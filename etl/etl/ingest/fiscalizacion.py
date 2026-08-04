@@ -30,9 +30,17 @@ from __future__ import annotations
 import csv
 import io
 import re
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ..crosswalk import FISCALIZACION_VOTE_COLUMNS
+from ..crosswalk import FISCALIZACION_VOTE_COLUMNS, OFFICIAL_AGRUPACION_NAME_BY_COLUMN
+from ..party_map import PartyMappingTable
+
+# `etl.db` is imported lazily inside `load_fiscalizacion_rows` below, not at
+# module scope: `etl.db` imports `etl.review_item`, which imports THIS
+# module for `ReviewItemDraft`'s type -- a module-level `from .. import db`
+# here would be a circular import.
 
 PERSONAL_DATA_COLUMNS: tuple[str, ...] = ("Nombre", "Apellido")
 
@@ -361,3 +369,141 @@ def guard_local_mirror_only(entry: dict) -> None:
         raise FiscalizacionUploadForbiddenError(
             f"fiscalización entry {entry.get('id')!r} must declare `upload: never`"
         )
+
+
+# ---------------------------------------------------------------------------
+# 12b — Postgres loader (task 12.12)
+# ---------------------------------------------------------------------------
+
+# The distrito/seccion this fiscalización source covers, per the ACCEPTED
+# mesa-identity decision (`curated/crosswalk.yaml::fiscalizacion_mesa_identity`,
+# Engram #1410): fiscalización mesa numbers join to OFFICIAL national DINE
+# mesa numbers by identity, within national distrito "02" / seccion "027" —
+# never the separate PBA municipal (`coronel_rosales_municipal`) numbering
+# scheme, which uses an unrelated 22xx list family.
+FISCALIZACION_JURISDICTION = "national"
+FISCALIZACION_CATEGORY = "DIPUTADO NACIONAL"
+FISCALIZACION_DISTRITO = "02"
+FISCALIZACION_SECCION = "027"
+
+
+def _normalize_party_name(name: str) -> str:
+    """Diacritic- and case-insensitive normalization for matching a
+    fiscalización column's official name against a curated `party_name`.
+
+    The two sources spell some names with different accents for the SAME
+    real-world party (`crosswalk.py`'s "COALICIÓN CÍVICA - A.R.I." vs
+    `curated/party_map.yaml`'s "COALICION CIVICA - A.R.I.") — this is a
+    spelling difference, not a different party, so matching must not be
+    accent-sensitive.
+    """
+    decomposed = unicodedata.normalize("NFKD", name)
+    without_marks = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", without_marks.strip().upper())
+
+
+def build_column_list_id_map(
+    party_map: PartyMappingTable,
+    *,
+    year: int,
+    jurisdiction: str = FISCALIZACION_JURISDICTION,
+    category: str = FISCALIZACION_CATEGORY,
+) -> dict[str, str]:
+    """Resolve each fiscalización vote column to its curated `list_id`,
+    THROUGH `curated/party_map.yaml` — never by column position (task
+    12.8). A column whose official name (`OFFICIAL_AGRUPACION_NAME_BY_COLUMN`)
+    matches no curated `party_name` for `(year, jurisdiction, category)` is
+    simply absent from the returned mapping (`En blanco`/`Impugnado`
+    always fall in this case — they key on `votos_tipo`, not
+    `agrupacion_nombre`, and carry no party identity to map).
+    """
+    by_normalized_name = {
+        _normalize_party_name(entry.party_name): entry.list_id
+        for entry in party_map.entries
+        if entry.year == year
+        and entry.jurisdiction == jurisdiction
+        and entry.category == category
+    }
+    mapping: dict[str, str] = {}
+    for column, official_name in OFFICIAL_AGRUPACION_NAME_BY_COLUMN.items():
+        list_id = by_normalized_name.get(_normalize_party_name(official_name))
+        if list_id is not None:
+            mapping[column] = list_id
+    return mapping
+
+
+def load_fiscalizacion_rows(
+    conn,
+    rows: Sequence[FiscalizacionRow],
+    *,
+    year: int,
+    round_: str,
+    party_map: PartyMappingTable,
+    archive_entry_id: str,
+    jurisdiction: str = FISCALIZACION_JURISDICTION,
+    category: str = FISCALIZACION_CATEGORY,
+    distrito: str = FISCALIZACION_DISTRITO,
+    seccion: str = FISCALIZACION_SECCION,
+) -> int:
+    """Load merged/collapsed fiscalización rows into `result_row` (task
+    12.12), turning each row's 17 WIDE vote columns into one LONG
+    `result_row` per resolvable list.
+
+    Reuses `db.py::load_result_rows` unchanged, so D8's election-scoped
+    delete-by-`archive_entry_id`-then-bulk-insert idempotency (migration
+    0008) applies to fiscalización exactly as it already does to
+    national/PBA (task 12.12) — no separate transaction logic here.
+
+    - Column -> `list_id` resolution always goes through
+      `curated/party_map.yaml` (`build_column_list_id_map`), never column
+      position (task 12.8).
+    - A blank vote cell (`row.votes[column] is None`) produces NO row for
+      that column — missing, never a zero-vote row (task 12.9).
+    - Every produced row carries `source_kind="fiscalizacion"`, never
+      `"official"` (task 12.10).
+    - No personal-data value ever reaches this function: `FiscalizacionRow`
+      structurally carries no `Nombre`/`Apellido` field at all (D9.3), so
+      there is nothing here that could leak one (task 12.11).
+    """
+    if not rows:
+        return 0
+
+    from .. import db
+
+    column_list_ids = build_column_list_id_map(
+        party_map, year=year, jurisdiction=jurisdiction, category=category
+    )
+
+    election_id = db.upsert_election(conn, year=year, round_=round_)
+    category_id = db.upsert_category(conn, name=category)
+    jurisdiction_cache: dict[int, str] = {}
+    records: list[db.ResultRowRecord] = []
+
+    for source_row_index, row in enumerate(rows):
+        jurisdiction_id = jurisdiction_cache.get(row.mesa)
+        if jurisdiction_id is None:
+            jurisdiction_id = db.upsert_jurisdiction(
+                conn, distrito=distrito, seccion=seccion, mesa=row.mesa
+            )
+            jurisdiction_cache[row.mesa] = jurisdiction_id
+
+        for column, list_id in column_list_ids.items():
+            votes = row.votes.get(column)
+            if votes is None:
+                continue  # blank cell -- missing, never a zero-vote row (task 12.9)
+            records.append(
+                db.ResultRowRecord(
+                    election_id=election_id,
+                    jurisdiction_id=jurisdiction_id,
+                    category_id=category_id,
+                    granularity="mesa",
+                    list_id=list_id,
+                    votes=votes,
+                    source_kind="fiscalizacion",
+                    is_unmapped=False,
+                    archive_entry_id=archive_entry_id,
+                    source_row_index=source_row_index,
+                )
+            )
+
+    return db.load_result_rows(conn, archive_entry_id=archive_entry_id, records=records)

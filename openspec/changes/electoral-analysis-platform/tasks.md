@@ -371,11 +371,11 @@ no numbered task ever required. They are the contract this sub-unit satisfies.
 Fiscalización data is parsed, validated, merged and crosswalked, but never reaches Postgres:
 `load_national_rows` and `load_pba_rows` exist, `load_fiscalizacion_rows` does not.
 
-- [ ] 12.8 RED: `etl/tests/test_ingest_fiscalizacion.py::test_wide_columns_map_to_one_result_row_per_list` — the sheet is 17 wide vote columns per mesa; `result_row` is long. The mapping MUST go through `curated/party_map.yaml`, never by column position.
-- [ ] 12.9 RED: `::test_blank_vote_cell_is_missing_not_zero_in_the_loaded_rows` — a blank cell must not become a 0 vote row.
-- [ ] 12.10 RED: `::test_loaded_rows_carry_source_kind_fiscalizacion` — never `official`.
-- [ ] 12.11 RED: `::test_fiscalizacion_load_never_writes_a_fiscal_name` — assert the personal-data columns reach no table.
-- [ ] 12.12 GREEN: `load_fiscalizacion_rows` in `etl/etl/ingest/fiscalizacion.py`, reusing `db.py::load_result_rows` so D8's election-scoped idempotency applies unchanged.
+- [x] 12.8 RED: `etl/tests/test_ingest_fiscalizacion.py::test_wide_columns_map_to_one_result_row_per_list` — the sheet is 17 wide vote columns per mesa; `result_row` is long. The mapping MUST go through `curated/party_map.yaml`, never by column position.
+- [x] 12.9 RED: `::test_blank_vote_cell_is_missing_not_zero_in_the_loaded_rows` — a blank cell must not become a 0 vote row.
+- [x] 12.10 RED: `::test_loaded_rows_carry_source_kind_fiscalizacion` — never `official`.
+- [x] 12.11 RED: `::test_fiscalizacion_load_never_writes_a_fiscal_name` — assert the personal-data columns reach no table.
+- [x] 12.12 GREEN: `load_fiscalizacion_rows` in `etl/etl/ingest/fiscalizacion.py`, reusing `db.py::load_result_rows` so D8's election-scoped idempotency applies unchanged.
 
 ### 12c — Write role
 
