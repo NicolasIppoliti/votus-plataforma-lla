@@ -197,11 +197,66 @@ RED tests first (spec `source-archive`):
 
 ## Phase 8: RLS and Idempotency Integration
 
-- [ ] 8.1 RED: `supabase/tests/rls_anonymous_denied.sql` — one assertion per table under the anon role.
-- [ ] 8.2 RED: `etl/tests/test_integration_idempotent.py::test_ephemeral_postgres_reingest_matches_original` (ephemeral local Postgres).
-- [ ] 8.3 RED: `etl/tests/test_integration_idempotent.py::test_drop_and_rebuild_equality`.
-- [ ] 8.4 GREEN: `supabase/migrations/0006_rls.sql` + down migration — enable RLS on every electoral table, single authenticated-role policy, no anonymous grant.
-- [ ] 8.5 GREEN: idempotent delete-by-`archive_entry_id` + bulk insert transaction wrapper (D8) in ingestion entrypoints.
+> **Structural fix (prerequisite, discovered running real Postgres for the first
+> time this phase).** The Supabase CLI applies every `.sql` file directly under
+> `supabase/migrations/` as a forward migration, in filename order. The
+> `NNNN_..._down.sql` files committed alongside 0001-0005 were therefore ALSO
+> auto-applied on `supabase db start`/`db reset`, and their shared numeric
+> prefix collided with the forward migration's own version in
+> `supabase_migrations.schema_migrations` (`SQLSTATE 23505`, duplicate key) —
+> migrations 0001-0005 could not run at all before this was fixed. All five
+> `*_down.sql` files were moved to a new sibling directory,
+> `supabase/migrations_down/` (not scanned by the CLI), with a README
+> explaining the convention and how to apply one manually. No forward
+> migration's SQL changed.
+
+- [x] 8.1 RED: `supabase/tests/rls_anonymous_denied.sql` — one assertion per table under the anon role.
+- [x] 8.2 RED: `etl/tests/test_integration_idempotent.py::test_ephemeral_postgres_reingest_matches_original` (ephemeral local Postgres).
+- [x] 8.3 RED: `etl/tests/test_integration_idempotent.py::test_drop_and_rebuild_equality`.
+- [x] 8.4 GREEN: `supabase/migrations/0006_rls.sql` + down migration — enable RLS on every electoral table, single authenticated-role policy, no anonymous grant.
+- [x] 8.5 GREEN: idempotent delete-by-`archive_entry_id` + bulk insert transaction wrapper (D8) in ingestion entrypoints.
+
+> **Evidence summary.** `supabase init` + `supabase db start` ran migrations
+> 0001-0006 against real local Postgres for the first time (Docker,
+> `supabase_db_votus-plataforma-lla`, port 54322). `supabase/tests/rls_anonymous_denied.sql`
+> (11 pgTAP `throws_ok` assertions, SQLSTATE 42501) passes against 0001-0005
+> alone — the CLI's local default never grants a new table to `anon` unless a
+> migration explicitly does, so no accidental leak exists — and RED was
+> instead produced honestly by injecting a real regression (`grant select on
+> jurisdiction to anon`), observing the suite catch it (`Result: FAIL`, 1/11),
+> then reverting and confirming `Result: PASS` again. `0006_rls.sql` makes the
+> "no anonymous grant" invariant an explicit, self-documenting `REVOKE` (not
+> an implicit platform default) and adds the one `authenticated`-only `SELECT`
+> policy per table the requirement actually needs. `etl/tests/test_integration_idempotent.py`'s
+> two tests were RED before `etl/etl/db.py` existed (`mv`'d aside — genuine
+> `ImportError: cannot import name 'db'` collection error, matching Phases 6-7's
+> transient-removal RED technique, this time for a not-yet-connected Postgres
+> writer instead of a Python module), then GREEN after restoring it, both
+> against the real ephemeral database (uuid-scoped `archive_entry_id` per
+> test run, transaction rolled back in the `pg_conn` fixture's teardown).
+> `db.upsert_jurisdiction` discovered a real correctness bug while writing
+> this: `jurisdiction`'s unique constraint spans four NULLABLE columns, and
+> Postgres never treats `NULL = NULL` as a conflict match, so a plain
+> `ON CONFLICT` upsert would silently duplicate the jurisdiction row on every
+> re-ingest of a PBA distrito-level source (all four columns `NULL`) — fixed
+> with a `SELECT ... IS NOT DISTINCT FROM` lookup instead. `load_national_rows`
+> and `load_pba_rows` wire `db.load_result_rows` into the two long-format
+> entrypoints; `ingest_fiscalizacion` gets an explicit forward-gap comment
+> instead (its wide-format 17-vote-column shape needs a list-id mapping that
+> does not exist yet, and D9.1 already excludes it from every default read
+> path). Full suite: **104 passed** — 3 new integration tests
+> (`test_integration_idempotent.py`) added to the prior baseline; the exact
+> prior total in Engram's Phase 7 note (96) undercounted by 5 relative to
+> this session's `uv run pytest` output, which includes
+> `test_vote_vector_match.py`'s 5 SPIKE-script tests (`../spikes/scripts`,
+> wired into `testpaths` since Phase 1) — a pre-existing bookkeeping gap in
+> the prior note, not a Phase 8 regression; `ruff check` clean,
+> `ruff format --check` clean on every file authored this phase (pba.py's
+> one pre-existing formatter-drift line, noted since Phase 7, was left
+> untouched again). Personal-data sweep: grepped every file touched this
+> phase for `Nombre`/`Apellido`/surname markers — the only hits are the
+> pre-existing Phase 6 column-name references (`PERSONAL_DATA_COLUMNS`
+> constant and its docstring, unmodified), zero real names anywhere.
 
 ## Phase 9: Access Control (web)
 
