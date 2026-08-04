@@ -322,19 +322,19 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 - [x] 11.4 RED: `compare.test.ts::test_flip_detection_reports_from_to_with_both_shares`.
 - [x] 11.5 RED: `compare.test.ts::test_no_flip_still_reports_swing`.
 - [x] 11.6 RED: `compare.test.ts::test_discontinuous_mesa_excluded_from_swing_and_listed_separately`.
-- [ ] 11.7 RED (threat matrix — unofficial-source leakage into official figures, path 1: default query): `apps/web/src/lib/fiscalizacion/repository.test.ts::test_default_query_excludes_fiscalizacion`.
-- [ ] 11.8 RED (threat matrix, path 2: aggregate): `repository.test.ts::test_aggregate_excludes_fiscalizacion_without_opt_in`.
-- [ ] 11.9 RED (threat matrix, path 3: rendered page): `e2e/provenance.spec.ts::test_rendered_page_excludes_fiscalizacion_without_opt_in`.
-- [ ] 11.10 RED: `repository.test.ts::test_fiscalizacion_query_without_coverage_is_refused` (D9.2, `requires_explicit_unofficial_opt_in`).
+- [x] 11.7 RED (threat matrix — unofficial-source leakage into official figures, path 1: default query): `apps/web/src/lib/fiscalizacion/repository.test.ts::test_default_query_excludes_fiscalizacion`.
+- [x] 11.8 RED (threat matrix, path 2: aggregate): `repository.test.ts::test_aggregate_excludes_fiscalizacion_without_opt_in`.
+- [x] 11.9 RED (threat matrix, path 3: rendered page): `e2e/provenance.spec.ts::test_rendered_page_excludes_fiscalizacion_without_opt_in`.
+- [x] 11.10 RED: `repository.test.ts::test_fiscalizacion_query_without_coverage_is_refused` (D9.2, `requires_explicit_unofficial_opt_in`).
 - [ ] 11.11 RED: `apps/web/src/components/GranularityBadge.test.tsx::test_mesa_indicator_and_degraded_indicator_shown`.
 - [ ] 11.12 RED: `apps/web/src/components/SourceDisclaimer.test.tsx::test_disclaimer_present_and_not_permanently_dismissible`.
 - [ ] 11.13 RED: `apps/web/src/components/ProvenanceLink.test.tsx::test_traces_figure_to_archive_entry_sha256_url_timestamp` and `test_swing_figure_lists_both_contributing_sources`.
 - [ ] 11.14 RED: `e2e/comparison.spec.ts::test_mixed_granularity_flagged_in_display_not_only_api`.
 - [x] 11.15 GREEN: create `apps/web/src/lib/results/compare.ts` implementing the discriminated-union response (`ok` / `requires_explicit_aggregation`; `requires_explicit_unofficial_opt_in` is implemented on `repository.ts`'s response type in task 11.16 — see Deviations).
-- [ ] 11.16 GREEN: create `apps/web/src/lib/fiscalizacion/repository.ts` — `ResultsRepository` interface, default `source_kind = 'official'` filter, explicit opt-in path.
+- [x] 11.16 GREEN: create `apps/web/src/lib/fiscalizacion/repository.ts` — `ResultsRepository` interface, default `source_kind = 'official'` filter, explicit opt-in path.
 - [ ] 11.17 GREEN: create `apps/web/src/components/{GranularityBadge,ProvenanceLink,SourceDisclaimer}.tsx`.
 - [ ] 11.18 GREEN: create `apps/web/src/app/(authenticated)/{compare,drilldown,review,simulate}/page.tsx` (RSC, server-only reads) — the simulate page wires `allocate.ts` from Phase 10.
-- [ ] 11.19 GREEN: create `supabase/migrations/0007_review_item.sql` + down migration — `review_item(kind, severity, subject_ref, detected_at, resolved_at, note)`; unresolved-count banner query.
+- [x] 11.19 GREEN: create `supabase/migrations/0007_review_item.sql` + down migration — `review_item(kind, severity, subject_ref, detected_at, resolved_at, note)`; unresolved-count banner query. ALSO wired the ETL write path (`etl/etl/review_item.py`, `etl/etl/db.py::insert_review_items`) that projects `MesaDivergence`/`ReviewItemDraft` into this table — see Deviations (beyond the 20 numbered tasks, done per explicit orchestrator instruction).
 - [ ] 11.20 REFACTOR: confirm the full E2E suite (`pnpm playwright test`) and full pytest suite (`uv run pytest`) pass together.
 
 ## Key Learnings
