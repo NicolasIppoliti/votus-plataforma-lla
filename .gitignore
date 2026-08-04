@@ -15,3 +15,13 @@ node_modules/
 .next/
 apps/web/node_modules/
 *.tsbuildinfo
+
+# Env files with real secrets (never commit; see
+# apps/web/environment-variables.example.txt for the placeholder template)
+.env
+.env.local
+.env.*.local
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/
