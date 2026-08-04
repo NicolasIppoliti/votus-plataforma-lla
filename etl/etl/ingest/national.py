@@ -230,7 +230,18 @@ def load_national_rows(
 
     election_id = db.upsert_election(conn, year=year, round_=round_)
     category_cache: dict[str, str] = {}
-    jurisdiction_cache: dict[tuple[str, str | None, str | None, int | None], str] = {}
+
+    # Batched jurisdiction resolution (task 14.5): one round trip to
+    # resolve every distinct mesa already in `jurisdiction`, one more to
+    # bulk-insert whatever is missing -- replacing the SELECT-then-INSERT
+    # per first-seen mesa `upsert_jurisdiction` cost here before (~109k
+    # round trips at real national 2025 scale, spikes/003).
+    jurisdiction_keys = [
+        (row.result.distrito, row.result.seccion, row.result.circuito, None, row.result.mesa)
+        for row in rows
+    ]
+    jurisdiction_ids = db.batch_upsert_jurisdictions(conn, jurisdiction_keys)
+
     records: list[db.ResultRowRecord] = []
 
     for row in rows:
@@ -239,17 +250,14 @@ def load_national_rows(
             category_id = db.upsert_category(conn, name=row.category)
             category_cache[row.category] = category_id
 
-        j_key = (row.result.distrito, row.result.seccion, row.result.circuito, row.result.mesa)
-        jurisdiction_id = jurisdiction_cache.get(j_key)
-        if jurisdiction_id is None:
-            jurisdiction_id = db.upsert_jurisdiction(
-                conn,
-                distrito=row.result.distrito,
-                seccion=row.result.seccion,
-                circuito=row.result.circuito,
-                mesa=row.result.mesa,
-            )
-            jurisdiction_cache[j_key] = jurisdiction_id
+        j_key = (
+            row.result.distrito,
+            row.result.seccion,
+            row.result.circuito,
+            None,
+            row.result.mesa,
+        )
+        jurisdiction_id = jurisdiction_ids[j_key]
 
         records.append(
             db.ResultRowRecord(

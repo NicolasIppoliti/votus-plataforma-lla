@@ -421,9 +421,9 @@ product owner asked for them fixed rather than carried as debt.
 
 ### 14b — N+1 in `upsert_jurisdiction`
 
-- [ ] 14.4 RED: `etl/tests/test_integration_idempotent.py::test_jurisdiction_resolution_is_batched_not_per_row` — assert the number of round trips is bounded by a small constant, not proportional to the distinct jurisdiction count.
-- [ ] 14.5 GREEN: batch jurisdiction resolution in `etl/etl/db.py` — collect the distinct lineage tuples, resolve the existing ones in one query, bulk-insert the missing ones, preserving the `is not distinct from` NULL semantics that migration 0002's nullable key requires.
-- [ ] 14.6 REFACTOR: re-run the national 2025 ingest and record the new wall-clock against the 5 m 53 s baseline in `spikes/003-first-end-to-end-run.md`.
+- [x] 14.4 RED: `etl/tests/test_integration_idempotent.py::test_jurisdiction_resolution_is_batched_not_per_row` — assert the number of round trips is bounded by a small constant, not proportional to the distinct jurisdiction count.
+- [x] 14.5 GREEN: batch jurisdiction resolution in `etl/etl/db.py` — collect the distinct lineage tuples, resolve the existing ones in one query, bulk-insert the missing ones, preserving the `is not distinct from` NULL semantics that migration 0002's nullable key requires.
+- [x] 14.6 REFACTOR: re-run the national 2025 ingest and record the new wall-clock against the 5 m 53 s baseline in `spikes/003-first-end-to-end-run.md`.
 
 ### 14c — Playwright never runs
 
