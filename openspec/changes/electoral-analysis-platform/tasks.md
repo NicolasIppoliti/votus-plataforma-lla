@@ -346,6 +346,47 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 5. **Discovered, not fixed**: the local Postgres instance's `service_role` has `bypassrls=true` but no table-level `GRANT` on any electoral table (pre-existing across ALL tables, not introduced by Phase 11 — the ETL has always written through the raw `postgres` connection instead, so this was never exercised before). `e2e/comparison.spec.ts` seeds fixture rows via the `service_role` JS client and explicitly SKIPS with a clear reason when that grant is absent, rather than failing on an environment/ops gap. Verified genuinely GREEN end-to-end (real login, real Postgres, real page render, real D6 refusal displayed) with a temporary local-only grant, then reverted — no migration commits a broadened grant.
 6. `result_row`'s D8 idempotency key `(archive_entry_id, jurisdiction_id, category_id, list_id, source_kind)` does NOT include `election_id` or `granularity` — two fixture rows for different years sharing an `archive_entry_id` collide as duplicates of the same natural key. `comparison.spec.ts`'s fixture uses a distinct `archive_entry_id` suffix per year to avoid this; worth flagging for whoever wires the real multi-year ingestion path.
 
+## Phase 12: Runnable System — close the three gaps found in verification
+
+Phases 0–11 delivered a well-tested library with no way to run it. `result_row` holds 0 rows,
+no entrypoint exists, and the write path documented in `0006_rls.sql` is not the one the code
+uses. The specs say the system MUST fetch each registered source and MUST ingest PBA
+provincial and municipal results; today that is true of functions, not of the system.
+
+### 12a — CLI entrypoint
+
+`tasks.md`'s own work-unit table promised four runtime harnesses that were never built and that
+no numbered task ever required. They are the contract this sub-unit satisfies.
+
+- [ ] 12.1 RED: `etl/tests/test_cli.py::test_fetch_subcommand_archives_a_registered_source` (fake `Fetcher`, no network).
+- [ ] 12.2 RED: `test_cli.py::test_fetch_rejects_an_unregistered_source_name` — unknown source is an error, never a silent no-op.
+- [ ] 12.3 RED: `test_cli.py::test_ingest_subcommand_loads_rows_into_result_row` (ephemeral Postgres; skip explicitly when unreachable).
+- [ ] 12.4 RED: `test_cli.py::test_validate_crosswalk_reports_unmapped_codes_and_exits_nonzero`.
+- [ ] 12.5 RED: `test_cli.py::test_validate_curated_reports_unmapped_list_ids_and_exits_nonzero`.
+- [ ] 12.6 RED: `test_cli.py::test_ingest_refuses_to_write_without_an_explicit_database_url` — never silently fall back to a default DSN.
+- [ ] 12.7 GREEN: create `etl/etl/__main__.py` exposing `fetch`, `ingest`, `validate-crosswalk`, `validate-curated`, matching the four commands the work-unit table already names. Exit codes: 0 success, non-zero on validation failure.
+
+### 12b — Fiscalización Postgres loader
+
+Fiscalización data is parsed, validated, merged and crosswalked, but never reaches Postgres:
+`load_national_rows` and `load_pba_rows` exist, `load_fiscalizacion_rows` does not.
+
+- [ ] 12.8 RED: `etl/tests/test_ingest_fiscalizacion.py::test_wide_columns_map_to_one_result_row_per_list` — the sheet is 17 wide vote columns per mesa; `result_row` is long. The mapping MUST go through `curated/party_map.yaml`, never by column position.
+- [ ] 12.9 RED: `::test_blank_vote_cell_is_missing_not_zero_in_the_loaded_rows` — a blank cell must not become a 0 vote row.
+- [ ] 12.10 RED: `::test_loaded_rows_carry_source_kind_fiscalizacion` — never `official`.
+- [ ] 12.11 RED: `::test_fiscalizacion_load_never_writes_a_fiscal_name` — assert the personal-data columns reach no table.
+- [ ] 12.12 GREEN: `load_fiscalizacion_rows` in `etl/etl/ingest/fiscalizacion.py`, reusing `db.py::load_result_rows` so D8's election-scoped idempotency applies unchanged.
+
+### 12c — Write role
+
+- [ ] 12.13 RED: `supabase/tests/rls_write_role.sql` — pgTAP asserting the role the ETL actually uses can INSERT/UPDATE/DELETE on every electoral table, and that `anon` still cannot read.
+- [ ] 12.14 GREEN: `supabase/migrations/0009_etl_write_grants.sql` + down — grant DML to the ETL's role on every electoral table, leaving the `authenticated` read-only policy and the `anon` revoke from 0006 untouched.
+- [ ] 12.15 GREEN: correct `0006_rls.sql`'s comment, which states loading happens through `service_role` when `service_role` holds no DML privilege and the code connects as `postgres`. Document the real write path, and make the DSN configurable rather than defaulting to a superuser.
+
+### 12d — End-to-end proof
+
+- [ ] 12.16 GREEN: run the real pipeline once against the archived 2025 national ZIP and record the outcome — `result_row` count, distinct elections, distinct jurisdictions — in `spikes/003-first-end-to-end-run.md`. This is the first evidence the system runs at all, not just that its functions do.
+
 ## Key Learnings
 
 1. The SPIKE's hard gates each remove or reshape specific downstream phases; gate (e)'s original DENY was itself later refuted by re-verification (Engram #1398), so tasks encode a conditional-pending-policy state for Phase 5 rather than a permanent removal.
