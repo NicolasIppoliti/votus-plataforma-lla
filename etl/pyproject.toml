@@ -29,4 +29,4 @@ target-version = "py312"
 select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "../spikes/scripts"]
