@@ -260,12 +260,12 @@ RED tests first (spec `source-archive`):
 
 ## Phase 9: Access Control (web)
 
-- [ ] 9.1 RED: `apps/web/src/middleware.test.ts::test_unauthenticated_request_rejected_without_data`.
-- [ ] 9.2 RED: `apps/web/src/middleware.test.ts::test_authenticated_request_succeeds`.
-- [ ] 9.3 RED: `apps/web/src/middleware.test.ts::test_two_authenticated_users_get_identical_access`.
-- [ ] 9.4 RED: `e2e/auth.spec.ts::test_no_anonymous_read_path_including_cached_content` (Playwright, seeded fixture DB).
-- [ ] 9.5 GREEN: create `apps/web/src/middleware.ts` — Supabase Auth session check, redirect unauthenticated to login, no public route for in-scope data.
-- [ ] 9.6 GREEN: create `apps/web/src/app/(authenticated)/layout.tsx` gating all in-scope routes; single role, no privilege flags.
+- [x] 9.1 RED: `apps/web/src/middleware.test.ts::test_unauthenticated_request_rejected_without_data`.
+- [x] 9.2 RED: `apps/web/src/middleware.test.ts::test_authenticated_request_succeeds`.
+- [x] 9.3 RED: `apps/web/src/middleware.test.ts::test_two_authenticated_users_get_identical_access`.
+- [x] 9.4 RED: `e2e/auth.spec.ts::test_no_anonymous_read_path_including_cached_content` (Playwright, seeded fixture DB).
+- [x] 9.5 GREEN: create `apps/web/src/middleware.ts` — Supabase Auth session check, redirect unauthenticated to login, no public route for in-scope data.
+- [x] 9.6 GREEN: create `apps/web/src/app/(authenticated)/layout.tsx` gating all in-scope routes; single role, no privilege flags.
 
 ## Phase 10: Seat Allocation Domain (pure TypeScript, two statutory algorithms, D3–D5)
 
