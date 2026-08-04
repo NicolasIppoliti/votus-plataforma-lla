@@ -394,17 +394,17 @@ and unreachable — no page called `repository.queryFiscalizacion()`. The produc
 the view belongs in this change, so the two requirements added to
 `specs/fiscalizacion-analysis/spec.md` are mandatory here, not deferred.
 
-- [ ] 13.1 RED: `apps/web/src/app/(authenticated)/fiscalizacion/page.test.tsx::test_route_requests_fiscalizacion_through_the_opt_in_path` — asserts the page calls the opt-in query with a coverage argument and never reads through the default official-only path.
-- [ ] 13.2 RED: `::test_route_refuses_to_render_without_coverage` — renders the refusal state, never an unlabelled figure.
-- [ ] 13.3 RED: `::test_every_fiscalizacion_figure_carries_unofficial_indicator_and_coverage` — each figure shows the unofficial-source indicator plus covered/total mesa counts.
-- [ ] 13.4 RED: `::test_coverage_indicator_states_it_is_not_a_random_sample` — the covered mesas are exactly those where a fiscal was present; the indicator MUST say so.
-- [ ] 13.5 RED: `::test_official_figure_inside_the_view_carries_its_own_official_indicator` — the two source kinds are never visually interchangeable.
-- [ ] 13.6 RED: `apps/web/src/components/JuxtapositionBadge.test.tsx::test_cross_election_juxtaposition_shows_both_election_identities_and_source_kinds` — Requirement 7, previously unimplementable because nothing rendered a fiscalización figure.
-- [ ] 13.7 RED: `::test_non_random_coverage_is_stated_adjacent_not_only_in_a_footnote`.
-- [ ] 13.8 GREEN: create `apps/web/src/components/JuxtapositionBadge.tsx`.
-- [ ] 13.9 GREEN: create `apps/web/src/app/(authenticated)/fiscalizacion/page.tsx` — RSC, server-only read, reaching data ONLY through `repository.queryFiscalizacion()`.
-- [ ] 13.10 GREEN: link the route from the authenticated layout so it is reachable by an operator, not merely addressable by URL.
-- [ ] 13.11 RED then GREEN: `apps/web/e2e/fiscalizacion.spec.ts::test_route_renders_labelled_unofficial_figures` — the rendered-page leakage guard already has an e2e; this proves the opt-in path renders correctly. Skip explicitly if credentials are absent, never silently pass.
+- [x] 13.1 RED: `apps/web/src/app/(authenticated)/fiscalizacion/page.test.tsx::test_route_requests_fiscalizacion_through_the_opt_in_path` — asserts the page calls the opt-in query with a coverage argument and never reads through the default official-only path.
+- [x] 13.2 RED: `::test_route_refuses_to_render_without_coverage` — renders the refusal state, never an unlabelled figure.
+- [x] 13.3 RED: `::test_every_fiscalizacion_figure_carries_unofficial_indicator_and_coverage` — each figure shows the unofficial-source indicator plus covered/total mesa counts.
+- [x] 13.4 RED: `::test_coverage_indicator_states_it_is_not_a_random_sample` — the covered mesas are exactly those where a fiscal was present; the indicator MUST say so.
+- [x] 13.5 RED: `::test_official_figure_inside_the_view_carries_its_own_official_indicator` — the two source kinds are never visually interchangeable.
+- [x] 13.6 RED: `apps/web/src/components/JuxtapositionBadge.test.tsx::test_cross_election_juxtaposition_shows_both_election_identities_and_source_kinds` — Requirement 7, previously unimplementable because nothing rendered a fiscalización figure.
+- [x] 13.7 RED: `::test_non_random_coverage_is_stated_adjacent_not_only_in_a_footnote`.
+- [x] 13.8 GREEN: create `apps/web/src/components/JuxtapositionBadge.tsx`.
+- [x] 13.9 GREEN: create `apps/web/src/app/(authenticated)/fiscalizacion/page.tsx` — RSC, server-only read, reaching data ONLY through `repository.queryFiscalizacion()`.
+- [x] 13.10 GREEN: link the route from the authenticated layout so it is reachable by an operator, not merely addressable by URL.
+- [x] 13.11 RED then GREEN: `apps/web/e2e/fiscalizacion.spec.ts::test_route_renders_labelled_unofficial_figures` — the rendered-page leakage guard already has an e2e; this proves the opt-in path renders correctly. Skip explicitly if credentials are absent, never silently pass.
 
 ## Key Learnings
 
