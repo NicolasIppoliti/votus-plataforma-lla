@@ -316,12 +316,12 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 
 ## Phase 11: Results Analysis, Provenance UI, Disclaimers
 
-- [ ] 11.1 RED: `apps/web/src/lib/results/compare.test.ts::test_mesa_level_comparison_when_both_years_available`.
-- [ ] 11.2 RED: `compare.test.ts::test_distrito_only_comparison_labeled_distrito_not_mesa`.
-- [ ] 11.3 RED: `compare.test.ts::test_mixed_granularity_returns_requires_explicit_aggregation_status` (D6).
-- [ ] 11.4 RED: `compare.test.ts::test_flip_detection_reports_from_to_with_both_shares`.
-- [ ] 11.5 RED: `compare.test.ts::test_no_flip_still_reports_swing`.
-- [ ] 11.6 RED: `compare.test.ts::test_discontinuous_mesa_excluded_from_swing_and_listed_separately`.
+- [x] 11.1 RED: `apps/web/src/lib/results/compare.test.ts::test_mesa_level_comparison_when_both_years_available`.
+- [x] 11.2 RED: `compare.test.ts::test_distrito_only_comparison_labeled_distrito_not_mesa`.
+- [x] 11.3 RED: `compare.test.ts::test_mixed_granularity_returns_requires_explicit_aggregation_status` (D6).
+- [x] 11.4 RED: `compare.test.ts::test_flip_detection_reports_from_to_with_both_shares`.
+- [x] 11.5 RED: `compare.test.ts::test_no_flip_still_reports_swing`.
+- [x] 11.6 RED: `compare.test.ts::test_discontinuous_mesa_excluded_from_swing_and_listed_separately`.
 - [ ] 11.7 RED (threat matrix — unofficial-source leakage into official figures, path 1: default query): `apps/web/src/lib/fiscalizacion/repository.test.ts::test_default_query_excludes_fiscalizacion`.
 - [ ] 11.8 RED (threat matrix, path 2: aggregate): `repository.test.ts::test_aggregate_excludes_fiscalizacion_without_opt_in`.
 - [ ] 11.9 RED (threat matrix, path 3: rendered page): `e2e/provenance.spec.ts::test_rendered_page_excludes_fiscalizacion_without_opt_in`.
@@ -330,7 +330,7 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 - [ ] 11.12 RED: `apps/web/src/components/SourceDisclaimer.test.tsx::test_disclaimer_present_and_not_permanently_dismissible`.
 - [ ] 11.13 RED: `apps/web/src/components/ProvenanceLink.test.tsx::test_traces_figure_to_archive_entry_sha256_url_timestamp` and `test_swing_figure_lists_both_contributing_sources`.
 - [ ] 11.14 RED: `e2e/comparison.spec.ts::test_mixed_granularity_flagged_in_display_not_only_api`.
-- [ ] 11.15 GREEN: create `apps/web/src/lib/results/compare.ts` implementing the discriminated-union response (`ok` / `requires_explicit_aggregation` / `requires_explicit_unofficial_opt_in`).
+- [x] 11.15 GREEN: create `apps/web/src/lib/results/compare.ts` implementing the discriminated-union response (`ok` / `requires_explicit_aggregation`; `requires_explicit_unofficial_opt_in` is implemented on `repository.ts`'s response type in task 11.16 — see Deviations).
 - [ ] 11.16 GREEN: create `apps/web/src/lib/fiscalizacion/repository.ts` — `ResultsRepository` interface, default `source_kind = 'official'` filter, explicit opt-in path.
 - [ ] 11.17 GREEN: create `apps/web/src/components/{GranularityBadge,ProvenanceLink,SourceDisclaimer}.tsx`.
 - [ ] 11.18 GREEN: create `apps/web/src/app/(authenticated)/{compare,drilldown,review,simulate}/page.tsx` (RSC, server-only reads) — the simulate page wires `allocate.ts` from Phase 10.
