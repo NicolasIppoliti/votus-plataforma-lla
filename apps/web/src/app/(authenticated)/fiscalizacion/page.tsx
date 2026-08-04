@@ -155,6 +155,42 @@ interface FiscalizacionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
+/**
+ * Builds the optional official comparison figure from query parameters.
+ *
+ * Requirement 9 says the cross-election juxtaposition badge must be "reachable
+ * and exercised". It was neither: the production call site passed `undefined`
+ * for `comparison`, so the badge branch could never render through any real
+ * HTTP request even though its component tests all passed. That is the same
+ * failure shape as the capability's original reachability gap — built, tested,
+ * unreachable.
+ *
+ * `sourceKind` is forced to `official` rather than read from the request: the
+ * badge exists to contrast an unofficial figure against an official one from a
+ * DIFFERENT election, and a comparison that could itself be fiscalización would
+ * defeat the contrast the requirement exists to enforce. A half-specified
+ * comparison yields none at all, so a figure never renders with a missing label
+ * or a NaN share.
+ */
+export function comparisonFromParams(
+  params: Record<string, string | string[] | undefined>,
+): ElectionFigure | undefined {
+  const electionId = stringParam(params, "compareElectionId");
+  const electionLabel = stringParam(params, "compareElectionLabel");
+  const rawShare = stringParam(params, "compareSharePercent");
+
+  if (!electionId || !electionLabel || !rawShare) {
+    return undefined;
+  }
+
+  const sharePercent = Number(rawShare);
+  if (!Number.isFinite(sharePercent)) {
+    return undefined;
+  }
+
+  return { electionId, electionLabel, sourceKind: "official", sharePercent };
+}
+
 function stringParam(
   params: Record<string, string | string[] | undefined>,
   key: string,
@@ -202,5 +238,5 @@ export default async function FiscalizacionPage({
       ? await fetchSourceRefs(supabase, [...new Set(view.rows.map((row) => row.archiveEntryId))])
       : [];
 
-  return renderFiscalizacionView(view, undefined, sources);
+  return renderFiscalizacionView(view, comparisonFromParams(params), sources);
 }

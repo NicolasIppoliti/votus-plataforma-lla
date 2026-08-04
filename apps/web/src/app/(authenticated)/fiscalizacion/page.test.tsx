@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ResultsRepository } from "@/lib/fiscalizacion/repository";
 import type { ResultRow, RowSource } from "@/lib/fiscalizacion/repository";
-import { FISCALIZACION_COVERAGE, loadFiscalizacionView, renderFiscalizacionView } from "./page";
+import { FISCALIZACION_COVERAGE, loadFiscalizacionView, renderFiscalizacionView,
+  comparisonFromParams,
+} from "./page";
 
 /**
  * fiscalizacion-analysis spec, "An operator route reaches fiscalización
@@ -130,5 +132,55 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
 
     expect(html.toLowerCase()).toContain("refus");
     expect(html).not.toContain("12578");
+  });
+});
+
+describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachable)", () => {
+  it("test_comparison_absent_when_no_query_params_supplied", () => {
+    expect(comparisonFromParams({})).toBeUndefined();
+  });
+
+  it("test_comparison_built_from_query_params", () => {
+    const comparison = comparisonFromParams({
+      compareElectionId: "2023-municipal",
+      compareElectionLabel: "2023 municipal (official)",
+      compareSharePercent: "29.31",
+    });
+
+    expect(comparison).toEqual({
+      electionId: "2023-municipal",
+      electionLabel: "2023 municipal (official)",
+      sourceKind: "official",
+      sharePercent: 29.31,
+    });
+  });
+
+  it("test_comparison_is_always_official_never_fiscalizacion", () => {
+    // The juxtaposition badge exists to contrast an unofficial figure against an
+    // official one from a DIFFERENT election. A comparison that could itself be
+    // fiscalización would defeat the contrast the requirement exists to enforce.
+    const comparison = comparisonFromParams({
+      compareElectionId: "2023-municipal",
+      compareElectionLabel: "2023 municipal",
+      compareSharePercent: "29.31",
+      compareSourceKind: "fiscalizacion",
+    });
+
+    expect(comparison?.sourceKind).toBe("official");
+  });
+
+  it("test_incomplete_comparison_params_yield_no_comparison", () => {
+    // A half-specified comparison must not render a figure with a missing label
+    // or a NaN share.
+    expect(
+      comparisonFromParams({ compareElectionId: "2023-municipal" }),
+    ).toBeUndefined();
+    expect(
+      comparisonFromParams({
+        compareElectionId: "2023-municipal",
+        compareElectionLabel: "2023 municipal",
+        compareSharePercent: "not-a-number",
+      }),
+    ).toBeUndefined();
   });
 });
