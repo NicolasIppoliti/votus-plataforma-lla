@@ -183,12 +183,49 @@ juxtaposition without both badges attached.
 - **AND** the view MUST NOT imply the two figures are directly comparable without
   disclosing the different elections and the non-random coverage
 
-## Open Product Question — not resolved by this spec
+## RESOLVED — the operator route is IN SCOPE for this change
 
-No operator-facing route currently calls the fiscalización query path; the only
-in-repository reference outside the module is a comment on the drilldown page explaining
-that it deliberately does not. The capability is complete but currently unreachable by
-any operator. Whether an operator-facing fiscalización view belongs in this change or a
-later one is undecided by the product owner. This spec intentionally does NOT mandate a
-route or UI entry point, and does NOT declare the absence of one out of scope — the next
-phase MUST resolve this question explicitly rather than inherit a default.
+The product owner has decided: an operator-facing fiscalización view belongs in THIS
+change. The requirements below are therefore mandatory, not deferred.
+
+### Requirement: An operator route reaches fiscalización through the opt-in path
+The system MUST provide an authenticated operator route that renders fiscalización figures,
+and that route MUST obtain them through the same explicit opt-in path every other consumer
+uses. It MUST NOT introduce a second query path that bypasses the source-kind default.
+
+#### Scenario: The route requests fiscalización explicitly
+- **GIVEN** an authenticated operator opens the fiscalización view
+- **WHEN** the page loads its data
+- **THEN** it MUST call the opt-in query path with a coverage argument
+- **AND** MUST NOT read fiscalización rows through the default official-only path
+
+#### Scenario: The route refuses to render without coverage
+- **GIVEN** a request for the fiscalización view that supplies no coverage
+- **WHEN** the page loads
+- **THEN** it MUST render the refusal state, not an unlabelled figure
+
+#### Scenario: Every rendered fiscalización figure is labelled unofficial
+- **GIVEN** the fiscalización view has rendered figures
+- **WHEN** an operator reads any one of them
+- **THEN** each MUST carry a visible unofficial-source indicator and its coverage
+  denominator, stating the covered and total mesa counts
+- **AND** the coverage indicator MUST state that the covered mesas are not a random sample
+
+#### Scenario: Official figures are never rendered inside the fiscalización view without their own label
+- **GIVEN** the fiscalización view also displays an official figure for context
+- **WHEN** the page renders
+- **THEN** the official figure MUST carry its own official-source indicator, so the two
+  source kinds are never visually interchangeable
+
+### Requirement: The cross-election juxtaposition badge is reachable and exercised
+Requirement 7's juxtaposition rule was previously unimplementable because no route rendered
+a fiscalización figure at all. With the route in scope, it becomes testable and MUST be
+covered by a test that fails if either badge is removed.
+
+#### Scenario: A fiscalización figure beside a different election's official figure
+- **GIVEN** the view shows a fiscalización figure from the 26 Oct 2025 election beside an
+  official figure from a different election
+- **WHEN** the page renders
+- **THEN** both figures MUST carry their election identity and their source kind
+- **AND** the non-random coverage of the fiscalización figure MUST be stated adjacent to it,
+  not only in a page-level footnote

@@ -257,11 +257,14 @@ They supersede any earlier "TBD" language in this document.
    reads LLA at 60,48 % against 29,31 % in the 2023 municipal official result, and that
    juxtaposition is the single most likely misuse of this platform.
 
-   **OPEN PRODUCT QUESTION — no operator route exists.** No page calls
-   `repository.queryFiscalizacion()`; the only reference outside the module is a comment noting
-   that the drilldown view deliberately does not. The capability is therefore complete and
-   unreachable. Whether an operator-facing fiscalización view belongs in THIS change or in a
-   later one is undecided, and the accompanying spec marks it rather than assuming an answer.
+   **RESOLVED — the operator route is IN SCOPE for this change.** The capability was complete
+   and unreachable: no page called `repository.queryFiscalizacion()`, and the only reference
+   outside the module was a comment noting the drilldown view deliberately does not. The product
+   owner decided the view belongs in this change, so `fiscalizacion-analysis` now carries two
+   further requirements — an authenticated route that reaches fiscalización through the same
+   opt-in path every other consumer uses, never a second path that bypasses the source-kind
+   default; and the cross-election juxtaposition badge, which was previously unimplementable
+   because nothing rendered a fiscalización figure at all.
 
 ## Success Criteria
 

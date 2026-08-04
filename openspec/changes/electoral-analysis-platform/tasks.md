@@ -387,6 +387,25 @@ Fiscalización data is parsed, validated, merged and crosswalked, but never reac
 
 - [x] 12.16 GREEN: run the real pipeline once against the archived 2025 national ZIP and record the outcome — `result_row` count, distinct elections, distinct jurisdictions — in `spikes/003-first-end-to-end-run.md`. This is the first evidence the system runs at all, not just that its functions do.
 
+## Phase 13: Fiscalización operator route
+
+Closes the contract gap found after `sdd-verify`: the fiscalización capability was complete
+and unreachable — no page called `repository.queryFiscalizacion()`. The product owner decided
+the view belongs in this change, so the two requirements added to
+`specs/fiscalizacion-analysis/spec.md` are mandatory here, not deferred.
+
+- [ ] 13.1 RED: `apps/web/src/app/(authenticated)/fiscalizacion/page.test.tsx::test_route_requests_fiscalizacion_through_the_opt_in_path` — asserts the page calls the opt-in query with a coverage argument and never reads through the default official-only path.
+- [ ] 13.2 RED: `::test_route_refuses_to_render_without_coverage` — renders the refusal state, never an unlabelled figure.
+- [ ] 13.3 RED: `::test_every_fiscalizacion_figure_carries_unofficial_indicator_and_coverage` — each figure shows the unofficial-source indicator plus covered/total mesa counts.
+- [ ] 13.4 RED: `::test_coverage_indicator_states_it_is_not_a_random_sample` — the covered mesas are exactly those where a fiscal was present; the indicator MUST say so.
+- [ ] 13.5 RED: `::test_official_figure_inside_the_view_carries_its_own_official_indicator` — the two source kinds are never visually interchangeable.
+- [ ] 13.6 RED: `apps/web/src/components/JuxtapositionBadge.test.tsx::test_cross_election_juxtaposition_shows_both_election_identities_and_source_kinds` — Requirement 7, previously unimplementable because nothing rendered a fiscalización figure.
+- [ ] 13.7 RED: `::test_non_random_coverage_is_stated_adjacent_not_only_in_a_footnote`.
+- [ ] 13.8 GREEN: create `apps/web/src/components/JuxtapositionBadge.tsx`.
+- [ ] 13.9 GREEN: create `apps/web/src/app/(authenticated)/fiscalizacion/page.tsx` — RSC, server-only read, reaching data ONLY through `repository.queryFiscalizacion()`.
+- [ ] 13.10 GREEN: link the route from the authenticated layout so it is reachable by an operator, not merely addressable by URL.
+- [ ] 13.11 RED then GREEN: `apps/web/e2e/fiscalizacion.spec.ts::test_route_renders_labelled_unofficial_figures` — the rendered-page leakage guard already has an e2e; this proves the opt-in path renders correctly. Skip explicitly if credentials are absent, never silently pass.
+
 ## Key Learnings
 
 1. The SPIKE's hard gates each remove or reshape specific downstream phases; gate (e)'s original DENY was itself later refuted by re-verification (Engram #1398), so tasks encode a conditional-pending-policy state for Phase 5 rather than a permanent removal.
