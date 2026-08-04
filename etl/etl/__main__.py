@@ -19,8 +19,11 @@ Exit codes: 0 on success, non-zero on any argument or validation failure.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
+import tempfile
+import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -31,11 +34,11 @@ from .archive import ArchiveResult, Fetcher, archive_source
 from .crosswalk import CrosswalkTable, QuarantinedJurisdiction, load_crosswalk
 from .http_client import RequestsFetcher
 from .ingest.fiscalizacion import ingest_fiscalizacion
-from .ingest.national import ingest_national, load_national_rows
+from .ingest.national import REQUIRED_COLUMNS, ingest_national, load_national_rows
 from .ingest.pba import ingest_pba, load_pba_rows
 from .manifest import latest_ok_record, load_manifest, save_manifest, upsert_record
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
-from .storage import LocalArchiveStore
+from .storage import LocalArchiveStore, extract_zip_safely
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SOURCES_PATH = REPO_ROOT / "etl" / "sources.yaml"
@@ -156,6 +159,45 @@ def resolve_database_url(explicit: str | None) -> str:
     return url
 
 
+def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> bytes:
+    """Return the national results CSV bytes `ingest_national` expects.
+
+    A registered national source is archived as a ZIP (`sources.yaml`),
+    with the results file's own name differing across years
+    (`resultados2025.csv` in 2025, `ResultadosElectorales.csv` in 2023) and
+    packaged alongside unrelated CSVs (`ambitosElectorales.csv`,
+    `localesDeVotacionyMesas.csv`). Rather than hardcode either filename,
+    this extracts the whole archive (`storage.extract_zip_safely`, the
+    same safe-extraction path `tests/test_ingest_national.py` already
+    exercises) and picks the one CSV member whose header declares every
+    column `ingest_national.REQUIRED_COLUMNS` needs.
+
+    `raw_bytes` that is not a ZIP at all (a bare CSV, e.g. a test fixture)
+    passes through unchanged.
+    """
+    if not zipfile.is_zipfile(io.BytesIO(raw_bytes)):
+        return raw_bytes
+
+    extracted = extract_zip_safely(raw_bytes, extract_dir)
+    for path in extracted:
+        if path.suffix.lower() != ".csv":
+            continue
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            header = handle.readline()
+        if all(column in header for column in REQUIRED_COLUMNS):
+            return path.read_bytes()
+
+    raise NationalResultsCsvNotFoundError(
+        "no member of the archived ZIP matches the expected national results "
+        f"schema (looked for columns: {', '.join(REQUIRED_COLUMNS)})"
+    )
+
+
+class NationalResultsCsvNotFoundError(ValueError):
+    """Raised when a ZIP-archived national source has no member whose
+    header matches `ingest.national.REQUIRED_COLUMNS` (task 12d)."""
+
+
 def ingest_source(
     source_id: str,
     *,
@@ -194,7 +236,11 @@ def ingest_source(
     conn = psycopg.connect(resolved_url)
     try:
         if capability == "national":
-            rows = ingest_national(raw_bytes, archive_entry_id=source_id)
+            with tempfile.TemporaryDirectory(prefix="votus-etl-ingest-") as extract_dir:
+                csv_bytes = resolve_national_results_bytes(
+                    raw_bytes, extract_dir=Path(extract_dir)
+                )
+                rows = ingest_national(csv_bytes, archive_entry_id=source_id)
             inserted = load_national_rows(conn, rows, year=year, round_=round_)
         elif capability == "pba":
             rows = ingest_pba(raw_bytes, archive_entry_id=source_id)

@@ -385,7 +385,7 @@ Fiscalización data is parsed, validated, merged and crosswalked, but never reac
 
 ### 12d — End-to-end proof
 
-- [ ] 12.16 GREEN: run the real pipeline once against the archived 2025 national ZIP and record the outcome — `result_row` count, distinct elections, distinct jurisdictions — in `spikes/003-first-end-to-end-run.md`. This is the first evidence the system runs at all, not just that its functions do.
+- [x] 12.16 GREEN: run the real pipeline once against the archived 2025 national ZIP and record the outcome — `result_row` count, distinct elections, distinct jurisdictions — in `spikes/003-first-end-to-end-run.md`. This is the first evidence the system runs at all, not just that its functions do.
 
 ## Key Learnings
 
