@@ -273,6 +273,15 @@ def ingest_fiscalizacion(raw_csv_text: str, *, archive_entry_id: str) -> Fiscali
     """
     del archive_entry_id  # accepted for interface symmetry; not yet used
 
+    # Phase 8 (task 8.5) wired `db.load_result_rows` into `ingest.national`
+    # and `ingest.pba`, both already long-format (one row per list/category).
+    # `FiscalizacionRow` is wide-format (one row per mesa, 17 vote columns),
+    # so loading it needs a column-to-list_id mapping that does not exist
+    # yet anywhere in this codebase -- deliberately NOT invented here under
+    # Phase 8's scope, given D9.1's default-exclude-from-official-queries
+    # rule already keeps this source out of every default read path. Left as
+    # an explicit forward-gap for the phase that adds that mapping, the same
+    # pattern already recorded for `review_item` in 0004/0005's migrations.
     stripped_text = strip_personal_columns(raw_csv_text)
     reader = csv.DictReader(io.StringIO(stripped_text))
     data_rows = list(reader)
