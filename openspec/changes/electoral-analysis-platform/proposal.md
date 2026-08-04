@@ -238,6 +238,31 @@ They supersede any earlier "TBD" language in this document.
 5. **Access control.** A single authenticated role is sufficient for this change. There is no
    anonymous access. Separate viewer/curator roles are explicitly a NON-GOAL of this change.
 
+6. **Internal fiscalización data — ADDED MID-CHANGE, recorded late.** The product owner supplied
+   a party-internal fiscalización spreadsheet for the 26 Oct 2025 national legislative election
+   in Coronel Rosales after this proposal was approved. It was accepted into scope and drove
+   design ADR D9, Phase 6 (14 tasks) and Phase 12b — but it was never written back into this
+   proposal or into any capability spec, so roughly nineteen tasks of shipped code had no
+   requirement backing them. This entry closes that gap.
+
+   **In scope, as built:** ingest the sheet as a source class distinct from official results;
+   never merge the two in one figure; default every query to `source_kind = 'official'` with
+   fiscalización reachable only by explicit opt-in; carry a mandatory coverage denominator whose
+   `isRandomSample` is the literal `false`; strip fiscal names at ingestion so no personal data
+   reaches the database; and block unofficial-source leakage on three independent paths — the
+   default query, the aggregate, and the rendered page.
+
+   **Why coverage can never claim to be a sample:** the covered mesas are exactly those where the
+   party had a fiscal present — 93 of 153. The missing ~40 % is not missing at random. The sheet
+   reads LLA at 60,48 % against 29,31 % in the 2023 municipal official result, and that
+   juxtaposition is the single most likely misuse of this platform.
+
+   **OPEN PRODUCT QUESTION — no operator route exists.** No page calls
+   `repository.queryFiscalizacion()`; the only reference outside the module is a comment noting
+   that the drilldown view deliberately does not. The capability is therefore complete and
+   unreachable. Whether an operator-facing fiscalización view belongs in THIS change or in a
+   later one is undecided, and the accompanying spec marks it rather than assuming an answer.
+
 ## Success Criteria
 
 - [ ] SPIKE completed; every UNVERIFIED / NOT FOUND cell in the granularity table has a
