@@ -1,0 +1,15 @@
+# Copy to .env (gitignored) and fill with real values, or export directly.
+# Never commit a real password or a superuser DSN.
+
+# Required by `uv run python -m etl ingest ...` -- `etl_writer` (see
+# supabase/migrations/0009_etl_write_grants.sql), never the `postgres`
+# superuser DSN `supabase status` prints. `fetch`/`validate-crosswalk`/
+# `validate-curated` do not need this.
+ETL_DATABASE_URL=postgresql://etl_writer:etl_writer_local_dev_only@127.0.0.1:54322/postgres
+
+# Only used by the test suite (etl/tests/test_cli.py,
+# etl/tests/test_ingest_fiscalizacion.py, etl/tests/test_integration_idempotent.py).
+# Defaults to the local Supabase stack's postgres superuser DSN when unset --
+# tests never write through etl_writer, since they exercise db.py's own
+# upsert/idempotency logic directly, not the CLI's role restriction.
+ETL_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
