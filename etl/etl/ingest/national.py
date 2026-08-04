@@ -1,0 +1,208 @@
+"""National 2023/2025 ZIP ingestion (`electoral-ingestion` spec, national
+subset; D8's idempotency; SPIKE 001 (b)/(c) verdicts).
+
+One shared, NAME-based parser (never positional indexing — SPIKE (b) found
+real column-order drift between 2023 and 2025) driven by whatever columns
+the source CSV actually declares. `estado_final` (new in 2025) is read via
+`.get()` so it is `None` for 2023 rows rather than defaulted to a guessed
+status. Mesa ids are normalized to a canonical string form so the 2025
+results file's unpadded (`"1"`) and `localesDeVotacionyMesas.csv`'s
+zero-padded (`"00001"`) forms compare equal (SPIKE (c)).
+
+Only `votos_tipo == "POSITIVO"` rows with a real `agrupacion_id` become
+normalized list-vote rows — this is the "(mesa, list/agrupación, category)
+combination" the spec scenario asks for. EN BLANCO/NULO/IMPUGNADO/
+RECURRIDO rows (`agrupacion_id` empty or `"0"`) are out of this phase's
+scope and are skipped, not silently mis-attributed to a list.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+from dataclasses import dataclass
+
+from etl.crosswalk import CrosswalkTable
+from etl.jurisdiction import ResultRow, make_result_row
+from etl.party_map import PartyMappingTable, PartyResolutionResult, resolve_party_for_rows
+
+REQUIRED_COLUMNS = (
+    "distrito_id",
+    "seccion_id",
+    "circuito_id",
+    "mesa_id",
+    "cargo_nombre",
+    "agrupacion_id",
+    "votos_tipo",
+    "votos_cantidad",
+)
+
+
+class NationalSchemaError(ValueError):
+    """Raised when the source CSV does not declare a required column.
+
+    Per the "BUP-era 2025 format handled or explicitly rejected" scenario:
+    an unrecognized structure MUST fail loudly, not silently ingest partial
+    or misaligned data.
+    """
+
+
+@dataclass(frozen=True)
+class NationalRow:
+    """A normalized national result row plus ingestion provenance.
+
+    Wraps `jurisdiction.ResultRow` (the shared granularity model) with
+    fields specific to this ingestion path: the 2025-only `estado_final`
+    attribute, and the `(archive_entry_id, natural key)` D8 requires for
+    idempotent re-ingestion.
+    """
+
+    result: ResultRow
+    estado_final: str | None
+    archive_entry_id: str
+    source_row_index: int
+    natural_key: tuple[str, int, str, str, str]
+
+    @property
+    def mesa(self) -> int | None:
+        return self.result.mesa
+
+    @property
+    def granularity(self) -> str:
+        return self.result.granularity
+
+    @property
+    def category(self) -> str:
+        return self.result.category
+
+    @property
+    def list_id(self) -> str | None:
+        return self.result.list_id
+
+
+def _normalize_mesa_id(raw: str) -> int:
+    """Normalize a mesa id to a canonical, zero-padding-independent integer.
+
+    SPIKE (c): `resultados2025.csv`'s `mesa_id` is unpadded while
+    `localesDeVotacionyMesas.csv`'s is zero-padded to 5 digits. Comparing
+    them as raw strings would treat `"1"` and `"00001"` as different mesas;
+    comparing as integers makes the zero-padding irrelevant.
+    """
+    return int(raw)
+
+
+def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[NationalRow]:
+    """Parse one archived national results CSV into normalized rows.
+
+    Pure function of `(csv_bytes, archive_entry_id)`: calling it twice
+    against the same bytes yields an identical list, which is the
+    precondition D8's later transactional (delete-by-archive_entry_id,
+    bulk insert) idempotency at the Postgres layer depends on.
+    """
+    reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8")))
+    fieldnames = set(reader.fieldnames or ())
+    missing = [col for col in REQUIRED_COLUMNS if col not in fieldnames]
+    if missing:
+        raise NationalSchemaError(
+            "unrecognized national results structure — missing required "
+            f"column(s): {', '.join(missing)}"
+        )
+
+    rows: list[NationalRow] = []
+    for index, raw in enumerate(reader):
+        agrupacion_id = (raw.get("agrupacion_id") or "").strip()
+        if raw["votos_tipo"] != "POSITIVO" or not agrupacion_id or agrupacion_id == "0":
+            continue
+
+        mesa_id = _normalize_mesa_id(raw["mesa_id"])
+        result = make_result_row(
+            granularity="mesa",
+            distrito=raw["distrito_id"],
+            seccion=raw["seccion_id"],
+            circuito=raw["circuito_id"],
+            mesa=mesa_id,
+            category=raw["cargo_nombre"],
+            list_id=agrupacion_id,
+            votes=int(raw["votos_cantidad"]),
+        )
+        rows.append(
+            NationalRow(
+                result=result,
+                estado_final=raw.get("estado_final") or None,
+                archive_entry_id=archive_entry_id,
+                source_row_index=index,
+                natural_key=(
+                    archive_entry_id,
+                    mesa_id,
+                    agrupacion_id,
+                    raw["cargo_nombre"],
+                    raw["votos_tipo"],
+                ),
+            )
+        )
+    return rows
+
+
+@dataclass(frozen=True)
+class QuarantinedNationalRow:
+    """A parsed row whose distrito/seccion has no curated crosswalk entry.
+
+    Stored as data alongside the reason, never silently dropped or assigned
+    to an unrelated jurisdiction (jurisdiction-model spec, task 4.6).
+    """
+
+    row: NationalRow
+    reason: str
+
+
+@dataclass(frozen=True)
+class CrosswalkResolutionResult:
+    mapped: tuple[NationalRow, ...]
+    quarantined: tuple[QuarantinedNationalRow, ...]
+
+
+def resolve_jurisdictions(
+    rows: list[NationalRow], crosswalk: CrosswalkTable
+) -> CrosswalkResolutionResult:
+    """Split ``rows`` into those whose (distrito, seccion) resolves against
+    the curated crosswalk and those that do not.
+
+    A national distrito/seccion code with no crosswalk entry is QUARANTINED,
+    never silently assigned to whatever jurisdiction happens to share the
+    code (jurisdiction-model spec, "An unmapped jurisdiction code is
+    encountered" scenario).
+    """
+    mapped: list[NationalRow] = []
+    quarantined: list[QuarantinedNationalRow] = []
+
+    for row in rows:
+        resolved = crosswalk.resolve_national(
+            distrito_code=row.result.distrito, seccion_code=row.result.seccion or ""
+        )
+        if resolved is None:
+            quarantined.append(
+                QuarantinedNationalRow(
+                    row=row,
+                    reason=(
+                        "no curated crosswalk entry for national distrito="
+                        f"{row.result.distrito!r} seccion={row.result.seccion!r}"
+                    ),
+                )
+            )
+            continue
+        mapped.append(row)
+
+    return CrosswalkResolutionResult(mapped=tuple(mapped), quarantined=tuple(quarantined))
+
+
+def resolve_national_party(
+    rows: list[NationalRow], party_map: PartyMappingTable, *, year: int
+) -> PartyResolutionResult:
+    """Resolve each national row's canonical party via `party_map`
+    (party-identity-mapping spec, task 7.8) -- jurisdiction is always
+    ``"national"`` for this ingestion path. `year` is supplied by the
+    caller (known from the archive entry, e.g. 2023 or 2025), never
+    inferred from the row itself, so the SAME `agrupacion_id` value never
+    resolves across years by accident (task 7.6a).
+    """
+    return resolve_party_for_rows(rows, party_map, year=year, jurisdiction="national")

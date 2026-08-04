@@ -1,0 +1,75 @@
+# curated/crosswalk.yaml
+#
+# Human-curated, PR-reviewed crosswalk (jurisdiction-model spec):
+#   1. `jurisdictions` maps PBA-issued distrito codes to national (DINE)
+#      distrito/seccion codes -- both numbering schemes MUST resolve to the
+#      same canonical jurisdiction record.
+#   2. `fiscalizacion_mesa_identity` records the ACCEPTED decision (product
+#      owner, Engram #1410) that internal fiscalización mesa numbers join to
+#      official DINE mesa numbers BY IDENTITY within this distrito/seccion --
+#      never by vote-vector matching. This is NOT auto-inferred from
+#      name-matching; it is a maintainer decision recorded here with its
+#      supporting measured evidence.
+#
+# Adding a new jurisdiction or accepting a new identity mapping requires a
+# reviewed PR to this file -- never inferred automatically at ingest time.
+
+jurisdictions:
+  - pba_distrito: "027"
+    national_distrito: "02"
+    national_seccion: "027"
+    name: "Coronel de Marina Leonardo Rosales"
+    verified: true
+    source: "spikes/001-granularity-and-join-keys.md (task 0.4)"
+
+fiscalizacion_mesa_identity:
+  distrito: "02"
+  seccion: "027"
+  # NOT `same-id-only` and NOT `verified` -- the identity hypothesis is
+  # accepted by explicit product-owner decision on measured evidence, not
+  # independently re-verified for every mesa's tally.
+  confidence: accepted-by-maintainer
+  decided_by: product-owner
+  decision_ref: "Engram #1410"
+  election: "2025 legislativas, DIPUTADO NACIONAL"
+  # Measured by the orchestrator directly against the real 2025 national
+  # ZIP (archive/national_2025/legislativas2025.zip, sha256
+  # 5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b) for
+  # distrito 02 / seccion 027 -- 153 official mesas, 3060 rows.
+  evidence:
+    coverage: >-
+      All 93 fiscalización mesa numbers exist in the official set. Zero
+      unmatched, injective, 93/93.
+    la_libertad_avanza_exact_match: >-
+      La Libertad Avanza matches exactly on all 89 comparable mesas
+      (signed delta min 0, max 0).
+    zero_divergence_columns:
+      - "La Libertad Avanza"
+      - "Frente de Izquierda"
+      - "Frente Patriota Federal"
+      - "Coalicion Civica"
+      - "Propuesta Federal"
+      - "Union Federal"
+      - "Nuevos Aires"
+    divergence_concentration: >-
+      Divergence concentrates in Impugnado (31 mesas, 217 votes) and En
+      blanco (8 mesas, 55 votes) -- ~272 of ~300 total absolute divergence.
+      Party-column residuals are small: Proyecto Sur 10, Union Liberal 9,
+      Fuerza Patria 6, Movimiento Socialista 3, Potencia 3, and 1 each for
+      Provincias Unidas, Liber.AR, Nuevo Buenos Aires.
+    l1_distance_full_17_value_vector: "median 0, mean 3.4, max 14"
+    party_columns_only_exact_match: "83/93 = 89.2%"
+  # Criterion correction (see design.md Open Questions and Engram #1410):
+  # SPIKE (h)'s original "≥90% exact vote-vector match" gate conflated *do
+  # the codes correspond* with *do the tallies agree*. Only the former is
+  # the join-key question. Tally agreement is a fiscalización-quality
+  # metric, reported separately (see MesaDivergence / D7 review queue),
+  # and MUST NEVER gate the join.
+  note: >-
+    Per-mesa tally divergence is informational only (D7 review-queue
+    material) and MUST NOT block a mesa from joining. The Impugnado/En
+    blanco mismatch specifically is an EXPECTED, documented
+    category-definition difference between source kinds -- a fiscal
+    records a provisional judgement at the table while the definitive
+    escrutinio resolves impugnaciones afterwards -- and MUST NOT be
+    counted as generic drift.
