@@ -22,6 +22,8 @@ import pytest
 from etl.__main__ import (
     MissingDatabaseUrlError,
     UnknownSourceError,
+    collect_national_jurisdiction_codes,
+    collect_national_party_keys,
     fetch_source,
     find_unmapped_jurisdictions,
     find_unmapped_parties,
@@ -370,3 +372,52 @@ def test_fetch_refuses_a_fiscalizacion_entry_without_upload_never(tmp_path) -> N
             local_root=tmp_path / "archive",
             manifest_path=tmp_path / "archive-manifest.json",
         )
+
+
+def test_collect_functions_read_a_real_zipped_archive_entry(tmp_path) -> None:
+    """`validate-crosswalk` and `validate-curated` must read a ZIP archive
+    entry the same way `ingest` does.
+
+    Both collect helpers handed the archived bytes straight to
+    `ingest_national`, which expects decoded CSV. Every registered national
+    source is archived as a ZIP, so on real data both commands died with
+    `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80`. `cmd_ingest`
+    routes through `resolve_national_results_bytes` first; these two did not.
+
+    The four existing tests for these commands never caught it because they
+    exercise the downstream pure comparison functions and bypass the
+    archive-reading path entirely.
+    """
+    import json
+    import zipfile
+
+    local_root = tmp_path / "archive"
+    (local_root / "national").mkdir(parents=True)
+    zip_path = local_root / "national" / "sample.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("resultados2025.csv", NATIONAL_CSV)
+
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "national/2025-legislativas",
+                    "status": "ok",
+                    "archived_path": "national/sample.zip",
+                }
+            ]
+        )
+    )
+
+    sources = {"national": [{"id": "national/2025-legislativas"}]}
+
+    codes = collect_national_jurisdiction_codes(
+        sources, local_root=local_root, manifest_path=manifest_path
+    )
+    assert codes, "a zipped archive entry must yield jurisdiction codes, not crash"
+
+    keys = collect_national_party_keys(
+        sources, local_root=local_root, manifest_path=manifest_path
+    )
+    assert keys, "a zipped archive entry must yield party keys, not crash"
