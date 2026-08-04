@@ -6,8 +6,8 @@
 -- SELECT and relied on RLS alone to filter to nothing would still be one
 -- accidental permissive policy away from a leak. This suite asserts the
 -- stronger, defense-in-depth property design D7/access-control actually
--- requires: no anonymous GRANT exists at all, on any of the 11 electoral
--- tables created by migrations 0001-0006.
+-- requires: no anonymous GRANT exists at all, on any of the 12 electoral
+-- tables created by migrations 0001-0007.
 --
 -- Depends on the `pgtap` extension, enabled by migration 0006 (task 8.4) —
 -- this file's own RED evidence (task 8.1) is that `pgtap` does not exist
@@ -15,7 +15,7 @@
 -- and finishes cleanly.
 begin;
 
-select plan(11);
+select plan(12);
 
 -- One row per electoral table created by migrations 0001-0006 (D7 core
 -- tables list in design.md's Interfaces/Contracts section), asserted in
@@ -95,6 +95,14 @@ select throws_ok(
   '42501',
   'permission denied for table party_mapping',
   'anon is denied on party_mapping'
+);
+
+-- Added by Phase 11 (0007_review_item.sql) — the D7 review queue.
+select throws_ok(
+  $$ set local role anon; select count(*) from review_item $$,
+  '42501',
+  'permission denied for table review_item',
+  'anon is denied on review_item'
 );
 
 select * from finish();
