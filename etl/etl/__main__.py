@@ -33,7 +33,7 @@ import yaml
 from .archive import ArchiveResult, Fetcher, archive_source
 from .crosswalk import CrosswalkTable, QuarantinedJurisdiction, load_crosswalk
 from .http_client import RequestsFetcher
-from .ingest.fiscalizacion import ingest_fiscalizacion
+from .ingest.fiscalizacion import guard_local_mirror_only, ingest_fiscalizacion
 from .ingest.national import REQUIRED_COLUMNS, ingest_national, load_national_rows
 from .ingest.pba import ingest_pba, load_pba_rows
 from .manifest import latest_ok_record, load_manifest, save_manifest, upsert_record
@@ -108,6 +108,14 @@ def fetch_source(
     entry = find_source_entry(sources, source_id)
     if entry is None:
         raise UnknownSourceError(f"no registered source with id {source_id!r}")
+
+    # The guard runs BEFORE anything is fetched or written. It was defined and
+    # unit-tested in phase 6 but had no call site anywhere in production code,
+    # so the single personal-data-bearing source in this project was protected
+    # only by a test that read the YAML -- not by the code path that acts on it.
+    # A fiscalización entry that loses its `upload: never` declaration now fails
+    # here, before its bytes exist on disk.
+    guard_local_mirror_only(entry)
 
     local_store = LocalArchiveStore(root=local_root)
     records = load_manifest(manifest_path)
