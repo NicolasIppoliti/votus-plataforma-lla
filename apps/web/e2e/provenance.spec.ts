@@ -43,6 +43,12 @@ test.describe("no fiscalización leakage into the rendered page", () => {
     await page.getByLabel("Email").fill(TEST_USER_EMAIL as string);
     await page.getByLabel("Password").fill(TEST_USER_PASSWORD as string);
     await page.getByRole("button", { name: "Sign in" }).click();
+    // Wait for the client-side sign-in to actually set the session cookie
+    // (visible as the redirect to /dashboard) before navigating away —
+    // otherwise the next `goto` can race ahead of authentication and land
+    // back on /login, which would make this test pass for the wrong
+    // reason (no page reached at all, not a genuine leakage check).
+    await expect(page).toHaveURL(/\/dashboard/);
 
     // The default comparison view — no fiscalización opt-in requested —
     // must not surface the unofficial-source marker anywhere in the
