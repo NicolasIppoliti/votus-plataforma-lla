@@ -1,0 +1,244 @@
+# curated/party_map.yaml
+#
+# Human-curated, PR-reviewed party-identity mapping (party-identity-mapping
+# spec; task 7.6). Key is the FULL tuple
+# (year, jurisdiction, category, list_id) -- list_id alone is NEVER a party
+# key; the same list_id value under a different year/jurisdiction/category
+# is an UNRELATED entry. Adding a mapping requires a reviewed PR, never
+# inferred automatically from list names or numbers at query/ingest time.
+#
+# THREE MEASURED, MUTUALLY INCOMPATIBLE IDENTIFIER SCHEMES (Engram #1417):
+#   1. National `agrupacion_id` is NOT a stable cross-year party key -- LLA
+#      moved 135 (2023 PASO) -> 110 (2025 legislativas) in this same
+#      distrito. Never resolve across years by agrupacion_id alone.
+#   2. `lista_numero` is populated in 2023 and EMPTY for every agrupación
+#      in 2025 (Boleta Única de Papel: one ballot, no per-party list
+#      numbers). The key below is `list_id` (== agrupacion_id), never
+#      `lista_numero`, so 2025 resolution never depends on an always-empty
+#      column.
+#   3. PBA municipal's 22xx list family (jurisdiction:
+#      coronel_rosales_municipal) is a completely separate numbering scheme
+#      from the national agrupacion_id space (jurisdiction: national), even
+#      where numeric values coincide.
+#
+# `list_id` 135/132/134 recurring identically across the `national` and
+# `coronel_rosales_municipal` 2023 entries below is NOT a scheme collision:
+# pre-BUP, the same alliance was assigned the same "número de lista" for
+# every cargo on one distrito's 2023 ballot (verified against the primary
+# source below), so it is the SAME real party under two distinct
+# (year, jurisdiction, category) keys -- not evidence that list_id alone is
+# safe to resolve on.
+
+mappings:
+  # --- 2023 PASO, national (agrupacion_id) --------------------------------
+  - year: 2023
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "132"
+    canonical_party: JXC
+    party_name: JUNTOS POR EL CAMBIO
+    source: "archive/national_2023_paso/2023-PROVISORIOS_PASO.zip -> 2023_PASO/ResultadosElectorales.csv"
+  - year: 2023
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "133"
+    canonical_party: HXNP
+    party_name: HACEMOS POR NUESTRO PAIS
+    source: "archive/national_2023_paso/2023-PROVISORIOS_PASO.zip -> 2023_PASO/ResultadosElectorales.csv"
+  - year: 2023
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "134"
+    canonical_party: UP
+    party_name: UNION POR LA PATRIA
+    source: "archive/national_2023_paso/2023-PROVISORIOS_PASO.zip -> 2023_PASO/ResultadosElectorales.csv"
+  - year: 2023
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "135"
+    canonical_party: LLA
+    party_name: LA LIBERTAD AVANZA
+    # lista_numero 3016 for this entry -- recorded here for curator
+    # traceability only; the mapping key itself never uses lista_numero.
+    source: "archive/national_2023_paso/2023-PROVISORIOS_PASO.zip -> 2023_PASO/ResultadosElectorales.csv (lista_numero 3016)"
+  - year: 2023
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "136"
+    canonical_party: FIT
+    party_name: FRENTE DE IZQUIERDA
+    source: "archive/national_2023_paso/2023-PROVISORIOS_PASO.zip -> 2023_PASO/ResultadosElectorales.csv"
+
+  # --- 2023, Coronel Rosales municipal (Concejales) -----------------------
+  # VERIFIED (not inherited from the national scheme) against the primary
+  # 2023 municipal escrutinio document -- one-off fetch per D10, cached at
+  # https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf
+  # (HTTP 200, distrito 027 / SECCION SEXTA, TOTAL DE MESAS 153). It shows
+  # the SAME numbers as the national 2023 agrupacion_id space for this
+  # distrito -- LLA ran solo as list 135, confirming task 7.1's premise
+  # rather than requiring correction.
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "132"
+    canonical_party: JXC
+    party_name: JUNTOS POR EL CAMBIO
+    source: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf"
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "134"
+    canonical_party: UP
+    party_name: UNION POR LA PATRIA
+    source: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf"
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "135"
+    canonical_party: LLA
+    party_name: LA LIBERTAD AVANZA
+    source: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf"
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "962"
+    # Purely local list, no national or provincial counterpart
+    # (party-identity-mapping spec, "Local-only lists are representable").
+    canonical_party: PRIMERO_ROSALES
+    party_name: AGRUPACION MUNICIPAL PRIMERO ROSALES
+    source: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf"
+
+  # --- 2025 legislativas, national (agrupacion_id) ------------------------
+  # Full distrito-02 agrupacion_id set (Engram #1417). agrupacion_id 110
+  # is a DIFFERENT identifier from 2023's 135 for the same real-world party
+  # lineage -- this is exactly why the key is (year, jurisdiction,
+  # category, list_id), not list_id alone. lista_numero is empty for every
+  # one of these (Boleta Única) and intentionally absent from the key.
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "11"
+    canonical_party: FRENTE_PATRIOTA_FEDERAL
+    party_name: FRENTE PATRIOTA FEDERAL
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "110"
+    canonical_party: LLA_PRO_ALLIANCE
+    party_name: ALIANZA LA LIBERTAD AVANZA
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "248"
+    canonical_party: FUERZA_PATRIA
+    party_name: ALIANZA FUERZA PATRIA
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "252"
+    canonical_party: NUEVO_BUENOS_AIRES
+    party_name: PARTIDO NUEVO BUENOS AIRES
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "253"
+    canonical_party: LIBER_AR
+    party_name: LIBER.AR
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "258"
+    canonical_party: PROPUESTA_FEDERAL
+    party_name: PROPUESTA FEDERAL PARA EL CAMBIO
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "259"
+    canonical_party: PROVINCIAS_UNIDAS
+    party_name: ALIANZA PROVINCIAS UNIDAS
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "260"
+    canonical_party: POTENCIA
+    party_name: ALIANZA POTENCIA
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "262"
+    canonical_party: NUEVOS_AIRES
+    party_name: ALIANZA NUEVOS AIRES
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "263"
+    canonical_party: MOVIMIENTO_SOCIALISTA
+    party_name: MOVIMIENTO AVANZADA SOCIALISTA
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "265"
+    canonical_party: PROYECTO_SUR
+    party_name: MOVIMIENTO POLITICO SOCIAL Y CULTURAL PROYECTO SUR
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "315"
+    canonical_party: UNION_LIBERAL
+    party_name: UNION LIBERAL
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "316"
+    canonical_party: COALICION_CIVICA
+    party_name: COALICION CIVICA - A.R.I.
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "317"
+    canonical_party: UNION_FEDERAL
+    party_name: ALIANZA UNION FEDERAL
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+  - year: 2025
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "372"
+    canonical_party: FIT
+    party_name: FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD
+    source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
+
+  # --- 2025, PBA municipal (Concejales) -- separate 22xx scheme -----------
+  - year: 2025
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "2200"
+    canonical_party: FUERZA_PATRIA
+    party_name: ALIANZA FUERZA PATRIA
+    source: "escrutinio-definitivo-2025/distrito_027.html"
+  - year: 2025
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "2201"
+    canonical_party: POTENCIA
+    party_name: ALIANZA POTENCIA
+    source: "escrutinio-definitivo-2025/distrito_027.html"
+  - year: 2025
+    jurisdiction: coronel_rosales_municipal
+    category: CONCEJALES
+    list_id: "2206"
+    canonical_party: LLA_PRO_ALLIANCE
+    party_name: ALIANZA LA LIBERTAD AVANZA
+    source: "escrutinio-definitivo-2025/distrito_027.html"
