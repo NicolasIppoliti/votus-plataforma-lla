@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import type { Coverage, Granularity, SourceKind } from "@/lib/results/types";
+import type { Coverage, Granularity, SourceKind, SourceRef } from "@/lib/results/types";
 
 /**
  * `ResultsRepository` — the database seam for `results-analysis` and the
@@ -132,4 +132,33 @@ export class SupabaseRowSource implements RowSource {
 export async function createResultsRepository(): Promise<ResultsRepository> {
   const client = await createSupabaseServerClient();
   return new ResultsRepository(new SupabaseRowSource(client));
+}
+
+/**
+ * Resolves `SourceRef`s for `ProvenanceLink` (provenance-display spec).
+ * Thin DB wrapper, same as `SupabaseRowSource` — not fake-seamed for unit
+ * tests, matching the existing convention for this project's direct
+ * Supabase-client wrappers.
+ */
+export async function fetchSourceRefs(
+  client: SupabaseClient,
+  archiveEntryIds: string[],
+): Promise<SourceRef[]> {
+  if (archiveEntryIds.length === 0) return [];
+
+  const { data, error } = await client
+    .from("archive_entry")
+    .select("id, sha256, source_url, fetched_at")
+    .in("id", archiveEntryIds);
+
+  if (error) {
+    throw new Error(`fetchSourceRefs: failed to read archive_entry: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => ({
+    archiveEntryId: row["id"] as string,
+    sha256: (row["sha256"] as string | null) ?? "",
+    url: row["source_url"] as string,
+    fetchedAt: row["fetched_at"] as string,
+  }));
 }
