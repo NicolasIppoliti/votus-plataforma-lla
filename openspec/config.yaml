@@ -1,0 +1,90 @@
+schema: spec-driven
+
+context: |
+  Project: Votus — internal electoral analysis tool for La Libertad Avanza,
+  Coronel Rosales (Buenos Aires Province, Argentina).
+  Greenfield repo, no source code yet. Scrapes and normalizes PUBLIC official
+  election results (2023, 2025) at national/provincial/municipal levels down
+  to per-mesa / per-establecimiento granularity for 2027 scenario analysis.
+  Stack LOCKED by sdd-design ADR D1: Python/uv ETL producing an immutable
+  sha256-tracked archive, feeding a Supabase Postgres projection behind Auth/RLS,
+  with a Next.js App Router front end on Vercel. Seat-allocation domain logic is
+  pure TypeScript in apps/web/ (ADR D3).
+
+strict_tdd: true
+
+testing:
+  status: ready
+  note: >
+    Two runtimes, therefore two runners — established by Phase 1 of
+    electoral-analysis-platform and verified passing. Both must be run; neither
+    alone covers the change. Python ETL logic lives in etl/, all web and domain
+    TypeScript (including seat allocation) in apps/web/.
+  runners:
+    - name: etl
+      working_dir: etl
+      test_command: "uv run pytest"
+    - name: web
+      working_dir: apps/web
+      test_command: "pnpm vitest run"
+      e2e_command: "pnpm playwright test"
+      typecheck_command: "pnpm exec tsc --noEmit"
+      build_command: "pnpm build"
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Treat scraping of official electoral sources as a data-provenance-sensitive concern; document source URLs and legality of scraping public results
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Model electoral data granularity explicitly (nacional / provincial / municipal / mesa / establecimiento)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Resolve and record the final stack choice (Next.js/Supabase vs Python/uv ETL, or both) here, not earlier
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - First task of any implementation change MUST establish the test runner if none exists yet
+  apply:
+    guidelines:
+      - Follow existing code patterns once established
+      - Strict TDD: RED-GREEN-REFACTOR is mandatory, no exceptions
+    tdd: true
+    test_command: "cd etl && uv run pytest && cd ../apps/web && pnpm vitest run"
+  verify:
+    test_command: "cd etl && uv run pytest && cd ../apps/web && pnpm vitest run"
+    build_command: "cd apps/web && pnpm exec tsc --noEmit && pnpm build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+
+delivery:
+  strategy: auto-chain
+  chain_strategy: feature-branch-chain
+  # Raised from 400 to 800 by the product owner after Phase 2 measured 1588 reviewable
+  # lines. The driver is structural, not code bloat: threat-matrix and RED/GREEN test
+  # coverage consistently costs more lines than the logic it wraps (Phase 2: ~458 lines of
+  # ported archive logic against ~884 lines of tests). At 400 a cohesive safety layer had
+  # to be cut into five slices, which fragments review of a single concern. 800 trades
+  # more PR volume for fewer, more coherent slices.
+  review_budget_lines: 800
+  rdd_enabled: true
+  # Dependency lockfiles are committed for reproducible builds but are machine-generated
+  # and are never read line-by-line in review, so they do not count toward
+  # review_budget_lines. Decided by the product owner after the Phase 1 scaffold measured
+  # 1833 changed lines, of which 1616 were lockfiles (pnpm-lock.yaml 1508, uv.lock 108)
+  # and only ~217 were hand-authored. Applies to every phase, not just Phase 1.
+  review_budget_exclusions:
+    - "**/pnpm-lock.yaml"
+    - "**/package-lock.json"
+    - "**/yarn.lock"
+    - "**/uv.lock"
+    - "**/poetry.lock"
+    - "**/*.tsbuildinfo"
+  review_budget_exclusion_policy: |
+    Exclusions cover machine-generated dependency lockfiles and build artifacts ONLY.
+    Hand-authored code, configuration, schema, tests, and documentation always count.
+    A phase that wants to exclude anything else must ask the product owner first —
+    never widen this list to make a slice fit.
