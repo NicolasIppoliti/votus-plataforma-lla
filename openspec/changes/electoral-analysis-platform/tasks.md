@@ -358,13 +358,13 @@ provincial and municipal results; today that is true of functions, not of the sy
 `tasks.md`'s own work-unit table promised four runtime harnesses that were never built and that
 no numbered task ever required. They are the contract this sub-unit satisfies.
 
-- [ ] 12.1 RED: `etl/tests/test_cli.py::test_fetch_subcommand_archives_a_registered_source` (fake `Fetcher`, no network).
-- [ ] 12.2 RED: `test_cli.py::test_fetch_rejects_an_unregistered_source_name` — unknown source is an error, never a silent no-op.
-- [ ] 12.3 RED: `test_cli.py::test_ingest_subcommand_loads_rows_into_result_row` (ephemeral Postgres; skip explicitly when unreachable).
-- [ ] 12.4 RED: `test_cli.py::test_validate_crosswalk_reports_unmapped_codes_and_exits_nonzero`.
-- [ ] 12.5 RED: `test_cli.py::test_validate_curated_reports_unmapped_list_ids_and_exits_nonzero`.
-- [ ] 12.6 RED: `test_cli.py::test_ingest_refuses_to_write_without_an_explicit_database_url` — never silently fall back to a default DSN.
-- [ ] 12.7 GREEN: create `etl/etl/__main__.py` exposing `fetch`, `ingest`, `validate-crosswalk`, `validate-curated`, matching the four commands the work-unit table already names. Exit codes: 0 success, non-zero on validation failure.
+- [x] 12.1 RED: `etl/tests/test_cli.py::test_fetch_subcommand_archives_a_registered_source` (fake `Fetcher`, no network).
+- [x] 12.2 RED: `test_cli.py::test_fetch_rejects_an_unregistered_source_name` — unknown source is an error, never a silent no-op.
+- [x] 12.3 RED: `test_cli.py::test_ingest_subcommand_loads_rows_into_result_row` (ephemeral Postgres; skip explicitly when unreachable).
+- [x] 12.4 RED: `test_cli.py::test_validate_crosswalk_reports_unmapped_codes_and_exits_nonzero`.
+- [x] 12.5 RED: `test_cli.py::test_validate_curated_reports_unmapped_list_ids_and_exits_nonzero`.
+- [x] 12.6 RED: `test_cli.py::test_ingest_refuses_to_write_without_an_explicit_database_url` — never silently fall back to a default DSN.
+- [x] 12.7 GREEN: create `etl/etl/__main__.py` exposing `fetch`, `ingest`, `validate-crosswalk`, `validate-curated`, matching the four commands the work-unit table already names. Exit codes: 0 success, non-zero on validation failure.
 
 ### 12b — Fiscalización Postgres loader
 
