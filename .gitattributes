@@ -1,0 +1,11 @@
+# Test fixtures are byte-exact slices of real published electoral sources.
+# Several of those sources use CRLF. With core.autocrlf=input git strips the
+# CR on commit, so a fresh clone would produce a fixture that no longer matches
+# the file it claims to slice. That matters here: the archive layer is defined
+# by byte-exact sha256 integrity, and a line-ending-sensitive parser bug could
+# never be reproduced by a silently normalised fixture.
+etl/tests/fixtures/** -text
+
+# Archived source documents, when any are ever tracked, are bytes, not text.
+*.zip binary
+*.pdf binary
