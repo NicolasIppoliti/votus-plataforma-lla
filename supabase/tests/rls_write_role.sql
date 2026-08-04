@@ -12,7 +12,7 @@
 -- `etl_writer` also carrying `bypassrls`).
 begin;
 
-select plan(9);
+select plan(10);
 
 -- 1-4: etl_writer can write end to end on the tables ingestion actually
 -- writes through (category -> jurisdiction -> election -> result_row).
@@ -105,6 +105,29 @@ select throws_ok(
   '42501',
   'permission denied for table result_row',
   'anon is still denied on result_row after granting etl_writer'
+);
+
+-- 10: task 14.1 -- a FRESH deploy must not ship a login-capable role with
+-- the literal password `0009_etl_write_grants.sql` hardcoded. Exercised
+-- over REAL password authentication rather than the `127.0.0.1 trust` rule
+-- this project's local Docker `pg_hba.conf` uses for loopback convenience
+-- (which would accept ANY password, defeating the point of this test) --
+-- the docker-internal network hostname `db` is on this project's
+-- `scram-sha-256` path instead, the same authentication method a real
+-- deployment's network traffic would go through.
+create extension if not exists dblink;
+
+select throws_ok(
+  $$
+    select dblink_connect(
+      'etl_writer_password_probe',
+      'host=db port=5432 dbname=postgres user=etl_writer '
+      'password=etl_writer_local_dev_only sslmode=disable'
+    )
+  $$,
+  NULL,
+  NULL,
+  'etl_writer rejects the known literal password -- a fresh deploy ships no usable secret'
 );
 
 select * from finish();
