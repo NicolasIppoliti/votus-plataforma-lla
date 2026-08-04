@@ -18,8 +18,10 @@ import uuid
 import psycopg
 import pytest
 
+from etl.db import insert_review_items
 from etl.ingest.national import NationalRow, load_national_rows
 from etl.jurisdiction import make_result_row
+from etl.review_item import ReviewItemRecord
 
 TEST_DSN = os.environ.get(
     "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -153,3 +155,35 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
     rebuilt_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     assert rebuilt_snapshot == original_snapshot
+
+
+def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:
+    """Task 11.19: `review_item` (`0007_review_item.sql`) is the first
+    table that actually persists what `etl.review_item` projects from
+    `MesaDivergence`/`ReviewItemDraft` -- this proves the write path works
+    against a real Postgres, not just the pure projection logic already
+    covered by `test_review_item.py`.
+    """
+    subject_ref = f"mesa:{uuid.uuid4()}"
+    records = [
+        ReviewItemRecord(
+            kind="mesa_tally_divergence",
+            severity="info",
+            subject_ref=subject_ref,
+            note="fiscalización/official divergence on 'La Libertad Avanza': "
+            "fiscalización=55, official=57",
+        )
+    ]
+
+    inserted = insert_review_items(pg_conn, records)
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select kind, severity, subject_ref, note, resolved_at from review_item"
+            " where subject_ref = %s",
+            (subject_ref,),
+        )
+        row = cur.fetchone()
+
+    assert inserted == 1
+    assert row == ("mesa_tally_divergence", "info", subject_ref, records[0].note, None)
