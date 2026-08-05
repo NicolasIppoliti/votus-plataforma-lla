@@ -24,6 +24,10 @@ import { SourceDisclaimer } from "@/components/SourceDisclaimer";
  * by an operator navigating the app, not merely addressable by URL —
  * closing the reachability gap `sdd-verify` found (fiscalizacion-analysis
  * spec, "An operator route reaches fiscalización through the opt-in path").
+ *
+ * Phase 16c: `/municipal` is linked here for the same reason — the
+ * `coronel_rosales_municipal` party mappings (Phase 15) had no reachable
+ * route, this project's 8th instance of shipped-correct-but-unreachable code.
  */
 export default async function AuthenticatedLayout({
   children,
@@ -59,6 +63,8 @@ export default async function AuthenticatedLayout({
         <Link href="/drilldown">Drilldown</Link>
         {" | "}
         <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
+        {" | "}
+        <Link href="/municipal">Municipal (Concejales)</Link>
         {" | "}
         <Link href="/review">Review</Link>
       </nav>
