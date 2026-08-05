@@ -88,6 +88,7 @@ def _fixture_rows(archive_entry_id: str) -> list[NationalRow]:
                 NationalRow(
                     result=result,
                     estado_final=None,
+                    mesa_tipo="NATIVOS",
                     archive_entry_id=archive_entry_id,
                     source_row_index=len(rows),
                     natural_key=(
@@ -321,6 +322,7 @@ def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connect
             NationalRow(
                 result=result,
                 estado_final=None,
+                mesa_tipo="NATIVOS",
                 archive_entry_id=archive_entry_id,
                 source_row_index=len(rows),
                 natural_key=(

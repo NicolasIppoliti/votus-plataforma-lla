@@ -172,6 +172,53 @@ def test_ambiguous_duplicate_natural_keys_are_quarantined_not_crashed() -> None:
     )
 
 
+def test_mesa_tipo_is_captured_from_the_source() -> None:
+    """Phase 16a: `mesa_tipo` MUST be carried through, not dropped.
+
+    Every row in the real 2023/2025 fixtures is a regular (`NATIVOS`) mesa —
+    this only proves the column reaches `NationalRow`, not that a foreign
+    mesa is handled (that is `test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa`
+    below).
+    """
+    rows = ingest_national(
+        _read("national_2023_sample.csv"), archive_entry_id="national/2023-generales"
+    )
+
+    assert len(rows) == 4
+    for row in rows:
+        assert row.mesa_tipo == "NATIVOS"
+
+
+def test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa() -> None:
+    """The two extra mesas measured live in Coronel Rosales (9001/9002) carry
+    `mesa_tipo = EXTRANJEROS` — foreign residents vote in PBA
+    provincial/municipal races but not national ones. That is a real
+    electoral fact, not a defect, but the database can only preserve the
+    distinction if `mesa_tipo` survives ingestion per-mesa, not just as a
+    fixed constant.
+    """
+    csv_text = (
+        "año,eleccion_tipo,recuento_tipo,padron_tipo,distrito_id,distrito_nombre,"
+        "seccionprovincial_id,seccionprovincial_nombre,seccion_id,seccion_nombre,"
+        "circuito_id,circuito_nombre,mesa_id,mesa_tipo,mesa_electores,cargo_id,"
+        "cargo_nombre,agrupacion_id,agrupacion_nombre,lista_numero,lista_nombre,"
+        "votos_tipo,votos_cantidad\n"
+        "2023,GENERAL,DEFINITIVO,NAC,02,X,,,27,S,00248,C,1,NATIVOS,300,3,"
+        "DIPUTADO NACIONAL,135,LLA,3016,L,POSITIVO,90\n"
+        "2023,GENERAL,DEFINITIVO,NAC,02,X,,,27,S,00248,C,9001,EXTRANJEROS,300,3,"
+        "DIPUTADO NACIONAL,135,LLA,3016,L,POSITIVO,12\n"
+    )
+
+    rows = ingest_national(csv_text.encode("utf-8"), archive_entry_id="test/extranjeros")
+
+    assert len(rows) == 2
+    by_mesa = {row.mesa: row.mesa_tipo for row in rows}
+    assert by_mesa == {1: "NATIVOS", 9001: "EXTRANJEROS"}, (
+        "mesa_tipo must be captured per-mesa, distinguishing a foreign-resident "
+        f"mesa from a regular one; got {by_mesa}"
+    )
+
+
 def test_internal_primary_lists_are_distinct_rows_not_quarantined() -> None:
     """In a PASO, one agrupación fields SEVERAL internal lists.
 

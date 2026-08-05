@@ -178,4 +178,45 @@ describe("compareResults", () => {
     expect(result.swings.map((s) => s.unitId)).toEqual(["mesa-5"]);
     expect(result.discontinuities).toEqual([{ unitId: "mesa-4", presentIn: "2023" }]);
   });
+
+  it("test_cross_year_comparison_flags_a_mesa_population_mismatch", () => {
+    // Phase 16a: a real electoral fact, not a defect — foreign-resident
+    // (`EXTRANJEROS`) mesas vote in PBA provincial/municipal races but not
+    // national ones. Comparing a category where one year's mesa set carries
+    // an `EXTRANJEROS` mesa and the other year's does not MUST surface that
+    // as a population mismatch, never average silently over it.
+    const input: CompareInput = {
+      granularity2023: "mesa",
+      granularity2025: "mesa",
+      units2023: [
+        { unitId: "mesa-1", parties: [{ party: "A", votes: 60 }], mesaTipo: "NATIVOS" },
+        { unitId: "mesa-9001", parties: [{ party: "A", votes: 5 }], mesaTipo: "EXTRANJEROS" },
+      ],
+      units2025: [{ unitId: "mesa-1", parties: [{ party: "A", votes: 55 }], mesaTipo: "NATIVOS" }],
+    };
+
+    const result = compareResults(input);
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok status");
+    expect(result.mesaPopulationMismatch).toEqual({
+      types2023: ["EXTRANJEROS", "NATIVOS"],
+      types2025: ["NATIVOS"],
+    });
+  });
+
+  it("test_no_mesa_population_mismatch_when_types_match", () => {
+    const input: CompareInput = {
+      granularity2023: "mesa",
+      granularity2025: "mesa",
+      units2023: [{ unitId: "mesa-1", parties: [{ party: "A", votes: 60 }], mesaTipo: "NATIVOS" }],
+      units2025: [{ unitId: "mesa-1", parties: [{ party: "A", votes: 55 }], mesaTipo: "NATIVOS" }],
+    };
+
+    const result = compareResults(input);
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok status");
+    expect(result.mesaPopulationMismatch).toBeUndefined();
+  });
 });
