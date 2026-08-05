@@ -19,6 +19,11 @@ import { SourceDisclaimer } from "@/components/SourceDisclaimer";
  * review-item banner are rendered HERE, once, rather than repeated per
  * page — every route under `(authenticated)/` inherits both structurally,
  * so no future page can forget either.
+ *
+ * Task 13.10: the `/fiscalizacion` route is linked here so it is reachable
+ * by an operator navigating the app, not merely addressable by URL —
+ * closing the reachability gap `sdd-verify` found (fiscalizacion-analysis
+ * spec, "An operator route reaches fiscalización through the opt-in path").
  */
 export default async function AuthenticatedLayout({
   children,
@@ -46,6 +51,17 @@ export default async function AuthenticatedLayout({
   return (
     <>
       <SourceDisclaimer />
+      <nav aria-label="main">
+        <Link href="/dashboard">Dashboard</Link>
+        {" | "}
+        <Link href="/compare">Compare</Link>
+        {" | "}
+        <Link href="/drilldown">Drilldown</Link>
+        {" | "}
+        <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
+        {" | "}
+        <Link href="/review">Review</Link>
+      </nav>
       {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
         <p role="alert">
           <Link href="/review">{unresolvedCount} unresolved review item(s)</Link>

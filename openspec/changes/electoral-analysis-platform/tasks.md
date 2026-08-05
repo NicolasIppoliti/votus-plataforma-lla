@@ -394,17 +394,52 @@ and unreachable — no page called `repository.queryFiscalizacion()`. The produc
 the view belongs in this change, so the two requirements added to
 `specs/fiscalizacion-analysis/spec.md` are mandatory here, not deferred.
 
-- [ ] 13.1 RED: `apps/web/src/app/(authenticated)/fiscalizacion/page.test.tsx::test_route_requests_fiscalizacion_through_the_opt_in_path` — asserts the page calls the opt-in query with a coverage argument and never reads through the default official-only path.
-- [ ] 13.2 RED: `::test_route_refuses_to_render_without_coverage` — renders the refusal state, never an unlabelled figure.
-- [ ] 13.3 RED: `::test_every_fiscalizacion_figure_carries_unofficial_indicator_and_coverage` — each figure shows the unofficial-source indicator plus covered/total mesa counts.
-- [ ] 13.4 RED: `::test_coverage_indicator_states_it_is_not_a_random_sample` — the covered mesas are exactly those where a fiscal was present; the indicator MUST say so.
-- [ ] 13.5 RED: `::test_official_figure_inside_the_view_carries_its_own_official_indicator` — the two source kinds are never visually interchangeable.
-- [ ] 13.6 RED: `apps/web/src/components/JuxtapositionBadge.test.tsx::test_cross_election_juxtaposition_shows_both_election_identities_and_source_kinds` — Requirement 7, previously unimplementable because nothing rendered a fiscalización figure.
-- [ ] 13.7 RED: `::test_non_random_coverage_is_stated_adjacent_not_only_in_a_footnote`.
-- [ ] 13.8 GREEN: create `apps/web/src/components/JuxtapositionBadge.tsx`.
-- [ ] 13.9 GREEN: create `apps/web/src/app/(authenticated)/fiscalizacion/page.tsx` — RSC, server-only read, reaching data ONLY through `repository.queryFiscalizacion()`.
-- [ ] 13.10 GREEN: link the route from the authenticated layout so it is reachable by an operator, not merely addressable by URL.
-- [ ] 13.11 RED then GREEN: `apps/web/e2e/fiscalizacion.spec.ts::test_route_renders_labelled_unofficial_figures` — the rendered-page leakage guard already has an e2e; this proves the opt-in path renders correctly. Skip explicitly if credentials are absent, never silently pass.
+- [x] 13.1 RED: `apps/web/src/app/(authenticated)/fiscalizacion/page.test.tsx::test_route_requests_fiscalizacion_through_the_opt_in_path` — asserts the page calls the opt-in query with a coverage argument and never reads through the default official-only path.
+- [x] 13.2 RED: `::test_route_refuses_to_render_without_coverage` — renders the refusal state, never an unlabelled figure.
+- [x] 13.3 RED: `::test_every_fiscalizacion_figure_carries_unofficial_indicator_and_coverage` — each figure shows the unofficial-source indicator plus covered/total mesa counts.
+- [x] 13.4 RED: `::test_coverage_indicator_states_it_is_not_a_random_sample` — the covered mesas are exactly those where a fiscal was present; the indicator MUST say so.
+- [x] 13.5 RED: `::test_official_figure_inside_the_view_carries_its_own_official_indicator` — the two source kinds are never visually interchangeable.
+- [x] 13.6 RED: `apps/web/src/components/JuxtapositionBadge.test.tsx::test_cross_election_juxtaposition_shows_both_election_identities_and_source_kinds` — Requirement 7, previously unimplementable because nothing rendered a fiscalización figure.
+- [x] 13.7 RED: `::test_non_random_coverage_is_stated_adjacent_not_only_in_a_footnote`.
+- [x] 13.8 GREEN: create `apps/web/src/components/JuxtapositionBadge.tsx`.
+- [x] 13.9 GREEN: create `apps/web/src/app/(authenticated)/fiscalizacion/page.tsx` — RSC, server-only read, reaching data ONLY through `repository.queryFiscalizacion()`.
+- [x] 13.10 GREEN: link the route from the authenticated layout so it is reachable by an operator, not merely addressable by URL.
+- [x] 13.11 RED then GREEN: `apps/web/e2e/fiscalizacion.spec.ts::test_route_renders_labelled_unofficial_figures` — the rendered-page leakage guard already has an e2e; this proves the opt-in path renders correctly. Skip explicitly if credentials are absent, never silently pass.
+
+## Phase 14: Close the four carried risks
+
+`sdd-verify` returned PASS WITH WARNINGS with six risks. Two were closed immediately (the
+juxtaposition badge's live reachability and the dormant local-mirror guard). These are the
+remaining four. None is a defect in what the change specifies; all four are real, and the
+product owner asked for them fixed rather than carried as debt.
+
+### 14a — Migration 0009 ships a known password
+
+- [ ] 14.1 RED: `supabase/tests/rls_write_role.sql` — assert no electoral-table role can log in with the literal `etl_writer_local_dev_only`, so a fresh deploy cannot inherit a publicly-known credential.
+- [ ] 14.2 GREEN: `supabase/migrations/0010_etl_writer_no_default_password.sql` + down — create `etl_writer` with NO usable password by default; a deployment MUST set one explicitly out of band. Keep the `if not exists` guard so an environment that already provisioned the role is untouched.
+- [ ] 14.3 GREEN: give local development an explicit, non-migration path to set the dev credential (a documented one-liner or seed script), so the local end-to-end flow still works without the migration itself shipping a secret.
+
+### 14b — N+1 in `upsert_jurisdiction`
+
+- [ ] 14.4 RED: `etl/tests/test_integration_idempotent.py::test_jurisdiction_resolution_is_batched_not_per_row` — assert the number of round trips is bounded by a small constant, not proportional to the distinct jurisdiction count.
+- [ ] 14.5 GREEN: batch jurisdiction resolution in `etl/etl/db.py` — collect the distinct lineage tuples, resolve the existing ones in one query, bulk-insert the missing ones, preserving the `is not distinct from` NULL semantics that migration 0002's nullable key requires.
+- [ ] 14.6 REFACTOR: re-run the national 2025 ingest and record the new wall-clock against the 5 m 53 s baseline in `spikes/003-first-end-to-end-run.md`.
+
+### 14c — Playwright never runs
+
+- [ ] 14.7 GREEN: commit a credential-provisioning path for the LOCAL stack only — the Supabase local anon/service keys are well-known fixed development defaults, not secrets, so they can be committed for `supabase start` without exposing anything. A real deployment continues to read from the environment.
+- [ ] 14.8 GREEN: seed the e2e fixture user reproducibly, and delete it afterwards.
+- [ ] 14.9 REFACTOR: run all four e2e spec files and record which now genuinely pass. Any that still skip MUST state why; a skip that hides an unproven requirement is worse than a failure.
+
+### 14d — PBA and fiscalización never loaded from real sources
+
+`result_row` is 100 % `official` and holds only the national 2025 ZIP. Five PBA entries and one
+fiscalización entry are registered in `sources.yaml` and have never been fetched or ingested.
+
+- [ ] 14.10 GREEN: fetch the five registered PBA entries under D10's etiquette constraints — serial, ≥4 s apart, identifying UA, TLS verification on, registered paths only.
+- [ ] 14.11 GREEN: ingest PBA into `result_row`, at whatever granularity the source publishes, surfacing degradation rather than fabricating lower levels.
+- [ ] 14.12 GREEN: place the fiscalización CSV at its registered archive path and ingest it, stripping personal data at ingestion.
+- [ ] 14.13 REFACTOR: record the resulting `result_row` composition — rows per `source_kind`, per election, per granularity — in `spikes/004-full-corpus-load.md`, and confirm the default query still returns official-only.
 
 ## Key Learnings
 

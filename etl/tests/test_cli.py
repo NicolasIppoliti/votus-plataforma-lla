@@ -334,3 +334,39 @@ def test_validate_curated_reports_nothing_when_every_key_resolves() -> None:
     unmapped = find_unmapped_parties([(2025, "national", "DIPUTADO NACIONAL", "110")], party_map)
 
     assert unmapped == []
+
+
+def test_fetch_refuses_a_fiscalizacion_entry_without_upload_never(tmp_path) -> None:
+    """`guard_local_mirror_only` must actually run, not merely exist.
+
+    The guard was written in phase 6 and unit-tested, but its only appearance
+    in production code was its own definition -- no call site anywhere. A
+    guard that never runs is a false sense of safety, and this one protects
+    the single personal-data-bearing source in the project.
+
+    Wiring it into the fetch path makes the invariant structural: a
+    fiscalización entry that loses its `upload: never` declaration fails
+    immediately instead of being archived and only caught by a test that
+    inspects the YAML.
+    """
+    from etl.ingest.fiscalizacion import FiscalizacionUploadForbiddenError
+
+    sources = {
+        "fiscalizacion": [
+            {
+                "id": "fiscalizacion/2025-coronel-rosales",
+                "source_kind": "fiscalizacion",
+                "local_path": "does-not-matter.csv",
+                # `upload: never` deliberately absent
+            }
+        ]
+    }
+
+    with pytest.raises(FiscalizacionUploadForbiddenError):
+        fetch_source(
+            "fiscalizacion/2025-coronel-rosales",
+            sources=sources,
+            fetcher=FakeFetcher(),
+            local_root=tmp_path / "archive",
+            manifest_path=tmp_path / "archive-manifest.json",
+        )
