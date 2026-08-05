@@ -501,10 +501,10 @@ That is a real electoral fact, not a data defect. But `mesa_tipo` is captured NO
 the ETL, not in any migration — so the database cannot tell a foreign-resident mesa from a
 regular one, and a per-mesa cross-year comparison silently compares different mesa populations.
 
-- [ ] 16.1 RED: `etl/tests/test_ingest_national.py::test_mesa_tipo_is_captured_from_the_source`.
-- [ ] 16.2 RED: `::test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa`.
-- [ ] 16.3 GREEN: carry `mesa_tipo` through `ingest_national` into `result_row`; migration `0011_mesa_tipo.sql` + down.
-- [ ] 16.4 RED then GREEN: `apps/web/src/lib/results/compare.test.ts::test_cross_year_comparison_flags_a_mesa_population_mismatch` — comparing a category whose mesa set differs between years MUST surface the difference, never average over it silently.
+- [x] 16.1 RED: `etl/tests/test_ingest_national.py::test_mesa_tipo_is_captured_from_the_source`.
+- [x] 16.2 RED: `::test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa`.
+- [x] 16.3 GREEN: carry `mesa_tipo` through `ingest_national` into `result_row`; migration `0011_mesa_tipo.sql` + down.
+- [x] 16.4 RED then GREEN: `apps/web/src/lib/results/compare.test.ts::test_cross_year_comparison_flags_a_mesa_population_mismatch` — comparing a category whose mesa set differs between years MUST surface the difference, never average over it silently.
 
 ### 16b — `validate-crosswalk` zero-padding
 

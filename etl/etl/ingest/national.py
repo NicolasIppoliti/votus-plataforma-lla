@@ -61,6 +61,7 @@ class NationalRow:
 
     result: ResultRow
     estado_final: str | None
+    mesa_tipo: str | None
     archive_entry_id: str
     source_row_index: int
     natural_key: tuple[str, int, str, str, str]
@@ -142,6 +143,13 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
             NationalRow(
                 result=result,
                 estado_final=raw.get("estado_final") or None,
+                # Phase 16a: `mesa_tipo` distinguishes a regular (`NATIVOS`)
+                # mesa from a foreign-resident (`EXTRANJEROS`) one — the
+                # latter votes in PBA provincial/municipal races but not
+                # national ones, a real electoral fact that per-mesa
+                # cross-year comparisons must be able to see. `.get()`
+                # mirrors `estado_final`'s absent-column tolerance.
+                mesa_tipo=raw.get("mesa_tipo") or None,
                 archive_entry_id=archive_entry_id,
                 source_row_index=index,
                 natural_key=(
@@ -333,6 +341,7 @@ def load_national_rows(
                 is_unmapped=False,
                 archive_entry_id=row.archive_entry_id,
                 source_row_index=row.source_row_index,
+                mesa_tipo=row.mesa_tipo,
             )
         )
 

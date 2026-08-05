@@ -42,6 +42,9 @@ class ResultRowRecord:
     is_unmapped: bool
     archive_entry_id: str
     source_row_index: int
+    # Phase 16a: `NATIVOS` | `EXTRANJEROS` | `None` (source column absent or
+    # row not at mesa granularity) -- see migration 0011.
+    mesa_tipo: str | None = None
 
 
 def upsert_election(conn, *, year: int, round_: str) -> str:
@@ -267,8 +270,8 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
                 insert into result_row (
                     election_id, jurisdiction_id, category_id, granularity,
                     list_id, votes, source_kind, is_unmapped,
-                    archive_entry_id, source_row_index
-                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    archive_entry_id, source_row_index, mesa_tipo
+                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -282,6 +285,7 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
                         record.is_unmapped,
                         record.archive_entry_id,
                         record.source_row_index,
+                        record.mesa_tipo,
                     )
                     for record in records
                 ],
