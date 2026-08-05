@@ -5,6 +5,15 @@ export interface GranularityBadgeProps {
   granularity: Granularity;
   /** Set when the requested (finer) level was unavailable (design.md D7). */
   degradedFrom?: Granularity;
+  /**
+   * Set when finer rows were SUMMED into this figure.
+   *
+   * Distinct from `degradedFrom`: "mesa detail was unavailable" and "every
+   * mesa was added together" are opposite situations, and folding both into
+   * one field made a jurisdiction total built from mesa rows announce that
+   * mesa data could not be had.
+   */
+  summedFrom?: Granularity;
 }
 
 /**
@@ -15,6 +24,7 @@ export interface GranularityBadgeProps {
 export function GranularityBadge({
   granularity,
   degradedFrom,
+  summedFrom,
 }: GranularityBadgeProps): ReactNode {
   return (
     <span role="status" aria-label={`granularity: ${granularity}`}>
@@ -22,8 +32,14 @@ export function GranularityBadge({
       {degradedFrom ? (
         <span role="alert">
           {" "}
-          — degraded from {degradedFrom} (requested {degradedFrom}-level data was
-          unavailable)
+          — degraded from {degradedFrom} (the source published {degradedFrom}
+          totals, so nothing finer is available)
+        </span>
+      ) : null}
+      {summedFrom ? (
+        <span role="note">
+          {" "}
+          — summed from {summedFrom}-level rows
         </span>
       ) : null}
     </span>

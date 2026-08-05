@@ -12,14 +12,14 @@ import type { SourceRef } from "@/lib/results/types";
 
 const SOURCE_2023: SourceRef = {
   archiveEntryId: "national/2023-generales",
-  sha256: "a1b2c3d4e5f60000000000000000000000000000000000000000000000001",
+  sha256: "a1b2c3d4e5f60000000000000000000000000000000000000000000000001a1b",
   url: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf",
   fetchedAt: "2026-01-01T00:00:00.000Z",
 };
 
 const SOURCE_2025: SourceRef = {
   archiveEntryId: "national/2025-legislativas",
-  sha256: "b1b2c3d4e5f60000000000000000000000000000000000000000000000002",
+  sha256: "b1b2c3d4e5f60000000000000000000000000000000000000000000000002b1b",
   url: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2025027.pdf",
   fetchedAt: "2026-01-02T00:00:00.000Z",
 };
@@ -43,5 +43,24 @@ describe("ProvenanceLink", () => {
     expect(html).toContain(SOURCE_2023.sha256);
     expect(html).toContain(SOURCE_2025.archiveEntryId);
     expect(html).toContain(SOURCE_2025.sha256);
+  });
+});
+
+describe("ProvenanceLink — an entry with no hash", () => {
+  it("test_an_entry_without_a_hash_is_named_unverifiable", () => {
+    const html = renderToStaticMarkup(
+      <ProvenanceLink
+        sources={[
+          {
+            archiveEntryId: "national/2025-legislativas",
+            sha256: null,
+            url: "https://example.test/x.zip",
+            fetchedAt: "2026-01-01T00:00:00Z",
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain("cannot be verified");
   });
 });
