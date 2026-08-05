@@ -3,9 +3,14 @@ schema: spec-driven
 context: |
   Project: Votus — internal electoral analysis tool for La Libertad Avanza,
   Coronel Rosales (Buenos Aires Province, Argentina).
-  Greenfield repo, no source code yet. Scrapes and normalizes PUBLIC official
-  election results (2023, 2025) at national/provincial/municipal levels down
-  to per-mesa / per-establecimiento granularity for 2027 scenario analysis.
+  SHIPPED and on main: the electoral-analysis-platform change is archived, the
+  ETL, web app and 12 migrations are merged, and `result_row` holds ~18,17M
+  rows across 2023 PASO/generales/balotaje and 2025 legislativas/PBA plus the
+  Coronel Rosales fiscalización sheet. Plan against the existing parsers,
+  repository and schema — never from scratch. Scrapes and normalizes PUBLIC
+  official election results (2023, 2025) at national/provincial/municipal
+  levels down to per-mesa / per-establecimiento granularity for 2027 scenario
+  analysis.
   Stack LOCKED by sdd-design ADR D1: Python/uv ETL producing an immutable
   sha256-tracked archive, feeding a Supabase Postgres projection behind Auth/RLS,
   with a Next.js App Router front end on Vercel. Seat-allocation domain logic is
@@ -16,10 +21,12 @@ strict_tdd: true
 testing:
   status: ready
   note: >
-    Two runtimes, therefore two runners — established by Phase 1 of
-    electoral-analysis-platform and verified passing. Both must be run; neither
-    alone covers the change. Python ETL logic lives in etl/, all web and domain
-    TypeScript (including seat allocation) in apps/web/.
+    Two runners, both mandatory. `etl` (Python, etl/) and `web` (all web and
+    domain TypeScript including seat allocation, apps/web/) are BOTH run by
+    `apply` and `verify`; neither alone covers a change, since the two runtimes
+    were established by Phase 1 and verified passing. The Playwright suite in
+    `apps/web/e2e/` is deliberately NOT a runner here -- see the note below
+    `archive` for what it would take to wire it honestly.
   runners:
     - name: etl
       working_dir: etl
@@ -27,10 +34,8 @@ testing:
     - name: web
       working_dir: apps/web
       test_command: "pnpm vitest run"
-      e2e_command: "pnpm playwright test"
       typecheck_command: "pnpm exec tsc --noEmit"
       build_command: "pnpm build"
-
 rules:
   proposal:
     - Include rollback plan for risky changes
@@ -47,29 +52,85 @@ rules:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
     - First task of any implementation change MUST establish the test runner if none exists yet
+  # AUTHORITATIVE source for how to run things: `testing.runners` above. Every
+  # command below is a COMPOSITION of those, restated because this schema has
+  # no reference syntax. Change a runner command and change every composition
+  # in the same commit — three spellings of one fact is how the same padding
+  # bug landed in two independent functions.
   apply:
     guidelines:
       - Follow existing code patterns once established
       - Strict TDD: RED-GREEN-REFACTOR is mandatory, no exceptions
     tdd: true
-    test_command: "cd etl && uv run pytest && cd ../apps/web && pnpm vitest run"
+    # Relative `cd ../apps/web` only resolves if the gate starts at the repo root,
+    # which nothing here guarantees; both paths are therefore repo-root-relative.
+    test_command: "(cd etl && uv run pytest) && (cd apps/web && pnpm vitest run)"
   verify:
-    test_command: "cd etl && uv run pytest && cd ../apps/web && pnpm vitest run"
+    test_command: "(cd etl && uv run pytest) && (cd apps/web && pnpm vitest run)"
+    # Composed from the `web` runner's `typecheck_command` + `build_command`.
     build_command: "cd apps/web && pnpm exec tsc --noEmit && pnpm build"
+    # ZERO on purpose, and this is the one number in this file that means
+    # "deliberately not enforced". Coverage never caught a real defect in this
+    # repo: the quarantine that discarded 6.462.906 legitimate PASO rows ran
+    # under a fully green suite, and every one of the eight
+    # correct-tested-unreachable defects was covered by its own tests. What
+    # catches those is the reachability rule in AGENTS.md — a test must drive
+    # the real entry point — which a percentage cannot express. Raising this
+    # would add a number to satisfy without adding a defect it can find.
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
+  # NO release gate declaring the Playwright suite, and no `e2e_command` in
+  # `testing.runners`. I wrote both and they were wrong in three ways, each
+  # verified against the code rather than assumed:
+  #   - `load-curated` seeds the curated reference tables, NOT `result_row`;
+  #     `ingest` does that, and the fiscalización and comparison pages read
+  #     `result_row`. The chain provisioned the wrong tables.
+  #   - `load_curated` raises `MissingArchivedYearError` unless archived 2023
+  #     AND 2025 sources are already on disk, so on a fresh checkout the gate
+  #     fails for environment reasons -- the exact failure it existed to avoid.
+  #   - `apps/web/e2e/global-setup.ts` no-ops and every spec skips when the
+  #     four env vars are absent, so Playwright exits 0 having asserted
+  #     nothing. A green gate over 100% skipped specs is worse than no gate.
+  # Declaring a command that cannot run is the correct-tested-unreachable shape
+  # this repo keeps hitting. The suite lives in `apps/web/e2e/` and is run by
+  # hand; wiring it needs a real provisioning chain (fetch -> ingest ->
+  # load-curated, plus asserting the env vars are set and that specs actually
+  # executed), which is its own work unit, not a line in this file.
 
 delivery:
   strategy: auto-chain
   chain_strategy: feature-branch-chain
-  # Raised from 400 to 800 by the product owner after Phase 2 measured 1588 reviewable
-  # lines. The driver is structural, not code bloat: threat-matrix and RED/GREEN test
-  # coverage consistently costs more lines than the logic it wraps (Phase 2: ~458 lines of
-  # ported archive logic against ~884 lines of tests). At 400 a cohesive safety layer had
-  # to be cut into five slices, which fragments review of a single concern. 800 trades
-  # more PR volume for fewer, more coherent slices.
-  review_budget_lines: 800
+  # Raised from 400 to 800 by the product owner after Phase 2. Every figure that once
+  # justified this raise is REMOVED: none carried a commit range, and the headline figure
+  # does not re-derive (the slice-02
+  # merge 66d21d8 is 306 changed / 0 excluded by pattern / 306 reviewable). A number nobody can check is not evidence, and
+  # keeping it with a caveat only invites someone to cite it again. The structural reason
+  # survives on its own and is observable in any slice here: RED/GREEN and threat-matrix
+  # coverage costs more lines than the logic it wraps, so at 400 one cohesive safety
+  # layer had to be cut across five slices, fragmenting review of a single concern.
+  # 800 trades more PR volume for fewer, more coherent slices.
+  #
+  # Raised again from 800 to 1200 by the product owner after PR #37. Measured at ba9675e
+  # against main, additions + deletions:
+  #   2484 changed / 0 excluded by pattern / 2484 reviewable
+  #     of which non-test code   1140  (page.tsx 1050, JuxtapositionBadge.tsx 90)
+  #     of which tests           1344
+  #   apps/web/src/app/(authenticated)/fiscalizacion/page.tsx: 1183 lines, 377 of them
+  #   comments.
+  # NOTE the arithmetic honestly: at 1200 the non-test half fits and the FULL reviewable
+  # count still does not, because tests always count under the exclusion policy below.
+  # 1200 is therefore the ceiling for logic, not a blanket that makes PR #37 compliant;
+  # that PR needs its own size_exceptions entry.
+  #
+  # Same structural driver as the 400 -> 800 raise, one level further: `AGENTS.md` requires
+  # every guard to state the failure it exists to prevent, so a fix carries its rationale
+  # in the diff, and those comments are what stops a later reader deleting a guard whose
+  # purpose is invisible from the code. Splitting to fit would have cut one page's
+  # figure-correctness work across several PRs, and the self-review that found that PR's
+  # last two production bugs only worked because the whole request path was readable in
+  # one place.
+  review_budget_lines: 1200
   # Receipt-driven development was DISABLED by the product owner after the review
   # lifecycle proved unfinishable in this runtime: the Claude Code lens agents ship
   # without a shell and so cannot run the candidate inspection their own contract
@@ -92,8 +153,23 @@ delivery:
   # rule that a phase must ask before widening the exclusion list.
   size_exceptions:
     - work_unit: phase-8-rls-idempotency
+      # Recorded before the per-pattern reporting rule existed. RE-DERIVED at 9c8b544
+      # (the slice-12-rls merge) against its first parent: 1226 changed, 78 excluded by
+      # pattern, 1148 reviewable -- 21 lines off the 1127 recorded at the time, so the
+      # original base or counting method differed and is not recoverable. Both are kept:
+      # the recorded one because it is what the decision was made on, the re-derived one
+      # because it is what today's rule produces.
       reviewable_lines: 1127
-      budget: 800
+      re_derived_at: 9c8b544
+      re_derived_reviewable_lines: 1148
+      re_derived_excluded_lines: 78
+      re_derived_excluded_by_pattern:
+        "**/uv.lock": 78
+      # The 422 generated `supabase/config.toml` + `.gitignore` lines named in the
+      # reason below are NOT in this 78: they are not lockfiles, so no exclusion
+      # pattern covers them. That is precisely why this slice needed an exception
+      # instead of a wider exclusion list.
+      budget_at_time_of_decision: 800
       over_by: 327
       decided_by: product-owner
       reason: >
@@ -102,8 +178,39 @@ delivery:
         accept this slice as a one-off size:exception rather than widen
         review_budget_exclusions to cover CLI-generated scaffolding, keeping the
         exclusion list literal and narrow.
+    - work_unit: pr-37-fiscalizacion-figures
+      measured_at: ba9675e
+      reviewable_lines: 2484
+      excluded_lines: 0
+      excluded_by_pattern: {}
+      non_test_lines: 1140
+      non_test_by_file:
+        "apps/web/src/app/(authenticated)/fiscalizacion/page.tsx": 1050
+        "apps/web/src/components/JuxtapositionBadge.tsx": 90
+      test_lines: 1344
+      test_by_file:
+        "apps/web/src/app/(authenticated)/fiscalizacion/page.test.tsx": 1282
+        "apps/web/src/components/JuxtapositionBadge.test.tsx": 62
+      budget_at_time_of_decision: 1200
+      over_by: 1284
+      decided_by: product-owner
+      reason: >
+        Raising the budget to 1200 covers the non-test half (1140). The tests do
+        not fit and always count, so this slice is accepted as an exception
+        rather than by widening the exclusion list to cover tests — which would
+        hide exactly the code the reachability rule depends on. The work is one
+        page's figure correctness; splitting it would separate a guard from the
+        defect it prevents.
   review_budget_exclusion_policy: |
     Exclusions cover machine-generated dependency lockfiles and build artifacts ONLY.
     Hand-authored code, configuration, schema, tests, and documentation always count.
     A phase that wants to exclude anything else must ask the product owner first —
     never widen this list to make a slice fit.
+
+    REPORT WHAT WAS EXCLUDED. Any measurement quoted against review_budget_lines
+    must state the excluded line count PER PATTERN alongside the reviewable
+    total, never the total alone. An exclusion is a filter, and a filter that
+    reports only what survived is how a destructive one survives review — the
+    Phase 1 measurement (1833 changed lines, 1616 of them lockfiles) was found
+    by reading the breakdown, not by any gate. A bare "N reviewable lines" with
+    no breakdown is not a measurement, it is a claim.
