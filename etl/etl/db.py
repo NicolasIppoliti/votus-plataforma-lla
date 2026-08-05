@@ -139,11 +139,24 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
     Truncating `result_row` and calling this again reproduces the same
     projection (task 8.3, "rebuild = truncate + replay").
     """
+    election_ids = {record.election_id for record in records}
+
     with conn.cursor() as cur:
-        cur.execute(
-            "delete from result_row where archive_entry_id = %s",
-            (archive_entry_id,),
-        )
+        if election_ids:
+            # Scoped by election, not just by archive entry: one archived file may
+            # hold several elections (the PBA open-data catalogue publishes
+            # 2005-2023 in a single CSV), and an unscoped delete would wipe every
+            # other election's rows that share the entry.
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s "
+                "and election_id = any(%s)",
+                (archive_entry_id, list(election_ids)),
+            )
+        else:
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s",
+                (archive_entry_id,),
+            )
         if records:
             cur.executemany(
                 """

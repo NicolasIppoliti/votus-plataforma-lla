@@ -187,3 +187,57 @@ def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Con
 
     assert inserted == 1
     assert row == ("mesa_tally_divergence", "info", subject_ref, records[0].note, None)
+
+
+def test_two_elections_in_one_archive_entry_do_not_collide(
+    pg_conn: psycopg.Connection,
+) -> None:
+    """`result_row`'s natural key must include `election_id`.
+
+    D8 guarantees idempotency by `(archive_entry, natural key)`. The unique
+    constraint written in migration 0002 was
+    `(archive_entry_id, jurisdiction_id, category_id, list_id, source_kind)` --
+    it omits `election_id`, even though the column is `not null` and ingestion
+    always writes it.
+
+    That holds only while one archived file contains exactly one election. It
+    stops holding for a multi-year source, and one is already identified for
+    this project: the PBA open-data catalogue publishes
+    `elecciones-generales-2005-2023.csv`, nineteen years of results in a single
+    file. Ingesting it would make a 2005 row and a 2023 row for the same
+    jurisdiction, category and list collide as duplicates of one natural key,
+    so the second silently overwrites the first.
+    """
+    archive_entry_id = f"test-multiyear-{uuid.uuid4()}"
+
+    rows_2023 = _fixture_rows(archive_entry_id)
+    inserted_2023 = load_national_rows(
+        pg_conn, rows_2023, year=2023, round_="generales"
+    )
+
+    rows_2025 = _fixture_rows(archive_entry_id)
+    inserted_2025 = load_national_rows(
+        pg_conn, rows_2025, year=2025, round_="legislativas"
+    )
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(distinct election_id), count(*)
+            from result_row
+            where archive_entry_id = %s
+            """,
+            (archive_entry_id,),
+        )
+        distinct_elections, total_rows = cur.fetchone()
+
+    assert inserted_2023 == len(rows_2023)
+    assert inserted_2025 == len(rows_2025)
+    assert distinct_elections == 2, (
+        "both elections must survive in the same archive entry; "
+        f"only {distinct_elections} did"
+    )
+    assert total_rows == len(rows_2023) + len(rows_2025), (
+        "rows from the two elections collided on a natural key that omits "
+        f"election_id: expected {len(rows_2023) + len(rows_2025)}, got {total_rows}"
+    )
