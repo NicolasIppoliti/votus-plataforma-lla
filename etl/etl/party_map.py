@@ -47,6 +47,12 @@ class PartyMappingEntry:
     canonical_party: str
     party_name: str
     source: str | None = None
+    verified: bool = True
+    """Whether a curator has confirmed this entry (task 15.4). Mirrors
+    `party_mapping.verified` (migration 0005), which defaults to `true`;
+    an entry the YAML explicitly marks `verified: false` is still loaded
+    and resolvable -- never silently promoted to verified, and never
+    silently dropped."""
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,7 @@ def load_party_map(path: Path) -> PartyMappingTable:
             canonical_party=str(m["canonical_party"]),
             party_name=str(m["party_name"]),
             source=m.get("source"),
+            verified=bool(m.get("verified", True)),
         )
         for m in data.get("mappings", [])
     )

@@ -31,7 +31,14 @@ import psycopg
 import yaml
 
 from .archive import ArchiveResult, Fetcher, archive_source
-from .crosswalk import CrosswalkTable, QuarantinedJurisdiction, load_crosswalk
+from .crosswalk import (
+    CrosswalkTable,
+    MesaStability,
+    QuarantinedJurisdiction,
+    compute_mesa_stability,
+    load_crosswalk,
+)
+from .db import load_crosswalk_rows, load_party_map_rows
 from .http_client import RequestsFetcher
 from .ingest.fiscalizacion import guard_local_mirror_only, ingest_fiscalizacion
 from .ingest.national import REQUIRED_COLUMNS, ingest_national, load_national_rows
@@ -454,6 +461,160 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# load-curated
+# ---------------------------------------------------------------------------
+
+
+def _normalize_administrative_code(raw: str) -> str:
+    """Normalize a distrito/seccion code to a zero-padding-independent form.
+
+    MEASURED against the real archived files (task 15.11): the raw national
+    CSVs' `distrito_id`/`seccion_id` columns are UNPADDED (`"2"`, `"27"`),
+    while `curated/crosswalk.yaml` follows the DINE zero-padded convention
+    (`"02"`, `"027"`) that `curated/party_map.yaml`'s comments and this
+    project's own test fixtures also use. Comparing the two verbatim silently
+    matches nothing -- exactly the same class of bug `ingest.national`'s
+    `_normalize_mesa_id` already exists to prevent for mesa ids. Falls back
+    to the raw string unchanged for a non-numeric code rather than raising.
+    """
+    try:
+        return str(int(raw))
+    except ValueError:
+        return raw
+
+
+def collect_national_mesa_codes(
+    sources: dict[str, list[dict]],
+    *,
+    local_root: Path,
+    manifest_path: Path,
+    distrito_code: str,
+    seccion_code: str,
+    year: int,
+) -> set[int]:
+    """Gather every distinct mesa code observed in an already-archived
+    national source for one `(distrito, seccion)` scope and one year.
+
+    Reuses the same archived-file parsing path
+    `collect_national_jurisdiction_codes`/`collect_national_party_keys`
+    already exercise for `validate-crosswalk`/`validate-curated` -- this is
+    `mesa_crosswalk`'s per-year presence input (task 15.11), computed from
+    the REAL archived corpus rather than assumed or hand-authored in YAML
+    (jurisdiction-model spec: stability "MUST NOT be assumed by default").
+    """
+    records = load_manifest(manifest_path)
+    local_store = LocalArchiveStore(root=local_root)
+    target_distrito = _normalize_administrative_code(distrito_code)
+    target_seccion = _normalize_administrative_code(seccion_code)
+    mesas: set[int] = set()
+    for entry in sources.get("national", []):
+        year_digits = "".join(c for c in entry["id"].split("/")[-1][:4] if c.isdigit())
+        if len(year_digits) != 4 or int(year_digits) != year:
+            continue
+        archived = latest_ok_record(records, entry["id"])
+        if archived is None:
+            continue
+        filename = (archived.get("archived_path") or "").rsplit("/", 1)[-1]
+        if not local_store.exists("national", filename):
+            continue
+        raw_bytes = local_store.read("national", filename)
+        with tempfile.TemporaryDirectory(prefix="votus-etl-load-curated-") as extract_dir:
+            csv_bytes = resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
+        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
+            if (
+                _normalize_administrative_code(row.result.distrito) == target_distrito
+                and _normalize_administrative_code(row.result.seccion or "") == target_seccion
+                and row.mesa is not None
+            ):
+                mesas.add(row.mesa)
+    return mesas
+
+
+def load_curated(
+    *,
+    database_url: str,
+    sources: dict[str, list[dict]],
+    local_root: Path,
+    manifest_path: Path,
+    party_map_path: Path,
+    crosswalk_path: Path,
+) -> dict[str, int]:
+    """Load every curated table (task 15.10): `party_canonical`,
+    `list_identity`, `party_mapping` from `party_map_path`, and
+    `jurisdiction_crosswalk`/`mesa_crosswalk` from `crosswalk_path`.
+
+    `mesa_crosswalk`'s presence-per-year is computed for every jurisdiction
+    the crosswalk curates, from whichever national sources are ALREADY
+    archived on disk for 2023/2025 (task 15.11) -- a jurisdiction with no
+    archived source for one year simply gets an empty set for that year,
+    never a crash.
+    """
+    party_map = load_party_map(party_map_path)
+    crosswalk = load_crosswalk(crosswalk_path)
+
+    mesa_stabilities: list[tuple[str, str, MesaStability]] = []
+    for jurisdiction in crosswalk.jurisdictions:
+        mesas_2023 = collect_national_mesa_codes(
+            sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+            distrito_code=jurisdiction.national_distrito_code,
+            seccion_code=jurisdiction.national_seccion_code,
+            year=2023,
+        )
+        mesas_2025 = collect_national_mesa_codes(
+            sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+            distrito_code=jurisdiction.national_distrito_code,
+            seccion_code=jurisdiction.national_seccion_code,
+            year=2025,
+        )
+        for stability in compute_mesa_stability(mesas_2023, mesas_2025):
+            mesa_stabilities.append(
+                (
+                    jurisdiction.national_distrito_code,
+                    jurisdiction.national_seccion_code,
+                    stability,
+                )
+            )
+
+    conn = psycopg.connect(database_url)
+    try:
+        counts = load_party_map_rows(conn, party_map)
+        counts.update(load_crosswalk_rows(conn, crosswalk, mesa_stabilities=mesa_stabilities))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return counts
+
+
+def cmd_load_curated(args: argparse.Namespace) -> int:
+    try:
+        database_url = resolve_database_url(args.database_url)
+    except MissingDatabaseUrlError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    sources = load_sources(Path(args.sources_path))
+    counts = load_curated(
+        database_url=database_url,
+        sources=sources,
+        local_root=Path(args.local_root),
+        manifest_path=Path(args.manifest_path),
+        party_map_path=Path(args.party_map_path),
+        crosswalk_path=Path(args.crosswalk_path),
+    )
+
+    for table_name, count in counts.items():
+        print(f"loaded {count} row(s) into {table_name}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------------
 
@@ -489,6 +650,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate_curated_parser.add_argument("--party-map-path", default=str(DEFAULT_PARTY_MAP_PATH))
     validate_curated_parser.set_defaults(func=cmd_validate_curated)
+
+    load_curated_parser = subparsers.add_parser(
+        "load-curated",
+        help="Load curated party-map and crosswalk YAML into party_canonical, "
+        "list_identity, party_mapping, jurisdiction_crosswalk and mesa_crosswalk.",
+    )
+    load_curated_parser.add_argument("--database-url", default=None)
+    load_curated_parser.add_argument("--party-map-path", default=str(DEFAULT_PARTY_MAP_PATH))
+    load_curated_parser.add_argument("--crosswalk-path", default=str(DEFAULT_CROSSWALK_PATH))
+    load_curated_parser.set_defaults(func=cmd_load_curated)
 
     return parser
 

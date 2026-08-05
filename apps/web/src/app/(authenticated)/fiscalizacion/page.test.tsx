@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ResultsRepository } from "@/lib/fiscalizacion/repository";
 import type { ResultRow, RowSource } from "@/lib/fiscalizacion/repository";
-import { FISCALIZACION_COVERAGE, loadFiscalizacionView, renderFiscalizacionView,
+import { FISCALIZACION_COVERAGE, FISCALIZACION_PARTY_CONTEXT, loadFiscalizacionView, renderFiscalizacionView,
   comparisonFromParams,
 } from "./page";
 
@@ -54,9 +54,11 @@ describe("fiscalizacion page — loadFiscalizacionView", () => {
 
     const view = await loadFiscalizacionView(repository, QUERY);
 
-    expect(queryFiscalizacionSpy).toHaveBeenCalledWith(QUERY, {
-      coverage: FISCALIZACION_COVERAGE,
-    });
+    expect(queryFiscalizacionSpy).toHaveBeenCalledWith(
+      QUERY,
+      { coverage: FISCALIZACION_COVERAGE },
+      FISCALIZACION_PARTY_CONTEXT,
+    );
     expect(queryOfficialSpy).not.toHaveBeenCalled();
     expect(view.status).toBe("ok");
     if (view.status !== "ok") throw new Error("expected ok status");

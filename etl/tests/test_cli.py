@@ -18,6 +18,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+import yaml
 
 from etl.__main__ import (
     MissingDatabaseUrlError,
@@ -28,6 +29,7 @@ from etl.__main__ import (
     find_unmapped_jurisdictions,
     find_unmapped_parties,
     ingest_source,
+    main,
 )
 from etl.archive import FetchResponse
 from etl.crosswalk import load_crosswalk
@@ -421,3 +423,182 @@ def test_collect_functions_read_a_real_zipped_archive_entry(tmp_path) -> None:
         sources, local_root=local_root, manifest_path=manifest_path
     )
     assert keys, "a zipped archive entry must yield party keys, not crash"
+
+
+# ---------------------------------------------------------------------------
+# 15.9 -- load-curated is reachable from the CLI, not merely importable
+# ---------------------------------------------------------------------------
+
+
+def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
+    """This project has shipped correct, tested, unreachable code seven
+    times (Phase 15's own charter). This test drives `load-curated` through
+    `main()` -- the real argv-parsing CLI entrypoint -- never by importing
+    `load_curated`/`load_party_map_rows`/`load_crosswalk_rows` directly, so
+    a subcommand that exists but was never wired into `build_parser` cannot
+    pass this test."""
+    _require_ephemeral_postgres()
+
+    marker = uuid.uuid4().hex[:8]
+    canonical_id = f"TESTCLI_{marker}"
+    # Curated `crosswalk.yaml` uses zero-padded DINE-convention codes, while
+    # the RAW national CSV `distrito_id`/`seccion_id` columns are UNPADDED
+    # (measured against the real archived files, task 15.11) -- using
+    # different padding on each side here exercises that exact real-world
+    # mismatch, not a coincidentally-matching fixture.
+    csv_distrito, csv_seccion = "90", "1"
+    curated_distrito, curated_seccion = "090", "001"
+    pba_distrito = f"P{marker}"
+
+    source_2023_id = f"national/2023-cli-load-{marker}"
+    source_2025_id = f"national/2025-cli-load-{marker}"
+    sources = {
+        "national": [
+            {
+                "id": source_2023_id,
+                "source": "example.test",
+                "source_url": "https://example.test/2023.csv",
+                "mime": "text/csv",
+                "notes": "load-curated CLI reachability fixture",
+                "filename": "2023.csv",
+            },
+            {
+                "id": source_2025_id,
+                "source": "example.test",
+                "source_url": "https://example.test/2025.csv",
+                "mime": "text/csv",
+                "notes": "load-curated CLI reachability fixture",
+                "filename": "2025.csv",
+            },
+        ]
+    }
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(sources), encoding="utf-8")
+
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+
+    csv_row = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        "votos_tipo,votos_cantidad,estado_final\n"
+        f"{csv_distrito},{csv_seccion},01,1,DIPUTADO NACIONAL,900001,POSITIVO,10,definitivo\n"
+    )
+    for source_id in (source_2023_id, source_2025_id):
+        fetch_source(
+            source_id,
+            sources=sources,
+            fetcher=FakeFetcher(payload=csv_row.encode("utf-8")),
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+
+    party_map_path = tmp_path / "party_map.yaml"
+    party_map_path.write_text(
+        yaml.safe_dump(
+            {
+                "mappings": [
+                    {
+                        "year": 2025,
+                        "jurisdiction": "national",
+                        "category": "DIPUTADO NACIONAL",
+                        "list_id": "900001",
+                        "canonical_party": canonical_id,
+                        "party_name": "TEST CLI PARTY",
+                        "source": "fixture",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    crosswalk_path = tmp_path / "crosswalk.yaml"
+    crosswalk_path.write_text(
+        yaml.safe_dump(
+            {
+                "jurisdictions": [
+                    {
+                        "pba_distrito": pba_distrito,
+                        "national_distrito": curated_distrito,
+                        "national_seccion": curated_seccion,
+                        "name": "Test Distrito",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--sources-path",
+            str(sources_path),
+            "--local-root",
+            str(local_root),
+            "--manifest-path",
+            str(manifest_path),
+            "load-curated",
+            "--database-url",
+            TEST_DSN,
+            "--party-map-path",
+            str(party_map_path),
+            "--crosswalk-path",
+            str(crosswalk_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select display_name from party_canonical where id = %s", (canonical_id,))
+            party_row = cur.fetchone()
+
+            cur.execute(
+                "select source_name from list_identity where year = 2025 "
+                "and jurisdiction = 'national' and category = 'DIPUTADO NACIONAL' "
+                "and list_id = '900001'"
+            )
+            list_identity_row = cur.fetchone()
+
+            cur.execute(
+                "select canonical_party_id from party_mapping where year = 2025 "
+                "and jurisdiction = 'national' and category = 'DIPUTADO NACIONAL' "
+                "and list_id = '900001'"
+            )
+            party_mapping_row = cur.fetchone()
+
+            cur.execute(
+                "select name from jurisdiction_crosswalk where pba_distrito_code = %s",
+                (pba_distrito,),
+            )
+            crosswalk_row = cur.fetchone()
+
+            cur.execute(
+                "select present_2023, present_2025, stable_across_years from mesa_crosswalk "
+                "where distrito_code = %s and seccion_code = %s and mesa_code = 1",
+                (curated_distrito, curated_seccion),
+            )
+            mesa_row = cur.fetchone()
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from party_mapping where canonical_party_id = %s", (canonical_id,))
+            cur.execute("delete from list_identity where list_id = '900001' and year = 2025")
+            cur.execute("delete from party_canonical where id = %s", (canonical_id,))
+            cur.execute(
+                "delete from jurisdiction_crosswalk where pba_distrito_code = %s", (pba_distrito,)
+            )
+            cur.execute(
+                "delete from mesa_crosswalk where distrito_code = %s and seccion_code = %s",
+                (curated_distrito, curated_seccion),
+            )
+        conn.commit()
+        conn.close()
+
+    assert party_row == ("TEST CLI PARTY",)
+    assert list_identity_row == ("TEST CLI PARTY",)
+    assert party_mapping_row == (canonical_id,)
+    assert crosswalk_row == ("Test Distrito",)
+    # Same mesa fetched in both the 2023 and 2025 fixture files -> stable.
+    assert mesa_row == (True, True, True)
