@@ -15,10 +15,16 @@ isolation between runs).
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from etl.crosswalk import CrosswalkTable, MesaStability
+from etl.jurisdiction import (
+    normalize_circuito_code,
+    normalize_distrito_code,
+    normalize_seccion_code,
+)
 from etl.party_map import PartyMappingTable
 from etl.review_item import ReviewItemRecord
 
@@ -103,7 +109,23 @@ def upsert_jurisdiction(
     idempotency for every PBA distrito-level row, which has all four `NULL`.
     A `SELECT ... IS NOT DISTINCT FROM` lookup treats `NULL = NULL` as a
     match, so it is used here instead of `ON CONFLICT`.
+
+    Phase 17: this is the single normalization boundary every writer funnels
+    through -- `distrito`/`seccion` are canonicalized to the curated,
+    zero-padded form (`etl.jurisdiction.normalize_distrito_code` /
+    `normalize_seccion_code`) BEFORE the lookup or insert, so a caller that
+    still passes national ingestion's raw unpadded `"2"`/`"27"` resolves to
+    the SAME row as fiscalización's already-padded `"02"`/`"027"` instead of
+    creating a second, format-only duplicate.
     """
+    distrito = normalize_distrito_code(distrito)
+    seccion = normalize_seccion_code(seccion)
+    # Circuito goes through the boundary too. Leaving it out meant
+    # `jurisdiction.py` declared itself the single normalization boundary while
+    # one of its three codes was written raw, forcing every reader to
+    # compensate — two independent ideas of the same code, which is what
+    # produced Coronel Rosales as three identities.
+    circuito = normalize_circuito_code(circuito)
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -137,6 +159,44 @@ JurisdictionKey = tuple[str, str | None, str | None, str | None, int | None]
 lineage tuple `upsert_jurisdiction` resolves one at a time."""
 
 
+# One definition of the NULL-safe lineage key, used by every large join that
+# would otherwise need four `IS NOT DISTINCT FROM` predicates (rule 10).
+#
+# `establecimiento_code` is FREE TEXT -- `test_jurisdiction.py` writes
+# "Escuela N.1" and no normalizer touches it -- so a bare `'|'` join is not
+# injective: `("00001", "A|B")` and `("00001|A", "B")` would produce the same
+# key and bind two distinct lineages to one jurisdiction. Both sides therefore
+# escape `\` then `|` before joining, which makes the encoding reversible and
+# the key exact.
+MERGE_KEY_SQL = (
+    "coalesce(j.distrito_code,'') || '|' || coalesce(j.seccion_code,'')"
+    " || '|' || coalesce(j.circuito_code,'') || '|'"
+    " || replace(replace(coalesce(j.establecimiento_code,''), '\\', '\\\\'), '|', '\\|')"
+    " || '|' || coalesce(j.mesa_code::text,'')"
+)
+
+
+def merge_key(
+    distrito: str | None,
+    seccion: str | None,
+    circuito: str | None,
+    establecimiento: str | None,
+    mesa: int | None,
+) -> str:
+    """Python side of `MERGE_KEY_SQL` -- the two MUST agree character for
+    character, which is why they live next to each other."""
+    escaped = (establecimiento or "").replace("\\", "\\\\").replace("|", "\\|")
+    return "|".join(
+        (
+            distrito or "",
+            seccion or "",
+            circuito or "",
+            escaped,
+            "" if mesa is None else str(mesa),
+        )
+    )
+
+
 def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[JurisdictionKey, str]:
     """Resolve or create every `jurisdiction` row for a batch of lineage
     tuples in TWO round trips total, instead of one SELECT-then-INSERT
@@ -155,10 +215,31 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
     which has all four `NULL`) would otherwise be duplicated on every call,
     the exact bug `upsert_jurisdiction`'s docstring already documents.
 
-    Returns a mapping from EVERY key in `keys` (order-preserving de-dup
-    happens internally) to its resolved `jurisdiction.id`.
+    Returns a mapping from EVERY key in `keys`, AS PASSED BY THE CALLER
+    (order-preserving de-dup happens internally), to its resolved
+    `jurisdiction.id` -- so an existing caller that still indexes the
+    returned dict by its own original (possibly unpadded) key keeps working
+    unchanged.
+
+    Phase 17: `distrito`/`seccion` are canonicalized to the curated,
+    zero-padded form (same normalization boundary as `upsert_jurisdiction`
+    above) for every round trip below, so `("2", "27", ...)` and
+    `("02", "027", ...)` resolve to the SAME `jurisdiction` row instead of
+    two rows for what is the same real mesa. The ORIGINAL, un-normalized
+    keys are what the returned mapping is keyed by.
     """
-    distinct_keys = list(dict.fromkeys(keys))
+    original_keys = list(keys)
+    normalized_keys = [
+        (
+            normalize_distrito_code(distrito),
+            normalize_seccion_code(seccion),
+            normalize_circuito_code(circuito),
+            establecimiento,
+            mesa,
+        )
+        for distrito, seccion, circuito, establecimiento, mesa in original_keys
+    ]
+    distinct_keys = list(dict.fromkeys(normalized_keys))
     if not distinct_keys:
         return {}
 
@@ -177,27 +258,54 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
         # five parallel arrays back into one row per input tuple (matching
         # by NULL-safe `IS NOT DISTINCT FROM`, not `=`), so a single query
         # replaces one SELECT per distinct tuple.
+        # ONE NULL-safe text key (`merge_key` / `MERGE_KEY_SQL` above), not
+        # four `is not distinct from` predicates: across several nullable
+        # columns that is not hash-joinable and degrades to a nested loop,
+        # which at this call site's ~109k distinct mesas is the shape rule 10
+        # warns about.
+        merge_keys = [merge_key(*key) for key in distinct_keys]
         cur.execute(
             """
             select v.distrito, v.seccion, v.circuito, v.establecimiento, v.mesa, j.id
-            from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[])
-                 with ordinality as v(distrito, seccion, circuito, establecimiento, mesa, idx)
+            from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[],
+                        %s::text[])
+                 with ordinality as v(distrito, seccion, circuito, establecimiento, mesa,
+                                      merge_key, idx)
             left join jurisdiction j
-              on j.distrito_code = v.distrito
-             and j.seccion_code is not distinct from v.seccion
-             and j.circuito_code is not distinct from v.circuito
-             and j.establecimiento_code is not distinct from v.establecimiento
-             and j.mesa_code is not distinct from v.mesa
+              on """
+            + MERGE_KEY_SQL
+            + """ = v.merge_key
             order by v.idx
             """,
-            (distritos, seccions, circuitos, establecimientos, mesas),
+            (distritos, seccions, circuitos, establecimientos, mesas, merge_keys),
         )
+        # A `left join` yields ONE ROW PER MATCH, so a tuple with two
+        # `jurisdiction` rows comes back twice. Assigning straight into
+        # `resolved` would keep whichever arrived last and say nothing --
+        # rule 4's silent pick. Duplicates for exactly these NULL-bearing keys
+        # are not hypothetical: this docstring records that the pre-Phase-8
+        # `ON CONFLICT` inserted one on every call for any key with a NULL.
+        # Collect the distinct ids per key and refuse when there is more
+        # than one, the way `apply_mesa_tipo_mapping` refuses a mesa with two
+        # tipos.
+        matches: dict[JurisdictionKey, set[str]] = {}
         for distrito, seccion, circuito, establecimiento, mesa, jurisdiction_id in cur.fetchall():
             key = (distrito, seccion, circuito, establecimiento, mesa)
-            if jurisdiction_id is not None:
-                resolved[key] = jurisdiction_id
-            else:
+            if jurisdiction_id is None:
                 missing.append(key)
+            else:
+                matches.setdefault(key, set()).add(jurisdiction_id)
+
+        ambiguous = {key: ids for key, ids in matches.items() if len(ids) > 1}
+        if ambiguous:
+            key, ids = next(iter(sorted(ambiguous.items())))
+            raise RuntimeError(
+                f"{len(ambiguous)} lineage tuple(s) match more than one jurisdiction "
+                f"row; refusing to pick one arbitrarily. First: {key} -> "
+                f"{sorted(ids)}"
+            )
+        for key, ids in matches.items():
+            resolved[key] = next(iter(ids))
 
         # Round trip 2 -- bulk-insert every tuple with no existing row.
         # Safe without `ON CONFLICT`: `missing` is already de-duplicated
@@ -231,7 +339,10 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
             ) in cur.fetchall():
                 resolved[(distrito, seccion, circuito, establecimiento, mesa)] = jurisdiction_id
 
-    return {key: resolved[key] for key in keys}
+    return {
+        original_key: resolved[normalized_key]
+        for original_key, normalized_key in zip(original_keys, normalized_keys)
+    }
 
 
 def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRowRecord]) -> int:
@@ -314,10 +425,29 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
     LIBERTAD AVANZA" in 2025); one display name has to be chosen, and doing
     it deterministically (first occurrence) beats an unordered `dict`
     write-wins race.
+
+    Choosing deterministically is not the same as choosing SILENTLY: every
+    spelling that was NOT used is reported, so a curated typo introducing a
+    second spelling is visible instead of being absorbed by the pick.
     """
     display_name_by_canonical_party: dict[str, str] = {}
+    spellings_by_canonical_party: dict[str, list[str]] = {}
     for entry in table.entries:
         display_name_by_canonical_party.setdefault(entry.canonical_party, entry.party_name)
+        seen = spellings_by_canonical_party.setdefault(entry.canonical_party, [])
+        if entry.party_name not in seen:
+            seen.append(entry.party_name)
+
+    for canonical_party, spellings in sorted(spellings_by_canonical_party.items()):
+        if len(spellings) > 1:
+            chosen = display_name_by_canonical_party[canonical_party]
+            discarded = [name for name in spellings if name != chosen]
+            print(
+                f"  canonical party {canonical_party!r} carries {len(spellings)} "
+                f"source spellings; kept {chosen!r}, not shown: "
+                f"{', '.join(repr(name) for name in discarded)}",
+                file=sys.stderr,
+            )
 
     with conn.cursor() as cur:
         for canonical_party, display_name in display_name_by_canonical_party.items():
@@ -406,9 +536,18 @@ def load_crosswalk_rows(
                     name = excluded.name
                 """,
                 (
+                    # Through the SAME boundary as `jurisdiction`. A curated
+                    # file writing `national_seccion: "27"` would otherwise key
+                    # `jurisdiction_crosswalk` on `"27"` while `jurisdiction`
+                    # holds `"027"` -- the same real place under two identities
+                    # joined by nothing, one table over from where it already
+                    # happened. `pba_distrito_code` is deliberately NOT
+                    # normalized: it belongs to PBA's own scheme, where `"027"`
+                    # is a partido, and padding it to a national width is the
+                    # scheme collision this crosswalk exists to translate.
                     jurisdiction.pba_distrito_code,
-                    jurisdiction.national_distrito_code,
-                    jurisdiction.national_seccion_code,
+                    normalize_distrito_code(jurisdiction.national_distrito_code),
+                    normalize_seccion_code(jurisdiction.national_seccion_code),
                     jurisdiction.name,
                 ),
             )
@@ -426,8 +565,8 @@ def load_crosswalk_rows(
                     stable_across_years = excluded.stable_across_years
                 """,
                 (
-                    distrito_code,
-                    seccion_code,
+                    normalize_distrito_code(distrito_code),
+                    normalize_seccion_code(seccion_code),
                     stability.mesa,
                     stability.present_2023,
                     stability.present_2025,

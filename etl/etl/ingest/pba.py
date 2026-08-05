@@ -24,15 +24,22 @@ PDF/telegrama OCR extraction is explicitly out of scope
 
 from __future__ import annotations
 
+import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from html.parser import HTMLParser
 
 from .. import db
 from ..archive import POLITENESS_DELAY_SECONDS, ArchiveResult, FetchResponse, archive_source
+from ..crosswalk import CrosswalkTable
 from ..http_client import DEFAULT_USER_AGENT, HostPolicy, PolicedHostFetcher
-from ..jurisdiction import ResultRow, make_result_row
+from ..jurisdiction import (
+    QuarantinedPbaDistrito,
+    ResultRow,
+    make_result_row,
+    resolve_pba_distrito_code,
+)
 from ..manifest import latest_ok_record
 from ..party_map import PartyMappingTable, PartyResolutionResult, resolve_party_for_rows
 from ..storage import LocalArchiveStore
@@ -394,20 +401,112 @@ def resolve_pba_party(
     )
 
 
+@dataclass(frozen=True)
+class QuarantinedPbaRow:
+    """A `PbaRow` whose PBA-native distrito code has no curated
+    `jurisdiction_crosswalk` entry -- kept as data alongside the reason,
+    mirroring `ingest.national.QuarantinedNationalRow` (task 17.3)."""
+
+    row: PbaRow
+    reason: str
+
+
+@dataclass(frozen=True)
+class PbaJurisdictionResolutionResult:
+    resolved: tuple[PbaRow, ...]
+    quarantined: tuple[QuarantinedPbaRow, ...]
+
+
+def resolve_pba_jurisdictions(
+    rows: list[PbaRow], crosswalk: CrosswalkTable
+) -> PbaJurisdictionResolutionResult:
+    """Translate every row's PBA-native distrito code (e.g. `"027"`) to the
+    national numbering scheme via the curated `jurisdiction_crosswalk`
+    (task 17.5), BEFORE any `jurisdiction` row is created.
+
+    Scheme cause (Phase 17): PBA writes its own `distrito_code`, a
+    different numbering scheme from national's, straight into
+    `db.upsert_jurisdiction` -- `jurisdiction_crosswalk` was never consulted
+    at ingestion, so a PBA row became its own island instead of resolving to
+    the same distrito national ingestion and fiscalización use. Mirrors
+    `ingest.national.resolve_jurisdictions`'s mapped/quarantined split for
+    the analogous national-side problem. An uncurated PBA distrito code is
+    quarantined (task 17.3), never silently written as a new jurisdiction.
+    """
+    resolved: list[PbaRow] = []
+    quarantined: list[QuarantinedPbaRow] = []
+
+    for row in rows:
+        translated = resolve_pba_distrito_code(row.result.distrito, crosswalk)
+        if isinstance(translated, QuarantinedPbaDistrito):
+            quarantined.append(QuarantinedPbaRow(row=row, reason=translated.reason))
+            continue
+
+        national_distrito, national_seccion = translated
+        if (national_distrito, national_seccion) == (row.result.distrito, row.result.seccion):
+            resolved.append(row)
+            continue
+
+        # A PBA partido total is a SECCION-level figure in the national scheme:
+        # PBA's distrito `027` is the partido, while national distrito `02` is
+        # the province and Coronel Rosales is its seccion `027`. Keeping the
+        # partido total at distrito granularity with a null seccion attributed
+        # 32.291 CONCEJALES votes -- Coronel Rosales's own valid-vote
+        # denominator -- to the whole of Buenos Aires.
+        translated_result = make_result_row(
+            granularity="seccion" if national_seccion else row.result.granularity,
+            distrito=national_distrito,
+            seccion=national_seccion,
+            category=row.result.category,
+            list_id=row.result.list_id,
+            votes=row.result.votes,
+        )
+        resolved.append(replace(row, result=translated_result))
+
+    return PbaJurisdictionResolutionResult(
+        resolved=tuple(resolved), quarantined=tuple(quarantined)
+    )
+
+
 def load_pba_rows(
-    conn, rows: list[PbaRow], *, year: int, round_: str, source_kind: str = "official"
+    conn,
+    rows: list[PbaRow],
+    *,
+    year: int,
+    round_: str,
+    crosswalk: CrosswalkTable,
+    source_kind: str = "official",
 ) -> int:
     """Task 8.5 (D8): same delete-by-`archive_entry_id`-then-bulk-insert
     wrapper as `ingest.national.load_national_rows`, adapted to `PbaRow`'s
     distrito-only lineage (`seccion`/`circuito`/`mesa` are always `None`
     here -- `upsert_jurisdiction`'s `IS NOT DISTINCT FROM` lookup is exactly
     what makes that safe to re-run without duplicating the jurisdiction row).
+
+    Task 17.5: `rows` are resolved through `jurisdiction_crosswalk`
+    (`resolve_pba_jurisdictions`) BEFORE any jurisdiction is created --
+    `crosswalk` is now a required argument, not optional, so a caller can
+    never accidentally skip this step and write a PBA-scheme island. A
+    quarantined row (task 17.3) is reported to stderr and never written.
     """
     if not rows:
         return 0
     archive_entry_id = rows[0].archive_entry_id
     if any(row.archive_entry_id != archive_entry_id for row in rows):
         raise ValueError("load_pba_rows requires every row to share one archive_entry_id")
+
+    resolution = resolve_pba_jurisdictions(rows, crosswalk)
+    if resolution.quarantined:
+        codes = sorted({q.row.result.distrito for q in resolution.quarantined})
+        print(
+            f"quarantined {len(resolution.quarantined)} PBA row(s) with no curated "
+            f"jurisdiction_crosswalk entry for distrito(s) {', '.join(codes)} -- "
+            "not written to result_row",
+            file=sys.stderr,
+        )
+    rows = list(resolution.resolved)
+    if not rows:
+        return 0
 
     election_id = db.upsert_election(conn, year=year, round_=round_)
     category_cache: dict[str, str] = {}
@@ -420,11 +519,16 @@ def load_pba_rows(
             category_id = db.upsert_category(conn, name=row.category)
             category_cache[row.category] = category_id
 
-        distrito = row.result.distrito
-        jurisdiction_id = jurisdiction_cache.get(distrito)
+        # The lineage is (distrito, seccion), not distrito alone: a PBA partido
+        # total is a seccion-level figure once translated to the national
+        # scheme, and dropping the seccion attributes it to the whole province.
+        lineage = (row.result.distrito, row.result.seccion)
+        jurisdiction_id = jurisdiction_cache.get(lineage)
         if jurisdiction_id is None:
-            jurisdiction_id = db.upsert_jurisdiction(conn, distrito=distrito)
-            jurisdiction_cache[distrito] = jurisdiction_id
+            jurisdiction_id = db.upsert_jurisdiction(
+                conn, distrito=row.result.distrito, seccion=row.result.seccion
+            )
+            jurisdiction_cache[lineage] = jurisdiction_id
 
         records.append(
             db.ResultRowRecord(

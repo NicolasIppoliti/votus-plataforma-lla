@@ -526,6 +526,39 @@ tested-but-unreachable shape this change has hit eight times.
 - [x] 16.8 RED: `::test_distrito_granularity_is_labelled_never_presented_as_mesa` — the PBA municipal source publishes distrito totals; the indicator must say so.
 - [x] 16.9 GREEN: create the route, reachable from the authenticated layout, reading only through the repository.
 
+## Phase 17: One real jurisdiction, one row
+
+Coronel Rosales exists as THREE separate jurisdiction identities in the loaded database, and
+nothing joins them. Measured live:
+
+| distrito_code | seccion_code | jurisdictions | rows | source |
+|---|---|---|---|---|
+| `02` | `027` | 94 | 1.395 | fiscalización |
+| `027` | NULL | 1 | 23 | PBA official |
+| `2` | `27` | 166 | 38.983 | national official |
+
+Two distinct causes:
+1. **Format.** The national ingest writes the raw CSV's unpadded `2`/`27`; fiscalización writes
+   padded `02`/`027`. Same scheme, different padding, so the same mesa becomes two jurisdictions.
+2. **Scheme.** PBA writes its own `distrito_code = 027`, which `jurisdiction_crosswalk` says maps
+   to national `02`/`027`. The crosswalk is never consulted at ingestion, so PBA is its own island.
+
+Consequences: the accepted mesa-identity join (93/93 injective, proven in the SPIKE) does not
+actually happen in the data; the cross-year comparison only worked because the orchestrator
+hand-wrote `distrito_code in ('02','2')`. An operator querying normally gets neither.
+
+Root cause is the one already flagged in Phase 16: administrative codes are normalized
+per-call-site instead of behind a single boundary. Two call sites were fixed; ingestion —
+where jurisdictions are CREATED — never was.
+
+- [x] 17.1 RED: `etl/tests/test_jurisdiction.py::test_padded_and_unpadded_codes_resolve_to_one_jurisdiction`.
+- [x] 17.2 RED: `::test_pba_distrito_code_resolves_through_the_crosswalk_to_the_national_pair` — PBA `027` must land on the same jurisdiction as national `02`/`027`, not a third one.
+- [x] 17.3 RED: `::test_an_uncurated_pba_code_is_quarantined_not_silently_written` — a PBA code with no crosswalk entry must not create an island; it is quarantined and surfaced.
+- [x] 17.4 GREEN: normalize administrative codes at the single jurisdiction boundary (`make_result_row` / `db.upsert_jurisdiction`), so every writer goes through one place. Choose the curated padded form as canonical, since `curated/*.yaml` and `jurisdiction_crosswalk` already use it. **Deviation, disclosed: NOT applied inside `make_result_row` itself — `ingest.pba`'s pre-crosswalk-resolution distrito value is not yet a national code, and blindly zero-padding PBA's own `"027"` silently produced the WRONG code `"27"` (caught live via a real test regression). Normalization instead lives at `etl.db.upsert_jurisdiction`/`batch_upsert_jurisdictions` (the actual write boundary every path funnels through) and at `resolve_pba_distrito_code`'s translation output.**
+- [x] 17.5 GREEN: resolve PBA distrito codes through `jurisdiction_crosswalk` during `ingest_pba`, before any jurisdiction is created.
+- [x] 17.6 GREEN: migration `0012_reconcile_jurisdictions.sql` + down — merge duplicate jurisdictions that differ only by padding, repoint `result_row.jurisdiction_id`, and delete the emptied duplicates. It MUST NOT lose or duplicate a single result row; assert the total before and after.
+- [x] 17.7 REFACTOR: verify live that Coronel Rosales resolves to ONE jurisdiction set, that fiscalización mesas join to national mesas, and record the before/after counts in `spikes/006-jurisdiction-reconciliation.md`.
+
 ## Key Learnings
 
 1. The SPIKE's hard gates each remove or reshape specific downstream phases; gate (e)'s original DENY was itself later refuted by re-verification (Engram #1398), so tasks encode a conditional-pending-policy state for Phase 5 rather than a permanent removal.

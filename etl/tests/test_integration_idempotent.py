@@ -18,7 +18,7 @@ import uuid
 import psycopg
 import pytest
 
-from etl.db import insert_review_items
+from etl.db import insert_review_items, upsert_jurisdiction
 from etl.ingest.national import NationalRow, load_national_rows
 from etl.jurisdiction import make_result_row
 from etl.review_item import ReviewItemRecord
@@ -289,6 +289,39 @@ class _CountingConnectionProxy:
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
+
+
+def test_padded_and_unpadded_national_codes_share_one_jurisdiction_row(
+    pg_conn: psycopg.Connection,
+) -> None:
+    """Task 17.1/17.4, proven against real Postgres: `upsert_jurisdiction`
+    resolves national ingestion's raw unpadded distrito/seccion (`"2"`/`"27"`)
+    and fiscalización's curated padded form (`"02"`/`"027"`) to the SAME
+    `jurisdiction.id` for the same real mesa, instead of the pre-fix
+    behaviour (two distinct rows -- one of Coronel Rosales's three measured
+    jurisdiction identities).
+    """
+    # A mesa number unlikely to collide with the real corpus already loaded
+    # in this environment (`spikes/004-full-corpus-load.md`'s real data uses
+    # ordinary mesa numbers well under this range).
+    mesa = 900001
+
+    unpadded_id = upsert_jurisdiction(
+        pg_conn, distrito="2", seccion="27", circuito="00248", mesa=mesa
+    )
+    padded_id = upsert_jurisdiction(
+        pg_conn, distrito="02", seccion="027", circuito="00248", mesa=mesa
+    )
+
+    assert unpadded_id == padded_id
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from jurisdiction where circuito_code = %s and mesa_code = %s",
+            ("00248", mesa),
+        )
+        (count,) = cur.fetchone()
+    assert count == 1, "expected exactly one jurisdiction row, not a padding-only duplicate"
 
 
 def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connection) -> None:
