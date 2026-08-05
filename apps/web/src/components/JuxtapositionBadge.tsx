@@ -29,6 +29,14 @@ export interface JuxtapositionBadgeProps {
    * backed.
    */
   officialSources: SourceRef[];
+  /**
+   * Archive entries backing the official figure that resolved to no source
+   * record.
+   *
+   * Announcing only the EMPTY case left a partial trace silent: two entries,
+   * one resolving, rendered a list that reads as complete.
+   */
+  officialMissingProvenance?: string[];
   /** The 26 Oct 2025 fiscalización figure — always carries a `Coverage`. */
   fiscalizacion: ElectionFigure & { sourceKind: "fiscalizacion"; coverage: Coverage };
   /** An official figure from a DIFFERENT election, shown for context. */
@@ -82,6 +90,7 @@ export function JuxtapositionBadge({
   fiscalizacion,
   official,
   officialSources,
+  officialMissingProvenance = [],
 }: JuxtapositionBadgeProps): ReactNode {
   return (
     <div role="group" aria-label="cross-election juxtaposition">
@@ -110,6 +119,13 @@ export function JuxtapositionBadge({
           {" "}
           {official.partyName}: {official.sharePercent}%
         </span>
+        {officialMissingProvenance.length > 0 ? (
+          <p role="alert">
+            {officialMissingProvenance.length} archive entry/entries behind this
+            figure resolved to no source record (
+            {officialMissingProvenance.join(", ")}); it is only partly traced.
+          </p>
+        ) : null}
         {officialSources.length === 0 ? (
           <p role="alert">
             No archived source for this figure — it cannot be traced and must
@@ -120,7 +136,7 @@ export function JuxtapositionBadge({
             {officialSources.map((source) => (
               <li key={source.archiveEntryId}>
                 <a href={source.url}>{source.archiveEntryId}</a> — sha256{" "}
-                {source.sha256.slice(0, 8)}, fetched {source.fetchedAt}
+                {source.sha256 ? source.sha256.slice(0, 8) : "unhashed — cannot be verified"}, fetched {source.fetchedAt}
               </li>
             ))}
           </ul>

@@ -10,10 +10,21 @@ import {
   type PartyMappingContext,
   type ResultRow,
   type ResultsRepository,
+  describeExcluded,
+  votesByParty,
 } from "@/lib/fiscalizacion/repository";
+import type { ExcludedByKind } from "@/lib/fiscalizacion/repository";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import { GRANULARITY } from "@/lib/results/types";
-import type { Coverage, Granularity, SourceRef } from "@/lib/results/types";
+import { repeatedParams, stringParam } from "@/lib/results/query-params";
+import {
+  jurisdictionTotalLevel,
+  mixedGranularityReason,
+  readGranularity,
+  unrecognizedLevels,
+} from "@/lib/results/granularity";
+import { electionYear } from "@/lib/results/election-id";
+import { pinnedCategoryId, servedJurisdictionId } from "@/lib/results/party-family";
+import type { Coverage, SourceRef } from "@/lib/results/types";
 
 /**
  * fiscalizacion-analysis spec, Requirement 8. The 26 Oct 2025 fiscalización
@@ -71,13 +82,18 @@ export const FISCALIZACION_ELECTION = {
  * mislabelling this guard exists to prevent.
  */
 export function fiscalizacionScope(): { jurisdictionId?: string; categoryId?: string } {
+  // The JURISDICTION comes from the same place every other route gets it:
+  // `servedJurisdictionId`, which asks `resolvePartyFamily` and so refuses the
+  // SAME collision the other three routes refuse. A separate
+  // `FISCALIZACION_JURISDICTION_ID` was a second identity for one Coronel
+  // Rosales, joined to the first by nothing — set them differently and this
+  // route pinned one id while resolving list ids through the national table
+  // for another. Only the CATEGORY is this route's own.
+  const served = servedJurisdictionId("national");
+  const categoryId = pinnedCategoryId("FISCALIZACION");
   return {
-    ...(process.env["FISCALIZACION_JURISDICTION_ID"]
-      ? { jurisdictionId: process.env["FISCALIZACION_JURISDICTION_ID"] }
-      : {}),
-    ...(process.env["FISCALIZACION_CATEGORY_ID"]
-      ? { categoryId: process.env["FISCALIZACION_CATEGORY_ID"] }
-      : {}),
+    ...(served.status === "ok" ? { jurisdictionId: served.jurisdictionId } : {}),
+    ...(categoryId ? { categoryId } : {}),
   };
 }
 
@@ -100,8 +116,9 @@ export function outOfScopeReason(request: {
   const scope = fiscalizacionScope();
   if (!scope.jurisdictionId || !scope.categoryId) {
     return (
-      "FISCALIZACION_JURISDICTION_ID and FISCALIZACION_CATEGORY_ID are not " +
-      "configured, so the coverage denominator and party mapping cannot be " +
+      "NATIONAL_JURISDICTION_ID and FISCALIZACION_CATEGORY_ID are not " +
+      "configured (or the national and municipal jurisdiction ids collide), " +
+      "so the coverage denominator and party mapping cannot be " +
       "shown to describe the requested scope"
     );
   }
@@ -122,26 +139,31 @@ export function outOfScopeReason(request: {
 
 export type FiscalizacionQuery = BaseQuery;
 
-/**
- * Coarsest to finest.
- *
- * This is a HAND-WRITTEN ordering over the shared `GRANULARITY` values, not a
- * derivation of them: a level added to that const would be silently absent
- * here and every row carrying it would be reported as `distrito`, a claim
- * nobody made. `test_granularity_order_covers_every_shared_level` is what actually
- * enforces the correspondence.
- */
-export const GRANULARITY_ORDER: Granularity[] = [
-  GRANULARITY.DISTRITO,
-  GRANULARITY.SECCION,
-  GRANULARITY.CIRCUITO,
-  GRANULARITY.ESTABLECIMIENTO,
-  GRANULARITY.MESA,
-];
 
 export type FiscalizacionView =
   | { status: "refused"; reason: string }
-  | { status: "ok"; rows: ResultRow[]; coverage: Coverage };
+  | {
+      status: "read_failed";
+      reason: string;
+      /** The breakdown counted before this failure, carried through it. */
+      excluded?: ExcludedByKind;
+      /** A comparison that was requested and could not be built. */
+      comparisonUnavailable?: string;
+    }
+  | {
+      status: "ok";
+      rows: ResultRow[];
+      coverage: Coverage;
+      /**
+       * Rows the source-kind filter removed, per kind.
+       *
+       * `queryFiscalizacion` counts them -- including the `unknown` bucket for
+       * a value outside the enum, which BOTH filters drop -- and this seam used
+       * to discard the count, so it existed nowhere and rendered nowhere. The
+       * three sibling routes carry it through every branch.
+       */
+      excluded: ExcludedByKind;
+    };
 
 /**
  * The single function through which this route reaches fiscalización
@@ -166,22 +188,34 @@ export async function loadFiscalizacionView(
   // describe.
   const coverage = FISCALIZACION_COVERAGE;
 
-  const response = await repository.queryFiscalizacion(
-    query,
-    { coverage },
-    FISCALIZACION_PARTY_CONTEXT,
-  );
-
-  if (response.status !== "ok") {
-    return { status: "refused", reason: response.reason };
+  // A denied read RAISES: `SupabaseRowSource.fetchRows` throws on a Postgres
+  // error, so an RLS denial never arrives as a non-ok status. The three
+  // sibling routes catch it; this one let it escape into the framework error
+  // boundary while its test asserted a shape production cannot produce.
+  let response;
+  try {
+    response = await repository.queryFiscalizacion(
+      query,
+      { coverage },
+      FISCALIZACION_PARTY_CONTEXT,
+    );
+  } catch (error) {
+    // Its OWN status, never the opt-in vocabulary: that string means "you
+    // asked for unofficial figures", not "the database refused".
+    return {
+      status: "read_failed",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 
-  return { status: "ok", rows: response.rows, coverage };
+  return { status: "ok", rows: response.rows, coverage, excluded: response.excluded };
 }
 
 /** An official figure, narrowed so it cannot be handed to the wrong slot. */
 export type OfficialFigure = ElectionFigure & {
   sourceKind: "official";
+  /** The identity both sides were matched on, carried for the same match here. */
+  canonicalPartyId: string;
   partyName: string;
   /**
    * The archive entries the figure was computed from.
@@ -202,7 +236,20 @@ export type ShareResult =
 
 /** The top party, plus what had to be skipped to find it. */
 export interface TopPartyResult {
-  /** `null` when nothing resolved, when the top is TIED, or when refused. */
+  /**
+   * The party's CANONICAL id — what a cross-election match keys on.
+   *
+   * `null` when nothing resolved, when the top is TIED, or when refused.
+   */
+  canonicalPartyId: string | null;
+  /**
+   * The same party's display name, for rendering ONLY.
+   *
+   * The curated file legitimately spells one canonical party "LA LIBERTAD
+   * AVANZA" in 2023 and "ALIANZA LA LIBERTAD AVANZA" in 2025, so matching on
+   * it across years gives the two sides zero common keys and the badge reports
+   * "no rows for …" about a party that stood.
+   */
   partyName: string | null;
   /**
    * Why no party was selected, when that is not simply "nothing resolved".
@@ -243,37 +290,6 @@ export function mixedSourceKindReason(rows: ResultRow[]): string | null {
   );
 }
 
-/**
- * Whether these rows can be SUMMED, given what each level contains.
- *
- * A `seccion` row already CONTAINS the `mesa` rows beneath it, so adding them
- * double-counts. `partyShare` refused mixed levels while `topParty` and the
- * rendered per-party list summed the very same rows -- two contradictory
- * rules over one row set, and the inflated total could flip which party the
- * whole juxtaposition reported.
- */
-export function mixedGranularityReason(rows: ResultRow[]): string | null {
-  const levels = new Set(rows.map((row) => row.granularity));
-
-  // An unknown level is unsummable even when it is the ONLY one present:
-  // this module cannot say what it contains, so it cannot say the rows do not
-  // overlap. Keying on `size <= 1` let a uniformly `subcircuito` set through,
-  // and `coarsestGranularity` then labelled the computed share `distrito` --
-  // a level no row claimed.
-  const unknown = [...levels].filter((level) => !GRANULARITY_ORDER.includes(level)).sort();
-  if (unknown.length > 0) {
-    return (
-      `rows carry a granularity this page cannot order (${unknown.join(", ")}); ` +
-      "their containment relationship is unknown, so they cannot be summed"
-    );
-  }
-
-  if (levels.size <= 1) return null;
-  return (
-    `rows mix ${levels.size} granularity levels (${[...levels].sort().join(", ")}); ` +
-    "summing them would double-count"
-  );
-}
 
 /**
  * The party with the most votes among the rows, or `null` when no row
@@ -292,27 +308,32 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
   // mixed: a silent exclusion behind a plausible total.
   const refusedReason = mixedSourceKindReason(rows) ?? mixedGranularityReason(rows);
 
-  const votesByParty = new Map<string, number>();
+  // Keyed on the CANONICAL id, labelled by the display name. Keying on the
+  // name merged nothing across a respelling and split one party in two within
+  // a year if the curated file ever spelled it two ways.
+  const votesByParty = new Map<string, { votes: number; displayName: string }>();
   for (const row of rows) {
     // An unmapped row keeps its votes in the denominator, but it can never BE
     // the answer: naming a party we could not resolve is exactly the
-    // fabrication the unmapped state exists to prevent. `partyName` is absent
+    // fabrication the unmapped state exists to prevent. Both fields are absent
     // (not merely null) when no `PartyNameSource` was supplied at all, and
-    // both mean the same thing here -- unresolved.
+    // that means the same thing here -- unresolved.
+    const id = row.canonicalPartyId;
     const name = row.partyName;
-    if (!name) continue;
-    votesByParty.set(name, (votesByParty.get(name) ?? 0) + row.votes);
+    if (!id || !name) continue;
+    const entry = votesByParty.get(id) ?? { votes: 0, displayName: name };
+    votesByParty.set(id, { votes: entry.votes + row.votes, displayName: entry.displayName });
   }
 
-  let top: string | null = null;
+  let top: { id: string; displayName: string } | null = null;
   let topVotes = -1;
   let tied = false;
-  for (const [name, votes] of votesByParty) {
-    if (votes > topVotes) {
-      top = name;
-      topVotes = votes;
+  for (const [id, entry] of votesByParty) {
+    if (entry.votes > topVotes) {
+      top = { id, displayName: entry.displayName };
+      topVotes = entry.votes;
       tied = false;
-    } else if (votes === topVotes) {
+    } else if (entry.votes === topVotes) {
       tied = true;
     }
   }
@@ -323,7 +344,7 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     top = null;
   }
 
-  const unmapped = rows.filter((row) => !row.partyName);
+  const unmapped = rows.filter((row) => !row.partyName || !row.canonicalPartyId);
   // PER LIST ID, not one aggregate. One id covering 40 % of the votes and
   // forty ids covering 1 % each render identically as a total, and a large
   // plausible total is exactly how a destructive filter survives review.
@@ -334,7 +355,8 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
   }
 
   return {
-    partyName: refusedReason ? null : top,
+    canonicalPartyId: refusedReason ? null : (top?.id ?? null),
+    partyName: refusedReason ? null : (top?.displayName ?? null),
     refusedReason,
     // A "tie" computed from an untrustworthy total is not a finding. When the
     // rows cannot be summed at all, `tied` is an ARTIFACT of the same bad
@@ -358,7 +380,13 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
  * suffered. Unmapped rows stay in the denominator -- they are votes that were
  * cast, and excluding them would inflate every share.
  */
-export function partyShare(rows: ResultRow[], partyName: string): ShareResult {
+export function partyShare(
+  rows: ResultRow[],
+  canonicalPartyId: string,
+  // For the REASON only. `no rows for canon-110` names an internal id at an
+  // operator; the match still keys on the id.
+  displayName: string = canonicalPartyId,
+): ShareResult {
   const mixed = mixedSourceKindReason(rows) ?? mixedGranularityReason(rows);
   if (mixed) {
     return { status: "unavailable", reason: mixed };
@@ -369,11 +397,14 @@ export function partyShare(rows: ResultRow[], partyName: string): ShareResult {
     return { status: "unavailable", reason: "no votes in the returned rows" };
   }
 
-  const matching = rows.filter((row) => row.partyName === partyName);
+  // On the CANONICAL id. Matching display names across two elections gave the
+  // sides zero common keys whenever the curated file respelled a party, and
+  // the badge then reported "no rows for …" about a party that stood.
+  const matching = rows.filter((row) => row.canonicalPartyId === canonicalPartyId);
   if (matching.length === 0) {
     // `unavailable`, never 0 %: a party that did not stand has no share, and
     // a rendered 0 reads as a collapse it never suffered.
-    return { status: "unavailable", reason: `no rows for ${partyName}` };
+    return { status: "unavailable", reason: `no rows for ${displayName}` };
   }
 
   const partyVotes = matching.reduce((sum, row) => sum + row.votes, 0);
@@ -383,63 +414,7 @@ export function partyShare(rows: ResultRow[], partyName: string): ShareResult {
   };
 }
 
-/**
- * Coarsest granularity present among the rows.
- *
- * A single badge describes the whole list, so deriving it from `rows[0]`
- * described one row and the `?? "mesa"` fallback UPGRADED an unknown to the
- * finest granularity available -- the opposite of what a degradation label is
- * for. Mixed rows must announce the coarsest level present, because that is
- * the strongest claim the set as a whole supports.
- */
-export interface GranularityResult {
-  granularity: Granularity;
-  /**
-   * Levels present that this module does not know how to order, with HOW
-   * MUCH each covers.
-   *
-   * A list of names alone was rendered as a row count, so 500 rows carrying
-   * one unknown level read as "1 row(s)" -- a plausible small total hiding
-   * the real distribution. Same per-key shape as `unmappedByListId` and
-   * `foreignByKind`.
-   */
-  unrecognized: { granularity: string; rows: number; votes: number }[];
-}
 
-export function coarsestGranularity(rows: ResultRow[]): GranularityResult {
-  // No rows is no evidence of a fine level. Starting the fold at the finest
-  // level and returning it unchanged would claim mesa granularity for an
-  // empty set -- the same upgrade the `?? "mesa"` fallback performed.
-  if (rows.length === 0) {
-    return { granularity: GRANULARITY.DISTRITO, unrecognized: [] };
-  }
-
-  let coarsest = GRANULARITY_ORDER.length - 1;
-  const unrecognized = new Map<string, { rows: number; votes: number }>();
-  for (const row of rows) {
-    const index = GRANULARITY_ORDER.indexOf(row.granularity);
-    if (index === -1) {
-      // Treated as the coarsest possible AND reported WITH its magnitude.
-      // Absorbing it silently renders a plausible level while the fact that
-      // rows carried an unmappable one never reaches the operator.
-      const entry = unrecognized.get(row.granularity) ?? { rows: 0, votes: 0 };
-      unrecognized.set(row.granularity, {
-        rows: entry.rows + 1,
-        votes: entry.votes + row.votes,
-      });
-      coarsest = 0;
-      continue;
-    }
-    coarsest = Math.min(coarsest, index);
-  }
-
-  return {
-    granularity: GRANULARITY_ORDER[coarsest] ?? GRANULARITY.DISTRITO,
-    unrecognized: [...unrecognized.entries()]
-      .map(([granularity, totals]) => ({ granularity, ...totals }))
-      .sort((a, b) => b.votes - a.votes),
-  };
-}
 
 /**
  * Pure render function, testable via `renderToStaticMarkup` without
@@ -461,6 +436,20 @@ export interface FiscalizacionRenderOptions {
   officialSources?: SourceRef[];
   /** Fiscalización archive entries that have no `source_ref` row at all. */
   missingProvenance?: string[];
+  /** The same, for the OFFICIAL figure — reported in its own section. */
+  officialMissingProvenance?: string[];
+}
+
+/** The source-kind filter's breakdown, or nothing when it dropped nothing. */
+function renderExcludedNote(excluded: ExcludedByKind | undefined): ReactNode {
+  const summary = describeExcluded(excluded ?? {});
+  if (summary === null) return null;
+  return (
+    <p role="note">
+      {summary} were excluded by the fiscalización-source filter and are not in
+      any figure on this page.
+    </p>
+  );
 }
 
 export function renderFiscalizacionView(
@@ -475,13 +464,25 @@ export function renderFiscalizacionView(
     comparisonUnavailable,
     officialSources = [],
     missingProvenance = [],
+    officialMissingProvenance = [],
   }: FiscalizacionRenderOptions = {},
 ): ReactNode {
-  if (view.status === "refused") {
+  // `read_failed` renders the same way but is a DIFFERENT state: a denied
+  // read is not a refusal to serve unofficial figures.
+  if (view.status !== "ok") {
     return (
       <main>
         <h1>Fiscalización (unofficial)</h1>
         <p role="alert">Refused: {view.reason}</p>
+      {/* No missing-provenance alert here, unlike the ok branch. Every path
+          that reaches a non-ok view has an EMPTY entry-id list — a refused or
+          failed read produced no rows and no comparison, so `fetchSourceRefs`
+          was never called. `municipal` and `compare` render theirs inside
+          refusals that follow a completed read; this one cannot. */}
+        {view.status === "read_failed" ? renderExcludedNote(view.excluded) : null}
+        {view.status === "read_failed" && view.comparisonUnavailable ? (
+          <p role="note">No comparison figure: {view.comparisonUnavailable}</p>
+        ) : null}
         {comparisonUnavailable ? (
           // Both reasons, not whichever came first. A refused view AND a
           // requested-but-impossible comparison are two separate things the
@@ -493,6 +494,10 @@ export function renderFiscalizacionView(
   }
 
   const { rows, coverage } = view;
+  // Rendered on EVERY branch. The count existed, was carried to the view, and
+  // was then read by nothing — the field's own docstring described a fix this
+  // seam never applied.
+  const excludedNote = renderExcludedNote(view.excluded);
 
   // The THIRD independent leakage path. The loader is guarded and the
   // repository filters, but this function accepts any `FiscalizacionView` a
@@ -534,6 +539,14 @@ export function renderFiscalizacionView(
           // early dropped a requested-and-impossible comparison entirely.
           <p role="note">No comparison figure: {comparisonUnavailable}</p>
         ) : null}
+        {excludedNote}
+        {missingProvenance.length > 0 ? (
+          <p role="alert">
+            {missingProvenance.length} archive entry/entries backing these
+            figures have no source record ({missingProvenance.join(", ")}); those
+            figures cannot be traced and must not be quoted.
+          </p>
+        ) : null}
       </main>
     );
   }
@@ -544,26 +557,17 @@ export function renderFiscalizacionView(
   // that party's figure. The share calculation was fixed to aggregate; this
   // list was not.
   const mixedLevels = mixedGranularityReason(rows);
-  // Computed for the non-empty render only: the empty branch shows no badge,
-  // so an empty-set result was never displayed and only a unit test reached it.
-  const levels = coarsestGranularity(rows);
-  const unrecognizedLevels = levels.unrecognized;
-  const votesByParty = (() => {
-    if (mixedLevels) return [];
-    const totals = new Map<string, number>();
-    for (const row of rows) {
-      const label = row.partyName ?? `unmapped (list ${row.listId ?? "?"})`;
-      totals.set(label, (totals.get(label) ?? 0) + row.votes);
-    }
-    return [...totals.entries()]
-      .map(([label, votes]) => ({ label, votes }))
-      .sort((a, b) => b.votes - a.votes);
-  })();
+  // The two boundary functions directly, like `drilldown` and `municipal`. A
+  // page-local wrapper gave the same question a second shape, so a change to
+  // what `readGranularity` reports would land in one and not the other.
+  const levels = readGranularity(rows);
+  const unorderable = unrecognizedLevels(rows);
+  const partyTotals = mixedLevels !== null ? [] : votesByParty(rows);
 
   // Computed for the party the comparison names, not for whichever list
   // happens to rank first here.
   const fiscalizacionShare = comparison
-    ? partyShare(rows, comparison.partyName)
+    ? partyShare(rows, comparison.canonicalPartyId, comparison.partyName)
     : null;
   const unmapped = topParty(rows);
 
@@ -581,11 +585,17 @@ export function renderFiscalizacionView(
           figures cannot be traced and must not be quoted.
         </p>
       ) : null}
-      <p role="note">
-        Coverage: {coverage.observedUnits} of {coverage.denominatorUnits} mesas
-        — not a random sample; these are exactly the mesas where the party
-        had a fiscal present.
-      </p>
+      {excludedNote}
+      {rows.length === 0 ? null : (
+        // A denominator describes a FIGURE. Rendered in the empty branch too,
+        // "93 of 153 mesas" sat beside "no rows found" — a coverage claim
+        // about nothing.
+        <p role="note">
+          Coverage: {coverage.observedUnits} of {coverage.denominatorUnits} mesas
+          — not a random sample; these are exactly the mesas where the party
+          had a fiscal present.
+        </p>
+      )}
       {rows.length === 0 ? (
         <p>No fiscalización rows found for this jurisdiction/category/election.</p>
       ) : (
@@ -593,16 +603,24 @@ export function renderFiscalizacionView(
           {/* Computed HERE: the empty-rows branch above renders no badge, so
               an empty-set result was never displayed and only a unit test
               reached it. */}
-          <GranularityBadge granularity={levels.granularity} />
-          {unrecognizedLevels.length > 0 ? (
+          {/* Through the boundary, like the three sibling pages. `votesByParty`
+              sums every row per party across ONE jurisdiction, so the raw row
+              level claimed `mesa` over a figure that IS every mesa added up. */}
+          {mixedLevels !== null ? null : (
+            // Withheld with the figure it describes: a badge over a refused
+            // computation names one of the mixed levels as if it were the set's.
+            <GranularityBadge {...jurisdictionTotalLevel(levels.granularity)} />
+          )}
+          {unorderable.length > 0 ? (
             <>
               <p role="alert">
-                {unrecognizedLevels.reduce((sum, entry) => sum + entry.rows, 0)}{" "}
-                row(s) carry a granularity this page cannot order; the level
-                above is the coarsest possible, not a measured one. By level:
+                {unorderable.reduce((sum, entry) => sum + entry.rows, 0)}{" "}
+                row(s) carry a granularity this page cannot order, so their
+                containment relationship is unknown and no level is shown for
+                them at all. By level:
               </p>
               <ul>
-                {unrecognizedLevels.map((entry) => (
+                {unorderable.map((entry) => (
                   <li key={entry.granularity}>
                     {entry.granularity}: {entry.rows} rows, {entry.votes} votes
                   </li>
@@ -614,7 +632,7 @@ export function renderFiscalizacionView(
             <p role="alert">No per-party figures: {mixedLevels}.</p>
           ) : (
             <ul>
-              {votesByParty.map((entry) => (
+              {partyTotals.map((entry) => (
                 <li key={entry.label}>
                   {entry.label}: {entry.votes} votes
                 </li>
@@ -661,6 +679,7 @@ export function renderFiscalizacionView(
           }}
           official={comparison}
           officialSources={officialSources}
+          officialMissingProvenance={officialMissingProvenance}
         />
       ) : null}
       {comparison && fiscalizacionShare?.status === "unavailable" ? (
@@ -807,8 +826,9 @@ export function comparisonFromParams(
     return {
       status: "refused",
       reason:
-        "FISCALIZACION_JURISDICTION_ID and FISCALIZACION_CATEGORY_ID are not " +
-        "configured, so a comparison cannot be shown to describe the same scope",
+        "NATIONAL_JURISDICTION_ID and FISCALIZACION_CATEGORY_ID are not " +
+        "configured (or the national and municipal jurisdiction ids collide), " +
+        "so a comparison cannot be shown to describe the same scope",
     };
   }
   if (jurisdictionId !== scope.jurisdictionId) {
@@ -849,24 +869,21 @@ export function comparisonFromParams(
   // `compareYear=2025` resolved 2023 rows through the 2025 `party_mapping`,
   // where LLA is `110` rather than `20135`: the 2023 LLA rows drop out as
   // unmapped and any 2023 row carrying `110` is named LLA when it is not.
-  // First four-digit run. Verified against the only election ids this
-  // deployment registers -- `2023-generales`, `2023-paso`, `2023-balotaje`,
-  // `2025-legislativas-nacional` -- all of which lead with the year. An id
-  // without one skips the check rather than guessing.
-  const declaredYear = electionId.match(/\d{4}/)?.[0];
-  if (!declaredYear) {
-    // REFUSED, not skipped. An id with no year makes `compareYear`
-    // unverifiable, and an unverifiable year is what resolves 2023 rows
-    // through the 2025 `party_mapping` -- exactly what this check exists to
-    // stop. Skipping it silently accepted the case it was written for.
+  // THE boundary. This was the fourth derivation and it disagreed with the
+  // other three: first `\d{4}` ANYWHERE accepts `legislativas-2025`, which
+  // they refuse, and accepts `2023-2025-comparativa` by silently picking the
+  // first of two years — on the axis that selects the party mapping, which is
+  // what stops `135`/`20135`/`110` reading as three parties.
+  const declaredYear = electionYear(electionId);
+  if (declaredYear === null) {
     return {
       status: "refused",
       reason:
-        `the election id ${electionId} carries no year, so compareYear ` +
-        `${year} cannot be verified against it`,
+        `the election id ${electionId} does not lead with a single year, so ` +
+        `compareYear ${year} cannot be verified against it`,
     };
   }
-  if (Number(declaredYear) !== year) {
+  if (declaredYear !== year) {
     return {
       status: "refused",
       reason: `compareYear ${year} contradicts the election id ${electionId}`,
@@ -927,7 +944,9 @@ export function comparisonFromParams(
 export async function loadOfficialComparison(
   repository: ResultsRepository,
   request: ComparisonRequest & {
-    /** The party to report — resolved from the fiscalización side. */
+    /** The party to MATCH on — resolved from the fiscalización side. */
+    canonicalPartyId: string;
+    /** The same party's display name, for the rendered figure only. */
     partyName: string;
   },
 ): Promise<
@@ -943,13 +962,12 @@ export async function loadOfficialComparison(
     request.partyContext,
   );
 
-  // Three distinct outcomes -- refused query, no official rows, party absent
-  // from that election -- used to collapse into one silent `undefined`, so the
-  // operator saw the fiscalización figure alone with no sign that a comparison
-  // had been requested and could not be built.
-  if (response.status !== "ok") {
-    return { status: "unavailable", reason: response.reason };
-  }
+  // Two distinct outcomes -- no official rows, party absent from that
+  // election -- used to collapse into one silent `undefined`, so the operator
+  // saw the fiscalización figure alone with no sign that a comparison had been
+  // requested and could not be built. A REFUSED read is no longer among them:
+  // `queryOfficial` cannot return one and the compiler enforces it; a denial
+  // throws.
   if (response.rows.length === 0) {
     return {
       status: "unavailable",
@@ -976,7 +994,7 @@ export async function loadOfficialComparison(
 
   // The SAME party, never this election's own winner. Reporting each side's
   // top list compared two different parties and presented it as one trend.
-  const share = partyShare(response.rows, request.partyName);
+  const share = partyShare(response.rows, request.canonicalPartyId, request.partyName);
   if (share.status !== "ok") {
     return {
       status: "unavailable",
@@ -989,6 +1007,7 @@ export async function loadOfficialComparison(
     figure: {
       electionId: request.electionId,
       electionLabel: request.electionLabel,
+      canonicalPartyId: request.canonicalPartyId,
       sourceKind: "official",
       sharePercent: share.sharePercent,
       partyName: request.partyName,
@@ -997,33 +1016,7 @@ export async function loadOfficialComparison(
   };
 }
 
-/**
- * One query param, or why it cannot be used.
- *
- * Next.js hands `string[]` for a REPEATED param. Collapsing that to
- * `undefined` made a supplied value vanish: the page answered "Provide
- * electionId" to a request that sent it twice, and a repeated `compare*`
- * param was named in the missing list the operator had actually filled in.
- * Supplied-but-unusable is a third state, the same split this module already
- * makes between `none` and `refused`.
- */
-function stringParam(
-  params: Record<string, string | string[] | undefined>,
-  key: string,
-): string | undefined {
-  const value = params[key];
-  return typeof value === "string" ? value : undefined;
-}
 
-/** Every param supplied more than once, named. */
-function repeatedParams(
-  params: Record<string, string | string[] | undefined>,
-): string[] {
-  return Object.entries(params)
-    .filter(([, value]) => Array.isArray(value))
-    .map(([key]) => key)
-    .sort();
-}
 
 /**
  * Authenticated operator route for the fiscalización capability
@@ -1123,14 +1116,27 @@ export default async function FiscalizacionPage({
       // The actual cause, not a catch-all. Rows can map perfectly and still
       // yield no party when their levels cannot be summed.
       comparisonUnavailable = top.refusedReason;
-    } else if (!top?.partyName) {
+    } else if (!top?.canonicalPartyId || !top.partyName) {
+      // BOTH: the id is what the match keys on and the name is what renders,
+      // and `topParty` only ever sets them together.
       comparisonUnavailable = "no row resolved to a curated party to compare";
     } else {
-      const result = await loadOfficialComparison(repository, {
-        // The comparison's OWN ids, never this election's.
-        ...comparisonRequest.request,
-        partyName: top.partyName,
-      });
+      // The comparison read THROWS on a denial like any other; without this it
+      // escaped to the framework instead of the reason this page renders.
+      let result;
+      try {
+        result = await loadOfficialComparison(repository, {
+          // The comparison's OWN ids, never this election's.
+          ...comparisonRequest.request,
+          canonicalPartyId: top.canonicalPartyId,
+          partyName: top.partyName,
+        });
+      } catch (error) {
+        result = {
+          status: "unavailable" as const,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
       if (result.status === "ok") {
         comparison = result.figure;
       } else {
@@ -1142,29 +1148,50 @@ export default async function FiscalizacionPage({
   // Fetched AFTER the comparison so the official side's own archive entries
   // are included. Fetching only the fiscalización rows' entries left the
   // official figure displayed with no `SourceRef` at all.
-  const supabase = await createSupabaseServerClient();
+  // The page's OTHER TWO reads, inside the same guard. `loadFiscalizacionView`
+  // catches its own; the comparison query and the provenance fetch escaped to
+  // the framework error boundary, so two of three reads bypassed the refusal
+  // this page states. `drilldown` fixed exactly this shape.
   const fiscalizacionEntryIds = [
     ...new Set(view.status === "ok" ? view.rows.map((row) => row.archiveEntryId) : []),
   ];
   const officialEntryIds = comparison?.archiveEntryIds ?? [];
   const allEntryIds = [...new Set([...fiscalizacionEntryIds, ...officialEntryIds])];
-  const fetched =
-    allEntryIds.length > 0 ? await fetchSourceRefs(supabase, allEntryIds) : [];
 
-  // SPLIT per figure. One undifferentiated list rendered the 2023 official
-  // ZIP's digest under the unofficial figure, with nothing saying which
-  // number it backed.
+  let fetched: SourceRef[] = [];
+  let reportedMissing: string[] = [];
+  try {
+    const supabase = await createSupabaseServerClient();
+    if (allEntryIds.length > 0) {
+      const refs = await fetchSourceRefs(supabase, allEntryIds);
+      fetched = refs.sources;
+      // The value the function ALREADY returns, not a second computation of
+      // the same fact — `isMissing` below was a second reader of it.
+      reportedMissing = refs.missing;
+    }
+  } catch (error) {
+    // Carries what was already loaded: a drop counted moments earlier must not
+    // vanish behind a refusal about a different read, and a
+    // requested-but-impossible comparison stays reported.
+    return renderFiscalizacionView({
+      status: "read_failed",
+      reason: error instanceof Error ? error.message : String(error),
+      ...(view.status === "ok" ? { excluded: view.excluded } : {}),
+      ...(comparisonUnavailable ? { comparisonUnavailable } : {}),
+    });
+  }
+
   // `fetchSourceRefs` can return FEWER refs than asked for: an archive entry
-  // with no `source_ref` row yielded an empty list, and both the fiscalización
-  // block and the badge then rendered a percentage with no provenance and
-  // nothing saying provenance was missing.
-  const isMissing = (id: string) =>
-    !fetched.some((source) => source.archiveEntryId === id);
-  // SPLIT per figure, like `sources`/`officialSources`. Merging them reported
-  // a missing 2023 official record inside the unofficial block, as "entries
-  // backing THESE figures" -- the wrong figure, and a second report of what
-  // the badge's own alert already covers.
-  const missingProvenance = fiscalizacionEntryIds.filter(isMissing);
+  // with no `source_ref` row yields nothing, and both the fiscalización block
+  // and the badge would render a percentage with no provenance and nothing
+  // saying provenance was missing. SPLIT per figure, so a missing 2023
+  // official record is not reported inside the unofficial block.
+  const missingProvenance = reportedMissing.filter((id) =>
+    fiscalizacionEntryIds.includes(id),
+  );
+  const officialMissingProvenance = reportedMissing.filter((id) =>
+    officialEntryIds.includes(id),
+  );
 
   const sources = fetched.filter((source) =>
     fiscalizacionEntryIds.includes(source.archiveEntryId),
@@ -1179,5 +1206,6 @@ export default async function FiscalizacionPage({
     ...(comparisonUnavailable ? { comparisonUnavailable } : {}),
     officialSources,
     missingProvenance,
+    officialMissingProvenance,
   });
 }

@@ -22,7 +22,14 @@ export type SourceKind = (typeof SOURCE_KIND)[keyof typeof SOURCE_KIND];
 /** Traces a figure to its archived source (provenance-display spec). */
 export interface SourceRef {
   archiveEntryId: string;
-  sha256: string;
+  /**
+   * `null` when the archive entry carries no hash.
+   *
+   * NOT `""`: this system is built on an immutable sha256 archive, so an entry
+   * without one cannot be verified, and substituting an empty string rendered
+   * it as provenance that exists.
+   */
+  sha256: string | null;
   url: string;
   fetchedAt: string;
 }

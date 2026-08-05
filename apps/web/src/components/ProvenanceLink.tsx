@@ -19,7 +19,14 @@ export function ProvenanceLink({ sources }: ProvenanceLinkProps): ReactNode {
         <li key={source.archiveEntryId}>
           <span>{source.archiveEntryId}</span>
           {" — sha256: "}
-          <code>{source.sha256}</code>
+          {source.sha256 ? (
+            <code>{source.sha256}</code>
+          ) : (
+            // Named, not blank. An entry with no hash cannot be verified, and
+            // rendering an empty code block reads as a digest that is simply
+            // hard to see.
+            <strong role="alert">unhashed — this entry cannot be verified</strong>
+          )}
           {" — "}
           <a href={source.url}>{source.url}</a>
           {" — fetched "}
