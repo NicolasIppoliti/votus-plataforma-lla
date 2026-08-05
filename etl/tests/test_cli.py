@@ -23,6 +23,7 @@ import yaml
 from etl.__main__ import (
     MissingDatabaseUrlError,
     UnknownSourceError,
+    collect_mesa_tipo_mapping,
     collect_national_jurisdiction_codes,
     collect_national_party_keys,
     fetch_source,
@@ -624,3 +625,38 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
     assert crosswalk_row == ("Test Distrito",)
     # Same mesa fetched in both the 2023 and 2025 fixture files -> stable.
     assert mesa_row == (True, True, True)
+
+
+def test_backfill_mesa_tipo_updates_existing_rows_without_reingesting(tmp_path) -> None:
+    """`mesa_tipo` must be backfillable without re-parsing the whole corpus.
+
+    The field was added late, so 16,5 million already-correct 2023 rows carry
+    NULL. Re-ingesting to populate one column means re-parsing 13,6 million
+    PASO rows — about 47 minutes, which this environment could not sustain
+    across four attempts.
+
+    But `mesa_tipo` is a property of the MESA, not of a result: mesa 9001 in
+    distrito 02 / seccion 027 is EXTRANJEROS for every category and every
+    list. So the distinct lineage->tipo mapping is a few hundred thousand
+    tuples at most, and applying it is an UPDATE, not a reload.
+
+    This test pins the pure part: extracting the distinct mapping from source
+    rows, which is what makes the backfill cheap.
+    """
+    rows = [
+        {"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
+         "mesa_id": "1", "mesa_tipo": "NATIVOS", "cargo_nombre": "A"},
+        {"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
+         "mesa_id": "1", "mesa_tipo": "NATIVOS", "cargo_nombre": "B"},
+        {"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
+         "mesa_id": "9001", "mesa_tipo": "EXTRANJEROS", "cargo_nombre": "A"},
+    ]
+
+    mapping = collect_mesa_tipo_mapping(rows)
+
+    # Codes are normalized to the padding-independent form, so `"02"`/`"027"`
+    # and `"2"`/`"27"` describe the same mesa rather than two.
+    assert mapping == {
+        ("2", "27", "00001", 1): "NATIVOS",
+        ("2", "27", "00001", 9001): "EXTRANJEROS",
+    }, "three source rows must collapse to two distinct mesas"

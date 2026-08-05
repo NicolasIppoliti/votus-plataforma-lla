@@ -382,6 +382,29 @@ def collect_national_jurisdiction_codes(
     return sorted(codes)
 
 
+def collect_mesa_tipo_mapping(rows) -> dict[tuple[str, str, str, int], str]:
+    """Collapse source rows to the distinct `(lineage) -> mesa_tipo` mapping.
+
+    `mesa_tipo` is a property of the MESA, not of a result: mesa 9001 in
+    distrito 02 / seccion 027 is EXTRANJEROS for every category and every
+    list. Collapsing to distinct mesas turns a 13,6-million-row reload into a
+    few hundred thousand tuples, which is what makes backfilling a
+    late-added column an UPDATE rather than a re-ingest.
+    """
+    mapping: dict[tuple[str, str, str, int], str] = {}
+    for raw in rows:
+        tipo = (raw.get("mesa_tipo") or "").strip()
+        if not tipo:
+            continue
+        mapping[(
+            _normalize_administrative_code(raw["distrito_id"]),
+            _normalize_administrative_code(raw["seccion_id"]),
+            raw["circuito_id"],
+            int(raw["mesa_id"]),
+        )] = tipo
+    return mapping
+
+
 def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     codes = collect_national_jurisdiction_codes(
