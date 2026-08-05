@@ -1,0 +1,15 @@
+[
+  {
+    "id": "national/2025-legislativas",
+    "capability": "national",
+    "source": "datos.mininterior.gob.ar",
+    "source_url": "https://datos.mininterior.gob.ar/dataset/947e871a-650e-4b63-8939-ecb29acb717c/resource/a24110fb-bfcf-47a6-8aa7-2e53dab9caf5/download/elecciones_legislativas_2025.zip",
+    "archived_path": "archive/national/2025-legislativas.zip",
+    "sha256": "5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b",
+    "mime": "application/zip",
+    "bytes": 13554180,
+    "fetched_at": "2026-08-04T12:29:56Z",
+    "status": "ok",
+    "notes": "Phase 12d end-to-end proof: registered directly from the pre-archived copy found at archive/national_2025/legislativas2025.zip (outside the LocalArchiveStore's archive/<capability>/<filename> convention -- copied to the conventional path, sha256 and byte count verified identical, original left in place). Not fetched over the network this run."
+  }
+]

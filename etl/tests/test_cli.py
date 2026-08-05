@@ -215,6 +215,78 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
+    tmp_path: Path,
+) -> None:
+    """A real registered national source is a ZIP (per `sources.yaml`), not
+    a bare CSV -- `ingest` must extract the results member before parsing,
+    the same `extract_zip_safely`-then-`ingest_national` path
+    `tests/test_ingest_national.py::test_idempotent_reingest_via_real_fixture_zip`
+    already proves at the parser level, exercised here end to end through
+    the CLI (task 12d's real-pipeline proof needs exactly this path).
+    """
+    _require_ephemeral_postgres()
+
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("resultados2025.csv", NATIONAL_CSV)
+        zf.writestr("ambitosElectorales.csv", "not,the,results,file\n")
+    zip_bytes = buffer.getvalue()
+
+    source_id = f"national/cli-zip-test-{uuid.uuid4()}"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/cli-zip-test.zip",
+                "mime": "application/zip",
+                "notes": "CLI ZIP-extraction fixture",
+                "filename": "cli-zip-test.zip",
+            }
+        ]
+    }
+    fetcher = FakeFetcher(payload=zip_bytes)
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=fetcher,
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        inserted = ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="legislativas",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+        assert inserted == 2
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from result_row where archive_entry_id = %s", (source_id,)
+            )
+            (count,) = cur.fetchone()
+        assert count == 2
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+        conn.commit()
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # 12.4 -- validate-crosswalk reports unmapped codes and exits nonzero
 # ---------------------------------------------------------------------------
