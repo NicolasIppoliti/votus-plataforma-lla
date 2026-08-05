@@ -294,11 +294,11 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 
 ### 10b — D'Hondt (Ley 19.945 Art. 161, national diputados only)
 
-- [ ] 10.12 RED: `dhondt.test.ts::test_national_diputados_quotient_table_matches_supplied_vote_totals`.
-- [ ] 10.13 RED: `dhondt.test.ts::test_national_3_percent_padron_threshold_excludes_list_but_reports_raw_share` (Art. 160 — basis is padrón, not valid votes).
-- [ ] 10.14 RED: `dhondt.test.ts::test_equal_quotient_different_vote_totals_ordered_by_vote_total_and_flagged_statutory` (Art. 161(c) first clause).
-- [ ] 10.15 RED: `dhondt.test.ts::test_equal_quotient_and_equal_votes_tie_flagged_as_simulation_convention_not_statute` (Art. 161(c) ends in sorteo, which the system does not perform).
-- [ ] 10.16 GREEN: create `apps/web/src/domain/seat-allocation/dhondt.ts` (module-private) per 10.12–10.15; table-driven, no I/O.
+- [x] 10.12 RED: `dhondt.test.ts::test_national_diputados_quotient_table_matches_supplied_vote_totals`.
+- [x] 10.13 RED: `dhondt.test.ts::test_national_3_percent_padron_threshold_excludes_list_but_reports_raw_share` (Art. 160 — basis is padrón, not valid votes).
+- [x] 10.14 RED: `dhondt.test.ts::test_equal_quotient_different_vote_totals_ordered_by_vote_total_and_flagged_statutory` (Art. 161(c) first clause).
+- [x] 10.15 RED: `dhondt.test.ts::test_equal_quotient_and_equal_votes_tie_flagged_as_simulation_convention_not_statute` (Art. 161(c) ends in sorteo, which the system does not perform).
+- [x] 10.16 GREEN: create `apps/web/src/domain/seat-allocation/dhondt.ts` (module-private) per 10.12–10.15; table-driven, no I/O.
 
 ### 10c — `allocate.ts` public boundary and level→method binding
 
