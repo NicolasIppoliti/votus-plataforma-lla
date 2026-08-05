@@ -1,0 +1,27 @@
+-- 0011_mesa_tipo.sql
+-- Phase 16a: capture `mesa_tipo` so a foreign-resident mesa is
+-- distinguishable from a regular one.
+--
+-- Diagnosed live: in Coronel Rosales, every NATIONAL category covers 151
+-- mesas across 2023 (PASO, generales, balotaje) while every PROVINCIAL/
+-- MUNICIPAL one covers 153 -- the two extras (9001, 9002) carry
+-- `mesa_tipo = EXTRANJEROS` in the source. Foreign residents registered in
+-- the padrón de extranjeros vote in PBA provincial and municipal races but
+-- not national ones -- that is a real electoral fact, not a data defect.
+-- Without this column the database cannot tell a foreign-resident mesa from
+-- a regular one, so a per-mesa cross-year comparison would silently compare
+-- different mesa populations.
+--
+-- Attached to `result_row` (not `jurisdiction`): `mesa_tipo` is a property
+-- of one source row's mesa as declared BY THAT SOURCE for that election, the
+-- same reasoning `granularity`/`source_kind` already follow on this table --
+-- `jurisdiction` stays the pure lineage/identity model with no per-election
+-- attributes.
+--
+-- Nullable: only `mesa`-granularity rows carry a `mesa_id` at all (see
+-- `jurisdiction-model`'s no-fabrication rule), and PBA ingestion (Phase 5,
+-- not yet implemented) has not been verified to publish an equivalent
+-- column, so `NULL` means "not applicable / not yet captured", never a
+-- guessed "NATIVOS" default.
+
+alter table result_row add column if not exists mesa_tipo text;
