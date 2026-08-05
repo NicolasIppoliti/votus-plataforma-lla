@@ -38,14 +38,17 @@ def test_2023_generales_mesa_rows_one_per_combination() -> None:
         _read("national_2023_sample.csv"), archive_entry_id="national/2023-generales"
     )
 
-    # 2 mesas x 2 lists (agrupación 134, 135) = 4 combinations, no more, no
-    # fewer — one normalized row per (mesa, list, category) combination.
+    # 2 mesas x 2 lists = 4 combinations, no more, no fewer — one normalized
+    # row per (mesa, list, category). `list_id` is the (agrupación, lista)
+    # pair, because in a PASO one agrupación fields several competing internal
+    # lists; it degrades to the bare agrupación id where the source carries no
+    # `lista_numero`.
     assert len(rows) == 4
     assert {(r.mesa, r.list_id) for r in rows} == {
-        (1, "134"),
-        (1, "135"),
-        (2, "134"),
-        (2, "135"),
+        (1, "134-3005"),
+        (1, "135-3016"),
+        (2, "134-3005"),
+        (2, "135-3016"),
     }
     for row in rows:
         assert row.granularity == "mesa"
@@ -163,7 +166,48 @@ def test_ambiguous_duplicate_natural_keys_are_quarantined_not_crashed() -> None:
         "ingest must not emit two rows sharing one natural key; the ambiguous "
         f"pair was not quarantined: {keys}"
     )
-    assert any(r.list_id == "135" for r in rows), (
+    assert any(r.list_id == "135-3016" for r in rows), (
         "the unambiguous row must still be ingested -- one ambiguous municipal "
         "row must not discard the rest of the file"
     )
+
+
+def test_internal_primary_lists_are_distinct_rows_not_quarantined() -> None:
+    """In a PASO, one agrupación fields SEVERAL internal lists.
+
+    That is the entire point of a primary: agrupación 134 in the real 2023
+    PASO file runs `3005 A- CELESTE Y BLANCA` and `3006 B- JUSTA Y
+    SOBERANA` against each other in the same mesa and cargo. They are
+    different candidacies with different vote counts, not a data defect.
+
+    Deriving `list_id` from `agrupacion_id` alone collapses them into one
+    natural key, so the ambiguity quarantine — added for the genuinely
+    indistinguishable municipal rows in the 2023 generales file — discarded
+    every internal list in the PASO: 6.462.906 rows across 2.666.412 keys,
+    spanning every category including PRESIDENTE. `lista_numero` is empty
+    in the 2023 generales file, populated throughout the PASO, and
+    populated for about a quarter of the 2025 rows, so the identity of a
+    list is the pair, not the agrupación.
+    """
+    csv_text = (
+        "año,eleccion_tipo,recuento_tipo,padron_tipo,distrito_id,distrito_nombre,"
+        "seccionprovincial_id,seccionprovincial_nombre,seccion_id,seccion_nombre,"
+        "circuito_id,circuito_nombre,mesa_id,mesa_tipo,mesa_electores,cargo_id,"
+        "cargo_nombre,agrupacion_id,agrupacion_nombre,lista_numero,lista_nombre,"
+        "votos_tipo,votos_cantidad\n"
+        "2023,PASO,DEFINITIVO,NAC,01,X,,,1,S,00001,C,1,M,300,1,PRESIDENTE,"
+        "134,UXP,3005,A- CELESTE Y BLANCA,POSITIVO,49\n"
+        "2023,PASO,DEFINITIVO,NAC,01,X,,,1,S,00001,C,1,M,300,1,PRESIDENTE,"
+        "134,UXP,3006,B- JUSTA Y SOBERANA,POSITIVO,25\n"
+    )
+
+    rows = ingest_national(csv_text.encode("utf-8"), archive_entry_id="test/paso")
+
+    assert len(rows) == 2, (
+        "both internal lists of the same agrupación must survive as distinct "
+        f"rows; got {len(rows)}"
+    )
+    assert len({r.list_id for r in rows}) == 2, (
+        f"the two lists must carry distinct list_ids; got {[r.list_id for r in rows]}"
+    )
+    assert {r.result.votes for r in rows} == {49, 25}

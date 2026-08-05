@@ -116,6 +116,17 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
         if raw["votos_tipo"] != "POSITIVO" or not agrupacion_id or agrupacion_id == "0":
             continue
 
+        # A list's identity is (agrupación, lista) -- NOT the agrupación alone.
+        # In a PASO one agrupación fields several internal lists competing
+        # against each other in the same mesa and cargo (agrupación 134 runs
+        # `3005 A- CELESTE Y BLANCA` against `3006 B- JUSTA Y SOBERANA`), which
+        # is the point of a primary. `lista_numero` is empty throughout the 2023
+        # generales file, populated throughout the PASO, and populated for about
+        # a quarter of the 2025 rows, so the composite degrades to the bare
+        # agrupación id exactly where the source has no list to distinguish.
+        lista_numero = (raw.get("lista_numero") or "").strip()
+        list_id = f"{agrupacion_id}-{lista_numero}" if lista_numero else agrupacion_id
+
         mesa_id = _normalize_mesa_id(raw["mesa_id"])
         result = make_result_row(
             granularity="mesa",
@@ -124,7 +135,7 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
             circuito=raw["circuito_id"],
             mesa=mesa_id,
             category=raw["cargo_nombre"],
-            list_id=agrupacion_id,
+            list_id=list_id,
             votes=int(raw["votos_cantidad"]),
         )
         rows.append(
