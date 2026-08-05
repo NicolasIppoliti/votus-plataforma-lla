@@ -317,7 +317,18 @@ def find_unmapped_jurisdictions(
     codes: Iterable[tuple[str, str]], crosswalk: CrosswalkTable
 ) -> list[QuarantinedJurisdiction]:
     """Report every `(distrito, seccion)` pair with no curated crosswalk
-    entry -- never silently ignored (task 12.4)."""
+    entry -- never silently ignored (task 12.4).
+
+    Phase 16b: `codes` comes from the raw national CSVs, which the real
+    archived 2023 file carries UNPADDED (`"2"`, `"27"`); `crosswalk`
+    (`curated/crosswalk.yaml`) is zero-padded (`"02"`, `"027"`). Comparing
+    verbatim would misreport every real 2023 code as unmapped even though it
+    IS curated -- confirmed live, the same padding-independence
+    `_normalize_administrative_code` already gives `collect_national_mesa_codes`
+    (Phase 15). Applied on both sides here rather than inside
+    `CrosswalkTable.resolve_national`, which stays a plain exact-match lookup
+    used elsewhere against already-normalized keys.
+    """
     unmapped: list[QuarantinedJurisdiction] = []
     seen: set[tuple[str, str]] = set()
     for distrito, seccion in codes:
@@ -325,7 +336,14 @@ def find_unmapped_jurisdictions(
         if key in seen:
             continue
         seen.add(key)
-        if crosswalk.resolve_national(distrito_code=distrito, seccion_code=seccion) is None:
+        normalized_distrito = _normalize_administrative_code(distrito)
+        normalized_seccion = _normalize_administrative_code(seccion)
+        resolved = any(
+            _normalize_administrative_code(entry.national_distrito_code) == normalized_distrito
+            and _normalize_administrative_code(entry.national_seccion_code) == normalized_seccion
+            for entry in crosswalk.jurisdictions
+        )
+        if not resolved:
             unmapped.append(
                 QuarantinedJurisdiction(
                     code=f"{distrito}/{seccion}",
