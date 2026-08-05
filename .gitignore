@@ -1,0 +1,17 @@
+# Local AI runtime state
+.atl/
+
+# Raw immutable archive (D2) — sha256-tracked via archive-manifest.json, not git
+archive/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Node
+node_modules/
+.next/
+apps/web/node_modules/
+*.tsbuildinfo
