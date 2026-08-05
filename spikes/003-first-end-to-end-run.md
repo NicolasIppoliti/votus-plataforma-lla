@@ -109,6 +109,51 @@ concrete, measured forward gap for whichever change next touches
 5-6 minutes is tolerable for a one-off manual run but would not be for a
 tight ingestion-then-serve loop.
 
+## UPDATE (Phase 14b): batched jurisdiction resolution re-run
+
+Task 14.4-14.6 fixed the N+1 flagged above. `etl/etl/db.py::batch_upsert_jurisdictions`
+replaced `load_national_rows`'s per-mesa `upsert_jurisdiction` calls with
+exactly two round trips for the whole batch: one `unnest(...) with ordinality`
+`SELECT` (NULL-safe `IS NOT DISTINCT FROM` join, preserving the same
+semantics `upsert_jurisdiction` already required — migration 0002's unique
+key spans four nullable columns, so a plain `ON CONFLICT` would silently
+duplicate every row with a `NULL` in that key) to resolve every already-
+known jurisdiction in one shot, then one bulk `INSERT ... SELECT * FROM
+unnest(...) RETURNING ...` for whatever is missing. Proven with a new
+integration test, `test_jurisdiction_resolution_is_batched_not_per_row`
+(50 distinct mesas, asserts round trips stay under 10 — a per-row pattern
+would issue at least 100).
+
+Re-ran the SAME command against the SAME archived source
+(`archive/national/2025-legislativas.zip`, sha256
+`5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b`),
+through the same `etl_writer` role, on the same machine:
+
+```
+export ETL_DATABASE_URL="postgresql://etl_writer:etl_writer_local_dev_only@127.0.0.1:54322/postgres"
+cd etl && time uv run python -m etl ingest --source national/2025-legislativas --year 2025 --round legislativas
+```
+
+```
+ingested 1621111 rows from national/2025-legislativas
+uv run python -m etl ingest --source national/2025-legislativas --year 2025    20.07s user 5.19s system 44% cpu 57.156 total
+```
+
+| Metric | Before (task 12.16) | After (task 14.6) |
+|---|---|---|
+| Wall-clock | **5 min 53 s** (353 s) | **57 s** |
+| Speedup | — | **~6.2x** |
+| `result_row` count | 1,621,111 | 1,621,111 (identical) |
+| Distinct jurisdictions | 108,992 | 108,992 (identical) |
+| Distinct categories | 2 | 2 (identical) |
+| Total votes | 28,196,825 | 28,196,825 (identical) |
+| Average CPU | 13% (latency-bound) | 44% (still not compute-bound, but far less wait) |
+
+The composition is byte-for-byte identical to the original run — this was
+purely a round-trip-count fix, not a behavior change. The remaining ~57 s
+is dominated by CSV parsing and the ~1.6M-row bulk `result_row` insert, not
+jurisdiction resolution; no further N+1 was observed for this source.
+
 ## What this run does NOT cover
 
 - PBA and fiscalización ingestion were not re-run here (already covered by

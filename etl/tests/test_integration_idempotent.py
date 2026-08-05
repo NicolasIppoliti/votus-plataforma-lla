@@ -241,3 +241,110 @@ def test_two_elections_in_one_archive_entry_do_not_collide(
         "rows from the two elections collided on a natural key that omits "
         f"election_id: expected {len(rows_2023) + len(rows_2025)}, got {total_rows}"
     )
+
+
+class _CountingCursorProxy:
+    """Wraps a real psycopg cursor, counting every `execute`/`executemany`
+    call so a test can assert on the number of round trips a function
+    issues without needing a network-level mock -- `pg_conn` stays a real
+    ephemeral Postgres connection throughout.
+    """
+
+    def __init__(self, cursor, counter: dict[str, int]) -> None:
+        self._cursor = cursor
+        self._counter = counter
+
+    def execute(self, *args, **kwargs):
+        self._counter["count"] += 1
+        return self._cursor.execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        self._counter["count"] += 1
+        return self._cursor.executemany(*args, **kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return self._cursor.__exit__(*exc_info)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _CountingConnectionProxy:
+    """Wraps a real `psycopg.Connection`, handing out `_CountingCursorProxy`
+    cursors so every `execute`/`executemany` call made through this
+    connection is counted -- everything else (`commit`, `rollback`, ...)
+    passes straight through to the real connection.
+    """
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+        self.counter: dict[str, int] = {"count": 0}
+
+    def cursor(self, *args, **kwargs):
+        return _CountingCursorProxy(self._conn.cursor(*args, **kwargs), self.counter)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connection) -> None:
+    """Task 14.4: the number of database round trips `load_national_rows`
+    issues to resolve jurisdiction ids must be bounded by a SMALL CONSTANT,
+    never proportional to the number of distinct mesas in the batch.
+
+    This is the real, measured N+1 from `spikes/003-first-end-to-end-run.md`:
+    ~109k distinct jurisdictions at real national 2025 scale, one
+    SELECT-then-INSERT round trip per first-seen mesa, 5m53s wall-clock at
+    13% CPU (latency-bound, not compute-bound). This test proves the shape
+    of the fix with 50 distinct mesas -- large enough that a per-row
+    pattern would trivially blow past any small constant, without needing
+    real national-scale fixtures to prove it.
+    """
+    archive_entry_id = f"test-batched-{uuid.uuid4()}"
+    distinct_mesa_count = 50
+    rows: list[NationalRow] = []
+    for mesa in range(1, distinct_mesa_count + 1):
+        result = make_result_row(
+            granularity="mesa",
+            distrito="02",
+            seccion="027",
+            circuito="01",
+            mesa=mesa,
+            category="DIPUTADO NACIONAL",
+            list_id="135",
+            votes=10,
+        )
+        rows.append(
+            NationalRow(
+                result=result,
+                estado_final=None,
+                archive_entry_id=archive_entry_id,
+                source_row_index=len(rows),
+                natural_key=(
+                    archive_entry_id,
+                    mesa,
+                    "135",
+                    "DIPUTADO NACIONAL",
+                    "POSITIVO",
+                ),
+            )
+        )
+
+    counting_conn = _CountingConnectionProxy(pg_conn)
+    inserted = load_national_rows(counting_conn, rows, year=2025, round_="legislativas")
+
+    assert inserted == distinct_mesa_count
+    # A per-row SELECT-then-INSERT pattern would issue at least
+    # 2 * distinct_mesa_count = 100 round trips just for jurisdiction
+    # resolution. A batched resolution issues a small, fixed number of
+    # round trips (election, category, jurisdiction-resolve,
+    # jurisdiction-insert, result_row delete, result_row insert) that does
+    # not grow with the number of distinct mesas.
+    assert counting_conn.counter["count"] < 10, (
+        f"expected a small, bounded number of round trips, got "
+        f"{counting_conn.counter['count']} for {distinct_mesa_count} distinct mesas "
+        "-- looks like a per-row SELECT-then-INSERT pattern is still present"
+    )

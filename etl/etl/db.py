@@ -127,6 +127,108 @@ def upsert_jurisdiction(
         return cur.fetchone()[0]
 
 
+JurisdictionKey = tuple[str, str | None, str | None, str | None, int | None]
+"""`(distrito, seccion, circuito, establecimiento, mesa)` -- the same
+lineage tuple `upsert_jurisdiction` resolves one at a time."""
+
+
+def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[JurisdictionKey, str]:
+    """Resolve or create every `jurisdiction` row for a batch of lineage
+    tuples in TWO round trips total, instead of one SELECT-then-INSERT
+    round trip per distinct tuple (task 14.4/14.5 -- ~109k distinct mesas,
+    5m53s at real national 2025 scale, measured in
+    `spikes/003-first-end-to-end-run.md`; `load_national_rows`'s per-call
+    cache only avoids a REPEAT round trip for an already-seen mesa within
+    the same run, so the first occurrence of each distinct mesa still cost
+    one synchronous SELECT immediately followed by one INSERT on a
+    cache miss).
+
+    Preserves `upsert_jurisdiction`'s `IS NOT DISTINCT FROM` NULL semantics
+    exactly: migration 0002's unique key spans four NULLABLE columns, and
+    Postgres never considers `NULL = NULL` for a plain `ON CONFLICT` --
+    every row with a `NULL` in that key (e.g. every PBA distrito-level row,
+    which has all four `NULL`) would otherwise be duplicated on every call,
+    the exact bug `upsert_jurisdiction`'s docstring already documents.
+
+    Returns a mapping from EVERY key in `keys` (order-preserving de-dup
+    happens internally) to its resolved `jurisdiction.id`.
+    """
+    distinct_keys = list(dict.fromkeys(keys))
+    if not distinct_keys:
+        return {}
+
+    distritos = [key[0] for key in distinct_keys]
+    seccions = [key[1] for key in distinct_keys]
+    circuitos = [key[2] for key in distinct_keys]
+    establecimientos = [key[3] for key in distinct_keys]
+    mesas = [key[4] for key in distinct_keys]
+
+    resolved: dict[JurisdictionKey, str] = {}
+    missing: list[JurisdictionKey] = []
+
+    with conn.cursor() as cur:
+        # Round trip 1 -- resolve every tuple that already has a
+        # `jurisdiction` row. `unnest(...) with ordinality` expands the
+        # five parallel arrays back into one row per input tuple (matching
+        # by NULL-safe `IS NOT DISTINCT FROM`, not `=`), so a single query
+        # replaces one SELECT per distinct tuple.
+        cur.execute(
+            """
+            select v.distrito, v.seccion, v.circuito, v.establecimiento, v.mesa, j.id
+            from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[])
+                 with ordinality as v(distrito, seccion, circuito, establecimiento, mesa, idx)
+            left join jurisdiction j
+              on j.distrito_code = v.distrito
+             and j.seccion_code is not distinct from v.seccion
+             and j.circuito_code is not distinct from v.circuito
+             and j.establecimiento_code is not distinct from v.establecimiento
+             and j.mesa_code is not distinct from v.mesa
+            order by v.idx
+            """,
+            (distritos, seccions, circuitos, establecimientos, mesas),
+        )
+        for distrito, seccion, circuito, establecimiento, mesa, jurisdiction_id in cur.fetchall():
+            key = (distrito, seccion, circuito, establecimiento, mesa)
+            if jurisdiction_id is not None:
+                resolved[key] = jurisdiction_id
+            else:
+                missing.append(key)
+
+        # Round trip 2 -- bulk-insert every tuple with no existing row.
+        # Safe without `ON CONFLICT`: `missing` is already de-duplicated
+        # (derived from `distinct_keys` above, itself de-duplicated), and
+        # this is a single-writer batch load, never a concurrent upsert.
+        if missing:
+            cur.execute(
+                """
+                insert into jurisdiction (
+                    distrito_code, seccion_code, circuito_code, establecimiento_code, mesa_code
+                )
+                select * from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[])
+                returning distrito_code, seccion_code, circuito_code, establecimiento_code,
+                          mesa_code, id
+                """,
+                (
+                    [key[0] for key in missing],
+                    [key[1] for key in missing],
+                    [key[2] for key in missing],
+                    [key[3] for key in missing],
+                    [key[4] for key in missing],
+                ),
+            )
+            for (
+                distrito,
+                seccion,
+                circuito,
+                establecimiento,
+                mesa,
+                jurisdiction_id,
+            ) in cur.fetchall():
+                resolved[(distrito, seccion, circuito, establecimiento, mesa)] = jurisdiction_id
+
+    return {key: resolved[key] for key in keys}
+
+
 def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRowRecord]) -> int:
     """D8's idempotent load: delete every existing `result_row` for
     `archive_entry_id`, then bulk-insert `records`, in the caller's
