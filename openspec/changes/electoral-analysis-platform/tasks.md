@@ -427,9 +427,22 @@ product owner asked for them fixed rather than carried as debt.
 
 ### 14c — Playwright never runs
 
-- [ ] 14.7 GREEN: commit a credential-provisioning path for the LOCAL stack only — the Supabase local anon/service keys are well-known fixed development defaults, not secrets, so they can be committed for `supabase start` without exposing anything. A real deployment continues to read from the environment.
-- [ ] 14.8 GREEN: seed the e2e fixture user reproducibly, and delete it afterwards.
-- [ ] 14.9 REFACTOR: run all four e2e spec files and record which now genuinely pass. Any that still skip MUST state why; a skip that hides an unproven requirement is worse than a failure.
+- [x] 14.7 GREEN: commit a credential-provisioning path for the LOCAL stack only — the Supabase local anon/service keys are well-known fixed development defaults, not secrets, so they can be committed for `supabase start` without exposing anything. A real deployment continues to read from the environment.
+- [x] 14.8 GREEN: seed the e2e fixture user reproducibly, and delete it afterwards.
+- [x] 14.9 REFACTOR: run all four e2e spec files and record which now genuinely pass. Any that still skip MUST state why; a skip that hides an unproven requirement is worse than a failure.
+
+  Result (recorded here, `apps/web/e2e.env` committed, ran via
+  `npx playwright test` with the local Supabase stack up): **3/4 genuinely
+  pass** — `auth.spec.ts`, `provenance.spec.ts`, `fiscalizacion.spec.ts`.
+  `comparison.spec.ts` still skips, with an explicit, already-documented
+  reason (pre-existing code, Phase 11): the local `service_role` has no
+  table GRANTs on the electoral tables (writes normally go only through
+  the ETL's raw `postgres`/`etl_writer` connection per D8), so its
+  fixture-row seeding step fails and the test self-skips rather than
+  failing on an environment/ops gap unrelated to the page or repository
+  under test. Confirmed reproducible across two consecutive runs (fixture
+  user seeded and deleted cleanly both times, `select ... from auth.users
+  where email like '%votus-e2e-fixture%'` returns 0 rows after each run).
 
 ### 14d — PBA and fiscalización never loaded from real sources
 
