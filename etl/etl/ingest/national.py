@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import io
+import sys
 from dataclasses import dataclass
 
 from etl import db
@@ -141,7 +142,57 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
                 ),
             )
         )
-    return rows
+
+    return _quarantine_ambiguous_rows(rows)
+
+
+def _quarantine_ambiguous_rows(rows: list[NationalRow]) -> list[NationalRow]:
+    """Drop rows whose natural key repeats within one file, and say so.
+
+    The 2023 national file bundles ten categories, from PRESIDENTE Y VICE
+    down to MIEMBROS DE JUNTA COMUNAL, and for the two most local ones its
+    distrito/seccion/circuito/mesa lineage does not identify the municipio.
+    The result is rows that are byte-identical across every column except
+    `votos_cantidad`: measured on the real archived `2023-generales.zip`,
+    5.051 natural keys repeat, 2.379 under INTENDENTE and 2.672 under
+    MIEMBROS DE JUNTA COMUNAL. No national category is affected.
+
+    They are genuinely indistinguishable in the source, so there is no
+    correct way to pick one -- summing could double-count a mesa and
+    choosing the first is arbitrary. They are therefore excluded and
+    reported, never silently resolved.
+
+    Before this, one such row aborted the entire ingest on a raw psycopg
+    `UniqueViolation` against `result_row_natural_key`, discarding 2,7
+    million good national rows with it.
+    """
+    by_key: dict[tuple, list[NationalRow]] = {}
+    for row in rows:
+        by_key.setdefault(
+            (row.result.distrito, row.result.seccion, row.result.circuito,
+             row.result.mesa, row.category, row.list_id),
+            [],
+        ).append(row)
+
+    ambiguous = {k: v for k, v in by_key.items() if len(v) > 1}
+    if not ambiguous:
+        return rows
+
+    dropped = sum(len(v) for v in ambiguous.values())
+    categories: dict[str, int] = {}
+    for key in ambiguous:
+        categories[key[4]] = categories.get(key[4], 0) + 1
+    breakdown = ", ".join(
+        f"{name} {count}" for name, count in sorted(categories.items(), key=lambda kv: -kv[1])
+    )
+    print(
+        f"quarantined {dropped} rows across {len(ambiguous)} ambiguous natural keys "
+        f"({breakdown}) -- indistinguishable in the source except by vote count, "
+        "so no row was loaded for them",
+        file=sys.stderr,
+    )
+
+    return [row for key, group in by_key.items() if len(group) == 1 for row in group]
 
 
 @dataclass(frozen=True)

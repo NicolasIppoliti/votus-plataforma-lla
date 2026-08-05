@@ -121,3 +121,49 @@ def test_idempotent_reingest_via_real_fixture_zip(tmp_path: Path) -> None:
 
     assert first == second
     assert len(first) == 4
+
+
+def test_ambiguous_duplicate_natural_keys_are_quarantined_not_crashed() -> None:
+    """The 2023 national file contains rows that are byte-identical across
+    every column except `votos_cantidad`.
+
+    Measured in the real archived `2023-generales.zip`: 5.051 natural keys
+    repeat, confined entirely to the two most local categories the national
+    file bundles -- INTENDENTE (2.379) and MIEMBROS DE JUNTA COMUNAL
+    (2.672). For a municipal race the file's distrito/seccion/circuito/mesa
+    lineage does not identify the municipio, so those rows are genuinely
+    indistinguishable from one another in the source itself.
+
+    Before this, the whole ingest aborted on a raw psycopg
+    `UniqueViolation` against `result_row_natural_key` -- one ambiguous
+    municipal row killed 2,7 million good national rows. The specs require
+    degradation to be surfaced and conflicting rows quarantined, never
+    dropped and never silently resolved by picking one arbitrarily.
+    """
+    csv_text = (
+        "año,eleccion_tipo,recuento_tipo,padron_tipo,distrito_id,distrito_nombre,"
+        "seccionprovincial_id,seccionprovincial_nombre,seccion_id,seccion_nombre,"
+        "circuito_id,circuito_nombre,mesa_id,mesa_tipo,mesa_electores,cargo_id,"
+        "cargo_nombre,agrupacion_id,agrupacion_nombre,lista_numero,lista_nombre,"
+        "votos_tipo,votos_cantidad\n"
+        # Two rows identical in every dimension except the vote count.
+        "2023,GENERAL,DEFINITIVO,NAC,20,X,,,1,S,00001,C,1,M,300,7,INTENDENTE,"
+        "200704,AGRUP,,,POSITIVO,79\n"
+        "2023,GENERAL,DEFINITIVO,NAC,20,X,,,1,S,00001,C,1,M,300,7,INTENDENTE,"
+        "200704,AGRUP,,,POSITIVO,63\n"
+        # An unambiguous row in the same file must survive untouched.
+        "2023,GENERAL,DEFINITIVO,NAC,02,Y,,,27,S,00099,C,5,M,300,3,DIPUTADO NACIONAL,"
+        "135,LLA,3016,L,POSITIVO,42\n"
+    )
+
+    rows = ingest_national(csv_text.encode("utf-8"), archive_entry_id="test/ambiguous")
+
+    keys = [(r.result.distrito, r.result.mesa, r.category, r.list_id) for r in rows]
+    assert len(keys) == len(set(keys)), (
+        "ingest must not emit two rows sharing one natural key; the ambiguous "
+        f"pair was not quarantined: {keys}"
+    )
+    assert any(r.list_id == "135" for r in rows), (
+        "the unambiguous row must still be ingested -- one ambiguous municipal "
+        "row must not discard the rest of the file"
+    )

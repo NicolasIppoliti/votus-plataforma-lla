@@ -454,6 +454,41 @@ fiscalización entry are registered in `sources.yaml` and have never been fetche
 - [x] 14.12 GREEN: place the fiscalización CSV at its registered archive path and ingest it, stripping personal data at ingestion.
 - [x] 14.13 REFACTOR: record the resulting `result_row` composition — rows per `source_kind`, per election, per granularity — in `spikes/004-full-corpus-load.md`, and confirm the default query still returns official-only.
 
+## Phase 15: Curated-table loaders
+
+The curated YAML files exist, are validated and are tested, but **nothing loads them into
+Postgres**: `party_mapping`, `party_canonical`, `list_identity`, `jurisdiction_crosswalk` and
+`mesa_crosswalk` are all EMPTY. Consequences measured live: the UI renders raw `list 110`
+instead of a party name, and a cross-year query returns NULL unless the caller hard-codes the
+per-election ids by hand — LLA is `135` in the 2023 PASO, `20135` in the 2023 generales and
+`110` in 2025. Reconciling those is precisely what the curated tables exist for.
+
+### 15a — party mapping loader
+
+- [ ] 15.1 RED: `etl/tests/test_load_curated.py::test_party_canonical_rows_created_once_per_canonical_party` — re-running must not duplicate.
+- [ ] 15.2 RED: `::test_party_mapping_keyed_by_year_jurisdiction_category_list_id` — the four-part key, never `agrupacion_id` alone.
+- [ ] 15.3 RED: `::test_same_party_across_three_id_spaces_resolves_to_one_canonical` — 135 (PASO 2023), 20135 (generales 2023) and 110 (2025) must resolve to one canonical party.
+- [ ] 15.4 RED: `::test_unverified_mapping_is_loaded_but_flagged` — `verified` is carried, not silently promoted.
+- [ ] 15.5 GREEN: `load_party_map_rows` in `etl/etl/db.py`, idempotent by natural key like `load_result_rows`.
+
+### 15b — crosswalk loader
+
+- [ ] 15.6 RED: `::test_jurisdiction_crosswalk_rows_loaded_from_curated_yaml`.
+- [ ] 15.7 RED: `::test_mesa_crosswalk_carries_presence_per_year_and_stability_flag`.
+- [ ] 15.8 GREEN: `load_crosswalk_rows` in `etl/etl/db.py`, idempotent.
+
+### 15c — CLI and reachability
+
+- [ ] 15.9 RED: `etl/tests/test_cli.py::test_load_curated_populates_every_curated_table` — the command must be reachable from the CLI, not merely importable. This project has shipped correct, tested, unreachable code seven times; this test exists to make the eighth impossible.
+- [ ] 15.10 GREEN: `load-curated` subcommand in `etl/etl/__main__.py`, alongside `fetch`, `ingest`, `validate-crosswalk` and `validate-curated`.
+- [ ] 15.11 GREEN: run it against the real curated files and record the resulting row counts per table in `spikes/005-curated-load.md`.
+
+### 15d — resolve party names in the UI
+
+- [ ] 15.12 RED: `apps/web/src/lib/fiscalizacion/repository.test.ts::test_rows_carry_a_resolved_party_name_when_a_mapping_exists`.
+- [ ] 15.13 RED: `::test_unmapped_list_id_renders_as_unmapped_not_as_a_bare_number` — an unmapped list is surfaced as unmapped, never silently shown as a raw id.
+- [ ] 15.14 GREEN: join `party_mapping` in the repository read path so pages render party names.
+
 ## Key Learnings
 
 1. The SPIKE's hard gates each remove or reshape specific downstream phases; gate (e)'s original DENY was itself later refuted by re-verification (Engram #1398), so tasks encode a conditional-pending-policy state for Phase 5 rather than a permanent removal.
