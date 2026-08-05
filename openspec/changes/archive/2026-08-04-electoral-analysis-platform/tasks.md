@@ -489,6 +489,43 @@ per-election ids by hand — LLA is `135` in the 2023 PASO, `20135` in the 2023 
 - [x] 15.13 RED: `::test_unmapped_list_id_renders_as_unmapped_not_as_a_bare_number` — an unmapped list is surfaced as unmapped, never silently shown as a raw id.
 - [x] 15.14 GREEN: join `party_mapping` in the repository read path so pages render party names.
 
+## Phase 16: Three carried gaps
+
+### 16a — `mesa_tipo` is not captured, and two mesas depend on it
+
+Diagnosed live: in 2023 every NATIONAL category covers 151 mesas in Coronel Rosales while every
+PROVINCIAL/MUNICIPAL one covers 153, consistently across PASO, generales and balotaje. The two
+extra mesas are **9001 and 9002, `mesa_tipo = EXTRANJEROS`** — foreign residents registered in
+the padrón de extranjeros vote in PBA provincial and municipal races but not in national ones.
+That is a real electoral fact, not a data defect. But `mesa_tipo` is captured NOWHERE — not in
+the ETL, not in any migration — so the database cannot tell a foreign-resident mesa from a
+regular one, and a per-mesa cross-year comparison silently compares different mesa populations.
+
+- [ ] 16.1 RED: `etl/tests/test_ingest_national.py::test_mesa_tipo_is_captured_from_the_source`.
+- [ ] 16.2 RED: `::test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa`.
+- [ ] 16.3 GREEN: carry `mesa_tipo` through `ingest_national` into `result_row`; migration `0011_mesa_tipo.sql` + down.
+- [ ] 16.4 RED then GREEN: `apps/web/src/lib/results/compare.test.ts::test_cross_year_comparison_flags_a_mesa_population_mismatch` — comparing a category whose mesa set differs between years MUST surface the difference, never average over it silently.
+
+### 16b — `validate-crosswalk` zero-padding
+
+Phase 15 fixed a padding mismatch in `collect_national_mesa_codes`: curated YAML uses zero-padded
+DINE codes while the raw CSVs are unpadded, silently yielding zero matches. `validate-crosswalk`
+was flagged as likely sharing it and was never verified.
+
+- [ ] 16.5 RED: a test proving `validate-crosswalk` finds a curated entry whose codes are zero-padded against unpadded source rows. If the bug is absent, record that plainly and close the item — do not manufacture a failure.
+- [ ] 16.6 GREEN: apply `_normalize_administrative_code` on both sides if the RED confirms it.
+
+### 16c — PBA municipal has no operator route
+
+`curated/party_map.yaml` carries the `coronel_rosales_municipal` mappings (list 2206 =
+LLA+PRO alliance) and Phase 15 loaded them, but only the national DIPUTADO NACIONAL read path
+was wired. No page renders a municipal figure, so the mappings are unreachable — the same
+tested-but-unreachable shape this change has hit eight times.
+
+- [ ] 16.7 RED: `apps/web/src/app/(authenticated)/municipal/page.test.tsx::test_route_renders_pba_municipal_results_with_resolved_party_names`.
+- [ ] 16.8 RED: `::test_distrito_granularity_is_labelled_never_presented_as_mesa` — the PBA municipal source publishes distrito totals; the indicator must say so.
+- [ ] 16.9 GREEN: create the route, reachable from the authenticated layout, reading only through the repository.
+
 ## Key Learnings
 
 1. The SPIKE's hard gates each remove or reshape specific downstream phases; gate (e)'s original DENY was itself later refuted by re-verification (Engram #1398), so tasks encode a conditional-pending-policy state for Phase 5 rather than a permanent removal.
