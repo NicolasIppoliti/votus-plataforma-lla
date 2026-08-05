@@ -24,23 +24,52 @@ Two kinds of test data are used, deliberately:
 from __future__ import annotations
 
 import csv
+import os
+import uuid
 from pathlib import Path
 
+import psycopg
+import pytest
 import yaml
 
 from etl.crosswalk import FISCALIZACION_VOTE_COLUMNS
 from etl.ingest.fiscalizacion import (
+    FiscalizacionRow,
     FiscalizacionUploadForbiddenError,
     _merge_wrapped_rows,
     classify_reexport_drift,
     guard_local_mirror_only,
     ingest_fiscalizacion,
+    load_fiscalizacion_rows,
     strip_personal_columns,
 )
+from etl.party_map import load_party_map
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).parent.parent.parent
 VOTE_HEADER = ",".join(FISCALIZACION_VOTE_COLUMNS)
+PARTY_MAP_PATH = REPO_ROOT / "curated" / "party_map.yaml"
+
+TEST_DSN = os.environ.get(
+    "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+)
+
+
+def _require_ephemeral_postgres() -> psycopg.Connection:
+    try:
+        return psycopg.connect(TEST_DSN, connect_timeout=2)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {TEST_DSN!r}: {exc}")
+
+
+@pytest.fixture
+def pg_conn():
+    conn = _require_ephemeral_postgres()
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
 
 
 def _real_fixture_text() -> str:
@@ -292,3 +321,208 @@ def test_real_fixture_converges_to_93_unique_mesas_with_documented_totals() -> N
     assert fuerza_patria_votes == 4_165
     assert round(lla_votes / total_votes * 100, 2) == 60.48
     assert round(fuerza_patria_votes / total_votes * 100, 2) == 20.03
+
+
+# ---------------------------------------------------------------------------
+# 12b — Fiscalización Postgres loader (real ephemeral Postgres)
+# ---------------------------------------------------------------------------
+
+
+def _snapshot(conn: psycopg.Connection, archive_entry_id: str) -> list[tuple]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select list_id, votes, source_kind, is_unmapped
+            from result_row
+            where archive_entry_id = %s
+            order by list_id
+            """,
+            (archive_entry_id,),
+        )
+        return cur.fetchall()
+
+
+def test_wide_columns_map_to_one_result_row_per_list(pg_conn: psycopg.Connection) -> None:
+    """12.8: the sheet is 17 wide vote columns per mesa; `result_row` is
+    long, one row per list. The mapping goes through
+    `curated/party_map.yaml` (never column position) -- so only the 15
+    party columns become rows; `En blanco`/`Impugnado` have no curated
+    `list_id` and are skipped rather than written under a fabricated id.
+    """
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    row = FiscalizacionRow(
+        mesa=1,
+        escuela="ESCUELA TEST",
+        escuela_normalized="ESCUELA TEST",
+        votes={column: index + 1 for index, column in enumerate(FISCALIZACION_VOTE_COLUMNS)},
+        source_row_indices=(0,),
+    )
+
+    inserted = load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+
+    snapshot = _snapshot(pg_conn, archive_entry_id)
+    assert inserted == 15, "17 columns minus En blanco/Impugnado (no curated list_id) == 15"
+    assert len(snapshot) == 15
+    list_ids = {list_id for list_id, _, _, _ in snapshot}
+    assert "110" in list_ids  # La Libertad Avanza -> ALIANZA LA LIBERTAD AVANZA
+
+
+def test_blank_vote_cell_is_missing_not_zero_in_the_loaded_rows(
+    pg_conn: psycopg.Connection,
+) -> None:
+    """12.9: a blank cell in the source CSV (`None` in `FiscalizacionRow.votes`)
+    must produce NO `result_row` for that column -- never a zero-vote row.
+    """
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    votes = {column: 5 for column in FISCALIZACION_VOTE_COLUMNS}
+    votes["La Libertad Avanza"] = None  # blank cell, per the real source shape
+    row = FiscalizacionRow(
+        mesa=2,
+        escuela="ESCUELA TEST",
+        escuela_normalized="ESCUELA TEST",
+        votes=votes,
+        source_row_indices=(0,),
+    )
+
+    load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+
+    snapshot = _snapshot(pg_conn, archive_entry_id)
+    assert "110" not in {list_id for list_id, _, _, _ in snapshot}
+    assert len(snapshot) == 14, "14 party columns loaded, La Libertad Avanza's blank cell skipped"
+
+
+def test_loaded_rows_carry_source_kind_fiscalizacion(pg_conn: psycopg.Connection) -> None:
+    """12.10: loaded fiscalización rows always carry `source_kind =
+    'fiscalizacion'` -- never `'official'`, which would make an internal
+    provisional tally indistinguishable from the definitive escrutinio.
+    """
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    row = FiscalizacionRow(
+        mesa=3,
+        escuela="ESCUELA TEST",
+        escuela_normalized="ESCUELA TEST",
+        votes={column: 1 for column in FISCALIZACION_VOTE_COLUMNS},
+        source_row_indices=(0,),
+    )
+
+    load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+
+    snapshot = _snapshot(pg_conn, archive_entry_id)
+    assert snapshot, "sanity: the fixture actually produced rows"
+    assert {source_kind for _, _, source_kind, _ in snapshot} == {"fiscalizacion"}
+
+
+def test_fiscalizacion_load_never_writes_a_fiscal_name(pg_conn: psycopg.Connection) -> None:
+    """12.11: no personal-data column (`Nombre`/`Apellido`) reaches any
+    table. `FiscalizacionRow` never carries a name field at all (D9.3), so
+    this asserts the structural invariant end to end: neither the inserted
+    `result_row` rows nor the `jurisdiction` row created for this mesa
+    contain the fake fiscal's name used only to prove the absence.
+    """
+    fake_given_name = "Testigo Sintetico Tres"
+    fake_surname = "Apellido Sintetico Cuatro"
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    row = FiscalizacionRow(
+        mesa=4,
+        escuela=f"ESCUELA TEST ({fake_given_name} {fake_surname} never stored here)",
+        escuela_normalized="ESCUELA TEST",
+        votes={column: 1 for column in FISCALIZACION_VOTE_COLUMNS},
+        source_row_indices=(0,),
+    )
+
+    load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            """
+            select column_name from information_schema.columns
+            where table_schema = 'public' and table_name in ('result_row', 'jurisdiction')
+            """
+        )
+        columns = [name for (name,) in cur.fetchall()]
+        for column in columns:
+            assert "nombre" not in column.lower() and "apellido" not in column.lower()
+
+        cur.execute(
+            "select jurisdiction_id, votes, list_id, source_kind, archive_entry_id, "
+            "source_row_index from result_row where archive_entry_id = %s",
+            (archive_entry_id,),
+        )
+        for db_row in cur.fetchall():
+            for value in db_row:
+                assert fake_given_name not in str(value)
+                assert fake_surname not in str(value)
+
+        cur.execute(
+            "select distrito_code, seccion_code, circuito_code, mesa_code from jurisdiction"
+        )
+        for db_row in cur.fetchall():
+            for value in db_row:
+                assert fake_given_name not in str(value)
+                assert fake_surname not in str(value)
+
+
+def test_fiscalizacion_reingest_is_idempotent_per_d8(pg_conn: psycopg.Connection) -> None:
+    """12.12: reuses `db.py::load_result_rows`, so D8's election-scoped
+    idempotency (migration 0008) applies to fiscalización the same way it
+    already applies to national/PBA -- re-running with the same
+    `archive_entry_id` and rows leaves `result_row` identical.
+    """
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    rows = [
+        FiscalizacionRow(
+            mesa=5,
+            escuela="ESCUELA TEST",
+            escuela_normalized="ESCUELA TEST",
+            votes={column: 2 for column in FISCALIZACION_VOTE_COLUMNS},
+            source_row_indices=(0,),
+        )
+    ]
+
+    first = load_fiscalizacion_rows(
+        pg_conn, rows, year=2025, round_="legislativas", party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+    first_snapshot = _snapshot(pg_conn, archive_entry_id)
+
+    second = load_fiscalizacion_rows(
+        pg_conn, rows, year=2025, round_="legislativas", party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+    second_snapshot = _snapshot(pg_conn, archive_entry_id)
+
+    assert first == second == 15
+    assert first_snapshot == second_snapshot
