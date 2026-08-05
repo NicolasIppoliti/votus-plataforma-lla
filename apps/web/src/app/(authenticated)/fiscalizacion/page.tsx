@@ -451,16 +451,31 @@ export function coarsestGranularity(rows: ResultRow[]): GranularityResult {
  * figures are never rendered inside the fiscalización view without their
  * own label") via `JuxtapositionBadge`.
  */
+export interface FiscalizacionRenderOptions {
+  comparison?: OfficialFigure;
+  /** Sources backing the FISCALIZACIÓN figure. */
+  sources?: Parameters<typeof ProvenanceLink>[0]["sources"];
+  /** Why no comparison figure was supplied, when one was requested. */
+  comparisonUnavailable?: string;
+  /** Sources backing the OFFICIAL figure — never merged with the above. */
+  officialSources?: SourceRef[];
+  /** Fiscalización archive entries that have no `source_ref` row at all. */
+  missingProvenance?: string[];
+}
+
 export function renderFiscalizacionView(
   view: FiscalizacionView,
-  comparison?: OfficialFigure,
-  sources: Parameters<typeof ProvenanceLink>[0]["sources"] = [],
-  /** Why no comparison figure was supplied, when one was requested. */
-  comparisonUnavailable?: string,
-  /** Sources backing the OFFICIAL figure — never merged with the above. */
-  officialSources: SourceRef[] = [],
-  /** Archive entries that have no `source_ref` row at all. */
-  missingProvenance: string[] = [],
+  // NAMED, not six positionals of which four were optional. This whole change
+  // is about figures rendering under the wrong label; a signature where
+  // inserting an argument silently shifts every one after it is that same
+  // shape, one level up.
+  {
+    comparison,
+    sources = [],
+    comparisonUnavailable,
+    officialSources = [],
+    missingProvenance = [],
+  }: FiscalizacionRenderOptions = {},
 ): ReactNode {
   if (view.status === "refused") {
     return (
@@ -687,6 +702,11 @@ export interface ComparisonRequest {
    * sameness test rather than a coincidence. A PARTY id is the opposite: LLA
    * is `135`, `20135` and `110` across the three files, which is why the
    * party side goes through each election's own mapping instead.
+   *
+   * `category` is the same shape: no `election_id`, and `name` is UNIQUE
+   * (migration 0001), so one row per category name across every election.
+   * "DIPUTADO NACIONAL" in 2023 and in 2025 is one `category.id`, which is
+   * what makes the sameness check below a check rather than a coincidence.
    */
   jurisdictionId: string;
   categoryId: string;
@@ -698,6 +718,12 @@ export interface ComparisonRequest {
    */
   partyContext: PartyMappingContext;
 }
+
+/** Nothing asked for, something unservable, or a usable request. */
+export type ComparisonRequestResult =
+  | { status: "none" }
+  | { status: "refused"; reason: string }
+  | { status: "ok"; request: ComparisonRequest };
 
 /**
  * Reads WHICH election to compare against from the request. It deliberately
@@ -713,11 +739,6 @@ export interface ComparisonRequest {
  * A half-specified request yields none at all, so a figure never renders with
  * a missing label.
  */
-export type ComparisonRequestResult =
-  | { status: "none" }
-  | { status: "refused"; reason: string }
-  | { status: "ok"; request: ComparisonRequest };
-
 export function comparisonFromParams(
   params: Record<string, string | string[] | undefined>,
 ): ComparisonRequestResult {
@@ -851,6 +872,18 @@ export function comparisonFromParams(
       reason: `compareYear ${year} contradicts the election id ${electionId}`,
     };
   }
+  if (electionId === FISCALIZACION_ELECTION.electionId) {
+    // Every other axis of a comparison is pinned to match; the ELECTION is the
+    // one axis the badge exists to vary. Without this, the same race renders
+    // beside itself under "cross-election juxtaposition" -- one election drawn
+    // as two, labelled as a trend over time.
+    return {
+      status: "refused",
+      reason:
+        `a comparison must be a DIFFERENT election from ` +
+        `${FISCALIZACION_ELECTION.electionId}; got the same one`,
+    };
+  }
   if (category !== FISCALIZACION_PARTY_CONTEXT.category) {
     return {
       status: "refused",
@@ -964,12 +997,32 @@ export async function loadOfficialComparison(
   };
 }
 
+/**
+ * One query param, or why it cannot be used.
+ *
+ * Next.js hands `string[]` for a REPEATED param. Collapsing that to
+ * `undefined` made a supplied value vanish: the page answered "Provide
+ * electionId" to a request that sent it twice, and a repeated `compare*`
+ * param was named in the missing list the operator had actually filled in.
+ * Supplied-but-unusable is a third state, the same split this module already
+ * makes between `none` and `refused`.
+ */
 function stringParam(
   params: Record<string, string | string[] | undefined>,
   key: string,
 ): string | undefined {
   const value = params[key];
   return typeof value === "string" ? value : undefined;
+}
+
+/** Every param supplied more than once, named. */
+function repeatedParams(
+  params: Record<string, string | string[] | undefined>,
+): string[] {
+  return Object.entries(params)
+    .filter(([, value]) => Array.isArray(value))
+    .map(([key]) => key)
+    .sort();
 }
 
 /**
@@ -982,6 +1035,17 @@ export default async function FiscalizacionPage({
   searchParams,
 }: FiscalizacionPageProps): Promise<ReactNode> {
   const params = await searchParams;
+
+  const repeated = repeatedParams(params);
+  if (repeated.length > 0) {
+    return renderFiscalizacionView({
+      status: "refused",
+      reason:
+        `these query parameters were supplied more than once and cannot be ` +
+        `resolved to one value: ${repeated.join(", ")}`,
+    });
+  }
+
   const electionId = stringParam(params, "electionId");
   const jurisdictionId = stringParam(params, "jurisdictionId");
   const categoryId = stringParam(params, "categoryId");
@@ -1007,13 +1071,16 @@ export default async function FiscalizacionPage({
     const requested = comparisonFromParams(params);
     return renderFiscalizacionView(
       { status: "refused", reason: outOfScope },
-      undefined,
-      [],
-      requested.status === "none"
-        ? undefined
-        : requested.status === "refused"
-          ? requested.reason
-          : "the request itself was refused, so no comparison was attempted",
+      {
+        ...(requested.status === "none"
+          ? {}
+          : {
+              comparisonUnavailable:
+                requested.status === "refused"
+                  ? requested.reason
+                  : "the request itself was refused, so no comparison was attempted",
+            }),
+      },
     );
   }
 
@@ -1039,6 +1106,13 @@ export default async function FiscalizacionPage({
       // ever read. Falling through to "no row resolved to a curated party"
       // sent the operator after a mapping problem that does not exist.
       comparisonUnavailable = `no rows were read: ${view.reason}`;
+    } else if (view.status === "ok" && view.rows.length === 0) {
+      // Zero rows resolved to nothing because there were none, not because
+      // the crosswalk failed. `renderFiscalizacionView` already says this in
+      // its own empty branch; the page used to contradict it.
+      comparisonUnavailable =
+        "no fiscalización rows were found for this jurisdiction, category and " +
+        "election, so there is no party to compare";
     } else if (top?.tied) {
       // The TIE, named as such. Reporting "no row resolved to a curated
       // party" for a tie states something false: every row may have resolved.
@@ -1099,12 +1173,11 @@ export default async function FiscalizacionPage({
     officialEntryIds.includes(source.archiveEntryId),
   );
 
-  return renderFiscalizacionView(
-    view,
-    comparison,
+  return renderFiscalizacionView(view, {
+    ...(comparison ? { comparison } : {}),
     sources,
-    comparisonUnavailable,
+    ...(comparisonUnavailable ? { comparisonUnavailable } : {}),
     officialSources,
     missingProvenance,
-  );
+  });
 }

@@ -28,6 +28,8 @@ import FiscalizacionPage, { FISCALIZACION_COVERAGE, FISCALIZACION_PARTY_CONTEXT,
 let repositoryRows: ResultRow[] = [];
 /** Sources the mocked `fetchSourceRefs` returns for the entry-point tests. */
 let sourceRefs: SourceRef[] = [];
+/** When set, the mocked repository refuses the fiscalización query. */
+let refuseQueryWith: string | null = null;
 
 // Restored after EVERY test: `process.env` and `repositoryRows` are shared
 // module state, so leaving them set makes results depend on execution order.
@@ -36,6 +38,7 @@ afterEach(() => {
   delete process.env["FISCALIZACION_CATEGORY_ID"];
   repositoryRows = [];
   sourceRefs = [];
+  refuseQueryWith = null;
 });
 
 vi.mock("@/lib/supabase/server-client", () => ({
@@ -46,21 +49,30 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
   return {
     ...actual,
-    createResultsRepository: () =>
-      Promise.resolve(
-        new actual.ResultsRepository(
-          { fetchRows: () => Promise.resolve(repositoryRows) },
-          {
-            fetchPartyNames: () =>
-              Promise.resolve(
-                new Map([
-                  ["110", "LA LIBERTAD AVANZA"],
-                  ["999", "FUERZA PATRIA"],
-                ]),
-              ),
-          },
-        ),
-      ),
+    createResultsRepository: () => {
+      const repository = new actual.ResultsRepository(
+        { fetchRows: () => Promise.resolve(repositoryRows) },
+        {
+          fetchPartyNames: () =>
+            Promise.resolve(
+              new Map([
+                ["110", "LA LIBERTAD AVANZA"],
+                ["999", "FUERZA PATRIA"],
+              ]),
+            ),
+        },
+      );
+      if (refuseQueryWith) {
+        // The production refusal paths — RLS denial, a failed query — which
+        // a repository that always answers `ok` can never reach.
+        repository.queryFiscalizacion = () =>
+          Promise.resolve({
+            status: "requires_explicit_unofficial_opt_in",
+            reason: refuseQueryWith as string,
+          });
+      }
+      return Promise.resolve(repository);
+    },
     fetchSourceRefs: () => Promise.resolve(sourceRefs),
   };
 });
@@ -152,8 +164,11 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
     );
 
     expect(html.toLowerCase()).toContain("unofficial");
-    expect(html).toContain("93");
-    expect(html).toContain("153");
+    // Tied to the coverage note's own element: bare `93` and `153` also match
+    // a vote count, a percentage, or a slice of a sha256 digest, and neither
+    // says which figure the denominator belongs to.
+    const coverageNote = html.slice(html.indexOf('role="note"'));
+    expect(coverageNote).toContain("93 of 153 mesas");
   });
 
   it("test_coverage_indicator_states_it_is_not_a_random_sample", () => {
@@ -166,6 +181,11 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
     );
 
     expect(html.toLowerCase()).toContain("not a random sample");
+    // Tied to the coverage NOTE's own element. `toContain("93")` also matches
+    // a vote count, a percentage or a sha256 digest, and says nothing about
+    // which figure it belongs to.
+    const note = html.slice(html.indexOf('role="note"'));
+    expect(note).toContain("93 of 153 mesas");
   });
 
   it("test_official_figure_inside_the_view_carries_its_own_official_indicator", () => {
@@ -180,12 +200,14 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
           coverage: FISCALIZACION_COVERAGE,
         },
         {
-          electionId: "2023-municipal-coronel-rosales",
-          electionLabel: "2023 municipal",
-          sourceKind: "official",
-          sharePercent: 29.31,
-          partyName: "LA LIBERTAD AVANZA",
-          archiveEntryIds: ["national/2023-generales"],
+          comparison: {
+            electionId: "2023-municipal-coronel-rosales",
+            electionLabel: "2023 municipal",
+            sourceKind: "official",
+            sharePercent: 29.31,
+            partyName: "LA LIBERTAD AVANZA",
+            archiveEntryIds: ["national/2023-generales"],
+          },
         },
       ),
     );
@@ -682,6 +704,106 @@ describe("fiscalizacion page — the real entry point", () => {
     expect(fiscalizacionBlock).not.toContain("have no source record");
   });
 
+  it("test_a_refused_query_is_reported_as_such_not_as_a_mapping_problem", async () => {
+    // RLS denial or a failed query. Every page test so far mocked a repository
+    // that always answers `ok`, so both this branch and the "no rows were
+    // read" comparison branch were green whether they worked or not.
+    process.env["FISCALIZACION_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    refuseQueryWith = "row-level security denied the read";
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "2025-legislativas-nacional",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+          compareElectionId: "2023-generales",
+          compareElectionLabel: "22 Oct 2023 generales",
+          compareYear: "2023",
+          compareCategory: "DIPUTADO NACIONAL",
+          compareJurisdiction: "national",
+          compareJurisdictionId: "j-027",
+          compareCategoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("row-level security denied the read");
+    expect(markup).toContain("no rows were read");
+    expect(markup).not.toContain("no row resolved to a curated party");
+  });
+
+  it("test_a_comparison_against_the_same_election_is_refused", () => {
+    process.env["FISCALIZACION_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+
+    const result = comparisonFromParams({
+      compareElectionId: "2025-legislativas-nacional",
+      compareElectionLabel: "26 Oct 2025 national legislative",
+      compareYear: "2025",
+      compareCategory: "DIPUTADO NACIONAL",
+      compareJurisdiction: "national",
+      compareJurisdictionId: "j-027",
+      compareCategoryId: "c-diputados",
+    });
+
+    // One election drawn as two, labelled a trend over time.
+    expect(result.status).toBe("refused");
+    if (result.status !== "refused") throw new Error("expected refused");
+    expect(result.reason).toContain("DIFFERENT election");
+  });
+
+  it("test_a_repeated_query_param_is_reported_not_treated_as_absent", async () => {
+    // Next.js hands `string[]` for a repeated param. `stringParam` returned
+    // `undefined` for those, so a SUPPLIED value vanished: the page then said
+    // "Provide electionId" about a request that sent it twice.
+    process.env["FISCALIZACION_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: ["2025-legislativas-nacional", "2023-generales"],
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("electionId");
+    expect(markup).toContain("more than once");
+  });
+
+  it("test_zero_rows_is_not_reported_as_a_mapping_failure", async () => {
+    // Zero rows resolved to nothing because there were zero rows, not because
+    // the crosswalk failed. The catch-all sent the operator after a
+    // `party_mapping` problem that does not exist.
+    process.env["FISCALIZACION_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    repositoryRows = [];
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "2025-legislativas-nacional",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+          compareElectionId: "2023-generales",
+          compareElectionLabel: "22 Oct 2023 generales",
+          compareYear: "2023",
+          compareCategory: "DIPUTADO NACIONAL",
+          compareJurisdiction: "national",
+          compareJurisdictionId: "j-027",
+          compareCategoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("no fiscalización rows");
+    expect(markup).not.toContain("no row resolved to a curated party");
+  });
+
   it("test_the_page_asks_for_the_parameters_it_needs", async () => {
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({ searchParams: Promise.resolve({}) })) as ReactElement,
@@ -1053,9 +1175,10 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     const html = renderToStaticMarkup(
       renderFiscalizacionView(
         { status: "refused", reason: "out of scope" },
-        undefined,
-        [],
-        "the request itself was refused, so no comparison was attempted",
+        {
+          comparisonUnavailable:
+            "the request itself was refused, so no comparison was attempted",
+        },
       ),
     );
 
@@ -1071,9 +1194,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
           rows: [FISCALIZACION_ROW, OFFICIAL_ROW],
           coverage: FISCALIZACION_COVERAGE,
         },
-        undefined,
-        [],
-        "no row resolved to a curated party to compare",
+        { comparisonUnavailable: "no row resolved to a curated party to compare" },
       ),
     );
 
