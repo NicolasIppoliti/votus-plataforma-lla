@@ -415,9 +415,9 @@ product owner asked for them fixed rather than carried as debt.
 
 ### 14a — Migration 0009 ships a known password
 
-- [ ] 14.1 RED: `supabase/tests/rls_write_role.sql` — assert no electoral-table role can log in with the literal `etl_writer_local_dev_only`, so a fresh deploy cannot inherit a publicly-known credential.
-- [ ] 14.2 GREEN: `supabase/migrations/0010_etl_writer_no_default_password.sql` + down — create `etl_writer` with NO usable password by default; a deployment MUST set one explicitly out of band. Keep the `if not exists` guard so an environment that already provisioned the role is untouched.
-- [ ] 14.3 GREEN: give local development an explicit, non-migration path to set the dev credential (a documented one-liner or seed script), so the local end-to-end flow still works without the migration itself shipping a secret.
+- [x] 14.1 RED: `supabase/tests/rls_write_role.sql` — assert no electoral-table role can log in with the literal `etl_writer_local_dev_only`, so a fresh deploy cannot inherit a publicly-known credential.
+- [x] 14.2 GREEN: `supabase/migrations/0010_etl_writer_no_default_password.sql` + down — create `etl_writer` with NO usable password by default; a deployment MUST set one explicitly out of band. Keep the `if not exists` guard so an environment that already provisioned the role is untouched.
+- [x] 14.3 GREEN: give local development an explicit, non-migration path to set the dev credential (a documented one-liner or seed script), so the local end-to-end flow still works without the migration itself shipping a secret.
 
 ### 14b — N+1 in `upsert_jurisdiction`
 
