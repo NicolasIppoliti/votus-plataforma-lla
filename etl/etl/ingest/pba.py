@@ -437,18 +437,26 @@ def resolve_pba_jurisdictions(
     quarantined: list[QuarantinedPbaRow] = []
 
     for row in rows:
-        national_distrito = resolve_pba_distrito_code(row.result.distrito, crosswalk)
-        if isinstance(national_distrito, QuarantinedPbaDistrito):
-            quarantined.append(QuarantinedPbaRow(row=row, reason=national_distrito.reason))
+        translated = resolve_pba_distrito_code(row.result.distrito, crosswalk)
+        if isinstance(translated, QuarantinedPbaDistrito):
+            quarantined.append(QuarantinedPbaRow(row=row, reason=translated.reason))
             continue
 
-        if national_distrito == row.result.distrito:
+        national_distrito, national_seccion = translated
+        if (national_distrito, national_seccion) == (row.result.distrito, row.result.seccion):
             resolved.append(row)
             continue
 
+        # A PBA partido total is a SECCION-level figure in the national scheme:
+        # PBA's distrito `027` is the partido, while national distrito `02` is
+        # the province and Coronel Rosales is its seccion `027`. Keeping the
+        # partido total at distrito granularity with a null seccion attributed
+        # 32.291 CONCEJALES votes -- Coronel Rosales's own valid-vote
+        # denominator -- to the whole of Buenos Aires.
         translated_result = make_result_row(
-            granularity=row.result.granularity,
+            granularity="seccion" if national_seccion else row.result.granularity,
             distrito=national_distrito,
+            seccion=national_seccion,
             category=row.result.category,
             list_id=row.result.list_id,
             votes=row.result.votes,
@@ -511,11 +519,16 @@ def load_pba_rows(
             category_id = db.upsert_category(conn, name=row.category)
             category_cache[row.category] = category_id
 
-        distrito = row.result.distrito
-        jurisdiction_id = jurisdiction_cache.get(distrito)
+        # The lineage is (distrito, seccion), not distrito alone: a PBA partido
+        # total is a seccion-level figure once translated to the national
+        # scheme, and dropping the seccion attributes it to the whole province.
+        lineage = (row.result.distrito, row.result.seccion)
+        jurisdiction_id = jurisdiction_cache.get(lineage)
         if jurisdiction_id is None:
-            jurisdiction_id = db.upsert_jurisdiction(conn, distrito=distrito)
-            jurisdiction_cache[distrito] = jurisdiction_id
+            jurisdiction_id = db.upsert_jurisdiction(
+                conn, distrito=row.result.distrito, seccion=row.result.seccion
+            )
+            jurisdiction_cache[lineage] = jurisdiction_id
 
         records.append(
             db.ResultRowRecord(

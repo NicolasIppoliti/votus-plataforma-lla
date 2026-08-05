@@ -204,7 +204,7 @@ class QuarantinedPbaDistrito:
 
 def resolve_pba_distrito_code(
     pba_distrito_code: str, crosswalk: CrosswalkTable
-) -> str | QuarantinedPbaDistrito:
+) -> tuple[str, str | None] | QuarantinedPbaDistrito:
     """Resolve a PBA-native distrito code (e.g. `"027"`) to the national
     numbering scheme's canonical, zero-padded distrito code (e.g. `"02"`),
     via the curated `jurisdiction_crosswalk` (task 17.5).
@@ -229,4 +229,7 @@ def resolve_pba_distrito_code(
             pba_distrito_code=pba_distrito_code,
             reason=f"no curated crosswalk entry for PBA distrito {pba_distrito_code!r}",
         )
-    return normalize_distrito_code(entry.national_distrito_code)
+    return (
+        normalize_distrito_code(entry.national_distrito_code),
+        normalize_seccion_code(entry.national_seccion_code),
+    )

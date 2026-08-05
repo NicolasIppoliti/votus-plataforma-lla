@@ -133,7 +133,11 @@ def test_pba_distrito_code_resolves_through_the_crosswalk_to_the_national_pair()
 
     resolved = resolve_pba_distrito_code("027", crosswalk)
 
-    assert resolved == "02"
+    # The PAIR, as this test's own name says: PBA's distrito `027` is the
+    # partido, national distrito `02` is the province, and Coronel Rosales is
+    # its seccion `027`. Resolving only the province attributes a partido
+    # total to all of Buenos Aires.
+    assert resolved == ("02", "027")
 
 
 def test_an_uncurated_pba_code_is_quarantined_not_silently_written() -> None:

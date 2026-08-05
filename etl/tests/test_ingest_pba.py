@@ -41,6 +41,7 @@ from etl.ingest.pba import (
     load_pba_distrito_totals,
     resolve_pba_jurisdictions,
 )
+from etl.jurisdiction import QuarantinedPbaDistrito, resolve_pba_distrito_code
 from etl.storage import LocalArchiveStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -353,3 +354,43 @@ def test_resolve_pba_jurisdictions_quarantines_an_uncurated_distrito_code() -> N
     assert len(result.quarantined) == len(rows)
     assert all(q.row.result.distrito == "027" for q in result.quarantined)
     assert all("027" in q.reason for q in result.quarantined)
+
+
+def test_pba_partido_total_identifies_the_partido_not_the_whole_province() -> None:
+    """A PBA partido total identifies Coronel Rosales, not all of Buenos Aires.
+
+    The two schemes collide on the word "distrito": PBA's distrito `027` is a
+    PARTIDO, while the national scheme's distrito `02` is the PROVINCE and
+    Coronel Rosales is its seccion `027`. `jurisdiction_crosswalk` says exactly
+    that -- PBA `027` maps to national `02` / `027`.
+
+    Resolving only the distrito half and discarding the seccion stores a
+    partido total as a province-wide figure. Measured live after phase 17:
+    32.291 CONCEJALES votes -- verifiably Coronel Rosales's valid-vote
+    denominator, since the official cuociente 3.587,8888880 times 9 seats
+    equals exactly that -- sat under `distrito_code='02', seccion_code=NULL`,
+    attributed to the whole province.
+
+    The fabrication ban forbids inventing FINER levels a row does not have.
+    It does not forbid a row from identifying which place it describes.
+    """
+    crosswalk = CrosswalkTable(
+        jurisdictions=(
+            JurisdictionCrosswalkEntry(
+                pba_distrito_code="027",
+                national_distrito_code="02",
+                national_seccion_code="027",
+                name="Coronel de Marina Leonardo Rosales",
+            ),
+        ),
+    )
+
+    resolved = resolve_pba_distrito_code("027", crosswalk)
+
+    assert not isinstance(resolved, QuarantinedPbaDistrito), (
+        "a curated PBA distrito must resolve, not quarantine"
+    )
+    assert resolved == ("02", "027"), (
+        "the resolver must yield BOTH the province and the partido; yielding "
+        f"the province alone attributes the figure to all of Buenos Aires: got {resolved!r}"
+    )
