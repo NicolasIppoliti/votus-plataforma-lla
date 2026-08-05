@@ -379,9 +379,9 @@ Fiscalización data is parsed, validated, merged and crosswalked, but never reac
 
 ### 12c — Write role
 
-- [ ] 12.13 RED: `supabase/tests/rls_write_role.sql` — pgTAP asserting the role the ETL actually uses can INSERT/UPDATE/DELETE on every electoral table, and that `anon` still cannot read.
-- [ ] 12.14 GREEN: `supabase/migrations/0009_etl_write_grants.sql` + down — grant DML to the ETL's role on every electoral table, leaving the `authenticated` read-only policy and the `anon` revoke from 0006 untouched.
-- [ ] 12.15 GREEN: correct `0006_rls.sql`'s comment, which states loading happens through `service_role` when `service_role` holds no DML privilege and the code connects as `postgres`. Document the real write path, and make the DSN configurable rather than defaulting to a superuser.
+- [x] 12.13 RED: `supabase/tests/rls_write_role.sql` — pgTAP asserting the role the ETL actually uses can INSERT/UPDATE/DELETE on every electoral table, and that `anon` still cannot read.
+- [x] 12.14 GREEN: `supabase/migrations/0009_etl_write_grants.sql` + down — grant DML to the ETL's role on every electoral table, leaving the `authenticated` read-only policy and the `anon` revoke from 0006 untouched.
+- [x] 12.15 GREEN: correct `0006_rls.sql`'s comment, which states loading happens through `service_role` when `service_role` holds no DML privilege and the code connects as `postgres`. Document the real write path, and make the DSN configurable rather than defaulting to a superuser.
 
 ### 12d — End-to-end proof
 

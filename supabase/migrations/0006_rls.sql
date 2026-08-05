@@ -18,16 +18,23 @@
 --      currently a no-op (the CLI's `auto_expose_new_tables` default never
 --      granted `anon` anything -- see `supabase/tests/rls_anonymous_denied.sql`,
 --      which already passes against migrations 0001-0005 alone), but a
---      cloud project or a future CLI default change could differ, and
---      writing/loading is always done by the ETL through the `service_role`
---      (or `postgres`) connection, which bypasses RLS entirely and needs no
---      grant here at all. Making the revoke explicit means this migration's
---      own diff is the security control, not an implicit platform default.
+--      cloud project or a future CLI default change could differ. Making
+--      the revoke explicit means this migration's own diff is the security
+--      control, not an implicit platform default.
 --
--- Only SELECT is granted -- this change's UI is read-only (Next.js RSC,
--- "server-only reads" per design.md's Data Flow); all writes go through the
--- ETL's `service_role`/`postgres` connection (`etl/etl/db.py`, D8), which
--- bypasses RLS and needs no policy or grant here.
+-- Only SELECT is granted here -- this change's UI is read-only (Next.js
+-- RSC, "server-only reads" per design.md's Data Flow).
+--
+-- CORRECTION (0009_etl_write_grants.sql, task 12.15): this comment
+-- previously claimed writes go through `service_role`, which is FALSE --
+-- `service_role` is `NOLOGIN` in this project and no DSN has ever
+-- connected as it. Every write this project has made ran through the raw
+-- `postgres` SUPERUSER connection instead, which was never an
+-- intentionally chosen role, just an unreplaced default. The real write
+-- path is `etl_writer` (0009), a dedicated non-superuser `bypassrls` role
+-- the ETL actually connects as via a configurable `--database-url` /
+-- `ETL_DATABASE_URL` (`etl/etl/__main__.py`), never a hardcoded superuser
+-- DSN.
 
 do $$
 declare
