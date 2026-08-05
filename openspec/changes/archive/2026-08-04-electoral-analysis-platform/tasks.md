@@ -522,9 +522,9 @@ LLA+PRO alliance) and Phase 15 loaded them, but only the national DIPUTADO NACIO
 was wired. No page renders a municipal figure, so the mappings are unreachable — the same
 tested-but-unreachable shape this change has hit eight times.
 
-- [ ] 16.7 RED: `apps/web/src/app/(authenticated)/municipal/page.test.tsx::test_route_renders_pba_municipal_results_with_resolved_party_names`.
-- [ ] 16.8 RED: `::test_distrito_granularity_is_labelled_never_presented_as_mesa` — the PBA municipal source publishes distrito totals; the indicator must say so.
-- [ ] 16.9 GREEN: create the route, reachable from the authenticated layout, reading only through the repository.
+- [x] 16.7 RED: `apps/web/src/app/(authenticated)/municipal/page.test.tsx::test_route_renders_pba_municipal_results_with_resolved_party_names`.
+- [x] 16.8 RED: `::test_distrito_granularity_is_labelled_never_presented_as_mesa` — the PBA municipal source publishes distrito totals; the indicator must say so.
+- [x] 16.9 GREEN: create the route, reachable from the authenticated layout, reading only through the repository.
 
 ## Key Learnings
 
