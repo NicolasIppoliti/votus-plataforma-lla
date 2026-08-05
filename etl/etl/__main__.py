@@ -348,7 +348,11 @@ def collect_national_jurisdiction_codes(
         if not local_store.exists("national", filename):
             continue
         raw_bytes = local_store.read("national", filename)
-        for row in ingest_national(raw_bytes, archive_entry_id=entry["id"]):
+        with tempfile.TemporaryDirectory(prefix="votus-etl-validate-") as extract_dir:
+            csv_bytes = resolve_national_results_bytes(
+                raw_bytes, extract_dir=Path(extract_dir)
+            )
+        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
             codes.add((row.result.distrito, row.result.seccion or ""))
     return sorted(codes)
 
@@ -418,7 +422,11 @@ def collect_national_party_keys(
             continue
         year = int(year_digits)
         raw_bytes = local_store.read("national", filename)
-        for row in ingest_national(raw_bytes, archive_entry_id=entry["id"]):
+        with tempfile.TemporaryDirectory(prefix="votus-etl-validate-") as extract_dir:
+            csv_bytes = resolve_national_results_bytes(
+                raw_bytes, extract_dir=Path(extract_dir)
+            )
+        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
             if row.list_id:
                 keys.add((year, "national", row.category, row.list_id))
     return sorted(keys)

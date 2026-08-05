@@ -449,10 +449,10 @@ product owner asked for them fixed rather than carried as debt.
 `result_row` is 100 % `official` and holds only the national 2025 ZIP. Five PBA entries and one
 fiscalización entry are registered in `sources.yaml` and have never been fetched or ingested.
 
-- [ ] 14.10 GREEN: fetch the five registered PBA entries under D10's etiquette constraints — serial, ≥4 s apart, identifying UA, TLS verification on, registered paths only.
-- [ ] 14.11 GREEN: ingest PBA into `result_row`, at whatever granularity the source publishes, surfacing degradation rather than fabricating lower levels.
-- [ ] 14.12 GREEN: place the fiscalización CSV at its registered archive path and ingest it, stripping personal data at ingestion.
-- [ ] 14.13 REFACTOR: record the resulting `result_row` composition — rows per `source_kind`, per election, per granularity — in `spikes/004-full-corpus-load.md`, and confirm the default query still returns official-only.
+- [x] 14.10 GREEN: fetch the five registered PBA entries under D10's etiquette constraints — serial, ≥4 s apart, identifying UA, TLS verification on, registered paths only.
+- [x] 14.11 GREEN: ingest PBA into `result_row`, at whatever granularity the source publishes, surfacing degradation rather than fabricating lower levels.
+- [x] 14.12 GREEN: place the fiscalización CSV at its registered archive path and ingest it, stripping personal data at ingestion.
+- [x] 14.13 REFACTOR: record the resulting `result_row` composition — rows per `source_kind`, per election, per granularity — in `spikes/004-full-corpus-load.md`, and confirm the default query still returns official-only.
 
 ## Key Learnings
 

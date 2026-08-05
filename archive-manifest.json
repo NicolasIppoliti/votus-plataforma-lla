@@ -11,5 +11,83 @@
     "fetched_at": "2026-08-04T12:29:56Z",
     "status": "ok",
     "notes": "Phase 12d end-to-end proof: registered directly from the pre-archived copy found at archive/national_2025/legislativas2025.zip (outside the LocalArchiveStore's archive/<capability>/<filename> convention -- copied to the conventional path, sha256 and byte count verified identical, original left in place). Not fetched over the network this run."
+  },
+  {
+    "id": "pba/2025-distrito-027",
+    "capability": "pba",
+    "source": "www.juntaelectoral.gba.gov.ar",
+    "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/distrito_027.html",
+    "archived_path": "archive/pba/distrito_027.html",
+    "sha256": "b46c1fbe90bd6e623b1c2dcac88790243e7d585890a46afd4290f1ded7a9f852",
+    "mime": "text/html",
+    "bytes": 471727,
+    "fetched_at": "2026-08-04T14:14:39Z",
+    "status": "ok",
+    "notes": "2025 Elecciones Provinciales, distrito 027 (Coronel Rosales) escrutinio definitivo. DISTRITO-LEVEL totals only (no mesa/circuito breakdown at this source) for two categories: Diputados Prov. Tit. and Concejales Titulares. Discovered by navigating from the linked landing page, not by pattern-guessing (spikes/002-pba-2025-paths.md); reached via etl.ingest.pba.PBA_HOST_POLICY (concurrency 1, >=4s delay, identifying UA, cert verification on). Verified 200, text/html, this session."
+  },
+  {
+    "id": "pba/2025-concejales-bancas-027",
+    "capability": "pba",
+    "source": "www.juntaelectoral.gba.gov.ar",
+    "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/concejales/2025027.pdf",
+    "archived_path": "archive/pba/concejales-bancas-027.pdf",
+    "sha256": "963ca3cc0e987f9cbebd3797deb186dea87cae2fd919424eece775615cde7fac",
+    "mime": "application/pdf",
+    "bytes": 606289,
+    "fetched_at": "2026-08-04T14:14:40Z",
+    "status": "ok",
+    "notes": "\"Bancas Concejales\" seat-allocation PDF for distrito 027. Reference document only -- registered so an operator can archive/open it manually. etl.ingest.pba NEVER parses PDF bytes; PDF/telegrama OCR extraction is explicitly out of scope (electoral-ingestion spec). Verified 200, application/pdf, 606289 bytes, this session."
+  },
+  {
+    "id": "pba/2025-consejeros-bancas-027",
+    "capability": "pba",
+    "source": "www.juntaelectoral.gba.gov.ar",
+    "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/consejeros/2025027.pdf",
+    "archived_path": "archive/pba/consejeros-bancas-027.pdf",
+    "sha256": "18e8e48374412b25f5523a366d66fd050d9a6ec2d8c12b5c1b5ce2c6f3cd8b4f",
+    "mime": "application/pdf",
+    "bytes": 303704,
+    "fetched_at": "2026-08-04T14:14:44Z",
+    "status": "ok",
+    "notes": "\"Bancas Consejeros Esc.\" seat-allocation PDF for distrito 027. Reference document only, never parsed -- see the concejales-bancas entry above for the shared rationale. Verified 200, application/pdf, 303704 bytes, this session."
+  },
+  {
+    "id": "pba/2025-concejales-distri-027",
+    "capability": "pba",
+    "source": "www.juntaelectoral.gba.gov.ar",
+    "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/concejales_distri/2025027.pdf",
+    "archived_path": "archive/pba/concejales-distribucion-027.pdf",
+    "sha256": "8b73cb27c47b8f5d2b13143eddbd0fdc3dcd794f07b51f583ede8a749d1717b4",
+    "mime": "application/pdf",
+    "bytes": 303057,
+    "fetched_at": "2026-08-04T14:14:48Z",
+    "status": "ok",
+    "notes": "\"Distribucion de Bancas Concejales\" PDF for distrito 027. Reference document only, never parsed. Verified 200, application/pdf, 303057 bytes, this session."
+  },
+  {
+    "id": "pba/2025-consejeros-distri-027",
+    "capability": "pba",
+    "source": "www.juntaelectoral.gba.gov.ar",
+    "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/consejeros_distri/2025027.pdf",
+    "archived_path": "archive/pba/consejeros-distribucion-027.pdf",
+    "sha256": "3b44bc442fd8260f861ed8f8f0ff48d541f6f5e9ff2d76508b4be0554cf52906",
+    "mime": "application/pdf",
+    "bytes": 302921,
+    "fetched_at": "2026-08-04T14:14:52Z",
+    "status": "ok",
+    "notes": "\"Distribucion de Bancas Consejeros Esc.\" PDF for distrito 027. Reference document only, never parsed. Verified 200, application/pdf, 302921 bytes, this session."
+  },
+  {
+    "id": "fiscalizacion/2025-coronel-rosales",
+    "capability": "fiscalizacion",
+    "source": "local-file",
+    "source_url": "local://fiscalizacion/2025-coronel-rosales-mesas-procesadas.csv",
+    "archived_path": "archive/fiscalizacion/fiscalizacion-2025-coronel-rosales.csv",
+    "sha256": "915613063ea544eb03c8b436307af1dd5e6889b106fdfba0a39039be21d5976e",
+    "mime": "text/csv",
+    "bytes": 9824,
+    "fetched_at": "2026-08-04T14:16:38Z",
+    "status": "ok",
+    "notes": "Task 14.12: internal LLA fiscalizacion spreadsheet, supplied by the user outside this repository per D9/upload:never, placed at its registered archive path (never fetched over the network -- source_kind=fiscalizacion, upload=never, D9.3). Not the second, unregistered file in the same source directory (...Respuestas.csv, out of scope)."
   }
 ]

@@ -22,6 +22,10 @@ apps/web/node_modules/
 .env.local
 .env.*.local
 
-# Playwright
+# Playwright run output
+test-results/
 apps/web/test-results/
 apps/web/playwright-report/
+
+# Playwright MCP session artifacts
+.playwright-mcp/
