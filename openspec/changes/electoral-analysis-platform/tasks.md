@@ -276,21 +276,21 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 
 ### 10a — Hare quota + largest remainder (Ley 5109 Arts. 109–110)
 
-- [ ] 10.1 RED: `hare-quota.test.ts::test_cuociente_denominator_excludes_blank_and_annulled_votes` (Art. 109 final paragraph — divisor uses `validVotes`, never `totalVotes`).
-- [ ] 10.2 RED: `hare-quota.test.ts::test_list_below_cuociente_gets_zero_seats_but_carries_remainder_forward`.
-- [ ] 10.3 RED: `hare-quota.test.ts::test_largest_remainder_top_up_orders_by_descending_remainder`.
-- [ ] 10.4 RED: `hare-quota.test.ts::test_equal_remainder_resolved_by_higher_vote_total_and_flagged_statutory` (Art. 109(c) — MUST NOT be labelled `simulation_convention`).
-- [ ] 10.5 RED: `hare-quota.test.ts::test_repeated_50_percent_halving_when_no_list_reaches_cuociente` (Art. 110, multiple halving iterations recorded).
-- [ ] 10.6 RED: `hare-quota.test.ts::test_over_subscription_awards_seats_to_highest_voted_qualifying_lists` (Art. 110).
-- [ ] 10.7 RED: `hare-quota.test.ts::test_seats_divisor_is_9_not_18_for_coronel_rosales_council` (council-total-vs-seats-per-election distinction; Engram #1400).
-- [ ] 10.8 RED: `hare-quota.test.ts::test_18_seats_to_fill_for_single_election_is_rejected` (rejects council total substituted for seats-per-election).
-- [ ] 10.9 RED — **UNBLOCKED, denominators now sourced (Engram #1414).** Both years' valid-vote denominators were recovered from official Junta Electoral documents during Phase 5's path discovery, by dividing the published cuociente by the 9 seats per election. Write TWO golden cases, neither approximating anything:
+- [x] 10.1 RED: `hare-quota.test.ts::test_cuociente_denominator_excludes_blank_and_annulled_votes` (Art. 109 final paragraph — divisor uses `validVotes`, never `totalVotes`).
+- [x] 10.2 RED: `hare-quota.test.ts::test_list_below_cuociente_gets_zero_seats_but_carries_remainder_forward`.
+- [x] 10.3 RED: `hare-quota.test.ts::test_largest_remainder_top_up_orders_by_descending_remainder`.
+- [x] 10.4 RED: `hare-quota.test.ts::test_equal_remainder_resolved_by_higher_vote_total_and_flagged_statutory` (Art. 109(c) — MUST NOT be labelled `simulation_convention`).
+- [x] 10.5 RED: `hare-quota.test.ts::test_repeated_50_percent_halving_when_no_list_reaches_cuociente` (Art. 110, multiple halving iterations recorded).
+- [x] 10.6 RED: `hare-quota.test.ts::test_over_subscription_awards_seats_to_highest_voted_qualifying_lists` (Art. 110).
+- [x] 10.7 RED: `hare-quota.test.ts::test_seats_divisor_is_9_not_18_for_coronel_rosales_council` (council-total-vs-seats-per-election distinction; Engram #1400).
+- [x] 10.8 RED: `hare-quota.test.ts::test_18_seats_to_fill_for_single_election_is_rejected` (rejects council total substituted for seats-per-election).
+- [x] 10.9 RED — **UNBLOCKED, denominators now sourced (Engram #1414).** Both years' valid-vote denominators were recovered from official Junta Electoral documents during Phase 5's path discovery, by dividing the published cuociente by the 9 seats per election. Write TWO golden cases, neither approximating anything:
   - `hare-quota.test.ts::test_2023_coronel_rosales_golden_case` — published `COCIENTE CONCEJALES 3.928,777777` × 9 = **35.359 valid votes**. Cross-check: 39.273 total − 35.359 valid = 3.914 blank + annulled. Sanity check that must hold: LLA 10.365 / 35.359 = 29,31 %, reproducing the recorded share exactly. Expected outcome UxP 3 / JxC 3 / LLA 3 = 9. Source: `https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf`.
   - `hare-quota.test.ts::test_2025_coronel_rosales_golden_case` — the STRONGER case, because the document publishes the full computation rather than only the outcome. Published `Cociente: 3.587,8888880` × 9 = **32.291 valid votes**. Assert every column: ALIANZA LA LIBERTAD AVANZA 14.550 votes → quotient 4,055310 → 5 seats (4 by cuociente + 1 by residuo); ALIANZA FUERZA PATRIA 7.300 → 2,034620 → 2 (2 + 0); ALIANZA POTENCIA 4.540 → 1,265370 → 2 (1 + 1). Total 9. The three qualifying lists sum to 26.390, so **5.901 valid votes belong to sub-cuociente lists that receive zero representation** — a sourced test of Art. 109(b) exclusion. Source: `https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/concejales_distri/2025027.pdf`.
   - The document also carries a `MAYORIA` column, zero in both observed years. Do NOT model it speculatively; record it as an unexercised statutory provision in the test file's comments so it is not mistaken for a missing feature.
   - 39.273 remains forbidden as a divisor. It is the TOTAL vote count and MUST only ever be reported alongside, never used as the denominator.
-- [ ] 10.10 GREEN: create `apps/web/src/domain/seat-allocation/hare-quota.ts` (module-private) implementing Art. 109–110 per 10.1–10.8; table-driven, no I/O.
-- [ ] 10.11 GREEN: create `apps/web/src/domain/seat-allocation/council.ts` — 9-per-election / 18-total half-renewal roster tracking, holds over the un-renewed 9 as sourced input.
+- [x] 10.10 GREEN: create `apps/web/src/domain/seat-allocation/hare-quota.ts` (module-private) implementing Art. 109–110 per 10.1–10.8; table-driven, no I/O.
+- [x] 10.11 GREEN: create `apps/web/src/domain/seat-allocation/council.ts` — 9-per-election / 18-total half-renewal roster tracking, holds over the un-renewed 9 as sourced input.
 
 ### 10b — D'Hondt (Ley 19.945 Art. 161, national diputados only)
 
