@@ -22,6 +22,7 @@ import csv
 import io
 from dataclasses import dataclass
 
+from etl import db
 from etl.crosswalk import CrosswalkTable
 from etl.jurisdiction import ResultRow, make_result_row
 from etl.party_map import PartyMappingTable, PartyResolutionResult, resolve_party_for_rows
@@ -206,3 +207,63 @@ def resolve_national_party(
     resolves across years by accident (task 7.6a).
     """
     return resolve_party_for_rows(rows, party_map, year=year, jurisdiction="national")
+
+
+def load_national_rows(
+    conn, rows: list[NationalRow], *, year: int, round_: str, source_kind: str = "official"
+) -> int:
+    """Task 8.5 (D8): resolve each row's election/category/jurisdiction ids
+    and hand the batch to `db.load_result_rows`'s delete-by-
+    `archive_entry_id`-then-bulk-insert transaction wrapper.
+
+    All `rows` MUST share one `archive_entry_id` -- D8's idempotency key is
+    scoped per archive entry, not per mixed batch. `year`/`round_` are
+    caller-supplied (known from the archive entry, e.g. 2023 generales or
+    2025 legislativas), never inferred from the rows themselves, the same
+    discipline `resolve_national_party` already applies.
+    """
+    if not rows:
+        return 0
+    archive_entry_id = rows[0].archive_entry_id
+    if any(row.archive_entry_id != archive_entry_id for row in rows):
+        raise ValueError("load_national_rows requires every row to share one archive_entry_id")
+
+    election_id = db.upsert_election(conn, year=year, round_=round_)
+    category_cache: dict[str, str] = {}
+    jurisdiction_cache: dict[tuple[str, str | None, str | None, int | None], str] = {}
+    records: list[db.ResultRowRecord] = []
+
+    for row in rows:
+        category_id = category_cache.get(row.category)
+        if category_id is None:
+            category_id = db.upsert_category(conn, name=row.category)
+            category_cache[row.category] = category_id
+
+        j_key = (row.result.distrito, row.result.seccion, row.result.circuito, row.result.mesa)
+        jurisdiction_id = jurisdiction_cache.get(j_key)
+        if jurisdiction_id is None:
+            jurisdiction_id = db.upsert_jurisdiction(
+                conn,
+                distrito=row.result.distrito,
+                seccion=row.result.seccion,
+                circuito=row.result.circuito,
+                mesa=row.result.mesa,
+            )
+            jurisdiction_cache[j_key] = jurisdiction_id
+
+        records.append(
+            db.ResultRowRecord(
+                election_id=election_id,
+                jurisdiction_id=jurisdiction_id,
+                category_id=category_id,
+                granularity=row.granularity,
+                list_id=row.list_id,
+                votes=row.result.votes,
+                source_kind=source_kind,
+                is_unmapped=False,
+                archive_entry_id=row.archive_entry_id,
+                source_row_index=row.source_row_index,
+            )
+        )
+
+    return db.load_result_rows(conn, archive_entry_id=archive_entry_id, records=records)

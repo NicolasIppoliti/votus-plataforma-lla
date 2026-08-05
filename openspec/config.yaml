@@ -70,7 +70,12 @@ delivery:
   # to be cut into five slices, which fragments review of a single concern. 800 trades
   # more PR volume for fewer, more coherent slices.
   review_budget_lines: 800
-  rdd_enabled: true
+  # Receipt-driven development was DISABLED by the product owner after the review
+  # lifecycle proved unfinishable in this runtime: the Claude Code lens agents ship
+  # without a shell and so cannot run the candidate inspection their own contract
+  # requires, leaving no path to a receipt. Reported upstream (gentle-ai issue 2223).
+  # Delivery is therefore ordinary repository policy, reported as disabled/unmanaged.
+  rdd_enabled: false
   # Dependency lockfiles are committed for reproducible builds but are machine-generated
   # and are never read line-by-line in review, so they do not count toward
   # review_budget_lines. Decided by the product owner after the Phase 1 scaffold measured
@@ -83,6 +88,20 @@ delivery:
     - "**/uv.lock"
     - "**/poetry.lock"
     - "**/*.tsbuildinfo"
+  # size:exception log — accepted overruns, recorded per the exclusion policy's
+  # rule that a phase must ask before widening the exclusion list.
+  size_exceptions:
+    - work_unit: phase-8-rls-idempotency
+      reviewable_lines: 1127
+      budget: 800
+      over_by: 327
+      decided_by: product-owner
+      reason: >
+        supabase/config.toml and its .gitignore are 422 lines generated entirely
+        by `supabase init` and never hand-edited. The product owner chose to
+        accept this slice as a one-off size:exception rather than widen
+        review_budget_exclusions to cover CLI-generated scaffolding, keeping the
+        exclusion list literal and narrow.
   review_budget_exclusion_policy: |
     Exclusions cover machine-generated dependency lockfiles and build artifacts ONLY.
     Hand-authored code, configuration, schema, tests, and documentation always count.

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from html.parser import HTMLParser
 
+from .. import db
 from ..archive import POLITENESS_DELAY_SECONDS, ArchiveResult, FetchResponse, archive_source
 from ..http_client import DEFAULT_USER_AGENT, HostPolicy, PolicedHostFetcher
 from ..jurisdiction import ResultRow, make_result_row
@@ -391,3 +392,53 @@ def resolve_pba_party(
     return resolve_party_for_rows(
         rows, party_map, year=year, jurisdiction=PBA_PARTY_MAP_JURISDICTION
     )
+
+
+def load_pba_rows(
+    conn, rows: list[PbaRow], *, year: int, round_: str, source_kind: str = "official"
+) -> int:
+    """Task 8.5 (D8): same delete-by-`archive_entry_id`-then-bulk-insert
+    wrapper as `ingest.national.load_national_rows`, adapted to `PbaRow`'s
+    distrito-only lineage (`seccion`/`circuito`/`mesa` are always `None`
+    here -- `upsert_jurisdiction`'s `IS NOT DISTINCT FROM` lookup is exactly
+    what makes that safe to re-run without duplicating the jurisdiction row).
+    """
+    if not rows:
+        return 0
+    archive_entry_id = rows[0].archive_entry_id
+    if any(row.archive_entry_id != archive_entry_id for row in rows):
+        raise ValueError("load_pba_rows requires every row to share one archive_entry_id")
+
+    election_id = db.upsert_election(conn, year=year, round_=round_)
+    category_cache: dict[str, str] = {}
+    jurisdiction_cache: dict[str, str] = {}
+    records: list[db.ResultRowRecord] = []
+
+    for row in rows:
+        category_id = category_cache.get(row.category)
+        if category_id is None:
+            category_id = db.upsert_category(conn, name=row.category)
+            category_cache[row.category] = category_id
+
+        distrito = row.result.distrito
+        jurisdiction_id = jurisdiction_cache.get(distrito)
+        if jurisdiction_id is None:
+            jurisdiction_id = db.upsert_jurisdiction(conn, distrito=distrito)
+            jurisdiction_cache[distrito] = jurisdiction_id
+
+        records.append(
+            db.ResultRowRecord(
+                election_id=election_id,
+                jurisdiction_id=jurisdiction_id,
+                category_id=category_id,
+                granularity=row.granularity,
+                list_id=row.list_id,
+                votes=row.votes,
+                source_kind=source_kind,
+                is_unmapped=False,
+                archive_entry_id=row.archive_entry_id,
+                source_row_index=row.source_row_index,
+            )
+        )
+
+    return db.load_result_rows(conn, archive_entry_id=archive_entry_id, records=records)
