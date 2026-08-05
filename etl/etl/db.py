@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from etl.review_item import ReviewItemRecord
+
 
 @dataclass(frozen=True)
 class ResultRowRecord:
@@ -164,6 +166,31 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
                         record.archive_entry_id,
                         record.source_row_index,
                     )
+                    for record in records
+                ],
+            )
+    return len(records)
+
+
+def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
+    """Write path for `review_item` (task 11.19) -- the first table that
+    actually persists what `etl.review_item` projects from `MesaDivergence`
+    (`etl.crosswalk`, Phase 4) and `ReviewItemDraft`
+    (`etl.ingest.fiscalizacion`, Phase 6). Unlike `load_result_rows`, there
+    is no delete-by-`archive_entry_id` step here -- `review_item` has no
+    natural idempotency key (a divergence note is an append-only observed
+    event, not a rebuildable projection row), so the caller decides whether
+    re-running a given ingestion should re-record its review items.
+    """
+    with conn.cursor() as cur:
+        if records:
+            cur.executemany(
+                """
+                insert into review_item (kind, severity, subject_ref, note)
+                values (%s, %s, %s, %s)
+                """,
+                [
+                    (record.kind, record.severity, record.subject_ref, record.note)
                     for record in records
                 ],
             )
