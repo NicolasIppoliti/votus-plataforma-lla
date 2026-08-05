@@ -19,6 +19,7 @@ from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.jurisdiction import (
     QuarantinedPbaDistrito,
     make_result_row,
+    normalize_circuito_code,
     normalize_distrito_code,
     normalize_seccion_code,
     resolve_pba_distrito_code,
@@ -153,3 +154,23 @@ def test_an_uncurated_pba_code_is_quarantined_not_silently_written() -> None:
     assert isinstance(resolved, QuarantinedPbaDistrito)
     assert resolved.pba_distrito_code == "999"
     assert "999" in resolved.reason
+
+
+def test_normalize_circuito_code_pads_and_never_truncates() -> None:
+    """Circuito is normalized at the same boundary as distrito and seccion.
+
+    Leaving it out meant `jurisdiction.py` declared itself the single
+    normalization boundary while one of its three codes was written raw,
+    forcing every reader to compensate — two independent ideas of the same
+    code, which is what produced Coronel Rosales as three identities.
+
+    The padding must never truncate: SQL's `lpad(x, 5, '0')` cuts a wider
+    value from the right, and a normalizer that silently shortens a code is
+    worse than one that leaves it alone.
+    """
+    assert normalize_circuito_code("1") == "00001"
+    assert normalize_circuito_code("00001") == "00001"
+    assert normalize_circuito_code(None) is None
+    assert normalize_circuito_code("123456") == "123456", (
+        "a wider code must survive intact, never be truncated to the padding width"
+    )

@@ -22,7 +22,9 @@ Deliberately NOT applied inside `make_result_row` itself: a `ResultRow`'s
 `distrito` is not always yet a NATIONAL administrative code at construction
 time — `ingest.pba.ingest_pba` builds one from PBA's OWN distrito code
 (`"027"`), which lives in an entirely different numbering scheme and must be
-TRANSLATED via `jurisdiction_crosswalk` (`resolve_pba_distrito_code` below),
+TRANSLATED via `jurisdiction_crosswalk` (`resolve_pba_distrito_code` below,
+which returns the national `(distrito, seccion)` PAIR, never the distrito
+alone),
 never merely re-padded (blindly zero-padding PBA's `"027"` to a 2-digit
 width silently produces `"27"` — a real but WRONG national code, national
 seccion 027's own distrito-adjacent digits, not distrito 02 at all).
@@ -57,27 +59,74 @@ DISTRITO_CODE_WIDTH = 2
 SECCION_CODE_WIDTH = 3
 
 
-def _zero_pad_numeric(raw: str, *, width: int) -> str:
+def _zero_pad_numeric(raw: str | None, *, width: int) -> str | None:
     """Zero-pad a numeric administrative code to `width` digits.
 
-    Falls back to the raw string unchanged for a non-numeric code, rather
+    Falls back to the raw value unchanged for a non-numeric code, rather
     than raising — matching the tolerance the pre-Phase-17
     `_normalize_administrative_code` already established in
     `etl/etl/__main__.py` for the (unpadded) comparison direction.
+
+    `TypeError` is caught alongside `ValueError` because the input is not
+    guaranteed to be a string: `csv.DictReader` fills a SHORT row's missing
+    trailing fields with `None`, and callers such as
+    `collect_mesa_tipo_mapping` verify a column is PRESENT, not that it holds
+    a value. Raising there would abort a whole backfill on one truncated row
+    instead of letting it be counted and skipped.
     """
-    try:
-        return str(int(raw)).zfill(width)
-    except ValueError:
+    if not isinstance(raw, str) or not raw.strip().isdigit():
+        # `int()` is NOT the shape test. It accepts `"2_7"` (PEP 515 numeric
+        # underscores) and yields 27 -- a real but WRONG seccion, canonicalized
+        # confidently out of a malformed code. `isdigit()` after stripping
+        # accepts exactly what these codes are: digits, optionally padded.
         return raw
+    return str(int(raw.strip())).zfill(width)
 
 
-def normalize_distrito_code(raw: str) -> str:
+def is_canonicalizable_code(raw: object) -> bool:
+    """Whether the normalizers can actually canonicalize `raw`.
+
+    The normalizers pass an uncanonicalizable code through UNCHANGED, which
+    leaves a caller unable to tell "already canonical" from "gave up": `"2A"`
+    or `"O2"` goes through the single boundary untouched and then joins
+    nothing downstream. This is the predicate that makes the give-up case
+    countable at the call site.
+
+    Surrounding whitespace is NOT a give-up: `" 2 "` canonicalizes to `"02"`.
+    `"2_7"` is -- Python's `int()` accepts it and would produce `"27"`, a real
+    but wrong seccion, so this agrees with `_zero_pad_numeric` rather than
+    reporting that case clean.
+    """
+    return isinstance(raw, str) and raw.strip().isdigit()
+
+
+def normalize_distrito_code(raw: str | None) -> str | None:
     """Canonicalize a distrito code to the curated, zero-padded form.
 
     `"2"` and `"02"` both normalize to `"02"` — the single source of truth
     for what "the same distrito" means at every write boundary.
     """
     return _zero_pad_numeric(raw, width=DISTRITO_CODE_WIDTH)
+
+
+CIRCUITO_CODE_WIDTH = 5
+
+
+def normalize_circuito_code(raw: str | None) -> str | None:
+    """Normalize a circuito code to the fixed DINE width.
+
+    Measured across the real archived files: `circuito_id` is 5 characters in
+    every row of both the 2023 generales and the 2025 legislativas sources, so
+    this is a no-op on existing data — which is exactly why it can be added as
+    a boundary now, before a source with a different convention arrives.
+
+    It exists because leaving circuito raw while distrito and seccion are
+    normalized is per-call-site handling of one rule, the pattern that produced
+    Coronel Rosales as three separate jurisdiction identities.
+    """
+    if raw is None:
+        return None
+    return _zero_pad_numeric(raw, width=CIRCUITO_CODE_WIDTH)
 
 
 def normalize_seccion_code(raw: str | None) -> str | None:
@@ -212,13 +261,13 @@ def resolve_pba_distrito_code(
     PBA's own distrito code is a DIFFERENT numbering scheme from the
     national one — `curated/crosswalk.yaml`'s single entry happens to map
     PBA `"027"` to national distrito `"02"` / seccion `"027"`, three
-    different-looking strings for the same real jurisdiction. This function
-    resolves only the distrito half: a PBA source publishes distrito-level
-    totals (`electoral-ingestion` spec), and `make_result_row` structurally
-    forbids a distrito-granularity `ResultRow` from also carrying a seccion
-    value (the fabrication ban above) — the resolved national seccion is
-    still available on the crosswalk entry itself for a caller that needs
-    it for something other than constructing the `ResultRow`.
+    different-looking strings for the same real jurisdiction. BOTH halves
+    are returned as `(national_distrito, national_seccion)`: a PBA partido
+    total is a SECCION-level figure in the national scheme, and returning the
+    distrito alone attributed 32.291 Coronel Rosales votes to the whole of
+    Buenos Aires. The caller (`ingest.pba.resolve_pba_jurisdictions`)
+    re-derives the granularity as `"seccion"` when a seccion comes back, so
+    `make_result_row`'s fabrication ban is satisfied without dropping it.
 
     An uncurated PBA distrito code is quarantined as data (task 17.3),
     never silently written as a new jurisdiction under PBA's own code space.
