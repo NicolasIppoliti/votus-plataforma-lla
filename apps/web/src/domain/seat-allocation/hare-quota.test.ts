@@ -240,17 +240,26 @@ describe("allocateHareQuota", () => {
 
     const byList = Object.fromEntries(result.results.map((r) => [r.listId, r]));
 
-    expect(byList.lla?.quotient).toBeCloseTo(4.055310, 5);
+    // The published QUOTIENT column is 5-decimal precision displayed as 6 with a
+    // trailing zero pad, not a 6-decimal figure. Verified across all three lists:
+    // exact 4.0553095 -> 4.05531 -> printed "4,055310"; 2.0346227 -> 2.03462 ->
+    // "2,034620"; 1.2653681 -> 1.26537 -> "1,265370". Rounding the computed quotient
+    // to 5 decimals therefore reproduces the document exactly, so these assertions
+    // are exact rather than approximate. Seat counts below are asserted with toBe:
+    // they are integers and must never carry a tolerance.
+    const to5 = (q: number | undefined): number => Number((q ?? Number.NaN).toFixed(5));
+
+    expect(to5(byList.lla?.quotient)).toBe(4.05531);
     expect(byList.lla?.seatsByCuociente).toBe(4);
     expect(byList.lla?.seatsByResidue).toBe(1);
     expect(byList.lla?.totalSeats).toBe(5);
 
-    expect(byList.fp?.quotient).toBeCloseTo(2.034620, 5);
+    expect(to5(byList.fp?.quotient)).toBe(2.03462);
     expect(byList.fp?.seatsByCuociente).toBe(2);
     expect(byList.fp?.seatsByResidue).toBe(0);
     expect(byList.fp?.totalSeats).toBe(2);
 
-    expect(byList.potencia?.quotient).toBeCloseTo(1.265370, 5);
+    expect(to5(byList.potencia?.quotient)).toBe(1.26537);
     expect(byList.potencia?.seatsByCuociente).toBe(1);
     expect(byList.potencia?.seatsByResidue).toBe(1);
     expect(byList.potencia?.totalSeats).toBe(2);

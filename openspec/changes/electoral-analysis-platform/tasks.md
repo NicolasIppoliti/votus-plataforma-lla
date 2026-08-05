@@ -302,17 +302,17 @@ are module-private. `AllocationInput` is a discriminated union on `level` (`Hare
 
 ### 10c — `allocate.ts` public boundary and level→method binding
 
-- [ ] 10.17 RED (threat matrix — statutory method applied to the wrong level, D3/D5): `allocate.test-d.ts::test_pba_level_input_carrying_threshold_field_fails_to_compile` (`@ts-expect-error` on the illegal pairing — type-level test).
-- [ ] 10.18 RED (threat matrix): `allocate.test-d.ts::test_national_level_input_carrying_cuociente_field_fails_to_compile` (`@ts-expect-error`).
-- [ ] 10.19 RED (threat matrix): `allocate.test.ts::test_runtime_rejects_pba_payload_with_threshold_key_as_unknown_key` (Zod `z.strictObject` boundary rejection, not a silent ignore).
-- [ ] 10.20 RED: `allocate.test.ts::test_pba_level_always_resolves_to_hare_quota_no_operator_override`.
-- [ ] 10.21 RED: `allocate.test.ts::test_national_level_always_resolves_to_dhondt_no_operator_override`.
-- [ ] 10.22 RED: `allocate.test.ts::test_result_traceable_per_seat_awarded_by_rule_tag_and_numbers_used`.
-- [ ] 10.23 RED: `allocate.test.ts::test_hypothetical_2027_inputs_labeled_as_projection_not_historical`.
-- [ ] 10.24 GREEN: create `apps/web/src/domain/seat-allocation/types.ts` — `AllocationLevel`, `HareInput`, `DhondtInput`, `AllocationInput` discriminated union, `AllocationResult` per design's traceability shape.
-- [ ] 10.25 GREEN: create `apps/web/src/domain/seat-allocation/schemas.ts` — Zod 4 `z.discriminatedUnion('level', [hareSchema, dhondtSchema])` over `z.strictObject` variants; TS types derived via `z.infer`.
-- [ ] 10.26 GREEN: create `apps/web/src/domain/seat-allocation/allocate.ts` — the only public export, dispatches to private `hare-quota.ts`/`dhondt.ts` by `level`.
-- [ ] 10.27 REFACTOR: confirm all Phase 10 tests pass; confirm `hare-quota.ts` and `dhondt.ts` have no external imports outside `allocate.ts`.
+- [x] 10.17 RED (threat matrix — statutory method applied to the wrong level, D3/D5): `allocate.test-d.ts::test_pba_level_input_carrying_threshold_field_fails_to_compile` (`@ts-expect-error` on the illegal pairing — type-level test).
+- [x] 10.18 RED (threat matrix): `allocate.test-d.ts::test_national_level_input_carrying_cuociente_field_fails_to_compile` (`@ts-expect-error`).
+- [x] 10.19 RED (threat matrix): `allocate.test.ts::test_runtime_rejects_pba_payload_with_threshold_key_as_unknown_key` (Zod `z.strictObject` boundary rejection, not a silent ignore).
+- [x] 10.20 RED: `allocate.test.ts::test_pba_level_always_resolves_to_hare_quota_no_operator_override`.
+- [x] 10.21 RED: `allocate.test.ts::test_national_level_always_resolves_to_dhondt_no_operator_override`.
+- [x] 10.22 RED: `allocate.test.ts::test_result_traceable_per_seat_awarded_by_rule_tag_and_numbers_used`.
+- [x] 10.23 RED: `allocate.test.ts::test_hypothetical_2027_inputs_labeled_as_projection_not_historical`.
+- [x] 10.24 GREEN: create `apps/web/src/domain/seat-allocation/types.ts` — `AllocationLevel`, `HareInput`, `DhondtInput`, `AllocationInput` discriminated union, `AllocationResult` per design's traceability shape.
+- [x] 10.25 GREEN: create `apps/web/src/domain/seat-allocation/schemas.ts` — Zod 4 `z.discriminatedUnion('level', [hareSchema, dhondtSchema])` over `z.strictObject` variants; TS types derived via `z.infer`.
+- [x] 10.26 GREEN: create `apps/web/src/domain/seat-allocation/allocate.ts` — the only public export, dispatches to private `hare-quota.ts`/`dhondt.ts` by `level`.
+- [x] 10.27 REFACTOR: confirm all Phase 10 tests pass; confirm `hare-quota.ts` and `dhondt.ts` have no external imports outside `allocate.ts`.
 
 ## Phase 11: Results Analysis, Provenance UI, Disclaimers
 
