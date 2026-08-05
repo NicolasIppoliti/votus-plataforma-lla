@@ -314,6 +314,28 @@ def test_validate_crosswalk_reports_nothing_when_every_code_resolves() -> None:
     assert unmapped == []
 
 
+def test_validate_crosswalk_resolves_unpadded_codes_against_zero_padded_curated_entries() -> None:
+    """Phase 16b: `curated/crosswalk.yaml` records national codes
+    zero-padded (`"02"`/`"027"`, confirmed directly in the file for Coronel
+    Rosales), but the real archived 2023 national CSV (see
+    `tests/fixtures/national_2023_sample.csv`, sliced from the real archived
+    2023 PASO source) carries them UNPADDED (`distrito_id=2`,
+    `seccion_id=27`). `find_unmapped_jurisdictions` -> `resolve_national`
+    compares by exact string equality with no normalization, the same bug
+    Phase 15 found and fixed in `collect_national_mesa_codes`. If unfixed
+    here, every real 2023 code is misreported as unmapped even though it
+    IS curated.
+    """
+    crosswalk = load_crosswalk(CROSSWALK_PATH)
+
+    unmapped = find_unmapped_jurisdictions([("2", "27")], crosswalk)
+
+    assert unmapped == [], (
+        "an unpadded national code with a zero-padded curated match must resolve, "
+        f"not be reported unmapped: {unmapped}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 12.5 -- validate-curated reports unmapped list ids and exits nonzero
 # ---------------------------------------------------------------------------

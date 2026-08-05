@@ -512,8 +512,8 @@ Phase 15 fixed a padding mismatch in `collect_national_mesa_codes`: curated YAML
 DINE codes while the raw CSVs are unpadded, silently yielding zero matches. `validate-crosswalk`
 was flagged as likely sharing it and was never verified.
 
-- [ ] 16.5 RED: a test proving `validate-crosswalk` finds a curated entry whose codes are zero-padded against unpadded source rows. If the bug is absent, record that plainly and close the item — do not manufacture a failure.
-- [ ] 16.6 GREEN: apply `_normalize_administrative_code` on both sides if the RED confirms it.
+- [x] 16.5 RED: a test proving `validate-crosswalk` finds a curated entry whose codes are zero-padded against unpadded source rows. If the bug is absent, record that plainly and close the item — do not manufacture a failure. CONFIRMED REAL — `etl/tests/test_cli.py::test_validate_crosswalk_resolves_unpadded_codes_against_zero_padded_curated_entries`.
+- [x] 16.6 GREEN: apply `_normalize_administrative_code` on both sides — `find_unmapped_jurisdictions` in `etl/etl/__main__.py`.
 
 ### 16c — PBA municipal has no operator route
 
