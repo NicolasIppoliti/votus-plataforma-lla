@@ -25,6 +25,7 @@ import pytest
 import requests
 
 from etl.archive import FetchResponse
+from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.http_client import (
     PolicedHostFetcher,
     UnregisteredPathError,
@@ -38,6 +39,7 @@ from etl.ingest.pba import (
     archive_pba_source,
     ingest_pba,
     load_pba_distrito_totals,
+    resolve_pba_jurisdictions,
 )
 from etl.storage import LocalArchiveStore
 
@@ -295,3 +297,59 @@ def test_pba_fetch_exhausted_error_message_names_the_url() -> None:
         backoff.get(
             f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}", timeout=5, headers={}
         )
+
+
+# ---------------------------------------------------------------------------
+# 17.5/17.3 — PBA distrito codes resolved through jurisdiction_crosswalk
+# before any jurisdiction is created; an uncurated code is quarantined.
+# ---------------------------------------------------------------------------
+
+_CROSSWALK = CrosswalkTable(
+    jurisdictions=(
+        JurisdictionCrosswalkEntry(
+            pba_distrito_code="027",
+            national_distrito_code="02",
+            national_seccion_code="027",
+            name="Coronel de Marina Leonardo Rosales",
+        ),
+    )
+)
+
+
+def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() -> None:
+    rows = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id="pba/2025-distrito-027",
+        requested_granularity="distrito",
+    )
+    assert rows and all(row.result.distrito == "027" for row in rows), (
+        "sanity: ingest_pba itself still carries PBA's own, untranslated code"
+    )
+
+    result = resolve_pba_jurisdictions(rows, _CROSSWALK)
+
+    assert not result.quarantined
+    assert len(result.resolved) == len(rows)
+    assert all(row.result.distrito == "02" for row in result.resolved), (
+        "every resolved row must carry the national distrito code, "
+        "never PBA's own 027"
+    )
+    # Everything else about each row is preserved verbatim.
+    assert {row.list_id for row in result.resolved} == {row.list_id for row in rows}
+    assert {row.votes for row in result.resolved} == {row.votes for row in rows}
+
+
+def test_resolve_pba_jurisdictions_quarantines_an_uncurated_distrito_code() -> None:
+    rows = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id="pba/2025-distrito-027",
+        requested_granularity="distrito",
+    )
+    empty_crosswalk = CrosswalkTable(jurisdictions=())
+
+    result = resolve_pba_jurisdictions(rows, empty_crosswalk)
+
+    assert result.resolved == ()
+    assert len(result.quarantined) == len(rows)
+    assert all(q.row.result.distrito == "027" for q in result.quarantined)
+    assert all("027" in q.reason for q in result.quarantined)

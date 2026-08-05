@@ -654,9 +654,10 @@ def test_backfill_mesa_tipo_updates_existing_rows_without_reingesting(tmp_path) 
 
     mapping = collect_mesa_tipo_mapping(rows)
 
-    # Codes are normalized to the padding-independent form, so `"02"`/`"027"`
-    # and `"2"`/`"27"` describe the same mesa rather than two.
+    # Codes are normalized to the curated, zero-padded canonical form
+    # (Phase 17's single normalization boundary, `etl.jurisdiction`), so
+    # `"02"`/`"027"` and `"2"`/`"27"` describe the same mesa rather than two.
     assert mapping == {
-        ("2", "27", "00001", 1): "NATIVOS",
-        ("2", "27", "00001", 9001): "EXTRANJEROS",
+        ("02", "027", "00001", 1): "NATIVOS",
+        ("02", "027", "00001", 9001): "EXTRANJEROS",
     }, "three source rows must collapse to two distinct mesas"

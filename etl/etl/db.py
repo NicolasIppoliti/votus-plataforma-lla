@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from etl.crosswalk import CrosswalkTable, MesaStability
+from etl.jurisdiction import normalize_distrito_code, normalize_seccion_code
 from etl.party_map import PartyMappingTable
 from etl.review_item import ReviewItemRecord
 
@@ -103,7 +104,17 @@ def upsert_jurisdiction(
     idempotency for every PBA distrito-level row, which has all four `NULL`.
     A `SELECT ... IS NOT DISTINCT FROM` lookup treats `NULL = NULL` as a
     match, so it is used here instead of `ON CONFLICT`.
+
+    Phase 17: this is the single normalization boundary every writer funnels
+    through -- `distrito`/`seccion` are canonicalized to the curated,
+    zero-padded form (`etl.jurisdiction.normalize_distrito_code` /
+    `normalize_seccion_code`) BEFORE the lookup or insert, so a caller that
+    still passes national ingestion's raw unpadded `"2"`/`"27"` resolves to
+    the SAME row as fiscalización's already-padded `"02"`/`"027"` instead of
+    creating a second, format-only duplicate.
     """
+    distrito = normalize_distrito_code(distrito)
+    seccion = normalize_seccion_code(seccion)
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -155,10 +166,31 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
     which has all four `NULL`) would otherwise be duplicated on every call,
     the exact bug `upsert_jurisdiction`'s docstring already documents.
 
-    Returns a mapping from EVERY key in `keys` (order-preserving de-dup
-    happens internally) to its resolved `jurisdiction.id`.
+    Returns a mapping from EVERY key in `keys`, AS PASSED BY THE CALLER
+    (order-preserving de-dup happens internally), to its resolved
+    `jurisdiction.id` -- so an existing caller that still indexes the
+    returned dict by its own original (possibly unpadded) key keeps working
+    unchanged.
+
+    Phase 17: `distrito`/`seccion` are canonicalized to the curated,
+    zero-padded form (same normalization boundary as `upsert_jurisdiction`
+    above) for every round trip below, so `("2", "27", ...)` and
+    `("02", "027", ...)` resolve to the SAME `jurisdiction` row instead of
+    two rows for what is the same real mesa. The ORIGINAL, un-normalized
+    keys are what the returned mapping is keyed by.
     """
-    distinct_keys = list(dict.fromkeys(keys))
+    original_keys = list(keys)
+    normalized_keys = [
+        (
+            normalize_distrito_code(distrito),
+            normalize_seccion_code(seccion),
+            circuito,
+            establecimiento,
+            mesa,
+        )
+        for distrito, seccion, circuito, establecimiento, mesa in original_keys
+    ]
+    distinct_keys = list(dict.fromkeys(normalized_keys))
     if not distinct_keys:
         return {}
 
@@ -231,7 +263,10 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
             ) in cur.fetchall():
                 resolved[(distrito, seccion, circuito, establecimiento, mesa)] = jurisdiction_id
 
-    return {key: resolved[key] for key in keys}
+    return {
+        original_key: resolved[normalized_key]
+        for original_key, normalized_key in zip(original_keys, normalized_keys)
+    }
 
 
 def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRowRecord]) -> int:

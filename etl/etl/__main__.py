@@ -43,6 +43,7 @@ from .http_client import RequestsFetcher
 from .ingest.fiscalizacion import guard_local_mirror_only, ingest_fiscalizacion
 from .ingest.national import REQUIRED_COLUMNS, ingest_national, load_national_rows
 from .ingest.pba import ingest_pba, load_pba_rows
+from .jurisdiction import normalize_distrito_code, normalize_seccion_code
 from .manifest import latest_ok_record, load_manifest, save_manifest, upsert_record
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
 from .storage import LocalArchiveStore, extract_zip_safely
@@ -259,7 +260,8 @@ def ingest_source(
             inserted = load_national_rows(conn, rows, year=year, round_=round_)
         elif capability == "pba":
             rows = ingest_pba(raw_bytes, archive_entry_id=source_id)
-            inserted = load_pba_rows(conn, rows, year=year, round_=round_)
+            crosswalk = load_crosswalk(DEFAULT_CROSSWALK_PATH)
+            inserted = load_pba_rows(conn, rows, year=year, round_=round_, crosswalk=crosswalk)
         elif capability == "fiscalizacion":
             # Imported lazily: `load_fiscalizacion_rows` lands in sub-unit 12b,
             # chained on top of this one -- 12a's own tests never exercise the
@@ -324,10 +326,11 @@ def find_unmapped_jurisdictions(
     (`curated/crosswalk.yaml`) is zero-padded (`"02"`, `"027"`). Comparing
     verbatim would misreport every real 2023 code as unmapped even though it
     IS curated -- confirmed live, the same padding-independence
-    `_normalize_administrative_code` already gives `collect_national_mesa_codes`
-    (Phase 15). Applied on both sides here rather than inside
-    `CrosswalkTable.resolve_national`, which stays a plain exact-match lookup
-    used elsewhere against already-normalized keys.
+    `normalize_distrito_code`/`normalize_seccion_code` (Phase 17's single
+    normalization boundary, `etl.jurisdiction`) already gives
+    `collect_national_mesa_codes` (Phase 15). Applied on both sides here
+    rather than inside `CrosswalkTable.resolve_national`, which stays a
+    plain exact-match lookup used elsewhere against already-normalized keys.
     """
     unmapped: list[QuarantinedJurisdiction] = []
     seen: set[tuple[str, str]] = set()
@@ -336,11 +339,11 @@ def find_unmapped_jurisdictions(
         if key in seen:
             continue
         seen.add(key)
-        normalized_distrito = _normalize_administrative_code(distrito)
-        normalized_seccion = _normalize_administrative_code(seccion)
+        normalized_distrito = normalize_distrito_code(distrito)
+        normalized_seccion = normalize_seccion_code(seccion)
         resolved = any(
-            _normalize_administrative_code(entry.national_distrito_code) == normalized_distrito
-            and _normalize_administrative_code(entry.national_seccion_code) == normalized_seccion
+            normalize_distrito_code(entry.national_distrito_code) == normalized_distrito
+            and normalize_seccion_code(entry.national_seccion_code) == normalized_seccion
             for entry in crosswalk.jurisdictions
         )
         if not resolved:
@@ -397,8 +400,8 @@ def collect_mesa_tipo_mapping(rows) -> dict[tuple[str, str, str, int], str]:
         if not tipo:
             continue
         mapping[(
-            _normalize_administrative_code(raw["distrito_id"]),
-            _normalize_administrative_code(raw["seccion_id"]),
+            normalize_distrito_code(raw["distrito_id"]),
+            normalize_seccion_code(raw["seccion_id"]),
             raw["circuito_id"],
             int(raw["mesa_id"]),
         )] = tipo
@@ -506,24 +509,6 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _normalize_administrative_code(raw: str) -> str:
-    """Normalize a distrito/seccion code to a zero-padding-independent form.
-
-    MEASURED against the real archived files (task 15.11): the raw national
-    CSVs' `distrito_id`/`seccion_id` columns are UNPADDED (`"2"`, `"27"`),
-    while `curated/crosswalk.yaml` follows the DINE zero-padded convention
-    (`"02"`, `"027"`) that `curated/party_map.yaml`'s comments and this
-    project's own test fixtures also use. Comparing the two verbatim silently
-    matches nothing -- exactly the same class of bug `ingest.national`'s
-    `_normalize_mesa_id` already exists to prevent for mesa ids. Falls back
-    to the raw string unchanged for a non-numeric code rather than raising.
-    """
-    try:
-        return str(int(raw))
-    except ValueError:
-        return raw
-
-
 def collect_national_mesa_codes(
     sources: dict[str, list[dict]],
     *,
@@ -545,8 +530,8 @@ def collect_national_mesa_codes(
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
-    target_distrito = _normalize_administrative_code(distrito_code)
-    target_seccion = _normalize_administrative_code(seccion_code)
+    target_distrito = normalize_distrito_code(distrito_code)
+    target_seccion = normalize_seccion_code(seccion_code)
     mesas: set[int] = set()
     for entry in sources.get("national", []):
         year_digits = "".join(c for c in entry["id"].split("/")[-1][:4] if c.isdigit())
@@ -563,8 +548,8 @@ def collect_national_mesa_codes(
             csv_bytes = resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
         for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
             if (
-                _normalize_administrative_code(row.result.distrito) == target_distrito
-                and _normalize_administrative_code(row.result.seccion or "") == target_seccion
+                normalize_distrito_code(row.result.distrito) == target_distrito
+                and normalize_seccion_code(row.result.seccion) == target_seccion
                 and row.mesa is not None
             ):
                 mesas.add(row.mesa)

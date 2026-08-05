@@ -551,13 +551,13 @@ Root cause is the one already flagged in Phase 16: administrative codes are norm
 per-call-site instead of behind a single boundary. Two call sites were fixed; ingestion —
 where jurisdictions are CREATED — never was.
 
-- [ ] 17.1 RED: `etl/tests/test_jurisdiction.py::test_padded_and_unpadded_codes_resolve_to_one_jurisdiction`.
-- [ ] 17.2 RED: `::test_pba_distrito_code_resolves_through_the_crosswalk_to_the_national_pair` — PBA `027` must land on the same jurisdiction as national `02`/`027`, not a third one.
-- [ ] 17.3 RED: `::test_an_uncurated_pba_code_is_quarantined_not_silently_written` — a PBA code with no crosswalk entry must not create an island; it is quarantined and surfaced.
-- [ ] 17.4 GREEN: normalize administrative codes at the single jurisdiction boundary (`make_result_row` / `db.upsert_jurisdiction`), so every writer goes through one place. Choose the curated padded form as canonical, since `curated/*.yaml` and `jurisdiction_crosswalk` already use it.
-- [ ] 17.5 GREEN: resolve PBA distrito codes through `jurisdiction_crosswalk` during `ingest_pba`, before any jurisdiction is created.
-- [ ] 17.6 GREEN: migration `0012_reconcile_jurisdictions.sql` + down — merge duplicate jurisdictions that differ only by padding, repoint `result_row.jurisdiction_id`, and delete the emptied duplicates. It MUST NOT lose or duplicate a single result row; assert the total before and after.
-- [ ] 17.7 REFACTOR: verify live that Coronel Rosales resolves to ONE jurisdiction set, that fiscalización mesas join to national mesas, and record the before/after counts in `spikes/006-jurisdiction-reconciliation.md`.
+- [x] 17.1 RED: `etl/tests/test_jurisdiction.py::test_padded_and_unpadded_codes_resolve_to_one_jurisdiction`.
+- [x] 17.2 RED: `::test_pba_distrito_code_resolves_through_the_crosswalk_to_the_national_pair` — PBA `027` must land on the same jurisdiction as national `02`/`027`, not a third one.
+- [x] 17.3 RED: `::test_an_uncurated_pba_code_is_quarantined_not_silently_written` — a PBA code with no crosswalk entry must not create an island; it is quarantined and surfaced.
+- [x] 17.4 GREEN: normalize administrative codes at the single jurisdiction boundary (`make_result_row` / `db.upsert_jurisdiction`), so every writer goes through one place. Choose the curated padded form as canonical, since `curated/*.yaml` and `jurisdiction_crosswalk` already use it. **Deviation, disclosed: NOT applied inside `make_result_row` itself — `ingest.pba`'s pre-crosswalk-resolution distrito value is not yet a national code, and blindly zero-padding PBA's own `"027"` silently produced the WRONG code `"27"` (caught live via a real test regression). Normalization instead lives at `etl.db.upsert_jurisdiction`/`batch_upsert_jurisdictions` (the actual write boundary every path funnels through) and at `resolve_pba_distrito_code`'s translation output.**
+- [x] 17.5 GREEN: resolve PBA distrito codes through `jurisdiction_crosswalk` during `ingest_pba`, before any jurisdiction is created.
+- [x] 17.6 GREEN: migration `0012_reconcile_jurisdictions.sql` + down — merge duplicate jurisdictions that differ only by padding, repoint `result_row.jurisdiction_id`, and delete the emptied duplicates. It MUST NOT lose or duplicate a single result row; assert the total before and after.
+- [x] 17.7 REFACTOR: verify live that Coronel Rosales resolves to ONE jurisdiction set, that fiscalización mesas join to national mesas, and record the before/after counts in `spikes/006-jurisdiction-reconciliation.md`.
 
 ## Key Learnings
 
