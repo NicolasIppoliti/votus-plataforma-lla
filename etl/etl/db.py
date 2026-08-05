@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from etl.crosswalk import CrosswalkTable, MesaStability
+from etl.party_map import PartyMappingTable
 from etl.review_item import ReviewItemRecord
 
 
@@ -285,6 +287,154 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
                 ],
             )
     return len(records)
+
+
+def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
+    """Load `curated/party_map.yaml` (already parsed into `table` by
+    `etl.party_map.load_party_map`) into `party_canonical`, `list_identity`
+    and `party_mapping` (Phase 15, tasks 15.1-15.5).
+
+    Idempotent by plain `ON CONFLICT` upsert -- unlike `upsert_jurisdiction`,
+    none of these three tables' natural keys contain a nullable column
+    (`party_canonical.id` is a `text primary key`; `list_identity` and
+    `party_mapping` both key on `(year, jurisdiction, category, list_id)`,
+    all `not null`), so Postgres's `NULL <> NULL` upsert pitfall documented
+    on `upsert_jurisdiction` does not apply here.
+
+    `party_canonical.display_name` is populated from the FIRST entry (in
+    `table.entries` order) that carries each `canonical_party` id -- a
+    canonical party is a single concept, but the curated file legitimately
+    repeats the same canonical id under several `(year, jurisdiction,
+    category, list_id)` keys with source-observed `party_name` spellings
+    that can differ (e.g. "LA LIBERTAD AVANZA" in 2023 vs "ALIANZA LA
+    LIBERTAD AVANZA" in 2025); one display name has to be chosen, and doing
+    it deterministically (first occurrence) beats an unordered `dict`
+    write-wins race.
+    """
+    display_name_by_canonical_party: dict[str, str] = {}
+    for entry in table.entries:
+        display_name_by_canonical_party.setdefault(entry.canonical_party, entry.party_name)
+
+    with conn.cursor() as cur:
+        for canonical_party, display_name in display_name_by_canonical_party.items():
+            cur.execute(
+                """
+                insert into party_canonical (id, display_name)
+                values (%s, %s)
+                on conflict (id) do update set display_name = excluded.display_name
+                """,
+                (canonical_party, display_name),
+            )
+
+        for entry in table.entries:
+            cur.execute(
+                """
+                insert into list_identity (year, jurisdiction, category, list_id, source_name)
+                values (%s, %s, %s, %s, %s)
+                on conflict (year, jurisdiction, category, list_id)
+                do update set source_name = excluded.source_name
+                """,
+                (entry.year, entry.jurisdiction, entry.category, entry.list_id, entry.party_name),
+            )
+            cur.execute(
+                """
+                insert into party_mapping (
+                    year, jurisdiction, category, list_id, canonical_party_id, verified, source
+                ) values (%s, %s, %s, %s, %s, %s, %s)
+                on conflict (year, jurisdiction, category, list_id)
+                do update set
+                    canonical_party_id = excluded.canonical_party_id,
+                    verified = excluded.verified,
+                    source = excluded.source
+                """,
+                (
+                    entry.year,
+                    entry.jurisdiction,
+                    entry.category,
+                    entry.list_id,
+                    entry.canonical_party,
+                    entry.verified,
+                    entry.source,
+                ),
+            )
+
+    return {
+        "party_canonical": len(display_name_by_canonical_party),
+        "list_identity": len(table.entries),
+        "party_mapping": len(table.entries),
+    }
+
+
+def load_crosswalk_rows(
+    conn,
+    table: CrosswalkTable,
+    mesa_stabilities: Sequence[tuple[str, str, MesaStability]] = (),
+) -> dict[str, int]:
+    """Load `curated/crosswalk.yaml` (already parsed into `table` by
+    `etl.crosswalk.load_crosswalk`) into `jurisdiction_crosswalk`, plus any
+    supplied per-mesa stability records into `mesa_crosswalk` (Phase 15,
+    tasks 15.6-15.8).
+
+    `mesa_stabilities` is `(distrito_code, seccion_code, MesaStability)`
+    triples -- `etl.crosswalk.MesaStability` itself carries only a mesa
+    number, not the jurisdiction it was observed in, so the caller (the
+    `load-curated` CLI command, task 15.10/15.11) supplies the scope
+    alongside each record. `compute_mesa_stability` MUST NOT default a
+    code to "stable" (jurisdiction-model spec); this loader does not
+    recompute stability, it only persists whatever the caller already
+    computed.
+
+    Idempotent by plain `ON CONFLICT`: `jurisdiction_crosswalk` keys on
+    `pba_distrito_code` (not null, migration 0003) and `mesa_crosswalk`
+    keys on `(distrito_code, seccion_code, mesa_code)` (all not null) --
+    same no-nullable-key-column reasoning as `load_party_map_rows`.
+    """
+    with conn.cursor() as cur:
+        for jurisdiction in table.jurisdictions:
+            cur.execute(
+                """
+                insert into jurisdiction_crosswalk (
+                    pba_distrito_code, national_distrito_code, national_seccion_code, name
+                ) values (%s, %s, %s, %s)
+                on conflict (pba_distrito_code) do update set
+                    national_distrito_code = excluded.national_distrito_code,
+                    national_seccion_code = excluded.national_seccion_code,
+                    name = excluded.name
+                """,
+                (
+                    jurisdiction.pba_distrito_code,
+                    jurisdiction.national_distrito_code,
+                    jurisdiction.national_seccion_code,
+                    jurisdiction.name,
+                ),
+            )
+
+        for distrito_code, seccion_code, stability in mesa_stabilities:
+            cur.execute(
+                """
+                insert into mesa_crosswalk (
+                    distrito_code, seccion_code, mesa_code,
+                    present_2023, present_2025, stable_across_years
+                ) values (%s, %s, %s, %s, %s, %s)
+                on conflict (distrito_code, seccion_code, mesa_code) do update set
+                    present_2023 = excluded.present_2023,
+                    present_2025 = excluded.present_2025,
+                    stable_across_years = excluded.stable_across_years
+                """,
+                (
+                    distrito_code,
+                    seccion_code,
+                    stability.mesa,
+                    stability.present_2023,
+                    stability.present_2025,
+                    stability.stable,
+                ),
+            )
+
+    return {
+        "jurisdiction_crosswalk": len(table.jurisdictions),
+        "mesa_crosswalk": len(mesa_stabilities),
+    }
 
 
 def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:

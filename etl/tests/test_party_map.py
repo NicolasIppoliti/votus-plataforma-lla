@@ -158,9 +158,12 @@ def test_unmapped_row_never_falls_back_to_different_year_or_jurisdiction() -> No
 def test_agrupacion_id_is_not_a_cross_year_party_key() -> None:
     """LLA's national `agrupacion_id` CHANGED 135 (2023) -> 110 (2025).
     Resolution goes through the full key, never `agrupacion_id` alone:
-    2023's 135 and 2025's 135 are NOT the same lookup, and 2025's real LLA
-    identifier (110) resolves to a party distinct from the bare-135
-    lookup's failure."""
+    2023's 135 and 2025's 135 are NOT the same lookup -- a stale key with
+    the right list id but the wrong year still fails, even though 2025's
+    real LLA identifier (110) resolves via its OWN correct key. (Phase 15,
+    task 15.3: 2025's national list 110 is now RECONCILED to the SAME
+    canonical party as 2023's 135/20135 -- the point is the lookup is
+    exact-key-only, not that the parties must differ.)"""
     table = _load_party_map_table()
 
     lla_2023 = table.resolve(
@@ -176,7 +179,7 @@ def test_agrupacion_id_is_not_a_cross_year_party_key() -> None:
     assert isinstance(lla_2023, PartyMappingEntry) and lla_2023.canonical_party == "LLA"
     assert isinstance(stale_135_in_2025, UnmappedListId)
     assert isinstance(lla_2025, PartyMappingEntry)
-    assert lla_2025.canonical_party == "LLA_PRO_ALLIANCE"
+    assert lla_2025.canonical_party == "LLA"
 
 
 # --- 7.6b --------------------------------------------------------------
@@ -203,7 +206,7 @@ def test_empty_lista_numero_in_2025_is_not_treated_as_missing_data() -> None:
     assert resolution.unmapped == ()
     assert len(resolution.mapped) == len(lla_rows)
     for _row, entry in resolution.mapped:
-        assert entry.canonical_party == "LLA_PRO_ALLIANCE"
+        assert entry.canonical_party == "LLA"
 
 
 # --- 7.6c --------------------------------------------------------------
@@ -244,7 +247,8 @@ def test_pba_municipal_scheme_never_resolved_against_national_ids() -> None:
     ("year", "jurisdiction", "category", "list_id", "expected_party"),
     [
         (2023, "national", "DIPUTADO NACIONAL", "135", "LLA"),
-        (2025, "national", "DIPUTADO NACIONAL", "110", "LLA_PRO_ALLIANCE"),
+        (2023, "national", "DIPUTADO NACIONAL", "20135", "LLA"),
+        (2025, "national", "DIPUTADO NACIONAL", "110", "LLA"),
         (2025, "coronel_rosales_municipal", "CONCEJALES", "2206", "LLA_PRO_ALLIANCE"),
         (2023, "coronel_rosales_municipal", "CONCEJALES", "962", "PRIMERO_ROSALES"),
     ],

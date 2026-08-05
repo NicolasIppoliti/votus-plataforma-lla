@@ -89,5 +89,44 @@
     "fetched_at": "2026-08-04T14:16:38Z",
     "status": "ok",
     "notes": "Task 14.12: internal LLA fiscalizacion spreadsheet, supplied by the user outside this repository per D9/upload:never, placed at its registered archive path (never fetched over the network -- source_kind=fiscalizacion, upload=never, D9.3). Not the second, unregistered file in the same source directory (...Respuestas.csv, out of scope)."
+  },
+  {
+    "id": "national/2023-generales",
+    "capability": "national",
+    "source": "argentina.gob.ar",
+    "source_url": "https://www.argentina.gob.ar/sites/default/files/2023_generales_1.zip",
+    "archived_path": "archive/national/2023-generales.zip",
+    "sha256": "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b",
+    "mime": "application/zip",
+    "bytes": 28028857,
+    "fetched_at": "2026-08-05T00:07:47Z",
+    "status": "ok",
+    "notes": "2023 Elecciones Generales, mesa-level results ZIP. ~28MB, verified reachable (200, content-length 28028857) per SPIKE evidence table (spikes/001-granularity-and-join-keys.md), sha256 2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b."
+  },
+  {
+    "id": "national/2023-balotaje",
+    "capability": "national",
+    "source": "argentina.gob.ar",
+    "source_url": "https://www.argentina.gob.ar/sites/default/files/2023_segundavuelta.zip",
+    "archived_path": "archive/national/2023-balotaje.zip",
+    "sha256": "6d63298575984a9639cc51ed3fb60def789ceab0a4ae9b1b1003571f2b4fa530",
+    "mime": "application/zip",
+    "bytes": 3014122,
+    "fetched_at": "2026-08-05T00:07:50Z",
+    "status": "ok",
+    "notes": "2023 Balotaje (segunda vuelta), mesa-level results ZIP. ~3MB, verified reachable (200, content-length 3014122)."
+  },
+  {
+    "id": "national/2023-paso-wayback",
+    "capability": "national",
+    "source": "web.archive.org",
+    "source_url": "https://web.archive.org/web/20240106010034if_/https://www.argentina.gob.ar/sites/default/files/dine-resultados/2023-PROVISORIOS_PASO.zip",
+    "archived_path": "archive/national/2023-paso-wayback.zip",
+    "sha256": "25558e7b73e8c273726ea12f04040e2fac8e693ad0eb866386502eb112bd2c0c",
+    "mime": "application/zip",
+    "bytes": 88157604,
+    "fetched_at": "2026-08-05T00:44:50Z",
+    "status": "ok",
+    "notes": "2023 PASO, mesa-level results ZIP. Official URL (argentina.gob.ar/sites/default/files/dine-resultados/2023-PROVISORIOS_PASO.zip) returns 404 -- this is the only surviving copy, via the Wayback Machine snapshot dated 2024-01-06 (the `if_` suffix requests the raw archived bytes, not the Wayback UI wrapper). ~88MB, sha256 25558e7b73e8c273726ea12f04040e2fac8e693ad0eb866386502eb112bd2c0c per SPIKE task 0.7 (archived to archive/national_2023_paso/, gitignored per D2). ~42x deflate ratio measured on ResultadosElectorales.csv -- the reference case for task 2.6b's decompression-bomb size cap."
   }
 ]

@@ -108,6 +108,22 @@ mappings:
     party_name: AGRUPACION MUNICIPAL PRIMERO ROSALES
     source: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf"
 
+  # --- 2023 generales, national (agrupacion_id, 5-digit space) ------------
+  # Verified live against archive/national/2023-generales.zip ->
+  # 2023_Generales/ResultadoElectorales_2023_Generales.csv, distrito 2,
+  # category DIPUTADO NACIONAL: this file's agrupacion_id space is a 5-digit
+  # extension of the PASO's ("2" + the PASO id -- 132/134/135/136 become
+  # 20132/20134/20135/20136), NOT a fresh scheme. list_id 20135 carried
+  # 2.327.998 votes for distrito 2 -- the same party as PASO's 135, so it
+  # resolves to the SAME canonical party (task 15.3).
+  - year: 2023
+    jurisdiction: national
+    category: DIPUTADO NACIONAL
+    list_id: "20135"
+    canonical_party: LLA
+    party_name: LA LIBERTAD AVANZA
+    source: "archive/national/2023-generales.zip -> 2023_Generales/ResultadoElectorales_2023_Generales.csv"
+
   # --- 2025 legislativas, national (agrupacion_id) ------------------------
   # Full distrito-02 agrupacion_id set (Engram #1417). agrupacion_id 110
   # is a DIFFERENT identifier from 2023's 135 for the same real-world party
@@ -125,7 +141,18 @@ mappings:
     jurisdiction: national
     category: DIPUTADO NACIONAL
     list_id: "110"
-    canonical_party: LLA_PRO_ALLIANCE
+    # RECONCILED (Phase 15, task 15.3): at the NATIONAL DIPUTADO NACIONAL
+    # level, list 110 is the same real-world party lineage as list 135
+    # (2023 PASO) and list 20135 (2023 generales), verified against the
+    # archived files -- all three MUST resolve to canonical party `LLA` so
+    # a cross-year query does not need per-election hardcoded ids. This is
+    # DELIBERATELY NOT the same decision as the `coronel_rosales_municipal`
+    # 2025 entry below (list 2206, still `LLA_PRO_ALLIANCE`): the spec's
+    # "LLA+PRO alliance mapped separately for 2025" scenario is about a
+    # PROVINCIAL/municipal-level alliance composition, a different
+    # (jurisdiction, category) key than this national entry, and stays a
+    # distinct canonical party.
+    canonical_party: LLA
     party_name: ALIANZA LA LIBERTAD AVANZA
     source: "archive/national_2025/legislativas2025.zip -> resultados2025.csv"
   - year: 2025

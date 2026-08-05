@@ -7,6 +7,7 @@ import {
   createResultsRepository,
   fetchSourceRefs,
   type BaseQuery,
+  type PartyMappingContext,
   type ResultRow,
   type ResultsRepository,
 } from "@/lib/fiscalizacion/repository";
@@ -25,6 +26,18 @@ export const FISCALIZACION_COVERAGE: Coverage = {
   denominatorUnits: 153,
   denominatorBasis: "distinct mesa_id, distrito_id=02 seccion_id=027 (26 Oct 2025)",
   isRandomSample: false,
+};
+
+/**
+ * The curated `party_mapping` scope for this route (task 15.14): this page
+ * is always the 26 Oct 2025 national legislativas race, so the scope is a
+ * fixed constant rather than derived from the request — same pattern as
+ * `FISCALIZACION_COVERAGE`.
+ */
+export const FISCALIZACION_PARTY_CONTEXT: PartyMappingContext = {
+  year: 2025,
+  jurisdiction: "national",
+  category: "DIPUTADO NACIONAL",
 };
 
 export type FiscalizacionQuery = BaseQuery;
@@ -60,7 +73,11 @@ export async function loadFiscalizacionView(
     };
   }
 
-  const response = await repository.queryFiscalizacion(query, { coverage });
+  const response = await repository.queryFiscalizacion(
+    query,
+    { coverage },
+    FISCALIZACION_PARTY_CONTEXT,
+  );
 
   if (response.status !== "ok") {
     return { status: "refused", reason: response.reason };
@@ -128,7 +145,7 @@ export function renderFiscalizacionView(
           <ul>
             {rows.map((row, index) => (
               <li key={`${row.listId ?? "unmapped"}-${index}`}>
-                list {row.listId ?? "unmapped"}: {row.votes} votes
+                {row.partyName ?? `unmapped (list ${row.listId ?? "?"})`}: {row.votes} votes
               </li>
             ))}
           </ul>
