@@ -82,6 +82,7 @@ describe("municipal page — renderMunicipalView", () => {
         status: "ok",
         rows: [{ ...MUNICIPAL_ROWS[0]!, partyName: "ALIANZA LA LIBERTAD AVANZA" }],
         excluded: {},
+        partyMappingConfigured: true,
       }),
     );
 
@@ -118,12 +119,19 @@ describe("municipal page — the badge describes the rows, not a memory of them"
     const html = renderToStaticMarkup(
       renderMunicipalView({
         status: "ok",
-        rows: [{ ...MUNICIPAL_ROWS[0]!, granularity: "seccion" }],
+        // MESA rows. `jurisdictionTotalLevel` answers `seccion` on every path,
+        // so `granularity` is a constant and asserting it cannot fail — and
+        // `seccion` rows are the one level where the boundary emits neither
+        // `summedFrom` nor `degradedFrom`, i.e. the single input where the
+        // badge carries nothing about the rows at all.
+        rows: [{ ...MUNICIPAL_ROWS[0]!, granularity: "mesa" }],
         excluded: {},
+        partyMappingConfigured: true,
       }),
     );
 
-    expect(html).toContain("seccion");
+    // The ROW-DERIVED part: mesa rows were summed to reach the partido total.
+    expect(html).toContain("summed from mesa");
     expect(html).not.toMatch(/granularity[^>]*distrito/);
   });
 
@@ -136,6 +144,7 @@ describe("municipal page — the badge describes the rows, not a memory of them"
           { ...MUNICIPAL_ROWS[0]!, granularity: "distrito" },
         ],
         excluded: {},
+        partyMappingConfigured: true,
       }),
     );
 
@@ -186,6 +195,14 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
           },
         ),
       ),
+    fetchElectionYear: (_client: unknown, electionId: string) => {
+      // The uuid the database stores, mapped the way the `election` table does.
+      if (electionId === "bfeb6235-2ac7-4f8d-aa09-a3db8bd1e2da") return Promise.resolve({ status: "ok" as const, year: 2025 });
+      const match = /^(\d{4})/.exec(electionId);
+      return Promise.resolve(
+        match ? { status: "ok" as const, year: Number(match[1]) } : { status: "no_row" as const },
+      );
+    },
     fetchSourceRefs: () => Promise.resolve({ sources: entryPointSources, missing: [] }),
   };
 });
@@ -266,6 +283,7 @@ describe("municipal page — the mapping is fixed to one race", () => {
   it("test_an_election_outside_the_mapping_year_is_refused", async () => {
     process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
     const { default: MunicipalPage } = await import("./page");
 
     const markup = renderToStaticMarkup(
@@ -289,6 +307,7 @@ describe("municipal page — the race is pinned, not taken from the request", ()
   it("test_another_category_is_refused_not_named_through_this_mapping", async () => {
     process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
     const { default: MunicipalPage } = await import("./page");
 
     const markup = renderToStaticMarkup(
@@ -342,6 +361,7 @@ describe("municipal page — path 3 fires when the repository filter regresses",
           { ...MUNICIPAL_ROWS[0]!, sourceKind: "fiscalizacion" },
         ],
         excluded: {},
+        partyMappingConfigured: true,
       }),
     );
 
@@ -350,10 +370,12 @@ describe("municipal page — path 3 fires when the repository filter regresses",
     // two siblings pin it; this driver asserted only that the refusal fired,
     // so the per-kind tally could regress to a bare total and stay green.
     expect(html).toContain("1 fiscalizacion row(s) / 4200 vote(s)");
-    // Against markup the LEAK PATH would emit: `Coverage:` appears on no
-    // municipal branch at all, so asserting its absence could not fail — the
-    // exact vacuous-negative shape this suite documents elsewhere.
-    expect(html).not.toContain("<li>");
+    // No PARTY line. `not.toContain("<li>")` was too broad once the unmapped
+    // breakdown started rendering its own list: the refusal legitimately emits
+    // `<li>` now, and the claim was never about markup — it is that no figure
+    // is attributed to a party.
+    expect(html).not.toContain(": 4200 votes");
+    expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA:");
   });
 });
 
@@ -363,7 +385,7 @@ describe("municipal page — an untraceable figure says so", () => {
     // entry resolved to nothing is not rendered as traced.
     const html = renderToStaticMarkup(
       renderMunicipalView(
-        { status: "ok", rows: MUNICIPAL_ROWS, excluded: {} },
+        { status: "ok", rows: MUNICIPAL_ROWS, excluded: {}, partyMappingConfigured: true },
         [],
         ["pba/2025-municipal-coronel-rosales"],
       ),
@@ -394,5 +416,98 @@ describe("municipal page — a repeated query param reaches the guard", () => {
 
     expect(markup).toContain("categoryId");
     expect(markup).toContain("more than once");
+  });
+});
+
+describe("municipal page — a uuid election id is served", () => {
+  it("test_a_uuid_election_reaches_the_concejales_mapping", async () => {
+    // The gate this route applies is `year !== 2025`, and the year now comes
+    // from the `election` row. With the id parsed instead, a uuid answered
+    // `null` and the page refused every real request.
+    process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
+    process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
+    const { default: MunicipalPage } = await import("./page");
+
+    const markup = renderToStaticMarkup(
+      (await MunicipalPage({
+        searchParams: Promise.resolve({
+          electionId: "bfeb6235-2ac7-4f8d-aa09-a3db8bd1e2da",
+          jurisdictionId: "j-027",
+          categoryId: "c-concejales",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).not.toContain("is not that election");
+    expect(markup).toContain("LA LIBERTAD AVANZA");
+  });
+});
+
+describe("municipal page — a read failure states the real denominator", () => {
+  it("test_the_unmapped_share_is_of_the_rows_read_not_of_itself", () => {
+    // `totalRows` was derived from the unmapped entries, so numerator and
+    // denominator were the same number and every read-failed page claimed
+    // "N of N rows resolved to no curated party" — 100 % unmapped, whatever
+    // was actually read.
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "read_failed",
+        reason: "row-level security denied the source read",
+        unmapped: [{ listId: "2206", rows: 1, votes: 40 }],
+        unsummable: null,
+        totalRows: 400,
+        unrecognized: [{ granularity: "subcircuito", rows: 3, votes: 90 }],
+      }),
+    );
+
+    expect(html).toContain("1 of 400 rows");
+    expect(html).not.toContain("1 of 1 rows");
+    // And the levels this app cannot order, counted before the same failure.
+    expect(html).toContain("subcircuito: 3 rows");
+  });
+});
+
+describe("municipal page — a read failure names both breakdowns", () => {
+  it("test_the_refusal_carries_the_unmapped_ids_and_the_unorderable_levels", () => {
+    // `MunicipalView.read_failed` carries `unmapped`, `totalRows` and
+    // `unrecognized`, and the refusal branch renders both components — none of
+    // it driven through an entry point until now.
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "read_failed",
+        reason: "row-level security denied the source read",
+        unmapped: [{ listId: "2206", rows: 2, votes: 90 }],
+        unsummable: null,
+        totalRows: 120,
+        unrecognized: [{ granularity: "subcircuito", rows: 4, votes: 200 }],
+      }),
+    );
+
+    expect(html).toContain("row-level security denied the source read");
+    expect(html).toContain("2 of 120 rows");
+    expect(html).toContain("2206: 2 rows");
+    expect(html).toContain("subcircuito: 4 rows");
+    // ROWS only for the unorderable level: containment is unknown.
+    expect(html).not.toContain("subcircuito: 4 rows, 200 votes");
+  });
+});
+
+describe("municipal page — no mapping source is not a claim about the data", () => {
+  it("test_an_unconfigured_mapping_source_says_so_on_the_success_path", async () => {
+    // The two sibling pages have this test; municipal's absence is why its
+    // success branch shipped with the component's `true` default and stated a
+    // fact about the curated table that is really a fact about config.
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "ok",
+        rows: [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }],
+        excluded: {},
+        partyMappingConfigured: false,
+      }),
+    );
+
+    expect(html).toContain("no curated mapping source is configured");
+    expect(html).not.toContain("resolved to no curated party");
   });
 });

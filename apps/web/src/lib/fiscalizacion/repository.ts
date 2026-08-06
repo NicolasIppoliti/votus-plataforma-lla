@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mixedGranularityReason } from "@/lib/results/granularity";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import type { Coverage, Granularity, SourceKind, SourceRef } from "@/lib/results/types";
 
@@ -151,15 +152,83 @@ export function tallyByKind(rows: ResultRow[]): ExcludedByKind {
  * shown would have landed in one of the three.
  */
 export function votesByParty(rows: ResultRow[]): { label: string; votes: number }[] {
-  const totals = new Map<string, number>();
+  // Keyed on the CANONICAL ID and labelled by the display name. Folding on the
+  // name merged two canonical parties that happen to share a string and split
+  // one party the curated file respells between years — the identity mistake
+  // `topParty` refuses one file over.
+  //
+  // UNRESOLVED rows are not here at all. They have their own reported section
+  // (`unmappedByListId`), and emitting `unmapped (list 4321): 700 votes` inside
+  // the ranked party list put the same votes in two places, one of them where a
+  // reader sums them as a party's figure.
+  const totals = new Map<string, { votes: number; label: string }>();
   for (const row of rows) {
-    // NEVER the bare list id: `110` on its own reads as a party called 110.
-    const label = row.partyName ?? `unmapped (list ${row.listId ?? "?"})`;
-    totals.set(label, (totals.get(label) ?? 0) + row.votes);
+    if (!row.canonicalPartyId || !row.partyName) continue;
+    const entry = totals.get(row.canonicalPartyId) ?? { votes: 0, label: row.partyName };
+    totals.set(row.canonicalPartyId, { votes: entry.votes + row.votes, label: entry.label });
   }
-  return [...totals.entries()]
-    .map(([label, votes]) => ({ label, votes }))
+  return [...totals.values()]
+    .map(({ label, votes }) => ({ label, votes }))
     .sort((a, b) => b.votes - a.votes);
+}
+
+/**
+ * Rows whose `listId` resolved to no curated party, per list id.
+ *
+ * `votesByParty` does not include them AT ALL — it used to label them
+ * (`unmapped (list 110)`) inside the ranked list, which put the same votes in
+ * two places. This is the only place they are reported, and a label alone
+ * would not be a breakdown: one id covering 40 % of the votes and
+ * forty ids covering 1 % each render identically. `fiscalizacion` reported
+ * this per id; `drilldown` and `municipal` rendered the labels only.
+ */
+/**
+ * Whether a row carries a usable party identity.
+ *
+ * ONE predicate. `compare` re-derived it inline, so a row was excluded from
+ * every figure there while the disclosure depended on this fold agreeing by
+ * coincidence — two definitions of "resolved" that a change to either would
+ * separate, leaving rows in no tally on the page at all.
+ */
+export function isPartyResolved(
+  row: ResultRow,
+): row is ResultRow & { partyName: string; canonicalPartyId: string } {
+  return typeof row.partyName === "string" && typeof row.canonicalPartyId === "string";
+}
+
+export function unmappedByListId(rows: ResultRow[]): {
+  entries: { listId: string; rows: number; votes: number }[];
+  /**
+   * Rows carrying NO list id at all, PER SOURCE KIND — not parties that failed
+   * to map.
+   *
+   * One aggregate collapsed at least two distinct shapes (rule 2: the 2023
+   * generales file's empty `lista_numero`, and 2025's POSITIVO rows), and a
+   * large plausible total is how a destructive filter survives review.
+   */
+  withoutListId: ExcludedByKind;
+} {
+  const totals = new Map<string, { rows: number; votes: number }>();
+  const withoutListIdRows: ResultRow[] = [];
+  for (const row of rows) {
+    if (isPartyResolved(row)) continue;
+    if (row.listId === null) {
+      // NOT a list id that failed to map. Rule 2: `lista_numero` is never
+      // populated on a POSITIVO row in 2025 and is empty throughout the 2023
+      // generales file, so these are non-party rows. Bucketing them under
+      // "resolved to no curated party" reports a shape the source never had.
+      withoutListIdRows.push(row);
+      continue;
+    }
+    const entry = totals.get(row.listId) ?? { rows: 0, votes: 0 };
+    totals.set(row.listId, { rows: entry.rows + 1, votes: entry.votes + row.votes });
+  }
+  return {
+    entries: [...totals.entries()]
+      .map(([listId, tally]) => ({ listId, ...tally }))
+      .sort((a, b) => b.votes - a.votes),
+    withoutListId: tallyByKind(withoutListIdRows),
+  };
 }
 
 export type OkResultsQueryResponse = {
@@ -171,6 +240,25 @@ export type OkResultsQueryResponse = {
        * otherwise appear on no path at all.
        */
   excluded: ExcludedByKind;
+  /**
+   * The coverage the caller opted in with, TRAVELLING with the rows.
+   *
+   * `void optIn` made the opt-in a compile-time gate and nothing more: the
+   * denominator survived only because the page happened to read the same
+   * module constant, so a caller passing a different — or random-sample —
+   * coverage produced a response indistinguishable from the correct one.
+   * Undefined on the official path, which has no denominator to carry.
+   */
+  coverage?: Coverage;
+  /**
+   * Whether a curated mapping source was configured for THIS read.
+   *
+   * With none, every row comes back unresolved, and "resolved to no curated
+   * party" would state a fact about the curated table that is really a fact
+   * about the caller's configuration — the substitution `resolvePartyNames`
+   * documents, one function downstream.
+   */
+  partyMappingConfigured: boolean;
 };
 
 // No `ResultsQueryResponse` union: with `queryOfficial` and
@@ -200,6 +288,25 @@ export interface AggregateVotes {
    * it did not expect.
    */
   summedByKind: ExcludedByKind;
+  /**
+   * Why THIS path's rows cannot be summed, or `null` when they can.
+   *
+   * Path 1's gate is computed from path 1's rows, and this file argues
+   * everywhere that path 2 is an INDEPENDENT fetch whose row set can
+   * legitimately differ — so a mixed set reaching only this path produced a
+   * double-counted `totalVotes` that every surface rendered as the official
+   * figure. A `seccion` row already contains the `mesa` rows beneath it.
+   */
+  unsummableReason: string | null;
+  /**
+   * The archive entries THIS read's rows came from.
+   *
+   * Path 2 fetches independently, so its rows can differ from path 1's — and
+   * the page resolved provenance from path 1 only. `Official total` then
+   * shipped as a displayed figure with no source record and could not even
+   * appear in `missing`.
+   */
+  archiveEntryIds: string[];
 }
 
 export class ResultsRepository {
@@ -216,14 +323,17 @@ export class ResultsRepository {
    * `queryFiscalizacion` and appears nowhere at all — the silent-drop shape
    * rule 3 exists for. Counting it here is what makes it visible.
    */
-  private static excludedByKind(
-    rows: ResultRow[],
-    kept: SourceKind,
-  ): ExcludedByKind {
-    // Delegates: this IS `tallyByKind` over the rows the filter removed, and
-    // writing the `official | fiscalizacion | unknown` bucketing twice in one
-    // file meant a third `SourceKind` had to be added in two places.
-    return tallyByKind(rows.filter((row) => row.sourceKind !== kept));
+  private static excludedByKind(rows: ResultRow[], kept: ResultRow[]): ExcludedByKind {
+    // Derived from the KEPT collection, never from a second predicate over the
+    // same rows. `rows.filter(r => r.sourceKind !== "official")` re-decided
+    // what had been removed, so a widened keep-filter reported a row as
+    // returned AND removed — a drop reported as a drop it was not. Path 2
+    // already worked this way; paths 1 and 3 were the ones still guessing.
+    // A Set, not `kept.includes`: still identity-based — which is the point,
+    // the tally must describe the rows this call actually kept — but linear
+    // rather than quadratic. `result_row` holds 18.17M rows.
+    const keptRows = new Set(kept);
+    return tallyByKind(rows.filter((row) => !keptRows.has(row)));
   }
 
   /** Path 1 of the threat matrix: the default query. */
@@ -238,27 +348,50 @@ export class ResultsRepository {
     partyContext?: PartyMappingContext,
   ): Promise<OkResultsQueryResponse> {
     const rows = await this.rowSource.fetchRows(query);
-    const official = rows.filter((row) => row.sourceKind === "official");
+    const official = this.keep(rows, "official");
     return {
       status: "ok",
       rows: await this.resolvePartyNames(official, partyContext),
-      excluded: ResultsRepository.excludedByKind(rows, "official"),
+      partyMappingConfigured: this.partyNameSource !== undefined && partyContext !== undefined,
+      excluded: ResultsRepository.excludedByKind(rows, official),
     };
   }
 
   /** Path 2 of the threat matrix: any aggregate built on top of a query. */
+  /**
+   * The rows this path will SUM. A `protected` seam, not an inline filter, so a
+   * test can widen the filter itself rather than overwrite the tally it
+   * produces — reading back an injected value proves nothing about the code.
+   */
+  protected officialRows(rows: ResultRow[]): ResultRow[] {
+    return this.keep(rows, "official");
+  }
+
+  /**
+   * THE keep-filter, for every path. Each query had its own inline
+   * `rows.filter(...)`, so a test could only widen path 2 — and a subclass
+   * claiming to widen "every path" silently exercised one of them twice.
+   */
+  protected keep(rows: ResultRow[], kind: SourceKind): ResultRow[] {
+    return rows.filter((row) => row.sourceKind === kind);
+  }
+
   async aggregateOfficialVotes(query: BaseQuery): Promise<AggregateVotes> {
     // ITS OWN fetch and ITS OWN filter. Delegating to `queryOfficial` made
     // this path a caller of path 1, so blocking one blocked all and unblocking
     // one unblocked all -- the opposite of the three independent guards D9.1
     // describes, and the reason its test passed while exercising path 1 twice.
     const rows = await this.rowSource.fetchRows(query);
-    const summed = rows.filter((row) => row.sourceKind === "official");
+    const summed = this.officialRows(rows);
     const totalVotes = summed.reduce((sum: number, row: ResultRow) => sum + row.votes, 0);
     return {
       totalVotes,
       sourceKind: "official",
-      excluded: ResultsRepository.excludedByKind(rows, "official"),
+      // Both halves from the SAME seam, via the shared helper.
+      excluded: ResultsRepository.excludedByKind(rows, summed),
+      // Judged on the rows THIS path summed, not on another read's.
+      unsummableReason: mixedGranularityReason(summed),
+      archiveEntryIds: [...new Set(summed.map((row) => row.archiveEntryId))].sort(),
       // ONE collection: `summed` is what `totalVotes` came from, so widening
       // the filter shows up here as a kind the caller never asked for.
       summedByKind: tallyByKind(summed),
@@ -287,14 +420,21 @@ export class ResultsRepository {
     query: BaseQuery,
     optIn: UnofficialOptIn,
     partyContext?: PartyMappingContext,
-  ): Promise<OkResultsQueryResponse> {
-    void optIn;
+    // The coverage is REQUIRED on the way back, not merely optional: this
+    // method always sets it, so a caller narrowing `coverage` would be
+    // guarding a state nothing can produce. `OkResultsQueryResponse` keeps it
+    // optional because the official path has no denominator to carry.
+  ): Promise<OkResultsQueryResponse & { coverage: Coverage }> {
     const rows = await this.rowSource.fetchRows(query);
-    const fiscalizacion = rows.filter((row) => row.sourceKind === "fiscalizacion");
+    const fiscalizacion = this.keep(rows, "fiscalizacion");
     return {
       status: "ok",
       rows: await this.resolvePartyNames(fiscalizacion, partyContext),
-      excluded: ResultsRepository.excludedByKind(rows, "fiscalizacion"),
+      partyMappingConfigured: this.partyNameSource !== undefined && partyContext !== undefined,
+      excluded: ResultsRepository.excludedByKind(rows, fiscalizacion),
+      // Carried, not assumed: the figure and the denominator it must be read
+      // against come back together.
+      coverage: optIn.coverage,
     };
   }
 
@@ -342,31 +482,143 @@ export class ResultsRepository {
 export class SupabaseRowSource implements RowSource {
   constructor(private readonly client: SupabaseClient) {}
 
+  /**
+   * Reads EVERY matching row, in pages.
+   *
+   * A single unpaginated `select` is capped server-side by PostgREST
+   * (`max-rows`, 1000 by default) and comes back TRUNCATED with no error and
+   * no signal — so every figure downstream would be computed over a silent,
+   * arbitrary subset while looking large and plausible. That is worse than a
+   * quarantine: a quarantine at least reports, and this drop is one the code
+   * never learns about. It would also defeat `drilldown`'s reconciliation
+   * alert, since both independent reads truncate the same way and agree while
+   * both are wrong.
+   *
+   * `result_row` holds 18.17M rows, so this is not a theoretical cap.
+   */
   async fetchRows(query: BaseQuery): Promise<ResultRow[]> {
-    const { data, error } = await this.client
-      .from("result_row")
-      .select("jurisdiction_id, category_id, list_id, votes, source_kind, granularity, archive_entry_id")
-      .eq("election_id", query.electionId)
-      .eq("jurisdiction_id", query.jurisdictionId)
-      .eq("category_id", query.categoryId);
+    const PAGE = 1000;
+    const rows: ResultRow[] = [];
+    let after: string | null = null;
 
-    if (error) {
-      throw new Error(`ResultsRepository: failed to read result_row: ${error.message}`);
+    // KEYSET on the primary key, not an offset over a non-unique sort. Ordering
+    // by `(list_id, archive_entry_id)` ties across every mesa — `result_row`
+    // holds one row per (mesa, list) — and Postgres gives no ordering
+    // guarantee inside a tie, so `range()` across a page boundary silently
+    // repeats some rows and skips others. That is unbounded error with no
+    // signal, which is worse than the truncation the loop was added to fix.
+    // `id` is the uuid primary key, so it cannot tie.
+    for (;;) {
+      let request = this.client
+        .from("result_row")
+        .select("id, jurisdiction_id, category_id, list_id, votes, source_kind, granularity, archive_entry_id")
+        .eq("election_id", query.electionId)
+        .eq("jurisdiction_id", query.jurisdictionId)
+        .eq("category_id", query.categoryId)
+        .order("id", { ascending: true })
+        .limit(PAGE);
+      if (after !== null) request = request.gt("id", after);
+
+      const { data, error } = await request;
+      if (error) {
+        throw new Error(`ResultsRepository: failed to read result_row: ${error.message}`);
+      }
+
+      const page = data ?? [];
+      rows.push(...page.map((row) => toResultRow(row)));
+      // EMPTY, not "shorter than the page size I asked for". The server's
+      // `max-rows` may be BELOW `PAGE`, and then the first response is short
+      // for a reason that has nothing to do with exhaustion — the truncation
+      // this loop exists to prevent, reintroduced by its own exit condition.
+      if (page.length === 0) return rows;
+      after = (page[page.length - 1] as Record<string, unknown>)["id"] as string;
     }
-
-    return (data ?? []).map((row) => ({
-      jurisdictionId: row["jurisdiction_id"] as string,
-      categoryId: row["category_id"] as string,
-      listId: row["list_id"] as string | null,
-      votes: row["votes"] as number,
-      sourceKind: row["source_kind"] as SourceKind,
-      granularity: row["granularity"] as Granularity,
-      archiveEntryId: row["archive_entry_id"] as string,
-      // Resolved separately by `ResultsRepository.resolvePartyNames` —
-      // never fabricated here.
-      partyName: null,
-    }));
   }
+}
+
+/**
+ * One row mapper, with the scalar shapes CHECKED rather than asserted.
+ *
+ * `row["votes"] as number` is a claim about a column type. PostgREST
+ * serialises `int8`/`numeric` as a STRING, and `sum + row.votes` would then
+ * concatenate — a total that is not a number and does not look wrong.
+ * `fetchElectionYear` and `fetchCategoryName` already check with `typeof`;
+ * this is the same discipline on the column every figure is built from.
+ */
+function toResultRow(row: Record<string, unknown>): ResultRow {
+  const votes = row["votes"];
+  const numericVotes =
+    typeof votes === "number" ? votes : typeof votes === "string" ? Number(votes) : Number.NaN;
+  if (!Number.isFinite(numericVotes)) {
+    throw new Error(
+      `ResultsRepository: result_row.votes is not a number (${JSON.stringify(votes)}); ` +
+        "every figure on every page is a sum of this column",
+    );
+  }
+
+  const archiveEntryId = row["archive_entry_id"];
+  if (typeof archiveEntryId !== "string") {
+    // A non-string here flows straight into `fetchSourceRefs` and comes back in
+    // `missing`, mislabelling a bad column as absent provenance.
+    throw new Error(
+      `ResultsRepository: result_row.archive_entry_id is not a string (${JSON.stringify(archiveEntryId)})`,
+    );
+  }
+
+  const sourceKind = row["source_kind"];
+  if (typeof sourceKind !== "string") {
+    // The column ALL THREE leakage guards key on. A NULL passes an `as` cast
+    // and lands in the `unknown` bucket by luck of `tallyByKind`; saying so is
+    // cheaper than relying on that.
+    throw new Error(
+      `ResultsRepository: result_row.source_kind is not a string (${JSON.stringify(sourceKind)}); ` +
+        "every official/fiscalización guard reads this column",
+    );
+  }
+  const granularity = row["granularity"];
+  if (typeof granularity !== "string") {
+    throw new Error(
+      `ResultsRepository: result_row.granularity is not a string (${JSON.stringify(granularity)})`,
+    );
+  }
+
+  const jurisdictionId = row["jurisdiction_id"];
+  const categoryId = row["category_id"];
+  if (typeof jurisdictionId !== "string" || typeof categoryId !== "string") {
+    // The identity columns every figure is grouped and filtered by. A NULL
+    // here flows into `votesByParty` keys and jurisdiction totals with no
+    // signal — the class the checked columns above were hardened against.
+    throw new Error(
+      "ResultsRepository: result_row.jurisdiction_id/category_id are not strings " +
+        `(${JSON.stringify(jurisdictionId)}, ${JSON.stringify(categoryId)})`,
+    );
+  }
+
+  const listId = row["list_id"];
+  if (listId !== null && listId !== undefined && typeof listId !== "string") {
+    // The column the party mapping keys on. `SupabasePartyNameSource` keys its
+    // map with `String(list_id)`, so a numeric column here misses on EVERY row
+    // and `resolvePartyNames` writes `partyName: null` — the defined "no
+    // curated mapping" state. Every page would then report the curated table
+    // as empty because of a column type.
+    throw new Error(
+      `ResultsRepository: result_row.list_id is not a string or null (${JSON.stringify(listId)}); ` +
+        "the party mapping is keyed on it",
+    );
+  }
+
+  return {
+    jurisdictionId,
+    categoryId,
+    listId: listId ?? null,
+    votes: numericVotes,
+    sourceKind: sourceKind as SourceKind,
+    granularity: granularity as Granularity,
+    archiveEntryId,
+    // Resolved separately by `ResultsRepository.resolvePartyNames` —
+    // never fabricated here.
+    partyName: null,
+  };
 }
 
 /**
@@ -386,19 +638,101 @@ export class SupabasePartyNameSource implements PartyNameSource {
     const names = new Map<string, ResolvedParty>();
     if (listIds.length === 0) return names;
 
-    const { data, error } = await this.client
-      .from("party_mapping")
-      .select("list_id, canonical_party_id, party_canonical(display_name)")
-      .eq("year", context.year)
-      .eq("jurisdiction", context.jurisdiction)
-      .eq("category", context.category)
-      .in("list_id", listIds);
+    // BATCHED, and every batch read to exhaustion. A single `.in(...)` is
+    // capped server-side like any other select, and a truncated read here is
+    // worse than a lost row: `resolvePartyNames` writes `partyName: null`,
+    // which is the DEFINED "no curated mapping" state, so the page reports a
+    // claim about the CURATED DATA that is really a claim about a short read.
+    // The id list also travels in a GET URL, which has its own length limit.
+    // BATCHED at 200, and the batch is verified READ WHOLE below. A truncated
+    // read here would be worse than a lost row: `resolvePartyNames` writes
+    // `partyName: null`, which is the DEFINED "no curated mapping" state, so
+    // the page would state a fact about the curated data that is really a fact
+    // about a short read.
+    //
+    // Offset paging over `list_id` is not an option — nothing proves that
+    // column unique inside the key, and that is the repeat-and-skip defect
+    // `SupabaseRowSource` rejects in writing.
+    // BATCHED at 200, and each batch PAGED TO EXHAUSTION on the primary key —
+    // the same discipline `SupabaseRowSource` uses, for the same reason. A row
+    // count cannot detect truncation here: `byListId.size < batch.length` is
+    // also what a legitimately unmapped id looks like, so a short read and "no
+    // curated mapping" are indistinguishable from the outside. The only honest
+    // fix is to read until the server has nothing left to give.
+    //
+    // A truncated read would be worse than a lost row: `resolvePartyNames`
+    // writes `partyName: null`, the DEFINED "no curated mapping" state, and the
+    // page then states a fact about the curated data that is really a fact
+    // about a short read.
+    //
+    // Keyset on `id` (uuid, unique): ordering by `list_id` is the
+    // repeat-and-skip defect `SupabaseRowSource` rejects, since nothing proves
+    // that column unique inside the key.
+    const BATCH = 200;
+    const PAGE = 1000;
+    const rows: Record<string, unknown>[] = [];
 
-    if (error) {
-      throw new Error(`SupabasePartyNameSource: failed to read party_mapping: ${error.message}`);
+    for (let start = 0; start < listIds.length; start += BATCH) {
+      const batch = listIds.slice(start, start + BATCH);
+      let after: string | null = null;
+
+      for (;;) {
+        let request = this.client
+          .from("party_mapping")
+          .select("id, list_id, canonical_party_id, party_canonical(display_name)")
+          .eq("year", context.year)
+          .eq("jurisdiction", context.jurisdiction)
+          .eq("category", context.category)
+          .in("list_id", batch)
+          .order("id", { ascending: true })
+          .limit(PAGE);
+        if (after !== null) request = request.gt("id", after);
+
+        const { data, error } = await request;
+        if (error) {
+          throw new Error(`SupabasePartyNameSource: failed to read party_mapping: ${error.message}`);
+        }
+
+        const page = (data ?? []) as unknown as Record<string, unknown>[];
+        rows.push(...page);
+        // EMPTY, never "shorter than I asked for": the server cap may be below
+        // `PAGE`, and then a short first page means nothing about exhaustion.
+        if (page.length === 0) break;
+        after = String(page[page.length - 1]?.["id"]);
+      }
     }
 
-    for (const row of data ?? []) {
+    // Ambiguity, PER LIST ID and over the whole read. Two canonical parties for
+    // one id is an identity nobody can choose between, not a row to pick.
+    const byListId = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const listId = String(row["list_id"]);
+      const canonical = row["canonical_party_id"];
+      if (typeof canonical !== "string") {
+        // The MIRROR of the missing-display-name refusal below. A mapping row
+        // with no canonical id cannot name its list id and cannot honestly be
+        // reported as "no curated mapping" either — the row exists.
+        throw new Error(
+          `SupabasePartyNameSource: list id ${listId} has a party_mapping row in ` +
+            `(${context.year}, ${context.jurisdiction}, ${context.category}) with no ` +
+            "canonical party id, so it can be neither named nor called unmapped",
+        );
+      }
+      const seen = byListId.get(listId) ?? new Set<string>();
+      seen.add(canonical);
+      byListId.set(listId, seen);
+    }
+    const ambiguous = [...byListId.entries()].filter(([, ids]) => ids.size > 1);
+    if (ambiguous.length > 0) {
+      throw new Error(
+        `SupabasePartyNameSource: in (${context.year}, ${context.jurisdiction}, ` +
+          `${context.category}) these list ids map to more than one canonical ` +
+          `party, so no name can be chosen for them: ` +
+          ambiguous.map(([listId, ids]) => `${listId} -> ${[...ids].sort().join(", ")}`).join("; "),
+      );
+    }
+
+    for (const row of rows) {
       const listId = row["list_id"] as string;
       // Supabase's PostgREST client types a to-one nested relation as an
       // array at the type level even though it is a single row at
@@ -411,6 +745,18 @@ export class SupabasePartyNameSource implements PartyNameSource {
         | null;
       const displayName = Array.isArray(canonical) ? canonical[0]?.display_name : canonical?.display_name;
       const canonicalPartyId = row["canonical_party_id"] as string | null;
+      if (canonicalPartyId && !displayName) {
+        // The mapping EXISTS and cannot be used — a broken join or a null
+        // `display_name`. Folding it into "unmapped" would state a fact about
+        // the curated data that is really a fact about this row, the same
+        // substitution this file refuses for short reads.
+        throw new Error(
+          `SupabasePartyNameSource: list id ${listId} maps to ${canonicalPartyId} in ` +
+            `(${context.year}, ${context.jurisdiction}, ${context.category}) but that ` +
+            "canonical party has no display name, so the row cannot be named or " +
+            "honestly reported as unmapped",
+        );
+      }
       if (displayName && canonicalPartyId) {
         // The CANONICAL ID travels with the name. A display name is not an
         // identity: the curated file legitimately spells one canonical party
@@ -437,31 +783,150 @@ export async function createResultsRepository(): Promise<ResultsRepository> {
  * tests, matching the existing convention for this project's direct
  * Supabase-client wrappers.
  */
+/**
+ * The year an election was held, from the `election` table.
+ *
+ * THE source for this fact. Four routes derived it by parsing the election id
+ * string, which works for a curated slug like `2025-legislativas-nacional` and
+ * never for what the database actually stores: `election.id` is a uuid and
+ * `election.year` is a column beside it. So every real request refused with
+ * "provide an election id that carries its year" — the id was fine, the reader
+ * was looking in the wrong place.
+ *
+ * `null` when no election row carries that id, which is a REFUSAL and not a
+ * year: resolving list ids through a mapping year nobody established is the
+ * "one party, three ids" failure the party context exists to prevent.
+ */
+export type YearLookup =
+  | { status: "ok"; year: number }
+  | { status: "no_row" }
+  | { status: "unreadable_year" };
+
+export async function fetchElectionYear(
+  client: SupabaseClient,
+  electionId: string,
+): Promise<YearLookup> {
+  const { data, error } = await client
+    .from("election")
+    .select("year")
+    .eq("id", electionId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`fetchElectionYear: failed to read election: ${error.message}`);
+  }
+
+  // THREE answers, not two. `null` meant either "no election row carries this
+  // id" or "the row exists and its year is unusable", and three pages stated
+  // the first as a fact about the database — the same shape as saying "no
+  // official results found" about a refused read.
+  if (!data) return { status: "no_row" };
+  const year = data["year"];
+  return typeof year === "number" ? { status: "ok", year } : { status: "unreadable_year" };
+}
+
+/**
+ * The curated label of a category, from the `category` table.
+ *
+ * Two free-text params described one fact: `categoryId` filters `result_row`
+ * and `partyCategory` keys `party_mapping`, and nothing tied them. The
+ * jurisdiction axis is bounded by `resolvePartyFamily` and the year axis by
+ * `fetchElectionYear`; this axis was bounded by nothing, so diputado rows
+ * resolved through the senador mapping named a different canonical party for
+ * any list id present in both tables — and `compare` rendered that as a flip
+ * for a party that never changed hands.
+ *
+ * `null` when no category row carries that id, which is a refusal.
+ */
+export type CategoryLookup =
+  | { status: "ok"; name: string }
+  | { status: "no_row" }
+  | { status: "unreadable_name" };
+
+export async function fetchCategoryName(
+  client: SupabaseClient,
+  categoryId: string,
+): Promise<CategoryLookup> {
+  const { data, error } = await client
+    .from("category")
+    .select("name")
+    .eq("id", categoryId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`fetchCategoryName: failed to read category: ${error.message}`);
+  }
+
+  if (!data) return { status: "no_row" };
+  const name = data["name"];
+  return typeof name === "string" ? { status: "ok", name } : { status: "unreadable_name" };
+}
+
 export async function fetchSourceRefs(
   client: SupabaseClient,
   archiveEntryIds: string[],
 ): Promise<{ sources: SourceRef[]; missing: string[] }> {
   if (archiveEntryIds.length === 0) return { sources: [], missing: [] };
 
-  const { data, error } = await client
-    .from("archive_entry")
-    .select("id, sha256, source_url, fetched_at")
-    .in("id", archiveEntryIds);
+  // BATCHED and PAGED, like every other read in this file. A single `.in()` is
+  // capped server-side, and a truncated response here does not lose a row
+  // quietly — it lands in `missing`, which the pages render as "this figure
+  // cannot be traced". That is a claim about the ARCHIVE, produced by a short
+  // read: the same substitution the party-mapping read was fixed for.
+  const BATCH = 200;
+  const PAGE = 1000;
+  const data: Record<string, unknown>[] = [];
 
-  if (error) {
-    throw new Error(`fetchSourceRefs: failed to read archive_entry: ${error.message}`);
+  for (let start = 0; start < archiveEntryIds.length; start += BATCH) {
+    const batch = archiveEntryIds.slice(start, start + BATCH);
+    let after: string | null = null;
+
+    for (;;) {
+      let request = client
+        .from("archive_entry")
+        .select("id, sha256, source_url, fetched_at")
+        .in("id", batch)
+        .order("id", { ascending: true })
+        .limit(PAGE);
+      if (after !== null) request = request.gt("id", after);
+
+      const { data: page, error } = await request;
+      if (error) {
+        throw new Error(`fetchSourceRefs: failed to read archive_entry: ${error.message}`);
+      }
+
+      const rows = (page ?? []) as unknown as Record<string, unknown>[];
+      data.push(...rows);
+      if (rows.length === 0) break;
+      after = String(rows[rows.length - 1]?.["id"]);
+    }
   }
 
-  const sources = (data ?? []).map((row) => ({
-    archiveEntryId: row["id"] as string,
-    // NO `?? ""`. This system is built on an immutable sha256 archive, so an
-    // entry with no hash is an entry that cannot be verified — substituting an
-    // empty string renders it through `ProvenanceLink` as provenance that
-    // exists. `null` travels, and the display says "unhashed".
-    sha256: row["sha256"] as string | null,
-    url: row["source_url"] as string,
-    fetchedAt: row["fetched_at"] as string,
-  }));
+  const sources = data.map((row) => {
+    const url = row["source_url"];
+    const fetchedAt = row["fetched_at"];
+    if (typeof url !== "string" || typeof fetchedAt !== "string") {
+      // A NULL `source_url` would produce a `SourceRef` present in `sources`
+      // and absent from `missing`, so the figure renders as TRACED with
+      // nothing behind it. That is unverifiable shown as verified — worse than
+      // the blank digest the `sha256: string | null` comment already rejects.
+      throw new Error(
+        `fetchSourceRefs: archive_entry ${String(row["id"])} has no usable source_url/fetched_at ` +
+          `(${JSON.stringify(url)}, ${JSON.stringify(fetchedAt)}), so a figure citing it cannot ` +
+          "be shown as traced",
+      );
+    }
+    return {
+      archiveEntryId: String(row["id"]),
+      // NO `?? ""`. This system is built on an immutable sha256 archive, so an
+      // entry with no hash is an entry that cannot be verified — substituting
+      // an empty string renders it through `ProvenanceLink` as provenance that
+      // exists. `null` travels, and the display says "unhashed".
+      sha256: (row["sha256"] as string | null) ?? null,
+      url,
+      fetchedAt,
+    };
+  });
 
   // Which requested ids came back with NOTHING. An id that resolves to no
   // `archive_entry` row -- RLS scope, a mid-write, a deleted entry -- used to

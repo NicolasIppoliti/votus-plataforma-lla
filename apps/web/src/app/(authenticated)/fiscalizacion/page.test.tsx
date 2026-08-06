@@ -28,15 +28,18 @@ let repositoryRows: ResultRow[] = [];
 let sourceRefs: SourceRef[] = [];
 /** When set, the mocked repository refuses the fiscalización query. */
 let refuseQueryWith: string | null = null;
+let refuseSourceReadWith: string | null = null;
 
 // Restored after EVERY test: `process.env` and `repositoryRows` are shared
 // module state, so leaving them set makes results depend on execution order.
 afterEach(() => {
   delete process.env["NATIONAL_JURISDICTION_ID"];
   delete process.env["FISCALIZACION_CATEGORY_ID"];
+  delete process.env["FISCALIZACION_ELECTION_ID"];
   repositoryRows = [];
   sourceRefs = [];
   refuseQueryWith = null;
+  refuseSourceReadWith = null;
 });
 
 vi.mock("@/lib/supabase/server-client", () => ({
@@ -83,11 +86,26 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
     },
     // Computes `missing` the way the real function does — a mock that always
     // answers `[]` cannot exercise the untraceable-entry path it feeds.
+    // Stands in for the `election` table: the fixture ids carry their year, so
+    // the double reads it off them. Production reads the `year` COLUMN — the
+    // point of the change is that the id string is not the source.
+    fetchElectionYear: (_client: unknown, electionId: string) => {
+      // Two uuids mapped the way the `election` table does it: one held in
+      // 2025 (the race these constants were verified for) and one in 2023.
+      if (electionId === "6dae81f9-c862-4cc5-b3f3-b640e4ea7319") return Promise.resolve({ status: "ok" as const, year: 2025 });
+      if (electionId === "b5b6a452-836d-40ea-a570-1cbc87fb84f6") return Promise.resolve({ status: "ok" as const, year: 2023 });
+      const match = /^(\d{4})/.exec(electionId);
+      return Promise.resolve(
+        match ? { status: "ok" as const, year: Number(match[1]) } : { status: "no_row" as const },
+      );
+    },
     fetchSourceRefs: (_client: unknown, ids: string[]) =>
-      Promise.resolve({
+      refuseSourceReadWith
+        ? Promise.reject(new Error(refuseSourceReadWith))
+        : Promise.resolve({
         sources: sourceRefs,
-        missing: ids.filter((id) => !sourceRefs.some((ref) => ref.archiveEntryId === id)),
-      }),
+            missing: ids.filter((id) => !sourceRefs.some((ref) => ref.archiveEntryId === id)),
+          }),
   };
 });
 
@@ -175,6 +193,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
         rows: FISCALIZACION_ROWS,
         excluded: {},
         coverage: FISCALIZACION_COVERAGE,
+        partyMappingConfigured: true,
       }),
     );
 
@@ -193,6 +212,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
         rows: FISCALIZACION_ROWS,
         excluded: {},
         coverage: FISCALIZACION_COVERAGE,
+        partyMappingConfigured: true,
       }),
     );
 
@@ -217,6 +237,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
             { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" },
           ],
           coverage: FISCALIZACION_COVERAGE,
+          partyMappingConfigured: true,
         },
         {
           comparison: {
@@ -253,7 +274,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
 
 describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachable)", () => {
   it("test_comparison_absent_when_no_query_params_supplied", () => {
-    expect(comparisonFromParams({})).toEqual({ status: "none" });
+    expect(comparisonFromParams({}, null)).toEqual({ status: "none" });
   });
 
   it("test_comparison_names_the_election_and_carries_no_figure", () => {
@@ -261,6 +282,7 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
     // one on its own rather than skipping its checks.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const comparison = comparisonFromParams({
       compareElectionId: "2023-municipal",
@@ -272,7 +294,7 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
       compareCategoryId: "c-diputados",
       // Ignored on purpose: a share supplied by the request is not evidence.
       compareSharePercent: "29.31",
-    });
+    }, 2023);
 
     expect(comparison).toEqual({
       status: "ok",
@@ -290,10 +312,10 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
 
   it("test_incomplete_comparison_params_are_refused_with_the_missing_names", () => {
     // A half-specified comparison must not render a figure with a missing label.
-    expect(comparisonFromParams({})).toEqual({ status: "none" });
+    expect(comparisonFromParams({}, null)).toEqual({ status: "none" });
     // Half-specified is REFUSED, and names what is missing -- distinct from
     // "no comparison was asked for".
-    const refused = comparisonFromParams({ compareElectionId: "2023-municipal" });
+    const refused = comparisonFromParams({ compareElectionId: "2023-municipal" }, null);
 
     expect(refused.status).toBe("refused");
     if (refused.status !== "refused") throw new Error("expected refused");
@@ -320,6 +342,9 @@ describe("fiscalizacion page — the real entry point", () => {
    * while its component tests passed.
    */
   it("test_the_page_refuses_an_election_its_constants_were_not_verified_against", async () => {
+    // The pinned election is CONFIGURED here: this test is about a request for
+    // a different race, not about missing config.
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({
         searchParams: Promise.resolve({
@@ -342,6 +367,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // passed.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
       { ...FISCALIZACION_ROW, listId: "999", votes: 40 },
@@ -378,6 +404,7 @@ describe("fiscalizacion page — the real entry point", () => {
   it("test_the_page_refuses_a_jurisdiction_the_coverage_denominator_does_not_describe", async () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({
@@ -396,10 +423,10 @@ describe("fiscalizacion page — the real entry point", () => {
   });
 
   it("test_the_page_refuses_when_the_scope_is_not_configured", async () => {
-    // `afterEach` cleared the env vars, so the scope is unpinned here. This
-    // branch -- the guard that stops an unpinned scope from labelling any
-    // jurisdiction with the 93-of-153 denominator -- had no test: the one
-    // request that ran without them exited on the electionId check first.
+    // `afterEach` cleared the env vars, so the SCOPE is unpinned here. The
+    // pinned election is set, because the election check runs first and this
+    // test is about the jurisdiction/category pair rather than about it.
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({
         searchParams: Promise.resolve({
@@ -417,6 +444,7 @@ describe("fiscalizacion page — the real entry point", () => {
   it("test_a_refused_comparison_says_so_instead_of_rendering_nothing", async () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
 
     const markup = renderToStaticMarkup(
@@ -448,6 +476,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // nothing asserted the contract the module's own docstring states.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
     sourceRefs = [
       {
@@ -478,6 +507,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // that figure displayed with no provenance at all.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
       { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
@@ -525,6 +555,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // saying "no row resolved to a curated party" about rows that all did.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 50 },
       { ...FISCALIZACION_ROW, listId: "999", votes: 50 },
@@ -549,11 +580,16 @@ describe("fiscalizacion page — the real entry point", () => {
 
     expect(markup).toContain("tied at the top");
     expect(markup).not.toContain("no row resolved to a curated party");
+    // ONCE. Two emitters — the renderer's note and the page's
+    // `comparisonUnavailable` — both fired, and `toContain` passes on one copy
+    // or ten, so it could not catch the duplication.
+    expect(markup.match(/tied at the top/g) ?? []).toHaveLength(1);
   });
 
   it("test_the_page_reports_mixed_granularity_as_such", async () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", granularity: "mesa", votes: 60 },
       { ...FISCALIZACION_ROW, listId: "110", granularity: "seccion", votes: 40 },
@@ -587,6 +623,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // sharing a level, or the wrong count and the right one agree.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", granularity: "subcircuito" as never, votes: 30 },
       { ...FISCALIZACION_ROW, listId: "110", granularity: "subcircuito" as never, votes: 20 },
@@ -604,7 +641,10 @@ describe("fiscalizacion page — the real entry point", () => {
     );
 
     expect(markup).toContain("3 row(s) carry a granularity");
-    expect(markup).toContain("subcircuito: 3 rows, 100 votes");
+    // ROWS, not summed votes: the level cannot be ordered, so whether its rows
+    // contain one another is unknown and adding them may count votes twice.
+    expect(markup).toContain("subcircuito: 3 rows");
+    expect(markup).not.toContain("subcircuito: 3 rows, 100 votes");
     // And NO badge to point at: an unorderable level makes the set unsummable,
     // so the level "above" the alert was withheld. The copy used to name it.
     expect(markup).not.toContain('aria-label="granularity:');
@@ -616,6 +656,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // and this was the one axis with no driver.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({
@@ -637,6 +678,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // artifact of the arithmetic the refusal exists to prevent.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", granularity: "mesa", votes: 40 },
       { ...FISCALIZACION_ROW, listId: "999", granularity: "seccion", votes: 40 },
@@ -668,6 +710,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // to render anyway, with no provenance and nothing saying so.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
     sourceRefs = [];
 
@@ -690,6 +733,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // so a percentage appeared with no provenance and no statement of it.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
       { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
@@ -723,10 +767,11 @@ describe("fiscalizacion page — the real entry point", () => {
     );
 
     expect(markup).toContain("No archived source for this figure");
-    // Reported on the OFFICIAL side only: the fiscalización block's own
-    // missing-provenance alert must not claim the official entry.
-    const fiscalizacionBlock = markup.slice(0, markup.indexOf("cross-election juxtaposition"));
-    expect(fiscalizacionBlock).not.toContain("have no source record");
+    // Attributed to the OFFICIAL side, never to the fiscalización one. Both
+    // alerts share the phrase "have no source record", so the assertion names
+    // the SUBJECT each one claims — a bare phrase match would pass on either.
+    expect(markup).toContain("backing the official comparison figure have no source record");
+    expect(markup).not.toContain("backing these figures have no source record");
   });
 
   it("test_a_refused_query_is_reported_as_such_not_as_a_mapping_problem", async () => {
@@ -735,6 +780,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // read" comparison branch were green whether they worked or not.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     refuseQueryWith = "row-level security denied the read";
 
     const markup = renderToStaticMarkup(
@@ -762,6 +808,7 @@ describe("fiscalizacion page — the real entry point", () => {
   it("test_a_comparison_against_the_same_election_is_refused", () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const result = comparisonFromParams({
       compareElectionId: "2025-legislativas-nacional",
@@ -771,7 +818,7 @@ describe("fiscalizacion page — the real entry point", () => {
       compareJurisdiction: "national",
       compareJurisdictionId: "j-027",
       compareCategoryId: "c-diputados",
-    });
+    }, 2025);
 
     // One election drawn as two, labelled a trend over time.
     expect(result.status).toBe("refused");
@@ -785,6 +832,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // "Provide electionId" about a request that sent it twice.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({
@@ -806,6 +854,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // `party_mapping` problem that does not exist.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [];
 
     const markup = renderToStaticMarkup(
@@ -871,7 +920,9 @@ describe("fiscalizacion page — the figures it displays", () => {
 
     expect(partyShare(rows, "canon-110")).toEqual({ status: "ok", sharePercent: 45.45 });
     expect(topParty(rows).partyName).toBe("LA LIBERTAD AVANZA");
-    expect(topParty(rows).unmappedVotes).toBe(60);
+    // Per list id, which is the shape the render consumes — a bare total is
+    // what `unmappedByListId` replaced.
+    expect(topParty(rows).unmappedByListId).toEqual([{ listId: "110", rows: 3, votes: 60 }]);
   });
 
   it("test_granularity_reports_the_coarsest_level_present", () => {
@@ -901,7 +952,7 @@ describe("fiscalizacion page — the figures it displays", () => {
       compareJurisdictionId: "j-027",
       compareCategoryId: "c-diputados",
       compareSharePercent: "99.99",
-    });
+    }, 2023);
 
     // The share must come from archived rows, never from the request. An
     // operator-supplied number stamped `sourceKind: "official"` renders with
@@ -953,6 +1004,12 @@ describe("fiscalizacion page — the figures it displays", () => {
         // figure: without them the official share renders untraceable.
         archiveEntryIds: ["national/2023-generales"],
       },
+      // THIS read's own drops, reported whatever the outcome: it is a third
+      // independent query and the fiscalización read's tally cannot describe
+      // it. The fixture's fiscalización row is removed by the official filter
+      // here, and 12.578 votes leaving a comparison unremarked is precisely
+      // the drop rule 3 exists to surface.
+      excluded: { fiscalizacion: { rows: 1, votes: 12578 } },
     });
   });
 
@@ -1060,8 +1117,6 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       partyName: "LA LIBERTAD AVANZA",
       refusedReason: null,
       tied: false,
-      unmappedRows: 0,
-      unmappedVotes: 0,
       unmappedByListId: [],
     });
   });
@@ -1076,9 +1131,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       refusedReason: null,
       tied: false,
       // Counted and broken down, not silently skipped.
-      unmappedRows: 1,
-      unmappedVotes: 90,
-      unmappedByListId: [{ listId: "x", votes: 90 }],
+      unmappedByListId: [{ listId: "x", rows: 1, votes: 90 }],
     });
     expect(partyShare(rows, "canon-999")).toEqual({ status: "ok", sharePercent: 10 });
   });
@@ -1103,8 +1156,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     ]);
 
     expect(result.unmappedByListId).toEqual([
-      { listId: "777", votes: 400 },
-      { listId: "888", votes: 5 },
+      { listId: "777", rows: 1, votes: 400 },
+      { listId: "888", rows: 1, votes: 5 },
     ]);
   });
 
@@ -1126,6 +1179,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
   it("test_a_comparison_in_another_jurisdiction_is_refused", () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const result = comparisonFromParams({
       compareElectionId: "2023-generales",
@@ -1135,7 +1189,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       compareJurisdiction: "national",
       compareJurisdictionId: "j-999",
       compareCategoryId: "c-diputados",
-    });
+    }, 2023);
 
     // One party over time in ONE place. A different place renders two
     // unrelated figures as a trend.
@@ -1157,6 +1211,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       status: "ok",
       rows: [{ ...FISCALIZACION_ROW, listId: "110", partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 60 }],
       excluded: {},
+      partyMappingConfigured: true,
     });
 
     return loadOfficialComparison(repository, {
@@ -1234,6 +1289,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
           rows: [FISCALIZACION_ROW, OFFICIAL_ROW],
           excluded: {},
           coverage: FISCALIZACION_COVERAGE,
+          partyMappingConfigured: true,
         },
         { comparisonUnavailable: "no row resolved to a curated party to compare" },
       ),
@@ -1244,7 +1300,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     expect(html).toContain("No comparison figure");
   });
 
-  it("test_the_render_path_refuses_a_view_carrying_official_rows", () => {
+  it("test_the_render_path_refuses_a_view_carrying_official_rows_and_keeps_the_comparison_tally", () => {
     // The THIRD leakage path. The loader is guarded and the repository
     // filters, but `renderFiscalizacionView` accepts any view a caller hands
     // it — and nothing drove that branch, so the suite was green whether it
@@ -1257,10 +1313,18 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
         excluded: { unknown: { rows: 3, votes: 41 } },
         rows: [FISCALIZACION_ROW, OFFICIAL_ROW],
         coverage: FISCALIZACION_COVERAGE,
+        partyMappingConfigured: true,
+      }, {
+        // The comparison read's OWN tally, counted before this refusal fired.
+        officialExcluded: { fiscalizacion: { rows: 2, votes: 640 } },
       }),
     );
 
     expect(html).toContain("3 unknown");
+    // A THIRD read's drop, on the branch that never rendered it: it belongs to
+    // neither the repository's tally above nor the render filter's below.
+    expect(html).toContain("comparison election");
+    expect(html).toContain("2 fiscalizacion row(s) / 640 vote(s)");
     expect(html).toContain("Refused");
     // The official votes appear ONLY inside the exclusion breakdown, labelled
     // as excluded — never as a party figure. Asserting a bare `not
@@ -1281,8 +1345,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 
     expect(result.partyName).toBeNull();
     expect(result.refusedReason).toContain("double-count");
-    expect(result.unmappedVotes).toBe(400);
-    expect(result.unmappedByListId).toEqual([{ listId: "777", votes: 400 }]);
+    expect(result.unmappedByListId).toEqual([{ listId: "777", rows: 1, votes: 400 }]);
   });
 
   it("test_mixed_granularity_renders_no_per_party_list", () => {
@@ -1295,6 +1358,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
           { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "seccion", votes: 40 },
         ],
         coverage: FISCALIZACION_COVERAGE,
+        partyMappingConfigured: true,
       }),
     );
 
@@ -1319,6 +1383,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
   it("test_a_comparison_year_contradicting_its_election_is_refused", () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     const result = comparisonFromParams({
       compareElectionId: "2023-generales",
@@ -1330,16 +1395,21 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       compareJurisdiction: "national",
       compareJurisdictionId: "j-027",
       compareCategoryId: "c-diputados",
-    });
+      // The election row says 2023 — the TRUTH the request contradicts.
+    }, 2023);
 
     expect(result.status).toBe("refused");
     if (result.status !== "refused") throw new Error("expected refused");
     expect(result.reason).toContain("2023-generales");
+    // The reason names what the election actually was, so the operator can see
+    // which of the two values is wrong.
+    expect(result.reason).toContain("held in 2023");
   });
 
   it("test_a_non_national_comparison_is_refused_rather_than_mapped_as_national", () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
     // PBA's `distrito 027` is a PARTIDO; national distrito 02 / seccion 027 is
     // Coronel Rosales. Resolving a municipal comparison through the national
@@ -1355,7 +1425,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
         compareJurisdiction: "pba",
         compareJurisdictionId: "j-027",
         compareCategoryId: "c-diputados",
-      }),
+      }, 2023),
     ).toEqual({
       status: "refused",
       // REFUSED, with a reason. `undefined` is what "nothing was asked for"
@@ -1366,10 +1436,20 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
   });
 
   it("test_a_party_absent_from_the_rows_has_no_share_rather_than_zero", () => {
-    const result = partyShare([NAMED("FUERZA PATRIA", 10)], "LA LIBERTAD AVANZA");
+    // The absent party is asked for by its CANONICAL ID, and the row present
+    // carries a DIFFERENT id under a name that is not it. Asking with a display
+    // string instead made the row match neither field, so `unavailable` came
+    // back whether `partyShare` keyed on the id or on the name — the identity
+    // boundary this file exists to defend, untested by its own test.
+    const result = partyShare(
+      [NAMED("FUERZA PATRIA", 10)],
+      "canon-110",
+      "LA LIBERTAD AVANZA",
+    );
 
     expect(result.status).toBe("unavailable");
     if (result.status !== "unavailable") throw new Error("expected unavailable");
+    // The REASON names the party a human recognises, not the internal id.
     expect(result.reason).toContain("LA LIBERTAD AVANZA");
   });
 
@@ -1447,6 +1527,7 @@ describe("fiscalizacion page — the filter's drops reach the operator", () => {
     // were reported nowhere.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
       { ...OFFICIAL_ROW, listId: "110", votes: 25 },
@@ -1475,6 +1556,7 @@ describe("fiscalizacion page — the figure's level is disclosed", () => {
     // The fourth page to derive this label its own way.
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       {
         jurisdictionId: "j-027",
@@ -1524,6 +1606,7 @@ describe("fiscalizacion page — an unlabelled source kind is never borrowed", (
             { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" },
           ],
           coverage: FISCALIZACION_COVERAGE,
+          partyMappingConfigured: true,
           excluded: {},
         },
         {
@@ -1584,6 +1667,7 @@ describe("fiscalizacion page — an unhashed comparison source is flagged", () =
             { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" },
           ],
           coverage: FISCALIZACION_COVERAGE,
+          partyMappingConfigured: true,
           excluded: {},
         },
         {
@@ -1657,6 +1741,7 @@ describe("fiscalizacion page — the badge's own branches, through the page", ()
   const seedJuxtaposition = () => {
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
       { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
@@ -1722,5 +1807,303 @@ describe("fiscalizacion page — the badge's own branches, through the page", ()
 
     expect(markup).toContain("national/2023-generales");
     expect(markup).toContain("cannot be traced");
+  });
+});
+
+describe("fiscalizacion page — the pinned election is configuration", () => {
+  it("test_an_unconfigured_election_refuses_instead_of_pinning_a_slug", async () => {
+    // It was a hardcoded curated slug (`2025-legislativas-nacional`), which can
+    // never equal the uuid `election.id` holds — so this route refused every
+    // real request before reading a row. Unset, it must SAY so rather than
+    // compare against a literal nothing in the database can match.
+    delete process.env["FISCALIZACION_ELECTION_ID"];
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "6dae81f9-c862-4cc5-b3f3-b640e4ea7319",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("FISCALIZACION_ELECTION_ID is not configured");
+  });
+
+  it("test_a_configured_uuid_election_is_served", async () => {
+    // The whole point: a uuid reaches the rows instead of failing a string
+    // comparison against a slug.
+    process.env["FISCALIZACION_ELECTION_ID"] = "6dae81f9-c862-4cc5-b3f3-b640e4ea7319";
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "6dae81f9-c862-4cc5-b3f3-b640e4ea7319",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).not.toContain("this route only serves");
+    expect(markup).toContain("Coverage:");
+  });
+});
+
+describe("fiscalizacion page — the pinned election's year is read, not assumed", () => {
+  it("test_an_election_from_another_year_is_refused_not_mapped_through_2025", async () => {
+    // The asymmetry this closes: the COMPARISON side was checked against
+    // `election.year` while the pinned side — the one that selects the mapping
+    // for every figure on the page — was a literal. `FISCALIZACION_ELECTION_ID`
+    // is an opaque uuid an operator cannot eyeball, and the label beside it is
+    // a hardcoded string that cannot disagree with it. Pointed at a 2023
+    // election, every LLA row (`20135` in 2023, `110` in 2025) would drop out
+    // as unmapped under a denominator naming a different race.
+    process.env["FISCALIZACION_ELECTION_ID"] = "b5b6a452-836d-40ea-a570-1cbc87fb84f6";
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "b5b6a452-836d-40ea-a570-1cbc87fb84f6",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("which was held in 2023");
+    expect(markup).toContain("verified for 2025");
+    // No figure and no denominator reach the page.
+    expect(markup).not.toContain("Coverage:");
+  });
+});
+
+describe("fiscalizacion page — the comparison read reports its own drops", () => {
+  it("test_the_comparison_elections_excluded_rows_reach_the_page", () => {
+    // A THIRD independent read. Its `source_kind` filter removes rows — the
+    // `unknown` bucket among them, which BOTH filters drop — and that count
+    // used to appear on no page: `view.excluded` describes the fiscalización
+    // read and cannot stand in for this one.
+    const html = renderToStaticMarkup(
+      renderFiscalizacionView(
+        {
+          status: "ok",
+          rows: [{ ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" }],
+          coverage: FISCALIZACION_COVERAGE,
+          partyMappingConfigured: true,
+          excluded: { unknown: { rows: 1, votes: 9 } },
+        },
+        {
+          officialExcluded: {
+            fiscalizacion: { rows: 2, votes: 640 },
+            unknown: { rows: 1, votes: 55 },
+          },
+        },
+      ),
+    );
+
+    expect(html).toContain("comparison election");
+    expect(html).toContain("2 fiscalizacion row(s) / 640 vote(s)");
+    expect(html).toContain("1 unknown row(s) / 55 vote(s)");
+    // NOT merged with the fiscalización read's tally, which is a different
+    // query over different rows.
+    expect(html).toContain("1 unknown row(s) / 9 vote(s)");
+  });
+});
+
+describe("fiscalizacion page — the comparison tally reaches the rendered page", () => {
+  it("test_the_comparison_reads_drops_are_rendered_through_a_real_request", async () => {
+    // Threading it into the render had no driver: deleting the assignment left
+    // every test green while the count vanished again.
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    repositoryRows = [
+      { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
+      // Rows the COMPARISON election's official filter removes: one
+      // fiscalización, one carrying a value outside the enum that BOTH
+      // filters drop and that would otherwise appear nowhere.
+      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
+      {
+        ...OFFICIAL_ROW,
+        listId: "110",
+        votes: 44,
+        sourceKind: "provisional" as never,
+        archiveEntryId: "national/2023-generales",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "2025-legislativas-nacional",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+          compareElectionId: "2023-generales",
+          compareElectionLabel: "22 Oct 2023 generales",
+          compareYear: "2023",
+          compareCategory: "DIPUTADO NACIONAL",
+          compareJurisdiction: "national",
+          compareJurisdictionId: "j-027",
+          compareCategoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("comparison election");
+    expect(markup).toContain("1 fiscalizacion row(s) / 60 vote(s)");
+    expect(markup).toContain("1 unknown row(s) / 44 vote(s)");
+  });
+});
+
+describe("fiscalizacion page — a source-read failure keeps the comparison tally", () => {
+  it("test_the_comparison_reads_drops_survive_a_later_failure", () => {
+    // Counted by the comparison read, then discarded when `fetchSourceRefs`
+    // threw: a drop hidden behind a refusal about a THIRD read. `excluded` and
+    // `comparisonUnavailable` already survived that catch; this did not.
+    const html = renderToStaticMarkup(
+      renderFiscalizacionView({
+        status: "read_failed",
+        reason: "row-level security denied the source read",
+        excluded: { unknown: { rows: 1, votes: 9 } },
+        officialExcluded: { fiscalizacion: { rows: 2, votes: 640 } },
+      }),
+    );
+
+    expect(html).toContain("row-level security denied the source read");
+    expect(html).toContain("comparison election");
+    expect(html).toContain("2 fiscalizacion row(s) / 640 vote(s)");
+    // Its own note, not merged with the fiscalización read's.
+    expect(html).toContain("1 unknown row(s) / 9 vote(s)");
+  });
+});
+
+describe("fiscalizacion page — a failed source read keeps what the other reads counted", () => {
+  it("test_the_comparison_tally_survives_a_source_read_failure_through_the_page", async () => {
+    // The catch rebuilds a `read_failed` view AFTER the comparison read has
+    // already happened, so its tally exists and used to be dropped on the
+    // floor — a drop hidden behind a refusal about a third read.
+    refuseSourceReadWith = "row-level security denied the source read";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    repositoryRows = [
+      { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
+      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "2025-legislativas-nacional",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+          compareElectionId: "2023-generales",
+          compareElectionLabel: "22 Oct 2023 generales",
+          compareYear: "2023",
+          compareCategory: "DIPUTADO NACIONAL",
+          compareJurisdiction: "national",
+          compareJurisdictionId: "j-027",
+          compareCategoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("row-level security denied the source read");
+    expect(markup).toContain("comparison election");
+    expect(markup).toContain("1 fiscalizacion row(s) / 60 vote(s)");
+  });
+});
+
+describe("fiscalizacion page — unmapped rows on containing levels are not added", () => {
+  it("test_unmapped_votes_across_two_levels_are_withheld_not_double_counted", () => {
+    // ONE unmapped list id on two levels where the coarser CONTAINS the finer:
+    // a seccion row of 400 and a mesa row of 100 inside it. Adding them reports
+    // 500 for votes that were cast once — and the page directly above refuses
+    // to publish any per-party figure for these same rows.
+    //
+    // Every existing mixed-granularity fixture uses MAPPED rows, and the one
+    // test pairing unmapped with mixed levels has a single row, so no addition
+    // happens and it passes either way.
+    const html = renderToStaticMarkup(
+      renderFiscalizacionView({
+        status: "ok",
+        rows: [
+          { ...FISCALIZACION_ROW, listId: "777", votes: 400, granularity: "seccion" },
+          { ...FISCALIZACION_ROW, listId: "777", votes: 100, granularity: "mesa" },
+        ],
+        coverage: FISCALIZACION_COVERAGE,
+        partyMappingConfigured: true,
+        excluded: {},
+      }),
+    );
+
+    // WHICH id failed to map, and how many rows: independent of granularity.
+    expect(html).toContain("777: 2 rows");
+    expect(html).toContain("cannot be added");
+    // The double-counted total must not appear anywhere.
+    expect(html).not.toContain("500 votes");
+    expect(html).not.toContain("(500 votes)");
+  });
+});
+
+describe("fiscalizacion page — a source-read failure keeps every earlier count", () => {
+  it("test_the_unmapped_and_unorderable_breakdowns_survive_through_the_page", async () => {
+    // The catch rebuilds `read_failed` AFTER the rows were read and
+    // `topParty` ran, so both breakdowns are facts counted before it. They
+    // used to vanish behind a refusal about a THIRD read.
+    refuseSourceReadWith = "row-level security denied the source read";
+    process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
+    repositoryRows = [
+      { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
+      // Unmapped, and on a level this app cannot order.
+      { ...FISCALIZACION_ROW, listId: "4321", votes: 700, granularity: "subcircuito" as never },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({
+        searchParams: Promise.resolve({
+          electionId: "2025-legislativas-nacional",
+          jurisdictionId: "j-027",
+          categoryId: "c-diputados",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("row-level security denied the source read");
+    expect(markup).toContain("4321: 1 rows");
+    // The real denominator, not the unmapped count restated.
+    expect(markup).toContain("1 of 2 rows");
+    expect(markup).toContain("subcircuito: 1 rows");
+  });
+});
+
+describe("fiscalizacion page — no mapping source is not a claim about the data", () => {
+  it("test_an_unconfigured_mapping_source_says_so_on_the_success_path", async () => {
+    // The leakage branch threaded `mappingConfigured` and the success branch
+    // did not, so the component's `true` default made the page state a fact
+    // about the curated table that is really a fact about the caller's config.
+    const html = renderToStaticMarkup(
+      renderFiscalizacionView({
+        status: "ok",
+        rows: [{ ...FISCALIZACION_ROW, listId: "4321" }],
+        coverage: FISCALIZACION_COVERAGE,
+        excluded: {},
+        partyMappingConfigured: false,
+      }),
+    );
+
+    expect(html).toContain("no curated mapping source is configured");
+    expect(html).not.toContain("resolved to no curated party");
   });
 });

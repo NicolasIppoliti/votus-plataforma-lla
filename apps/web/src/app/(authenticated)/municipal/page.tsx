@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
+import { UnmappedListIds } from "@/components/UnmappedListIds";
+import { UnorderableLevels } from "@/components/UnorderableLevels";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
 import {
   createResultsRepository,
@@ -9,10 +11,12 @@ import {
   type OkResultsQueryResponse,
   type ResultsRepository,
   describeExcluded,
+  fetchElectionYear,
   tallyByKind,
+  unmappedByListId,
   votesByParty,
 } from "@/lib/fiscalizacion/repository";
-import type { ExcludedByKind } from "@/lib/fiscalizacion/repository";
+import type { ExcludedByKind, YearLookup } from "@/lib/fiscalizacion/repository";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import type { SourceRef } from "@/lib/results/types";
@@ -22,7 +26,6 @@ import {
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { electionYear } from "@/lib/results/election-id";
 import {
   partyFamilyRefusal,
   pinnedCategoryId,
@@ -60,6 +63,24 @@ export type MunicipalView =
        * earlier vanished behind a refusal about something else.
        */
       excluded?: ExcludedByKind;
+      /** WHICH list ids failed to map, counted before this failure. */
+      unmapped?: { listId: string; rows: number; votes: number }[];
+      /** Why those rows cannot be summed, when they cannot. */
+      unsummable?: string | null;
+      /**
+       * How many rows the read actually returned.
+       *
+       * Deriving it from the unmapped entries made numerator and denominator
+       * the same number, so every read-failed page claimed "N of N rows
+       * resolved to no curated party" — 100 % unmapped, whatever was read.
+       */
+      totalRows?: number;
+      /** Levels this app cannot order, counted before the failure. */
+      unrecognized?: { granularity: string; rows: number; votes: number }[];
+      /** Whether a curated mapping source was configured for the read. */
+      partyMappingConfigured?: boolean;
+      /** Rows carrying no list id at all, counted before the failure. */
+      withoutListId?: ExcludedByKind;
     };
 
 /**
@@ -104,10 +125,12 @@ export async function loadMunicipalView(
  * `distrito` outlived that change and asserted a level the data contradicts —
  * and the fixture hardcoded `distrito` too, so nothing caught it.
  *
- * `degradedFrom="mesa"` stays: whatever level these rows carry, it is coarser
- * than the mesa-level detail national results offer, and
- * provenance-display's "Degraded-granularity figure discloses the
- * degradation" scenario requires an operator to see that.
+ * The DISCLOSURE stays, and `jurisdictionTotalLevel` now names it: rows
+ * coarser than the partido carry `degradedFrom` set to the level the source
+ * actually published, rows finer carry `summedFrom`. A hardcoded
+ * `degradedFrom="mesa"` claimed the same missing detail whatever the rows
+ * said; provenance-display's "Degraded-granularity figure discloses the
+ * degradation" scenario needs the operator to see which level it really was.
  */
 export function renderMunicipalView(
   view: MunicipalView,
@@ -123,6 +146,18 @@ export function renderMunicipalView(
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">Refused: {view.reason}</p>
+        {view.status === "read_failed" && view.unmapped ? (
+          <UnmappedListIds
+            entries={view.unmapped}
+            withoutListId={view.withoutListId}
+            totalRows={view.totalRows ?? 0}
+            unsummable={view.unsummable ?? null}
+            mappingConfigured={view.partyMappingConfigured ?? true}
+          />
+        ) : null}
+        {view.status === "read_failed" && view.unrecognized ? (
+          <UnorderableLevels entries={view.unrecognized} />
+        ) : null}
         {carried !== null ? (
           <p role="note">
             {carried} were excluded by the official-source filter before this
@@ -148,6 +183,22 @@ export function renderMunicipalView(
 
   // PATH 3. See `drilldown`: unreachable while the repository filter holds,
   // live the moment it does not.
+  const levels = readGranularity(rows);
+  // Disclosure is not permission: this page announced the mix and then summed
+  // across it anyway, so a seccion row and a mesa row inside it were added
+  // together. See `mixedGranularityReason`.
+  const unsummable = mixedGranularityReason(rows);
+  // The SIZE of each unorderable level, not just its name: many rows on one
+  // unknown level read as "1 row(s)" when only the names are printed.
+  const unrecognized = unrecognizedLevels(rows);
+  // PER LIST ID, and the ONLY place unresolved rows are reported:
+  // `votesByParty` leaves them out of the ranked list entirely.
+  // UNCONDITIONAL. Unmappability is independent of granularity, and this is a
+  // per-list-id SIZE rather than a total claimed about the election, so zeroing
+  // it when levels mix hid which ids failed to map behind a refusal about
+  // arithmetic. `topParty` documents the same rule and its test locks it in.
+  const unmapped = unmappedByListId(rows);
+
   const foreignRows = rows.filter((row) => row.sourceKind !== "official");
   if (foreignRows.length > 0) {
     return (
@@ -159,6 +210,17 @@ export function renderMunicipalView(
           combined in one number.
         </p>
         {excludedNote}
+        {/* Both counted before this refusal and about facts it does not touch:
+            which list ids failed to map, and which levels cannot be ordered,
+            do not depend on source kinds. The sibling pages carry theirs. */}
+        <UnmappedListIds
+          entries={unmapped.entries}
+          withoutListId={unmapped.withoutListId}
+          totalRows={rows.length}
+          unsummable={unsummable}
+          mappingConfigured={view.partyMappingConfigured}
+        />
+        <UnorderableLevels entries={unrecognized} />
       {missingProvenance.length > 0 ? (
         <p role="alert">
           {missingProvenance.length} archive entry/entries backing these figures
@@ -174,14 +236,6 @@ export function renderMunicipalView(
   // numbers and no mesa label to tell them apart -- each line reading as that
   // party's figure, and the list visibly failing to sum to the total above it.
 
-  const levels = readGranularity(rows);
-  // Disclosure is not permission: this page announced the mix and then summed
-  // across it anyway, so a seccion row and a mesa row inside it were added
-  // together. See `mixedGranularityReason`.
-  const unsummable = mixedGranularityReason(rows);
-  // The SIZE of each unorderable level, not just its name: many rows on one
-  // unknown level read as "1 row(s)" when only the names are printed.
-  const unrecognized = unrecognizedLevels(rows);
   const partyTotals = unsummable !== null ? [] : votesByParty(rows);
 
 
@@ -189,6 +243,13 @@ export function renderMunicipalView(
     <main>
       <h1>Municipal (Concejales)</h1>
       {excludedNote}
+      <UnmappedListIds
+        entries={unmapped.entries}
+        withoutListId={unmapped.withoutListId}
+        totalRows={rows.length}
+        unsummable={unsummable}
+        mappingConfigured={view.partyMappingConfigured}
+      />
       {missingProvenance.length > 0 ? (
         <p role="alert">
           {missingProvenance.length} archive entry/entries backing these figures
@@ -202,23 +263,7 @@ export function renderMunicipalView(
           worse than no total.
         </p>
       ) : null}
-      {unrecognized.length > 0 ? (
-        <>
-          <p role="alert">
-            {unrecognized.reduce((sum, entry) => sum + entry.rows, 0)} row(s)
-            carry a granularity this page cannot order, so their containment
-            relationship is unknown and no level is shown for them at all. By
-            level:
-          </p>
-          <ul>
-            {unrecognized.map((entry) => (
-              <li key={entry.granularity}>
-                {entry.granularity}: {entry.rows} rows, {entry.votes} votes
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+      <UnorderableLevels entries={unrecognized} />
       {/* No rows, no granularity claim: `readGranularity([])` answers
           `distrito` so the fold cannot upgrade, but rendering that as a badge
           asserts a level for data that does not exist. Withheld with the
@@ -352,16 +397,37 @@ export default async function MunicipalPage({
     );
   }
 
-  const year = electionYear(electionId);
-  if (year !== MUNICIPAL_PARTY_CONTEXT.year) {
+  // From the `election` ROW. Parsing the id string worked for a curated slug
+  // and never for the uuid the database stores, so this route refused every
+  // real request while the year sat in a column beside the id.
+  const supabaseForYear = await createSupabaseServerClient();
+  let year: YearLookup;
+  try {
+    year = await fetchElectionYear(supabaseForYear, electionId);
+  } catch (error) {
+    return (
+      <main>
+        <h1>Municipal (Concejales)</h1>
+        <p role="alert">
+          Refused: {error instanceof Error ? error.message : String(error)}
+        </p>
+      </main>
+    );
+  }
+  if (year.status !== "ok" || year.year !== MUNICIPAL_PARTY_CONTEXT.year) {
     return (
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
           Refused: this route resolves list ids through the{" "}
           {MUNICIPAL_PARTY_CONTEXT.year} {MUNICIPAL_PARTY_CONTEXT.category} mapping,
-          and {electionId} is not that election. A list id means nothing outside
-          its own election&apos;s mapping.
+          and {electionId} is not that election{" "}
+          {year.status === "no_row"
+            ? "(no election row carries that id)"
+            : year.status === "unreadable_year"
+              ? "(its election row carries no usable year)"
+              : `(it is ${year.year})`}
+          . A list id means nothing outside its own election&apos;s mapping.
         </p>
       </main>
     );
@@ -391,7 +457,20 @@ export default async function MunicipalPage({
     return renderMunicipalView({
       status: "read_failed",
       reason: error instanceof Error ? error.message : String(error),
-      ...(view.status === "ok" ? { excluded: view.excluded } : {}),
+      ...(view.status === "ok"
+        ? {
+            excluded: view.excluded,
+            // The same fact `drilldown` carries through the same failure.
+            // Preserving `excluded` and discarding this was one refusal with
+            // two policies.
+            unmapped: unmappedByListId(view.rows).entries,
+            unsummable: mixedGranularityReason(view.rows),
+            totalRows: view.rows.length,
+            unrecognized: unrecognizedLevels(view.rows),
+            partyMappingConfigured: view.partyMappingConfigured,
+            withoutListId: unmappedByListId(view.rows).withoutListId,
+          }
+        : {}),
     });
   }
 

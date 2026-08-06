@@ -39,6 +39,11 @@ vi.mock("@/lib/supabase/server-client", () => ({
   createSupabaseServerClient: () => Promise.resolve({}),
 }));
 
+const CATEGORY_NAMES: Record<string, string | undefined> = {
+  "c-diputados": "DIPUTADO NACIONAL",
+  "c-concejales": "CONCEJALES",
+};
+
 vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
   return {
@@ -53,7 +58,7 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
           Promise.resolve({
             status: "ok",
             rows: rowsByElection[query.electionId] ?? [],
-            excluded: {},
+            excluded: {}, partyMappingConfigured: true,
           });
         return Promise.resolve(leaking);
       }
@@ -99,6 +104,30 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
               ),
           },
         ),
+      );
+    },
+    // Stands in for the `category` table, which is what binds `categoryId` to
+    // the curated `partyCategory` label.
+    fetchCategoryName: (_client: unknown, categoryId: string) =>
+      Promise.resolve(
+        CATEGORY_NAMES[categoryId] === undefined
+          ? { status: "no_row" as const }
+          : { status: "ok" as const, name: CATEGORY_NAMES[categoryId]! },
+      ),
+    fetchElectionYear: (_client: unknown, electionId: string) => {
+      // UUIDS FIRST — the shape the database actually stores. A double that
+      // only parses the id string reimplements the behaviour this change
+      // abandoned, so restoring the old reader would leave the suite green.
+      const rows: Record<string, number> = {
+        "7769c98d-b286-4e8c-80ce-c2f9ab4fc929": 2023,
+        "6dae81f9-c862-4cc5-b3f3-b640e4ea7319": 2025,
+      };
+      if (electionId in rows) {
+        return Promise.resolve({ status: "ok" as const, year: rows[electionId]! });
+      }
+      const match = /^(\d{4})/.exec(electionId);
+      return Promise.resolve(
+        match ? { status: "ok" as const, year: Number(match[1]) } : { status: "no_row" as const },
       );
     },
     fetchSourceRefs: () => Promise.resolve({ sources: sourceRefs, missing: [] }),
@@ -392,6 +421,10 @@ describe("compare page — path 3 fires when the repository filter regresses", (
     // The BREAKDOWN, in both units: a bare "2 row(s)" cannot tell a leaked
     // fiscalización row from a leaked unknown-kind one, and hides the votes.
     expect(markup).toContain("1 fiscalizacion row(s) / 10 vote(s)");
+    // And the unmapped ids, counted before this refusal and about a different
+    // axis: `toCompareUnits` used to run AFTER the guard, so they were never
+    // even computed on this path.
+    expect(markup).toContain("resolved to no curated party");
     expect(markup).toContain("are not official");
     expect(markup).not.toContain("no flip");
   });
@@ -524,43 +557,26 @@ describe("compare page — the figure's level is disclosed", () => {
     expect(markup).not.toContain("degraded from");
   });
 
-  it("test_the_mapping_context_reaches_the_party_lookup", async () => {
-    // The party names only resolve when jurisdiction AND category match, so a
-    // rendered party name is evidence the whole context travelled — not just
-    // the year.
-    rowsByElection["2023-generales"] = [
-      {
-        jurisdictionId: "j-027",
-        categoryId: "c-diputados",
-        listId: "20135",
-        votes: 100,
-        sourceKind: "official",
-        granularity: "mesa",
-        archiveEntryId: "national/2023-generales",
-      },
-    ];
-    rowsByElection["2025-legislativas-nacional"] = [
-      {
-        jurisdictionId: "j-027",
-        categoryId: "c-diputados",
-        listId: "110",
-        votes: 140,
-        sourceKind: "official",
-        granularity: "mesa",
-        archiveEntryId: "national/2025-legislativas",
-      },
-    ];
-
+  it("test_a_category_mismatch_is_refused_before_the_mapping_is_consulted", async () => {
+    // NO row fixtures: the guard fires before `createResultsRepository()`, so
+    // seeded rows would read as evidence the data path ran when nothing
+    // reaches it.
+    //
+    // That the full `(year, jurisdiction, category)` context reaches
+    // `fetchPartyNames` is driven where a party NAME renders — the mock returns
+    // an empty map unless all three match — in
+    // `test_a_flip_names_the_parties_never_their_canonical_ids` and
+    // `test_the_same_party_under_two_list_ids_is_not_reported_as_a_flip`.
     const markup = renderToStaticMarkup(
       (await ComparePage({
         searchParams: Promise.resolve({ ...PARAMS, partyCategory: "CONCEJAL" }),
       })) as ReactElement,
     );
 
-    // The REFUSAL's own text. `not.toContain("LA LIBERTAD AVANZA")` passes for
-    // any early refusal — a missing param, a family mismatch, a repeated param
-    // — so it said nothing about the context travelling.
-    expect(markup).toContain("resolved to no canonical party");
+    // `c-diputados` is DIPUTADO NACIONAL, not CONCEJAL. Refused on the axis
+    // itself rather than left to degrade into the unmapped path, which only
+    // catches ids ABSENT from the wrong table — the easy half.
+    expect(markup).toContain("not CONCEJAL");
   });
 });
 
@@ -648,7 +664,7 @@ describe("compare page — two summed sides do not report one side's level", () 
 });
 
 describe("compare page — an unorderable level is reported by size", () => {
-  it("test_unorderable_levels_are_broken_down_per_level_in_both_units", async () => {
+  it("test_unorderable_levels_are_reported_by_row_count_not_summed_votes", async () => {
     // Naming the levels alone hid how much of the comparison sits on one this
     // module cannot order — the large-plausible-total shape rule 3 exists for.
     rowsByElection["2023-generales"] = [
@@ -687,7 +703,322 @@ describe("compare page — an unorderable level is reported by size", () => {
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    // Two rows and 6000 votes, not "subcircuito" on its own.
-    expect(markup).toContain("subcircuito: 2 rows, 6000 votes");
+    // ROWS, never a vote total. The level cannot be ordered, so whether its
+    // two rows contain one another is unknown and adding them may count the
+    // same votes twice — the rule the shared component states and the inline
+    // copy here contradicted.
+    expect(markup).toContain("subcircuito: 2 rows");
+    expect(markup).not.toContain("6000 votes");
+    // NAMED per year: the two reads are independent, and merging them put one
+    // year's 400 rows and another's 200+200 on the same indistinguishable line.
+    expect(markup).toContain("2023-generales:");
+  });
+});
+
+describe("compare page — a category collision is refused, not resolved", () => {
+  it("test_rows_are_never_resolved_through_another_categorys_mapping", async () => {
+    // The hard half: a list id present in BOTH tables. It resolves to a
+    // DIFFERENT canonical party under the wrong category, so nothing degrades
+    // to unmapped and the page renders a real-looking name — on `compare`, a
+    // flip between two parties that never changed hands. No refusal, no note.
+    rowsByElection["2023-generales"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 100,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2023-generales",
+      },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 140,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2025-legislativas",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({ ...PARAMS, partyCategory: "SENADOR NACIONAL" }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("not SENADOR NACIONAL");
+    // No figure, no swing, no party name reaches the page.
+    expect(markup).not.toContain("LA LIBERTAD AVANZA");
+    expect(markup).not.toContain("flipped");
+  });
+});
+
+describe("compare page — uuid election ids are served", () => {
+  it("test_both_sides_uuid_are_compared_not_refused_for_want_of_a_year", async () => {
+    // `election.id` is a uuid and `election.year` is a column beside it, so a
+    // reader that parses the id refuses every real request. Both sides here
+    // carry no year in their text at all.
+    rowsByElection["7769c98d-b286-4e8c-80ce-c2f9ab4fc929"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "20135",
+        votes: 100,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2023-generales",
+      },
+    ];
+    rowsByElection["6dae81f9-c862-4cc5-b3f3-b640e4ea7319"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 140,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2025-legislativas",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({
+          ...PARAMS,
+          election2023: "7769c98d-b286-4e8c-80ce-c2f9ab4fc929",
+          election2025: "6dae81f9-c862-4cc5-b3f3-b640e4ea7319",
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).not.toContain("no election row carries");
+    // SERVED: the comparison itself renders. The party name is not on this
+    // line — the unit label is — so asserting it would be asserting about the
+    // wrong text.
+    expect(markup).toContain("j-027 (whole jurisdiction): no flip");
+    expect(markup).toContain('aria-label="granularity: seccion"');
+  });
+});
+
+describe("compare page — unmapped ids survive the refusals about other axes", () => {
+  it("test_the_unmapped_breakdown_survives_the_mixed_granularity_refusal", async () => {
+    // `toCompareUnits` counts them BEFORE the refusal, and which ids failed to
+    // map does not depend on granularity. Compare was the fourth page to drop
+    // this behind a refusal about something else.
+    rowsByElection["2023-generales"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "4321",
+        votes: 700,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2023-generales",
+      },
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "4321",
+        votes: 300,
+        sourceKind: "official",
+        granularity: "seccion",
+        archiveEntryId: "national/2023-generales",
+      },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 140,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2025-legislativas",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+
+    expect(markup).toContain("mix granularity levels");
+    expect(markup).toContain("4321: 2 rows");
+    // Votes withheld: the two rows are on containing levels.
+    expect(markup).toContain("cannot be added");
+  });
+});
+
+describe("compare page — a leaked row set that also mixes levels", () => {
+  it("test_the_leakage_refusal_withholds_vote_sums_when_levels_mix", async () => {
+    // The foreign guard runs BEFORE the mixed-granularity one, so this branch
+    // received `unsummable={null}` and printed vote totals across containing
+    // levels — the double count the prop exists to prevent. Every existing
+    // path-3 fixture used one level, so the gap stayed green.
+    leakFiscalizacion = true;
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      listId: "4321",
+      sourceKind: "fiscalizacion" as const,
+      archiveEntryId: "fiscalizacion/2025-lla",
+    };
+    rowsByElection["2023-generales"] = [
+      { ...base, votes: 400, granularity: "seccion" as const },
+      { ...base, votes: 100, granularity: "mesa" as const },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, votes: 60, granularity: "mesa" as const },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+
+    expect(markup).toContain("are not official");
+    // PER YEAR, each labelled. Merged into one line, `4321` read as a single
+    // cross-year figure — two different reads over different rows — with
+    // nothing naming the year.
+    expect(markup).toContain("2023-generales:");
+    expect(markup).toContain("2025-legislativas-nacional:");
+    expect(markup).toContain("4321: 2 rows");
+    expect(markup).toContain("4321: 1 rows");
+    expect(markup).not.toContain("4321: 3 rows");
+    expect(markup).toContain("cannot be added");
+    expect(markup).not.toContain("560 votes");
+  });
+});
+
+describe("compare page — one unorderable level in both years", () => {
+  it("test_each_year_reports_its_own_unorderable_rows", async () => {
+    // No fixture put the same level in BOTH years, so the merge that summed
+    // them was never driven — including the vote sum it computed on a level
+    // this module cannot order.
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      listId: "110",
+      sourceKind: "official" as const,
+      granularity: "subcircuito" as never,
+      archiveEntryId: "national/2025-legislativas",
+    };
+    rowsByElection["2023-generales"] = [{ ...base, votes: 400 }];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, votes: 200 },
+      { ...base, votes: 200 },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+
+    // ONE row for 2023 and TWO for 2025 — not three on a merged line.
+    expect(markup).toContain("2023-generales: 1 row(s) carry a granularity");
+    expect(markup).toContain("2025-legislativas-nacional: 2 row(s) carry a granularity");
+    expect(markup).not.toContain("3 row(s) carry a granularity");
+  });
+});
+
+describe("compare page — rows with no list id are not unmapped ids", () => {
+  it("test_a_row_without_a_list_id_does_not_refuse_the_comparison", async () => {
+    // Rule 2: `lista_numero` is empty throughout the 2023 generales file and
+    // never populated on a POSITIVO row in 2025. Counting those rows as ids
+    // that failed to map refused the whole comparison for the shape the source
+    // always had.
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      sourceKind: "official" as const,
+      granularity: "mesa" as const,
+      archiveEntryId: "national/2025-legislativas",
+    };
+    rowsByElection["2023-generales"] = [
+      { ...base, listId: "20135", votes: 100 },
+      { ...base, listId: null, votes: 12 },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, listId: "110", votes: 140 },
+      { ...base, listId: null, votes: 8 },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+
+    // SERVED, not refused for an "unmapped id" nobody supplied.
+    expect(markup).not.toContain("resolved to no canonical party");
+    expect(markup).toContain("no flip");
+    // And the id-less rows reported in their OWN sentence.
+    expect(markup).toContain("no list id at all");
+  });
+});
+
+describe("compare page — a row with an id but no name is never dropped", () => {
+  it("test_it_lands_in_a_visible_bucket_instead_of_leaving_every_figure", async () => {
+    // `{canonicalPartyId: set, partyName: null, listId: null}` hit `continue`
+    // in `toCompareUnits`: out of every figure and every swing, and out of the
+    // unresolved counter too. Its only disclosure was the boundary fold
+    // agreeing by coincidence — two definitions of "resolved", either of which
+    // could have moved.
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      sourceKind: "official" as const,
+      granularity: "mesa" as const,
+      archiveEntryId: "national/2025-legislativas",
+    };
+    rowsByElection["2023-generales"] = [
+      { ...base, listId: "20135", votes: 100 },
+      // Resolves to a canonical id the mock has no display name for.
+      { ...base, listId: null, votes: 33 },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [{ ...base, listId: "110", votes: 140 }];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+
+    // VISIBLE, per source kind — not silently absent from every tally.
+    expect(markup).toContain("no list id at all");
+    expect(markup).toContain("1 official row(s) / 33 vote(s)");
+  });
+});
+
+describe("compare page — the D6 refusal keeps the no-list-id disclosure", () => {
+  it("test_rows_without_a_list_id_are_named_under_a_granularity_mismatch", async () => {
+    // The gap: null-listId rows exist on the SUCCESS path test, and the D6
+    // test's fixture uses mapped ids on both sides. Neither puts the two
+    // together, so D6 — the one refusal this page names for granularity
+    // mismatch — rendered the count nowhere.
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      sourceKind: "official" as const,
+      archiveEntryId: "national/2025-legislativas",
+    };
+    rowsByElection["2023-generales"] = [
+      { ...base, listId: "20135", votes: 100, granularity: "seccion" as const },
+      { ...base, listId: null, votes: 31, granularity: "seccion" as const },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, listId: "110", votes: 140, granularity: "mesa" as const },
+      { ...base, listId: null, votes: 17, granularity: "mesa" as const },
+    ];
+
+    const markup = renderToStaticMarkup(
+      // NO `aggregateTo`: that parameter resolves the mismatch, which is how
+      // this fixture reached the success path instead of the refusal it names.
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+
+    // The D6 refusal itself...
+    expect(markup).toContain("this comparison refuses to guess");
+    // ...and the disclosure it used to return without.
+    expect(markup).toContain("no list id at all");
+    expect(markup).toContain("1 official row(s) / 31 vote(s)");
+    expect(markup).toContain("1 official row(s) / 17 vote(s)");
   });
 });
