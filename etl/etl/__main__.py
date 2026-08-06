@@ -34,6 +34,7 @@ import yaml
 
 from .archive import ArchiveResult, Fetcher, archive_source
 from .crosswalk import (
+    CURATED_NAME_TABLE_SCOPE,
     CrosswalkTable,
     FiscalizacionMesaRow,
     MesaStability,
@@ -52,9 +53,11 @@ from .db import (
 )
 from .http_client import RequestsFetcher
 from .ingest.fiscalizacion import (
+    mesa_subject_ref,
     FISCALIZACION_CATEGORY,
     FISCALIZACION_DISTRITO,
     FISCALIZACION_SECCION,
+    FiscalizacionSchemaError,
     FiscalizacionUploadForbiddenError,
     guard_local_mirror_only,
     ingest_fiscalizacion,
@@ -65,16 +68,27 @@ from .ingest.national import (
     ingest_national,
     load_national_rows,
 )
-from .ingest.pba import ingest_pba, load_pba_rows
+from .ingest.pba import PbaSchemaError, ingest_pba, load_pba_rows
 from .jurisdiction import (
     is_canonicalizable_code,
     normalize_circuito_code,
     normalize_distrito_code,
     normalize_seccion_code,
 )
-from .manifest import latest_ok_record, load_manifest, save_manifest, upsert_record
+from .manifest import (
+    DuplicateManifestRecordError,
+    MalformedManifestError,
+    latest_ok_record,
+    load_manifest,
+    save_manifest,
+    upsert_record,
+)
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
-from .review_item import mesa_divergences_to_review_items, review_item_draft_to_record
+from .review_item import (
+    ReviewItemRecord,
+    mesa_divergences_to_review_items,
+    review_item_draft_to_record,
+)
 from .storage import LocalArchiveStore, extract_zip_safely
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -186,7 +200,28 @@ def fetch_source(
 
     local_store = LocalArchiveStore(root=local_root)
     records = load_manifest(manifest_path)
-    result = archive_source(entry, fetcher=fetcher, local_store=local_store)
+    if entry.get("capability") == "pba":
+        # THROUGH D10's etiquette. `archive_pba_source` was implemented and
+        # tested with no production caller, so the archive-first cache and the
+        # bounded-backoff wrapper around the policed fetcher never ran for a
+        # real PBA fetch: this CLI hit the host directly, every time, however
+        # many times.
+        from etl.http_client import PolicedHostFetcher
+
+        from .ingest.pba import PBA_HOST_POLICY, archive_pba_source
+
+        # The POLICED fetcher, not the bare one: `archive_pba_source` wraps it
+        # in bounded backoff, and `PolicedHostFetcher` is what enforces the path
+        # allowlist, the serial cap and the minimum delay. Passing the raw
+        # fetcher would have kept the etiquette layer inert in a different way.
+        result = archive_pba_source(
+            entry,
+            fetcher=PolicedHostFetcher(fetcher, PBA_HOST_POLICY),
+            local_store=local_store,
+            records=records,
+        )
+    else:
+        result = archive_source(entry, fetcher=fetcher, local_store=local_store)
     records = upsert_record(records, result.record)
     save_manifest(manifest_path, records)
     return result
@@ -301,16 +336,33 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
     # silent pick between a re-export and the original, or between a full file
     # and a partial slice -- and `collapse()` in this same module refuses
     # rather than choose between two tallies for one key.
+    def report_rejected() -> None:
+        # ONE report, used by all three exits. It ran on the no-match path
+        # only, so a member rejected as "not valid UTF-8" -- the exact
+        # encoding-versus-schema misdiagnosis this function exists to prevent
+        # -- vanished whenever another member matched; then a copy was
+        # inlined into the two-match branch, which made two ideas of one
+        # report, the shape this file refuses everywhere else.
+        for name, reason in rejected:
+            print(f"  {name}: {reason}", file=sys.stderr)
+
     if len(matches) > 1:
+        report_rejected()
         raise NationalResultsCsvNotFoundError(
             f"{len(matches)} members of the archived ZIP declare the national results "
             f"schema ({', '.join(sorted(p.name for p in matches))}); refusing to pick one"
         )
     if matches:
+        if rejected:
+            print(
+                f"  selected {matches[0].name}; {len(rejected)} other member(s) were "
+                "examined and not used:",
+                file=sys.stderr,
+            )
+            report_rejected()
         return matches[0].read_bytes()
 
-    for name, reason in rejected:
-        print(f"  {name}: {reason}", file=sys.stderr)
+    report_rejected()
     raise NationalResultsCsvNotFoundError(
         f"no member of the archived ZIP matches the expected national results "
         f"schema (looked for columns: {', '.join(REQUIRED_COLUMNS)}); "
@@ -395,19 +447,21 @@ def ingest_source(
     conn = psycopg.connect(resolved_url)
     try:
         if capability == "national":
-            with tempfile.TemporaryDirectory(prefix="votus-etl-ingest-") as extract_dir:
-                csv_bytes = resolve_national_results_bytes(
-                    raw_bytes, extract_dir=Path(extract_dir)
-                )
-                rows = ingest_national(csv_bytes, archive_entry_id=source_id)
-            inserted = load_national_rows(conn, rows, year=year, round_=round_)
+            csv_bytes = national_csv_bytes(raw_bytes)
+            rows = ingest_national(csv_bytes, archive_entry_id=source_id)
+            inserted = load_national_rows(
+                conn, rows, year=year, round_=round_, archive_entry_id=source_id
+            )
         elif capability == "pba":
             rows = ingest_pba(raw_bytes, archive_entry_id=source_id)
             # The CALLER's crosswalk, not a hardcoded default: validating
             # against a candidate file and then ingesting against a different
             # one silently breaks the guarantee `validate-crosswalk` gives.
             crosswalk = load_crosswalk(crosswalk_path)
-            inserted = load_pba_rows(conn, rows, year=year, round_=round_, crosswalk=crosswalk)
+            inserted = load_pba_rows(
+                conn, rows, year=year, round_=round_, crosswalk=crosswalk,
+                archive_entry_id=source_id,
+            )
         elif capability == "fiscalizacion":
             # Imported lazily: `load_fiscalizacion_rows` lands in sub-unit 12b,
             # chained on top of this one -- 12a's own tests never exercise the
@@ -416,8 +470,15 @@ def ingest_source(
             from .ingest.fiscalizacion import load_fiscalizacion_rows
 
             party_map = load_party_map(party_map_path)
-            result = ingest_fiscalizacion(raw_bytes.decode("utf-8"), archive_entry_id=source_id)
-            inserted = load_fiscalizacion_rows(
+            # `utf-8-sig`, not `utf-8`: these sheets are exported from Excel,
+            # where a BOM is the norm. Attached to the first field name it
+            # makes `"Mesa"` unreachable, and the parser would report a
+            # missing column instead of an encoding it did not strip. Same
+            # boundary as every other CSV reader here.
+            result = ingest_fiscalizacion(
+                raw_bytes.decode("utf-8-sig"), archive_entry_id=source_id
+            )
+            inserted, loader_review_items = load_fiscalizacion_rows(
                 conn,
                 result.rows,
                 year=year,
@@ -448,7 +509,11 @@ def ingest_source(
                     review_item_draft_to_record(draft),
                     subject_ref=f"{source_id} {year}-{round_} {draft.subject_ref}",
                 )
-                for draft in result.review_items
+                # BOTH producers. The parser's drafts and the LOADER's — a mesa
+                # whose circuito cannot be resolved is quarantined at load
+                # time, and those drafts had no path out of the function at
+                # all.
+                for draft in [*result.review_items, *loader_review_items]
             ]
             # `review_item` has no natural key and `subject_ref` is only
             # `"mesa N"`, so re-ingesting the same source would append the same
@@ -456,26 +521,7 @@ def ingest_source(
             # skipping rows already present makes it idempotent without ever
             # discarding a NEW observation -- and the skip count is reported,
             # not swallowed.
-            with conn.cursor() as cur:
-                # EXACT match against the very subject_refs about to be
-                # written -- not `like 'source %'`. `_` and `%` are LIKE
-                # wildcards, so a source id such as `fiscalizacion/2025_cnel`
-                # would match ANOTHER source's rows, pull them into `existing`,
-                # and drop this source's genuinely new observation while
-                # reporting it as "already present": the exact silent drop the
-                # scoping exists to prevent.
-                cur.execute(
-                    "select kind, severity, subject_ref, note from review_item"
-                    " where subject_ref = any(%s::text[])",
-                    ([record.subject_ref for record in records],),
-                )
-                existing = {tuple(row) for row in cur.fetchall()}
-            fresh = [
-                record
-                for record in records
-                if (record.kind, record.severity, record.subject_ref, record.note)
-                not in existing
-            ]
+            fresh = fresh_review_items(conn, records)
             insert_review_items(conn, fresh)
 
             # The quarantine, REPORTED. `ingest_fiscalizacion` produced these
@@ -487,17 +533,33 @@ def ingest_source(
             if result.quarantined:
                 by_reason: dict[str, list[int | None]] = {}
                 for row in result.quarantined:
-                    by_reason.setdefault(row.reason, []).append(row.mesa)
+                    by_reason.setdefault(row.reason, []).append(row)
                 print(
                     f"quarantined {len(result.quarantined)} fiscalización row(s), "
                     "not written to result_row:",
                     file=sys.stderr,
                 )
-                for reason, mesas in sorted(by_reason.items()):
-                    named = sorted(m for m in mesas if m is not None)
+                for reason, quarantined_rows in sorted(by_reason.items()):
+                    named = sorted(
+                        r.mesa for r in quarantined_rows if r.mesa is not None
+                    )
+                    # THE SOURCE ROW INDICES, which the quarantine record
+                    # carries precisely so a human can find the line. Printed
+                    # only the mesa numbers, `unreadable_mesa` and
+                    # `unmergeable_empty_mesa` -- both `mesa=None` by
+                    # construction -- rendered as a bare count, which this
+                    # file elsewhere calls "visible and not actionable".
+                    lines = sorted(
+                        i for r in quarantined_rows for i in r.source_row_indices
+                    )
                     print(
-                        f"  {reason}: {len(mesas)} row(s)"
-                        + (f", mesas {', '.join(str(m) for m in named)}" if named else ""),
+                        f"  {reason}: {len(quarantined_rows)} row(s)"
+                        + (f", mesas {', '.join(str(m) for m in named)}" if named else "")
+                        + (
+                            f", source row(s) {', '.join(str(i) for i in lines)}"
+                            if lines
+                            else ""
+                        ),
                         file=sys.stderr,
                     )
 
@@ -538,9 +600,28 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         UnknownSourceError,
         AmbiguousSourceError,
         MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
         MissingDatabaseUrlError,
+        # `ValueError` LAST, and deliberately: `load_fiscalizacion_rows`
+        # refuses a jurisdiction scheme that does not match the distrito/
+        # seccion it is placing rows on, and `db.load_result_rows` refuses a
+        # record carrying a foreign `election_id`. Both are validation
+        # failures under this module's "non-zero, never a traceback"
+        # contract, and both raised plain `ValueError` -- while
+        # `NationalSchemaError` and `PbaSchemaError`, `ValueError` subclasses
+        # listed above, already exit 1. The narrower names stay listed so the
+        # intent of each is on the page.
+        ValueError,
         NationalResultsCsvNotFoundError,
         NationalSchemaError,
+        # Their exact twins, and every one of them was missing: a drifted
+        # header in the HAND-MAINTAINED sheet -- the source most likely to
+        # drift, because a human edits it -- and a re-skinned PBA page both
+        # exited with a traceback instead of the exit 1 the module contract
+        # promises. The guards existed; the entry point did not reach them.
+        FiscalizacionSchemaError,
+        PbaSchemaError,
         FiscalizacionUploadForbiddenError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -574,6 +655,7 @@ def find_unmapped_jurisdictions(
     """
     unmapped: list[QuarantinedJurisdiction] = []
     seen: set[tuple[str | None, str | None]] = set()
+    seen_uncanonical: set[tuple[str | None, str | None]] = set()
     for distrito, seccion in codes:
         normalized_distrito = normalize_distrito_code(distrito)
         normalized_seccion = normalize_seccion_code(seccion)
@@ -581,47 +663,187 @@ def find_unmapped_jurisdictions(
         # both real and both present in the 2023/2025 corpus; deduping on the
         # raw pair reports one jurisdiction twice, under two different code
         # strings, as if they were two problems.
+        if normalized_distrito is None:
+            # NOT interpolated as the string "None", and NOT deduped with
+            # every other unparseable distrito into one `(None, None)` key.
+            # Both happened: the report named a jurisdiction nobody wrote
+            # (`None/(sin seccion)`) and collapsed every distinct unreadable
+            # code into a single line, so an operator could neither find the
+            # jurisdiction nor tell how many problems there were. The RAW
+            # spelling is what a human has to go look for here, because
+            # there is no canonical form to show. Deduped on that raw
+            # spelling, so one bad code repeated across a corpus is one
+            # reported problem and two DIFFERENT bad codes stay two.
+            if (distrito, seccion) in seen_uncanonical:
+                continue
+            seen_uncanonical.add((distrito, seccion))
+            # `None` is ABSENT, not a code. Rendering it with `!r` printed
+            # the literal string "None" as if it were the distrito -- the
+            # same fabricated identifier this branch exists to stop.
+            shown = "(sin distrito)" if distrito is None else repr(distrito)
+            unmapped.append(
+                QuarantinedJurisdiction(
+                    code=f"{shown}/(codigo ilegible)",
+                    reason=(
+                        f"distrito code {shown} cannot be canonicalized, so it "
+                        "resolves against no curated crosswalk entry"
+                    ),
+                )
+            )
+            continue
+
         key = (normalized_distrito, normalized_seccion)
+        # The report identifies the jurisdiction by its CANONICAL codes. It
+        # used the RAW first-seen spelling, so the same jurisdiction was named
+        # `2/27` or `02/027` depending only on which archived file the corpus
+        # happened to read first -- and the dedup two lines below already
+        # decided they are one thing. Rule 8: normalize once, then use it.
         if key in seen:
             continue
         seen.add(key)
         if normalized_seccion is None:
-            # A coarser-than-seccion national row carries NO seccion. Coercing
-            # it to `""` fabricates a code no source ever wrote, and
-            # `normalize_seccion_code("")` cannot parse it, so it would match no
-            # curated `"027"` and report every distrito-level row of the
-            # ten-category 2023 file as unmapped under `"02/"`. Such a row is
-            # mapped when its DISTRITO is curated.
-            resolved = any(
-                normalize_distrito_code(entry.national_distrito_code)
-                == normalized_distrito
-                for entry in crosswalk.jurisdictions
-            )
+            # WHY A ROW REACHES HERE, corrected. This said "the coarse rows of
+            # the ten-category 2023 file", which is a data-shape claim the
+            # corpus does not support: `ingest_national` builds every row at
+            # `granularity="mesa"` from the required `seccion_id` column, and
+            # all 18.170.843 loaded rows resolve to a jurisdiction with a
+            # non-null `seccion_code` -- zero coarse rows, measured.
+            #
+            # The reachable cause is narrower: `csv.DictReader` fills a
+            # TRUNCATED row's missing trailing fields with `None`, so a source
+            # cut short mid-line yields `seccion_id is None`. No archived file
+            # does this today; this is a guard against one that does, not a
+            # description of one that exists.
+            #
+            # Coercing to `""` instead would fabricate a code no source ever
+            # wrote, and `normalize_seccion_code("")` cannot parse it, so it
+            # would match no curated `"027"` and report the row as unmapped
+            # under `"02/"`. Such a row is mapped when its DISTRITO is curated.
+            # THROUGH the boundary, like the paired lookup below -- and via
+            # the method that returns EVERY match, so an ambiguity is
+            # REPORTED here rather than resolved by taking the first entry.
+            in_distrito = crosswalk.entries_in_distrito(normalized_distrito)
+            if len(in_distrito) > 1:
+                unmapped.append(
+                    QuarantinedJurisdiction(
+                        code=f"{normalized_distrito}/(sin seccion)",
+                        reason=(
+                            f"{len(in_distrito)} curated entries share national distrito "
+                            f"{normalized_distrito} ("
+                            + ", ".join(sorted(e.name for e in in_distrito))
+                            + "); this row names no seccion, so it cannot be attributed "
+                            "to one of them"
+                        ),
+                    )
+                )
+                continue
+            resolved = bool(in_distrito)
         else:
-            resolved = any(
-                normalize_distrito_code(entry.national_distrito_code)
-                == normalized_distrito
-                and normalize_seccion_code(entry.national_seccion_code)
-                == normalized_seccion
-                for entry in crosswalk.jurisdictions
+            # THROUGH the table's own comparison. This loop was a second idea
+            # of how a crosswalk entry's code compares, living outside the
+            # boundary that owns it -- `resolve_national` now normalizes both
+            # sides, so one table has one comparison semantics whichever
+            # caller asks.
+            resolved = (
+                # The NORMALIZED values, matching the dedup key computed two
+                # lines up. Passing the raw ones worked only because
+                # `resolve_national` re-normalizes -- two representations
+                # inside one loop.
+                crosswalk.resolve_national(
+                    distrito_code=normalized_distrito, seccion_code=normalized_seccion
+                )
+                is not None
             )
         if not resolved:
-            shown_seccion = "(sin seccion)" if seccion is None else seccion
+            shown_seccion = (
+                "(sin seccion)" if normalized_seccion is None else normalized_seccion
+            )
             unmapped.append(
                 QuarantinedJurisdiction(
-                    code=f"{distrito}/{shown_seccion}",
+                    code=f"{normalized_distrito}/{shown_seccion}",
                     reason=(
-                        f"no curated crosswalk entry for distrito={distrito!r} "
-                        f"seccion={seccion!r}"
+                        # CANONICAL here too. `code` was fixed and this was
+                        # not, so the same jurisdiction still produced two
+                        # different reason strings depending only on which
+                        # archived file the corpus read first -- the exact
+                        # defect the fix above claims to have closed, closed
+                        # halfway.
+                        # `shown_*`, not `!r`: an absent seccion printed as
+                        # the literal `seccion=None`, a code nobody wrote --
+                        # the very thing the distrito branch above refuses,
+                        # left half-closed here.
+                        f"no curated crosswalk entry for distrito="
+                        f"{normalized_distrito} seccion={shown_seccion}"
                     ),
                 )
             )
     return unmapped
 
 
+def fresh_review_items(conn, records):
+    """The review-queue records not already present, deduped BOTH ways.
+
+    `review_item` has no natural key, so re-running a command would append
+    the same observation again; and two drafts identical in
+    `(kind, severity, subject_ref, note)` within ONE run would both land,
+    showing one observation twice while the "already present" count described
+    a state that never existed.
+
+    ONE implementation. This existed as three separate copies against one
+    table -- `ingest_source`, `load_curated` and `cmd_validate_fiscalizacion`
+    -- and the third filtered only against what was stored, so the fix made
+    to the first two never reached it. Three ideas of one dedup is how the
+    third stays wrong.
+    """
+    records = list(records)
+    if not records:
+        # And `any(%s::text[])` below rather than `any(%s)`: with an EMPTY
+        # list psycopg cannot infer the array type and raises
+        # `IndeterminateDatatype`, so the success case -- nothing to record --
+        # crashed instead of exiting 0. Guarded twice, on purpose.
+        return []
+    with conn.cursor() as cur:
+        # EXACT match against the very subject_refs about to be written, never
+        # `like`: `_` and `%` are LIKE wildcards, so a source id such as
+        # `fiscalizacion/2025_cnel` would pull in ANOTHER source's rows and
+        # drop this one's genuinely new observation as "already present".
+        cur.execute(
+            "select kind, severity, subject_ref, note from review_item"
+            " where subject_ref = any(%s::text[])",
+            ([r.subject_ref for r in records],),
+        )
+        existing = {tuple(row) for row in cur.fetchall()}
+
+    fresh = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for record in records:
+        key = (record.kind, record.severity, record.subject_ref, record.note)
+        if key in existing or key in seen:
+            continue
+        seen.add(key)
+        fresh.append(record)
+    return fresh
+
+
+def national_csv_bytes(raw_bytes: bytes) -> bytes:
+    """The national results CSV inside an archived ZIP, fully materialized.
+
+    THE TEMP DIRECTORY'S LIFETIME LIVES HERE, once. Six call sites each
+    opened their own `tempfile.TemporaryDirectory`, and four of them parsed
+    the returned bytes AFTER the block exited -- surviving only because
+    `resolve_national_results_bytes` reads the member into memory. That is
+    one lifetime assumption per call site, and the day the passthrough
+    returns a lazy handle instead, four of them break silently and two do
+    not. Returning bytes makes the contract the signature: the caller is
+    handed data, not a view into a directory that is already gone.
+    """
+    with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
+        return resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
+
+
 def collect_national_jurisdiction_codes(
     sources: dict[str, list[dict]], *, local_root: Path, manifest_path: Path
-) -> list[tuple[str, str | None]]:
+) -> list[tuple[str | None, str | None]]:
     """Gather every distinct `(distrito, seccion)` actually present in
     already-archived national sources -- the real codes an `ingest` run
     would need the crosswalk to resolve."""
@@ -645,10 +867,7 @@ def collect_national_jurisdiction_codes(
             skipped_missing_file += 1
             continue
         raw_bytes = local_store.read("national", filename)
-        with tempfile.TemporaryDirectory(prefix="votus-etl-validate-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(
-                raw_bytes, extract_dir=Path(extract_dir)
-            )
+        csv_bytes = national_csv_bytes(raw_bytes)
         for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
             # `seccion` stays `None` for coarser-than-seccion rows: absence is
             # not the empty string. See `find_unmapped_jurisdictions`.
@@ -675,7 +894,14 @@ def collect_national_jurisdiction_codes(
             "empty corpus, not a clean one",
             file=sys.stderr,
         )
-    return sorted(codes, key=lambda pair: (pair[0], pair[1] or ""))
+    # `or ""` on BOTH halves. The seccion half had it and the distrito half
+    # did not, so a truncated row -- `csv.DictReader` fills missing trailing
+    # fields with `None`, the hazard named in three places here -- raised
+    # `TypeError: '<' not supported between 'NoneType' and 'str'` inside the
+    # sort. `validate-crosswalk` died with a traceback, and the `None`-distrito
+    # handler downstream never ran, while the module contract promises a
+    # non-zero EXIT on a validation failure, not a stack trace.
+    return sorted(codes, key=lambda pair: (pair[0] or "", pair[1] or ""))
 
 
 def collect_mesa_tipo_mapping(
@@ -821,7 +1047,8 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (UnknownSourceError, MalformedManifestRecordError, DuplicateManifestRecordError,
+            AmbiguousSourceError) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -837,16 +1064,27 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
         codes = collect_national_jurisdiction_codes(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
+            PbaSchemaError, UnknownSourceError,
+            MalformedManifestRecordError, DuplicateManifestRecordError,
+            MalformedManifestError,
+            AmbiguousSourceError) as exc:
         # The module contract is "non-zero on any validation failure". A ZIP
         # whose schema drifted is a validation failure, not a crash — and
         # `ingest_national` raises `NationalSchemaError` for a header that
         # drifted a different way.
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    crosswalk = load_crosswalk(Path(args.crosswalk_path))
-    unmapped = find_unmapped_jurisdictions(codes, crosswalk)
+    try:
+        # INSIDE a try that names what this raises. `load_crosswalk` parses a
+        # HAND-EDITED YAML -- the file most likely to drift -- and exited with
+        # a `yaml` traceback while every archive-side failure in this same
+        # function exited 1.
+        crosswalk = load_crosswalk(Path(args.crosswalk_path))
+        unmapped = find_unmapped_jurisdictions(codes, crosswalk)
+    except (yaml.YAMLError, OSError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     if unmapped:
         for item in unmapped:
@@ -892,7 +1130,20 @@ def collect_national_party_keys(
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
-    skipped_no_list_id_by_source: dict[str, int] = {}
+    # NEW keys contributed by each source. This counted rows "carrying no
+    # list_id", a branch that could never fire: `ingest_national` excludes
+    # every row whose `agrupacion_id` is empty or `"0"` BEFORE building
+    # `list_id`, so `row.list_id` is never falsy and the counter was always
+    # zero and its report never printed. The comment justifying it was also
+    # wrong about the file -- `lista_numero` is empty throughout the 2023
+    # generales export, but `list_id` is not: it degrades to the bare
+    # `agrupacion_id`, which `ingest_national` documents.
+    #
+    # What the report was reaching for IS real and IS reachable: a source
+    # contributing ZERO keys while `sources_read > 0` suppresses the
+    # empty-corpus warning, so `validate-curated` prints "all N key(s)
+    # resolve" over a corpus one whole file is missing from.
+    keys_by_source: dict[str, int] = {}
     sources_read = 0
     keys: set[tuple[int, str, str, str]] = set()
     skipped_not_archived = 0
@@ -915,34 +1166,32 @@ def collect_national_party_keys(
             continue
         year = parsed_year
         raw_bytes = local_store.read("national", filename)
-        with tempfile.TemporaryDirectory(prefix="votus-etl-validate-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(
-                raw_bytes, extract_dir=Path(extract_dir)
-            )
-        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
-            if row.list_id:
-                keys.add((year, "national", row.category, row.list_id))
-            else:
-                skipped_no_list_id_by_source[entry["id"]] = (
-                    skipped_no_list_id_by_source.get(entry["id"], 0) + 1
-                )
+        csv_bytes = national_csv_bytes(raw_bytes)
+        # What this source YIELDED, not what was new to the shared
+        # accumulator. `len(keys)` deltas counted zero for a source whose
+        # every key another source had already contributed -- and 2023 PASO
+        # and 2023 generales key on the same `(year, "national", category,
+        # list_id)` tuple, so whichever was read second reported "the corpus
+        # is missing it" about a file read in full. A manufactured warning is
+        # the same broken distribution as a hidden one.
+        contributed = {
+            (year, "national", row.category, row.list_id)
+            for row in ingest_national(csv_bytes, archive_entry_id=entry["id"])
+        }
+        keys.update(contributed)
+        keys_by_source[entry["id"]] = len(contributed)
         sources_read += 1
 
-    # Both counted. `lista_numero` is empty throughout the 2023 generales file,
-    # so dropping those rows silently would make this collect zero keys and let
-    # `validate-curated` report "all 0 archived key(s) resolve" — green,
-    # plausible, and excluding a whole file. A run that read no source at all
-    # is likewise reported rather than passing as success.
-    # PER SOURCE. `lista_numero` is empty throughout the 2023 generales file,
-    # so one global total hides a whole file contributing ZERO keys while
-    # `sources_read > 0` suppresses the empty-corpus warning and
-    # `validate-curated` reports "all N key(s) resolve" over a corpus one file
-    # is missing from.
-    for source_id, count in sorted(skipped_no_list_id_by_source.items()):
-        print(
-            f"  {source_id}: {count} rows carried no list_id and were excluded",
-            file=sys.stderr,
-        )
+    # PER SOURCE, and only the ones that YIELDED nothing: a source read
+    # without error that carries no key at all is indistinguishable, in the
+    # totals, from one that was never read.
+    for source_id, count in sorted(keys_by_source.items()):
+        if count == 0:
+            print(
+                f"  {source_id}: read without error and carries NO curated "
+                "key at all; the corpus this validates is missing it",
+                file=sys.stderr,
+            )
     # Per REASON, not one total: "2 of 3 sources excluded" and "1 source has an
     # unparseable year" are different failures with different fixes, and either
     # one alone still lets `validate-curated` print a green "all N key(s)
@@ -980,7 +1229,8 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (UnknownSourceError, MalformedManifestRecordError, DuplicateManifestRecordError,
+            AmbiguousSourceError) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -996,12 +1246,22 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
         keys = collect_national_party_keys(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
+            PbaSchemaError, UnknownSourceError,
+            MalformedManifestRecordError, DuplicateManifestRecordError,
+            MalformedManifestError,
+            AmbiguousSourceError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    party_map = load_party_map(Path(args.party_map_path))
-    unmapped = find_unmapped_parties(keys, party_map)
+    try:
+        # Same reason as `cmd_validate_crosswalk`'s: `party_map.yaml` is
+        # hand-edited, so a malformed one is a validation failure and must
+        # exit 1 like every archive-side failure above it, not raise `yaml`.
+        party_map = load_party_map(Path(args.party_map_path))
+        unmapped = find_unmapped_parties(keys, party_map)
+    except (yaml.YAMLError, OSError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     if unmapped:
         for item in unmapped:
@@ -1052,8 +1312,23 @@ def collect_national_mesa_codes(
     skipped_not_archived = 0
     skipped_missing_file = 0
     sources_seen = 0
+    skipped_no_year = 0
     for entry in sources.get("national", []):
-        if source_year(entry["id"]) != year:
+        entry_year = source_year(entry["id"])
+        if entry_year is None:
+            # REPORTED, like the sibling `collect_national_party_keys` already
+            # does. An id with no parseable 4-digit year fell through
+            # `!= year` and was counted nowhere, and the consequence is not
+            # cosmetic: an empty mesa set is what `compute_mesa_stability`
+            # records as `present=False, stable_across_years=False`, and
+            # `load_curated` states that absence of a source MUST NOT be
+            # persisted as measured instability. `readable_national_sources`
+            # filters the same way, so a MIXED corpus -- one year parseable,
+            # one not -- sails past `MissingArchivedYearError` and lands the
+            # false verdict.
+            skipped_no_year += 1
+            continue
+        if entry_year != year:
             continue
         # Counted only after the year filter: a source for another year is out of
         # scope, not missing.
@@ -1067,8 +1342,7 @@ def collect_national_mesa_codes(
             skipped_missing_file += 1
             continue
         raw_bytes = local_store.read("national", filename)
-        with tempfile.TemporaryDirectory(prefix="votus-etl-load-curated-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
+        csv_bytes = national_csv_bytes(raw_bytes)
         for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
             # PER REASON. This function reported which SOURCES it skipped and
             # then dropped the rows themselves in silence, so an empty result
@@ -1098,6 +1372,13 @@ def collect_national_mesa_codes(
         print(
             f"  {skipped_missing_file} of {sources_seen} registered source(s) are "
             "recorded as archived but absent from the local mirror and were excluded",
+            file=sys.stderr,
+        )
+    if skipped_no_year:
+        print(
+            f"  {skipped_no_year} registered national source(s) carry no parseable "
+            "year in their id and were counted for NO year -- their mesas are absent "
+            f"from the {year} set, and absence is not evidence of instability",
             file=sys.stderr,
         )
     for reason, count in sorted(dropped.items()):
@@ -1154,7 +1435,9 @@ def load_curated(
             )
 
     mesa_stabilities: list[tuple[str, str, MesaStability]] = []
-    uncovered: list[str] = []
+    # Split by cause, because the fixes are opposite ones.
+    uncovered_absent: list[str] = []
+    uncovered_wrong_seccion: list[str] = []
     for jurisdiction in crosswalk.jurisdictions:
         mesas_2023 = collect_national_mesa_codes(
             sources,
@@ -1184,9 +1467,41 @@ def load_curated(
             # coverage rendered as a clean load. Reported, not refused: a
             # curated jurisdiction the archive does not reach yet is a real
             # state, unlike the half-covered one below.
-            uncovered.append(
-                f"{jurisdiction.national_distrito_code}/{jurisdiction.national_seccion_code}"
+            # PER REASON. One list collapsed two causes with OPPOSITE fixes:
+            # the archive genuinely does not reach this jurisdiction (fetch
+            # more), versus the curated codes do not match what the archive
+            # writes (fix `crosswalk.yaml`) -- the padding/scheme class of
+            # defect that produced Coronel Rosales as three identities. Which
+            # one it is, is answerable: does the corpus carry this DISTRITO
+            # at all?
+            in_corpus = collect_national_jurisdiction_codes(
+                sources, local_root=local_root, manifest_path=manifest_path
             )
+            target_distrito = normalize_distrito_code(
+                jurisdiction.national_distrito_code
+            )
+            distrito_seen = any(
+                normalize_distrito_code(d) == target_distrito for d, _ in in_corpus
+            )
+            label = (
+                f"{jurisdiction.national_distrito_code}/"
+                f"{jurisdiction.national_seccion_code}"
+            )
+            if distrito_seen:
+                seen_secciones = sorted(
+                    {
+                        normalize_seccion_code(s) or "(sin seccion)"
+                        for d, s in in_corpus
+                        if normalize_distrito_code(d) == target_distrito
+                    }
+                )
+                uncovered_wrong_seccion.append(
+                    f"{label} (the archive carries distrito "
+                    f"{jurisdiction.national_distrito_code} with seccion(s) "
+                    f"{', '.join(seen_secciones)})"
+                )
+            else:
+                uncovered_absent.append(label)
             continue
 
         if bool(mesas_2023) != bool(mesas_2025):
@@ -1208,10 +1523,19 @@ def load_curated(
                 )
             )
 
-    if uncovered:
+    if uncovered_absent:
         print(
-            f"  {len(uncovered)} curated jurisdiction(s) have no archived mesas in "
-            f"either year and get NO mesa_crosswalk row: {', '.join(uncovered)}",
+            f"  {len(uncovered_absent)} curated jurisdiction(s) get NO mesa_crosswalk "
+            "row because the archive does not carry their distrito at all -- fetch "
+            f"more sources: {', '.join(uncovered_absent)}",
+            file=sys.stderr,
+        )
+    if uncovered_wrong_seccion:
+        print(
+            f"  {len(uncovered_wrong_seccion)} curated jurisdiction(s) get NO "
+            "mesa_crosswalk row even though the archive DOES carry their distrito -- "
+            "the curated seccion does not match what the archive writes, so fix "
+            f"crosswalk.yaml: {'; '.join(uncovered_wrong_seccion)}",
             file=sys.stderr,
         )
 
@@ -1219,6 +1543,50 @@ def load_curated(
     try:
         counts = load_party_map_rows(conn, party_map)
         counts.update(load_crosswalk_rows(conn, crosswalk, mesa_stabilities=mesa_stabilities))
+
+        # THE DISCONTINUITIES, SURFACED. `MesaStability.discontinuous` had no
+        # production reader and `review_item`'s `mesa_discontinuity` kind had
+        # no production writer, so the spec's "a code present in only one
+        # year MUST be surfaced as a discontinuity, never silently dropped"
+        # was delivered by nothing: `mesa_crosswalk.stable_across_years`
+        # records the fact in a column nobody reports on.
+        #
+        # Deduped against what is already there, like the fiscalización
+        # drafts: re-running `load-curated` must not append the same
+        # observation again, and must not discard a genuinely new one.
+        drafts = [
+            ReviewItemRecord(
+                kind="mesa_discontinuity",
+                severity="warning",
+                # THROUGH the boundary, and through the SAME builder every
+                # other writer of this key uses. Built from the raw curated
+                # YAML strings, a `national_seccion: "27"` wrote
+                # `mesa_crosswalk` row `02/027` (which `load_crosswalk_rows`
+                # normalizes three lines later) and `review_item` key
+                # `02-27-mesa-N`. Two identities for one mesa, and
+                # `fresh_review_items` dedups on EXACT `subject_ref`, so the
+                # day the curated padding is corrected every discontinuity
+                # appends again.
+                subject_ref=mesa_subject_ref(distrito, seccion, stability.mesa),
+                note=(
+                    f"mesa {stability.mesa} in {distrito}/{seccion} is present in "
+                    + ("2023 but not 2025" if stability.present_2023 else "2025 but not 2023")
+                    + "; it is NOT stable across years and must not be compared as if it were"
+                ),
+            )
+            for distrito, seccion, stability in mesa_stabilities
+            if stability.discontinuous
+        ]
+        if drafts:
+            fresh = fresh_review_items(conn, drafts)
+            insert_review_items(conn, fresh)
+            counts["mesa_discontinuity_review_items"] = len(fresh)
+            print(
+                f"  {len(drafts)} discontinuous mesa(s) recorded for review "
+                f"({len(fresh)} new, {len(drafts) - len(fresh)} already present)",
+                file=sys.stderr,
+            )
+
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1240,7 +1608,8 @@ def cmd_load_curated(args: argparse.Namespace) -> int:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (UnknownSourceError, MalformedManifestRecordError, DuplicateManifestRecordError,
+            AmbiguousSourceError) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -1343,6 +1712,25 @@ def official_mesa_votes_from_national(
     votes_by_mesa: dict[int, dict[str, set[int]]] = {}
     tipo_by_mesa: dict[int, dict[str, set[int]]] = {}
     skipped: dict[str, int] = {}
+    # A mesa NUMBER does not identify a mesa: within one partido the same
+    # `mesa_code` appears under more than one circuito — 8 of the 93
+    # fiscalización mesas, against the live 2025 import, which is why
+    # `db.official_jurisdictions_for_mesa` refuses them. Keying tallies on the
+    # number alone merges two physically different mesas: equal tallies sum
+    # silently, and differing ones surface as SCHEMA DRIFT on data that is
+    # perfectly well-formed.
+    #
+    # `circuito_id` is not in the required set: the 2023 files this also reads
+    # may not carry it. Absent, the scope is circuito-blind and says so below.
+    circuitos_by_mesa: dict[int, set[str]] = {}
+    # Rows per mesa that CONTRIBUTED A TALLY. Counting every row that reached
+    # the loop body double-counted the ones already skipped as
+    # "votos_tipo not in the comparison vector", so the per-reason totals summed
+    # to more than the rows read. Counting mesas instead under-reported the
+    # largest exclusion by an order of magnitude. Neither total is truthful;
+    # this one is.
+    tallied_rows_by_mesa: dict[int, int] = {}
+    has_circuito = "circuito_id" in fieldnames
 
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
@@ -1365,17 +1753,84 @@ def official_mesa_votes_from_national(
             continue
 
         votos_tipo = raw["votos_tipo"]
+        contributes_tally = votos_tipo in ("POSITIVO", "EN BLANCO", "IMPUGNADO")
+
+        if has_circuito and contributes_tally:
+            # ONLY from rows that contribute a tally -- the same set
+            # `tallied_rows_by_mesa` tracks. Accumulating from every row that
+            # passed the distrito/seccion/category filter meant a NULO or
+            # RECURRIDO row carrying a different circuito declared the mesa
+            # ambiguous and dropped tallies that all sat in ONE circuito: a
+            # fabricated ambiguity verdict on well-formed data, which is the
+            # exact outcome this check exists to prevent.
+            #
+            # NORMALIZED, like every other administrative code read in this
+            # file. Compared raw, `"248"` and `"00248"` -- the same circuito
+            # written two ways, which is why `normalize_circuito_code` exists
+            # -- counted as two, with the same fabricated result.
+            # ABSENT IS NOT A SECOND CIRCUITO. `circuito_id` is not in
+            # `REQUIRED_COLUMNS`, so a mesa whose tally rows carry the code on
+            # some rows and an empty cell on others yielded `{"00248", ""}`
+            # and was declared ambiguous -- its tallies withheld and reported
+            # under "the mesa number appears under more than one circuito",
+            # a verdict about data that names exactly one. Coercing absence to
+            # a value is what `find_unmapped_jurisdictions` refuses by name.
+            circuito = normalize_circuito_code(raw["circuito_id"])
+            if circuito:
+                circuitos_by_mesa.setdefault(mesa, set()).add(circuito)
+
         if votos_tipo == "POSITIVO":
             votes_by_mesa.setdefault(mesa, {}).setdefault(
                 raw["agrupacion_nombre"], set()
             ).add(cantidad)
+            tallied_rows_by_mesa[mesa] = tallied_rows_by_mesa.get(mesa, 0) + 1
         elif votos_tipo in ("EN BLANCO", "IMPUGNADO"):
             tipo_by_mesa.setdefault(mesa, {}).setdefault(votos_tipo, set()).add(cantidad)
+            tallied_rows_by_mesa[mesa] = tallied_rows_by_mesa.get(mesa, 0) + 1
         else:
             # NULO, RECURRIDO and anything else the source reports: not part of
             # the 17-column fiscalización vector, so not comparable — counted
             # rather than vanishing.
             skip(f"votos_tipo {votos_tipo!r} is not in the comparison vector")
+
+    # DROPPED BEFORE the collapse, with their reason counted. Left in, an
+    # ambiguous mesa's two circuitos disagree about a tally and `collapse`
+    # reports that as schema drift — `validate-fiscalizacion` would exit 1 on
+    # data that is perfectly well-formed.
+    ambiguous = {mesa for mesa, circuitos in circuitos_by_mesa.items() if len(circuitos) > 1}
+    for mesa in ambiguous:
+        votes_by_mesa.pop(mesa, None)
+        tipo_by_mesa.pop(mesa, None)
+        for _ in range(tallied_rows_by_mesa.get(mesa, 0)):
+            skip(
+                "the mesa number appears under more than one circuito, so it does "
+                "not identify one mesa"
+            )
+    if ambiguous:
+        # NAMED, like every sibling report in this file (`unmatched_mesas`,
+        # `collided_mesas`, `incomparable_mesas`, the quarantine breakdown).
+        # A count with no identifiers is visible and not actionable: nobody
+        # can go look at the mesas whose tallies were withheld, or check the
+        # circuitos against the source.
+        print(
+            f"  {len(ambiguous)} mesa(s) withheld because their number appears under "
+            "more than one circuito: "
+            + ", ".join(
+                f"mesa {mesa} in circuitos "
+                + ", ".join(sorted(circuitos_by_mesa[mesa]))
+                for mesa in sorted(ambiguous)
+            ),
+            file=sys.stderr,
+        )
+    if not has_circuito:
+        # A REGIME, on its own line. Riding `skipped` printed it as
+        # "0 row(s) not used — the scope is circuito-blind": a zero beside a
+        # fact that is not zero-shaped.
+        print(
+            "  baseline: no circuito_id column, so the scope cannot tell two "
+            "same-numbered mesas apart",
+            file=sys.stderr,
+        )
 
     def collapse(source: dict[int, dict[str, set[int]]], label: str) -> dict[int, dict[str, int]]:
         collapsed: dict[int, dict[str, int]] = {}
@@ -1419,6 +1874,29 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     command exits zero on divergences and nonzero only when the join itself
     could not be performed.
     """
+    # THE CHECK behind the name table's curated scope. `vector()` maps every
+    # column through `OFFICIAL_AGRUPACION_NAME_BY_COLUMN`, curated for one
+    # (distrito, seccion, category); outside it every name misses, every
+    # column reads 0, and the run writes 17 fabricated divergences per mesa.
+    # Refused the way `load_fiscalizacion_rows` refuses a scheme that does not
+    # match the scope it writes to.
+    curated_distrito, curated_seccion, curated_category = CURATED_NAME_TABLE_SCOPE
+    requested = (
+        normalize_distrito_code(args.distrito),
+        normalize_seccion_code(args.seccion),
+        args.category,
+    )
+    if requested != (curated_distrito, curated_seccion, curated_category):
+        print(
+            f"error: the official party-name table is curated for "
+            f"{curated_distrito}/{curated_seccion}/{curated_category}, and this run "
+            f"asks for {requested[0]}/{requested[1]}/{requested[2]}; outside that "
+            "scope every column would miss and every mesa would report 17 divergences "
+            "that are not real",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         database_url = resolve_database_url(args.database_url)
     except MissingDatabaseUrlError as exc:
@@ -1474,25 +1952,39 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     if fiscalizacion_bytes is None or baseline_bytes is None:
         return 1
 
-    result = ingest_fiscalizacion(fiscalizacion_bytes.decode("utf-8"), archive_entry_id=args.source)
+    result = ingest_fiscalizacion(
+        # `utf-8-sig` for the same reason as `ingest_source`'s call: an
+        # Excel-exported sheet carries a BOM, and stripping it in one caller
+        # and not the other is two ideas of how this file decodes.
+        fiscalizacion_bytes.decode("utf-8-sig"),
+        archive_entry_id=args.source,
+    )
 
     # Same quarantine `ingest_source` reports, reported here too: reading only
     # `result.rows` made the join describe a smaller corpus with no word about
     # what was withheld.
     if result.quarantined:
-        by_reason: dict[str, list[int | None]] = {}
+        by_reason: dict[str, list] = {}
         for row in result.quarantined:
-            by_reason.setdefault(row.reason, []).append(row.mesa)
+            by_reason.setdefault(row.reason, []).append(row)
         print(
             f"  {len(result.quarantined)} fiscalización row(s) were quarantined at "
             "ingestion and are not part of this comparison:",
             file=sys.stderr,
         )
-        for reason, mesas in sorted(by_reason.items()):
-            named = sorted(m for m in mesas if m is not None)
+        for reason, quarantined_rows in sorted(by_reason.items()):
+            named = sorted(r.mesa for r in quarantined_rows if r.mesa is not None)
+            # Same locator as `ingest_source`'s report: a reason whose rows all
+            # carry `mesa=None` is otherwise a bare count.
+            lines = sorted(i for r in quarantined_rows for i in r.source_row_indices)
             print(
-                f"    {reason}: {len(mesas)} row(s)"
-                + (f", mesas {', '.join(str(m) for m in named)}" if named else ""),
+                f"    {reason}: {len(quarantined_rows)} row(s)"
+                + (f", mesas {', '.join(str(m) for m in named)}" if named else "")
+                + (
+                    f", source row(s) {', '.join(str(i) for i in lines)}"
+                    if lines
+                    else ""
+                ),
                 file=sys.stderr,
             )
     # PER ROW. A blank cell carries `None`, which cannot be compared against an
@@ -1508,32 +2000,82 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         if any(value is None for value in row.votes.values())
     )
     mesa_rows = [
-        FiscalizacionMesaRow(mesa=row.mesa, escuela=row.escuela, votes=dict(row.votes))
+        FiscalizacionMesaRow(mesa=row.mesa, votes=dict(row.votes))
         for row in comparable_rows
     ]
     if incomparable_mesas:
-        # NAMED, like the unmatched and collided mesas below. A bare count says
-        # how much was withheld and never which, so nobody can go look.
+        # PER REASON, not one name for two facts. A `None` vote is either a
+        # cell the fiscal left EMPTY or one carrying something unreadable
+        # ("1O", "n/d"), and the message named only the first -- so a
+        # transcription error a human could go fix against the source was
+        # reported as a blank the source genuinely has.
+        #
+        # NAMED, like the unmatched and collided mesas below: a bare count
+        # says how much was withheld and never which, so nobody can go look.
+        by_kind = {"blank_vote_cell": set(), "unreadable_vote_cell": set()}
+        for draft in result.review_items:
+            if draft.kind in by_kind:
+                by_kind[draft.kind].add(draft.subject_ref)
+        # EACH MESA IN EXACTLY ONE BUCKET. A mesa carrying one blank cell AND
+        # one unreadable cell produced both draft kinds, so it landed in both
+        # lists and the per-reason counts summed ABOVE the headline total --
+        # a breakdown whose parts do not reconcile, which is how a wrong
+        # distribution survives a plausible headline. Same correction
+        # `_quarantine_ambiguous_rows` needed for rows-versus-keys.
+        reasons: dict[str, list[int]] = {
+            "blank vote cell": [],
+            "unreadable vote cell": [],
+            "both a blank and an unreadable vote cell": [],
+        }
+        for m in incomparable_mesas:
+            blank = f"mesa {m}" in by_kind["blank_vote_cell"]
+            unreadable = f"mesa {m}" in by_kind["unreadable_vote_cell"]
+            if blank and unreadable:
+                reasons["both a blank and an unreadable vote cell"].append(m)
+            elif blank:
+                reasons["blank vote cell"].append(m)
+            elif unreadable:
+                reasons["unreadable vote cell"].append(m)
         print(
             f"  {len(incomparable_mesas)} of {len(result.rows)} fiscalización row(s) "
-            "carry a blank vote cell and cannot be compared; they are NOT counted as "
-            f"diverging: mesas {', '.join(str(m) for m in incomparable_mesas)}",
+            "cannot be compared; they are NOT counted as diverging:",
             file=sys.stderr,
         )
+        for reason, mesas in reasons.items():
+            if mesas:
+                print(
+                    f"    {reason}: {len(mesas)} row(s), mesas "
+                    f"{', '.join(str(m) for m in sorted(mesas))}",
+                    file=sys.stderr,
+                )
+        # A mesa carrying a `None` with no draft naming why would be an
+        # unexplained withdrawal, so it is reported rather than left out of
+        # the breakdown entirely.
+        unexplained = [
+            m
+            for m in incomparable_mesas
+            if not any(m in mesas for mesas in reasons.values())
+        ]
+        if unexplained:
+            print(
+                f"    reason not recorded: {len(unexplained)} row(s), mesas "
+                f"{', '.join(str(m) for m in sorted(unexplained))}",
+                file=sys.stderr,
+            )
 
     try:
-        with tempfile.TemporaryDirectory(prefix="votus-etl-divergence-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(
-                baseline_bytes, extract_dir=Path(extract_dir)
-            )
+        csv_bytes = national_csv_bytes(baseline_bytes)
         official_by_mesa, baseline_skipped = official_mesa_votes_from_national(
             csv_bytes,
             distrito=args.distrito,
             seccion=args.seccion,
             category=args.category,
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
+            PbaSchemaError, UnknownSourceError,
+            MalformedManifestRecordError, DuplicateManifestRecordError,
+            MalformedManifestError,
+            AmbiguousSourceError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -1580,7 +2122,19 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     # different divergences for the same mesa -- and a key that named only the
     # two sources dropped the second run as "already present" whenever the note
     # text coincided. Same argument this file makes for `ingest_source`.
-    scope = f"{args.distrito}/{args.seccion}/{args.category}"
+    # NORMALIZED, like every other writer of a `review_item` key here (see
+    # `ingest.fiscalizacion.mesa_subject_ref`, and migration 0013 keying on
+    # the STORED seccion_code). Built from the raw args, running this once as
+    # `--distrito 02 --seccion 027` and again as `--distrito 2 --seccion 27`
+    # produced two scopes for ONE comparison -- `official_mesa_votes_from_
+    # national` normalizes internally, so both runs compare identically --
+    # and `fresh_review_items` dedups on EXACT `subject_ref`, so every
+    # observation appended a second time.
+    scope = (
+        f"{normalize_distrito_code(args.distrito)}/"
+        f"{normalize_seccion_code(args.seccion) or '(sin seccion)'}/"
+        f"{args.category}"
+    )
     records_to_write = [
         replace(
             record,
@@ -1591,22 +2145,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
 
     conn = psycopg.connect(database_url)
     try:
-        with conn.cursor() as cur:
-            # `any(%s::text[])`, not `any(%s)`: with an EMPTY list psycopg
-            # cannot infer the array type and raises `IndeterminateDatatype`,
-            # so a run that found no divergences -- the success case -- crashed
-            # instead of exiting 0.
-            cur.execute(
-                "select kind, severity, subject_ref, note from review_item"
-                " where subject_ref = any(%s::text[])",
-                ([record.subject_ref for record in records_to_write],),
-            )
-            existing = {tuple(row) for row in cur.fetchall()}
-        fresh = [
-            record
-            for record in records_to_write
-            if (record.kind, record.severity, record.subject_ref, record.note) not in existing
-        ]
+        fresh = fresh_review_items(conn, records_to_write)
         insert_review_items(conn, fresh)
         conn.commit()
     except Exception:
@@ -1702,8 +2241,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
+def apply_mesa_tipo_mapping(
+    conn,
+    mapping: dict[tuple[str, str, str, int], str],
+    *,
+    batch_size: int = 1_500_000,
+):
     """Apply a lineage->mesa_tipo mapping to `result_row`, in batches.
+
+    `mapping` values are ONE tipo each, and the annotation now says so.
+    Untyped, it accepted `collect_mesa_tipo_mapping`'s `dict[..., set[str]]`
+    verbatim -- `cmd_backfill_mesa_tipo` collapses the sets before calling and
+    nothing enforced it, so a direct caller would have passed `set` objects
+    into `%s::text[]` and written the repr of a set as a mesa_tipo.
 
     Extracted so the UPDATE path is testable at all. Its only prior
     coverage stopped at `parse_args` — the same shape as the two validate
@@ -1741,12 +2291,11 @@ def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
                 -- TRUNCATES a wider value from the right where `zfill` never
                 -- does, so the two would disagree on any longer code.
                 -- `establecimiento_code` IS part of `jurisdiction`'s unique
-                -- key, so it belongs in the merge key. The national sources
-                -- publish no establecimiento column and every mesa-level row
-                -- this backfill targets carries NULL there, but omitting the
-                -- column would silently bind two mesa-level jurisdictions
-                -- differing only by establecimiento to one key the day a
-                -- source does publish it.
+                -- key, so it belongs in the merge key. The Python side passes
+                -- `None` for it, which is CHECKED below rather than assumed:
+                -- the day a source publishes an establecimiento, a hardcoded
+                -- `None` would stop matching and the backfill would silently
+                -- update nothing, so the run refuses instead.
                 on """
             + MERGE_KEY_SQL
             + """ = v.merge_key
@@ -1762,30 +2311,35 @@ def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
                 list(mapping.values()),
             ),
         )
-        # Two lineage keys resolving to ONE jurisdiction would let Postgres
-        # pick a `tipo` arbitrarily and say nothing — rule 4's silent pick.
-        #
-        # DEFENSIVE, and deliberately kept without a test: the merge key is an
-        # exact text equality against a lineage that is unique in
-        # `jurisdiction`, so two distinct keys cannot match one row, and a
-        # single key cannot appear twice in a dict. Reaching this needs
-        # duplicate `jurisdiction` rows for one lineage — which
-        # `batch_upsert_jurisdictions` now refuses outright, and which migration
-        # 0012 reconciled away. It stays because that reconciliation is a fact
-        # about today's data, not an invariant the schema enforces.
+        # THE CHECK behind the `None` above. `merge_key(..., establecimiento
+        # =None, ...)` only matches rows whose `establecimiento_code` is null,
+        # so the moment a mesa-level jurisdiction carries one, this backfill
+        # would quietly match nothing for it and report a smaller number with
+        # no indication why. Stated assumptions get checked.
         cur.execute(
-            """
-            select jurisdiction_id, count(distinct tipo)
-              from jur_tipo group by 1 having count(distinct tipo) > 1
-            """
+            "select count(*) from jurisdiction"
+            " where mesa_code is not null and establecimiento_code is not null"
         )
-        conflicts = cur.fetchall()
-        if conflicts:
-            raise RuntimeError(
-                f"{len(conflicts)} jurisdiction(s) resolved to more than one mesa_tipo; "
-                "refusing to pick one arbitrarily. First: "
-                f"{conflicts[0][0]}"
+        with_establecimiento = cur.fetchone()[0]
+        if with_establecimiento:
+            raise NationalSchemaError(
+                f"{with_establecimiento} mesa-level jurisdiction(s) carry an "
+                "establecimiento_code, which this backfill's merge key does not "
+                "supply -- it would silently match none of them, so it refuses "
+                "rather than under-report"
             )
+        # NO two-tipo conflict guard here. It grouped `jur_tipo` by
+        # `jurisdiction_id` and refused `count(distinct tipo) > 1`, which needs
+        # ONE jurisdiction row matched by two mapping keys carrying different
+        # tipos — and the join is exact text equality on a lineage the row
+        # itself determines, so two distinct keys cannot match one row.
+        # Duplicate `jurisdiction` rows for one lineage do not reach it either:
+        # they have different ids, so each carries one tipo.
+        #
+        # It was kept "defensive and deliberately without a test". Strict TDD
+        # has no such exemption, and trying to drive it is what showed it could
+        # not fire. `batch_upsert_jurisdictions` refuses the duplicate lineage
+        # that would be the real hazard, and that refusal IS tested.
         cur.execute("select count(distinct jurisdiction_id) from jur_tipo")
         resolved_jurisdictions = cur.fetchone()[0]
         # Which mesas failed to bind, by scope. A bare total ("N matched no
@@ -1897,12 +2451,12 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
             continue
         raw_bytes = local_store.read("national", filename)
         try:
-            with tempfile.TemporaryDirectory(prefix="votus-etl-backfill-") as extract_dir:
-                csv_bytes = resolve_national_results_bytes(
-                    raw_bytes, extract_dir=Path(extract_dir)
-                )
-        except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+            csv_bytes = national_csv_bytes(raw_bytes)
+        except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
+            PbaSchemaError, UnknownSourceError,
+            MalformedManifestRecordError, DuplicateManifestRecordError,
+            MalformedManifestError,
+            AmbiguousSourceError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         # Same BOM reason as `resolve_national_results_bytes`: with `utf-8`
@@ -1975,10 +2529,59 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
     return 0
 
 
+# THE module contract, in one place: "non-zero on any argument or validation
+# failure", never a traceback. Eight `except` tuples each listed a different
+# subset of these, so the SAME malformed manifest exited 1 from one command
+# and raised from another -- and the calls that read the hand-maintained
+# `sources.yaml`, `crosswalk.yaml` and `party_map.yaml` sat outside every
+# handler, so the files most likely to drift were the ones least likely to
+# produce an exit code.
+VALIDATION_FAILURES = (
+    UnknownSourceError,
+    AmbiguousSourceError,
+    MalformedManifestRecordError,
+    DuplicateManifestRecordError,
+    MalformedManifestError,
+    MissingDatabaseUrlError,
+    MissingArchivedYearError,
+    NationalResultsCsvNotFoundError,
+    FiscalizacionUploadForbiddenError,
+    # `ValueError` covers `NationalSchemaError`, `PbaSchemaError`,
+    # `FiscalizacionSchemaError` and the two bare-`ValueError` refusals in
+    # `load_fiscalizacion_rows` and `db.load_result_rows` -- a scheme that
+    # does not match the scope it writes to, and a record carrying a foreign
+    # election. Every one of them is a validation failure.
+    ValueError,
+    # The hand-edited YAML files. `yaml.YAMLError` is not a `ValueError`,
+    # and `OSError` covers a path that does not exist -- which for
+    # `sources.yaml`/`crosswalk.yaml`/`party_map.yaml` is an argument failure.
+    yaml.YAMLError,
+    OSError,
+    # NO `KeyError`. It is a PROGRAMMING bug here, not a validation failure:
+    # `load_national_rows`'s `jurisdiction_ids[j_key]`,
+    # `batch_upsert_jurisdictions`'s `resolved[normalized_key]` and
+    # `join_fiscalizacion_identity`'s `row.votes[column]` all raise it when an
+    # internal invariant breaks, and catching it here printed `error: '02'`,
+    # which reads as a drifted source. That is the misdiagnosis this module
+    # refuses everywhere else. A malformed curated YAML shape still exits 1:
+    # the three call sites that parse those files catch `KeyError` themselves,
+    # where the word means what it says.
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except VALIDATION_FAILURES as exc:
+        # The BACKSTOP, at the one place every subcommand passes through.
+        # The per-command handlers below still run first where they add
+        # context; this catches what none of them wrapped -- `load_sources`
+        # in every command, `load_manifest` in four, and `latest_ok_record`'s
+        # duplicate refusal in three.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

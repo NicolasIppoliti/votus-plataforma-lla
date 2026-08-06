@@ -174,3 +174,61 @@ def test_normalize_circuito_code_pads_and_never_truncates() -> None:
     assert normalize_circuito_code("123456") == "123456", (
         "a wider code must survive intact, never be truncated to the padding width"
     )
+
+
+def test_the_sql_and_python_merge_keys_agree_on_the_characters_they_escape() -> None:
+    """`MERGE_KEY_SQL` and `merge_key()` MUST agree character for character —
+    their shared docstring says so, and `establecimiento_code` is FREE TEXT, so
+    `|` (the separator) and `\\` (the escape) are the two characters that can
+    make the two sides disagree and the join silently miss.
+
+    Asserted against a REAL Postgres, because the question is how the server
+    reads the escapes under `standard_conforming_strings`, which no Python-side
+    reasoning can answer.
+    """
+    import os
+
+    import psycopg
+    import pytest
+
+    from etl.db import MERGE_KEY_SQL, merge_key
+
+    dsn = os.environ.get(
+        "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )
+    # SKIP only when Postgres is genuinely unreachable -- never because an
+    # env var is unset. Gated on the variable, the ONE check that
+    # `MERGE_KEY_SQL` and `merge_key()` agree -- the invariant the whole
+    # batched jurisdiction join rests on -- quietly did not run on a normal
+    # dev box while the suite reported green. Same shape as
+    # `_require_ephemeral_postgres` in the other suites.
+    try:
+        psycopg.connect(dsn, connect_timeout=2).close()
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {dsn!r}: {exc}")
+
+    expression = (
+        MERGE_KEY_SQL.replace("j.distrito_code", "%s")
+        .replace("j.seccion_code", "%s")
+        .replace("j.circuito_code", "%s")
+        .replace("j.establecimiento_code", "%s")
+        .replace("j.mesa_code", "%s")
+    )
+    # EVERY text component, not only `establecimiento_code`. The escaping used
+    # to cover that one alone on the grounds that the others are normalized --
+    # an assumption, and a false one: `normalize_circuito_code` passes a value
+    # wider than the padding width through unchanged, so a circuito can carry
+    # a separator too, and a separator inside a component makes the join
+    # silently miss.
+    hostile = ("plain", "A|B", "A\\B", "A\\|B", "")
+    with psycopg.connect(dsn) as conn:
+        for position in range(4):
+            for value in hostile:
+                args = ["02", "027", "00248", "Escuela 1"]
+                args[position] = value
+                with conn.cursor() as cur:
+                    cur.execute("select " + expression, (*args, 1))
+                    from_sql = cur.fetchone()[0]
+                assert from_sql == merge_key(*args, 1), (
+                    f"the two sides disagree with {value!r} in position {position}"
+                )

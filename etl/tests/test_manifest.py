@@ -7,12 +7,12 @@ manifest, committed alongside the gitignored ``archive/`` byte mirror).
 
 import json
 
+import pytest
+
 from etl.manifest import (
     REQUIRED_FIELDS,
-    entries_for_source,
     latest_ok_record,
     load_manifest,
-    ok_records_with_local_path,
     save_manifest,
     upsert_record,
 )
@@ -68,26 +68,6 @@ def test_manifest_entry_created_per_fetch() -> None:
     assert entry["bytes"] == 28028857
 
 
-def test_manifest_queryable_by_source() -> None:
-    """source-archive spec: 'Manifest queryable by source' — returns every
-    archive entry for a URL, in fetch order."""
-    first = _record(fetched_at="2026-08-01T00:00:00Z", sha256="a" * 64)
-    records = upsert_record([], first)
-    second_input = _record(
-        id="national/2025-legislativas",
-        source_url="https://datos.mininterior.gob.ar/legislativas2025.zip",
-        fetched_at="2026-08-02T00:00:00Z",
-        sha256="b" * 64,
-    )
-    records = upsert_record(records, second_input)
-
-    matches = entries_for_source(records, first["source_url"])
-    assert [r["id"] for r in matches] == ["national/2023-generales"]
-
-    unrelated = entries_for_source(records, "https://example.org/never-archived.zip")
-    assert unrelated == []
-
-
 def test_upsert_inserts_new_record() -> None:
     result = upsert_record([], _record())
     assert len(result) == 1
@@ -110,13 +90,19 @@ def test_upsert_detects_content_drift_and_keeps_prior_version() -> None:
 
     ids = {r["id"] for r in updated}
     assert "national/2023-generales" in ids
-    assert "national/2023-generales@2026-06-01" in ids
+    # The FULL timestamp, not just the date: two drifts on ONE calendar day
+    # produced two records sharing the dated id, and `latest_ok_record`
+    # refuses a duplicated id -- so the writer that maintains one-per-id was
+    # what broke it, making that capture permanently unreadable.
+    assert "national/2023-generales@2026-06-01T000000Z" in ids
 
     canonical = next(r for r in updated if r["id"] == "national/2023-generales")
     assert canonical["sha256"] == "b" * 64
     assert "drift" in canonical["notes"].lower()
 
-    prior = next(r for r in updated if r["id"] == "national/2023-generales@2026-06-01")
+    prior = next(
+        r for r in updated if r["id"] == "national/2023-generales@2026-06-01T000000Z"
+    )
     assert prior["sha256"] == "a" * 64
     assert "superseded" in prior["notes"].lower()
 
@@ -163,24 +149,6 @@ def test_upsert_still_overwrites_when_prior_status_was_already_error() -> None:
     assert updated[0]["notes"] == "[HTTP 500]"
 
 
-def test_ok_records_with_local_path_returns_matching_records() -> None:
-    records = [
-        _record(id="a", status="ok", archived_path="archive/a.zip"),
-        _record(id="b", status="ok", archived_path=None),
-        _record(id="c", status="error", archived_path=None),
-    ]
-    result = ok_records_with_local_path(records)
-    assert [r["id"] for r in result] == ["a"]
-
-
-def test_ok_records_with_local_path_returns_empty_when_none_qualify() -> None:
-    records = [
-        _record(id="b", status="ok", archived_path=None),
-        _record(id="c", status="error", archived_path="archive/c.zip"),
-    ]
-    assert ok_records_with_local_path(records) == []
-
-
 def test_manifest_is_valid_json_array(tmp_path) -> None:
     path = tmp_path / "archive-manifest.json"
     save_manifest(path, [_record(), _record(id="other/id")])
@@ -200,7 +168,12 @@ def test_latest_ok_record_returns_none_when_source_never_succeeded() -> None:
     assert latest_ok_record(records, "national/2023-generales") is None
 
 
-def test_latest_ok_record_returns_most_recent_ok_entry() -> None:
+def test_latest_ok_record_returns_the_single_record_upsert_left_for_the_id() -> None:
+    """There is no "most recent" to choose, and choosing is what this stopped
+    doing: `upsert_record` replaces by id, and `latest_ok_record` now refuses
+    a manifest holding two records for one id. The drift capture is preserved
+    under a DATED id, so the canonical id carries exactly one record.
+    """
     records = upsert_record([], _record(fetched_at="2026-06-01T00:00:00Z", sha256="a" * 64))
     records = upsert_record(
         records, _record(fetched_at="2026-08-03T00:00:00Z", sha256="b" * 64)
@@ -209,3 +182,39 @@ def test_latest_ok_record_returns_most_recent_ok_entry() -> None:
     found = latest_ok_record(records, "national/2023-generales")
     assert found is not None
     assert found["sha256"] == "b" * 64
+
+
+def test_two_records_for_one_id_are_refused_not_picked_between() -> None:
+    """`upsert_record` replaces by id, so a well-formed manifest holds one
+    record per id. Scanning for the FIRST match silently chose between two
+    archived copies of one source -- deciding which bytes reach `result_row`.
+    """
+    from etl.manifest import DuplicateManifestRecordError
+
+    records = [
+        {"id": "national/2025", "status": "ok", "sha256": "aaa"},
+        {"id": "national/2025", "status": "ok", "sha256": "bbb"},
+    ]
+
+    with pytest.raises(DuplicateManifestRecordError):
+        latest_ok_record(records, "national/2025")
+
+
+def test_a_stale_error_record_does_not_mask_the_archived_copy() -> None:
+    """The scan returned the first record for the id and answered `None` if it
+    was not `ok`, so an `error` record sitting ahead of an `ok` one reported
+    "never archived" for a source that IS archived.
+
+    `upsert_record` never produces that pair -- a failed re-fetch PRESERVES
+    the ok record and annotates it -- which is why the one-per-id invariant is
+    the thing to check.
+    """
+    preserved = upsert_record(
+        [_record(sha256="a" * 64)],
+        _record(status="error", sha256=None, notes="502"),
+    )
+
+    current = latest_ok_record(preserved, "national/2023-generales")
+    assert current is not None, "a failed re-fetch must not hide the archived copy"
+    assert current["sha256"] == "a" * 64
+    assert current["last_error"] == "502"

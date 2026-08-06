@@ -45,7 +45,6 @@ class ResultRowRecord:
     list_id: str | None
     votes: int
     source_kind: str
-    is_unmapped: bool
     archive_entry_id: str
     source_row_index: int
     # Phase 16a: `NATIVOS` | `EXTRANJEROS` | `None` (source column absent or
@@ -154,6 +153,55 @@ def upsert_jurisdiction(
         return cur.fetchone()[0]
 
 
+def official_jurisdictions_for_mesa(
+    conn,
+    *,
+    distrito: str,
+    seccion: str,
+    mesa: int,
+) -> list[tuple[str, str | None]]:
+    """Every jurisdiction row the OFFICIAL import created for one mesa number,
+    as `(id, circuito_code)` ordered by circuito.
+
+    A mesa NUMBER does not identify a mesa: within one partido the same
+    `mesa_code` appears under more than one circuito (8 of the 93 fiscalización
+    mesas, against the live 2025 national import). Callers must decide, and
+    the only honest decisions are "exactly one" or "refuse".
+    """
+    # NORMALIZED, like `upsert_jurisdiction` right above. A reader on the same
+    # table skipping the single boundary is normalization per call site — what
+    # produced Coronel Rosales as three identities. `load_fiscalizacion_rows`
+    # takes distrito/seccion as kwargs, so a caller passing national
+    # ingestion's unpadded "2"/"27" (which the 2023 file really carries) would
+    # match zero rows and every mesa would be quarantined as absent from the
+    # official import: a padding problem reported as a data problem.
+    distrito = normalize_distrito_code(distrito)
+    seccion = normalize_seccion_code(seccion)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, circuito_code
+            from jurisdiction
+            where distrito_code is not distinct from %s
+              -- `is not distinct from`, not `=`. `normalize_seccion_code`
+              -- returns `None` for an absent seccion, and Postgres never
+              -- treats NULL as equal to NULL, so plain equality matched ZERO rows for
+              -- a null-seccion mesa: every such mesa would be quarantined as
+              -- "absent from the official import" while its jurisdiction sat
+              -- right there. `_resolve_official_mesa` already anticipates a
+              -- null seccion in its own subject_ref, so the caller expects
+              -- what this predicate could not answer. Same NULL semantics
+              -- `upsert_jurisdiction` uses on this table.
+              and seccion_code is not distinct from %s
+              and mesa_code = %s
+              and circuito_code is not null
+            order by circuito_code
+            """,
+            (distrito, seccion, mesa),
+        )
+        return [(str(row[0]), row[1]) for row in cur.fetchall()]
+
+
 JurisdictionKey = tuple[str, str | None, str | None, str | None, int | None]
 """`(distrito, seccion, circuito, establecimiento, mesa)` -- the same
 lineage tuple `upsert_jurisdiction` resolves one at a time."""
@@ -168,10 +216,23 @@ lineage tuple `upsert_jurisdiction` resolves one at a time."""
 # key and bind two distinct lineages to one jurisdiction. Both sides therefore
 # escape `\` then `|` before joining, which makes the encoding reversible and
 # the key exact.
+def _escape_sql(column: str) -> str:
+    """Escape one text column for `MERGE_KEY_SQL`."""
+    return f"replace(replace(coalesce({column},''), '\\', '\\\\'), '|', '\\|')"
+
+
+# EVERY text component is escaped, not only `establecimiento_code`. The
+# docstring justified escaping that one because it is free text and implied
+# the rest were safe by normalization -- an assumption, not a check, and a
+# false one: `normalize_circuito_code` passes a value WIDER than the padding
+# width through unchanged (`test_normalize_circuito_code_pads_and_never_
+# truncates` pins exactly that), so a circuito is not guaranteed `|`-free
+# either. A separator appearing inside a component makes the join silently
+# miss, which is the one failure this key exists to prevent.
 MERGE_KEY_SQL = (
-    "coalesce(j.distrito_code,'') || '|' || coalesce(j.seccion_code,'')"
-    " || '|' || coalesce(j.circuito_code,'') || '|'"
-    " || replace(replace(coalesce(j.establecimiento_code,''), '\\', '\\\\'), '|', '\\|')"
+    f"{_escape_sql('j.distrito_code')} || '|' || {_escape_sql('j.seccion_code')}"
+    f" || '|' || {_escape_sql('j.circuito_code')}"
+    f" || '|' || {_escape_sql('j.establecimiento_code')}"
     " || '|' || coalesce(j.mesa_code::text,'')"
 )
 
@@ -184,14 +245,23 @@ def merge_key(
     mesa: int | None,
 ) -> str:
     """Python side of `MERGE_KEY_SQL` -- the two MUST agree character for
-    character, which is why they live next to each other."""
-    escaped = (establecimiento or "").replace("\\", "\\\\").replace("|", "\\|")
+    character, which is why they live next to each other.
+
+    Every text component is escaped, matching the SQL: see the comment on
+    `MERGE_KEY_SQL` for why "normalized, therefore separator-free" was an
+    assumption and not a check. `mesa_code` is an integer on both sides and
+    cannot carry either character.
+    """
+
+    def escape(value: str | None) -> str:
+        return (value or "").replace("\\", "\\\\").replace("|", "\\|")
+
     return "|".join(
         (
-            distrito or "",
-            seccion or "",
-            circuito or "",
-            escaped,
+            escape(distrito),
+            escape(seccion),
+            escape(circuito),
+            escape(establecimiento),
             "" if mesa is None else str(mesa),
         )
     )
@@ -345,7 +415,13 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
     }
 
 
-def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRowRecord]) -> int:
+def load_result_rows(
+    conn,
+    *,
+    archive_entry_id: str,
+    records: Sequence[ResultRowRecord],
+    election_id: str,
+) -> int:
     """D8's idempotent load: delete every existing `result_row` for
     `archive_entry_id`, then bulk-insert `records`, in the caller's
     currently open transaction.
@@ -357,32 +433,45 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
     Truncating `result_row` and calling this again reproduces the same
     projection (task 8.3, "rebuild = truncate + replay").
     """
-    election_ids = {record.election_id for record in records}
+    # The election is a PARAMETER, not inferred from the surviving rows. The
+    # empty-`records` branch used to fall back to an UNSCOPED delete, so a
+    # source that now parses to nothing — every mesa ambiguous, a sheet
+    # re-exported empty — wiped every OTHER election's rows sharing the entry.
+    # That is the exact hazard the scoped branch's own comment describes, and
+    # the empty case is the one that cannot state its scope from its rows.
+    # EXACTLY the declared election, and every record must belong to it.
+    # Unioning the records' own elections into the delete scope let a caller
+    # widen the blast radius without saying so: one stray record carrying a
+    # different election silently deleted that OTHER election's rows for this
+    # archive entry. The scope a caller declares is the scope it gets, and a
+    # record outside it is refused rather than quietly expanding it.
+    foreign = sorted({r.election_id for r in records} - {election_id})
+    if foreign:
+        raise ValueError(
+            f"load_result_rows was given election_id={election_id!r} but "
+            f"{len(foreign)} record(s) carry a different election "
+            f"({', '.join(foreign)}); refusing rather than widening the delete scope"
+        )
 
     with conn.cursor() as cur:
-        if election_ids:
-            # Scoped by election, not just by archive entry: one archived file may
-            # hold several elections (the PBA open-data catalogue publishes
-            # 2005-2023 in a single CSV), and an unscoped delete would wipe every
-            # other election's rows that share the entry.
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s "
-                "and election_id = any(%s)",
-                (archive_entry_id, list(election_ids)),
-            )
-        else:
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s",
-                (archive_entry_id,),
-            )
+        # Scoped by election, not just by archive entry: one archived file may
+        # hold several elections (the PBA open-data catalogue publishes
+        # 2005-2023 in a single CSV), and an unscoped delete would wipe every
+        # other election's rows that share the entry. ALWAYS scoped now — there
+        # is no records-derived fallback to lose the scope in.
+        cur.execute(
+            "delete from result_row where archive_entry_id = %s "
+            "and election_id = %s",
+            (archive_entry_id, election_id),
+        )
         if records:
             cur.executemany(
                 """
                 insert into result_row (
                     election_id, jurisdiction_id, category_id, granularity,
-                    list_id, votes, source_kind, is_unmapped,
+                    list_id, votes, source_kind,
                     archive_entry_id, source_row_index, mesa_tipo
-                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -393,7 +482,6 @@ def load_result_rows(conn, *, archive_entry_id: str, records: Sequence[ResultRow
                         record.list_id,
                         record.votes,
                         record.source_kind,
-                        record.is_unmapped,
                         record.archive_entry_id,
                         record.source_row_index,
                         record.mesa_tipo,

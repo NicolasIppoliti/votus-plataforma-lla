@@ -91,13 +91,6 @@ def _fixture_rows(archive_entry_id: str) -> list[NationalRow]:
                     mesa_tipo="NATIVOS",
                     archive_entry_id=archive_entry_id,
                     source_row_index=len(rows),
-                    natural_key=(
-                        archive_entry_id,
-                        mesa,
-                        list_id,
-                        "DIPUTADO NACIONAL",
-                        "POSITIVO",
-                    ),
                 )
             )
     return rows
@@ -125,10 +118,16 @@ def test_ephemeral_postgres_reingest_matches_original(pg_conn: psycopg.Connectio
     archive_entry_id = f"test-national-{uuid.uuid4()}"
     rows = _fixture_rows(archive_entry_id)
 
-    inserted_first = load_national_rows(pg_conn, rows, year=2025, round_="legislativas")
+    inserted_first = load_national_rows(
+        pg_conn, rows, year=2025, round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
     first_snapshot = _snapshot(pg_conn, archive_entry_id)
 
-    inserted_second = load_national_rows(pg_conn, rows, year=2025, round_="legislativas")
+    inserted_second = load_national_rows(
+        pg_conn, rows, year=2025, round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
     second_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     assert inserted_first == inserted_second == len(rows)
@@ -144,7 +143,10 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
     archive_entry_id = f"test-national-{uuid.uuid4()}"
     rows = _fixture_rows(archive_entry_id)
 
-    load_national_rows(pg_conn, rows, year=2025, round_="legislativas")
+    load_national_rows(
+        pg_conn, rows, year=2025, round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
     original_snapshot = _snapshot(pg_conn, archive_entry_id)
     assert original_snapshot  # sanity: the fixture actually produced rows
 
@@ -152,7 +154,10 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
         cur.execute("truncate table result_row")
     assert _snapshot(pg_conn, archive_entry_id) == set()
 
-    load_national_rows(pg_conn, rows, year=2025, round_="legislativas")
+    load_national_rows(
+        pg_conn, rows, year=2025, round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
     rebuilt_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     assert rebuilt_snapshot == original_snapshot
@@ -213,12 +218,14 @@ def test_two_elections_in_one_archive_entry_do_not_collide(
 
     rows_2023 = _fixture_rows(archive_entry_id)
     inserted_2023 = load_national_rows(
-        pg_conn, rows_2023, year=2023, round_="generales"
+        pg_conn, rows_2023, year=2023, round_="generales",
+        archive_entry_id=archive_entry_id,
     )
 
     rows_2025 = _fixture_rows(archive_entry_id)
     inserted_2025 = load_national_rows(
-        pg_conn, rows_2025, year=2025, round_="legislativas"
+        pg_conn, rows_2025, year=2025, round_="legislativas",
+        archive_entry_id=archive_entry_id,
     )
 
     with pg_conn.cursor() as cur:
@@ -358,18 +365,14 @@ def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connect
                 mesa_tipo="NATIVOS",
                 archive_entry_id=archive_entry_id,
                 source_row_index=len(rows),
-                natural_key=(
-                    archive_entry_id,
-                    mesa,
-                    "135",
-                    "DIPUTADO NACIONAL",
-                    "POSITIVO",
-                ),
             )
         )
 
     counting_conn = _CountingConnectionProxy(pg_conn)
-    inserted = load_national_rows(counting_conn, rows, year=2025, round_="legislativas")
+    inserted = load_national_rows(
+        counting_conn, rows, year=2025, round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
 
     assert inserted == distinct_mesa_count
     # A per-row SELECT-then-INSERT pattern would issue at least
@@ -383,3 +386,93 @@ def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connect
         f"{counting_conn.counter['count']} for {distinct_mesa_count} distinct mesas "
         "-- looks like a per-row SELECT-then-INSERT pattern is still present"
     )
+
+
+def test_a_reingest_that_now_yields_no_national_rows_clears_the_old_ones(
+    pg_conn: psycopg.Connection,
+) -> None:
+    """The delete-then-insert pair is the idempotency guarantee, and both
+    halves must run even when the batch is empty.
+
+    `load_national_rows` returned 0 on an empty batch WITHOUT calling
+    `db.load_result_rows`, so the delete never ran: a source that stops
+    parsing -- a re-skinned page, a drifted header, a crosswalk entry
+    removed -- left the PREVIOUS run's rows alive and indistinguishable from
+    current, while the CLI printed "ingested 0 rows" and exited 0.
+    `load_fiscalizacion_rows` already fixed exactly this.
+    """
+    archive_entry_id = f"national/empty-reingest-{uuid.uuid4()}"
+    rows = _fixture_rows(archive_entry_id)
+    assert rows, "sanity: the fixture must produce rows"
+
+    try:
+        load_national_rows(
+            pg_conn, rows, year=2025, round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from result_row where archive_entry_id = %s",
+                (archive_entry_id,),
+            )
+            assert cur.fetchone()[0] > 0
+
+        load_national_rows(
+            pg_conn, [], year=2025, round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from result_row where archive_entry_id = %s",
+                (archive_entry_id,),
+            )
+            assert cur.fetchone()[0] == 0, "the stale rows must not survive"
+    finally:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
+            )
+        pg_conn.commit()
+
+
+def test_an_empty_national_reingest_leaves_another_election_on_the_entry_alone(
+    pg_conn: psycopg.Connection,
+) -> None:
+    """The delete is ELECTION-scoped, so clearing 2025 must not take 2023's
+    rows on the same archive entry with it."""
+    archive_entry_id = f"national/empty-scope-{uuid.uuid4()}"
+    rows = _fixture_rows(archive_entry_id)
+
+    try:
+        load_national_rows(
+            pg_conn, rows, year=2023, round_="generales",
+            archive_entry_id=archive_entry_id,
+        )
+        load_national_rows(
+            pg_conn, rows, year=2025, round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
+        load_national_rows(
+            pg_conn, [], year=2025, round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
+
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                select e.year, count(*)
+                  from result_row r join election e on e.id = r.election_id
+                 where r.archive_entry_id = %s
+                 group by e.year
+                """,
+                (archive_entry_id,),
+            )
+            by_year = dict(cur.fetchall())
+        assert by_year.get(2023, 0) > 0, "2023 must survive an empty 2025 re-ingest"
+        assert by_year.get(2025, 0) == 0
+    finally:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
+            )
+        pg_conn.commit()

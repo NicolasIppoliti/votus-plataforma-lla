@@ -90,8 +90,15 @@ def test_idempotent_reingest_same_archive_entry() -> None:
     second = ingest_national(data, archive_entry_id="national/2023-generales")
 
     assert first == second
-    natural_keys = [r.natural_key for r in first]
-    assert len(natural_keys) == len(set(natural_keys)), "no duplicate rows on re-ingest"
+    # The FULL lineage, which is what `_quarantine_ambiguous_rows` and the
+    # database constraint both key on. The `natural_key` field was a weaker
+    # third idea — `mesa_id` alone is not unique in the 2023 file.
+    lineage = [
+        (r.result.distrito, r.result.seccion, r.result.circuito, r.result.mesa,
+         r.category, r.list_id)
+        for r in first
+    ]
+    assert len(lineage) == len(set(lineage)), "no duplicate rows on re-ingest"
 
 
 def test_full_rebuild_from_archive_is_identical() -> None:
@@ -258,3 +265,80 @@ def test_internal_primary_lists_are_distinct_rows_not_quarantined() -> None:
         f"the two lists must carry distinct list_ids; got {[r.list_id for r in rows]}"
     )
     assert {r.result.votes for r in rows} == {49, 25}
+
+
+# ---------------------------------------------------------------------------
+# Rule 3 — every exclusion is reported per reason, in rows and in votes
+# ---------------------------------------------------------------------------
+
+
+def test_each_out_of_scope_reason_is_counted_separately_in_rows_and_votes(capsys) -> None:
+    """Three reasons, three counts. Reported as one total, a filter that
+    started swallowing POSITIVO rows would hide inside the EN BLANCO count
+    that always looks large and always looks expected.
+    """
+    csv_bytes = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        "votos_tipo,votos_cantidad\n"
+        # kept
+        "02,027,1,9001,DIPUTADO NACIONAL,110,POSITIVO,50\n"
+        # excluded: three distinct reasons, distinct vote counts
+        "02,027,1,9001,DIPUTADO NACIONAL,110,EN BLANCO,7\n"
+        "02,027,1,9001,DIPUTADO NACIONAL,110,NULO,3\n"
+        "02,027,1,9001,DIPUTADO NACIONAL,,POSITIVO,11\n"
+        "02,027,1,9001,DIPUTADO NACIONAL,0,POSITIVO,13\n"
+    ).encode("utf-8")
+
+    rows = ingest_national(csv_bytes, archive_entry_id="national/test")
+
+    assert len(rows) == 1
+    report = capsys.readouterr().err
+    assert "excluded 4 row(s)" in report
+    assert "'EN BLANCO': 1 rows / 7 votes" in report
+    assert "'NULO': 1 rows / 3 votes" in report
+    assert "agrupacion_id empty: 1 rows / 11 votes" in report
+    assert 'agrupacion_id "0": 1 rows / 13 votes' in report
+
+
+def test_an_excluded_row_with_an_unreadable_vote_count_is_not_summed_as_zero(capsys) -> None:
+    """A number nobody could read is not the number zero. It is counted as a
+    dropped row and named as unreadable, never folded into the votes total.
+    """
+    csv_bytes = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        "votos_tipo,votos_cantidad\n"
+        "02,027,1,9001,DIPUTADO NACIONAL,110,EN BLANCO,4\n"
+        "02,027,1,9001,DIPUTADO NACIONAL,110,EN BLANCO,cuatro\n"
+    ).encode("utf-8")
+
+    ingest_national(csv_bytes, archive_entry_id="national/test")
+
+    report = capsys.readouterr().err
+    assert "'EN BLANCO': 2 rows / 4 votes" in report
+    assert "1 with an unparseable vote count, not summed" in report
+
+
+def test_an_unreadable_kept_row_is_excluded_by_reason_not_a_dead_run(capsys) -> None:
+    """`int("")` on a truncated line killed the whole ingest -- and
+    `_report_exclusions` runs AFTER the loop, so the breakdown for every row
+    already excluded died with it. Both cells get their own reason: an
+    unreadable vote count is not the number zero.
+    """
+    csv_bytes = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        "votos_tipo,votos_cantidad\n"
+        "02,027,1,9001,DIPUTADO NACIONAL,110,POSITIVO,50\n"
+        "02,027,1,,DIPUTADO NACIONAL,110,POSITIVO,9\n"
+        "02,027,1,9002,DIPUTADO NACIONAL,110,POSITIVO,\n"
+        "02,027,1,9003,DIPUTADO NACIONAL,110,EN BLANCO,4\n"
+    ).encode("utf-8")
+
+    rows = ingest_national(csv_bytes, archive_entry_id="national/test")
+
+    assert [row.mesa for row in rows] == [9001]
+    report = capsys.readouterr().err
+    assert "unreadable mesa_id: 1 rows / 9 votes" in report
+    assert "unreadable votos_cantidad: 1 rows" in report
+    # The breakdown for the ordinary exclusions still gets printed, which is
+    # what the crash used to take with it.
+    assert "'EN BLANCO': 1 rows / 4 votes" in report

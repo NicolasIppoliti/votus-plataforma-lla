@@ -6,7 +6,7 @@ Three independent concerns live here, all curator-reviewed rather than
 auto-inferred at ingest time (jurisdiction-model: "The crosswalk MUST NOT be
 inferred automatically from name-matching alone"):
 
-1. `CrosswalkTable` / `resolve_jurisdiction`: PBA distrito code <-> national
+1. `CrosswalkTable`: PBA distrito code <-> national
    (DINE) distrito/seccion code, loaded from the curated
    `curated/crosswalk.yaml`. An unmapped code is QUARANTINED (returned as
    `QuarantinedJurisdiction` data, never silently assigned to an unrelated
@@ -63,6 +63,15 @@ FISCALIZACION_VOTE_COLUMNS: tuple[str, ...] = (
 # (curated by inspecting the real DINE values for distrito 02 / seccion 027,
 # cargo DIPUTADO NACIONAL) -- this is provisional curator input for Phase 7's
 # `curated/party_map.yaml`, not a substitute for that phase's formal review.
+# The scope `OFFICIAL_AGRUPACION_NAME_BY_COLUMN` was curated for, as a value
+# rather than only as prose in the comment above it. `cmd_validate_fiscalizacion`
+# exposes --distrito/--seccion/--category as free flags and nothing checked the
+# requested scope against this one: pointed at another distrito or at SENADOR
+# NACIONAL, every `agrupacion_nombre` misses, `vector()` returns 0 for all 15
+# columns, and every joined mesa produces 17 FABRICATED divergences written to
+# `review_item` as `info` for an operator to read as data.
+CURATED_NAME_TABLE_SCOPE: tuple[str, str, str] = ("02", "027", "DIPUTADO NACIONAL")
+
 OFFICIAL_AGRUPACION_NAME_BY_COLUMN: dict[str, str] = {
     "La Libertad Avanza": "ALIANZA LA LIBERTAD AVANZA",
     "Nuevo Buenos Aires": "PARTIDO NUEVO BUENOS AIRES",
@@ -125,18 +134,72 @@ class CrosswalkTable:
     jurisdictions: tuple[JurisdictionCrosswalkEntry, ...]
 
     def resolve_pba(self, pba_distrito_code: str) -> JurisdictionCrosswalkEntry | None:
+        """The curated entry for one PBA distrito code, or `None`.
+
+        PRODUCTION CALLER: `etl.jurisdiction.resolve_pba_distrito_code`, which
+        wraps this lookup with the `QuarantinedPbaDistrito` refusal and is
+        what `ingest.pba.resolve_pba_jurisdictions` calls for every PBA row.
+        Named here because the caller lives in another module, and the
+        deleted `resolve_jurisdiction` below looked identical from inside
+        this file -- the difference between the two was exactly whether
+        anything called them.
+        """
         for entry in self.jurisdictions:
             if entry.pba_distrito_code == pba_distrito_code:
                 return entry
         return None
 
+    def entries_in_distrito(self, distrito_code: str | None) -> list[JurisdictionCrosswalkEntry]:
+        """EVERY curated entry whose national distrito matches, normalized.
+
+        The coarse question ("this row names no seccion -- is its distrito
+        curated?") gets its own method returning ALL matches, because the only
+        honest answers are "none", "exactly one" and "more than one, so it
+        cannot be attributed". Folded into `resolve_national`, it returned the
+        first match and its seccion/name would have been read as the row's.
+        """
+        from .jurisdiction import normalize_distrito_code
+
+        target = normalize_distrito_code(distrito_code)
+        return [
+            entry
+            for entry in self.jurisdictions
+            if normalize_distrito_code(entry.national_distrito_code) == target
+        ]
+
     def resolve_national(
         self, *, distrito_code: str, seccion_code: str
     ) -> JurisdictionCrosswalkEntry | None:
+        """Resolve a national (distrito, seccion) pair, normalizing BOTH sides.
+
+        Rule 8: the comparison lives behind ONE boundary. It was an exact
+        text match here while `__main__.find_unmapped_jurisdictions`
+        normalized both sides itself before calling in -- two ideas of how a
+        crosswalk entry's code compares, for one table, so `"2"/"27"` and
+        `"02"/"027"` resolved or did not depending on which caller asked.
+        Normalizing is idempotent, so a caller passing already-canonical
+        codes is unaffected.
+
+        `seccion_code` is REQUIRED. A row carrying no seccion is a different
+        question -- "is its distrito curated?" -- whose only honest answers
+        are none, exactly one, and more than one, so it belongs to
+        `entries_in_distrito`, which hands back every match instead of
+        picking. Passing `None` here is refused rather than quietly matching
+        nothing, which would read as "not curated" for a distrito that is.
+        """
+        from .jurisdiction import normalize_distrito_code, normalize_seccion_code
+
+        target_distrito = normalize_distrito_code(distrito_code)
+        target_seccion = normalize_seccion_code(seccion_code)
+        if target_seccion is None:
+            raise TypeError(
+                "seccion_code=None: call `entries_in_distrito` instead, which "
+                "returns every match rather than picking one"
+            )
         for entry in self.jurisdictions:
             if (
-                entry.national_distrito_code == distrito_code
-                and entry.national_seccion_code == seccion_code
+                normalize_distrito_code(entry.national_distrito_code) == target_distrito
+                and normalize_seccion_code(entry.national_seccion_code) == target_seccion
             ):
                 return entry
         return None
@@ -157,17 +220,12 @@ def load_crosswalk(path: Path) -> CrosswalkTable:
     return CrosswalkTable(jurisdictions=entries)
 
 
-def resolve_jurisdiction(
-    table: CrosswalkTable, *, pba_distrito_code: str
-) -> JurisdictionCrosswalkEntry | QuarantinedJurisdiction:
-    """Resolve a PBA distrito code, or quarantine it if uncurated."""
-    entry = table.resolve_pba(pba_distrito_code)
-    if entry is None:
-        return QuarantinedJurisdiction(
-            code=pba_distrito_code,
-            reason=f"no curated crosswalk entry for PBA distrito {pba_distrito_code!r}",
-        )
-    return entry
+# NO `resolve_jurisdiction`. It resolved a PBA distrito code or returned a
+# `QuarantinedJurisdiction`, was correct and tested, and had no production
+# caller: `ingest.pba.resolve_pba_jurisdictions` -- the path every PBA row
+# actually takes -- translates through `jurisdiction.resolve_pba_distrito_code`
+# and quarantines with `QuarantinedPbaDistrito`. Two resolvers for one
+# question, and the tested one was the unreachable one.
 
 
 # --- 2. Cross-year mesa code stability --------------------------------------
@@ -217,7 +275,12 @@ class FiscalizacionMesaRow:
     """
 
     mesa: int
-    escuela: str
+    # NO `escuela`. It was set on every row and read by nothing:
+    # `join_fiscalizacion_identity` joins by MESA NUMBER, per the accepted
+    # decision (Engram #1410), so the school name had no part in the join it
+    # was carried for. Same argument that removed `escuela_normalized` from
+    # `FiscalizacionRow`, one dataclass over. The RAW string still lives on
+    # `FiscalizacionRow`, where the personal-data guard asserts against it.
     votes: dict[str, int]
 
 

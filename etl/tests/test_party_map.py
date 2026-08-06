@@ -13,16 +13,21 @@ from pathlib import Path
 
 import pytest
 
-from etl.ingest.national import ingest_national, resolve_national_party
-from etl.ingest.pba import PBA_PARTY_MAP_JURISDICTION, resolve_pba_party
+from etl.ingest.national import ingest_national
 from etl.jurisdiction import make_result_row
 from etl.party_map import (
     PartyMappingEntry,
     PartyMappingTable,
     UnmappedListId,
     load_party_map,
-    resolve_party_for_rows,
 )
+
+# The `curated/party_map.yaml` label PBA municipal lists are curated under.
+# It lived in `ingest.pba` as a constant no production code read once
+# `resolve_pba_party` was deleted; it is a fact about the curated file, and
+# this is the test that asserts what it is for.
+PBA_PARTY_MAP_JURISDICTION = "coronel_rosales_municipal"
+
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CURATED = Path(__file__).parent.parent.parent / "curated"
@@ -98,10 +103,14 @@ def test_local_only_list_962_mapped_without_national_counterpart() -> None:
 # --- 7.4 -------------------------------------------------------------------
 
 
-def test_unmapped_list_id_excluded_from_rollup_and_flagged() -> None:
-    """A normalized row for an unmapped list id (2025, national,
-    Legislativas, list 701) is excluded from `mapped` and surfaced in
-    `unmapped`, never silently dropped."""
+def test_an_unmapped_list_id_is_refused_by_name_and_year_not_silently_matched() -> None:
+    """The name is the specification, and this one used to promise a rollup
+    exclusion the body never drove: it built a `ResultRow`, never rolled
+    anything up, and asserted only on `resolve`. What it actually pins --
+    and what matters -- is that an uncurated list id comes back as
+    `UnmappedListId` naming the id and the year, never silently matched to
+    a party that happens to share the number in another year.
+    """
     table = _load_party_map_table()
     result = make_result_row(
         granularity="mesa",
@@ -114,14 +123,19 @@ def test_unmapped_list_id_excluded_from_rollup_and_flagged() -> None:
         votes=10,
     )
 
-    resolution = resolve_party_for_rows([result], table, year=2025, jurisdiction="national")
+    # `PartyMappingTable.resolve` is the live entry point -- the row-batch
+    # wrapper this used to call fed the `is_unmapped` column, which never had
+    # a production writer and is gone (migration 0014).
+    resolved = table.resolve(
+        year=2025,
+        jurisdiction="national",
+        category=result.category,
+        list_id=result.list_id or "",
+    )
 
-    assert resolution.mapped == ()
-    assert len(resolution.unmapped) == 1
-    unmapped_row = resolution.unmapped[0]
-    assert unmapped_row.row is result
-    assert "701" in unmapped_row.reason
-    assert "2025" in unmapped_row.reason
+    assert isinstance(resolved, UnmappedListId)
+    assert "701" in resolved.reason
+    assert "2025" in resolved.reason
 
 
 # --- 7.5 -------------------------------------------------------------------
@@ -142,8 +156,13 @@ def test_unmapped_row_never_falls_back_to_different_year_or_jurisdiction() -> No
     wrong_jurisdiction = table.resolve(
         year=2023,
         jurisdiction="coronel_rosales_municipal",
+        # The id that IS curated for 2023/national/DIPUTADO NACIONAL. Using an
+        # id curated nowhere returned `UnmappedListId` whether or not a
+        # jurisdiction fallback existed, so the half of this test's name about
+        # jurisdiction was driven by nothing -- the year half already reuses
+        # its mapped id for exactly this reason.
         category="DIPUTADO NACIONAL",
-        list_id="133",
+        list_id="135",
     )
 
     assert isinstance(still_2023, PartyMappingEntry)
@@ -201,12 +220,13 @@ def test_empty_lista_numero_in_2025_is_not_treated_as_missing_data() -> None:
     assert not hasattr(lla_rows[0], "lista_numero")
 
     table = _load_party_map_table()
-    resolution = resolve_national_party(lla_rows, table, year=2025)
 
-    assert resolution.unmapped == ()
-    assert len(resolution.mapped) == len(lla_rows)
-    for _row, entry in resolution.mapped:
-        assert entry.canonical_party == "LLA"
+    for row in lla_rows:
+        resolved = table.resolve(
+            year=2025, jurisdiction="national", category=row.category, list_id=row.list_id or ""
+        )
+        assert not isinstance(resolved, UnmappedListId)
+        assert resolved.canonical_party == "LLA"
 
 
 # --- 7.6c --------------------------------------------------------------
@@ -229,15 +249,22 @@ def test_pba_municipal_scheme_never_resolved_against_national_ids() -> None:
     assert isinstance(national_id_under_municipal, UnmappedListId)
     assert isinstance(municipal_id_under_national, UnmappedListId)
 
-    # And through the row-resolution entry point PBA ingestion actually
-    # uses: a PBA row can never be resolved by silently trying the national
-    # jurisdiction as a fallback.
+    # A PBA row's own category and list id, resolved under the PBA
+    # jurisdiction label: never silently retried under "national" as a
+    # fallback, which is what would make the 22xx family collide with the
+    # numerically similar national agrupación ids.
     municipal_row = make_result_row(
         granularity="distrito", distrito="027", category="CONCEJALES", list_id="110", votes=1
     )
-    result = resolve_pba_party([municipal_row], table, year=2025)
-    assert result.mapped == ()
-    assert len(result.unmapped) == 1
+    assert isinstance(
+        table.resolve(
+            year=2025,
+            jurisdiction=PBA_PARTY_MAP_JURISDICTION,
+            category=municipal_row.category,
+            list_id=municipal_row.list_id or "",
+        ),
+        UnmappedListId,
+    )
 
 
 # --- regression: the real curated file loads and resolves ------------------

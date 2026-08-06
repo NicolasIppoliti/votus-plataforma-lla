@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import yaml
 
@@ -123,56 +123,16 @@ def load_party_map(path: Path) -> PartyMappingTable:
     return PartyMappingTable(entries=entries)
 
 
-class _PartyResolvableRow(Protocol):
-    """The minimal shape ingestion rows must satisfy to be party-resolved.
-    `ingest.national.NationalRow` and `ingest.pba.PbaRow` both already
-    expose these properties."""
-
-    category: str
-    list_id: str | None
-
-
-@dataclass(frozen=True)
-class UnmappedPartyRow:
-    """A parsed row whose `(year, jurisdiction, category, list_id)` key has
-    no curated mapping entry. Carried as data for the D7 review queue
-    (`unmapped_party` kind) -- excluded from canonical-party rollups, never
-    silently dropped, and never falls back to another year/jurisdiction
-    (party-identity-mapping spec, tasks 7.4/7.5)."""
-
-    row: _PartyResolvableRow
-    reason: str
-
-
-@dataclass(frozen=True)
-class PartyResolutionResult:
-    mapped: tuple[tuple[_PartyResolvableRow, PartyMappingEntry], ...]
-    unmapped: tuple[UnmappedPartyRow, ...]
-
-
-def resolve_party_for_rows(
-    rows: list[_PartyResolvableRow],
-    table: PartyMappingTable,
-    *,
-    year: int,
-    jurisdiction: str,
-) -> PartyResolutionResult:
-    """Resolve each row's canonical party through `table`, at ingestion time
-    (task 7.8) -- never inferred later at query time. `year` and
-    `jurisdiction` are supplied by the caller (known from the source/archive
-    entry, not present on `jurisdiction.ResultRow` itself); `category` and
-    `list_id` come from the row.
-    """
-    mapped: list[tuple[_PartyResolvableRow, PartyMappingEntry]] = []
-    unmapped: list[UnmappedPartyRow] = []
-
-    for row in rows:
-        resolved = table.resolve(
-            year=year, jurisdiction=jurisdiction, category=row.category, list_id=row.list_id or ""
-        )
-        if isinstance(resolved, UnmappedListId):
-            unmapped.append(UnmappedPartyRow(row=row, reason=resolved.reason))
-        else:
-            mapped.append((row, resolved))
-
-    return PartyResolutionResult(mapped=tuple(mapped), unmapped=tuple(unmapped))
+# NO `_PartyResolvableRow` / `UnmappedPartyRow` / `PartyResolutionResult` /
+# `resolve_party_for_rows`. This layer existed to compute the `result_row`
+# `is_unmapped` column through `ingest.national.resolve_national_party` and
+# `ingest.pba.resolve_pba_party`; all three were correct, tested, and never
+# called in production, and the column they fed (always `false`, for all
+# 18.170.843 rows) is dropped by migration 0014.
+#
+# `PartyMappingTable.resolve` above is the live entry point, used by
+# `__main__.find_unmapped_parties` (the `validate-curated` command) and,
+# via `entries`, by `ingest.fiscalizacion.build_column_list_id_map`. Whether
+# a list id resolves is read at QUERY time by the web layer's join against
+# `party_mapping`, which stays correct when `curated/party_map.yaml` gains an
+# entry after a corpus is already loaded.

@@ -39,10 +39,8 @@ from etl.ingest.pba import (
     PBA_HOST,
     PBA_HOST_POLICY,
     PbaFetchExhaustedError,
-    PbaSourceUnavailable,
     archive_pba_source,
     ingest_pba,
-    load_pba_distrito_totals,
     load_pba_rows,
     resolve_pba_jurisdictions,
 )
@@ -97,31 +95,78 @@ def test_distrito_level_totals_ingested_without_fabricating_lower_levels() -> No
 # ---------------------------------------------------------------------------
 
 
-def test_no_source_available_reports_unavailable_not_zero(tmp_path: Path) -> None:
-    local_store = LocalArchiveStore(root=tmp_path)
+def test_no_archived_source_refuses_before_any_write(tmp_path: Path) -> None:
+    """Spec: "No PBA source available for a given category" -- report it as
+    unavailable, never substitute a zero-filled or estimated figure.
 
-    with pytest.raises(PbaSourceUnavailable):
-        load_pba_distrito_totals(
-            [],  # no archive entries at all for this record id
-            local_store,
-            record_id="pba/2025-distrito-027",
+    Driven through `ingest_source`, the ONLY path production takes. This was
+    covered by `load_pba_distrito_totals` raising `PbaSourceUnavailable`, a
+    function with no production caller; the live refusal, on the live path,
+    had no test at all.
+    """
+    from etl.__main__ import UnknownSourceError, ingest_source
+
+    sources = {
+        "pba": [
+            {
+                "id": "pba/2025-distrito-027",
+                "capability": "pba",
+                "url": f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(UnknownSourceError) as excinfo:
+        ingest_source(
+            "pba/2025-distrito-027",
+            # A URL that would fail to connect: the refusal must happen
+            # BEFORE any connection is opened, so reaching Postgres at all
+            # would itself be the failure.
+            database_url="postgresql://votus-refusal-must-precede-connect/nowhere",
+            year=2025,
+            round_="generales",
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
         )
 
+    assert "no archived copy" in str(excinfo.value)
 
-def test_no_source_available_does_not_substitute_a_prior_years_record(tmp_path: Path) -> None:
-    local_store = LocalArchiveStore(root=tmp_path)
-    # A record for a DIFFERENT record id must never be silently substituted.
-    records = [
-        {
-            "id": "pba/2025-distrito-999",
-            "status": "ok",
-            "archived_path": "archive/pba/distrito_999.html",
-            "sha256": "deadbeef",
-        }
-    ]
 
-    with pytest.raises(PbaSourceUnavailable):
-        load_pba_distrito_totals(records, local_store, record_id="pba/2025-distrito-027")
+def test_a_different_record_id_is_never_substituted(tmp_path: Path) -> None:
+    from etl.__main__ import UnknownSourceError, ingest_source
+
+    sources = {
+        "pba": [
+            {
+                "id": "pba/2025-distrito-027",
+                "capability": "pba",
+                "url": f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "manifest.json"
+    # An "ok" record for a DIFFERENT id. Nothing may fall back to it.
+    manifest_path.write_text(
+        '[{"id": "pba/2025-distrito-999", "status": "ok",'
+        ' "archived_path": "archive/pba/distrito_999.html", "sha256": "deadbeef"}]',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UnknownSourceError) as excinfo:
+        ingest_source(
+            "pba/2025-distrito-027",
+            database_url="postgresql://votus-refusal-must-precede-connect/nowhere",
+            year=2025,
+            round_="generales",
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+        )
+
+    assert "no archived copy" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +419,7 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
             year=2025,
             round_="legislativas",
             crosswalk=CrosswalkTable(jurisdictions=()),
+            archive_entry_id=archive_entry_id,
         )
         with conn.cursor() as cur:
             cur.execute(
@@ -424,6 +470,7 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
             year=2025,
             round_="legislativas",
             crosswalk=_CROSSWALK,
+            archive_entry_id=archive_entry_id,
         )
         assert inserted > 0, "sanity: the fixture must produce rows"
         with conn.cursor() as cur:
@@ -539,3 +586,174 @@ def test_pba_partido_total_identifies_the_partido_not_the_whole_province() -> No
         "the resolver must yield BOTH the province and the partido; yielding "
         f"the province alone attributes the figure to all of Buenos Aires: got {resolved!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Rule 3 — every dropped cell/row is reported, and a SHORT ROW is named
+# ---------------------------------------------------------------------------
+
+
+def test_a_short_row_is_reported_as_schema_drift_not_folded_into_the_expected_drops(
+    capsys,
+) -> None:
+    """The three drops in this parser are not equivalent. A summary row and a
+    `"-"` cell are expected; a row that does not reach a column the header
+    declared is MALFORMED HTML -- schema drift arriving as absence. Under one
+    shared total the drift is invisible, because the expected count is always
+    non-zero and always looks fine.
+    """
+    html = (
+        "<html><body>"
+        '<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        "<table><thead><tr><th>Lista</th><th>Diputados Prov. Tit.</th>"
+        "<th>Concejales Titulares</th></tr></thead><tbody>"
+        # a normal row
+        "<tr><td>2206</td><td>1.000</td><td>2.000</td></tr>"
+        # a summary row: empty list-id cell
+        "<tr><td></td><td>9.999</td><td>9.999</td></tr>"
+        # a list absent from the second category
+        "<tr><td>962</td><td>500</td><td>-</td></tr>"
+        # a SHORT row: the Concejales column the header declared is missing
+        "<tr><td>2207</td><td>300</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+
+    rows = ingest_pba(html, archive_entry_id="pba/test")
+
+    assert len(rows) == 4  # 2206 x2, 962 x1, 2207 x1
+    report = capsys.readouterr().err
+    assert "summary row (empty list-id cell): 1" in report
+    assert 'list absent from this category ("-" or empty cell): 1' in report
+    assert "short row (declared category column missing): 1" in report
+    # And it says WHICH column vanished, which is what makes it actionable.
+    assert "missing the column(s) for CONCEJALES" in report
+
+
+def test_the_write_path_reports_the_granularity_it_could_not_honour(capsys) -> None:
+    """Rule 4: degradation MUST be visible.
+
+    `ingest_pba` computed `degraded_from` and `load_pba_rows` read it
+    nowhere. On the only production path -- `ingest_source` calls
+    `ingest_pba` with its default `requested_granularity="mesa"` -- every row
+    is degraded, so every row's degradation was announced to nobody. The
+    parser-level assertion above passed the whole time.
+    """
+    conn = _require_ephemeral_postgres()
+
+    archive_entry_id = f"pba/degraded-test-{uuid.uuid4()}"
+    rows = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id=archive_entry_id,
+        requested_granularity="mesa",  # what production actually asks for
+    )
+    assert all(row.degraded_from == "mesa" for row in rows), "sanity"
+    capsys.readouterr()  # discard the parser's own report
+
+    try:
+        load_pba_rows(
+            conn, rows, year=2025, round_="legislativas", crosswalk=_CROSSWALK,
+            archive_entry_id=archive_entry_id,
+        )
+    finally:
+        with conn.cursor() as cur:
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
+            )
+        conn.commit()
+        conn.close()
+
+    report = capsys.readouterr().err
+    assert "requested at mesa granularity" in report
+    assert "loaded at distrito level" in report
+    assert "none was fabricated" in report
+
+
+def test_an_unreadable_vote_cell_is_counted_apart_from_an_absent_one(capsys) -> None:
+    """`None` already means "this list did not run in this category" -- a real
+    electoral fact. A cell nobody can read is a different fact, and it used to
+    be a `ValueError` that destroyed the whole page's parse along with the
+    breakdown for everything already excluded.
+    """
+    html = (
+        "<html><body>"
+        '<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        "<table><thead><tr><th>Lista</th><th>Diputados Prov. Tit.</th>"
+        "<th>Concejales Titulares</th></tr></thead><tbody>"
+        "<tr><td>2206</td><td>1.000</td><td>1O</td></tr>"
+        "<tr><td>962</td><td>500</td><td>-</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+
+    rows = ingest_pba(html, archive_entry_id="pba/test")
+
+    assert len(rows) == 2, "the readable figures on both rows still load"
+    report = capsys.readouterr().err
+    assert "unreadable vote cell: 1" in report
+    assert 'list absent from this category ("-" or empty cell): 1' in report
+
+
+def test_a_retry_after_http_date_is_honoured_instead_of_crashing() -> None:
+    """`Retry-After` is legally an HTTP-date, not only delta-seconds.
+    `float()` on one raised out of the backoff loop, turning a routine 429
+    into a traceback on the one path built to back off and stop.
+    """
+    from etl.ingest.pba import _PolicedBackoffFetcher
+
+    fetcher = _PolicedBackoffFetcher(policed=None, default_backoff_seconds=2.0)
+
+    assert fetcher._retry_delay("Wed, 21 Oct 2015 07:28:00 GMT") == 2.0, (
+        "a date already past falls back to the policy delay, never a negative sleep"
+    )
+    assert fetcher._retry_delay("not a date at all") == 2.0
+    assert fetcher._retry_delay(None) == 2.0
+    assert fetcher._retry_delay("30") == 30.0
+
+
+def test_a_reingest_whose_rows_all_quarantine_clears_the_old_ones() -> None:
+    """The concrete failure: `pba/2025-distrito-027` loads 30 rows against a
+    curated crosswalk; the `027` entry is later removed; the re-ingest
+    quarantines every row, prints the quarantine, and returns 0 -- and the 30
+    old rows stay live and read as current by every query, while the CLI says
+    "ingested 0 rows" and exits 0.
+
+    `db.load_result_rows` is the delete-then-insert PAIR. Returning early
+    skipped the delete.
+    """
+    conn = _require_ephemeral_postgres()
+
+    archive_entry_id = f"pba/empty-reingest-{uuid.uuid4()}"
+    rows = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id=archive_entry_id,
+        requested_granularity="distrito",
+    )
+
+    def loaded() -> int:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from result_row where archive_entry_id = %s",
+                (archive_entry_id,),
+            )
+            return cur.fetchone()[0]
+
+    try:
+        load_pba_rows(
+            conn, rows, year=2025, round_="legislativas", crosswalk=_CROSSWALK,
+            archive_entry_id=archive_entry_id,
+        )
+        assert loaded() > 0, "sanity: the first load must write rows"
+
+        # The curated entry is gone, so every row quarantines.
+        load_pba_rows(
+            conn, rows, year=2025, round_="legislativas",
+            crosswalk=CrosswalkTable(jurisdictions=()),
+            archive_entry_id=archive_entry_id,
+        )
+        assert loaded() == 0, "the stale rows must not survive a fully-quarantined re-ingest"
+    finally:
+        with conn.cursor() as cur:
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
+            )
+        conn.commit()
+        conn.close()

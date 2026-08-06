@@ -396,8 +396,14 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     finally:
         with conn.cursor() as cur:
             cur.execute(
-                "delete from review_item where subject_ref = %s",
-                (f"{source_id} 2025-legislativas mesa 4242",),
+                # EVERY row this run wrote, not just the parser's. Mesa 4242
+                # exists in no official jurisdiction, so the LOADER also emits
+                # `mesa_absent_from_official_import` under a different
+                # subject_ref, and that row leaked into the shared database on
+                # every run. `starts_with`, not `like`: `_` and `%` are LIKE
+                # wildcards and a source id carries both.
+                "delete from review_item where starts_with(subject_ref, %s)",
+                (f"{source_id} ",),
             )
             cur.execute(
                 "delete from result_row where archive_entry_id = %s", (source_id,)
@@ -647,7 +653,16 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(
 
     exit_code = main(
         _main_args(sources_path, local_root, manifest_path)
-        + ["backfill-mesa-tipo", "--database-url", TEST_DSN]
+        # A URL that could never connect. Passing `TEST_DSN` let the test
+        # pass whether or not the refusal precedes `psycopg.connect` -- the
+        # very ordering its docstring asserts -- and would have failed on a
+        # machine without Postgres for a reason the docstring says cannot
+        # happen. Reaching the database at all is now itself the failure.
+        + [
+            "backfill-mesa-tipo",
+            "--database-url",
+            "postgresql://votus-refusal-must-precede-connect/nowhere",
+        ]
     )
 
     reported = capsys.readouterr().err
@@ -1167,7 +1182,10 @@ def test_ingest_reports_the_fiscalizacion_rows_it_quarantined(tmp_path: Path) ->
             )
     finally:
         with conn.cursor() as cur:
-            cur.execute("delete from review_item where subject_ref like %s", (f"{source_id} %",))
+            cur.execute(# `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
+                # uuid-bearing source id carries `_`, so this could delete
+                # ANOTHER test's rows from the shared database.
+                "delete from review_item where starts_with(subject_ref, %s)", (f"{source_id} ",))
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
         conn.commit()
         conn.close()
@@ -1269,14 +1287,22 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
         )
         with conn.cursor() as cur:
             cur.execute(
-                "select kind, severity from review_item where subject_ref like %s",
-                (f"{fiscalizacion_id} %",),
+                # `starts_with`, not `like`, for the same reason the cleanup
+                # below uses it: `_` is a LIKE wildcard and the source id
+                # carries one, so this could read ANOTHER test's rows and
+                # assert against them.
+                "select kind, severity from review_item"
+                " where starts_with(subject_ref, %s)",
+                (f"{fiscalizacion_id} ",),
             )
             written = cur.fetchall()
     finally:
         with conn.cursor() as cur:
             cur.execute(
-                "delete from review_item where subject_ref like %s", (f"{fiscalizacion_id} %",)
+                # `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
+                # uuid-bearing source id carries `_`, so this could delete
+                # ANOTHER test's rows from the shared database.
+                "delete from review_item where starts_with(subject_ref, %s)", (f"{fiscalizacion_id} ",)
             )
         conn.commit()
         conn.close()
@@ -1303,7 +1329,18 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
 
     fixtures = Path(__file__).parent / "fixtures"
     fiscalizacion_bytes = (fixtures / "fiscalizacion_2025_stripped_sample.csv").read_bytes()
-    national_bytes = (fixtures / "national_2025_027_diputados_sample.csv").read_bytes()
+    # The baseline rewritten into ANOTHER distrito. The scope requested stays
+    # the curated `02/027/DIPUTADO NACIONAL` -- asking for a different one is
+    # refused earlier now, by the party-name-table scope check, so driving
+    # this branch through `--category SENADOR NACIONAL` would test that
+    # refusal instead of this one.
+    national_text = (
+        (fixtures / "national_2025_027_diputados_sample.csv")
+        .read_text(encoding="utf-8")
+        .replace(",BUENOS AIRES,", ",OTRO DISTRITO,")
+        .replace("NORMAL,2,", "NORMAL,3,")
+    )
+    national_bytes = national_text.encode("utf-8")
 
     fiscalizacion_id = f"fiscalizacion/scope-{uuid.uuid4()}"
     national_id = f"national/2025-scope-{uuid.uuid4()}"
@@ -1374,9 +1411,6 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
             national_id,
             "--database-url",
             TEST_DSN,
-            # A category the baseline does not carry.
-            "--category",
-            "SENADOR NACIONAL",
         ]
     )
 
@@ -2242,3 +2276,470 @@ def test_backfill_mesa_tipo_is_driven_through_main(tmp_path: Path, capsys) -> No
         f"argparse error or an earlier guard; got exit={exit_code} err={reported!r}"
     )
     assert exit_code == 1
+
+
+def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) -> None:
+    """The loader's quarantine must reach `review_item` through the real CLI.
+
+    `load_fiscalizacion_rows` returned its drafts behind an opt-in flag the
+    production path never passed, so a mesa whose circuito cannot be resolved
+    dropped its whole tally with no record — 8 of the 93 mesas, on every real
+    ingest. Only the two unit tests passed the flag: the "correct, tested,
+    unreachable" shape this suite already caught once for `insert_review_items`
+    itself.
+    """
+    _require_ephemeral_postgres()
+
+    votes = ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS))
+    # Mesa 8888 exists in NO official jurisdiction, so the loader cannot place
+    # it without inventing one.
+    csv_text = _fiscalizacion_csv([f"ESCUELA TEST,Mesa 8888,{votes}\n"])
+
+    source_id = f"fiscalizacion/cli-loader-quarantine-{uuid.uuid4()}"
+    filename = "cli-loader-quarantine.csv"
+    sources = {
+        "fiscalizacion": [
+            {
+                "id": source_id,
+                "source": "internal",
+                "source_url": None,
+                "mime": "text/csv",
+                "notes": "CLI loader-quarantine fixture",
+                "filename": filename,
+                "upload": "never",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write(
+        "fiscalizacion", filename, csv_text.encode("utf-8")
+    )
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": f"archive/fiscalizacion/{filename}",
+                    "sha256": hashlib.sha256(csv_text.encode("utf-8")).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="legislativas",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "select kind, note from review_item where subject_ref = %s",
+                (f"{source_id} 2025-legislativas 02-027-mesa-8888",),
+            )
+            written = cur.fetchall()
+            cur.execute(
+                """
+                select count(*) from result_row r
+                join jurisdiction j on j.id = r.jurisdiction_id
+                where r.archive_entry_id = %s and j.mesa_code = 8888
+                """,
+                (source_id,),
+            )
+            placed = cur.fetchone()[0]
+            # DELETED, not rolled back. `ingest_source` opens its OWN connection
+            # and commits, so this connection only ever read — rolling it back
+            # undoes nothing and the run's rows accumulate in the shared
+            # database after every test. Every sibling here deletes its own.
+            cur.execute(
+                # `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
+                # uuid-bearing source id carries `_`, so this could delete
+                # ANOTHER test's rows from the shared database.
+                "delete from review_item where starts_with(subject_ref, %s)", (f"{source_id} ",)
+            )
+            cur.execute(
+                "delete from result_row where archive_entry_id = %s", (source_id,)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert [kind for kind, _ in written] == ["mesa_absent_from_official_import"]
+    assert "cannot be placed without inventing one" in written[0][1]
+    assert placed == 0, "no row may be written under an invented jurisdiction"
+
+
+def test_a_mesa_number_in_two_circuitos_is_not_reported_as_schema_drift() -> None:
+    """The same ambiguity the loader refuses, in the VALIDATION path.
+
+    `official_mesa_votes_from_national` keyed tallies on the mesa number inside
+    `(distrito, seccion)`, and within one partido that number appears under
+    more than one circuito. Two physically different mesas merged: equal
+    tallies summed silently, and differing ones surfaced as
+    `NationalSchemaError` — `validate-fiscalizacion` exiting 1 reporting schema
+    drift on data that is perfectly well-formed.
+    """
+    from etl.__main__ import official_mesa_votes_from_national
+
+    header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+    )
+    csv_text = header + "".join(
+        [
+            # ONE mesa number, two circuitos, two different tallies.
+            "02,027,00248C,142,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,00248D,142,DIPUTADO NACIONAL,POSITIVO,40,LLA\n",
+            # An unambiguous mesa, to prove the scope still produces figures.
+            "02,027,00248A,143,DIPUTADO NACIONAL,POSITIVO,7,LLA\n",
+        ]
+    )
+
+    tallies, skipped = official_mesa_votes_from_national(
+        csv_text.encode("utf-8"),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    assert 142 not in tallies, "an ambiguous mesa number cannot carry a tally"
+    assert tallies[143].votes_by_agrupacion_name == {"LLA": 7}
+    assert any("more than one circuito" in reason for reason in skipped), (
+        "the drop must be reported per reason, not silently absent"
+    )
+    # ROWS, and only the ones that contributed a tally. Counting mesas
+    # under-reported the largest exclusion by an order of magnitude; counting
+    # every row that reached the loop double-counted the ones already skipped
+    # as outside the comparison vector, so the totals exceeded the rows read.
+    ambiguous_rows = next(
+        count for reason, count in skipped.items() if "more than one circuito" in reason
+    )
+    assert ambiguous_rows == 2, "mesa 142 contributed two tally rows, not one and not three"
+    assert sum(skipped.values()) <= 3, "the per-reason totals cannot exceed the rows read"
+
+
+def test_the_same_circuito_written_two_ways_is_not_a_fabricated_ambiguity() -> None:
+    """The ambiguity check compared circuito codes RAW.
+
+    `"248"` and `"00248"` are one circuito written two ways -- which is why
+    `normalize_circuito_code` exists, and why the distrito and seccion
+    comparisons beside it already normalize. Compared raw they counted as two,
+    so the mesa was declared ambiguous, its tallies dropped, and its rows
+    reported under "the mesa number appears under more than one circuito": a
+    fabricated ambiguity verdict on well-formed data, the same class of defect
+    as the padding bug that produced Coronel Rosales as three identities.
+    """
+    from etl.__main__ import official_mesa_votes_from_national
+
+    header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+    )
+    csv_text = header + "".join(
+        [
+            # ONE circuito, written both ways, reporting the SAME tally --
+            # which is what a re-export with different padding looks like.
+            # Two DIFFERENT tallies under one circuito would be genuine drift,
+            # and the collapse still refuses to pick between those.
+            "02,027,248,144,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,00248,144,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+        ]
+    )
+
+    tallies, skipped = official_mesa_votes_from_national(
+        csv_text.encode("utf-8"),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    assert tallies[144].votes_by_agrupacion_name == {"LLA": 10}
+    assert not any("more than one circuito" in reason for reason in skipped)
+
+
+def test_a_withheld_ambiguous_mesa_is_named_with_its_circuitos(capsys) -> None:
+    """The exclusion was counted and never identified. Every sibling report in
+    this file names its mesas; a count with no identifiers is visible and not
+    actionable -- nobody can go check the circuitos against the source.
+    """
+    from etl.__main__ import official_mesa_votes_from_national
+
+    header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+    )
+    csv_text = header + "".join(
+        [
+            "02,027,00248,146,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,00249,146,DIPUTADO NACIONAL,POSITIVO,40,LLA\n",
+        ]
+    )
+
+    official_mesa_votes_from_national(
+        csv_text.encode("utf-8"),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    report = capsys.readouterr().err
+    assert "mesa 146 in circuitos 00248, 00249" in report
+
+
+def test_a_missing_circuito_cell_is_not_counted_as_a_second_circuito() -> None:
+    """`circuito_id` is not a required column, so a mesa can carry the code on
+    some rows and an empty cell on others. Coerced to `""`, the empty cell
+    became a SECOND circuito: the mesa was declared ambiguous and its tallies
+    withheld under "appears under more than one circuito" -- a verdict about
+    data that names exactly one.
+    """
+    from etl.__main__ import official_mesa_votes_from_national
+
+    header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+    )
+    csv_text = header + "".join(
+        [
+            "02,027,00248,147,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,,147,DIPUTADO NACIONAL,EN BLANCO,2,\n",
+        ]
+    )
+
+    tallies, skipped = official_mesa_votes_from_national(
+        csv_text.encode("utf-8"),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    assert tallies[147].votes_by_agrupacion_name == {"LLA": 10}
+    assert not any("more than one circuito" in reason for reason in skipped)
+
+
+def test_a_non_comparable_row_cannot_declare_a_mesa_ambiguous() -> None:
+    """The circuito set was built from every row that passed the
+    distrito/seccion/category filter -- including the NULO and RECURRIDO rows
+    skipped moments later as "not in the comparison vector".
+
+    So a mesa whose comparable rows all sit in ONE circuito had its tallies
+    dropped because a non-comparable row carried a different one: a fabricated
+    ambiguity verdict on well-formed data, which is precisely the outcome this
+    check exists to prevent.
+    """
+    from etl.__main__ import official_mesa_votes_from_national
+
+    header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+    )
+    csv_text = header + "".join(
+        [
+            "02,027,00248,145,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,00248,145,DIPUTADO NACIONAL,EN BLANCO,2,\n",
+            # A DIFFERENT circuito, on a row that contributes no tally.
+            "02,027,00249,145,DIPUTADO NACIONAL,RECURRIDO,1,\n",
+        ]
+    )
+
+    tallies, skipped = official_mesa_votes_from_national(
+        csv_text.encode("utf-8"),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    assert tallies[145].votes_by_agrupacion_name == {"LLA": 10}
+    assert not any("more than one circuito" in reason for reason in skipped)
+
+
+def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
+    """D10's etiquette must run for a real PBA fetch.
+
+    `archive_pba_source` was implemented and tested with NO production caller,
+    so `cmd_fetch` hit the host directly every time: no archive-first cache, no
+    bounded backoff around the policed fetcher. The capability existed and the
+    behaviour did not.
+
+    `source` in `sources.yaml` is a HOST LABEL (`www.juntaelectoral.gba.gov.ar`);
+    the family is the top-level key, which `find_source_entry` attaches as
+    `capability`. Keying the branch on `source` would never have fired.
+    """
+    from etl.__main__ import fetch_source
+    from etl.http_client import UnregisteredPathError
+    from etl.ingest.pba import PBA_HOST_POLICY
+
+    source_id = "pba/etiquette-check"
+    sources = {
+        "pba": [
+            {
+                "id": source_id,
+                "source": "www.juntaelectoral.gba.gov.ar",
+                "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/concejales_distri/2025027.pdf",
+                "mime": "text/html",
+                "notes": "etiquette fixture",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    calls: list[str] = []
+    seen_headers: list[dict] = []
+
+    class _RecordingFetcher:
+        def get(self, url: str, *, timeout: float = 30.0, headers=None):
+            calls.append(url)
+            seen_headers.append(dict(headers or {}))
+            from etl.http_client import FetchResponse
+
+            return FetchResponse(status_code=200, headers={}, content=b"<html></html>")
+
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=_RecordingFetcher(),
+        local_root=tmp_path / "archive",
+        manifest_path=manifest_path,
+    )
+    assert len(calls) == 1
+
+    # SECOND call: the archive-first cache is the whole point — an entry with an
+    # existing "ok" record must not touch the network again.
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=_RecordingFetcher(),
+        local_root=tmp_path / "archive",
+        manifest_path=manifest_path,
+    )
+    assert len(calls) == 1, (
+        "the second fetch must be served from the archive, not the host"
+    )
+
+    # THE ETIQUETTE LAYER ITSELF, which this test's name promises and which
+    # nothing here asserted: with only the cache pinned, deleting the
+    # `PolicedHostFetcher`/`PBA_HOST_POLICY` wrapping in `fetch_source` and
+    # passing the bare fetcher left the test green.
+    #
+    # The policy's User-Agent reached the host (D10 constraint 4)...
+    assert seen_headers[0].get("User-Agent") == PBA_HOST_POLICY.user_agent
+
+    # ...and a path outside the registered allowlist is REFUSED rather than
+    # fetched (D10 constraint 7): a prefix would let the whole subtree be
+    # crawled, which is exactly what the constraint forbids.
+    off_allowlist = dict(sources["pba"][0])
+    off_allowlist["id"] = "pba/off-allowlist"
+    off_allowlist["source_url"] = (
+        "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/otro.html"
+    )
+    fetch_source(
+        "pba/off-allowlist",
+        sources={"pba": [off_allowlist]},
+        fetcher=_RecordingFetcher(),
+        local_root=tmp_path / "archive",
+        manifest_path=manifest_path,
+    )
+
+    # The HOST WAS NEVER TOUCHED -- the refusal happens above the network --
+    # and `archive_source` records it as a failed fetch rather than raising,
+    # so the manifest carries WHY instead of the run dying with a traceback.
+    assert len(calls) == 1, "an unregistered path must not reach the host at all"
+    written = json.loads(manifest_path.read_text(encoding="utf-8"))
+    refused = [r for r in written if r["id"] == "pba/off-allowlist"]
+    assert refused and refused[0]["status"] != "ok"
+    assert UnregisteredPathError.__name__ in refused[0]["notes"] or "allowlist" in (
+        refused[0]["notes"]
+    )
+
+
+def test_a_malformed_sources_file_exits_nonzero_instead_of_a_traceback(
+    tmp_path: Path, capsys
+) -> None:
+    """`sources.yaml` is hand-maintained, and every subcommand parsed it
+    OUTSIDE any handler -- so the file most likely to drift was the one least
+    likely to produce an exit code, while the crosswalk parse one line later
+    exited 1 with a message.
+
+    Eight `except` tuples each listed a different subset of the same
+    failures; the contract now lives in one place, at the one boundary every
+    subcommand passes through.
+    """
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text("national: [unclosed\n", encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["validate-crosswalk"]
+    )
+
+    assert exit_code == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_a_manifest_record_missing_status_exits_nonzero(tmp_path: Path, capsys) -> None:
+    """`load_manifest` refuses a record missing the fields its readers
+    dereference. That refusal reached the operator as a traceback from four
+    commands and as exit 1 from the others -- the same defect, half-closed.
+    """
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump({"national": [{"id": "national/2025", "source": "x"}]}),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text('[{"id": "national/2025"}]', encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["validate-crosswalk"]
+    )
+
+    assert exit_code == 1
+    assert "status" in capsys.readouterr().err
+
+
+def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_for(
+    tmp_path: Path, capsys
+) -> None:
+    """`OFFICIAL_AGRUPACION_NAME_BY_COLUMN` is curated for one
+    (distrito, seccion, category). `--distrito/--seccion/--category` are free
+    flags and nothing checked one against the other.
+
+    Outside that scope every `agrupacion_nombre` misses, `vector()` returns 0
+    for all 15 columns, and every joined mesa produces 17 FABRICATED
+    divergences written to `review_item` as `info` for an operator to read as
+    data. The refusal comes BEFORE any archive read, so a wrong scope costs
+    nothing and writes nothing.
+    """
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({"national": []}), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + [
+            "validate-fiscalizacion",
+            "--source", "fiscalizacion/whatever",
+            "--baseline", "national/whatever",
+            "--category", "SENADOR NACIONAL",
+            "--database-url", "postgresql://votus-refusal-must-precede-connect/nowhere",
+        ]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "curated for 02/027/DIPUTADO NACIONAL" in reported
+    assert "not real" in reported

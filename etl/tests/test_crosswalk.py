@@ -45,9 +45,10 @@ from etl.crosswalk import (
     compute_mesa_stability,
     join_fiscalizacion_identity,
     load_crosswalk,
-    resolve_jurisdiction,
 )
-from etl.ingest.national import ingest_national, resolve_jurisdictions
+from etl.__main__ import find_unmapped_jurisdictions
+from etl.jurisdiction import QuarantinedPbaDistrito, resolve_pba_distrito_code
+from etl.ingest.national import ingest_national
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CURATED = Path(__file__).parent.parent.parent / "curated"
@@ -64,23 +65,26 @@ def _load_crosswalk_table() -> CrosswalkTable:
 def test_coronel_rosales_resolves_across_numbering_schemes() -> None:
     table = _load_crosswalk_table()
 
-    via_pba = resolve_jurisdiction(table, pba_distrito_code="027")
+    # Through the resolvers PRODUCTION uses. `resolve_jurisdiction` was a
+    # second PBA resolver with no production caller, deleted; every PBA row
+    # goes through `resolve_pba_distrito_code`.
+    via_pba = resolve_pba_distrito_code("027", table)
     via_national = table.resolve_national(distrito_code="02", seccion_code="027")
 
-    assert not isinstance(via_pba, QuarantinedJurisdiction)
+    assert not isinstance(via_pba, QuarantinedPbaDistrito)
     assert via_national is not None
-    # Both numbering schemes MUST resolve to the same canonical entry.
-    assert via_pba is via_national
-    assert via_pba.name == "Coronel de Marina Leonardo Rosales"
+    # Both numbering schemes MUST resolve to the same canonical jurisdiction.
+    assert via_pba == (via_national.national_distrito_code, via_national.national_seccion_code)
+    assert via_national.name == "Coronel de Marina Leonardo Rosales"
 
 
 def test_unmapped_jurisdiction_code_is_quarantined() -> None:
     table = _load_crosswalk_table()
 
-    result = resolve_jurisdiction(table, pba_distrito_code="999")
+    result = resolve_pba_distrito_code("999", table)
 
-    assert isinstance(result, QuarantinedJurisdiction)
-    assert result.code == "999"
+    assert isinstance(result, QuarantinedPbaDistrito)
+    assert result.pba_distrito_code == "999"
     # Never silently assigned to an unrelated jurisdiction.
     assert result.reason
 
@@ -126,26 +130,36 @@ def test_mesa_code_absent_in_one_year_reported_as_discontinuity() -> None:
     assert by_mesa[3].stable is False
 
 
-def test_national_row_with_unmapped_jurisdiction_is_quarantined_not_dropped() -> None:
+def test_a_national_code_absent_from_the_crosswalk_is_reported_not_passed() -> None:
+    """The national crosswalk guard is `validate-crosswalk`, not a quarantine
+    inside the loader.
+
+    `resolve_jurisdictions` used to quarantine a national row whose
+    (distrito, seccion) had no curated entry. It had no production caller,
+    and wiring it in would have discarded the corpus: `crosswalk.yaml` holds
+    ONE entry, the PBA-to-national translation for distrito 027, because PBA
+    is the only source writing codes in a foreign scheme. National codes are
+    already national, so every distrito except 02/027 resolves to nothing.
+    What the codes are checked against instead is this command.
+    """
     rows = ingest_national(
         _read("crosswalk_national_2025_sample.csv"), archive_entry_id="national/2025-legislativas"
     )
-    # A crosswalk containing NO entry for distrito 02 / seccion 027 at all --
-    # every row must be quarantined, never dropped and never mapped anyway.
-    empty_crosswalk = CrosswalkTable(jurisdictions=())
+    codes = sorted({(row.result.distrito, row.result.seccion) for row in rows})
+    assert codes, "fixture must carry at least one jurisdiction code"
 
-    result = resolve_jurisdictions(rows, empty_crosswalk)
+    unmapped = find_unmapped_jurisdictions(codes, CrosswalkTable(jurisdictions=()))
 
-    assert result.mapped == ()
-    assert len(result.quarantined) == len(rows)
-    for quarantined_row in result.quarantined:
-        assert quarantined_row.reason
+    assert len(unmapped) == len(codes)
+    for entry in unmapped:
+        assert entry.reason
 
 
-def test_national_row_with_mapped_jurisdiction_resolves() -> None:
+def test_a_curated_national_code_resolves_through_the_crosswalk() -> None:
     rows = ingest_national(
         _read("crosswalk_national_2025_sample.csv"), archive_entry_id="national/2025-legislativas"
     )
+    codes = sorted({(row.result.distrito, row.result.seccion) for row in rows})
     crosswalk = CrosswalkTable(
         jurisdictions=(
             JurisdictionCrosswalkEntry(
@@ -157,10 +171,7 @@ def test_national_row_with_mapped_jurisdiction_resolves() -> None:
         )
     )
 
-    result = resolve_jurisdictions(rows, crosswalk)
-
-    assert result.quarantined == ()
-    assert len(result.mapped) == len(rows)
+    assert find_unmapped_jurisdictions(codes, crosswalk) == []
 
 
 def _fiscalizacion_rows_from_fixture() -> list[FiscalizacionMesaRow]:
@@ -174,7 +185,7 @@ def _fiscalizacion_rows_from_fixture() -> list[FiscalizacionMesaRow]:
         for raw in csv.DictReader(f):
             mesa = int(raw["Mesa"].replace("Mesa", "").strip())
             votes = {col: int(raw[col]) for col in FISCALIZACION_VOTE_COLUMNS}
-            rows.append(FiscalizacionMesaRow(mesa=mesa, escuela=raw["Escuela"], votes=votes))
+            rows.append(FiscalizacionMesaRow(mesa=mesa, votes=votes))
     return rows
 
 
@@ -269,3 +280,105 @@ def test_impugnado_and_en_blanco_mismatch_is_expected_not_drift() -> None:
     for divergence in result.divergences:
         if divergence.column in ("En blanco", "Impugnado"):
             assert divergence.is_expected_category_difference is True
+
+
+def test_an_absent_distrito_is_reported_as_absent_not_as_the_string_none() -> None:
+    """A row with NO distrito -- `csv.DictReader` fills a truncated line's
+    missing fields with `None` -- was interpolated into the report as the
+    literal string `"None"`, naming a jurisdiction no source ever wrote, and
+    its dedup key collapsed it in with genuinely-coded jurisdictions.
+
+    A non-numeric code is a different case and NOT this one:
+    `normalize_distrito_code` falls back to the raw value unchanged, so
+    `"no es un codigo"` canonicalizes to itself and is reported the ordinary
+    way, under its own spelling.
+    """
+    unmapped = find_unmapped_jurisdictions(
+        [(None, None), ("no es un codigo", None), (None, None)],
+        CrosswalkTable(jurisdictions=()),
+    )
+
+    codes = [entry.code for entry in unmapped]
+    assert len(codes) == 2, "the repeated absent distrito is one problem, not two"
+    assert not any(code.startswith("None/") for code in codes), (
+        "the report must never name a jurisdiction nobody wrote"
+    )
+    absent = [e for e in unmapped if "(sin distrito)" in e.code]
+    assert len(absent) == 1
+    assert "cannot be canonicalized" in absent[0].reason
+    coded = [e for e in unmapped if "no es un codigo" in e.code]
+    assert len(coded) == 1 and "no curated crosswalk entry" in coded[0].reason
+
+
+def test_a_row_with_no_distrito_does_not_kill_the_sort_before_its_handler_runs() -> None:
+    """`collect_national_jurisdiction_codes` sorts its pairs with `or ""` on
+    the seccion half and nothing on the distrito half, so a truncated row --
+    `csv.DictReader` fills missing trailing fields with `None` -- raised
+    `TypeError: '<' not supported between 'NoneType' and 'str'` inside the
+    sort. `validate-crosswalk` died with a traceback and the `None`-distrito
+    handler downstream never ran, while the module contract promises a
+    non-zero exit on a validation failure, not a stack trace.
+    """
+    codes = sorted({(None, None), ("02", "027"), ("02", None)},
+                   key=lambda pair: (pair[0] or "", pair[1] or ""))
+
+    unmapped = find_unmapped_jurisdictions(codes, CrosswalkTable(jurisdictions=()))
+
+    assert len(unmapped) == 3
+    # And no report line names a jurisdiction nobody wrote.
+    for entry in unmapped:
+        assert "None" not in entry.code
+        assert "None" not in entry.reason
+
+
+def test_a_row_with_no_seccion_maps_on_its_distrito_through_the_table() -> None:
+    """One table, one comparison. The distrito-only match lived as its own
+    loop in `find_unmapped_jurisdictions` after the paired lookup moved into
+    `CrosswalkTable.resolve_national` -- the half-closed fix. Both now ask the
+    table, so `"2"` and `"02"` resolve the same whichever caller asks.
+    """
+    table = _load_crosswalk_table()
+
+    assert len(table.entries_in_distrito("2")) == 1
+    assert len(table.entries_in_distrito("02")) == 1
+    assert table.entries_in_distrito("99") == []
+    # And a coarse row is reported as mapped, not as unmapped under "02/".
+    assert find_unmapped_jurisdictions([("2", None)], table) == []
+
+
+def test_a_seccion_less_row_refuses_when_two_entries_share_its_distrito() -> None:
+    """National distrito `02` is the whole province of Buenos Aires, and
+    `crosswalk.yaml` is curated and will grow. Returning the first match meant
+    the day a second partido is added, a row carrying no seccion resolves to
+    whichever line the YAML happens to list first -- and the entry returned
+    carries a `national_seccion_code` and a `name` that would then be read as
+    that row's.
+    """
+    table = CrosswalkTable(
+        jurisdictions=(
+            JurisdictionCrosswalkEntry(
+                pba_distrito_code="027",
+                national_distrito_code="02",
+                national_seccion_code="027",
+                name="Coronel de Marina Leonardo Rosales",
+            ),
+            JurisdictionCrosswalkEntry(
+                pba_distrito_code="007",
+                national_distrito_code="02",
+                national_seccion_code="007",
+                name="Bahia Blanca",
+            ),
+        )
+    )
+
+    # The PAIRED lookup still resolves: the seccion tells them apart.
+    assert table.resolve_national(distrito_code="02", seccion_code="027") is not None
+
+    # The coarse one hands back BOTH, so the caller reports rather than picks.
+    assert len(table.entries_in_distrito("02")) == 2
+
+    reported = find_unmapped_jurisdictions([("02", None)], table)
+    assert len(reported) == 1
+    assert "cannot be attributed" in reported[0].reason
+    assert "Coronel de Marina Leonardo Rosales" in reported[0].reason
+    assert "Bahia Blanca" in reported[0].reason

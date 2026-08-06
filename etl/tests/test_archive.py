@@ -87,7 +87,7 @@ def test_refetch_never_mutates_prior_entry(tmp_path) -> None:
     )
 
     records = load_manifest(manifest_path)
-    prior = next(r for r in records if r["id"] == "national/2023-generales@2026-08-03")
+    prior = next(r for r in records if r["id"].startswith("national/2023-generales@2026-08-03"))
     assert prior["sha256"] == sha256_of(first_bytes)
 
     canonical = next(r for r in records if r["id"] == "national/2023-generales")

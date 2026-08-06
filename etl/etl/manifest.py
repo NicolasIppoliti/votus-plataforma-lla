@@ -59,11 +59,37 @@ REQUIRED_FIELDS = (
 )
 
 
+class MalformedManifestError(ValueError):
+    """Raised when a manifest record is missing a field this project reads."""
+
+
 def load_manifest(path: Path) -> list[dict[str, Any]]:
-    """Load the manifest array, or an empty list if it does not exist yet."""
+    """Load the manifest array, or an empty list if it does not exist yet.
+
+    Every record is CHECKED for the fields the READERS here dereference --
+    `id` and `status` -- once at this boundary rather than by each of the
+    eight call sites deciding for itself what it can rely on. A record
+    missing them made `latest_ok_record` answer "never archived" for a
+    source that is archived.
+    
+    Deliberately NOT the whole of `REQUIRED_FIELDS`: that is the schema
+    `upsert_record` WRITES (and now validates on the way out), and demanding
+    it on the way in would refuse a hand-written record this code reads
+    perfectly well. `archived_path` is not here either -- it has its own
+    named refusal in `__main__.archived_filename`, where it is read.
+    """
     if not path.exists():
         return []
-    return json.loads(path.read_text(encoding="utf-8"))
+    records = json.loads(path.read_text(encoding="utf-8"))
+    for index, record in enumerate(records):
+        missing = [field for field in ("id", "status") if field not in record]
+        if missing:
+            raise MalformedManifestError(
+                f"manifest record {index} (id={record.get('id')!r}) is missing "
+                f"{', '.join(missing)}; refusing to read an archive whose "
+                "provenance record is incomplete"
+            )
+    return records
 
 
 def save_manifest(path: Path, records: list[dict[str, Any]]) -> None:
@@ -73,16 +99,25 @@ def save_manifest(path: Path, records: list[dict[str, Any]]) -> None:
     )
 
 
-def entries_for_source(
-    records: list[dict[str, Any]], source_url: str
-) -> list[dict[str, Any]]:
-    """Return every archive entry recorded for ``source_url``, in fetch order.
+# NO `entries_for_source` and NO `ok_records_with_local_path`. Both were
+# correct, both tested, neither had a production caller: every archive read
+# in this project goes through `latest_ok_record` plus
+# `__main__.archived_filename`.
+#
+# `entries_for_source` was written for the source-archive spec's "manifest
+# queryable by source" scenario, and that scenario is satisfied by the
+# manifest being a plain JSON array on disk -- a helper nobody calls delivers
+# no queryability. If a `status` subcommand is ever added to report the
+# archived corpus, it can reintroduce whichever shape it actually needs,
+# tested through that entry point.
 
-    source-archive spec, "Manifest queryable by source" scenario. Records
-    are appended in fetch order by ``upsert_record``, so filtering
-    preserves that order without a separate sort.
+class DuplicateManifestRecordError(ValueError):
+    """Raised when one source id carries more than one manifest record.
+
+    `upsert_record` maintains one-per-id; more than one means the file was
+    written by something else, and choosing between two archived copies would
+    silently decide which bytes get ingested.
     """
-    return [r for r in records if r.get("source_url") == source_url]
 
 
 def latest_ok_record(
@@ -94,22 +129,25 @@ def latest_ok_record(
     source-archive spec, "Source has never been successfully fetched and
     is unreachable" scenario: downstream ingestion uses this to report data
     as unavailable rather than substituting empty or default results.
+
+    `upsert_record` REPLACES by id, so a well-formed manifest holds at most
+    one record per id. That invariant is now CHECKED rather than assumed:
+    scanning for the first match and returning it silently picked between two
+    archived copies of one source -- deciding which bytes reach `result_row`
+    -- and, worse, a stale `error` record ahead of a later `ok` one made this
+    answer "never archived" for a source that IS archived. Every other
+    two-candidate site in this codebase refuses rather than chooses.
     """
-    for record in records:
-        if record.get("id") == record_id:
-            return record if record.get("status") == "ok" else None
-    return None
-
-
-def ok_records_with_local_path(
-    records: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Return every ``status: "ok"`` record that declares an ``archived_path``."""
-    return [
-        record
-        for record in records
-        if record.get("status") == "ok" and record.get("archived_path")
-    ]
+    matches = [record for record in records if record.get("id") == record_id]
+    if len(matches) > 1:
+        raise DuplicateManifestRecordError(
+            f"the manifest holds {len(matches)} records for {record_id!r}; "
+            "`upsert_record` keeps one per id, so this file was written by "
+            "something else and there is no honest way to choose between them"
+        )
+    if not matches:
+        return None
+    return matches[0] if matches[0].get("status") == "ok" else None
 
 
 def upsert_record(
@@ -118,7 +156,21 @@ def upsert_record(
     """Insert or replace a record by ``id``, detecting content drift.
 
     See module docstring for the drift and failed-refetch rules.
+
+    The record being written is validated against `REQUIRED_FIELDS` first.
+    That tuple declares this file's schema and its only consumer was a test
+    asserting a fixture dict the test itself had built -- so it documented a
+    shape nothing enforced, and the one place that CAN enforce it is the
+    single writer.
     """
+    missing = [field for field in REQUIRED_FIELDS if field not in record]
+    if missing:
+        raise MalformedManifestError(
+            f"refusing to write a manifest record for {record.get('id')!r} missing "
+            f"{', '.join(missing)}; this file is the archive's provenance and an "
+            "incomplete record cannot be traced back to a fetch"
+        )
+
     result: list[dict[str, Any]] = []
     replaced = False
     for existing in records:
@@ -145,9 +197,15 @@ def upsert_record(
             and existing["sha256"] != record["sha256"]
         )
         if is_drift:
-            date = (existing.get("fetched_at") or "")[:10] or "unknown"
+            # The FULL timestamp, not `fetched_at[:10]`. Two content drifts on
+            # one calendar date produced two records sharing the dated id, and
+            # `latest_ok_record` now REFUSES a duplicated id -- so the single
+            # writer that maintains the one-per-id invariant was the thing
+            # that broke it, making that archived capture permanently
+            # unreadable. Colons are stripped so the id stays filename-safe.
+            stamp = (existing.get("fetched_at") or "unknown").replace(":", "")
             prior = dict(existing)
-            prior["id"] = f"{existing['id']}@{date}"
+            prior["id"] = f"{existing['id']}@{stamp}"
             prior_note = prior.get("notes") or ""
             prior["notes"] = (
                 f"{prior_note} [superseded by newer capture on "
