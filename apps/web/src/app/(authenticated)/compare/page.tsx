@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
+import { UnmappedListIds } from "@/components/UnmappedListIds";
+import { UnorderableLevels } from "@/components/UnorderableLevels";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
 import { compareResults } from "@/lib/results/compare";
 import type { CompareInput, UnitResult } from "@/lib/results/compare";
@@ -7,10 +9,21 @@ import type { Granularity } from "@/lib/results/types";
 import {
   createResultsRepository,
   describeExcluded,
+  fetchCategoryName,
+  fetchElectionYear,
   fetchSourceRefs,
+  isPartyResolved,
+  unmappedByListId,
   tallyByKind,
 } from "@/lib/fiscalizacion/repository";
-import type { ResultRow } from "@/lib/fiscalizacion/repository";
+import type { SourceRef } from "@/lib/results/types";
+import type {
+  CategoryLookup,
+  ExcludedByKind,
+  OkResultsQueryResponse,
+  ResultRow,
+  YearLookup,
+} from "@/lib/fiscalizacion/repository";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
@@ -18,10 +31,10 @@ import {
   coarsestOf,
   JURISDICTION_TOTAL_GRANULARITY,
   jurisdictionTotalLevel,
+  mixedGranularityReason,
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { electionYear } from "@/lib/results/election-id";
 import { partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-family";
 
 interface ComparePageProps {
@@ -32,7 +45,11 @@ interface ComparePageProps {
 
 /**
  * Groups official rows into `compare.ts`'s per-unit shape, keyed on the
- * RESOLVED PARTY NAME and never on `listId`.
+ * CANONICAL PARTY ID and never on `listId` or on the display name. The curated
+ * file spells one canonical party "LA LIBERTAD AVANZA" in 2023 and "ALIANZA LA
+ * LIBERTAD AVANZA" in 2025, so keying on the name gives the two sides zero
+ * common keys — the same fabricated flip as keying on the list id, one layer
+ * up.
  *
  * The same party carries `135` in the 2023 PASO, `20135` in the 2023
  * generales and `110` in 2025, so keying on the raw id gives the two sides
@@ -63,6 +80,8 @@ function toCompareUnits(rows: ResultRow[]): {
    * the one place that says how much of the comparison went missing.
    */
   unresolvedByListId: { listId: string; rows: number; votes: number }[];
+  /** Rows carrying no list id at all — not ids that failed to map. */
+  unresolvedWithoutListId: ExcludedByKind;
   /** Canonical id -> the name to show for it. */
   displayNames: Map<string, string>;
 } {
@@ -70,21 +89,31 @@ function toCompareUnits(rows: ResultRow[]): {
   const levels = readGranularity(rows);
   let unresolvedRows = 0;
   let unresolvedVotes = 0;
-  const unresolvedByListId = new Map<string, { rows: number; votes: number }>();
+  // THE fold, not a fourth private copy. The inline one sorted by list id
+  // while the boundary sorts by votes, so the same question had two answers.
+  const unresolvedReading = unmappedByListId(rows);
+  const unresolvedByListId = unresolvedReading.entries;
   const displayNames = new Map<string, string>();
 
   for (const row of rows) {
-    if (!row.canonicalPartyId) {
+    // The SAME definition the boundary uses: a row with a canonical id but no
+    // display name counted as mapped here, and then rendered the raw id (`lla`)
+    // at the operator as if it were a party.
+    if (!isPartyResolved(row)) {
       // An unmapped row carries no comparable identity. Falling back to
       // `unmapped (list N)` re-keyed on the raw id, so one party unmapped in
       // both years gave `unmapped (list 20135)` vs `unmapped (list 110)` —
       // zero common keys and a `flipped` claim for a party that never changed
       // hands. The fabricated swing survived on the unmapped path.
+      //
+      // Rows with NO list id are not ids that failed to map — rule 2:
+      // `lista_numero` is empty throughout the 2023 generales file and never
+      // populated on a POSITIVO row in 2025. Counting them here refused the
+      // whole comparison for a shape the source always had; they are reported
+      // in their own sentence by `UnmappedListIds`.
+      if (row.listId === null) continue;
       unresolvedRows += 1;
       unresolvedVotes += row.votes;
-      const key = row.listId ?? "(no list id)";
-      const entry = unresolvedByListId.get(key) ?? { rows: 0, votes: 0 };
-      unresolvedByListId.set(key, { rows: entry.rows + 1, votes: entry.votes + row.votes });
       continue;
     }
     // The CANONICAL ID, not the display name. The curated file spells one
@@ -95,7 +124,9 @@ function toCompareUnits(rows: ResultRow[]): {
     // The NAME travels with the key. `fromParty`/`toParty` are these keys, so
     // rendering them printed the internal id (`lla`) to the operator on the
     // page whose whole purpose is the swing.
-    displayNames.set(party, row.partyName ?? party);
+    // `row.partyName` is non-null here: the guard above sends a row without
+    // one to the unmapped tally rather than letting it name itself with an id.
+    displayNames.set(party, row.partyName);
     // `BaseQuery` filters `.eq("jurisdiction_id", ...)`, so EVERY row carries
     // the same id and they all sum into exactly ONE unit. The figure is
     // therefore a jurisdiction total whatever level its rows carry — and the
@@ -118,9 +149,8 @@ function toCompareUnits(rows: ResultRow[]): {
     units,
     unresolvedRows,
     unresolvedVotes,
-    unresolvedByListId: [...unresolvedByListId.entries()]
-      .map(([listId, tally]) => ({ listId, ...tally }))
-      .sort((a, b) => a.listId.localeCompare(b.listId)),
+    unresolvedByListId,
+    unresolvedWithoutListId: unresolvedReading.withoutListId,
     displayNames,
   };
 }
@@ -129,6 +159,7 @@ function toCompareUnits(rows: ResultRow[]): {
  * `results-analysis` cross-year comparison view (RSC, server-only reads —
  * design.md's Data Flow: "Next.js RSC (server-only reads)").
  */
+
 
 export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
   const params = await searchParams;
@@ -188,20 +219,95 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     );
   }
 
-  const year2023 = electionYear(electionId2023);
-  const year2025 = electionYear(electionId2025);
-  if (!partyCategory || !partyJurisdiction || year2023 === null || year2025 === null) {
-    // Without both years and the category there is no party mapping to resolve
-    // through, and an unresolved comparison is the fabricated-swing case.
+  if (!partyCategory || !partyJurisdiction) {
+    // Without the category there is no party mapping to resolve through, and an
+    // unresolved comparison is the fabricated-swing case.
     return (
       <main>
         <h1>Compare 2023 vs 2025</h1>
         <p role="alert">
           Refused: provide <code>partyCategory</code> and{" "}
-          <code>partyJurisdiction</code>, and election ids that
-          carry their year — each side is resolved through its own{" "}
+          <code>partyJurisdiction</code> — each side is resolved through its own{" "}
           <code>(year, jurisdiction, category)</code> party mapping, because the
           same party carries a different list id in each file.
+        </p>
+      </main>
+    );
+  }
+
+  // Each side's year from its own `election` ROW. Parsing the ids worked for
+  // curated slugs and never for the uuids the database stores, so this page
+  // refused every real comparison for want of years it had in a column.
+  const supabaseForYears = await createSupabaseServerClient();
+  // TYPED, not evolving `any` — the policy `drilldown` states and this file
+  // did not follow: an implicit `any` makes every field access typecheck
+  // whether the branch that assigns it ran or not.
+  let year2023: YearLookup;
+  let year2025: YearLookup;
+  try {
+    [year2023, year2025] = await Promise.all([
+      fetchElectionYear(supabaseForYears, electionId2023),
+      fetchElectionYear(supabaseForYears, electionId2025),
+    ]);
+  } catch (error) {
+    return (
+      <main>
+        <h1>Compare 2023 vs 2025</h1>
+        <p role="alert">
+          Refused: {error instanceof Error ? error.message : String(error)}
+        </p>
+      </main>
+    );
+  }
+  let categoryName: CategoryLookup;
+  try {
+    categoryName = await fetchCategoryName(supabaseForYears, categoryId);
+  } catch (error) {
+    return (
+      <main>
+        <h1>Compare 2023 vs 2025</h1>
+        <p role="alert">
+          Refused: {error instanceof Error ? error.message : String(error)}
+        </p>
+      </main>
+    );
+  }
+  if (categoryName.status !== "ok" || categoryName.name !== partyCategory) {
+    // The THIRD axis. `2206` names a different party in the municipal table
+    // than in the national one; the same holds ACROSS CATEGORIES, and a wrong
+    // party here renders as a flip between two that never changed hands.
+    return (
+      <main>
+        <h1>Compare 2023 vs 2025</h1>
+        <p role="alert">
+          Refused: category {categoryId} is{" "}
+          {categoryName.status === "no_row"
+            ? "carried by no category row"
+            : categoryName.status === "unreadable_name"
+              ? "carried by a row whose name is unusable"
+              : categoryName.name}
+          , not {partyCategory}. A list id resolved through another category&apos;s
+          mapping names the wrong party, and a wrong name is a fabricated flip.
+        </p>
+      </main>
+    );
+  }
+  if (year2023.status !== "ok" || year2025.status !== "ok") {
+    // NAMED per side: "one of them is unknown" sends the operator to check both.
+    return (
+      <main>
+        <h1>Compare 2023 vs 2025</h1>
+        <p role="alert">
+          Refused: the year could not be read for{" "}
+          {[
+            ...(year2023.status === "ok"
+              ? []
+              : [`${electionId2023} (${year2023.status === "no_row" ? "no election row" : "no usable year"})`]),
+            ...(year2025.status === "ok"
+              ? []
+              : [`${electionId2025} (${year2025.status === "no_row" ? "no election row" : "no usable year"})`]),
+          ].join(", ")}
+          , and a party mapping cannot be selected without it.
         </p>
       </main>
     );
@@ -230,16 +336,17 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   // A denied read THROWS. `SupabaseRowSource.fetchRows` raises on a Postgres
   // error, so RLS denial never arrives as a `status !== "ok"` response — the
   // branch below is defensive, and this is the path an actual denial takes.
-  let response2023, response2025;
+  let response2023: OkResultsQueryResponse;
+  let response2025: OkResultsQueryResponse;
   try {
     [response2023, response2025] = await Promise.all([
     repository.queryOfficial(baseQuery2023, {
-      year: year2023,
+      year: year2023.year,
       jurisdiction: partyJurisdiction,
       category: partyCategory,
     }),
     repository.queryOfficial(baseQuery2025, {
-      year: year2025,
+      year: year2025.year,
       jurisdiction: partyJurisdiction,
       category: partyCategory,
     }),
@@ -296,6 +403,17 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   const foreign2023 = rows2023.filter((row) => row.sourceKind !== "official");
   const foreign2025 = rows2025.filter((row) => row.sourceKind !== "official");
   const foreign = [...foreign2023, ...foreign2025];
+  const compare2023 = toCompareUnits(rows2023);
+  const compare2025 = toCompareUnits(rows2025);
+  // BEFORE the foreign guard, because that guard runs first: a leaked row set
+  // that also mixes levels reached `UnmappedListIds` with `unsummable={null}`
+  // and printed the vote sums the prop exists to withhold.
+  // PER YEAR. One value fed both blocks, so a mixed 2025 withheld 2023's vote
+  // totals for an arithmetic problem in a different query over different rows —
+  // the merge this file argues against everywhere else.
+  const unsummable2023 = mixedGranularityReason(rows2023);
+  const unsummable2025 = mixedGranularityReason(rows2025);
+
   if (foreign.length > 0) {
     return (
       <main>
@@ -307,12 +425,38 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           {electionId2025}: {describeExcluded(tallyByKind(foreign2025)) ?? "none"}).
           Official and fiscalización figures are never combined in one number.
         </p>
+        {/* Both counted before this refusal and about a different axis: which
+            list ids failed to map, and which levels cannot be ordered, do not
+            depend on source kinds. The three sibling pages carry theirs. */}
+        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
+            reads and rendered a list id present in both as a single cross-year
+            figure with nothing naming the year. */}
+        <UnmappedListIds
+          label={electionId2023}
+          entries={compare2023.unresolvedByListId}
+          withoutListId={compare2023.unresolvedWithoutListId}
+          mappingConfigured={response2023.partyMappingConfigured}
+          totalRows={rows2023.length}
+          unsummable={unsummable2023}
+        />
+        <UnmappedListIds
+          label={electionId2025}
+          entries={compare2025.unresolvedByListId}
+          withoutListId={compare2025.unresolvedWithoutListId}
+          mappingConfigured={response2025.partyMappingConfigured}
+          totalRows={rows2025.length}
+          unsummable={unsummable2025}
+        />
+        {/* PER YEAR, like the unmapped blocks beside them. Merging added rows
+            across two independent reads under one line with nothing naming the
+            year — and summed VOTES on a level this module cannot order, which
+            is the addition both components exist to withhold. */}
+        <UnorderableLevels label={electionId2023} entries={unrecognizedLevels(rows2023)} />
+        <UnorderableLevels label={electionId2025} entries={unrecognizedLevels(rows2025)} />
       </main>
     );
   }
 
-  const compare2023 = toCompareUnits(rows2023);
-  const compare2025 = toCompareUnits(rows2025);
   // Mixed levels on ONE side are invisible to `compareResults`'s D6 mismatch
   // check, which compares the two sides' single reported levels.
   // Unrecognized levels count too: a uniformly-unknown set is not "mixed",
@@ -329,6 +473,29 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <main>
         <h1>Compare 2023 vs 2025</h1>
         {excludedNote}
+        {/* Counted by `toCompareUnits` BEFORE this refusal, and about a
+            different axis entirely: which list ids resolved to no canonical
+            party does not depend on granularity or on row counts. The three
+            sibling pages carry theirs through every refusal. */}
+        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
+            reads and rendered a list id present in both as a single cross-year
+            figure with nothing naming the year. */}
+        <UnmappedListIds
+          label={electionId2023}
+          entries={compare2023.unresolvedByListId}
+          withoutListId={compare2023.unresolvedWithoutListId}
+          mappingConfigured={response2023.partyMappingConfigured}
+          totalRows={rows2023.length}
+          unsummable={unsummable2023}
+        />
+        <UnmappedListIds
+          label={electionId2025}
+          entries={compare2025.unresolvedByListId}
+          withoutListId={compare2025.unresolvedWithoutListId}
+          mappingConfigured={response2025.partyMappingConfigured}
+          totalRows={rows2025.length}
+          unsummable={unsummable2025}
+        />
         <p role="alert">
           Refused: the returned rows mix granularity levels ({[...new Set(mixed)].join(", ")}),
           so a single level cannot describe either side and the cross-year
@@ -338,21 +505,16 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             the levels alone hid how much of the comparison sits on one this
             module cannot order: many rows on a single unknown level read as
             one problem rather than as most of the data. */}
-        {[
-          [electionId2023, unrecognizedLevels(rows2023)] as const,
-          [electionId2025, unrecognizedLevels(rows2025)] as const,
-        ]
-          .filter(([, levels]) => levels.length > 0)
-          .map(([electionId, levels]) => (
-            <ul key={electionId} aria-label={`unorderable-levels-${electionId}`}>
-              {levels.map((entry) => (
-                <li key={entry.granularity}>
-                  {electionId} — {entry.granularity}: {entry.rows} rows,{" "}
-                  {entry.votes} votes
-                </li>
-              ))}
-            </ul>
-          ))}
+        {/* THE shared presentation, which reports rows and never a vote total:
+            two rows on one unorderable level may be the same votes counted
+            twice. This hand-rolled copy printed the sum the component
+            refuses. */}
+        {/* PER YEAR, like the unmapped blocks beside them. Merging added rows
+            across two independent reads under one line with nothing naming the
+            year — and summed VOTES on a level this module cannot order, which
+            is the addition both components exist to withhold. */}
+        <UnorderableLevels label={electionId2023} entries={unrecognizedLevels(rows2023)} />
+        <UnorderableLevels label={electionId2025} entries={unrecognizedLevels(rows2025)} />
       </main>
     );
   }
@@ -365,6 +527,29 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <main>
         <h1>Compare 2023 vs 2025</h1>
         {excludedNote}
+        {/* Counted by `toCompareUnits` BEFORE this refusal, and about a
+            different axis entirely: which list ids resolved to no canonical
+            party does not depend on granularity or on row counts. The three
+            sibling pages carry theirs through every refusal. */}
+        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
+            reads and rendered a list id present in both as a single cross-year
+            figure with nothing naming the year. */}
+        <UnmappedListIds
+          label={electionId2023}
+          entries={compare2023.unresolvedByListId}
+          withoutListId={compare2023.unresolvedWithoutListId}
+          mappingConfigured={response2023.partyMappingConfigured}
+          totalRows={rows2023.length}
+          unsummable={unsummable2023}
+        />
+        <UnmappedListIds
+          label={electionId2025}
+          entries={compare2025.unresolvedByListId}
+          withoutListId={compare2025.unresolvedWithoutListId}
+          mappingConfigured={response2025.partyMappingConfigured}
+          totalRows={rows2025.length}
+          unsummable={unsummable2025}
+        />
         <p role="alert">
           Refused: {rows2023.length === 0 && rows2025.length === 0
             ? "neither year"
@@ -393,28 +578,36 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           resolved to no canonical party, and an unmapped id is not an identity
           that can be compared across years.
         </p>
-        <ul>
-          <li>
-            {electionId2023}: {compare2023.unresolvedRows} row(s) /{" "}
-            {compare2023.unresolvedVotes} vote(s) across{" "}
-            {compare2023.unresolvedByListId.length} id(s)
-            {compare2023.unresolvedByListId.length > 0
-              ? ` (${compare2023.unresolvedByListId
-                  .map((entry) => `${entry.listId}: ${entry.rows} row(s) / ${entry.votes} vote(s)`)
-                  .join(", ")})`
-              : ""}
-          </li>
-          <li>
-            {electionId2025}: {compare2025.unresolvedRows} row(s) /{" "}
-            {compare2025.unresolvedVotes} vote(s) across{" "}
-            {compare2025.unresolvedByListId.length} id(s)
-            {compare2025.unresolvedByListId.length > 0
-              ? ` (${compare2025.unresolvedByListId
-                  .map((entry) => `${entry.listId}: ${entry.rows} row(s) / ${entry.votes} vote(s)`)
-                  .join(", ")})`
-              : ""}
-          </li>
-        </ul>
+        {/* THE shared presentation. The hand-rolled list beside it was a
+            second shape for one fact, and it printed vote sums the component
+            withholds when the rows cannot be added. */}
+        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
+            reads and rendered a list id present in both as a single cross-year
+            figure with nothing naming the year. */}
+        <UnmappedListIds
+          label={electionId2023}
+          entries={compare2023.unresolvedByListId}
+          withoutListId={compare2023.unresolvedWithoutListId}
+          mappingConfigured={response2023.partyMappingConfigured}
+          totalRows={rows2023.length}
+          unsummable={unsummable2023}
+        />
+        <UnmappedListIds
+          label={electionId2025}
+          entries={compare2025.unresolvedByListId}
+          withoutListId={compare2025.unresolvedWithoutListId}
+          mappingConfigured={response2025.partyMappingConfigured}
+          totalRows={rows2025.length}
+          unsummable={unsummable2025}
+        />
+        {/* Levels this module cannot order are independent of mappability, so
+            this refusal is about a different axis than that count. */}
+        {/* PER YEAR, like the unmapped blocks beside them. Merging added rows
+            across two independent reads under one line with nothing naming the
+            year — and summed VOTES on a level this module cannot order, which
+            is the addition both components exist to withhold. */}
+        <UnorderableLevels label={electionId2023} entries={unrecognizedLevels(rows2023)} />
+        <UnorderableLevels label={electionId2025} entries={unrecognizedLevels(rows2025)} />
       </main>
     );
   }
@@ -493,12 +686,32 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           <code>aggregateTo</code> query parameter to combine them — this comparison
           refuses to guess (design.md D6).
         </p>
+        {/* The FIFTH branch. Rows with no list id are counted and carried,
+            and D6 was the one refusal that rendered neither block — the same
+            shape this page fixed for `excludedNote` and stopped there. */}
+        <UnmappedListIds
+          label={electionId2023}
+          entries={compare2023.unresolvedByListId}
+          withoutListId={compare2023.unresolvedWithoutListId}
+          mappingConfigured={response2023.partyMappingConfigured}
+          totalRows={rows2023.length}
+          unsummable={unsummable2023}
+        />
+        <UnmappedListIds
+          label={electionId2025}
+          entries={compare2025.unresolvedByListId}
+          withoutListId={compare2025.unresolvedWithoutListId}
+          mappingConfigured={response2025.partyMappingConfigured}
+          totalRows={rows2025.length}
+          unsummable={unsummable2025}
+        />
       </main>
     );
   }
 
   const archiveEntryIds = [...new Set([...rows2023, ...rows2025].map((row) => row.archiveEntryId))];
-  let sources, missingProvenance: string[] = [];
+  let sources: SourceRef[] = [];
+  let missingProvenance: string[] = [];
   try {
     const supabase = await createSupabaseServerClient();
     const refs = await fetchSourceRefs(supabase, archiveEntryIds);
@@ -532,7 +745,32 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         {...(degradedFromDetail ? { degradedFrom: degradedFromDetail } : {})}
       />
       {excludedNote}
+      {/* Rows with no list id are not ids that failed to map, and the SUCCESS
+          path must say so too — they are votes that were cast and are in every
+          denominator. Per year, because the two reads are independent. */}
+      <UnmappedListIds
+        label={electionId2023}
+        entries={compare2023.unresolvedByListId}
+        withoutListId={compare2023.unresolvedWithoutListId}
+        mappingConfigured={response2023.partyMappingConfigured}
+        totalRows={rows2023.length}
+        unsummable={unsummable2023}
+      />
+      <UnmappedListIds
+        label={electionId2025}
+        entries={compare2025.unresolvedByListId}
+        withoutListId={compare2025.unresolvedWithoutListId}
+        mappingConfigured={response2025.partyMappingConfigured}
+        totalRows={rows2025.length}
+        unsummable={unsummable2025}
+      />
       {missingProvenance.length > 0 ? (
+        // DISCLOSED, not refused, and deliberately: an untraceable archive
+        // entry does not make the votes wrong, it makes them unquotable. The
+        // integrity failures this page refuses for — mixed levels, unmapped
+        // identities, leaked source kinds — all make the FIGURE itself
+        // unsound; this one leaves it sound and unciteable, which is a
+        // different thing an operator must be able to see and weigh.
         <p role="alert">
           {missingProvenance.length} archive entry/entries backing these figures
           resolved to no source record ({missingProvenance.join(", ")}); those

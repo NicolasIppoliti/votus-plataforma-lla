@@ -1,13 +1,24 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
+import { UnmappedListIds } from "@/components/UnmappedListIds";
+import { UnorderableLevels } from "@/components/UnorderableLevels";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
 import {
   createResultsRepository,
   describeExcluded,
+  fetchCategoryName,
+  fetchElectionYear,
   fetchSourceRefs,
   tallyByKind,
+  unmappedByListId,
   votesByParty,
 } from "@/lib/fiscalizacion/repository";
+import type {
+  CategoryLookup,
+  ResultsRepository,
+  YearLookup,
+} from "@/lib/fiscalizacion/repository";
+import type { SourceRef } from "@/lib/results/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
@@ -16,7 +27,6 @@ import {
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { electionYear } from "@/lib/results/election-id";
 import { partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-family";
 
 interface DrilldownPageProps {
@@ -73,16 +83,14 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   // left the parameter out, while this dedicated refusal could never fire for
   // it. `compare` and `municipal` both order params first; this was the fourth
   // divergent copy of one decision.
-  const year = electionYear(electionId);
-  if (year === null || !partyCategory || !partyJurisdiction) {
+  if (!partyCategory || !partyJurisdiction) {
     return (
       <main>
         <h1>Drilldown</h1>
         <p role="alert">
           Refused: provide <code>partyCategory</code> and{" "}
-          <code>partyJurisdiction</code>, and an election id that
-          carries its year — list ids are only meaningful through their own
-          election&apos;s party mapping.
+          <code>partyJurisdiction</code> — list ids are only meaningful through
+          their own election&apos;s party mapping.
         </p>
       </main>
     );
@@ -103,6 +111,74 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     );
   }
 
+  // The year comes from the `election` ROW, not from the id string. Parsing the
+  // id worked for a curated slug and never for a uuid, so every real request
+  // refused for want of a year the database had in a column all along.
+  const supabaseForYear = await createSupabaseServerClient();
+  let year: YearLookup;
+  try {
+    year = await fetchElectionYear(supabaseForYear, electionId);
+  } catch (error) {
+    return (
+      <main>
+        <h1>Drilldown</h1>
+        <p role="alert">
+          Refused: {error instanceof Error ? error.message : String(error)}
+        </p>
+      </main>
+    );
+  }
+  let categoryName: CategoryLookup;
+  try {
+    categoryName = await fetchCategoryName(supabaseForYear, categoryId);
+  } catch (error) {
+    return (
+      <main>
+        <h1>Drilldown</h1>
+        <p role="alert">
+          Refused: {error instanceof Error ? error.message : String(error)}
+        </p>
+      </main>
+    );
+  }
+  if (categoryName.status !== "ok" || categoryName.name !== partyCategory) {
+    // The THIRD axis, bounded like the other two. `categoryId` filters the
+    // rows and `partyCategory` keys the mapping, and nothing tied them: any
+    // list id present in both tables resolved to a different canonical party
+    // under the wrong one, with no refusal and no note.
+    return (
+      <main>
+        <h1>Drilldown</h1>
+        <p role="alert">
+          Refused: category {categoryId} is{" "}
+          {categoryName.status === "no_row"
+            ? "carried by no category row"
+            : categoryName.status === "unreadable_name"
+              ? "carried by a row whose name is unusable"
+              : categoryName.name}
+          , not {partyCategory}. A list id resolved through another
+          category&apos;s mapping names the wrong party.
+        </p>
+      </main>
+    );
+  }
+  if (year.status !== "ok") {
+    // No row, no year — and a mapping year nobody established is exactly what
+    // resolves `110` and `20135` as two parties.
+    return (
+      <main>
+        <h1>Drilldown</h1>
+        <p role="alert">
+          Refused:{" "}
+          {year.status === "no_row"
+            ? `no election row carries the id ${electionId}`
+            : `the election row for ${electionId} carries no usable year`}
+          , so the year its party mapping must be read through is unknown.
+        </p>
+      </main>
+    );
+  }
+
   const repository = await createResultsRepository();
   // WITH a party mapping. Without one no name ever resolves, so every row
   // rendered a raw list id — and `110` and `20135` are the SAME party in two
@@ -112,11 +188,21 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   // A denied read THROWS (`SupabaseRowSource.fetchRows` raises on a Postgres
   // error), so that is the path an RLS denial actually takes; the non-ok
   // branch below is defensive.
-  let response, aggregate, sources, missingProvenance: string[] = [];
+  // TYPED rather than evolving `any`: these are read after two try/catch
+  // blocks, and an implicit `any` made every field access typecheck whether the
+  // branch that assigns it ran or not.
+  let response: Awaited<ReturnType<ResultsRepository["queryOfficial"]>>;
+  // `| undefined` because the catch below READS it: `aggregateOfficialVotes`
+  // may be what threw, and then path 2 produced no tally to report. The
+  // evolving `any` let that read typecheck without the possibility existing in
+  // the type at all.
+  let aggregate: Awaited<ReturnType<ResultsRepository["aggregateOfficialVotes"]>> | undefined;
+  let sources: SourceRef[] = [];
+  let missingProvenance: string[] = [];
   try {
     response = await repository.queryOfficial(
       { electionId, jurisdictionId, categoryId },
-      { year, jurisdiction: partyJurisdiction, category: partyCategory },
+      { year: year.year, jurisdiction: partyJurisdiction, category: partyCategory },
     );
   } catch (error) {
     return (
@@ -147,6 +233,23 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
       </p>
     ) : null;
 
+  const rows = response.rows;
+  // Can these rows be ADDED? A `seccion` row already contains the `mesa` rows
+  // beneath it, so this page used to disclose the mix and then sum it anyway:
+  // one seccion row of 10 plus one mesa row of 10 inside it rendered 20 votes
+  // for a party that got 10. Disclosure is not permission.
+  const unsummable = mixedGranularityReason(rows);
+  // PER LIST ID, and the ONLY place unresolved rows are reported:
+  // `votesByParty` leaves them out of the ranked list entirely.
+  // UNCONDITIONAL. Unmappability is independent of granularity, and this is a
+  // per-list-id SIZE rather than a total claimed about the election, so zeroing
+  // it when levels mix hid which ids failed to map behind a refusal about
+  // arithmetic. `topParty` documents the same rule and its test locks it in.
+  const unmapped = unmappedByListId(rows);
+  // The SIZE of each unorderable level, not just its name: many rows on one
+  // unknown level read as "1 row(s)" when only the names are printed.
+  const unrecognized = unrecognizedLevels(rows);
+
   const foreign = response.rows.filter((row) => row.sourceKind !== "official");
   if (foreign.length > 0) {
     return (
@@ -158,10 +261,19 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           fiscalización figures are never combined in one number.
         </p>
         {excludedNote}
+        {/* Counted before this refusal, and about a different fact entirely:
+            WHICH list ids failed to map does not depend on source kinds, on
+            the aggregate, or on whether a later read succeeded. */}
+        <UnmappedListIds entries={unmapped.entries}
+        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={unsummable}
+          mappingConfigured={response.partyMappingConfigured}
+        />
+        {/* And the levels this page cannot order, counted with it and just as
+            independent of what these refusals are about. */}
+        <UnorderableLevels entries={unrecognized} />
       </main>
     );
   }
-  const rows = response.rows;
   // THE shared boundary. Taking `rows[0]` claimed the level of whichever row
   // the query happened to return first, which can be finer than the set
   // supports — the third page to derive this differently.
@@ -171,14 +283,6 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   // party's figure, and the list visibly failing to sum to the total above it.
 
   const levels = readGranularity(rows);
-  // Can these rows be ADDED? A `seccion` row already contains the `mesa` rows
-  // beneath it, so this page used to disclose the mix and then sum it anyway:
-  // one seccion row of 10 plus one mesa row of 10 inside it rendered 20 votes
-  // for a party that got 10. Disclosure is not permission.
-  const unsummable = mixedGranularityReason(rows);
-  // The SIZE of each unorderable level, not just its name: many rows on one
-  // unknown level read as "1 row(s)" when only the names are printed.
-  const unrecognized = unrecognizedLevels(rows);
   const partyTotals = unsummable !== null ? [] : votesByParty(rows);
 
 
@@ -196,10 +300,12 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
       categoryId,
     });
     const supabase = await createSupabaseServerClient();
-    const refs = await fetchSourceRefs(
-      supabase,
-      [...new Set(rows.map((row) => row.archiveEntryId))],
-    );
+    // BOTH reads' entries. Resolving path 1's only left `Official total` — a
+    // displayed figure from an independent fetch — with no source record, and
+    // unable to appear in `missing` either.
+    const refs = await fetchSourceRefs(supabase, [
+      ...new Set([...rows.map((row) => row.archiveEntryId), ...aggregate.archiveEntryIds]),
+    ]);
     sources = refs.sources;
     missingProvenance = refs.missing;
   } catch (error) {
@@ -224,6 +330,15 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
             {describeExcluded(aggregate.excluded)}.
           </p>
         ) : null}
+        {/* And WHICH ids failed to map, counted before this failure and
+            independent of it. */}
+        <UnmappedListIds entries={unmapped.entries}
+        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={unsummable}
+          mappingConfigured={response.partyMappingConfigured}
+        />
+        {/* And the levels this page cannot order, counted with it and just as
+            independent of what these refusals are about. */}
+        <UnorderableLevels entries={unrecognized} />
       </main>
     );
   }
@@ -247,6 +362,16 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           never combined in one number.
         </p>
         {excludedNote}
+        {/* Counted before this refusal, and about a different fact entirely:
+            WHICH list ids failed to map does not depend on source kinds, on
+            the aggregate, or on whether a later read succeeded. */}
+        <UnmappedListIds entries={unmapped.entries}
+        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={unsummable}
+          mappingConfigured={response.partyMappingConfigured}
+        />
+        {/* And the levels this page cannot order, counted with it and just as
+            independent of what these refusals are about. */}
+        <UnorderableLevels entries={unrecognized} />
         {describeExcluded(aggregate.excluded) !== null ? (
           // Path 2's OWN drops. Path 1's note describes a different read and
           // cannot stand in for it — least of all here, where a foreign row
@@ -273,8 +398,15 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   return (
     <main>
       <h1>Drilldown</h1>
-      {unsummable === null &&
+      {rows.length > 0 &&
+      unsummable === null &&
+      // Path 2's total is not a figure to compare against when ITS rows cannot
+      // be summed: the disagreement would be with a double count.
+      aggregate.unsummableReason === null &&
       aggregate.totalVotes !== rows.reduce((sum, row) => sum + row.votes, 0) ? (
+        // `rows.length > 0` because the empty case has its OWN alert below,
+        // which states the same disagreement in the terms that actually apply
+        // there. Both firing printed one fact as two.
         // TWO INDEPENDENT READS. That independence is the point of D9.1's
         // three paths, and it means the two can legitimately disagree — RLS
         // scope, a mid-write, a different row set. Rendering them adjacent
@@ -307,42 +439,48 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           .
         </p>
       ) : null}
-      {rows.length === 0 || unsummable !== null ? null : (
+      {rows.length === 0 || unsummable !== null || aggregate.unsummableReason !== null ? null : (
       <p role="note">
         Official total: {aggregate.totalVotes} votes ({aggregate.sourceKind} source
         only)
-        {describeExcluded(aggregate.excluded) !== null
-          ? `, excluding ${describeExcluded(aggregate.excluded)} on its own read`
-          : ""}
+        {/* NOT repeated here: the same tally already has its own note above,
+            and one drop printed twice reads as two. */}
         .
       </p>
       )}
+      {aggregate.unsummableReason !== null ? (
+        // Path 2's OWN levels. `unsummable` is computed from path 1's rows and
+        // path 2 fetches independently, so a mixed set reaching only it made
+        // `Official total` a double count rendered as the official figure.
+        <p role="alert">
+          No official total: the rows that read summed {aggregate.unsummableReason}.
+          A total that double-counts is worse than no total.
+        </p>
+      ) : null}
       {excludedNote}
+      <UnmappedListIds entries={unmapped.entries}
+        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={unsummable}
+          mappingConfigured={response.partyMappingConfigured}
+        />
       {unsummable !== null ? (
         <p role="alert">
           No per-party figures: {unsummable}. The rows are shown by nothing
           here; a total that double-counts is worse than no total.
         </p>
       ) : null}
-      {unrecognized.length > 0 ? (
-        <>
-          <p role="alert">
-            {unrecognized.reduce((sum, entry) => sum + entry.rows, 0)} row(s)
-            carry a granularity this page cannot order, so their containment
-            relationship is unknown and no level is shown for them at all. By
-            level:
-          </p>
-          <ul>
-            {unrecognized.map((entry) => (
-              <li key={entry.granularity}>
-                {entry.granularity}: {entry.rows} rows, {entry.votes} votes
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+      <UnorderableLevels entries={unrecognized} />
       {rows.length === 0 ? (
-        aggregate.totalVotes > 0 ? (
+        aggregate.unsummableReason !== null ? (
+          // NOT "no results" either. `mixedGranularityReason` needs at least
+          // two levels, so path 2 cannot be unsummable without having READ
+          // rows — the total is withheld, but the data is not absent, and
+          // saying it is states a fact nobody established.
+          <p role="alert">
+            This read returned no rows. The official total&apos;s own read did
+            return rows, and they cannot be summed, so neither a figure nor an
+            absence can be reported for this jurisdiction/category/election.
+          </p>
+        ) : aggregate.totalVotes > 0 ? (
           // NOT "no results". An independent read holds votes, so the honest
           // statement is that the two disagree — the case the alert above
           // exists for, and the one where suppressing it hid the most.

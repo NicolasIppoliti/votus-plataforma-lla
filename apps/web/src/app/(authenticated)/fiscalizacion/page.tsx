@@ -3,9 +3,13 @@ import { GranularityBadge } from "@/components/GranularityBadge";
 import { JuxtapositionBadge } from "@/components/JuxtapositionBadge";
 import type { ElectionFigure } from "@/components/JuxtapositionBadge";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
+import { UnmappedListIds } from "@/components/UnmappedListIds";
+import { UnorderableLevels } from "@/components/UnorderableLevels";
 import {
   createResultsRepository,
+  fetchElectionYear,
   fetchSourceRefs,
+  unmappedByListId,
   type BaseQuery,
   type PartyMappingContext,
   type ResultRow,
@@ -13,7 +17,7 @@ import {
   describeExcluded,
   votesByParty,
 } from "@/lib/fiscalizacion/repository";
-import type { ExcludedByKind } from "@/lib/fiscalizacion/repository";
+import type { ExcludedByKind, YearLookup } from "@/lib/fiscalizacion/repository";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
@@ -22,7 +26,6 @@ import {
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { electionYear } from "@/lib/results/election-id";
 import { pinnedCategoryId, servedJurisdictionId } from "@/lib/results/party-family";
 import type { Coverage, SourceRef } from "@/lib/results/types";
 
@@ -62,10 +65,18 @@ export const FISCALIZACION_PARTY_CONTEXT: PartyMappingContext = {
  * names resolved against the wrong `(year, category)` mapping. The route now
  * refuses such a request rather than mislabelling it.
  */
-export const FISCALIZACION_ELECTION = {
-  electionId: "2025-legislativas-nacional",
-  electionLabel: "26 Oct 2025 national legislative",
-} as const;
+export function fiscalizacionElection(): { electionId?: string; electionLabel: string } {
+  // CONFIGURATION, like the jurisdiction and the category beside it. A
+  // hardcoded curated slug (`2025-legislativas-nacional`) can never equal the
+  // uuid `election.id` actually holds, so this route refused every real
+  // request before it read a single row. The LABEL stays a literal: it names
+  // the race these constants were verified against, and is not an id.
+  const electionId = process.env["FISCALIZACION_ELECTION_ID"];
+  return {
+    ...(electionId ? { electionId } : {}),
+    electionLabel: "26 Oct 2025 national legislative",
+  };
+}
 
 /**
  * The jurisdiction and category the constants above describe.
@@ -106,10 +117,17 @@ export function outOfScopeReason(request: {
   jurisdictionId: string;
   categoryId: string;
 }): string | null {
-  if (request.electionId !== FISCALIZACION_ELECTION.electionId) {
+  const election = fiscalizacionElection();
+  if (!election.electionId) {
     return (
-      `this route only serves ${FISCALIZACION_ELECTION.electionLabel} ` +
-      `(${FISCALIZACION_ELECTION.electionId}); got ${request.electionId}`
+      "FISCALIZACION_ELECTION_ID is not configured, so no request can be shown " +
+      "to describe the race the coverage denominator and party mapping cover"
+    );
+  }
+  if (request.electionId !== election.electionId) {
+    return (
+      `this route only serves ${election.electionLabel} ` +
+      `(${election.electionId}); got ${request.electionId}`
     );
   }
 
@@ -147,8 +165,22 @@ export type FiscalizacionView =
       reason: string;
       /** The breakdown counted before this failure, carried through it. */
       excluded?: ExcludedByKind;
+      /** What the COMPARISON election's read dropped, counted before this failure. */
+      officialExcluded?: ExcludedByKind;
       /** A comparison that was requested and could not be built. */
       comparisonUnavailable?: string;
+      /** WHICH list ids failed to map, counted before this failure. */
+      unmapped?: { listId: string; rows: number; votes: number }[];
+      /** Why those rows cannot be summed, when they cannot. */
+      unsummable?: string | null;
+      /** How many rows the read returned — the real denominator. */
+      totalRows?: number;
+      /** Levels this app cannot order, counted before this failure. */
+      unrecognized?: { granularity: string; rows: number; votes: number }[];
+      /** Whether a curated mapping source was configured for the read. */
+      partyMappingConfigured?: boolean;
+      /** Rows carrying no list id at all, counted before the failure. */
+      withoutListId?: ExcludedByKind;
     }
   | {
       status: "ok";
@@ -163,6 +195,8 @@ export type FiscalizacionView =
        * three sibling routes carry it through every branch.
        */
       excluded: ExcludedByKind;
+      /** Whether a curated mapping source was configured for this read. */
+      partyMappingConfigured: boolean;
     };
 
 /**
@@ -208,7 +242,17 @@ export async function loadFiscalizacionView(
     };
   }
 
-  return { status: "ok", rows: response.rows, coverage, excluded: response.excluded };
+  // The coverage the RESPONSE carries, not the constant this function passed
+  // in. `queryFiscalizacion` types it as required, so there is no "came back
+  // without a denominator" state to guard — the compiler says so, which is
+  // stronger than a branch nothing could reach.
+  return {
+    status: "ok",
+    rows: response.rows,
+    coverage: response.coverage,
+    excluded: response.excluded,
+    partyMappingConfigured: response.partyMappingConfigured,
+  };
 }
 
 /** An official figure, narrowed so it cannot be handed to the wrong slot. */
@@ -263,11 +307,9 @@ export interface TopPartyResult {
   /** Whether two or more parties share the top position. */
   tied: boolean;
   /** Rows whose list id resolved to no curated party. */
-  unmappedRows: number;
   /** Votes on those rows. Reported, never silently excluded. */
-  unmappedVotes: number;
   /** Those votes broken down by the list id that failed to resolve. */
-  unmappedByListId: { listId: string; votes: number }[];
+  unmappedByListId: { listId: string; rows: number; votes: number }[];
 }
 
 /**
@@ -299,7 +341,9 @@ export function mixedSourceKindReason(rows: ResultRow[]): string | null {
  * `(mesa, list)` and nothing in the query path groups them, so ranking raw
  * rows ranked a single mesa's single list. One party can also appear under
  * several list ids in one file, which is why the aggregation keys on the
- * resolved name rather than on `listId`.
+ * CANONICAL PARTY ID rather than on `listId` — and not on the resolved name
+ * either: a respelling between elections merges nothing, which is what
+ * `test_a_party_respelled_between_elections_still_matches` exists for.
  */
 export function topParty(rows: ResultRow[]): TopPartyResult {
   // Refuses to RANK an inflated total -- but unmappability is independent of
@@ -311,7 +355,9 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
   // Keyed on the CANONICAL id, labelled by the display name. Keying on the
   // name merged nothing across a respelling and split one party in two within
   // a year if the curated file ever spelled it two ways.
-  const votesByParty = new Map<string, { votes: number; displayName: string }>();
+  // NOT `votesByParty`: that name belongs to the imported fold, and shadowing
+  // it here made the one identity boundary unreachable by name in this scope.
+  const totalsByParty = new Map<string, { votes: number; displayName: string }>();
   for (const row of rows) {
     // An unmapped row keeps its votes in the denominator, but it can never BE
     // the answer: naming a party we could not resolve is exactly the
@@ -321,14 +367,14 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     const id = row.canonicalPartyId;
     const name = row.partyName;
     if (!id || !name) continue;
-    const entry = votesByParty.get(id) ?? { votes: 0, displayName: name };
-    votesByParty.set(id, { votes: entry.votes + row.votes, displayName: entry.displayName });
+    const entry = totalsByParty.get(id) ?? { votes: 0, displayName: name };
+    totalsByParty.set(id, { votes: entry.votes + row.votes, displayName: entry.displayName });
   }
 
   let top: { id: string; displayName: string } | null = null;
   let topVotes = -1;
   let tied = false;
-  for (const [id, entry] of votesByParty) {
+  for (const [id, entry] of totalsByParty) {
     if (entry.votes > topVotes) {
       top = { id, displayName: entry.displayName };
       topVotes = entry.votes;
@@ -344,16 +390,9 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     top = null;
   }
 
-  const unmapped = rows.filter((row) => !row.partyName || !row.canonicalPartyId);
   // PER LIST ID, not one aggregate. One id covering 40 % of the votes and
   // forty ids covering 1 % each render identically as a total, and a large
   // plausible total is exactly how a destructive filter survives review.
-  const byListId = new Map<string, number>();
-  for (const row of unmapped) {
-    const key = row.listId ?? "(no list id)";
-    byListId.set(key, (byListId.get(key) ?? 0) + row.votes);
-  }
-
   return {
     canonicalPartyId: refusedReason ? null : (top?.id ?? null),
     partyName: refusedReason ? null : (top?.displayName ?? null),
@@ -363,21 +402,20 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     // arithmetic -- and reporting it told the operator a measured,
     // factual-sounding thing that is not true. The refusal is the cause.
     tied: refusedReason ? false : tied,
-    unmappedRows: unmapped.length,
-    unmappedVotes: unmapped.reduce((sum, row) => sum + row.votes, 0),
-    unmappedByListId: [...byListId.entries()]
-      .map(([listId, votes]) => ({ listId, votes }))
-      .sort((a, b) => b.votes - a.votes),
+    // THE exported fold, in BOTH units. This was a third local copy reporting
+    // votes only, so one list id at 400 votes across 1 row and across 200 rows
+    // rendered identically — the shape `ExcludedByKind` names in its own doc.
+    unmappedByListId: unmappedByListId(rows).entries,
   };
 }
 
 /**
- * One party's share of ALL votes in `rows`, or `null` when that party has no
- * rows at all.
+ * One party's share of ALL votes in `rows`, or `{ status: "unavailable" }`
+ * carrying the reason when no share can be computed.
  *
- * `null` rather than `0`: a party that did not stand in an election has no
- * share, and rendering 0 % beside a real figure reads as a collapse it never
- * suffered. Unmapped rows stay in the denominator -- they are votes that were
+ * `unavailable` rather than `0`: a party that did not stand in an election has
+ * no share, and rendering 0 % beside a real figure reads as a collapse it never
+ * suffered. Callers branch on `.status`; there is no `null` to check for. Unmapped rows stay in the denominator -- they are votes that were
  * cast, and excluding them would inflate every share.
  */
 export function partyShare(
@@ -438,6 +476,13 @@ export interface FiscalizacionRenderOptions {
   missingProvenance?: string[];
   /** The same, for the OFFICIAL figure — reported in its own section. */
   officialMissingProvenance?: string[];
+  /**
+   * What the COMPARISON election's read dropped, per kind.
+   *
+   * Its own note, never merged with the fiscalización read's: they are
+   * different queries over different rows, and one cannot describe the other.
+   */
+  officialExcluded?: ExcludedByKind;
 }
 
 /** The source-kind filter's breakdown, or nothing when it dropped nothing. */
@@ -448,6 +493,22 @@ function renderExcludedNote(excluded: ExcludedByKind | undefined): ReactNode {
     <p role="note">
       {summary} were excluded by the fiscalización-source filter and are not in
       any figure on this page.
+    </p>
+  );
+}
+
+/**
+ * The COMPARISON election's read tally — one renderer for all three branches.
+ *
+ * Three copies drifted: the leakage refusal never rendered it at all, so a
+ * drop this read counted vanished behind a refusal about a different one.
+ */
+function renderComparisonExcludedNote(excluded: ExcludedByKind | undefined): ReactNode {
+  const tally = describeExcluded(excluded ?? {});
+  if (tally === null) return null;
+  return (
+    <p role="note">
+      The comparison election&apos;s own read excluded {tally}.
     </p>
   );
 }
@@ -465,6 +526,7 @@ export function renderFiscalizacionView(
     officialSources = [],
     missingProvenance = [],
     officialMissingProvenance = [],
+    officialExcluded,
   }: FiscalizacionRenderOptions = {},
 ): ReactNode {
   // `read_failed` renders the same way but is a DIFFERENT state: a denied
@@ -474,12 +536,34 @@ export function renderFiscalizacionView(
       <main>
         <h1>Fiscalización (unofficial)</h1>
         <p role="alert">Refused: {view.reason}</p>
-      {/* No missing-provenance alert here, unlike the ok branch. Every path
-          that reaches a non-ok view has an EMPTY entry-id list — a refused or
-          failed read produced no rows and no comparison, so `fetchSourceRefs`
-          was never called. `municipal` and `compare` render theirs inside
-          refusals that follow a completed read; this one cannot. */}
+        {/* NO provenance alert on this branch, and no `render if present`
+            either: that made a branch no production input can reach. Every
+            non-ok path here is the year-read catch, the pinned-election
+            refusal, the out-of-scope refusal, or the `fetchSourceRefs` catch —
+            none has an entry-id list, because the read that would have produced
+            one refused or failed. Unlike the path-3 guards, there is no seam to
+            regress, so a test could only fabricate the state. */}
         {view.status === "read_failed" ? renderExcludedNote(view.excluded) : null}
+        {view.status === "read_failed" && view.unmapped ? (
+          <UnmappedListIds
+            entries={view.unmapped}
+            withoutListId={view.withoutListId}
+            totalRows={view.totalRows ?? 0}
+            unsummable={view.unsummable ?? null}
+            mappingConfigured={view.partyMappingConfigured ?? true}
+          />
+        ) : null}
+        {view.status === "read_failed" && view.unrecognized ? (
+          <UnorderableLevels entries={view.unrecognized} />
+        ) : null}
+        {/* From the VIEW on this branch: the `fetchSourceRefs` catch rebuilds a
+            `read_failed` after a comparison was already read, so its tally
+            exists here even though no entry-id list does. */}
+        {renderComparisonExcludedNote(
+          (view.status === "read_failed" ? view.officialExcluded : undefined) ??
+            officialExcluded,
+        )}
+
         {view.status === "read_failed" && view.comparisonUnavailable ? (
           <p role="note">No comparison figure: {view.comparisonUnavailable}</p>
         ) : null}
@@ -503,6 +587,13 @@ export function renderFiscalizacionView(
   // repository filters, but this function accepts any `FiscalizacionView` a
   // caller hands it and renders every row under "Unofficial source" while
   // feeding it into the share. Blocking one path is not blocking the others.
+  // AGGREGATED per party. `result_row` holds one row per (mesa, list), so
+  // rendering rows verbatim printed the same party several times with
+  // different numbers and no mesa label to tell them apart -- each read as
+  // that party's figure. The share calculation was fixed to aggregate; this
+  // list was not.
+  const mixedLevels = mixedGranularityReason(rows);
+  const unorderable = unrecognizedLevels(rows);
   const official = rows.filter((row) => row.sourceKind !== "fiscalizacion");
   // PER KIND. Every other exclusion in this file breaks down; a bare total is
   // how a destructive filter survives review.
@@ -540,6 +631,36 @@ export function renderFiscalizacionView(
           <p role="note">No comparison figure: {comparisonUnavailable}</p>
         ) : null}
         {excludedNote}
+        {/* The third branch. A regression in the repository filter selects this
+            path, and the comparison read's tally was counted before it — the
+            same "drop hidden behind a refusal about something else" this file
+            refuses everywhere else. */}
+        {renderComparisonExcludedNote(officialExcluded)}
+        {/* WHICH list ids failed to map does not depend on source kinds. This
+            branch returned before `topParty` ran, so they were never named —
+            the third divergent copy of one decision the siblings carry. */}
+        <UnmappedListIds
+          entries={unmappedByListId(rows).entries}
+          withoutListId={unmappedByListId(rows).withoutListId}
+          totalRows={rows.length}
+          unsummable={mixedLevels}
+          mappingConfigured={view.partyMappingConfigured}
+        />
+        {/* And the levels this page cannot order — rows it excludes from every
+            figure, which is a fact about a different axis than source kind. */}
+        <UnorderableLevels entries={unorderable} />
+        {officialMissingProvenance.length > 0 ? (
+          // Its OWN alert, independent of the badge. The badge renders only when
+          // a comparison AND an ok share exist, so an untraceable OFFICIAL entry
+          // was counted and then read by nothing whenever the share was
+          // unavailable — or whenever a refusal returned before the badge.
+          <p role="alert">
+            {officialMissingProvenance.length} archive entry/entries backing the
+            official comparison figure have no source record (
+            {officialMissingProvenance.join(", ")}); that figure cannot be traced
+            and must not be quoted.
+          </p>
+        ) : null}
         {missingProvenance.length > 0 ? (
           <p role="alert">
             {missingProvenance.length} archive entry/entries backing these
@@ -551,17 +672,10 @@ export function renderFiscalizacionView(
     );
   }
 
-  // AGGREGATED per party. `result_row` holds one row per (mesa, list), so
-  // rendering rows verbatim printed the same party several times with
-  // different numbers and no mesa label to tell them apart -- each read as
-  // that party's figure. The share calculation was fixed to aggregate; this
-  // list was not.
-  const mixedLevels = mixedGranularityReason(rows);
   // The two boundary functions directly, like `drilldown` and `municipal`. A
   // page-local wrapper gave the same question a second shape, so a change to
   // what `readGranularity` reports would land in one and not the other.
   const levels = readGranularity(rows);
-  const unorderable = unrecognizedLevels(rows);
   const partyTotals = mixedLevels !== null ? [] : votesByParty(rows);
 
   // Computed for the party the comparison names, not for whichever list
@@ -586,6 +700,21 @@ export function renderFiscalizacionView(
         </p>
       ) : null}
       {excludedNote}
+      {/* Its OWN note. Merging it into the fiscalización read's would state one
+          query's drops as another's. */}
+      {renderComparisonExcludedNote(officialExcluded)}
+      {officialMissingProvenance.length > 0 ? (
+        // Its OWN alert, independent of the badge. The badge renders only when
+        // a comparison AND an ok share exist, so an untraceable OFFICIAL entry
+        // was counted and then read by nothing whenever the share was
+        // unavailable — or whenever a refusal returned before the badge.
+        <p role="alert">
+          {officialMissingProvenance.length} archive entry/entries backing the
+          official comparison figure have no source record (
+          {officialMissingProvenance.join(", ")}); that figure cannot be traced
+          and must not be quoted.
+        </p>
+      ) : null}
       {rows.length === 0 ? null : (
         // A denominator describes a FIGURE. Rendered in the empty branch too,
         // "93 of 153 mesas" sat beside "no rows found" — a coverage claim
@@ -611,23 +740,7 @@ export function renderFiscalizacionView(
             // computation names one of the mixed levels as if it were the set's.
             <GranularityBadge {...jurisdictionTotalLevel(levels.granularity)} />
           )}
-          {unorderable.length > 0 ? (
-            <>
-              <p role="alert">
-                {unorderable.reduce((sum, entry) => sum + entry.rows, 0)}{" "}
-                row(s) carry a granularity this page cannot order, so their
-                containment relationship is unknown and no level is shown for
-                them at all. By level:
-              </p>
-              <ul>
-                {unorderable.map((entry) => (
-                  <li key={entry.granularity}>
-                    {entry.granularity}: {entry.rows} rows, {entry.votes} votes
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
+          <UnorderableLevels entries={unorderable} />
           {mixedLevels ? (
             <p role="alert">No per-party figures: {mixedLevels}.</p>
           ) : (
@@ -642,23 +755,13 @@ export function renderFiscalizacionView(
           <ProvenanceLink sources={sources} />
         </>
       )}
-      {unmapped.unmappedRows > 0 ? (
-        <>
-          <p role="note">
-            {unmapped.unmappedRows} of {rows.length} rows ({unmapped.unmappedVotes}{" "}
-            votes) resolved to no curated party and are excluded from every
-            named-party figure below, though they remain in every denominator.
-            By list id:
-          </p>
-          <ul>
-            {unmapped.unmappedByListId.map((entry) => (
-              <li key={entry.listId}>
-                {entry.listId}: {entry.votes} votes
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+      <UnmappedListIds
+        entries={unmapped.unmappedByListId}
+        withoutListId={unmappedByListId(rows).withoutListId}
+        totalRows={rows.length}
+        unsummable={mixedLevels}
+        mappingConfigured={view.partyMappingConfigured}
+      />
       {unmapped.tied ? (
         <p role="note">
           Two or more parties are tied at the top, so no party was selected for
@@ -668,8 +771,8 @@ export function renderFiscalizacionView(
       {comparison && fiscalizacionShare?.status === "ok" ? (
         <JuxtapositionBadge
           fiscalizacion={{
-            electionId: FISCALIZACION_ELECTION.electionId,
-            electionLabel: FISCALIZACION_ELECTION.electionLabel,
+            electionId: fiscalizacionElection().electionId ?? "(unconfigured)",
+            electionLabel: fiscalizacionElection().electionLabel,
             sourceKind: "fiscalizacion",
             // The SAME party the official side reports, so the two numbers
             // describe one party across two elections.
@@ -760,6 +863,16 @@ export type ComparisonRequestResult =
  */
 export function comparisonFromParams(
   params: Record<string, string | string[] | undefined>,
+  /**
+   * The year the comparison election was ACTUALLY held, from its `election`
+   * row — `null` when no row carries that id.
+   *
+   * Passed in rather than parsed out of the id: `election.id` is a uuid and
+   * `election.year` is a column, so reading the year off the id string refused
+   * every real request. The cross-check this enables is the same one, against
+   * the source that has the answer.
+   */
+  declaredYear: number | null,
 ): ComparisonRequestResult {
   const electionId = stringParam(params, "compareElectionId");
   const electionLabel = stringParam(params, "compareElectionLabel");
@@ -874,22 +987,23 @@ export function comparisonFromParams(
   // they refuse, and accepts `2023-2025-comparativa` by silently picking the
   // first of two years — on the axis that selects the party mapping, which is
   // what stops `135`/`20135`/`110` reading as three parties.
-  const declaredYear = electionYear(electionId);
   if (declaredYear === null) {
     return {
       status: "refused",
       reason:
-        `the election id ${electionId} does not lead with a single year, so ` +
-        `compareYear ${year} cannot be verified against it`,
+        `no election row carries the id ${electionId}, so compareYear ${year} ` +
+        `cannot be verified against it`,
     };
   }
   if (declaredYear !== year) {
     return {
       status: "refused",
-      reason: `compareYear ${year} contradicts the election id ${electionId}`,
+      reason:
+        `compareYear ${year} contradicts election ${electionId}, which was ` +
+        `held in ${declaredYear}`,
     };
   }
-  if (electionId === FISCALIZACION_ELECTION.electionId) {
+  if (electionId === fiscalizacionElection().electionId) {
     // Every other axis of a comparison is pinned to match; the ELECTION is the
     // one axis the badge exists to vary. Without this, the same race renders
     // beside itself under "cross-election juxtaposition" -- one election drawn
@@ -898,7 +1012,7 @@ export function comparisonFromParams(
       status: "refused",
       reason:
         `a comparison must be a DIFFERENT election from ` +
-        `${FISCALIZACION_ELECTION.electionId}; got the same one`,
+        `${fiscalizacionElection().electionId}; got the same one`,
     };
   }
   if (category !== FISCALIZACION_PARTY_CONTEXT.category) {
@@ -950,8 +1064,8 @@ export async function loadOfficialComparison(
     partyName: string;
   },
 ): Promise<
-  | { status: "ok"; figure: OfficialFigure }
-  | { status: "unavailable"; reason: string }
+  | { status: "ok"; figure: OfficialFigure; excluded: ExcludedByKind }
+  | { status: "unavailable"; reason: string; excluded: ExcludedByKind }
 > {
   const response = await repository.queryOfficial(
     {
@@ -972,6 +1086,9 @@ export async function loadOfficialComparison(
     return {
       status: "unavailable",
       reason: `no official rows for ${request.electionId} in this jurisdiction and category`,
+      // Zero rows SURVIVING the filter is not zero rows read: the tally says
+      // whether the filter is why.
+      excluded: response.excluded,
     };
   }
 
@@ -989,6 +1106,7 @@ export async function loadOfficialComparison(
     return {
       status: "unavailable",
       reason: `the comparison query returned non-official rows (${foreign.join(", ")})`,
+      excluded: response.excluded,
     };
   }
 
@@ -999,11 +1117,19 @@ export async function loadOfficialComparison(
     return {
       status: "unavailable",
       reason: `${request.electionLabel}: ${share.reason}`,
+      // THIS read's tally, on the refusal too: a drop counted before a refusal
+      // about something else is the silent drop with extra steps.
+      excluded: response.excluded,
     };
   }
 
   return {
     status: "ok",
+    // A THIRD independent read on this route. Its own `source_kind` filter
+    // removes rows — including the `unknown` bucket both filters drop — and
+    // that count belonged to no page: `view.excluded` describes the
+    // fiscalización read and cannot stand in for this one.
+    excluded: response.excluded,
     figure: {
       electionId: request.electionId,
       electionLabel: request.electionLabel,
@@ -1055,13 +1181,59 @@ export default async function FiscalizacionPage({
     );
   }
 
+  // The comparison election's year, from ITS OWN row. Resolved once here and
+  // handed to both `comparisonFromParams` call sites, so the two cannot answer
+  // the same question differently.
+  const compareElectionId = stringParam(params, "compareElectionId");
+  const supabaseForYear = await createSupabaseServerClient();
+  let compareYear: YearLookup | null = null;
+  let pinnedYear: YearLookup | null = null;
+  try {
+    const pinnedElectionId = fiscalizacionElection().electionId;
+    [pinnedYear, compareYear] = await Promise.all([
+      pinnedElectionId ? fetchElectionYear(supabaseForYear, pinnedElectionId) : null,
+      compareElectionId ? fetchElectionYear(supabaseForYear, compareElectionId) : null,
+    ]);
+  } catch (error) {
+    return renderFiscalizacionView({
+      status: "read_failed",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  // The PINNED side, checked against the same source the comparison side is.
+  // `FISCALIZACION_PARTY_CONTEXT.year` is the literal 2025 while the election
+  // it describes became opaque configuration in this same change — so pointing
+  // `FISCALIZACION_ELECTION_ID` at a 2023 election resolved every list id
+  // through the 2025 mapping (LLA is `20135` in 2023 and `110` in 2025) under
+  // a coverage denominator naming a different race. The comparison side already
+  // refuses this; the side that selects the mapping for every figure did not.
+  const pinnedElectionId = fiscalizacionElection().electionId;
+  if (
+    pinnedElectionId &&
+    (pinnedYear?.status !== "ok" || pinnedYear.year !== FISCALIZACION_PARTY_CONTEXT.year)
+  ) {
+    return renderFiscalizacionView({
+      status: "refused",
+      reason:
+        `FISCALIZACION_ELECTION_ID points at ${pinnedElectionId}, ` +
+        (pinnedYear?.status === "no_row"
+          ? "which no election row carries"
+          : pinnedYear?.status === "unreadable_year"
+            ? "whose election row carries no usable year"
+            : `which was held in ${pinnedYear?.year}`) +
+        `, but this route's party mapping and coverage denominator were ` +
+        `verified for ${FISCALIZACION_PARTY_CONTEXT.year}`,
+    });
+  }
+
   const outOfScope = outOfScopeReason({ electionId, jurisdictionId, categoryId });
   if (outOfScope) {
     // Refused, not relabelled. See `outOfScopeReason`. A comparison requested
     // in the same URL is still reported: returning here without it left the
     // operator unable to tell "no comparison asked for" from "asked for and
     // never attempted".
-    const requested = comparisonFromParams(params);
+    const requested = comparisonFromParams(params, compareYear?.status === "ok" ? compareYear.year : null);
     return renderFiscalizacionView(
       { status: "refused", reason: outOfScope },
       {
@@ -1084,13 +1256,17 @@ export default async function FiscalizacionPage({
     categoryId,
   });
 
-  const comparisonRequest = comparisonFromParams(params);
+  const comparisonRequest = comparisonFromParams(
+    params,
+    compareYear?.status === "ok" ? compareYear.year : null,
+  );
   // Which party to compare comes from THIS election's rows, resolved through
   // its own crosswalk. Absent it, there is nothing to match and no badge.
   const top = view.status === "ok" ? topParty(view.rows) : null;
 
   let comparison: OfficialFigure | undefined;
   let comparisonUnavailable: string | undefined;
+  let officialExcluded: ExcludedByKind | undefined;
   if (comparisonRequest.status === "refused") {
     comparisonUnavailable = comparisonRequest.reason;
   } else if (comparisonRequest.status === "ok") {
@@ -1107,11 +1283,10 @@ export default async function FiscalizacionPage({
         "no fiscalización rows were found for this jurisdiction, category and " +
         "election, so there is no party to compare";
     } else if (top?.tied) {
-      // The TIE, named as such. Reporting "no row resolved to a curated
-      // party" for a tie states something false: every row may have resolved.
-      comparisonUnavailable =
-        "two or more parties are tied at the top, so no single party could be " +
-        "selected to compare";
+      // NO second statement. `renderFiscalizacionView` already emits the tie
+      // note next to the figure it is about, and both firing printed one fact
+      // as two — the rule `drilldown` pins with its own `not.toContain`.
+      // The tie still stops the comparison; it is simply stated once.
     } else if (top?.refusedReason) {
       // The actual cause, not a catch-all. Rows can map perfectly and still
       // yield no party when their levels cannot be summed.
@@ -1123,7 +1298,11 @@ export default async function FiscalizacionPage({
     } else {
       // The comparison read THROWS on a denial like any other; without this it
       // escaped to the framework instead of the reason this page renders.
-      let result;
+      // TYPED, not an evolving `any`. The catch branch sets no `excluded`, and
+      // reading it off an implicit `any` typechecked by accident: the answer
+      // (`undefined` — a throw counted nothing) was right for a reason the
+      // compiler was not enforcing.
+      let result: Awaited<ReturnType<typeof loadOfficialComparison>>;
       try {
         result = await loadOfficialComparison(repository, {
           // The comparison's OWN ids, never this election's.
@@ -1133,10 +1312,16 @@ export default async function FiscalizacionPage({
         });
       } catch (error) {
         result = {
-          status: "unavailable" as const,
+          status: "unavailable",
           reason: error instanceof Error ? error.message : String(error),
+          // A throw counted nothing, and saying so is the point: `{}` is a
+          // tally reporting no drops, not an absent tally.
+          excluded: {},
         };
       }
+      // The tally travels on BOTH outcomes: a drop counted by this read must
+      // not vanish because the comparison it fed could not be built.
+      officialExcluded = result.excluded;
       if (result.status === "ok") {
         comparison = result.figure;
       } else {
@@ -1176,7 +1361,23 @@ export default async function FiscalizacionPage({
     return renderFiscalizacionView({
       status: "read_failed",
       reason: error instanceof Error ? error.message : String(error),
-      ...(view.status === "ok" ? { excluded: view.excluded } : {}),
+      ...(view.status === "ok"
+        ? {
+            excluded: view.excluded,
+            // Rows WERE read and these were already counted. Dropping them
+            // behind a refusal about a THIRD read is the shape this file
+            // refuses everywhere else; both siblings carry theirs.
+            unmapped: unmappedByListId(view.rows).entries,
+            unsummable: mixedGranularityReason(view.rows),
+            totalRows: view.rows.length,
+            unrecognized: unrecognizedLevels(view.rows),
+            partyMappingConfigured: view.partyMappingConfigured,
+            withoutListId: unmappedByListId(view.rows).withoutListId,
+          }
+        : {}),
+      // The comparison read's tally too. It was counted before this failure —
+      // a different read's drop dropped again, behind a refusal about a third.
+      ...(officialExcluded ? { officialExcluded } : {}),
       ...(comparisonUnavailable ? { comparisonUnavailable } : {}),
     });
   }
@@ -1207,5 +1408,6 @@ export default async function FiscalizacionPage({
     officialSources,
     missingProvenance,
     officialMissingProvenance,
+    ...(officialExcluded ? { officialExcluded } : {}),
   });
 }
