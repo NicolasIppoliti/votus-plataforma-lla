@@ -31,6 +31,8 @@ export interface ResultRow {
   votes: number;
   sourceKind: SourceKind;
   granularity: Granularity;
+  /** Requested level, or null/undefined when historical request intent is unknown. */
+  requestedGranularity?: Granularity | null;
   archiveEntryId: string;
   /**
    * The curated `party_mapping` -> `party_canonical` display name for
@@ -511,7 +513,7 @@ export class SupabaseRowSource implements RowSource {
     for (;;) {
       let request = this.client
         .from("result_row")
-        .select("id, jurisdiction_id, category_id, list_id, votes, source_kind, granularity, archive_entry_id")
+        .select("id, jurisdiction_id, category_id, list_id, votes, source_kind, granularity, requested_granularity, archive_entry_id")
         .eq("election_id", query.electionId)
         .eq("jurisdiction_id", query.jurisdictionId)
         .eq("category_id", query.categoryId)
@@ -581,6 +583,16 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
       `ResultsRepository: result_row.granularity is not a string (${JSON.stringify(granularity)})`,
     );
   }
+  const requestedGranularity = row["requested_granularity"];
+  if (
+    requestedGranularity !== null &&
+    requestedGranularity !== undefined &&
+    typeof requestedGranularity !== "string"
+  ) {
+    throw new Error(
+      `ResultsRepository: result_row.requested_granularity is not a string or null (${JSON.stringify(requestedGranularity)})`,
+    );
+  }
 
   const jurisdictionId = row["jurisdiction_id"];
   const categoryId = row["category_id"];
@@ -614,6 +626,7 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
     votes: numericVotes,
     sourceKind: sourceKind as SourceKind,
     granularity: granularity as Granularity,
+    requestedGranularity: (requestedGranularity ?? null) as Granularity | null,
     archiveEntryId,
     // Resolved separately by `ResultsRepository.resolvePartyNames` —
     // never fabricated here.

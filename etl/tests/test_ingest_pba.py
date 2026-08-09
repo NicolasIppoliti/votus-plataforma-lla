@@ -190,6 +190,7 @@ def test_mesa_requested_but_only_distrito_available_marks_degradation() -> None:
         # Degradation is a first-class attribute of the row itself, never
         # log-only (task 5.6 / electoral-ingestion "Granularity degradation
         # is explicit, never silent").
+        assert row.requested_granularity == "mesa"
         assert row.degraded_from == "mesa"
         assert row.granularity == "distrito"
 
@@ -203,6 +204,7 @@ def test_no_degradation_flag_when_requested_granularity_matches_actual() -> None
 
     assert rows
     for row in rows:
+        assert row.requested_granularity == "distrito"
         assert row.degraded_from is None
 
 
@@ -550,6 +552,15 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
                 (archive_entry_id,),
             )
             lineages = cur.fetchall()
+            cur.execute(
+                """
+                select distinct granularity, requested_granularity
+                  from result_row
+                 where archive_entry_id = %s
+                """,
+                (archive_entry_id,),
+            )
+            granularities = cur.fetchall()
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
@@ -560,6 +571,10 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
         "the write must carry the NATIONAL pair: `027` alone is PBA's partido "
         "code, and normalizing it as a national distrito yields `27`, a code in "
         f"neither scheme; got {lineages}"
+    )
+    assert granularities == [("seccion", "seccion")], (
+        "a fulfilled PBA distrito request becomes the same normalized seccion "
+        "level as the translated result; it must not render as degraded"
     )
 
 
@@ -591,6 +606,10 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
     assert all(row.result.granularity == "seccion" for row in result.resolved), (
         "a PBA partido total is a seccion-level figure once translated"
     )
+    assert all(row.requested_granularity == "seccion" for row in result.resolved), (
+        "a fulfilled source-native distrito request must translate with the result"
+    )
+    assert all(row.degraded_from is None for row in result.resolved)
     # Everything else about each row is preserved verbatim.
     assert {row.list_id for row in result.resolved} == {row.list_id for row in rows}
     assert {row.votes for row in result.resolved} == {row.votes for row in rows}
@@ -763,6 +782,16 @@ def test_the_write_path_reports_the_granularity_it_could_not_honour(capsys) -> N
             crosswalk=_CROSSWALK,
             archive_entry_id=archive_entry_id,
         )
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select distinct granularity, requested_granularity
+                  from result_row
+                 where archive_entry_id = %s
+                """,
+                (archive_entry_id,),
+            )
+            granularities = cur.fetchall()
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
@@ -774,6 +803,10 @@ def test_the_write_path_reports_the_granularity_it_could_not_honour(capsys) -> N
     assert "source-native PBA distrito total" in report
     assert "stored as national seccion 02/027" in report
     assert "none was fabricated" in report
+    assert granularities == [("seccion", "mesa")], (
+        "the database must retain the requested mesa level beside the actual "
+        "normalized seccion level so the UI can disclose the degradation"
+    )
 
 
 def test_an_unreadable_vote_cell_is_counted_apart_from_an_absent_one(capsys) -> None:

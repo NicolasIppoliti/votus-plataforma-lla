@@ -201,8 +201,8 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
     except (psycopg.Error, RuntimeError) as exc:
         pytest.skip(f"cannot create safely marked sibling migration database: {exc}")
     try:
-        available_numbers = _available_migration_numbers(maximum=18)
-        assert available_numbers == list(range(1, 19))
+        available_numbers = _available_migration_numbers(maximum=19)
+        assert available_numbers == list(range(1, 20))
 
         for number in range(1, 12):
             _apply_migration(database_dsn, number)
@@ -277,6 +277,7 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             result_count_before_0018,
         ) = _seed_pre_0018_fiscalizacion_case(database_dsn)
         _apply_migration(database_dsn, 18)
+        _apply_migration(database_dsn, 19)
 
         with psycopg.connect(database_dsn) as connection:
             repaired_pair = connection.execute(
@@ -365,6 +366,9 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
                   and constraint_row.contype = 'u'
                 """
             ).fetchone()
+            historical_requested_granularity = connection.execute(
+                "select distinct requested_granularity from result_row"
+            ).fetchall()
 
         assert repaired_pair == ("02", "027")
         assert len(alias_rows) == 1
@@ -384,5 +388,6 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
         assert constraint_columns == (
             ["distrito_code", "seccion_code", "circuito_code", "mesa_code"],
         )
+        assert historical_requested_granularity == [(None,)]
     finally:
         database.close()

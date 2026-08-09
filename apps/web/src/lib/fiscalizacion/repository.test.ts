@@ -469,13 +469,21 @@ describe("a lookup distinguishes an absent row from an unusable value", () => {
  * order the real path does not have, and would stay green against the
  * repeat-and-skip defect offset pagination has.
  */
-function fakeKeysetClient(rows: Record<string, unknown>[], maxRows = 1000) {
+function fakeKeysetClient(
+  rows: Record<string, unknown>[],
+  maxRows = 1000,
+  onSelect?: (columns: string) => void,
+) {
   return {
     from() {
       let after: string | null = null;
       let limit = maxRows;
       const chain: Record<string, unknown> = {};
-      for (const method of ["select", "eq", "in"]) chain[method] = () => chain;
+      chain["select"] = (columns: string) => {
+        onSelect?.(columns);
+        return chain;
+      };
+      for (const method of ["eq", "in"]) chain[method] = () => chain;
       chain["order"] = () => chain;
       chain["limit"] = (n: number) => {
         limit = Math.min(n, maxRows);
@@ -508,6 +516,7 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     votes: 1,
     source_kind: "official",
     granularity: "mesa",
+    requested_granularity: "mesa",
     archive_entry_id: "a1",
   });
 
@@ -527,6 +536,23 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
 
     expect(read).toHaveLength(2500);
     expect(read.reduce((sum, r) => sum + r.votes, 0)).toBe(2500);
+    expect(read[0]?.requestedGranularity).toBe("mesa");
+  });
+
+  it("test_requested_granularity_is_selected_and_historical_null_stays_unknown", async () => {
+    const selections: string[] = [];
+    const source = new SupabaseRowSource(
+      fakeKeysetClient(
+        [{ ...row(1), requested_granularity: null }],
+        1000,
+        (columns) => selections.push(columns),
+      ) as never,
+    );
+
+    const read = await source.fetchRows(BASE_QUERY);
+
+    expect(selections[0]).toContain("requested_granularity");
+    expect(read[0]?.requestedGranularity).toBeNull();
   });
 
   it("test_a_server_cap_below_the_page_size_does_not_end_the_read", async () => {

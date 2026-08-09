@@ -224,6 +224,7 @@ class ResultRowRecord:
     source_kind: str
     archive_entry_id: str
     source_row_index: int
+    requested_granularity: str | None = None
     # Phase 16a: `NATIVOS` | `EXTRANJEROS` | `None` (source column absent or
     # row not at mesa granularity) -- see migration 0011.
     mesa_tipo: str | None = None
@@ -686,9 +687,10 @@ def load_result_rows(
                 """
                 insert into result_row (
                     election_id, jurisdiction_id, category_id, granularity,
+                    requested_granularity,
                     list_id, votes, source_kind,
                     archive_entry_id, source_row_index, mesa_tipo
-                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -696,6 +698,7 @@ def load_result_rows(
                         record.jurisdiction_id,
                         record.category_id,
                         record.granularity,
+                        record.requested_granularity,
                         record.list_id,
                         record.votes,
                         record.source_kind,

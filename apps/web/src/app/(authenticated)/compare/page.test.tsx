@@ -619,6 +619,8 @@ describe("compare page — a mixed pair discloses BOTH sides", () => {
     // partido detail at all.
     expect(markup).toContain("summed from mesa");
     expect(markup).toContain("degraded from distrito");
+    expect(markup).toContain("source published distrito totals");
+    expect(markup).not.toContain("distrito detail was requested");
   });
 });
 

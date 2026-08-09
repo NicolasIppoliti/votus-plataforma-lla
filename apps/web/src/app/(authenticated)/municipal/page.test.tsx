@@ -49,8 +49,9 @@ const MUNICIPAL_ROWS: ResultRow[] = [
     listId: "2206",
     votes: 4200,
     sourceKind: "official",
-    // The PBA municipal source publishes DISTRITO totals, never mesa.
-    granularity: "distrito",
+    // PBA's partido total is normalized to national seccion by the crosswalk.
+    granularity: "seccion",
+    requestedGranularity: "mesa",
     archiveEntryId: "pba/2025-municipal-coronel-rosales",
   },
 ];
@@ -90,12 +91,27 @@ describe("municipal page — renderMunicipalView", () => {
     // covers one partido however the source labelled its rows — announcing the
     // province is the 32.291-vote misattribution rule 8 records.
     expect(html).toContain('granularity: seccion');
-    expect(html).not.toContain('granularity: mesa');
-    expect(html).not.toContain('granularity: distrito');
-    // provenance-display spec: a degraded-granularity figure MUST visibly note
-    // it. The source published distrito, so what is missing is everything
-    // below the partido — named by the level the rows actually carried.
-    expect(html.toLowerCase()).toContain("degraded from distrito");
+    expect(html).not.toContain('aria-label="granularity: mesa"');
+    expect(html).not.toContain('aria-label="granularity: distrito"');
+    // provenance-display spec: name what the caller requested and the source
+    // could not provide, not merely the coarser level the row carries.
+    expect(html.toLowerCase()).toContain("requested granularity: mesa");
+    expect(html.toLowerCase()).toContain("actual granularity: seccion");
+  });
+
+  it("test_exact_and_historical_unknown_requests_do_not_invent_degradation", () => {
+    for (const requestedGranularity of ["seccion", null] as const) {
+      const html = renderToStaticMarkup(
+        renderMunicipalView({
+          status: "ok",
+          rows: [{ ...MUNICIPAL_ROWS[0]!, requestedGranularity }],
+          excluded: {},
+          partyMappingConfigured: true,
+        }),
+      );
+
+      expect(html.toLowerCase()).not.toContain("degraded from");
+    }
   });
 });
 

@@ -343,16 +343,23 @@ class PbaRow:
 
     Wraps `jurisdiction.ResultRow` the same way `ingest.national.NationalRow`
     does, adding this ingestion path's own fields: the D8
-    `(archive_entry_id, natural key)` idempotency pair, and `degraded_from`
-    — the requested granularity when it differs from what the source
-    actually provides. `degraded_from` is `None` when no degradation
-    occurred, never a log-only side note (task 5.6).
+    `(archive_entry_id, natural key)` idempotency pair, and the requested
+    granularity. The request is retained even when fulfilled so persisted
+    `NULL` can continue to mean "historical request unknown".
     """
 
     result: ResultRow
     archive_entry_id: str
     source_row_index: int
-    degraded_from: str | None
+    requested_granularity: str
+
+    @property
+    def degraded_from(self) -> str | None:
+        return (
+            self.requested_granularity
+            if self.requested_granularity != self.result.granularity
+            else None
+        )
 
     @property
     def granularity(self) -> str:
@@ -448,8 +455,6 @@ def ingest_pba(
             f"{', '.join(recognized_categories) if recognized_categories else '(none)'}"
         )
 
-    degraded_from = requested_granularity if requested_granularity != GRANULARITY_ACTUAL else None
-
     rows: list[PbaRow] = []
     # Rule 3: every drop below is counted PER REASON and reported. All three
     # were silent, and they are not equivalent -- a summary row is expected,
@@ -499,7 +504,7 @@ def ingest_pba(
                     result=result,
                     archive_entry_id=archive_entry_id,
                     source_row_index=row_index,
-                    degraded_from=degraded_from,
+                    requested_granularity=requested_granularity,
                 )
             )
 
@@ -601,7 +606,18 @@ def resolve_pba_jurisdictions(
             list_id=row.result.list_id,
             votes=row.result.votes,
         )
-        resolved.append(replace(row, result=translated_result))
+        translated_request = (
+            translated_result.granularity
+            if row.requested_granularity == row.result.granularity
+            else row.requested_granularity
+        )
+        resolved.append(
+            replace(
+                row,
+                result=translated_result,
+                requested_granularity=translated_request,
+            )
+        )
 
     return PbaJurisdictionResolutionResult(resolved=tuple(resolved), quarantined=tuple(quarantined))
 
@@ -650,18 +666,10 @@ def load_pba_rows(
         )
     rows = list(resolution.resolved)
 
-    # THE DEGRADATION, REPORTED. `ingest_pba` computes `degraded_from` and
-    # `PbaRow` carries it as a first-class field, and this function read it
-    # nowhere -- so on the only production path (`ingest_source` calls
-    # `ingest_pba` with its default `requested_granularity="mesa"`) every
-    # single row was degraded and every single one said so to nobody.
-    #
-    # It is REPORTED rather than stored, deliberately. `result_row.granularity`
-    # already records what the figure IS (`distrito`/`seccion`), so no reader
-    # can mistake it for a mesa-level number. `degraded_from` records what the
-    # CALLER asked for and did not get -- a fact about this run's request, not
-    # about the row -- and a request's intent does not belong in a results
-    # table.
+    # THE DEGRADATION, REPORTED AND STORED. `result_row.granularity` records
+    # what the normalized figure IS; `requested_granularity` records what this
+    # archived projection was asked to provide. Both are needed downstream to
+    # disclose a shortfall without reconstructing intent for historical rows.
     degraded_rows = [row for row in rows if row.degraded_from]
     degraded = {row.degraded_from for row in degraded_rows if row.degraded_from is not None}
     if degraded:
@@ -714,6 +722,7 @@ def load_pba_rows(
                 jurisdiction_id=jurisdiction_id,
                 category_id=category_id,
                 granularity=row.granularity,
+                requested_granularity=row.requested_granularity,
                 list_id=row.list_id,
                 votes=row.votes,
                 # HARDCODED, and no override parameter. It was
