@@ -295,6 +295,64 @@ def test_fetch_rejects_an_unregistered_source_name(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("year", "round_", "expected", "received"),
+    [
+        (2025, "generales", "2023", "2025"),
+        (2023, "legislativas", "generales", "legislativas"),
+    ],
+)
+def test_ingest_refuses_source_election_mismatch_before_archive_or_db_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    year: int,
+    round_: str,
+    expected: str,
+    received: str,
+) -> None:
+    from etl.__main__ import SourceElectionValidationError
+
+    sources = {
+        "national": [
+            {
+                **FAKE_SOURCES["national"][0],
+                "election_year": 2023,
+                "election_round": "generales",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps([{"id": "national/fake-test", "status": "ok"}]), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "etl.__main__.read_archived_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("election mismatch must fail before archive byte access")
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.psycopg.connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("election mismatch must fail before database access")
+        ),
+    )
+
+    with pytest.raises(SourceElectionValidationError) as excinfo:
+        ingest_source(
+            "national/fake-test",
+            database_url="postgresql://must-not-connect/unused",
+            year=year,
+            round_=round_,
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+        )
+
+    message = str(excinfo.value)
+    assert "expected" in message and expected in message
+    assert "received" in message and received in message
+
 def test_pba_pdf_reference_is_not_ingestible_before_archive_parser_or_database_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -498,6 +556,8 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
                 "source": "example.test",
                 "source_url": "https://example.test/cli-test.csv",
                 "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "CLI integration fixture",
                 "filename": "cli-test.csv",
             }
@@ -529,11 +589,11 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
         assert inserted == 2
 
         with conn.cursor() as cur:
-            cur.execute(
-                "select count(*) from result_row where archive_entry_id = %s", (source_id,)
+            cur.execute("select count(*) from result_row where archive_entry_id = %s", (source_id,))
+            count_row = cur.fetchone()
+            assert count_row == (2,), (
+                f"ingest must persist exactly two result rows; got {count_row!r}"
             )
-            (count,) = cur.fetchone()
-        assert count == 2
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
@@ -570,6 +630,8 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
                 "source": "example.test",
                 "source_url": "https://example.test/cli-zip-test.zip",
                 "mime": "application/zip",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "CLI ZIP-extraction fixture",
                 "filename": "cli-zip-test.zip",
             }
@@ -601,11 +663,11 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
         assert inserted == 2
 
         with conn.cursor() as cur:
-            cur.execute(
-                "select count(*) from result_row where archive_entry_id = %s", (source_id,)
+            cur.execute("select count(*) from result_row where archive_entry_id = %s", (source_id,))
+            count_row = cur.fetchone()
+            assert count_row == (2,), (
+                f"ZIP ingestion must persist exactly two result rows; got {count_row!r}"
             )
-            (count,) = cur.fetchone()
-        assert count == 2
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
@@ -618,9 +680,7 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
 # ---------------------------------------------------------------------------
 
 
-FISCALIZACION_HEADER = (
-    "Escuela,Mesa," + ",".join(FISCALIZACION_VOTE_COLUMNS) + "\n"
-)
+FISCALIZACION_HEADER = "Escuela,Mesa," + ",".join(FISCALIZACION_VOTE_COLUMNS) + "\n"
 
 
 def _fiscalizacion_csv(rows: list[str]) -> str:
@@ -653,6 +713,8 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
                 "source": "internal",
                 "source_url": None,
                 "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "CLI review-item fixture",
                 "filename": filename,
                 "upload": "never",
@@ -663,9 +725,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     local_root = tmp_path / "archive"
     # Written straight to the local mirror: fiscalización is upload-forbidden,
     # so there is no `fetch` path to produce it.
-    LocalArchiveStore(root=local_root).write(
-        "fiscalizacion", filename, csv_text.encode("utf-8")
-    )
+    LocalArchiveStore(root=local_root).write("fiscalizacion", filename, csv_text.encode("utf-8"))
     manifest_path.write_text(
         json.dumps(
             [
@@ -710,9 +770,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
                 "delete from review_item where starts_with(subject_ref, %s)",
                 (f"{source_id} ",),
             )
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (source_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
         conn.commit()
         conn.close()
 
@@ -1103,6 +1161,8 @@ def test_ingest_drives_the_pba_branch_with_the_callers_crosswalk(tmp_path: Path)
                 "source": "juntaelectoral.gba.gov.ar",
                 "source_url": "https://www.juntaelectoral.gba.gov.ar/x.html",
                 "mime": "text/html",
+                "election_year": 2025,
+                "election_round": "provinciales",
                 "notes": "CLI pba fixture",
                 "filename": "d027.html",
             }
@@ -1147,7 +1207,7 @@ def test_ingest_drives_the_pba_branch_with_the_callers_crosswalk(tmp_path: Path)
             source_id,
             database_url=TEST_DSN,
             year=2025,
-            round_="legislativas",
+            round_="provinciales",
             sources=sources,
             local_root=local_root,
             manifest_path=manifest_path,
@@ -1177,9 +1237,7 @@ def test_ingest_drives_the_pba_branch_with_the_callers_crosswalk(tmp_path: Path)
     )
 
 
-def test_a_manifest_record_without_an_archived_path_exits_nonzero(
-    tmp_path: Path, capsys
-) -> None:
+def test_a_manifest_record_without_an_archived_path_exits_nonzero(tmp_path: Path, capsys) -> None:
     """A malformed manifest entry is a validation failure, not a crash.
 
     `archived_filename` was added so a record with no `archived_path` fails
@@ -1198,6 +1256,8 @@ def test_a_manifest_record_without_an_archived_path_exits_nonzero(
                         "source": "example.test",
                         "source_url": "https://example.test/x.csv",
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "malformed-manifest fixture",
                         "filename": "x.csv",
                     }
@@ -1336,8 +1396,8 @@ def test_one_mesa_reporting_two_tallies_for_one_party_refuses() -> None:
     csv_text = (
         "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
         "agrupacion_nombre,votos_tipo,votos_cantidad,estado_final\n"
-        "02,027,01,1,DIPUTADO NACIONAL,110,LA LIBERTAD AVANZA,POSITIVO,120,definitivo\n"
-        "02,027,01,1,DIPUTADO NACIONAL,110,LA LIBERTAD AVANZA,POSITIVO,999,definitivo\n"
+        "02,027,01,1,DIPUTADO NACIONAL,110,ALIANZA LA LIBERTAD AVANZA,POSITIVO,120,definitivo\n"
+        "02,027,01,1,DIPUTADO NACIONAL,110,ALIANZA LA LIBERTAD AVANZA,POSITIVO,999,definitivo\n"
     )
 
     with pytest.raises(NationalSchemaError, match="refusing to pick one"):
@@ -1349,9 +1409,7 @@ def test_one_mesa_reporting_two_tallies_for_one_party_refuses() -> None:
         )
 
 
-def test_a_zip_with_no_results_member_exits_nonzero_through_main(
-    tmp_path: Path, capsys
-) -> None:
+def test_a_zip_with_no_results_member_exits_nonzero_through_main(tmp_path: Path, capsys) -> None:
     """The CLI CONTRACT, not just the exception.
 
     "Exit codes: 0 on success, non-zero on any argument or validation failure"
@@ -1376,6 +1434,8 @@ def test_a_zip_with_no_results_member_exits_nonzero_through_main(
                         "source": "example.test",
                         "source_url": "https://example.test/bad.zip",
                         "mime": "application/zip",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "schema-drift fixture",
                         "filename": filename,
                     }
@@ -1448,15 +1508,15 @@ def test_ingest_reports_the_fiscalizacion_rows_it_quarantined(tmp_path: Path) ->
                 "source": "internal",
                 "source_url": None,
                 "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "CLI quarantine fixture",
                 "filename": filename,
                 "upload": "never",
             }
         ]
     }
-    LocalArchiveStore(root=local_root).write(
-        "fiscalizacion", filename, csv_text.encode("utf-8")
-    )
+    LocalArchiveStore(root=local_root).write("fiscalizacion", filename, csv_text.encode("utf-8"))
     manifest_path.write_text(
         json.dumps(
             [
@@ -1487,10 +1547,12 @@ def test_ingest_reports_the_fiscalizacion_rows_it_quarantined(tmp_path: Path) ->
             )
     finally:
         with conn.cursor() as cur:
-            cur.execute(# `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
+            cur.execute(  # `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
                 # uuid-bearing source id carries `_`, so this could delete
                 # ANOTHER test's rows from the shared database.
-                "delete from review_item where starts_with(subject_ref, %s)", (f"{source_id} ",))
+                "delete from review_item where starts_with(subject_ref, %s)",
+                (f"{source_id} ",),
+            )
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
         conn.commit()
         conn.close()
@@ -1737,7 +1799,7 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
 # ---------------------------------------------------------------------------
 
 
-def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[dict, Path, Path]:
+def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[Path, Path, Path]:
     """One archived national source, wired the way `main()` expects to find it."""
     # Year-prefixed: `collect_national_party_keys` derives the year from the
     # first four digits of the id, so an id with none is excluded as unparseable.
@@ -1745,9 +1807,7 @@ def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[dict, Path
     filename = f"{uuid.uuid4().hex}.csv"
     local_root = tmp_path / "archive"
     manifest_path = tmp_path / "archive-manifest.json"
-    LocalArchiveStore(root=local_root).write(
-        "national", filename, csv_text.encode("utf-8")
-    )
+    LocalArchiveStore(root=local_root).write("national", filename, csv_text.encode("utf-8"))
     sources_path = tmp_path / "sources.yaml"
     sources_path.write_text(
         yaml.safe_dump(
@@ -1758,6 +1818,8 @@ def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[dict, Path
                         "source": "example.test",
                         "source_url": "https://example.test/main-test.csv",
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "main() wiring fixture",
                         "filename": filename,
                     }
@@ -1781,6 +1843,7 @@ def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[dict, Path
         encoding="utf-8",
     )
     return sources_path, local_root, manifest_path
+
 
 
 def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> list[str]:
@@ -1859,6 +1922,7 @@ def test_ingest_refuses_schema_valid_bytes_modified_after_archival(
 
     assert exit_code == 1
     assert "sha256" in capsys.readouterr().err
+
 
 
 def test_fetch_is_reachable_through_main(tmp_path: Path, capsys) -> None:
@@ -2065,9 +2129,7 @@ def test_ingest_is_reachable_through_main(tmp_path: Path) -> None:
     """`ingest` had no `main()`-driven test either."""
     _require_ephemeral_postgres()
 
-    sources_path, local_root, manifest_path = _archived_national_corpus(
-        tmp_path, NATIONAL_CSV
-    )
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
     source_id = yaml.safe_load(sources_path.read_text())["national"][0]["id"]
 
     conn = psycopg.connect(TEST_DSN)
@@ -2091,17 +2153,18 @@ def test_ingest_is_reachable_through_main(tmp_path: Path) -> None:
                 "select count(*) from result_row where archive_entry_id = %s",
                 (source_id,),
             )
-            (count,) = cur.fetchone()
+            count_row = cur.fetchone()
+            assert count_row == (2,), (
+                f"the CLI must write exactly two archived rows; got {count_row!r}"
+            )
     finally:
         with conn.cursor() as cur:
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (source_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
         conn.commit()
         conn.close()
 
     assert exit_code == 0, "a well-formed ingest must exit zero"
-    assert count == 2, f"the CLI must write the archived rows; got {count}"
+
 
 
 # ---------------------------------------------------------------------------
@@ -2677,6 +2740,8 @@ def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) ->
                 "source": "internal",
                 "source_url": None,
                 "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "CLI loader-quarantine fixture",
                 "filename": filename,
                 "upload": "never",
@@ -2685,9 +2750,7 @@ def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) ->
     }
     manifest_path = tmp_path / "archive-manifest.json"
     local_root = tmp_path / "archive"
-    LocalArchiveStore(root=local_root).write(
-        "fiscalizacion", filename, csv_text.encode("utf-8")
-    )
+    LocalArchiveStore(root=local_root).write("fiscalizacion", filename, csv_text.encode("utf-8"))
     manifest_path.write_text(
         json.dumps(
             [
@@ -2728,7 +2791,9 @@ def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) ->
                 """,
                 (source_id,),
             )
-            placed = cur.fetchone()[0]
+            placed_row = cur.fetchone()
+            assert placed_row is not None
+            placed = placed_row[0]
             # DELETED, not rolled back. `ingest_source` opens its OWN connection
             # and commits, so this connection only ever read — rolling it back
             # undoes nothing and the run's rows accumulate in the shared
@@ -2737,11 +2802,10 @@ def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) ->
                 # `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
                 # uuid-bearing source id carries `_`, so this could delete
                 # ANOTHER test's rows from the shared database.
-                "delete from review_item where starts_with(subject_ref, %s)", (f"{source_id} ",)
+                "delete from review_item where starts_with(subject_ref, %s)",
+                (f"{source_id} ",),
             )
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (source_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
         conn.commit()
     finally:
         conn.close()

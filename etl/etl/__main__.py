@@ -33,6 +33,7 @@ import psycopg
 import yaml
 
 from .archive import (
+    ArchiveIntegrityError,
     ArchiveResult,
     Fetcher,
     FetchResponse,
@@ -68,6 +69,7 @@ from .ingest.fiscalizacion import (
     FISCALIZACION_SECCION,
     FiscalizacionSchemaError,
     FiscalizacionUploadForbiddenError,
+    QuarantinedFiscalizacionRow,
     guard_local_mirror_only,
     ingest_fiscalizacion,
     mesa_subject_ref,
@@ -557,16 +559,16 @@ def ingest_source(
 ) -> int:
     """Load one already-archived source's parsed rows into `result_row`.
 
-    Resolves (and validates) the database URL BEFORE touching the archive
-    or opening any connection, so a missing URL never reaches even a
-    partial write attempt (task 12.6).
+    The registered election is validated before archive or database access, so
+    an operator cannot ingest immutable bytes under a different election label.
     """
-    resolved_url = resolve_database_url(database_url)
-
     entry = find_source_entry(sources, source_id)
     if entry is None:
         raise UnknownSourceError(f"no registered source with id {source_id!r}")
     capability = entry["capability"]
+    resolved_url: str | None = None
+    if capability != "pba":
+        resolved_url = resolve_database_url(database_url)
 
     records = load_manifest(manifest_path)
     archived = latest_ok_record(records, source_id)
@@ -575,15 +577,42 @@ def ingest_source(
             f"no archived copy of {source_id!r} -- run `fetch --source {source_id}` first"
         )
 
+    registered_year, registered_round = registered_source_election(entry)
+    if registered_year != year or registered_round != round_:
+        raise SourceElectionValidationError(
+            f"source {source_id!r} expected election "
+            f"{registered_year}/{registered_round}; received {year}/{round_}"
+        )
+    if capability == "pba":
+        if entry.get("mime") != "text/html":
+            raise PbaIngestMimeValidationError(
+                f"PBA source {source_id!r} has MIME {entry.get('mime')!r}; ingest requires "
+                "exactly 'text/html' (other registered formats are archival references only)"
+            )
+        resolved_url = resolve_database_url(database_url)
+
     local_store = LocalArchiveStore(root=local_root)
     filename = archived_filename(archived, source_id=entry["id"])
-    raw_bytes = read_archived_source(entry, local_store=local_store, filename=filename)
+    raw_bytes = read_archived_source(
+        entry,
+        manifest_record=archived,
+        capability=capability,
+        local_store=local_store,
+        filename=filename,
+    )
 
+    if resolved_url is None:
+        raise MissingDatabaseUrlError("database URL resolution produced no value")
     conn = psycopg.connect(resolved_url)
     try:
         if capability == "national":
             csv_bytes = national_csv_bytes(raw_bytes)
-            rows = ingest_national(csv_bytes, archive_entry_id=source_id)
+            rows = ingest_national(
+                csv_bytes,
+                archive_entry_id=source_id,
+                election_year=registered_year,
+                election_round=registered_round,
+            )
             inserted = load_national_rows(
                 conn, rows, year=year, round_=round_, archive_entry_id=source_id
             )
@@ -594,7 +623,11 @@ def ingest_source(
             # one silently breaks the guarantee `validate-crosswalk` gives.
             crosswalk = load_crosswalk(crosswalk_path)
             inserted = load_pba_rows(
-                conn, rows, year=year, round_=round_, crosswalk=crosswalk,
+                conn,
+                rows,
+                year=year,
+                round_=round_,
+                crosswalk=crosswalk,
                 archive_entry_id=source_id,
             )
         elif capability == "fiscalizacion":
@@ -610,9 +643,7 @@ def ingest_source(
             # makes `"Mesa"` unreachable, and the parser would report a
             # missing column instead of an encoding it did not strip. Same
             # boundary as every other CSV reader here.
-            result = ingest_fiscalizacion(
-                raw_bytes.decode("utf-8-sig"), archive_entry_id=source_id
-            )
+            result = ingest_fiscalizacion(raw_bytes.decode("utf-8-sig"), archive_entry_id=source_id)
             inserted, loader_review_items = load_fiscalizacion_rows(
                 conn,
                 result.rows,
@@ -666,7 +697,7 @@ def ingest_source(
             # large plausible number is how the PASO quarantine discarded
             # 6.462.906 legitimate rows and looked fine doing it.
             if result.quarantined:
-                by_reason: dict[str, list[int | None]] = {}
+                by_reason: dict[str, list[QuarantinedFiscalizacionRow]] = {}
                 for row in result.quarantined:
                     by_reason.setdefault(row.reason, []).append(row)
                 print(
@@ -675,26 +706,18 @@ def ingest_source(
                     file=sys.stderr,
                 )
                 for reason, quarantined_rows in sorted(by_reason.items()):
-                    named = sorted(
-                        r.mesa for r in quarantined_rows if r.mesa is not None
-                    )
+                    named = sorted(r.mesa for r in quarantined_rows if r.mesa is not None)
                     # THE SOURCE ROW INDICES, which the quarantine record
                     # carries precisely so a human can find the line. Printed
                     # only the mesa numbers, `unreadable_mesa` and
                     # `unmergeable_empty_mesa` -- both `mesa=None` by
                     # construction -- rendered as a bare count, which this
                     # file elsewhere calls "visible and not actionable".
-                    lines = sorted(
-                        i for r in quarantined_rows for i in r.source_row_indices
-                    )
+                    lines = sorted(i for r in quarantined_rows for i in r.source_row_indices)
                     print(
                         f"  {reason}: {len(quarantined_rows)} row(s)"
                         + (f", mesas {', '.join(str(m) for m in named)}" if named else "")
-                        + (
-                            f", source row(s) {', '.join(str(i) for i in lines)}"
-                            if lines
-                            else ""
-                        ),
+                        + (f", source row(s) {', '.join(str(i) for i in lines)}" if lines else ""),
                         file=sys.stderr,
                     )
 
@@ -738,6 +761,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         DuplicateManifestRecordError,
         MalformedManifestError,
         MissingDatabaseUrlError,
+        ArchiveIntegrityError,
         # `ValueError` LAST, and deliberately: `load_fiscalizacion_rows`
         # refuses a jurisdiction scheme that does not match the distrito/
         # seccion it is placing rows on, and `db.load_result_rows` refuses a
@@ -944,7 +968,7 @@ def fresh_review_items(conn, records):
         # drop this one's genuinely new observation as "already present".
         cur.execute(
             "select kind, severity, subject_ref, note from review_item"
-            " where subject_ref = any(%s::text[])",
+            " where resolved_at is null and subject_ref = any(%s::text[])",
             ([r.subject_ref for r in records],),
         )
         existing = {tuple(row) for row in cur.fetchall()}
