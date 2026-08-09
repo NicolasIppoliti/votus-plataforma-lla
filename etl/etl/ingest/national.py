@@ -26,7 +26,16 @@ import sys
 from dataclasses import dataclass
 
 from etl import db
-from etl.jurisdiction import ResultRow, make_result_row
+from etl.jurisdiction import (
+    ResultRow,
+    is_canonicalizable_circuito_code,
+    is_canonicalizable_code,
+    make_result_row,
+)
+from etl.numeric import parse_source_int
+
+REQUIRED_IDENTITY_COLUMNS = ("distrito_id", "seccion_id", "circuito_id", "mesa_id")
+SUPPORTED_MESA_TIPOS = frozenset({"NATIVOS", "EXTRANJEROS"})
 
 REQUIRED_COLUMNS = (
     "distrito_id",
@@ -41,12 +50,24 @@ REQUIRED_COLUMNS = (
 
 
 class NationalSchemaError(ValueError):
-    """Raised when the source CSV does not declare a required column.
+    """Raised when the national source violates the supported schema contract.
 
     Per the "BUP-era 2025 format handled or explicitly rejected" scenario:
     an unrecognized structure MUST fail loudly, not silently ingest partial
     or misaligned data.
     """
+
+
+def validate_mesa_tipo(raw: object, *, source_label: str, source_row_index: int) -> str | None:
+    """Return an exact supported mesa type, preserving a genuinely absent value."""
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str) or raw not in SUPPORTED_MESA_TIPOS:
+        raise NationalSchemaError(
+            f"{source_label}: unsupported mesa_tipo {raw!r} at source row "
+            f"{source_row_index}; expected one of NATIVOS, EXTRANJEROS, or an absent value"
+        )
+    return raw
 
 
 @dataclass(frozen=True)
@@ -110,17 +131,89 @@ def _normalize_mesa_id(raw: str | None) -> int | None:
 
 
 def _parse_int(raw: str | None) -> int | None:
-    """The integer in `raw`, or `None` when there is not one to read."""
-    try:
-        return int((raw or "").strip())
-    except (TypeError, ValueError):
-        return None
+    """The strict source integer in `raw`, or `None` when unreadable."""
+    return parse_source_int(raw)
 
 
-def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[NationalRow]:
+def extract_raw_mesa_identities(csv_bytes: bytes) -> set[tuple[str, str, str, int]]:
+    """Extract distinct distrito/seccion/circuito/mesa identities before filtering."""
+    reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+    fieldnames = set(reader.fieldnames or ())
+    missing = [column for column in REQUIRED_IDENTITY_COLUMNS if column not in fieldnames]
+    if missing:
+        raise NationalSchemaError(
+            "unrecognized national results identity structure — missing required "
+            f"column(s): {', '.join(missing)}"
+        )
+
+    identities: set[tuple[str, str, str, int]] = set()
+    excluded: dict[str, int] = {}
+
+    def exclude(reason: str) -> None:
+        excluded[reason] = excluded.get(reason, 0) + 1
+
+    for raw in reader:
+        raw_distrito = raw.get("distrito_id")
+        distrito = raw_distrito.strip() if isinstance(raw_distrito, str) else ""
+        if not distrito:
+            exclude("absent distrito_id")
+            continue
+        if not is_canonicalizable_code(distrito):
+            exclude("unreadable distrito_id")
+            continue
+
+        codes: dict[str, str] = {}
+        invalid = False
+        for field, predicate in (
+            ("seccion_id", is_canonicalizable_code),
+            ("circuito_id", is_canonicalizable_circuito_code),
+        ):
+            raw_code = raw.get(field)
+            code = raw_code.strip() if isinstance(raw_code, str) else ""
+            if not code:
+                exclude(f"absent {field}")
+                invalid = True
+            elif not predicate(code):
+                exclude(f"unreadable {field}")
+                invalid = True
+            else:
+                codes[field] = code
+        if invalid:
+            continue
+
+        raw_mesa = raw.get("mesa_id")
+        if not isinstance(raw_mesa, str) or not raw_mesa.strip():
+            exclude("absent mesa_id")
+            continue
+        mesa = _normalize_mesa_id(raw_mesa)
+        if mesa is None:
+            exclude("unreadable mesa_id")
+            continue
+
+        identities.add((distrito, codes["seccion_id"], codes["circuito_id"], mesa))
+
+    if excluded:
+        breakdown = "; ".join(
+            f"{reason}: {count} row(s)" for reason, count in sorted(excluded.items())
+        )
+        print(
+            f"excluded {sum(excluded.values())} raw mesa identity row(s) -- {breakdown}",
+            file=sys.stderr,
+        )
+    return identities
+
+
+def ingest_national(
+    csv_bytes: bytes,
+    *,
+    archive_entry_id: str,
+    election_year: int,
+    election_round: str,
+) -> list[NationalRow]:
     """Parse one archived national results CSV into normalized rows.
 
-    Pure function of `(csv_bytes, archive_entry_id)`: calling it twice
+    Pure function of the source bytes, provenance, and explicit registered
+    election metadata: calling it twice
     against the same bytes yields an identical list, which is the
     precondition D8's later transactional (delete-by-archive_entry_id,
     bulk insert) idempotency at the Postgres layer depends on.
@@ -159,14 +252,18 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
 
     def exclude(reason: str, raw_votes: str | None) -> None:
         excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
-        try:
-            votes = int((raw_votes or "").strip())
-        except (TypeError, ValueError):
+        votes = parse_source_int(raw_votes)
+        if votes is None:
             excluded_unparseable[reason] = excluded_unparseable.get(reason, 0) + 1
             return
         excluded_votes[reason] = excluded_votes.get(reason, 0) + votes
 
     for index, raw in enumerate(reader):
+        mesa_tipo = validate_mesa_tipo(
+            raw.get("mesa_tipo"),
+            source_label=archive_entry_id,
+            source_row_index=index,
+        )
         agrupacion_id = (raw.get("agrupacion_id") or "").strip()
         votos_tipo = raw["votos_tipo"]
         if votos_tipo != "POSITIVO":
@@ -179,15 +276,40 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
             exclude('agrupacion_id "0"', raw.get("votos_cantidad"))
             continue
 
+        invalid_code_field = next(
+            (
+                field
+                for field, predicate in (
+                    ("distrito_id", is_canonicalizable_code),
+                    ("seccion_id", is_canonicalizable_code),
+                    ("circuito_id", is_canonicalizable_circuito_code),
+                )
+                if not predicate(raw.get(field))
+            ),
+            None,
+        )
+        if invalid_code_field is not None:
+            exclude(f"unreadable {invalid_code_field}", raw.get("votos_cantidad"))
+            continue
+
         # A list's identity is (agrupación, lista) -- NOT the agrupación alone.
         # In a PASO one agrupación fields several internal lists competing
         # against each other in the same mesa and cargo (agrupación 134 runs
         # `3005 A- CELESTE Y BLANCA` against `3006 B- JUSTA Y SOBERANA`), which
         # is the point of a primary. `lista_numero` is empty throughout the 2023
-        # generales file, populated throughout the PASO, and populated for about
-        # a quarter of the 2025 rows, so the composite degrades to the bare
-        # agrupación id exactly where the source has no list to distinguish.
+        # generales file, populated throughout the PASO, and empty on measured
+        # 2025 legislativas POSITIVO rows. Other explicit election combinations
+        # retain the general composite behavior without claiming a measured shape.
         lista_numero = (raw.get("lista_numero") or "").strip()
+        election = (election_year, election_round)
+        requires_empty = election in {(2023, "generales"), (2025, "legislativas")}
+        requires_nonempty = election == (2023, "paso")
+        if (requires_empty and lista_numero) or (requires_nonempty and not lista_numero):
+            expected = "empty" if requires_empty else "nonempty"
+            raise NationalSchemaError(
+                f"{archive_entry_id}: election {election_year}/{election_round} source row "
+                f"{index} requires lista_numero to be {expected}; received {lista_numero!r}"
+            )
         list_id = f"{agrupacion_id}-{lista_numero}" if lista_numero else agrupacion_id
 
         mesa_id = _normalize_mesa_id(raw.get("mesa_id"))
@@ -222,7 +344,7 @@ def ingest_national(csv_bytes: bytes, *, archive_entry_id: str) -> list[National
                 # national ones, a real electoral fact that per-mesa
                 # cross-year comparisons must be able to see. `.get()`
                 # mirrors `estado_final`'s absent-column tolerance.
-                mesa_tipo=raw.get("mesa_tipo") or None,
+                mesa_tipo=mesa_tipo,
                 archive_entry_id=archive_entry_id,
                 source_row_index=index,
             )
@@ -281,8 +403,14 @@ def _quarantine_ambiguous_rows(rows: list[NationalRow]) -> list[NationalRow]:
     by_key: dict[tuple, list[NationalRow]] = {}
     for row in rows:
         by_key.setdefault(
-            (row.result.distrito, row.result.seccion, row.result.circuito,
-             row.result.mesa, row.category, row.list_id),
+            (
+                row.result.distrito,
+                row.result.seccion,
+                row.result.circuito,
+                row.result.mesa,
+                row.category,
+                row.list_id,
+            ),
             [],
         ).append(row)
 
@@ -343,6 +471,7 @@ def _quarantine_ambiguous_rows(rows: list[NationalRow]) -> list[NationalRow]:
 # list id resolves is answered by joining `party_mapping` at query time, so
 # it stays correct when a list is curated AFTER ingestion instead of freezing
 # a boolean that goes stale the moment `curated/party_map.yaml` changes.
+
 
 def load_national_rows(
     conn, rows: list[NationalRow], *, year: int, round_: str, archive_entry_id: str

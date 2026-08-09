@@ -211,7 +211,12 @@ def test_empty_lista_numero_in_2025_is_not_treated_as_missing_data() -> None:
     REAL 2025 distrito-027 fixture, whose `lista_numero` column is
     genuinely empty end to end, not synthesized for this test."""
     csv_bytes = (FIXTURES / "national_2025_027_diputados_sample.csv").read_bytes()
-    rows = ingest_national(csv_bytes, archive_entry_id="national-2025-diputados-027")
+    rows = ingest_national(
+        csv_bytes,
+        archive_entry_id="national-2025-diputados-027",
+        election_year=2025,
+        election_round="legislativas",
+    )
     lla_rows = [row for row in rows if row.list_id == "110"]
     assert lla_rows, "fixture must contain at least one agrupacion_id=110 (LLA) row"
     # The fixture's `lista_numero` column is empty for agrupacion_id 110 --
