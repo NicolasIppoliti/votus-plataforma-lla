@@ -355,6 +355,7 @@ def test_ingest_refuses_source_election_mismatch_before_archive_or_db_access(
     assert "expected" in message and expected in message
     assert "received" in message and received in message
 
+
 def test_pba_pdf_reference_is_not_ingestible_before_archive_parser_or_database_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2002,7 +2003,6 @@ def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[Path, Path
     return sources_path, local_root, manifest_path
 
 
-
 def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> list[str]:
     return [
         "--sources-path",
@@ -2079,7 +2079,6 @@ def test_ingest_refuses_schema_valid_bytes_modified_after_archival(
 
     assert exit_code == 1
     assert "sha256" in capsys.readouterr().err
-
 
 
 def test_load_curated_refuses_any_registered_national_source_without_year_before_db_writes(
@@ -2613,7 +2612,6 @@ def test_ingest_is_reachable_through_main(tmp_path: Path) -> None:
         conn.close()
 
     assert exit_code == 0, "a well-formed ingest must exit zero"
-
 
 
 # ---------------------------------------------------------------------------
@@ -4258,6 +4256,70 @@ def test_validate_fiscalizacion_uses_registered_baseline_metadata_and_refuses_mi
     assert "must-not-be-read" not in reported
 
 
+@pytest.mark.parametrize(
+    ("fiscal_year", "fiscal_round"),
+    [(2023, "legislativas"), (2025, "paso")],
+)
+def test_validate_fiscalizacion_refuses_fiscal_source_election_mismatch_before_access(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    fiscal_year: int,
+    fiscal_round: str,
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": "fiscalizacion/current",
+                        "source": "internal",
+                        "source_url": None,
+                        "election_year": fiscal_year,
+                        "election_round": fiscal_round,
+                    }
+                ],
+                "national": [
+                    {
+                        "id": "national/current-baseline",
+                        "source": "example.test",
+                        "source_url": "https://example.test/current.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden_connect(*_args, **_kwargs):
+        raise AssertionError("fiscal mismatch must refuse before database access")
+
+    monkeypatch.setattr("etl.__main__.psycopg.connect", forbidden_connect)
+    manifest_path = tmp_path / "must-not-be-read.json"
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + [
+            "validate-fiscalizacion",
+            "--source",
+            "fiscalizacion/current",
+            "--baseline",
+            "national/current-baseline",
+            "--database-url",
+            "postgresql://must-not-connect/nowhere",
+        ]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "fiscalizacion/current" in reported
+    assert f"{fiscal_year}/{fiscal_round}" in reported
+    assert "2025/legislativas" in reported
+    assert not manifest_path.exists()
+
+
 def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_for(
     tmp_path: Path, capsys
 ) -> None:
@@ -4280,10 +4342,14 @@ def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_f
         _main_args(sources_path, tmp_path / "archive", manifest_path)
         + [
             "validate-fiscalizacion",
-            "--source", "fiscalizacion/whatever",
-            "--baseline", "national/whatever",
-            "--category", "SENADOR NACIONAL",
-            "--database-url", "postgresql://votus-refusal-must-precede-connect/nowhere",
+            "--source",
+            "fiscalizacion/whatever",
+            "--baseline",
+            "national/whatever",
+            "--category",
+            "SENADOR NACIONAL",
+            "--database-url",
+            "postgresql://votus-refusal-must-precede-connect/nowhere",
         ]
     )
 
@@ -4291,6 +4357,323 @@ def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_f
     reported = capsys.readouterr().err
     assert "curated for 02/027/DIPUTADO NACIONAL" in reported
     assert "not real" in reported
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"id": "national/bad", "source_url": "https://example.test/x"},
+        {"id": "national/bad", "source": "", "source_url": "https://example.test/x"},
+        {"id": "national/bad", "source": 1, "source_url": "https://example.test/x"},
+        {"id": "national/bad", "source": "example.test"},
+        {"id": "national/bad", "source": "example.test", "source_url": 1},
+    ],
+)
+def test_fetch_rejects_malformed_required_source_fields_through_main(
+    tmp_path: Path, capsys, monkeypatch, entry: dict[str, object]
+) -> None:
+    import etl.__main__ as cli
+
+    monkeypatch.setattr(
+        cli,
+        "fetch_source",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("malformed sources must be rejected before fetch")
+        ),
+    )
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({"national": [entry]}), encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", tmp_path / "manifest.json")
+        + ["fetch", "--source", "national/bad"]
+    )
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert "sources.yaml" in reported
+    assert "Traceback" not in reported
+
+
+def test_resolved_review_history_does_not_suppress_a_recurring_observation() -> None:
+    from etl.__main__ import fresh_review_items
+    from etl.db import insert_review_items
+    from etl.review_item import ReviewItemRecord
+
+    _require_ephemeral_postgres()
+    token = uuid.uuid4().hex
+    resolved = ReviewItemRecord("content_drift", "warning", f"resolved-{token}", "same")
+    active = ReviewItemRecord("content_drift", "warning", f"active-{token}", "same")
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into review_item (kind, severity, subject_ref, note, resolved_at) "
+                "values (%s, %s, %s, %s, now())",
+                (resolved.kind, resolved.severity, resolved.subject_ref, resolved.note),
+            )
+            cur.execute(
+                "insert into review_item (kind, severity, subject_ref, note) "
+                "values (%s, %s, %s, %s)",
+                (active.kind, active.severity, active.subject_ref, active.note),
+            )
+
+        fresh = fresh_review_items(conn, [resolved, active, resolved])
+        insert_review_items(conn, fresh)
+
+        assert fresh == [resolved]
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from review_item where subject_ref = %s and resolved_at is null",
+                (resolved.subject_ref,),
+            )
+            assert cur.fetchone() == (1,)
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("election_year", True),
+        ("election_year", "2025"),
+        ("election_round", ""),
+        ("election_round", "   "),
+    ],
+)
+def test_sources_boundary_validates_election_metadata_when_present(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    from etl.__main__ import SourcesValidationError, load_sources
+
+    entry: dict[str, object] = {
+        "id": "national/test",
+        "source": "example.test",
+        "source_url": "https://example.test/results.csv",
+        "election_year": 2025,
+        "election_round": "legislativas",
+    }
+    entry[field] = value
+    path = tmp_path / "sources.yaml"
+    path.write_text(yaml.safe_dump({"national": [entry]}), encoding="utf-8")
+
+    with pytest.raises(SourcesValidationError, match=field):
+        load_sources(path)
+
+
+@pytest.mark.parametrize(
+    "capability",
+    ["unknown", "../escaped", "national/extra", r"national\extra", ".", "..", "", "   "],
+)
+def test_sources_boundary_accepts_only_supported_capability_families(
+    tmp_path: Path, capability: str
+) -> None:
+    from etl.__main__ import SourcesValidationError, load_sources
+
+    path = tmp_path / "sources.yaml"
+    path.write_text(yaml.safe_dump({capability: []}), encoding="utf-8")
+
+    with pytest.raises(SourcesValidationError, match="capability"):
+        load_sources(path)
+
+
+def test_registered_sources_declare_an_explicit_election() -> None:
+    from etl.__main__ import load_sources
+
+    sources = load_sources(REPO_ROOT / "etl" / "sources.yaml")
+
+    for entries in sources.values():
+        for entry in entries:
+            assert isinstance(entry.get("election_year"), int)
+            assert isinstance(entry.get("election_round"), str)
+            assert entry["election_round"].strip()
+
+
+def test_sources_boundary_rejects_disagreement_between_id_and_election_metadata(
+    tmp_path: Path,
+) -> None:
+    from etl.__main__ import SourcesValidationError, load_sources
+
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": "national/2023-mislabeled",
+                        "source": "example.test",
+                        "source_url": "https://example.test/results.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourcesValidationError, match="2023.*2025"):
+        load_sources(path)
+
+
+def test_curated_collection_uses_metadata_for_a_non_year_shaped_source_id(
+    tmp_path: Path,
+) -> None:
+    source_id = "national/current-legislativas"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/current.csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "filename": "current.csv",
+            }
+        ]
+    }
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=FakeFetcher(payload=NATIONAL_CSV.encode("utf-8")),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    keys = collect_national_party_keys(
+        sources,
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    assert keys
+    assert {year for year, *_rest in keys} == {2025}
+
+
+def test_sources_boundary_accepts_required_election_metadata_and_nullable_url(
+    tmp_path: Path,
+) -> None:
+    from etl.__main__ import load_sources
+
+    path = tmp_path / "sources.yaml"
+    minimal = {
+        "fiscalizacion": [
+            {
+                "id": "fiscalizacion/upload-forbidden",
+                "source": "local",
+                "source_url": None,
+                "election_year": 2025,
+                "election_round": "legislativas",
+            }
+        ]
+    }
+    path.write_text(yaml.safe_dump(minimal), encoding="utf-8")
+
+    assert load_sources(path) == minimal
+
+
+def test_numeric_archived_path_is_a_clean_cli_validation_failure(tmp_path: Path, capsys) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": "national/2025-numeric-path",
+                        "source": "example.test",
+                        "source_url": "https://example.test/x.csv",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "national/2025-numeric-path",
+                    "status": "ok",
+                    "archived_path": 123,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path) + ["validate-crosswalk"]
+    )
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert "archived_path" in reported
+    assert "Traceback" not in reported
+
+
+def test_party_map_string_boolean_is_a_clean_cli_validation_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    import etl.__main__ as cli
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({"national": []}), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+    party_map_path = tmp_path / "party_map.yaml"
+    party_map_path.write_text(
+        yaml.safe_dump(
+            {
+                "mappings": [
+                    {
+                        "year": 2025,
+                        "jurisdiction": "national",
+                        "category": "DIPUTADO NACIONAL",
+                        "list_id": "110",
+                        "canonical_party": "LLA",
+                        "party_name": "LA LIBERTAD AVANZA",
+                        "verified": "false",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "readable_national_sources", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(cli, "collect_national_party_keys", lambda *args, **kwargs: [])
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["validate-curated", "--party-map-path", str(party_map_path)]
+    )
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert "verified must be a boolean" in reported
+    assert "Traceback" not in reported
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_backfill_batch_size_rejects_nonpositive_values_through_main(
+    tmp_path: Path, capsys, batch_size: int
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            _main_args(tmp_path / "sources.yaml", tmp_path / "archive", tmp_path / "manifest.json")
+            + ["backfill-mesa-tipo", "--batch-size", str(batch_size)]
+        )
+
+    assert excinfo.value.code == 2
+    reported = capsys.readouterr().err
+    assert "batch-size" in reported
+    assert "positive" in reported
+    assert "Traceback" not in reported
+
+
 @pytest.mark.parametrize("batch_size", [0, -1])
 def test_apply_mesa_tipo_mapping_rejects_nonpositive_batch_size_before_db_access(
     batch_size: int,
