@@ -98,6 +98,7 @@ from .jurisdiction import (
 from .manifest import (
     DuplicateManifestRecordError,
     MalformedManifestError,
+    canonical_record,
     latest_ok_record,
     load_manifest,
     save_manifest,
@@ -109,6 +110,9 @@ from .review_item import (
     ReviewItemRecord,
     mesa_divergences_to_review_items,
     review_item_draft_to_record,
+    source_archive_identity,
+    source_refetch_review_items,
+    validate_prior_source_identity,
 )
 from .storage import LocalArchiveStore, extract_zip_safely
 
@@ -327,6 +331,14 @@ def fetch_source(
 
     local_store = LocalArchiveStore(root=local_root)
     records = load_manifest(manifest_path)
+    previous = canonical_record(records, source_id)
+    identity = source_archive_identity(entry)
+    # Identity is known before transport. Refuse a canonical id that changed
+    # election, round, or kind before writing another immutable archive file.
+    validate_prior_source_identity(previous, identity)
+    verified_previous = (
+        previous if previous is not None and previous.get("status") == "ok" else None
+    )
     if entry.get("capability") == "pba":
         from .ingest.pba import archive_pba_source
 
@@ -358,9 +370,18 @@ def fetch_source(
     else:
         result = archive_source(entry, fetcher=fetcher, local_store=local_store)
 
-    records = upsert_record(records, result.record)
+    record = dict(result.record)
+    if identity is not None:
+        record.update(identity.manifest_fields())
+    review_items = source_refetch_review_items(verified_previous, record, identity)
+    drift_label = (
+        "source re-export"
+        if any(item.kind == "source_reexported" for item in review_items)
+        else "content drift"
+    )
+    records = upsert_record(records, record, drift_label=drift_label)
     save_manifest(manifest_path, records)
-    return result
+    return replace(result, record=record, review_items=review_items)
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
@@ -391,6 +412,15 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     if result.record["status"] != "ok":
         print(f"error: fetch failed for {args.source!r}: {result.record['notes']}", file=sys.stderr)
         return 1
+
+    if result.review_items:
+        counts: dict[tuple[str, str], int] = {}
+        for item in result.review_items:
+            key = (item.kind, item.severity)
+            counts[key] = counts.get(key, 0) + 1
+        print("review items by reason:", file=sys.stderr)
+        for (kind, severity), count in sorted(counts.items()):
+            print(f"  {kind} ({severity}): {count} review item(s)", file=sys.stderr)
 
     print(f"archived {args.source} -> {result.record['archived_path']}")
     return 0

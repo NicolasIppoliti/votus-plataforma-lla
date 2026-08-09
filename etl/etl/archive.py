@@ -15,9 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .storage import LocalArchiveStore, sha256_of
+
+if TYPE_CHECKING:
+    from .review_item import ReviewItemRecord
 
 DEFAULT_USER_AGENT = (
     "VotusElectoralAnalysis/1.0 "
@@ -51,6 +54,7 @@ class FetchResponse:
 @dataclass
 class ArchiveResult:
     record: dict
+    review_items: tuple[ReviewItemRecord, ...] = ()
 
 
 class ArchiveIntegrityError(RuntimeError):

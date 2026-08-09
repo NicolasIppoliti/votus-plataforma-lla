@@ -75,6 +75,8 @@ _STRING_FIELDS = (
     "fetched_at",
     "notes",
     "last_error_at",
+    "election_round",
+    "source_kind",
 )
 _NULLABLE_STRING_FIELDS = ("source_url", "archived_path", "sha256", "last_error")
 
@@ -104,6 +106,11 @@ def _validate_record_types(record: ManifestRecord, *, index: int | None = None) 
             isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0
         ):
             raise MalformedManifestError(f"{label} bytes must be a nonnegative integer or null")
+
+    if "election_year" in record:
+        election_year = record["election_year"]
+        if isinstance(election_year, bool) or not isinstance(election_year, int):
+            raise MalformedManifestError(f"{label} election_year must be an integer")
 
 
 def load_manifest(path: Path) -> list[ManifestRecord]:
@@ -197,6 +204,13 @@ def _ensure_unique_record_ids(
             )
 
 
+def canonical_record(records: list[ManifestRecord], record_id: str) -> ManifestRecord | None:
+    """Return the one canonical record for ``record_id`` regardless of status."""
+    _ensure_unique_record_ids(records, record_id=record_id)
+    matches = [record for record in records if record.get("id") == record_id]
+    return matches[0] if matches else None
+
+
 def latest_ok_record(records: list[ManifestRecord], record_id: str) -> ManifestRecord | None:
     """Return the current ``status: "ok"`` record for ``record_id``, or
     ``None`` if that source has never been successfully archived.
@@ -213,14 +227,16 @@ def latest_ok_record(records: list[ManifestRecord], record_id: str) -> ManifestR
     answer "never archived" for a source that IS archived. Every other
     two-candidate site in this codebase refuses rather than chooses.
     """
-    _ensure_unique_record_ids(records, record_id=record_id)
-    matches = [record for record in records if record.get("id") == record_id]
-    if not matches:
-        return None
-    return matches[0] if matches[0].get("status") == "ok" else None
+    current = canonical_record(records, record_id)
+    return current if current is not None and current.get("status") == "ok" else None
 
 
-def upsert_record(records: list[ManifestRecord], record: ManifestRecord) -> list[ManifestRecord]:
+def upsert_record(
+    records: list[ManifestRecord],
+    record: ManifestRecord,
+    *,
+    drift_label: str = "content drift",
+) -> list[ManifestRecord]:
     """Insert or replace a record by ``id``, detecting content drift.
 
     See module docstring for the drift and failed-refetch rules.
@@ -290,7 +306,7 @@ def upsert_record(records: list[ManifestRecord], record: ManifestRecord) -> list
 
             record = dict(record)
             new_note = record.get("notes") or ""
-            record["notes"] = f"{new_note} [content drift detected vs prior capture]".strip()
+            record["notes"] = f"{new_note} [{drift_label} detected vs prior capture]".strip()
 
         result.append(record)
 

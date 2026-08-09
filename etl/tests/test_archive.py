@@ -5,6 +5,7 @@ source-archive spec's immutability, sha256, and content-drift
 requirements (D2, D8).
 """
 
+import json
 import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -46,6 +47,20 @@ ENTRY = {
     "source_url": "https://www.argentina.gob.ar/sites/default/files/2023_generales_1.zip",
     "mime": "application/zip",
     "notes": "2023 Elecciones Generales",
+}
+
+FISCALIZACION_ENTRY = {
+    "id": "fiscalizacion/current-coronel-rosales",
+    "capability": "fiscalizacion",
+    "source": "local-file",
+    "source_url": "https://example.test/fiscalizacion.csv",
+    "mime": "text/csv",
+    "notes": "synthetic shape-only fixture",
+    "filename": "fiscalizacion.csv",
+    "election_year": 2025,
+    "election_round": "legislativas",
+    "source_kind": "fiscalizacion",
+    "upload": "never",
 }
 
 
@@ -288,6 +303,288 @@ def test_no_drift_on_identical_refetch(tmp_path) -> None:
     records = load_manifest(manifest_path)
     assert len(records) == 1
     assert "drift" not in _required_string(records[0], "notes").lower()
+
+
+def test_changed_fiscalizacion_hash_is_an_informational_reexport(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"fiscalizacion": [FISCALIZACION_ENTRY]}
+
+    fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"sheet-shape-v1")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    changed = fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"sheet-shape-v2")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    assert [(item.kind, item.severity) for item in changed.review_items] == [
+        ("source_reexported", "info")
+    ]
+    canonical = next(
+        record
+        for record in load_manifest(manifest_path)
+        if record["id"] == FISCALIZACION_ENTRY["id"]
+    )
+    assert "source re-export" in _required_string(canonical, "notes").lower()
+    assert "content drift" not in _required_string(canonical, "notes").lower()
+
+
+def test_identical_fiscalizacion_hash_has_no_reexport_item(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"fiscalizacion": [FISCALIZACION_ENTRY]}
+    payload = b"same-sheet-shape"
+
+    first = fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher({FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, payload)}),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    second = fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher({FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, payload)}),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    assert first.review_items == second.review_items == ()
+    assert len(load_manifest(manifest_path)) == 1
+
+
+def test_changed_official_hash_remains_content_drift_warning(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    official = {
+        **ENTRY,
+        "election_year": 2023,
+        "election_round": "generales",
+        "filename": "2023-generales.zip",
+    }
+    sources = {"national": [official]}
+
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"official-v1")}),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    changed = fetch_source(
+        ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"official-v2")}),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    assert [(item.kind, item.severity) for item in changed.review_items] == [
+        ("content_drift", "warning")
+    ]
+    assert all(item.kind != "source_reexported" for item in changed.review_items)
+    canonical = next(
+        record for record in load_manifest(manifest_path) if record["id"] == ENTRY["id"]
+    )
+    assert "content drift" in _required_string(canonical, "notes").lower()
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "changed_value"),
+    [
+        ("election_year", 2026),
+        ("election_round", "paso"),
+        ("source_kind", "official"),
+    ],
+)
+def test_refetch_refuses_cross_identity_hash_comparison_before_archive_mutation(
+    tmp_path, changed_field: str, changed_value: object
+) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    source_id = FISCALIZACION_ENTRY["id"]
+    first_sources = {"fiscalizacion": [FISCALIZACION_ENTRY]}
+    fetch_source(
+        source_id,
+        sources=first_sources,
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"identity-v1")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    manifest_before = manifest_path.read_bytes()
+    files_before = sorted(path.name for path in (local_root / "fiscalizacion").iterdir())
+    changed_entry = {**FISCALIZACION_ENTRY, changed_field: changed_value}
+
+    with pytest.raises(ValueError, match="identity.*refus"):
+        fetch_source(
+            source_id,
+            sources={"fiscalizacion": [changed_entry]},
+            fetcher=FakeFetcher(
+                {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"identity-v2")}
+            ),
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+
+    assert manifest_path.read_bytes() == manifest_before
+    assert sorted(path.name for path in (local_root / "fiscalizacion").iterdir()) == files_before
+
+
+def test_a_different_registered_source_identity_is_not_compared(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    other = {**FISCALIZACION_ENTRY, "id": "fiscalizacion/current-other-source"}
+    sources = {"fiscalizacion": [FISCALIZACION_ENTRY, other]}
+
+    fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher({FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"source-one")}),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    result = fetch_source(
+        other["id"],
+        sources=sources,
+        fetcher=FakeFetcher({other["source_url"]: FetchResponse(200, b"source-two")}),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    assert result.review_items == ()
+    assert {record["id"] for record in load_manifest(manifest_path)} == {
+        FISCALIZACION_ENTRY["id"],
+        other["id"],
+    }
+
+
+def test_refetch_refuses_malformed_prior_hash_before_archive_mutation(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"fiscalizacion": [FISCALIZACION_ENTRY]}
+    fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"verified-v1")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    records = load_manifest(manifest_path)
+    records[0]["sha256"] = "not-a-sha256"
+    manifest_path.write_text(json.dumps(records), encoding="utf-8")
+    manifest_before = manifest_path.read_bytes()
+    files_before = sorted(path.name for path in (local_root / "fiscalizacion").iterdir())
+
+    with pytest.raises(ValueError, match="verified sha256.*refus"):
+        fetch_source(
+            FISCALIZACION_ENTRY["id"],
+            sources=sources,
+            fetcher=FakeFetcher(
+                {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"verified-v2")}
+            ),
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+
+    assert manifest_path.read_bytes() == manifest_before
+    assert sorted(path.name for path in (local_root / "fiscalizacion").iterdir()) == files_before
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "changed_value", "capability"),
+    [
+        ("election_year", 2026, "fiscalizacion"),
+        ("election_round", "paso", "fiscalizacion"),
+        ("source_kind", None, "national"),
+    ],
+)
+def test_failed_prior_refuses_explicit_identity_conflict_before_archive_mutation(
+    tmp_path, changed_field: str, changed_value: object, capability: str
+) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    source_id = FISCALIZACION_ENTRY["id"]
+    failed = fetch_source(
+        source_id,
+        sources={"fiscalizacion": [FISCALIZACION_ENTRY]},
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(503, b"failed-shape")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    assert failed.record["status"] == "error"
+    manifest_before = manifest_path.read_bytes()
+    changed_entry = dict(FISCALIZACION_ENTRY)
+    if changed_field == "source_kind":
+        changed_entry.pop("source_kind")
+        changed_entry.pop("upload")
+    else:
+        changed_entry[changed_field] = changed_value
+    new_bytes = b"successful-shape"
+
+    with pytest.raises(ValueError, match="identity.*refus"):
+        fetch_source(
+            source_id,
+            sources={capability: [changed_entry]},
+            fetcher=FakeFetcher({FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, new_bytes)}),
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+
+    assert manifest_path.read_bytes() == manifest_before
+    expected_archive = local_root / capability / f"fiscalizacion.{sha256_of(new_bytes)}.csv"
+    assert not expected_archive.exists()
+
+
+def test_matching_failed_prior_produces_no_false_hash_classification(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"fiscalizacion": [FISCALIZACION_ENTRY]}
+    failed = fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(503, b"failed-shape")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    assert failed.record["status"] == "error"
+
+    successful = fetch_source(
+        FISCALIZACION_ENTRY["id"],
+        sources=sources,
+        fetcher=FakeFetcher(
+            {FISCALIZACION_ENTRY["source_url"]: FetchResponse(200, b"successful-shape")}
+        ),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    assert successful.review_items == ()
+    records = load_manifest(manifest_path)
+    assert len(records) == 1
+    assert records[0]["status"] == "ok"
+    assert "drift" not in _required_string(records[0], "notes").lower()
+    assert "re-export" not in _required_string(records[0], "notes").lower()
 
 
 def test_repeated_production_fetches_write_manifest_for_every_capability(tmp_path) -> None:

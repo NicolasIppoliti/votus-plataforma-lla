@@ -174,6 +174,57 @@ def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
     assert fetcher.calls == []
 
 
+def test_fetch_cli_reports_changed_fiscalizacion_hash_per_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "fiscalizacion/2025-reexport-cli"
+    local_file = tmp_path / "fiscal.csv"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": source_id,
+                        "source": "local-file",
+                        "source_url": "local://fiscalizacion/fiscal.csv",
+                        "mime": "text/csv",
+                        "filename": "fiscal.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: FakeFetcher())
+    command = _main_args(sources_path, local_root, manifest_path) + [
+        "fetch",
+        "--source",
+        source_id,
+        "--local-file",
+        str(local_file),
+    ]
+
+    local_file.write_bytes(b"shape-only-export-v1")
+    assert main(command) == 0
+    capsys.readouterr()
+    local_file.write_bytes(b"shape-only-export-v2")
+    assert main(command) == 0
+
+    reported = capsys.readouterr()
+    assert "source_reexported (info): 1 review item(s)" in reported.err
+    assert "content_drift" not in reported.err
+    assert "archived fiscalizacion/2025-reexport-cli" in reported.out
+
+
 def test_fetch_local_source_requires_a_local_file_argument(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
