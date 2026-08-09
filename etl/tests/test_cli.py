@@ -30,6 +30,7 @@ from etl.__main__ import (
     MissingDatabaseUrlError,
     NationalResultsCsvNotFoundError,
     NationalSchemaError,
+    PbaIngestMimeValidationError,
     UnknownSourceError,
     collect_mesa_tipo_mapping,
     collect_national_jurisdiction_codes,
@@ -106,7 +107,9 @@ def test_fetch_subcommand_archives_a_registered_source(tmp_path: Path) -> None:
 
     assert result.record["status"] == "ok"
     assert result.record["id"] == "national/fake-test"
-    assert (local_root / "national" / "fake-test.zip").read_bytes() == fetcher.payload
+    archived_path = result.record["archived_path"]
+    assert isinstance(archived_path, str)
+    assert (tmp_path / archived_path).read_bytes() == fetcher.payload
     assert manifest_path.exists()
     assert fetcher.calls == ["https://example.test/results.zip"]
 
@@ -114,6 +117,162 @@ def test_fetch_subcommand_archives_a_registered_source(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 12.2 -- an unregistered source name is an error, never a silent no-op
 # ---------------------------------------------------------------------------
+
+
+def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "fiscalizacion/2025-local-cli"
+    payload = b"Escuela,Mesa\nEscuela 1,1\n"
+    local_file = tmp_path / "fiscal.csv"
+    local_file.write_bytes(payload)
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": source_id,
+                        "source": "local-file",
+                        "source_url": "local://fiscalizacion/fiscal.csv",
+                        "mime": "text/csv",
+                        "filename": "fiscal.csv",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+    command = _main_args(sources_path, local_root, manifest_path) + [
+        "fetch",
+        "--source",
+        source_id,
+        "--local-file",
+        str(local_file),
+    ]
+
+    assert main(command) == 0
+    assert main(command) == 0
+
+    digest = hashlib.sha256(payload).hexdigest()
+    archived = local_root / "fiscalizacion" / f"fiscal.{digest}.csv"
+    assert archived.read_bytes() == payload
+    records = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert len(records) == 1
+    assert records[0]["sha256"] == digest
+    assert records[0]["archived_path"] == f"archive/fiscalizacion/{archived.name}"
+    assert fetcher.calls == []
+
+
+def test_fetch_local_source_requires_a_local_file_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "fiscalizacion/2025-local-missing"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": source_id,
+                        "source": "local-file",
+                        "source_url": "local://fiscalizacion/fiscal.csv",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", tmp_path / "manifest.json")
+        + ["fetch", "--source", source_id]
+    )
+
+    assert exit_code == 1
+    assert "--local-file" in capsys.readouterr().err
+    assert fetcher.calls == []
+
+
+def test_fetch_local_source_refuses_a_missing_file_without_disclosing_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "fiscalizacion/2025-local-absent"
+    missing = tmp_path / "private-operator-path.csv"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": source_id,
+                        "source": "local-file",
+                        "source_url": "local://fiscalizacion/fiscal.csv",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", tmp_path / "manifest.json")
+        + ["fetch", "--source", source_id, "--local-file", str(missing)]
+    )
+
+    report = capsys.readouterr().err
+    assert exit_code == 1
+    assert "regular readable file" in report
+    assert str(missing) not in report
+    assert fetcher.calls == []
+
+
+def test_fetch_http_source_rejects_local_file_before_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    import etl.__main__ as cli
+
+    local_file = tmp_path / "not-for-http.csv"
+    local_file.write_bytes(b"must not be used")
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(FAKE_SOURCES), encoding="utf-8")
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", tmp_path / "manifest.json")
+        + [
+            "fetch",
+            "--source",
+            "national/fake-test",
+            "--local-file",
+            str(local_file),
+        ]
+    )
+
+    assert exit_code == 1
+    assert "only valid for local://" in capsys.readouterr().err
+    assert fetcher.calls == []
 
 
 def test_fetch_rejects_an_unregistered_source_name(tmp_path: Path) -> None:
@@ -134,6 +293,150 @@ def test_fetch_rejects_an_unregistered_source_name(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 12.6 -- ingest refuses to write without an explicit database URL
 # ---------------------------------------------------------------------------
+
+
+def test_pba_pdf_reference_is_not_ingestible_before_archive_parser_or_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_id = "pba/2025-reference-pdf"
+    sources = {
+        "pba": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/reference.pdf",
+                "mime": "application/pdf",
+                "election_year": 2025,
+                "election_round": "provinciales",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/reference.pdf",
+                    "sha256": hashlib.sha256(b"archived reference").hexdigest(),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "etl.__main__.read_archived_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a reference-only PBA source must not be read for ingest")
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.ingest_pba",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a reference-only PBA source must not reach the parser")
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.psycopg.connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a reference-only PBA source must not reach the database")
+        ),
+    )
+
+    with pytest.raises(PbaIngestMimeValidationError) as excinfo:
+        ingest_source(
+            source_id,
+            database_url="postgresql://must-not-connect/unused",
+            year=2025,
+            round_="provinciales",
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+        )
+
+    message = str(excinfo.value)
+    assert source_id in message
+    assert "application/pdf" in message
+    assert "text/html" in message
+
+
+def test_main_reports_archived_pba_pdf_as_a_clean_validation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    source_id = "pba/2025-reference-pdf"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "pba": [
+                    {
+                        "id": source_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/reference.pdf",
+                        "mime": "application/pdf",
+                        "election_year": 2025,
+                        "election_round": "provinciales",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/reference.pdf",
+                    "sha256": hashlib.sha256(b"archived reference").hexdigest(),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "etl.__main__.read_archived_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("main must refuse the PDF before archive access")
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.ingest_pba",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("main must refuse the PDF before parser access")
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.psycopg.connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("main must refuse the PDF before database access")
+        ),
+    )
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + [
+            "ingest",
+            "--source",
+            source_id,
+            "--database-url",
+            "postgresql://must-not-connect/unused",
+            "--year",
+            "2025",
+            "--round",
+            "provinciales",
+        ]
+    )
+
+    assert exit_code == 1
+    report = capsys.readouterr().err
+    assert source_id in report
+    assert "application/pdf" in report
+    assert "text/html" in report
+    assert "Traceback" not in report
 
 
 def test_ingest_refuses_to_write_without_an_explicit_database_url(tmp_path: Path) -> None:
@@ -1491,6 +1794,73 @@ def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> lis
     ]
 
 
+def _archived_national_sources(
+    tmp_path: Path, payloads: dict[str, bytes | None]
+) -> tuple[Path, Path, Path]:
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": f"https://example.test/{source_id.rsplit('/', 1)[-1]}.csv",
+                "mime": "text/csv",
+                "election_year": int(source_id.split("/")[1][:4]),
+                "election_round": (
+                    "generales" if source_id.split("/")[1].startswith("2023") else "legislativas"
+                ),
+                "notes": "mesa stability fixture",
+                "filename": f"{source_id.rsplit('/', 1)[-1]}.csv",
+            }
+            for source_id in payloads
+        ]
+    }
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(sources), encoding="utf-8")
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    for source_id, payload in payloads.items():
+        if payload is not None:
+            fetch_source(
+                source_id,
+                sources=sources,
+                fetcher=FakeFetcher(payload=payload),
+                local_root=local_root,
+                manifest_path=manifest_path,
+            )
+    return sources_path, local_root, manifest_path
+
+
+def test_ingest_refuses_schema_valid_bytes_modified_after_archival(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
+    source_id = yaml.safe_load(sources_path.read_text(encoding="utf-8"))["national"][0]["id"]
+    archived_path = next((local_root / "national").iterdir())
+    archived_path.write_text(NATIONAL_CSV.replace("120", "121"), encoding="utf-8")
+
+    def forbidden_connect(*_args, **_kwargs):
+        raise AssertionError("archive integrity must be checked before opening the database")
+
+    monkeypatch.setattr("etl.__main__.psycopg.connect", forbidden_connect)
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "ingest",
+            "--source",
+            source_id,
+            "--database-url",
+            "postgresql://unused",
+            "--year",
+            "2025",
+            "--round",
+            "legislativas",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "sha256" in capsys.readouterr().err
+
+
 def test_fetch_is_reachable_through_main(tmp_path: Path, capsys) -> None:
     """`fetch` was the ONE subcommand with no `main()`-driven test.
 
@@ -2605,7 +2975,8 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
             seen_headers.append(dict(headers or {}))
             from etl.http_client import FetchResponse
 
-            return FetchResponse(status_code=200, headers={}, content=b"<html></html>")
+            status = 404 if url.endswith("/robots.txt") else 200
+            return FetchResponse(status_code=status, headers={}, content=b"<html></html>")
 
     fetch_source(
         source_id,
@@ -2614,10 +2985,13 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
         local_root=tmp_path / "archive",
         manifest_path=manifest_path,
     )
-    assert len(calls) == 1
+    assert calls == [
+        "https://www.juntaelectoral.gba.gov.ar/robots.txt",
+        sources["pba"][0]["source_url"],
+    ]
 
-    # SECOND call: the archive-first cache is the whole point — an entry with an
-    # existing "ok" record must not touch the network again.
+    # SECOND call: source bytes are served from the archive, but the robots guard
+    # still runs on every invocation before that cache return.
     fetch_source(
         source_id,
         sources=sources,
@@ -2625,9 +2999,11 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
         local_root=tmp_path / "archive",
         manifest_path=manifest_path,
     )
-    assert len(calls) == 1, (
-        "the second fetch must be served from the archive, not the host"
-    )
+    assert calls == [
+        "https://www.juntaelectoral.gba.gov.ar/robots.txt",
+        sources["pba"][0]["source_url"],
+        "https://www.juntaelectoral.gba.gov.ar/robots.txt",
+    ], "the cached invocation must re-check robots without re-fetching source bytes"
 
     # THE ETIQUETTE LAYER ITSELF, which this test's name promises and which
     # nothing here asserted: with only the cache pinned, deleting the
@@ -2635,7 +3011,7 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
     # passing the bare fetcher left the test green.
     #
     # The policy's User-Agent reached the host (D10 constraint 4)...
-    assert seen_headers[0].get("User-Agent") == PBA_HOST_POLICY.user_agent
+    assert seen_headers[1].get("User-Agent") == PBA_HOST_POLICY.user_agent
 
     # ...and a path outside the registered allowlist is REFUSED rather than
     # fetched (D10 constraint 7): a prefix would let the whole subtree be
@@ -2656,13 +3032,111 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
     # The HOST WAS NEVER TOUCHED -- the refusal happens above the network --
     # and `archive_source` records it as a failed fetch rather than raising,
     # so the manifest carries WHY instead of the run dying with a traceback.
-    assert len(calls) == 1, "an unregistered path must not reach the host at all"
+    assert calls[-1] == "https://www.juntaelectoral.gba.gov.ar/robots.txt"
+    assert len(calls) == 4, "an unregistered source path must not reach the host"
     written = json.loads(manifest_path.read_text(encoding="utf-8"))
     refused = [r for r in written if r["id"] == "pba/off-allowlist"]
     assert refused and refused[0]["status"] != "ok"
-    assert UnregisteredPathError.__name__ in refused[0]["notes"] or "allowlist" in (
-        refused[0]["notes"]
+    assert (
+        UnregisteredPathError.__name__ in refused[0]["notes"]
+        or "allowlist" in (refused[0]["notes"])
     )
+
+
+def test_pba_fetch_halts_before_source_or_archive_mutation_when_robots_appears(
+    tmp_path: Path,
+) -> None:
+    from etl.http_client import FetchResponse, RobotsTxtAppearedError
+    from etl.ingest.pba import PBA_HOST_POLICY
+
+    source_id = "pba/robots-appeared"
+    source_url = (
+        "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/"
+        "concejales_distri/2025027.pdf"
+    )
+    sources = {
+        "pba": [
+            {
+                "id": source_id,
+                "source": PBA_HOST_POLICY.host,
+                "source_url": source_url,
+                "mime": "application/pdf",
+                "notes": "robots refusal fixture",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    original_manifest = "[]"
+    manifest_path.write_text(original_manifest, encoding="utf-8")
+    calls: list[str] = []
+
+    class _RobotsPresentFetcher:
+        def get(self, url: str, *, timeout: float = 30.0, headers=None):
+            calls.append(url)
+            if not url.endswith("/robots.txt"):
+                raise AssertionError("source request must not occur after robots returns 200")
+            return FetchResponse(status_code=200, headers={}, content=b"User-agent: *")
+
+    with pytest.raises(RobotsTxtAppearedError, match="halting"):
+        fetch_source(
+            source_id,
+            sources=sources,
+            fetcher=_RobotsPresentFetcher(),
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+        )
+
+    assert calls == [f"https://{PBA_HOST_POLICY.host}/robots.txt"]
+    assert manifest_path.read_text(encoding="utf-8") == original_manifest
+    assert not (tmp_path / "archive").exists()
+
+
+def test_pba_robots_appearance_exits_fetch_command_cleanly(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from etl.http_client import FetchResponse
+    from etl.ingest.pba import PBA_HOST_POLICY
+
+    source_id = "pba/robots-cli"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "pba": [
+                    {
+                        "id": source_id,
+                        "source": PBA_HOST_POLICY.host,
+                        "source_url": (
+                            "https://www.juntaelectoral.gba.gov.ar/"
+                            "escrutinio-definitivo-2025/concejales_distri/2025027.pdf"
+                        ),
+                        "mime": "application/pdf",
+                        "notes": "robots CLI refusal fixture",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    class _RobotsPresentFetcher:
+        def get(self, url: str, *, timeout: float = 30.0, headers=None):
+            assert url.endswith("/robots.txt")
+            return FetchResponse(status_code=200, headers={}, content=b"User-agent: *")
+
+    monkeypatch.setattr("etl.__main__.RequestsFetcher", _RobotsPresentFetcher)
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["fetch", "--source", source_id]
+    )
+
+    assert exit_code == 1
+    assert "robots.txt now returns 200" in capsys.readouterr().err
+    assert manifest_path.read_text(encoding="utf-8") == "[]"
+    assert not (tmp_path / "archive").exists()
 
 
 @pytest.mark.parametrize(

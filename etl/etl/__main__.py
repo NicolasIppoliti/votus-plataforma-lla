@@ -35,7 +35,9 @@ import yaml
 from .archive import (
     ArchiveResult,
     Fetcher,
+    FetchResponse,
     archive_source,
+    read_verified_archive,
 )
 from .crosswalk import (
     CURATED_NAME_TABLE_SCOPE,
@@ -57,6 +59,8 @@ from .db import (
 )
 from .http_client import (
     RequestsFetcher,
+    RobotsTxtAppearedError,
+    check_robots_txt_still_absent,
 )
 from .ingest.fiscalizacion import (
     FISCALIZACION_CATEGORY,
@@ -252,6 +256,7 @@ def fetch_source(
     fetcher: Fetcher,
     local_root: Path,
     manifest_path: Path,
+    local_file: Path | None = None,
 ) -> ArchiveResult:
     """Archive one registered source by id.
 
@@ -270,8 +275,29 @@ def fetch_source(
     # here, before its bytes exist on disk.
     guard_local_mirror_only(entry)
 
-    local_store = LocalArchiveStore(root=local_root)
-    records = load_manifest(manifest_path)
+    source_url = entry.get("source_url")
+    is_local_source = isinstance(source_url, str) and source_url.startswith("local://")
+    local_bytes: bytes | None = None
+    if is_local_source:
+        if local_file is None:
+            raise LocalFileValidationError(f"local source {source_id!r} requires --local-file")
+        if not local_file.is_file():
+            raise LocalFileValidationError(
+                f"local source {source_id!r} requires a regular readable file"
+            )
+        try:
+            local_bytes = local_file.read_bytes()
+        except OSError as exc:
+            raise LocalFileValidationError(
+                f"local source {source_id!r} requires a regular readable file"
+            ) from exc
+    elif local_file is not None:
+        raise LocalFileValidationError(
+            f"--local-file is only valid for local:// sources, not {source_id!r}"
+        )
+
+    pba_fetcher = None
+
     if entry.get("capability") == "pba":
         # THROUGH D10's etiquette. `archive_pba_source` was implemented and
         # tested with no production caller, so the archive-first cache and the
@@ -280,20 +306,47 @@ def fetch_source(
         # many times.
         from etl.http_client import PolicedHostFetcher
 
-        from .ingest.pba import PBA_HOST_POLICY, archive_pba_source
+        from .ingest.pba import PBA_HOST_POLICY
 
+        # Re-check on EVERY invocation, including an archive-cache hit. A newly
+        # published robots.txt is a policy change, so it must halt before source
+        # access or any archive/manifest mutation.
+        check_robots_txt_still_absent(fetcher, PBA_HOST_POLICY.host)
+        pba_fetcher = PolicedHostFetcher(fetcher, PBA_HOST_POLICY)
+
+    local_store = LocalArchiveStore(root=local_root)
+    records = load_manifest(manifest_path)
+    if entry.get("capability") == "pba":
+        from .ingest.pba import archive_pba_source
+
+        assert pba_fetcher is not None
         # The POLICED fetcher, not the bare one: `archive_pba_source` wraps it
         # in bounded backoff, and `PolicedHostFetcher` is what enforces the path
         # allowlist, the serial cap and the minimum delay. Passing the raw
         # fetcher would have kept the etiquette layer inert in a different way.
         result = archive_pba_source(
             entry,
-            fetcher=PolicedHostFetcher(fetcher, PBA_HOST_POLICY),
+            fetcher=pba_fetcher,
             local_store=local_store,
             records=records,
         )
+    elif local_bytes is not None:
+        local_payload: bytes = local_bytes
+
+        class LocalBytesFetcher:
+            def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
+                if url != source_url:
+                    raise LocalFileValidationError("local archive transport mismatch")
+                return FetchResponse(status_code=200, content=local_payload, headers={})
+
+        result = archive_source(
+            entry,
+            fetcher=LocalBytesFetcher(),
+            local_store=local_store,
+        )
     else:
         result = archive_source(entry, fetcher=fetcher, local_store=local_store)
+
     records = upsert_record(records, result.record)
     save_manifest(manifest_path, records)
     return result
@@ -308,12 +361,15 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             fetcher=RequestsFetcher(),
             local_root=Path(args.local_root),
             manifest_path=Path(args.manifest_path),
+            local_file=Path(args.local_file) if args.local_file is not None else None,
         )
     except (
         UnknownSourceError,
         AmbiguousSourceError,
         MalformedManifestRecordError,
         FiscalizacionUploadForbiddenError,
+        LocalFileValidationError,
+        RobotsTxtAppearedError,
     ) as exc:
         # The personal-data guard is the one failure an operator is MOST likely
         # to hit by accident, and it was the only one exiting with a traceback
@@ -465,6 +521,8 @@ def archived_filename(record: dict, *, source_id: str) -> str:
 def read_archived_source(
     entry: dict,
     *,
+    manifest_record: dict,
+    capability: str,
     local_store: LocalArchiveStore,
     filename: str,
 ) -> bytes:
@@ -477,7 +535,12 @@ def read_archived_source(
     three now go through.
     """
     guard_local_mirror_only(entry)
-    return local_store.read(entry["capability"], filename)
+    return read_verified_archive(
+        local_store,
+        capability=capability,
+        filename=filename,
+        expected_sha256=manifest_record.get("sha256"),
+    )
 
 
 def ingest_source(
@@ -2269,6 +2332,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch_parser = subparsers.add_parser("fetch", help="Archive one registered source.")
     fetch_parser.add_argument("--source", required=True)
+    fetch_parser.add_argument("--local-file", default=None)
     fetch_parser.set_defaults(func=cmd_fetch)
 
     ingest_parser = subparsers.add_parser(
