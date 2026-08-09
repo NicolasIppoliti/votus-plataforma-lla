@@ -25,14 +25,18 @@ import os
 import sys
 import tempfile
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
 import psycopg
 import yaml
 
-from .archive import ArchiveResult, Fetcher, archive_source
+from .archive import (
+    ArchiveResult,
+    Fetcher,
+    archive_source,
+)
 from .crosswalk import (
     CURATED_NAME_TABLE_SCOPE,
     CrosswalkTable,
@@ -51,9 +55,10 @@ from .db import (
     load_party_map_rows,
     merge_key,
 )
-from .http_client import RequestsFetcher
+from .http_client import (
+    RequestsFetcher,
+)
 from .ingest.fiscalizacion import (
-    mesa_subject_ref,
     FISCALIZACION_CATEGORY,
     FISCALIZACION_DISTRITO,
     FISCALIZACION_SECCION,
@@ -61,6 +66,7 @@ from .ingest.fiscalizacion import (
     FiscalizacionUploadForbiddenError,
     guard_local_mirror_only,
     ingest_fiscalizacion,
+    mesa_subject_ref,
 )
 from .ingest.national import (
     REQUIRED_COLUMNS,
@@ -97,6 +103,7 @@ DEFAULT_LOCAL_ROOT = REPO_ROOT / "archive"
 DEFAULT_MANIFEST_PATH = REPO_ROOT / "archive-manifest.json"
 DEFAULT_CROSSWALK_PATH = REPO_ROOT / "curated" / "crosswalk.yaml"
 DEFAULT_PARTY_MAP_PATH = REPO_ROOT / "curated" / "party_map.yaml"
+SUPPORTED_SOURCE_CAPABILITIES = frozenset({"national", "pba", "fiscalizacion"})
 
 # Never a hardcoded fallback DSN -- see `resolve_database_url` (task 12.6).
 DATABASE_URL_ENV_VAR = "ETL_DATABASE_URL"
@@ -121,12 +128,28 @@ class MalformedManifestRecordError(ValueError):
     """
 
 
+class SourcesValidationError(ValueError):
+    """Raised when ``sources.yaml`` is not a capability-to-entry-list mapping."""
+
+
+class SourceElectionValidationError(ValueError):
+    """Raised when an ingest request does not match its registered election."""
+
+
+class PbaIngestMimeValidationError(ValueError):
+    """Raised when a registered PBA source is archival reference material only."""
+
+
 class UnknownSourceError(ValueError):
     """Raised when `--source` names no entry in `sources.yaml`.
 
     Per task 12.2: an unrecognized source id is always an error, never a
     silent no-op.
     """
+
+
+class LocalFileValidationError(ValueError):
+    """Raised when fetch local-file arguments do not match the source transport."""
 
 
 class MissingDatabaseUrlError(RuntimeError):
@@ -144,8 +167,57 @@ class MissingDatabaseUrlError(RuntimeError):
 
 
 def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
-    """Load `sources.yaml`'s capability -> entries mapping."""
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    """Load and minimally validate ``sources.yaml`` at its trust boundary."""
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, Mapping):
+        raise SourcesValidationError("sources.yaml top level must be a mapping")
+
+    sources: dict[str, list[dict]] = {}
+    for capability, entries in loaded.items():
+        if not isinstance(capability, str):
+            raise SourcesValidationError("sources.yaml capability names must be strings")
+        if capability not in SUPPORTED_SOURCE_CAPABILITIES:
+            raise SourcesValidationError(
+                f"sources.yaml capability {capability!r} is unsupported; expected one of "
+                f"{sorted(SUPPORTED_SOURCE_CAPABILITIES)}"
+            )
+        if not isinstance(entries, list):
+            raise SourcesValidationError(
+                f"sources.yaml capability {capability!r} must contain a list of entries"
+            )
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} must be a mapping"
+                )
+            source_id = entry.get("id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} id "
+                    "must be a non-empty string"
+                )
+            source = entry.get("source")
+            if not isinstance(source, str) or not source.strip():
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} source "
+                    "must be a non-empty string"
+                )
+            if "source_url" not in entry or not isinstance(entry["source_url"], str | None):
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} source_url "
+                    "must be a string or null"
+                )
+            if "election_year" in entry or "election_round" in entry:
+                try:
+                    registered_source_election(entry)
+                except SourcesValidationError as exc:
+                    raise SourcesValidationError(
+                        f"sources.yaml capability {capability!r} entry {index}: {exc}"
+                    ) from exc
+        sources[capability] = list(entries)
+    return sources
 
 
 def find_source_entry(sources: dict[str, list[dict]], source_id: str) -> dict | None:
@@ -999,18 +1071,39 @@ def collect_mesa_tipo_mapping(
 
 
 def source_year(entry_id: str) -> int | None:
-    """The election year a registered source id declares, or `None`.
-
-    ONE definition. The same four-line parse lived in
-    `readable_national_sources`, `collect_national_party_keys` and
-    `collect_national_mesa_codes` -- three independent ideas of "the year of a
-    source", which is how two independent functions ended up with the same
-    padding bug.
-    """
+    """Return a year encoded in a source id, only for consistency diagnostics."""
     digits = "".join(c for c in entry_id.split("/")[-1][:4] if c.isdigit())
     if len(digits) != 4:
         return None
-    return int(digits)
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def registered_source_election(entry: Mapping) -> tuple[int, str]:
+    """Validate and return the election metadata authoritative for a source."""
+    source_id = entry.get("id")
+    election_year = entry.get("election_year")
+    election_round = entry.get("election_round")
+    if isinstance(election_year, bool) or not isinstance(election_year, int):
+        raise SourcesValidationError(
+            f"source {source_id!r} election_year must be an integer excluding booleans; "
+            f"received {election_year!r}"
+        )
+    if not isinstance(election_round, str) or not election_round.strip():
+        raise SourcesValidationError(
+            f"source {source_id!r} election_round must be a non-empty string; "
+            f"received {election_round!r}"
+        )
+
+    id_year = source_year(source_id) if isinstance(source_id, str) else None
+    if id_year is not None and id_year != election_year:
+        raise SourcesValidationError(
+            f"source {source_id!r} id declares year {id_year}, but election_year "
+            f"metadata declares {election_year}"
+        )
+    return election_year, election_round
 
 
 def readable_national_sources(

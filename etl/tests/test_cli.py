@@ -63,6 +63,8 @@ FAKE_SOURCES = {
             "source": "example.test",
             "source_url": "https://example.test/results.zip",
             "mime": "application/zip",
+            "election_year": 2025,
+            "election_round": "legislativas",
             "notes": "fixture only, never fetched over the network",
             "filename": "fake-test.zip",
         }
@@ -1302,7 +1304,8 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                 # `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
                 # uuid-bearing source id carries `_`, so this could delete
                 # ANOTHER test's rows from the shared database.
-                "delete from review_item where starts_with(subject_ref, %s)", (f"{fiscalizacion_id} ",)
+                "delete from review_item where starts_with(subject_ref, %s)",
+                (f"{fiscalizacion_id} ",),
             )
         conn.commit()
         conn.close()
@@ -2662,6 +2665,54 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("- national/2025\n", "top level"),
+        ("national:\n", "national"),
+        ("national:\n  - not-a-mapping\n", "entry 0"),
+    ],
+)
+def test_malformed_sources_shapes_exit_cleanly_through_main(
+    tmp_path: Path, capsys, content: str, expected: str
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(content, encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path) + ["validate-crosswalk"]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "error:" in reported
+    assert expected in reported
+    assert "TypeError" not in reported
+    assert "Traceback" not in reported
+
+
+def test_source_entry_missing_id_exits_cleanly_through_main(tmp_path: Path, capsys) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump({"national": [{"source": "example.test"}]}), encoding="utf-8"
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path) + ["validate-crosswalk"]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "error:" in reported
+    assert "id" in reported
+    assert "KeyError" not in reported
+    assert "Traceback" not in reported
+
+
 def test_a_malformed_sources_file_exits_nonzero_instead_of_a_traceback(
     tmp_path: Path, capsys
 ) -> None:
@@ -2680,12 +2731,31 @@ def test_a_malformed_sources_file_exits_nonzero_instead_of_a_traceback(
     manifest_path.write_text("[]", encoding="utf-8")
 
     exit_code = main(
-        _main_args(sources_path, tmp_path / "archive", manifest_path)
-        + ["validate-crosswalk"]
+        _main_args(sources_path, tmp_path / "archive", manifest_path) + ["validate-crosswalk"]
     )
 
     assert exit_code == 1
     assert "error:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("manifest", ["{}", '["not-a-record"]'])
+def test_malformed_manifest_shapes_exit_cleanly_through_main(
+    tmp_path: Path, capsys, manifest: str
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text("national: []\n", encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(manifest, encoding="utf-8")
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path) + ["validate-crosswalk"]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "manifest" in reported
+    assert "TypeError" not in reported
+    assert "Traceback" not in reported
 
 
 def test_a_manifest_record_missing_status_exits_nonzero(tmp_path: Path, capsys) -> None:
@@ -2695,15 +2765,24 @@ def test_a_manifest_record_missing_status_exits_nonzero(tmp_path: Path, capsys) 
     """
     sources_path = tmp_path / "sources.yaml"
     sources_path.write_text(
-        yaml.safe_dump({"national": [{"id": "national/2025", "source": "x"}]}),
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": "national/2025",
+                        "source": "x",
+                        "source_url": "https://example.test/2025.csv",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     manifest_path = tmp_path / "archive-manifest.json"
     manifest_path.write_text('[{"id": "national/2025"}]', encoding="utf-8")
 
     exit_code = main(
-        _main_args(sources_path, tmp_path / "archive", manifest_path)
-        + ["validate-crosswalk"]
+        _main_args(sources_path, tmp_path / "archive", manifest_path) + ["validate-crosswalk"]
     )
 
     assert exit_code == 1
