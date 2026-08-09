@@ -51,7 +51,7 @@ from etl.crosswalk import (
     JurisdictionCrosswalkEntry,
     load_crosswalk,
 )
-from etl.party_map import load_party_map
+from etl.party_map import PartyMappingTable, load_party_map
 from etl.storage import LocalArchiveStore
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -295,64 +295,6 @@ def test_fetch_rejects_an_unregistered_source_name(tmp_path: Path) -> None:
 # 12.6 -- ingest refuses to write without an explicit database URL
 # ---------------------------------------------------------------------------
 
-
-@pytest.mark.parametrize(
-    ("year", "round_", "expected", "received"),
-    [
-        (2025, "generales", "2023", "2025"),
-        (2023, "legislativas", "generales", "legislativas"),
-    ],
-)
-def test_ingest_refuses_source_election_mismatch_before_archive_or_db_access(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    year: int,
-    round_: str,
-    expected: str,
-    received: str,
-) -> None:
-    from etl.__main__ import SourceElectionValidationError
-
-    sources = {
-        "national": [
-            {
-                **FAKE_SOURCES["national"][0],
-                "election_year": 2023,
-                "election_round": "generales",
-            }
-        ]
-    }
-    manifest_path = tmp_path / "archive-manifest.json"
-    manifest_path.write_text(
-        json.dumps([{"id": "national/fake-test", "status": "ok"}]), encoding="utf-8"
-    )
-    monkeypatch.setattr(
-        "etl.__main__.read_archived_source",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("election mismatch must fail before archive byte access")
-        ),
-    )
-    monkeypatch.setattr(
-        "etl.__main__.psycopg.connect",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("election mismatch must fail before database access")
-        ),
-    )
-
-    with pytest.raises(SourceElectionValidationError) as excinfo:
-        ingest_source(
-            "national/fake-test",
-            database_url="postgresql://must-not-connect/unused",
-            year=year,
-            round_=round_,
-            sources=sources,
-            local_root=tmp_path / "archive",
-            manifest_path=manifest_path,
-        )
-
-    message = str(excinfo.value)
-    assert "expected" in message and expected in message
-    assert "received" in message and received in message
 
 def test_pba_pdf_reference_is_not_ingestible_before_archive_parser_or_database_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -813,6 +755,7 @@ def test_a_distrito_level_code_with_no_seccion_resolves_through_its_distrito() -
     )
 
 
+
 def test_a_zip_with_no_results_member_raises_rather_than_returning_a_wrong_file(
     tmp_path: Path,
 ) -> None:
@@ -862,6 +805,8 @@ def test_load_curated_refuses_a_jurisdiction_present_in_only_one_year(
                 "source": "example.test",
                 "source_url": "https://example.test/n2025.csv",
                 "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "fixture",
                 "filename": "n2025.csv",
             },
@@ -870,6 +815,8 @@ def test_load_curated_refuses_a_jurisdiction_present_in_only_one_year(
                 "source": "example.test",
                 "source_url": "https://example.test/n2023.csv",
                 "mime": "text/csv",
+                "election_year": 2023,
+                "election_round": "generales",
                 "notes": "fixture",
                 "filename": "n2023.csv",
             },
@@ -906,7 +853,7 @@ def test_load_curated_refuses_a_jurisdiction_present_in_only_one_year(
             {
                 "jurisdictions": [
                     {
-                        "pba_distrito": "P90",
+                        "pba_distrito": str(uuid.uuid4().int),
                         "national_distrito": "90",
                         "national_seccion": "001",
                         "name": "Only-one-year fixture",
@@ -1321,6 +1268,8 @@ def test_load_curated_exits_nonzero_on_a_drifted_archive(tmp_path: Path, capsys)
                         "source": "example.test",
                         "source_url": "https://example.test/drifted.zip",
                         "mime": "application/zip",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "schema-drift fixture",
                         "filename": "drifted.zip",
                     },
@@ -1331,6 +1280,8 @@ def test_load_curated_exits_nonzero_on_a_drifted_archive(tmp_path: Path, capsys)
                         "source": "example.test",
                         "source_url": "https://example.test/drifted.zip",
                         "mime": "application/zip",
+                        "election_year": 2023,
+                        "election_round": "generales",
                         "notes": "schema-drift fixture",
                         "filename": "drifted.zip",
                     },
@@ -1847,7 +1798,6 @@ def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[Path, Path
 
 
 
-
 def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> list[str]:
     return [
         "--sources-path",
@@ -1927,6 +1877,219 @@ def test_ingest_refuses_schema_valid_bytes_modified_after_archival(
 
 
 
+def test_load_curated_refuses_any_registered_national_source_without_year_before_db_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": "national/2023-valid",
+                        "source": "example",
+                        "source_url": "https://x",
+                        "election_year": 2023,
+                        "election_round": "generales",
+                    },
+                    {
+                        "id": "national/2025-valid",
+                        "source": "example",
+                        "source_url": "https://x",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    },
+                    {"id": "national/unknown-year", "source": "example", "source_url": "https://x"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    class FakeConnection:
+        def commit(self) -> None:
+            calls.append("commit")
+
+        def rollback(self) -> None:
+            calls.append("rollback")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    monkeypatch.setattr("etl.__main__.readable_national_sources", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: PartyMappingTable(entries=()))
+    monkeypatch.setattr(
+        "etl.__main__.load_crosswalk", lambda _path: CrosswalkTable(jurisdictions=())
+    )
+    monkeypatch.setattr(
+        "etl.__main__.load_party_map_rows",
+        lambda *_args, **_kwargs: calls.append("party loader") or {},
+    )
+    monkeypatch.setattr(
+        "etl.__main__.load_crosswalk_rows",
+        lambda *_args, **_kwargs: calls.append("crosswalk loader") or {},
+    )
+    monkeypatch.setattr(
+        "etl.__main__.psycopg.connect",
+        lambda *_args, **_kwargs: calls.append("connect") or FakeConnection(),
+    )
+
+    exit_code = main(
+        [
+            "--sources-path",
+            str(sources_path),
+            "--local-root",
+            str(tmp_path / "archive"),
+            "--manifest-path",
+            str(tmp_path / "manifest.json"),
+            "load-curated",
+            "--database-url",
+            "postgresql://unused",
+        ]
+    )
+
+    assert exit_code == 1
+    assert calls == []
+    reported = capsys.readouterr().err
+    assert "unknown-year" in reported
+    assert "election_year" in reported
+
+
+def test_load_curated_requires_every_registered_source_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    csv_bytes = NATIONAL_CSV.encode("utf-8")
+    sources_path, local_root, manifest_path = _archived_national_sources(
+        tmp_path,
+        {
+            "national/2023-readable": csv_bytes,
+            "national/2023-missing": None,
+            "national/2025-readable": csv_bytes,
+            "national/2025-missing-file": None,
+        },
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.append(
+        {
+            "id": "national/2025-missing-file",
+            "status": "ok",
+            "archived_path": "archive/national/absent.csv",
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    party_map_path = tmp_path / "party-map.yaml"
+    party_map_path.write_text("mappings: []\n", encoding="utf-8")
+    crosswalk_path = tmp_path / "crosswalk.yaml"
+    crosswalk_path.write_text("jurisdictions: []\n", encoding="utf-8")
+
+    def forbidden_database_access(*_args, **_kwargs):
+        raise AssertionError("incomplete source corpus must fail before database access")
+
+    monkeypatch.setattr("etl.__main__.psycopg.connect", forbidden_database_access)
+    monkeypatch.setattr("etl.__main__.load_party_map_rows", forbidden_database_access)
+    monkeypatch.setattr("etl.__main__.load_crosswalk_rows", forbidden_database_access)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "load-curated",
+            "--database-url",
+            "postgresql://unused",
+            "--party-map-path",
+            str(party_map_path),
+            "--crosswalk-path",
+            str(crosswalk_path),
+        ]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "national/2023-missing" in reported
+    assert "no successful archive record" in reported
+    assert "national/2025-missing-file" in reported
+    assert "local artifact 'absent.csv' is missing" in reported
+
+
+def test_load_curated_records_raw_mesa_presence_before_vote_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    header = (
+        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        b"votos_tipo,votos_cantidad\n"
+    )
+    sources_path, local_root, manifest_path = _archived_national_sources(
+        tmp_path,
+        {
+            "national/2023-raw-presence": (
+                header + b"02,027,1,9001,DIPUTADO NACIONAL,,EN BLANCO,7\n"
+            ),
+            "national/2025-raw-presence": (
+                header + b"02,027,1,9001,DIPUTADO NACIONAL,,POSITIVO,no-leible\n"
+            ),
+        },
+    )
+    party_map_path = tmp_path / "party-map.yaml"
+    party_map_path.write_text("mappings: []\n", encoding="utf-8")
+    crosswalk_path = tmp_path / "crosswalk.yaml"
+    crosswalk_path.write_text(
+        yaml.safe_dump(
+            {
+                "jurisdictions": [
+                    {
+                        "pba_distrito": "027",
+                        "national_distrito": "02",
+                        "national_seccion": "027",
+                        "name": "Coronel Rosales",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured_stabilities: list[tuple] = []
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("etl.__main__.psycopg.connect", lambda *_args, **_kwargs: FakeConnection())
+    monkeypatch.setattr("etl.__main__.load_party_map_rows", lambda *_args, **_kwargs: {})
+
+    def capture_crosswalk(_conn, _crosswalk, *, mesa_stabilities):
+        captured_stabilities.extend(mesa_stabilities)
+        return {"mesa_crosswalk": len(mesa_stabilities)}
+
+    monkeypatch.setattr("etl.__main__.load_crosswalk_rows", capture_crosswalk)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "load-curated",
+            "--database-url",
+            "postgresql://unused",
+            "--party-map-path",
+            str(party_map_path),
+            "--crosswalk-path",
+            str(crosswalk_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(captured_stabilities) == 1
+    distrito, seccion, stability = captured_stabilities[0]
+    assert (distrito, seccion, stability.mesa) == ("02", "027", 9001)
+    assert stability.present_2023 is True
+    assert stability.present_2025 is True
+    assert stability.stable is True
+
+
 def test_validate_crosswalk_refuses_a_parser_row_without_distrito(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1945,6 +2108,7 @@ def test_validate_crosswalk_refuses_a_parser_row_without_distrito(
     assert exit_code == 1
     assert "parser invariant violated" in reported
     assert "distrito" in reported
+
 
 def test_validate_curated_refuses_a_parser_row_without_list_id(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
@@ -2124,9 +2288,7 @@ def test_validate_crosswalk_is_reachable_through_main(tmp_path: Path, capsys) ->
     exercised downstream pure functions and bypassed the archive-reading path
     they existed to cover. Deleting the `add_parser` call left the suite green.
     """
-    sources_path, local_root, manifest_path = _archived_national_corpus(
-        tmp_path, NATIONAL_CSV
-    )
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
     # A crosswalk that maps NOTHING: the command must FAIL, so a green exit
     # cannot come from an empty corpus or a skipped read.
     crosswalk_path = tmp_path / "crosswalk.yaml"
@@ -2140,8 +2302,7 @@ def test_validate_crosswalk_is_reachable_through_main(tmp_path: Path, capsys) ->
     output = capsys.readouterr()
     assert exit_code == 1, "an unmapped code must exit nonzero"
     assert "02" in output.out + output.err, (
-        "the code read FROM THE ARCHIVE must appear in the report; "
-        f"got {output.out + output.err!r}"
+        f"the code read FROM THE ARCHIVE must appear in the report; got {output.out + output.err!r}"
     )
 
 
@@ -2184,9 +2345,7 @@ def test_duplicate_curated_keys_exit_cleanly_through_main(
 
 def test_validate_curated_is_reachable_through_main(tmp_path: Path, capsys) -> None:
     """Same wiring proof for the second command rule 1 names."""
-    sources_path, local_root, manifest_path = _archived_national_corpus(
-        tmp_path, NATIONAL_CSV
-    )
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
     party_map_path = tmp_path / "party_map.yaml"
     party_map_path.write_text(yaml.safe_dump({"parties": []}), encoding="utf-8")
 
@@ -2383,21 +2542,28 @@ def test_collect_functions_read_a_real_zipped_archive_entry(tmp_path) -> None:
                     "id": "national/2025-legislativas",
                     "status": "ok",
                     "archived_path": "national/sample.zip",
+                    "sha256": hashlib.sha256(zip_path.read_bytes()).hexdigest(),
                 }
             ]
         )
     )
 
-    sources = {"national": [{"id": "national/2025-legislativas"}]}
+    sources = {
+        "national": [
+            {
+                "id": "national/2025-legislativas",
+                "election_year": 2025,
+                "election_round": "legislativas",
+            }
+        ]
+    }
 
     codes = collect_national_jurisdiction_codes(
         sources, local_root=local_root, manifest_path=manifest_path
     )
     assert codes, "a zipped archive entry must yield jurisdiction codes, not crash"
 
-    keys = collect_national_party_keys(
-        sources, local_root=local_root, manifest_path=manifest_path
-    )
+    keys = collect_national_party_keys(sources, local_root=local_root, manifest_path=manifest_path)
     assert keys, "a zipped archive entry must yield party keys, not crash"
 
 
@@ -2434,7 +2600,7 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
     # the national 2-digit form. Asserting the raw curated strings would pass
     # only while the crosswalk tables kept their own idea of the code.
     stored_distrito, stored_seccion = "90", "001"
-    pba_distrito = f"P{marker}"
+    pba_distrito = str(uuid.uuid4().int)
 
     source_2023_id = f"national/2023-cli-load-{marker}"
     source_2025_id = f"national/2025-cli-load-{marker}"
@@ -2445,6 +2611,8 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
                 "source": "example.test",
                 "source_url": "https://example.test/2023.csv",
                 "mime": "text/csv",
+                "election_year": 2023,
+                "election_round": "generales",
                 "notes": "load-curated CLI reachability fixture",
                 "filename": "2023.csv",
             },
@@ -2453,6 +2621,8 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
                 "source": "example.test",
                 "source_url": "https://example.test/2025.csv",
                 "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "notes": "load-curated CLI reachability fixture",
                 "filename": "2025.csv",
             },

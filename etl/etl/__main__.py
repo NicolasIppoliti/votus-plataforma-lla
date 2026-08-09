@@ -72,11 +72,11 @@ from .ingest.fiscalizacion import (
     QuarantinedFiscalizacionRow,
     guard_local_mirror_only,
     ingest_fiscalizacion,
-    mesa_subject_ref,
 )
 from .ingest.national import (
     REQUIRED_COLUMNS,
     NationalSchemaError,
+    extract_raw_mesa_identities,
     ingest_national,
     load_national_rows,
 )
@@ -796,7 +796,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def find_unmapped_jurisdictions(
-    codes: Iterable[tuple[str, str | None]], crosswalk: CrosswalkTable
+    codes: Iterable[tuple[str | None, str | None]], crosswalk: CrosswalkTable
 ) -> list[QuarantinedJurisdiction]:
     """Report every `(distrito, seccion)` pair with no curated crosswalk
     entry -- never silently ignored (task 12.4).
@@ -914,9 +914,7 @@ def find_unmapped_jurisdictions(
                 is not None
             )
         if not resolved:
-            shown_seccion = (
-                "(sin seccion)" if normalized_seccion is None else normalized_seccion
-            )
+            shown_seccion = "(sin seccion)" if normalized_seccion is None else normalized_seccion
             unmapped.append(
                 QuarantinedJurisdiction(
                     code=f"{normalized_distrito}/{shown_seccion}",
@@ -1079,6 +1077,8 @@ def collect_national_jurisdiction_codes(
     # handler downstream never ran, while the module contract promises a
     # non-zero EXIT on a validation failure, not a stack trace.
     return sorted(codes, key=lambda pair: (pair[0] or "", pair[1] or ""))
+
+
 
 
 
@@ -1520,22 +1520,25 @@ def collect_national_mesa_codes(
     distrito_code: str,
     seccion_code: str,
     year: int,
-) -> set[int]:
-    """Gather every distinct mesa code observed in an already-archived
+) -> set[tuple[str, int]]:
+    """Gather every distinct circuito/mesa pair observed in an already-archived
     national source for one `(distrito, seccion)` scope and one year.
 
-    Reuses the same archived-file parsing path
-    `collect_national_jurisdiction_codes`/`collect_national_party_keys`
-    already exercise for `validate-crosswalk`/`validate-curated` -- this is
-    `mesa_crosswalk`'s per-year presence input (task 15.11), computed from
-    the REAL archived corpus rather than assumed or hand-authored in YAML
-    (jurisdiction-model spec: stability "MUST NOT be assumed by default").
+    Reads the raw identity projection before list/vote filters or ambiguous-row
+    quarantine. Every registered source for the requested year must be archived
+    locally first, so the result can never represent a partial year corpus.
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
+    _require_complete_national_corpus(
+        sources,
+        records=records,
+        local_store=local_store,
+        years=(year,),
+    )
     target_distrito = normalize_distrito_code(distrito_code)
     target_seccion = normalize_seccion_code(seccion_code)
-    mesas: set[int] = set()
+    mesas: set[tuple[str, int]] = set()
     dropped: dict[str, int] = {}
     # Split by REASON: "never fetched" and "manifest says ok but the local
     # mirror has no such file" are different failures -- one needs a fetch, the
@@ -1543,24 +1546,11 @@ def collect_national_mesa_codes(
     skipped_not_archived = 0
     skipped_missing_file = 0
     sources_seen = 0
-    skipped_no_year = 0
     for entry in sources.get("national", []):
-        entry_year = source_year(entry["id"])
-        if entry_year is None:
-            # REPORTED, like the sibling `collect_national_party_keys` already
-            # does. An id with no parseable 4-digit year fell through
-            # `!= year` and was counted nowhere, and the consequence is not
-            # cosmetic: an empty mesa set is what `compute_mesa_stability`
-            # records as `present=False, stable_across_years=False`, and
-            # `load_curated` states that absence of a source MUST NOT be
-            # persisted as measured instability. `readable_national_sources`
-            # filters the same way, so a MIXED corpus -- one year parseable,
-            # one not -- sails past `MissingArchivedYearError` and lands the
-            # false verdict.
-            skipped_no_year += 1
-            continue
+        entry_year, _ = registered_source_election(entry)
         if entry_year != year:
             continue
+
         # Counted only after the year filter: a source for another year is out of
         # scope, not missing.
         sources_seen += 1
@@ -1572,27 +1562,31 @@ def collect_national_mesa_codes(
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        raw_bytes = local_store.read("national", filename)
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
         csv_bytes = national_csv_bytes(raw_bytes)
-        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
-            # PER REASON. This function reported which SOURCES it skipped and
-            # then dropped the rows themselves in silence, so an empty result
-            # had no distinguishable cause -- and an empty result is what makes
-            # `compute_mesa_stability` record a mesa as absent in a year.
-            if normalize_distrito_code(row.result.distrito) != target_distrito:
+        for distrito, seccion, circuito, mesa in extract_raw_mesa_identities(csv_bytes):
+            if normalize_distrito_code(distrito) != target_distrito:
                 dropped["outside the requested distrito"] = (
                     dropped.get("outside the requested distrito", 0) + 1
                 )
-            elif normalize_seccion_code(row.result.seccion) != target_seccion:
+            elif normalize_seccion_code(seccion) != target_seccion:
                 dropped["outside the requested seccion"] = (
                     dropped.get("outside the requested seccion", 0) + 1
                 )
-            elif row.mesa is None:
-                dropped["coarser than mesa granularity"] = (
-                    dropped.get("coarser than mesa granularity", 0) + 1
-                )
             else:
-                mesas.add(row.mesa)
+                normalized_circuito = normalize_circuito_code(circuito)
+                if normalized_circuito is None:
+                    raise NationalSchemaError(
+                        f"raw mesa identity carried unreadable circuito {circuito!r}"
+                    )
+                mesas.add((normalized_circuito, mesa))
+
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
@@ -1605,21 +1599,49 @@ def collect_national_mesa_codes(
             "recorded as archived but absent from the local mirror and were excluded",
             file=sys.stderr,
         )
-    if skipped_no_year:
-        print(
-            f"  {skipped_no_year} registered national source(s) carry no parseable "
-            "year in their id and were counted for NO year -- their mesas are absent "
-            f"from the {year} set, and absence is not evidence of instability",
-            file=sys.stderr,
-        )
+
     for reason, count in sorted(dropped.items()):
         print(f"  {year}: {count} row(s) not counted — {reason}", file=sys.stderr)
     return mesas
 
 
 class MissingArchivedYearError(RuntimeError):
-    """Raised when mesa stability is requested for a year with no readable
-    archived source -- absence of data is not evidence of instability."""
+    """Raised when mesa stability lacks a complete registered source corpus."""
+
+
+def _require_complete_national_corpus(
+    sources: dict[str, list[dict]],
+    *,
+    records: list[dict],
+    local_store: LocalArchiveStore,
+    years: tuple[int, ...],
+) -> None:
+    unavailable: list[str] = []
+    for year in years:
+        entries = [
+            entry
+            for entry in sources.get("national", [])
+            if registered_source_election(entry)[0] == year
+        ]
+        if not entries:
+            unavailable.append(f"{year}: no registered national source")
+            continue
+        for entry in entries:
+            archived = latest_ok_record(records, entry["id"])
+            if archived is None:
+                unavailable.append(f"{entry['id']}: no successful archive record")
+                continue
+            filename = archived_filename(archived, source_id=entry["id"])
+            if not local_store.exists("national", filename):
+                unavailable.append(
+                    f"{entry['id']}: archived local artifact {filename!r} is missing"
+                )
+
+    if unavailable:
+        raise MissingArchivedYearError(
+            "national source corpus is incomplete; refusing to compute mesa stability: "
+            + "; ".join(unavailable)
+        )
 
 
 def load_curated(
@@ -1636,34 +1658,29 @@ def load_curated(
     `jurisdiction_crosswalk`/`mesa_crosswalk` from `crosswalk_path`.
 
     `mesa_crosswalk`'s presence-per-year is computed for every jurisdiction
-    the crosswalk curates, from whichever national sources are ALREADY
-    archived on disk for 2023/2025 (task 15.11).
+    the crosswalk curates only after every registered 2023/2025 national source
+    has a successful manifest record and an existing local artifact.
 
-    A year with NO readable archived source is refused, not computed. An
-    unread year yields an empty mesa set, which `compute_mesa_stability`
-    cannot distinguish from a year whose mesas genuinely vanished: every mesa
-    would be persisted as `present_2023=False, stable_across_years=False` --
-    absence of a source rendered as measured instability, which the
-    jurisdiction-model spec states MUST NOT be assumed.
+    A partial year corpus is refused, not computed. Missing source data yields
+    an incomplete mesa set that `compute_mesa_stability` cannot distinguish
+    from mesas that genuinely vanished, rendering unmeasured coverage as
+    measured instability.
     """
+    for entry in sources.get("national", []):
+        registered_source_election(entry)
+
+    records = load_manifest(manifest_path)
+    local_store = LocalArchiveStore(root=local_root)
+
+    _require_complete_national_corpus(
+        sources,
+        records=records,
+        local_store=local_store,
+        years=(2023, 2025),
+    )
+
     party_map = load_party_map(party_map_path)
     crosswalk = load_crosswalk(crosswalk_path)
-
-    for required_year in (2023, 2025):
-        if (
-            readable_national_sources(
-                sources,
-                local_root=local_root,
-                manifest_path=manifest_path,
-                year=required_year,
-            )
-            == 0
-        ):
-            raise MissingArchivedYearError(
-                f"no archived national source is readable for {required_year}; "
-                "refusing to compute mesa stability, which would record every "
-                f"mesa as absent in {required_year} rather than unmeasured"
-            )
 
     mesa_stabilities: list[tuple[str, str, MesaStability]] = []
     # Split by cause, because the fixes are opposite ones.
@@ -1708,16 +1725,9 @@ def load_curated(
             in_corpus = collect_national_jurisdiction_codes(
                 sources, local_root=local_root, manifest_path=manifest_path
             )
-            target_distrito = normalize_distrito_code(
-                jurisdiction.national_distrito_code
-            )
-            distrito_seen = any(
-                normalize_distrito_code(d) == target_distrito for d, _ in in_corpus
-            )
-            label = (
-                f"{jurisdiction.national_distrito_code}/"
-                f"{jurisdiction.national_seccion_code}"
-            )
+            target_distrito = normalize_distrito_code(jurisdiction.national_distrito_code)
+            distrito_seen = any(normalize_distrito_code(d) == target_distrito for d, _ in in_corpus)
+            label = f"{jurisdiction.national_distrito_code}/{jurisdiction.national_seccion_code}"
             if distrito_seen:
                 seen_secciones = sorted(
                     {
@@ -1798,9 +1808,14 @@ def load_curated(
                 # `fresh_review_items` dedups on EXACT `subject_ref`, so the
                 # day the curated padding is corrected every discontinuity
                 # appends again.
-                subject_ref=mesa_subject_ref(distrito, seccion, stability.mesa),
+                subject_ref=(
+                    f"{normalize_distrito_code(distrito)}-"
+                    f"{normalize_seccion_code(seccion)}-circuito-"
+                    f"{stability.circuito}-mesa-{stability.mesa}"
+                ),
                 note=(
-                    f"mesa {stability.mesa} in {distrito}/{seccion} is present in "
+                    f"mesa {stability.mesa} circuito {stability.circuito} in "
+                    f"{distrito}/{seccion} is present in "
                     + ("2023 but not 2025" if stability.present_2023 else "2025 but not 2023")
                     + "; it is NOT stable across years and must not be compared as if it were"
                 ),
@@ -1835,28 +1850,6 @@ def cmd_load_curated(args: argparse.Namespace) -> int:
         return 1
 
     sources = load_sources(Path(args.sources_path))
-    try:
-        readable = readable_national_sources(
-            sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
-        )
-    except (UnknownSourceError, MalformedManifestRecordError, DuplicateManifestRecordError,
-            AmbiguousSourceError) as exc:
-        # A malformed manifest entry is a validation failure like any other.
-        # This call sat OUTSIDE the try below, so it exited with a traceback.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    if readable == 0:
-        # `mesa_crosswalk`'s per-year presence is COMPUTED from the archived
-        # corpus. With nothing archived, every mesa set is empty, no stability
-        # row is emitted, and "loaded 0 row(s) into mesa_crosswalk" exits 0 --
-        # stability UNKNOWN rendered as a clean load. Same refusal the two
-        # validate commands make.
-        print(
-            "no archived national source is readable; refusing to compute mesa "
-            "stability over an empty corpus -- run `fetch` first",
-            file=sys.stderr,
-        )
-        return 1
     try:
         counts = load_curated(
             database_url=database_url,
@@ -2460,16 +2453,6 @@ def build_parser() -> argparse.ArgumentParser:
     load_curated_parser.add_argument("--crosswalk-path", default=str(DEFAULT_CROSSWALK_PATH))
     load_curated_parser.set_defaults(func=cmd_load_curated)
 
-    backfill_parser = subparsers.add_parser(
-        "backfill-mesa-tipo",
-        help="Populate result_row.mesa_tipo from the archived sources without re-ingesting.",
-    )
-    backfill_parser.add_argument("--database-url", default=None)
-    # Batched so progress commits incrementally: a single 16,5-million-row
-    # UPDATE loses everything if the client dies, which it did.
-    backfill_parser.add_argument("--batch-size", type=int, default=1_500_000)
-    backfill_parser.set_defaults(func=cmd_backfill_mesa_tipo)
-
     return parser
 
 
@@ -2630,135 +2613,6 @@ def apply_mesa_tipo_mapping(
         conn.commit()
     return updated, resolved_jurisdictions, remaining_breakdown, unresolved_breakdown
 
-
-def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
-    """Populate `result_row.mesa_tipo` without re-ingesting the corpus.
-
-    The column was added late, so already-correct rows carry NULL.
-    Re-ingesting to fill one column means re-parsing 13,6 million PASO rows
-    — about 47 minutes, which this environment could not sustain.
-
-    But `mesa_tipo` is a property of the MESA: mesa 9001 in distrito 02 /
-    seccion 027 is EXTRANJEROS for every category and every list. Collapsing
-    the sources to the distinct lineage->tipo mapping is a few hundred
-    thousand tuples, and applying it is an UPDATE joined on jurisdiction.
-    """
-    # Resolved BEFORE the archives are parsed, and reported as an exit code
-    # rather than a traceback — matching `cmd_ingest` and `cmd_load_curated`.
-    # Parsing 13,6 million rows first and only then discovering there is no
-    # database URL burns minutes to reach an error known at argument time.
-    try:
-        database_url = resolve_database_url(args.database_url)
-    except MissingDatabaseUrlError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-
-    sources = load_sources(Path(args.sources_path))
-    records = load_manifest(Path(args.manifest_path))
-    local_store = LocalArchiveStore(root=Path(args.local_root))
-
-    candidates: dict[tuple[str, str, str, int], set[str]] = {}
-    # Split by REASON: "never fetched" and "manifest says ok but the local
-    # mirror has no such file" are different failures -- one needs a fetch, the
-    # other means the archive drifted -- and one shared counter hides which.
-    skipped_not_archived = 0
-    skipped_missing_file = 0
-    sources_seen = 0
-    for entry in sources.get("national", []):
-        archived = latest_ok_record(records, entry["id"])
-        sources_seen += 1
-        if archived is None:
-            skipped_not_archived += 1
-            continue
-        try:
-            filename = archived_filename(archived, source_id=entry["id"])
-        except MalformedManifestRecordError as exc:
-            # INSIDE the try that names this exception. It sat one line above,
-            # so the handler was dead and the traceback live -- the same defect
-            # `cmd_validate_crosswalk` already fixed.
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        if not local_store.exists("national", filename):
-            skipped_missing_file += 1
-            continue
-        raw_bytes = local_store.read("national", filename)
-        try:
-            csv_bytes = national_csv_bytes(raw_bytes)
-        except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
-            PbaSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, DuplicateManifestRecordError,
-            MalformedManifestError,
-            AmbiguousSourceError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        # Same BOM reason as `resolve_national_results_bytes`: with `utf-8`
-        # every row would miss `distrito_id` and land in `skipped_malformed`,
-        # emptying the mapping and failing the backfill on a valid file.
-        reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
-        collect_mesa_tipo_mapping(reader, source_label=entry["id"], into=candidates)
-
-    if skipped_not_archived:
-        print(
-            f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
-            "no successful archive record and were excluded from the mapping",
-            file=sys.stderr,
-        )
-    if skipped_missing_file:
-        print(
-            f"  {skipped_missing_file} of {sources_seen} registered source(s) are "
-            "recorded as archived but absent from the local mirror and were "
-            "excluded from the mapping",
-            file=sys.stderr,
-        )
-
-    # One conflict check over EVERY source, not per file: mesa (02,027,00001,1)
-    # being NATIVOS in 2023 and EXTRANJEROS in 2025 is exactly the disagreement
-    # a per-file check cannot see.
-    conflicts = {key: tipos for key, tipos in candidates.items() if len(tipos) > 1}
-    if conflicts:
-        key, tipos = next(iter(conflicts.items()))
-        print(
-            f"{len(conflicts)} mesa(s) carry more than one mesa_tipo across the archived "
-            f"sources; refusing to pick one. First: {key} -> {sorted(tipos)}",
-            file=sys.stderr,
-        )
-        return 1
-
-    mapping = {key: next(iter(tipos)) for key, tipos in candidates.items()}
-    if not mapping:
-        print("no mesa_tipo mapping found in any archived national source", file=sys.stderr)
-        return 1
-
-    with psycopg.connect(database_url) as conn:
-        (
-            updated,
-            resolved_jurisdictions,
-            remaining_breakdown,
-            unresolved_breakdown,
-        ) = apply_mesa_tipo_mapping(
-            conn, mapping, batch_size=args.batch_size
-        )
-    remaining = sum(count for _, count in remaining_breakdown)
-
-    print(
-        f"backfilled mesa_tipo on {updated} rows; {len(mapping)} distinct mesas mapped, "
-        f"{resolved_jurisdictions} resolved to a jurisdiction"
-    )
-    if unresolved_breakdown:
-        total_unresolved = sum(count for _, count in unresolved_breakdown)
-        print(
-            f"  {total_unresolved} mapped mesas matched no jurisdiction, by scope:",
-            file=sys.stderr,
-        )
-        for (distrito, seccion), count in unresolved_breakdown:
-            print(f"    distrito={distrito} seccion={seccion}: {count}", file=sys.stderr)
-    # The remainder is REPORTED per source, never explained by assertion. It may
-    # be a source that does not publish the field, or a lineage that failed to
-    # match — those look identical in a single total.
-    print(f"{remaining} rows still have no mesa_tipo:")
-    for source, count in remaining_breakdown:
-        print(f"  {source}: {count}")
-    return 0
 
 
 # THE module contract, in one place: "non-zero on any argument or validation
