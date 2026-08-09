@@ -156,6 +156,7 @@ def upsert_jurisdiction(
 def official_jurisdictions_for_mesa(
     conn,
     *,
+    election_id: str,
     distrito: str,
     seccion: str,
     mesa: int,
@@ -180,9 +181,9 @@ def official_jurisdictions_for_mesa(
     with conn.cursor() as cur:
         cur.execute(
             """
-            select id, circuito_code
-            from jurisdiction
-            where distrito_code is not distinct from %s
+            select j.id, j.circuito_code
+            from jurisdiction j
+            where j.distrito_code is not distinct from %s
               -- `is not distinct from`, not `=`. `normalize_seccion_code`
               -- returns `None` for an absent seccion, and Postgres never
               -- treats NULL as equal to NULL, so plain equality matched ZERO rows for
@@ -192,12 +193,19 @@ def official_jurisdictions_for_mesa(
               -- null seccion in its own subject_ref, so the caller expects
               -- what this predicate could not answer. Same NULL semantics
               -- `upsert_jurisdiction` uses on this table.
-              and seccion_code is not distinct from %s
-              and mesa_code = %s
-              and circuito_code is not null
-            order by circuito_code
+              and j.seccion_code is not distinct from %s
+              and j.mesa_code = %s
+              and j.circuito_code is not null
+              and exists (
+                select 1
+                from result_row rr
+                where rr.jurisdiction_id = j.id
+                  and rr.election_id = %s
+                  and rr.source_kind = 'official'
+              )
+            order by j.circuito_code
             """,
-            (distrito, seccion, mesa),
+            (distrito, seccion, mesa, election_id),
         )
         return [(str(row[0]), row[1]) for row in cur.fetchall()]
 

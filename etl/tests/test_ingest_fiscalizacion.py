@@ -32,19 +32,23 @@ import psycopg
 import pytest
 import yaml
 
+from etl.__main__ import fresh_review_items
 from etl.crosswalk import FISCALIZACION_VOTE_COLUMNS
 from etl.ingest.fiscalizacion import (
-    FiscalizacionRow,
+    FISCALIZACION_CATEGORY,
     FISCALIZACION_DISTRITO,
     FISCALIZACION_SECCION,
+    FiscalizacionRow,
     FiscalizacionUploadForbiddenError,
     _merge_wrapped_rows,
+    _resolve_official_mesa,
     guard_local_mirror_only,
     ingest_fiscalizacion,
     load_fiscalizacion_rows,
     strip_personal_columns,
 )
 from etl.party_map import load_party_map
+from etl.review_item import ReviewItemRecord
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -193,7 +197,7 @@ def test_the_raw_escuela_string_is_preserved_exactly_as_written() -> None:
     text = (
         f"Escuela,Mesa,{VOTE_HEADER}\n"
         f"Escuela N\u00b0 3,9001," + ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS)) + "\n"
-        f"  ESCUELA  N \u00ba 3 ,9002," + ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS)) + "\n"
+        "  ESCUELA  N \u00ba 3 ,9002," + ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS)) + "\n"
     )
 
     result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
@@ -258,26 +262,30 @@ def test_committed_fixture_has_no_name_columns() -> None:
 def test_fiscalizacion_entries_never_reach_the_remote_uploader() -> None:
     compliant_entry = {
         "id": "fiscalizacion/2025-x",
-        "source_kind": "fiscalizacion",
+        "capability": "fiscalizacion",
         "upload": "never",
     }
     guard_local_mirror_only(compliant_entry)  # must not raise
 
-    misconfigured_entry = {"id": "fiscalizacion/2025-y", "source_kind": "fiscalizacion"}
-    try:
+    misconfigured_entry = {"id": "fiscalizacion/2025-y", "capability": "fiscalizacion"}
+    with pytest.raises(FiscalizacionUploadForbiddenError):
         guard_local_mirror_only(misconfigured_entry)
-        raise AssertionError("expected FiscalizacionUploadForbiddenError")
-    except FiscalizacionUploadForbiddenError:
-        pass
 
-    official_entry = {"id": "national/2023-generales", "source_kind": "official"}
+    capability_only_entry = {
+        "id": "fiscalizacion/2025-capability-only",
+        "capability": "fiscalizacion",
+    }
+    with pytest.raises(FiscalizacionUploadForbiddenError):
+        guard_local_mirror_only(capability_only_entry)
+
+    official_entry = {"id": "national/2023-generales", "capability": "national"}
     guard_local_mirror_only(official_entry)  # unaffected, must not raise
 
     sources = yaml.safe_load((REPO_ROOT / "etl" / "sources.yaml").read_text(encoding="utf-8"))
     real_entry = next(
         e for e in sources["fiscalizacion"] if e["id"] == "fiscalizacion/2025-coronel-rosales"
     )
-    guard_local_mirror_only(real_entry)  # the committed entry must itself comply
+    guard_local_mirror_only({**real_entry, "capability": "fiscalizacion"})
 
 
 # ---------------------------------------------------------------------------
@@ -349,9 +357,7 @@ def _snapshot(conn: psycopg.Connection, archive_entry_id: str) -> list[tuple]:
         return cur.fetchall()
 
 
-def _official_mesa(conn: psycopg.Connection, *, circuito: str, mesa: int) -> str:
-    """An OFFICIAL-shaped jurisdiction: the national import always carries a
-    circuito, and fiscalización's own upsert never did."""
+def _jurisdiction_mesa(conn: psycopg.Connection, *, circuito: str, mesa: int) -> str:
     from etl import db
 
     return db.upsert_jurisdiction(
@@ -361,6 +367,41 @@ def _official_mesa(conn: psycopg.Connection, *, circuito: str, mesa: int) -> str
         circuito=circuito,
         mesa=mesa,
     )
+
+
+def _official_mesa(
+    conn: psycopg.Connection,
+    *,
+    circuito: str,
+    mesa: int,
+    year: int = 2025,
+    round_: str = "legislativas",
+) -> str:
+    """A mesa jurisdiction proven by an official result for one election."""
+    from etl import db
+
+    jurisdiction_id = _jurisdiction_mesa(conn, circuito=circuito, mesa=mesa)
+    election_id = db.upsert_election(conn, year=year, round_=round_)
+    category_id = db.upsert_category(conn, name=FISCALIZACION_CATEGORY)
+    db.load_result_rows(
+        conn,
+        archive_entry_id=f"official-test-{year}-{round_}-{mesa}-{circuito}",
+        election_id=election_id,
+        records=[
+            db.ResultRowRecord(
+                election_id=election_id,
+                jurisdiction_id=jurisdiction_id,
+                category_id=category_id,
+                granularity="mesa",
+                list_id="official-test-list",
+                votes=1,
+                source_kind="official",
+                archive_entry_id=f"official-test-{year}-{round_}-{mesa}-{circuito}",
+                source_row_index=0,
+            )
+        ],
+    )
+    return jurisdiction_id
 
 
 def test_wide_columns_map_to_one_result_row_per_list(pg_conn: psycopg.Connection) -> None:
@@ -404,7 +445,7 @@ def test_blank_vote_cell_is_missing_not_zero_in_the_loaded_rows(
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
     party_map = load_party_map(PARTY_MAP_PATH)
-    votes = {column: 5 for column in FISCALIZACION_VOTE_COLUMNS}
+    votes: dict[str, int | None] = {column: 5 for column in FISCALIZACION_VOTE_COLUMNS}
     votes["La Libertad Avanza"] = None  # blank cell, per the real source shape
     _official_mesa(pg_conn, circuito="00248A", mesa=9002)
     row = FiscalizacionRow(
@@ -534,19 +575,118 @@ def test_fiscalizacion_reingest_is_idempotent_per_d8(pg_conn: psycopg.Connection
     ]
 
     first, _first_review_items = load_fiscalizacion_rows(
-        pg_conn, rows, year=2025, round_="legislativas", party_map=party_map,
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
         archive_entry_id=archive_entry_id,
     )
     first_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     second, _second_review_items = load_fiscalizacion_rows(
-        pg_conn, rows, year=2025, round_="legislativas", party_map=party_map,
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
         archive_entry_id=archive_entry_id,
     )
     second_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     assert first == second == 15
     assert first_snapshot == second_snapshot
+
+
+def test_a_jurisdiction_shape_without_an_official_result_is_not_accepted(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    _jurisdiction_mesa(pg_conn, circuito="00248A", mesa=9009)
+    row = FiscalizacionRow(
+        mesa=9009,
+        escuela="ESCUELA TEST",
+        votes={column: 1 for column in FISCALIZACION_VOTE_COLUMNS},
+        source_row_indices=(0,),
+    )
+
+    inserted, review_items = load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+
+    assert inserted == 0
+    assert [item.kind for item in review_items] == ["mesa_absent_from_official_import"]
+
+
+def test_official_result_from_another_election_does_not_authorize_the_mesa(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    _official_mesa(
+        pg_conn,
+        circuito="00248A",
+        mesa=9014,
+        year=2024,
+        round_="legislativas",
+    )
+    row = FiscalizacionRow(
+        mesa=9014,
+        escuela="ESCUELA TEST",
+        votes={column: 1 for column in FISCALIZACION_VOTE_COLUMNS},
+        source_row_indices=(0,),
+    )
+
+    inserted, review_items = load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+    )
+
+    assert inserted == 0
+    assert [item.kind for item in review_items] == ["mesa_absent_from_official_import"]
+
+
+def test_unpadded_scope_codes_match_the_normalized_national_scheme(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    party_map = load_party_map(PARTY_MAP_PATH)
+    official_id = _official_mesa(pg_conn, circuito="00248A", mesa=9010)
+    row = FiscalizacionRow(
+        mesa=9010,
+        escuela="ESCUELA TEST",
+        votes={column: 1 for column in FISCALIZACION_VOTE_COLUMNS},
+        source_row_indices=(0,),
+    )
+
+    load_fiscalizacion_rows(
+        pg_conn,
+        [row],
+        year=2025,
+        round_="legislativas",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
+        distrito="2",
+        seccion="27",
+    )
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select distinct jurisdiction_id from result_row where archive_entry_id = %s",
+            (archive_entry_id,),
+        )
+        used = [result[0] for result in cur.fetchall()]
+    assert used == [official_id]
 
 
 def test_a_fiscalizacion_mesa_reuses_the_official_jurisdiction_row(
@@ -623,6 +763,78 @@ def test_a_mesa_number_in_two_circuitos_is_quarantined_never_guessed(
     assert [item.kind for item in review_items] == ["ambiguous_mesa_circuito"]
     assert "9012" in review_items[0].subject_ref
     assert "00248C" in review_items[0].note and "00248D" in review_items[0].note
+
+
+@pytest.mark.parametrize(
+    ("matches", "kind", "migration_note"),
+    [
+        (
+            [("official-a", "00248C"), ("official-b", "00248D")],
+            "ambiguous_mesa_circuito",
+            "mesa 9012 exists in 2 circuitos (00248C, 00248D), so the mesa number "
+            "does not identify it; a fiscalización tally cannot be attributed to one of "
+            "them without guessing",
+        ),
+        (
+            [],
+            "mesa_absent_from_official_import",
+            "mesa 9012 carries fiscalización rows but the official import has no jurisdiction "
+            "for it in distrito 02 seccion 027, so it cannot be placed without inventing one",
+        ),
+    ],
+)
+def test_migration_review_item_identity_is_seen_as_existing_by_runtime(
+    pg_conn: psycopg.Connection,
+    monkeypatch,
+    matches: list[tuple[str, str]],
+    kind: str,
+    migration_note: str,
+) -> None:
+    """A migration-created observation must suppress the runtime duplicate.
+
+    The transaction is rolled back by ``pg_conn`` so this test never changes the
+    shared disposable database after the assertion.
+    """
+    import etl.db as db
+
+    source_id = f"fiscalizacion/migration-identity-{uuid.uuid4()}"
+    election_ref = "2025-legislativas"
+    monkeypatch.setattr(db, "official_jurisdictions_for_mesa", lambda *args, **kwargs: matches)
+    drafts = []
+
+    assert (
+        _resolve_official_mesa(
+            pg_conn,
+            election_id="unused-by-stub",
+            distrito="2",
+            seccion="27",
+            mesa=9012,
+            review_items=drafts,
+        )
+        is None
+    )
+    assert len(drafts) == 1
+    runtime = ReviewItemRecord(
+        kind=drafts[0].kind,
+        severity=drafts[0].severity,
+        subject_ref=f"{source_id} {election_ref} {drafts[0].subject_ref}",
+        note=drafts[0].note,
+    )
+    migration = ReviewItemRecord(
+        kind=kind,
+        severity="warning",
+        subject_ref=f"{source_id} {election_ref} 02-027-mesa-9012",
+        note=migration_note,
+    )
+    assert runtime == migration
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "insert into review_item (kind, severity, subject_ref, note) values (%s, %s, %s, %s)",
+            (migration.kind, migration.severity, migration.subject_ref, migration.note),
+        )
+
+    assert fresh_review_items(pg_conn, [runtime]) == []
 
 
 def test_a_mesa_absent_from_the_official_import_is_quarantined_not_invented(
@@ -719,9 +931,7 @@ def test_a_party_column_with_no_curated_mapping_is_reported_not_just_absent(
     broken = _replace(
         party_map,
         entries=[
-            entry
-            for entry in party_map.entries
-            if entry.party_name != "ALIANZA LA LIBERTAD AVANZA"
+            entry for entry in party_map.entries if entry.party_name != "ALIANZA LA LIBERTAD AVANZA"
         ],
     )
     _official_mesa(pg_conn, circuito="00248A", mesa=9007)
@@ -762,7 +972,8 @@ def test_an_empty_reingest_does_not_wipe_another_election_sharing_the_entry(
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
     party_map = load_party_map(PARTY_MAP_PATH)
-    _official_mesa(pg_conn, circuito="00248A", mesa=9008)
+    _official_mesa(pg_conn, circuito="00248A", mesa=9008, round_="paso")
+    _official_mesa(pg_conn, circuito="00248A", mesa=9008, round_="generales")
     row = FiscalizacionRow(
         mesa=9008,
         escuela="ESCUELA TEST",
@@ -772,19 +983,31 @@ def test_an_empty_reingest_does_not_wipe_another_election_sharing_the_entry(
 
     # Two elections, ONE archive entry.
     paso, _ = load_fiscalizacion_rows(
-        pg_conn, [row], year=2025, round_="paso",
-        party_map=party_map, archive_entry_id=archive_entry_id,
+        pg_conn,
+        [row],
+        year=2025,
+        round_="paso",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
     )
     generales, _ = load_fiscalizacion_rows(
-        pg_conn, [row], year=2025, round_="generales",
-        party_map=party_map, archive_entry_id=archive_entry_id,
+        pg_conn,
+        [row],
+        year=2025,
+        round_="generales",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
     )
     assert paso == generales == 15
 
     # The generales sheet now parses to nothing.
     load_fiscalizacion_rows(
-        pg_conn, [], year=2025, round_="generales",
-        party_map=party_map, archive_entry_id=archive_entry_id,
+        pg_conn,
+        [],
+        year=2025,
+        round_="generales",
+        party_map=party_map,
+        archive_entry_id=archive_entry_id,
     )
 
     with pg_conn.cursor() as cur:
@@ -816,7 +1039,9 @@ def test_a_renamed_column_is_refused_by_name_not_raised_as_a_keyerror() -> None:
     from etl.ingest.fiscalizacion import FiscalizacionSchemaError
 
     header = VOTE_HEADER.replace("La Libertad Avanza", "LLA")
-    text = f"Escuela,Mesa,{header}\nEscuela 1,1," + ",".join(["0"] * len(FISCALIZACION_VOTE_COLUMNS))
+    text = f"Escuela,Mesa,{header}\nEscuela 1,1," + ",".join(
+        ["0"] * len(FISCALIZACION_VOTE_COLUMNS)
+    )
 
     with pytest.raises(FiscalizacionSchemaError) as excinfo:
         ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
@@ -859,11 +1084,19 @@ def test_a_mesa_cell_with_no_digits_is_quarantined_not_fatal() -> None:
     a human can read it against the source.
     """
     full = ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS))
-    text = (
-        f"Escuela,Mesa,{VOTE_HEADER}\n"
-        f"Escuela 1,9001,{full}\n"
-        f"Escuela 1,sin numero,{full}\n"
-    )
+    text = f"Escuela,Mesa,{VOTE_HEADER}\nEscuela 1,9001,{full}\nEscuela 1,sin numero,{full}\n"
+
+    result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
+
+    assert [row.mesa for row in result.rows] == [9001]
+    assert [q.reason for q in result.quarantined] == ["unreadable_mesa"]
+    assert result.quarantined[0].mesa is None
+
+
+def test_a_huge_digit_only_mesa_cell_is_quarantined_not_fatal() -> None:
+    full = ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS))
+    huge_mesa = "9" * 10_000
+    text = f"Escuela,Mesa,{VOTE_HEADER}\nEscuela 1,9001,{full}\nEscuela 1,{huge_mesa},{full}\n"
 
     result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
 
@@ -899,6 +1132,22 @@ def test_an_unreadable_vote_cell_is_a_review_item_not_a_withheld_row() -> None:
     assert "blank_vote_cell" not in kinds, "an unreadable cell is not a blank one"
 
 
+@pytest.mark.parametrize("bad_value", ["1_2", "+12", "-1"])
+def test_signed_and_permissive_python_vote_forms_are_unreadable_not_tallies(
+    bad_value: str,
+) -> None:
+    cells = ["1"] * len(FISCALIZACION_VOTE_COLUMNS)
+    cells[0] = bad_value
+    text = f"Escuela,Mesa,{VOTE_HEADER}\nEscuela 1,9001," + ",".join(cells) + "\n"
+
+    result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
+
+    assert result.rows[0].votes[FISCALIZACION_VOTE_COLUMNS[0]] is None
+    assert result.rows[0].votes[FISCALIZACION_VOTE_COLUMNS[1]] == 1
+    assert result.quarantined == ()
+    assert [draft.kind for draft in result.review_items] == ["unreadable_vote_cell"]
+
+
 def test_two_rows_for_one_mesa_disagreeing_on_the_escuela_are_not_collapsed() -> None:
     """The identity check covered only the 17 vote columns, so two rows for
     one mesa with the same tallies and DIFFERENT schools collapsed to the
@@ -911,11 +1160,7 @@ def test_two_rows_for_one_mesa_disagreeing_on_the_escuela_are_not_collapsed() ->
     which was true of their vote vectors and of nothing else.
     """
     full = ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS))
-    text = (
-        f"Escuela,Mesa,{VOTE_HEADER}\n"
-        f"Escuela 1,9001,{full}\n"
-        f"Escuela 7,9001,{full}\n"
-    )
+    text = f"Escuela,Mesa,{VOTE_HEADER}\nEscuela 1,9001,{full}\nEscuela 7,9001,{full}\n"
 
     result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
 
@@ -928,11 +1173,7 @@ def test_two_genuinely_identical_rows_for_one_mesa_still_collapse() -> None:
     """The collapse itself must survive the tightened identity: same mesa,
     same school, same tallies is one observation written twice."""
     full = ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS))
-    text = (
-        f"Escuela,Mesa,{VOTE_HEADER}\n"
-        f"Escuela 1,9001,{full}\n"
-        f"Escuela 1,9001,{full}\n"
-    )
+    text = f"Escuela,Mesa,{VOTE_HEADER}\nEscuela 1,9001,{full}\nEscuela 1,9001,{full}\n"
 
     result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
 
@@ -954,9 +1195,9 @@ def test_a_typod_mesa_cell_is_quarantined_not_mined_for_digits() -> None:
     full = ",".join(["1"] * len(FISCALIZACION_VOTE_COLUMNS))
     text = (
         f"Escuela,Mesa,{VOTE_HEADER}\n"
-        f"Escuela 1,Mesa 9001,{full}\n"   # the documented prefix form still parses
-        f"Escuela 1,9002,{full}\n"        # and so does a bare number
-        f"Escuela 1,Mesa 1O,{full}\n"     # letter O
+        f"Escuela 1,Mesa 9001,{full}\n"  # the documented prefix form still parses
+        f"Escuela 1,9002,{full}\n"  # and so does a bare number
+        f"Escuela 1,Mesa 1O,{full}\n"  # letter O
         f"Escuela 1,13 bis,{full}\n"
     )
 
@@ -983,9 +1224,14 @@ def test_a_non_party_column_is_not_reported_as_a_curated_typo() -> None:
     assert "En blanco" not in mapping and "Impugnado" not in mapping
     # And every column the loop now visits is accounted for one way or the other.
     for column in FISCALIZACION_VOTE_COLUMNS:
-        assert column in mapping or column in unresolved or column in (
-            "En blanco",
-            "Impugnado",
+        assert (
+            column in mapping
+            or column in unresolved
+            or column
+            in (
+                "En blanco",
+                "Impugnado",
+            )
         )
 
 
@@ -1007,8 +1253,8 @@ def test_a_continuation_row_never_lands_on_a_mesa_further_up_the_sheet() -> None
     text = (
         f"Escuela,Mesa,{VOTE_HEADER}\n"
         f"Escuela 1,9001," + ",".join(["1"] * n) + "\n"
-        f"Escuela 1,sin numero," + ",".join(first_half) + "\n"   # quarantined
-        f"Escuela 1,," + ",".join(second_half) + "\n"            # ITS continuation
+        "Escuela 1,sin numero," + ",".join(first_half) + "\n"  # quarantined
+        "Escuela 1,," + ",".join(second_half) + "\n"  # ITS continuation
     )
 
     result = ingest_fiscalizacion(text, archive_entry_id="fiscalizacion/test")
@@ -1039,12 +1285,20 @@ def test_two_curated_names_that_normalize_alike_are_refused_not_picked_between()
     table = PartyMappingTable(
         entries=(
             PartyMappingEntry(
-                year=2025, jurisdiction="national", category="DIPUTADO NACIONAL",
-                list_id="900", party_name="UNION LIBERAL", canonical_party="UL",
+                year=2025,
+                jurisdiction="national",
+                category="DIPUTADO NACIONAL",
+                list_id="900",
+                party_name="UNION LIBERAL",
+                canonical_party="UL",
             ),
             PartyMappingEntry(
-                year=2025, jurisdiction="national", category="DIPUTADO NACIONAL",
-                list_id="901", party_name="UNIÓN LIBERAL", canonical_party="UL",
+                year=2025,
+                jurisdiction="national",
+                category="DIPUTADO NACIONAL",
+                list_id="901",
+                party_name="UNIÓN LIBERAL",
+                canonical_party="UL",
             ),
         )
     )

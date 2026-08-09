@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..crosswalk import FISCALIZACION_VOTE_COLUMNS, OFFICIAL_AGRUPACION_NAME_BY_COLUMN
+from ..numeric import parse_source_int
 from ..party_map import PartyMappingTable
 
 # `etl.db` is imported lazily inside `load_fiscalizacion_rows` below, not at
@@ -43,6 +44,7 @@ from ..party_map import PartyMappingTable
 # here would be a circular import.
 
 PERSONAL_DATA_COLUMNS: tuple[str, ...] = ("Nombre", "Apellido")
+
 
 def strip_personal_columns(raw_csv_text: str) -> str:
     """Remove `Nombre`/`Apellido` columns from raw CSV text, if present.
@@ -78,7 +80,7 @@ def strip_personal_columns(raw_csv_text: str) -> str:
 # The shapes the sheet actually writes: a bare number, or the word "Mesa"
 # (any casing, optional punctuation) followed by one. Anything else is
 # unreadable, NOT something to mine digits out of.
-_MESA_CELL = re.compile(r"^(?:mesa\s*[.:#-]?\s*)?(\d+)$", re.IGNORECASE)
+_MESA_CELL = re.compile(r"^(?:mesa\s*[.:#-]?\s*)?([0-9]+)$", re.IGNORECASE)
 
 
 def _parse_mesa(raw: str) -> int | None:
@@ -96,7 +98,9 @@ def _parse_mesa(raw: str) -> int | None:
     `None`, quarantined by the caller as `unreadable_mesa`.
     """
     match = _MESA_CELL.match(raw.strip())
-    return int(match.group(1)) if match else None
+    if match is None:
+        return None
+    return parse_source_int(match.group(1))
 
 
 def _nonblank_columns(cells: dict[str, str]) -> set[str]:
@@ -257,20 +261,17 @@ def _merge_wrapped_rows(
         # ADJACENT IN THE SOURCE, checked by index. `merged[-1]` alone is
         # "whatever last landed", which is not the row above when the row
         # above was quarantined.
-        target = (
-            merged[-1]
-            if merged and last_merged_source_index == index - 1
-            else None
-        )
+        target = merged[-1] if merged and last_merged_source_index == index - 1 else None
         this_nonblank = _nonblank_columns(cells)
-        target_nonblank = _nonblank_columns(target.cells) if target is not None else set()
-        can_merge = (
-            target is not None
-            and target.escuela_raw == (row.get("Escuela") or "")
-            and not (target_nonblank & this_nonblank)
-        )
+        if target is None:
+            can_merge = False
+        else:
+            target_nonblank = _nonblank_columns(target.cells)
+            can_merge = target.escuela_raw == (row.get("Escuela") or "") and not (
+                target_nonblank & this_nonblank
+            )
 
-        if not can_merge:
+        if not can_merge or target is None:
             quarantined.append(
                 QuarantinedFiscalizacionRow(
                     reason="unmergeable_empty_mesa",
@@ -327,8 +328,7 @@ def _collapse_duplicates(
         # below, which is where it belongs: same mesa, rows that are not the
         # same observation, nothing picked.
         vectors = {
-            (row.escuela_raw, *(row.cells[c] for c in FISCALIZACION_VOTE_COLUMNS))
-            for row in group
+            (row.escuela_raw, *(row.cells[c] for c in FISCALIZACION_VOTE_COLUMNS)) for row in group
         }
         if len(vectors) == 1:
             kept = group[0]
@@ -413,17 +413,15 @@ def ingest_fiscalizacion(raw_csv_text: str, *, archive_entry_id: str) -> Fiscali
                 votes[column] = None
                 has_blank = True
                 continue
-            try:
-                votes[column] = int(raw_value)
-            except ValueError:
-                # The SAME hazard `_parse_mesa` already guards, in the same
-                # hand-maintained sheet: `int("1O")` killed the run and took
-                # every good row and the end-of-parse quarantine breakdown
-                # with it. An unreadable tally is `None` -- missing, exactly
-                # like a blank cell, and explicitly not zero -- and the mesa
-                # is quarantined so the cell reaches a human.
+            parsed_vote = parse_source_int(raw_value)
+            if parsed_vote is None:
+                # An unreadable tally is missing, explicitly not zero. The
+                # row still loads its readable cells and records this one for
+                # review instead of fabricating a tally.
                 votes[column] = None
                 unreadable.append(column)
+            else:
+                votes[column] = parsed_vote
 
         if unreadable:
             # A REVIEW ITEM, not a quarantine. The row IS loaded -- every
@@ -480,13 +478,13 @@ class FiscalizacionUploadForbiddenError(Exception):
 
 
 def guard_local_mirror_only(entry: dict) -> None:
-    """Refuse to proceed unless a fiscalización `sources.yaml` entry
-    declares `upload: never`. This project has no remote uploader at all
-    (D2: no R2/bucket path exists for anything), so the guard's job is to
-    make that fact a structural, testable invariant for this one
-    personal-data-bearing source rather than an implicit absence.
+    """Refuse unless a fiscalización-capability entry declares `upload: never`.
+
+    Capability is authoritative because `find_source_entry` derives it from the
+    entry's `sources.yaml` family. `source_kind` is optional duplicated metadata
+    and cannot safely decide whether the personal-data guard runs.
     """
-    if entry.get("source_kind") != "fiscalizacion":
+    if entry.get("capability") != "fiscalizacion":
         return
     if entry.get("upload") != "never":
         raise FiscalizacionUploadForbiddenError(
@@ -570,11 +568,7 @@ def build_column_list_id_map(
     by_normalized_name: dict[str, str] = {}
     collisions: dict[str, set[str]] = {}
     for entry in party_map.entries:
-        if (
-            entry.year != year
-            or entry.jurisdiction != jurisdiction
-            or entry.category != category
-        ):
+        if entry.year != year or entry.jurisdiction != jurisdiction or entry.category != category:
             continue
         normalized = _normalize_party_name(entry.party_name)
         previous = by_normalized_name.get(normalized)
@@ -618,13 +612,13 @@ def mesa_subject_ref(distrito: str, seccion: str | None, mesa: int) -> str:
     """The review-queue key for one mesa, NORMALIZED.
 
     Public, because it has THREE writers across two modules -- this loader,
-    `__main__.load_curated`'s discontinuity drafts, and migration 0013's SQL
+    `__main__.load_curated`'s discontinuity drafts, and migration 0018's SQL
     mirror of it -- and a key with three writers written three ways is how a
     mesa ends up with three identities.
 
     Built from the raw kwargs, it disagreed with both of the other writers of
     this key: `db.official_jurisdictions_for_mesa` normalizes before querying,
-    and migration 0013 keys on the STORED (normalized) `seccion_code`. A
+    and migration 0018 keys on the STORED (normalized) `seccion_code`. A
     caller passing the unpadded `"27"` the 2023 national file really carries
     produced `02-27-mesa-N` against the migration's `02-027-mesa-N` -- two
     identities for one mesa, joined by nothing, and `fresh_review_items`
@@ -646,6 +640,7 @@ def mesa_subject_ref(distrito: str, seccion: str | None, mesa: int) -> str:
 def _resolve_official_mesa(
     conn,
     *,
+    election_id: str,
     distrito: str,
     seccion: str,
     mesa: int,
@@ -668,21 +663,29 @@ def _resolve_official_mesa(
     from .. import db
 
     matches = db.official_jurisdictions_for_mesa(
-        conn, distrito=distrito, seccion=seccion, mesa=mesa
+        conn,
+        election_id=election_id,
+        distrito=distrito,
+        seccion=seccion,
+        mesa=mesa,
     )
     if len(matches) == 1:
         return matches[0][0]
 
     if not matches:
+        from ..jurisdiction import normalize_distrito_code, normalize_seccion_code
+
+        normalized_distrito = normalize_distrito_code(distrito) or "(sin distrito)"
+        normalized_seccion = normalize_seccion_code(seccion) or "(sin seccion)"
         review_items.append(
             ReviewItemDraft(
                 kind="mesa_absent_from_official_import",
                 severity="warning",
-                    subject_ref=mesa_subject_ref(distrito, seccion, mesa),
+                subject_ref=mesa_subject_ref(distrito, seccion, mesa),
                 note=(
                     f"mesa {mesa} carries fiscalización rows but the official import "
-                    f"has no jurisdiction for it in distrito {distrito} seccion "
-                    f"{seccion}, so it cannot be placed without inventing one"
+                    f"has no jurisdiction for it in distrito {normalized_distrito} seccion "
+                    f"{normalized_seccion}, so it cannot be placed without inventing one"
                 ),
             )
         )
@@ -693,7 +696,7 @@ def _resolve_official_mesa(
         ReviewItemDraft(
             kind="ambiguous_mesa_circuito",
             severity="warning",
-                subject_ref=mesa_subject_ref(distrito, seccion, mesa),
+            subject_ref=mesa_subject_ref(distrito, seccion, mesa),
             note=(
                 f"mesa {mesa} exists in {len(matches)} circuitos ({circuitos}), so the "
                 "mesa number does not identify it; a fiscalización tally cannot be "
@@ -747,6 +750,7 @@ def load_fiscalizacion_rows(
     """
 
     from .. import db
+    from ..jurisdiction import normalize_distrito_code, normalize_seccion_code
 
     # THE CHECK behind the docstring's claim. Two independent kwargs that
     # must describe one place, and nothing verified they did.
@@ -757,12 +761,16 @@ def load_fiscalizacion_rows(
             "JURISDICTION_SCHEME_SCOPES with the distrito/seccion it describes "
             "rather than resolving list ids from one scheme onto another's mesas"
         )
-    if (distrito, seccion) != expected:
+    normalized_distrito = normalize_distrito_code(distrito)
+    normalized_seccion = normalize_seccion_code(seccion)
+    normalized_scope = (normalized_distrito, normalized_seccion)
+    if normalized_scope != expected:
         raise ValueError(
             f"party-map jurisdiction {jurisdiction!r} describes distrito/seccion "
             f"{expected[0]}/{expected[1]}, but the rows are being placed on "
             f"{distrito}/{seccion}; refusing to resolve list ids across schemes"
         )
+    distrito, seccion = normalized_distrito, normalized_seccion
 
     # NO early return on empty input. Returning before `load_result_rows` meant
     # D8's delete-by-`archive_entry_id` never ran, so re-ingesting a source that
@@ -805,12 +813,11 @@ def load_fiscalizacion_rows(
         # is the anchor -- `result_row.source_row_index` holds one integer --
         # and the full tuple stays visible in the `duplicate_collapsed`
         # review item that records the merge.
-        source_row_index = (
-            row.source_row_indices[0] if row.source_row_indices else 0
-        )
+        source_row_index = row.source_row_indices[0] if row.source_row_indices else 0
         if row.mesa not in jurisdiction_cache:
             jurisdiction_cache[row.mesa] = _resolve_official_mesa(
                 conn,
+                election_id=election_id,
                 distrito=distrito,
                 seccion=seccion,
                 mesa=row.mesa,
