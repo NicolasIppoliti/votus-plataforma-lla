@@ -16,7 +16,7 @@ isolation between runs).
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import LiteralString, Protocol
@@ -31,6 +31,179 @@ from etl.jurisdiction import (
 )
 from etl.party_map import PartyMappingTable
 from etl.review_item import ReviewItemRecord
+
+
+class ArchiveEntryConflictError(ValueError):
+    """Persisted provenance disagrees with verified archive/source evidence."""
+
+
+@dataclass(frozen=True)
+class ArchiveEntryRecord:
+    id: str
+    capability: str
+    source: str
+    source_url: str
+    archived_path: str
+    sha256: str
+    mime: str
+    byte_count: int | None
+    fetched_at: str
+    status: str
+    source_kind: str
+    notes: str
+
+
+def archive_entry_from_evidence(
+    manifest_record: Mapping[str, object],
+    source_entry: Mapping[str, object],
+) -> ArchiveEntryRecord:
+    """Map one hash-verified manifest record and its registered source once."""
+
+    def registry_backed(field: str) -> object:
+        manifest_value = manifest_record.get(field)
+        source_value = source_entry.get(field)
+        if field in manifest_record and manifest_value != source_value:
+            raise ArchiveEntryConflictError(
+                f"archive evidence conflict for {manifest_record.get('id')!r}: "
+                f"manifest {field} does not match the registered source"
+            )
+        return manifest_value if field in manifest_record else source_value
+
+    values = {
+        field: registry_backed(field)
+        for field in ("id", "capability", "source", "source_url", "mime")
+    }
+    for field, value in values.items():
+        if not isinstance(value, str) or not value:
+            raise ArchiveEntryConflictError(
+                f"archive evidence for {manifest_record.get('id')!r} has no usable {field}"
+            )
+    notes = manifest_record["notes"] if "notes" in manifest_record else source_entry.get("notes")
+    if not isinstance(notes, str):
+        raise ArchiveEntryConflictError(
+            f"archive evidence for {manifest_record.get('id')!r} has no usable notes"
+        )
+
+    status = manifest_record.get("status")
+    if status != "ok":
+        raise ArchiveEntryConflictError(
+            f"archive entry {values['id']!r} has status {status!r}; only verified ok entries ingest"
+        )
+    archived_path = manifest_record.get("archived_path")
+    fetched_at = manifest_record.get("fetched_at")
+    sha256 = manifest_record.get("sha256")
+    if not isinstance(archived_path, str) or not archived_path:
+        raise ArchiveEntryConflictError(f"archive entry {values['id']!r} has no archived_path")
+    if not isinstance(fetched_at, str) or not fetched_at:
+        raise ArchiveEntryConflictError(f"archive entry {values['id']!r} has no fetched_at")
+    if (
+        not isinstance(sha256, str)
+        or len(sha256) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in sha256)
+    ):
+        raise ArchiveEntryConflictError(f"archive entry {values['id']!r} has no valid sha256")
+
+    byte_count = manifest_record.get("bytes")
+    if byte_count is not None and (
+        isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0
+    ):
+        raise ArchiveEntryConflictError(f"archive entry {values['id']!r} has invalid bytes")
+
+    capability = str(values["capability"])
+    expected_kind = "fiscalizacion" if capability == "fiscalizacion" else "official"
+    for evidence_name, evidence in (
+        ("manifest", manifest_record.get("source_kind", expected_kind)),
+        ("registered source", source_entry.get("source_kind", expected_kind)),
+    ):
+        if evidence != expected_kind:
+            raise ArchiveEntryConflictError(
+                f"archive entry {values['id']!r} capability {capability!r} requires "
+                f"source_kind {expected_kind!r}, but {evidence_name} declares {evidence!r}"
+            )
+
+    return ArchiveEntryRecord(
+        id=str(values["id"]),
+        capability=capability,
+        source=str(values["source"]),
+        source_url=str(values["source_url"]),
+        archived_path=archived_path,
+        sha256=sha256.lower(),
+        mime=str(values["mime"]),
+        byte_count=byte_count,
+        fetched_at=fetched_at,
+        status=status,
+        source_kind=expected_kind,
+        notes=notes,
+    )
+
+
+def project_archive_entry(conn, record: ArchiveEntryRecord) -> bool:
+    """Insert immutable provenance once, or refuse every conflicting field."""
+    fields = (
+        "capability",
+        "source",
+        "source_url",
+        "archived_path",
+        "sha256",
+        "mime",
+        "bytes",
+        "fetched_at",
+        "status",
+        "source_kind",
+    )
+    values = (
+        record.capability,
+        record.source,
+        record.source_url,
+        record.archived_path,
+        record.sha256,
+        record.mime,
+        record.byte_count,
+        record.fetched_at,
+        record.status,
+        record.source_kind,
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+              capability is not distinct from %s,
+              source is not distinct from %s,
+              source_url is not distinct from %s,
+              archived_path is not distinct from %s,
+              sha256 is not distinct from %s,
+              mime is not distinct from %s,
+              bytes is not distinct from %s,
+              fetched_at is not distinct from %s::timestamptz,
+              status is not distinct from %s,
+              source_kind is not distinct from %s
+            from archive_entry
+            where id = %s
+            """,
+            (*values, record.id),
+        )
+        matches = cur.fetchone()
+        if matches is not None:
+            conflicting_fields = [
+                field for field, matches_field in zip(fields, matches) if not matches_field
+            ]
+            if conflicting_fields:
+                raise ArchiveEntryConflictError(
+                    f"archive_entry {record.id!r} conflicts on "
+                    f"{', '.join(conflicting_fields)}; refusing to overwrite immutable provenance"
+                )
+            return False
+
+        cur.execute(
+            """
+            insert into archive_entry (
+              id, capability, source, source_url, archived_path, sha256,
+              mime, bytes, fetched_at, status, source_kind, notes
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (record.id, *values, record.notes),
+        )
+    return True
 
 
 @dataclass(frozen=True)

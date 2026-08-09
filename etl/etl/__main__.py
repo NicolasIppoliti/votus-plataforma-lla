@@ -56,10 +56,12 @@ from .crosswalk import (
 )
 from .db import (
     MERGE_KEY_SQL,
+    archive_entry_from_evidence,
     insert_review_items,
     load_crosswalk_rows,
     load_party_map_rows,
     merge_key,
+    project_archive_entry,
 )
 from .http_client import (
     RequestsFetcher,
@@ -612,6 +614,7 @@ def ingest_source(
         raise MissingDatabaseUrlError("database URL resolution produced no value")
     conn = psycopg.connect(resolved_url)
     try:
+        project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
             csv_bytes = national_csv_bytes(raw_bytes)
             rows = ingest_national(

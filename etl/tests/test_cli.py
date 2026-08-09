@@ -591,15 +591,107 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
         )
         assert inserted == 2
 
+        second_inserted = ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="legislativas",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+        assert second_inserted == 2
+
         with conn.cursor() as cur:
             cur.execute("select count(*) from result_row where archive_entry_id = %s", (source_id,))
             count_row = cur.fetchone()
             assert count_row == (2,), (
                 f"ingest must persist exactly two result rows; got {count_row!r}"
             )
+            cur.execute("set local role authenticated")
+            cur.execute(
+                # Exact column path used by web `fetchSourceRefs`.
+                "select id, sha256, source_url, fetched_at from archive_entry where id = %s",
+                (source_id,),
+            )
+            provenance_rows = cur.fetchall()
+            cur.execute("reset role")
+            assert len(provenance_rows) == 1
+            projected = provenance_rows[0]
+            assert projected[0] == source_id
+            assert projected[1] == hashlib.sha256(NATIONAL_CSV.encode("utf-8")).hexdigest()
+            assert projected[2] == sources["national"][0]["source_url"]
+            assert projected[3] is not None
+            cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
+            assert cur.fetchone() == ("official",)
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
+        conn.commit()
+        conn.close()
+
+
+def test_ingest_refuses_conflicting_archive_projection_before_result_rows(tmp_path: Path) -> None:
+    _require_ephemeral_postgres()
+    source_id = f"national/cli-conflict-{uuid.uuid4()}"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/current.csv",
+                "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "conflict fixture",
+                "filename": "conflict.csv",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=FakeFetcher(payload=NATIONAL_CSV.encode("utf-8")),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into archive_entry (
+                  id, capability, source, source_url, archived_path, sha256,
+                  mime, bytes, fetched_at, status, source_kind, notes
+                ) values (%s, 'national', 'example.test', %s, null, null,
+                          'text/csv', null, now(), 'ok', 'official', 'conflict fixture')
+                """,
+                (source_id, "https://example.test/conflicting.csv"),
+            )
+        conn.commit()
+
+        with pytest.raises(ValueError, match="archive_entry.*conflict"):
+            ingest_source(
+                source_id,
+                database_url=TEST_DSN,
+                year=2025,
+                round_="legislativas",
+                sources=sources,
+                local_root=local_root,
+                manifest_path=manifest_path,
+            )
+
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from result_row where archive_entry_id = %s", (source_id,))
+            assert cur.fetchone() == (0,)
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
         conn.commit()
         conn.close()
 
@@ -714,7 +806,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
             {
                 "id": source_id,
                 "source": "internal",
-                "source_url": None,
+                "source_url": f"local://{source_id}.csv",
                 "mime": "text/csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
@@ -761,6 +853,8 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
                 (f"{source_id} 2025-legislativas mesa 4242",),
             )
             written = cur.fetchall()
+            cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
+            assert cur.fetchone() == ("fiscalizacion",)
     finally:
         with conn.cursor() as cur:
             cur.execute(
@@ -774,6 +868,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
                 (f"{source_id} ",),
             )
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
         conn.commit()
         conn.close()
 
@@ -1556,7 +1651,7 @@ def test_ingest_reports_the_fiscalizacion_rows_it_quarantined(tmp_path: Path) ->
             {
                 "id": source_id,
                 "source": "internal",
-                "source_url": None,
+                "source_url": f"local://{source_id}.csv",
                 "mime": "text/csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
@@ -3309,7 +3404,7 @@ def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) ->
             {
                 "id": source_id,
                 "source": "internal",
-                "source_url": None,
+                "source_url": f"local://{source_id}.csv",
                 "mime": "text/csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
