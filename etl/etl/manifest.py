@@ -23,9 +23,10 @@ dropped)::
 Content-drift handling (source-archive spec, "Re-fetch with changed
 content" scenario): when ``upsert_record`` receives a record whose
 ``sha256`` differs from the existing "ok" record sharing the same ``id``,
-the prior version is kept under a dated id (``{id}@{fetched_at date}``) so
-it remains retrievable, and the canonical id is updated to the new
-capture.
+the prior version is kept under an id containing its filename-safe fetch
+timestamp and full sha256. If that identity has already been used, an
+explicit numeric suffix preserves the repeated capture. The canonical id
+is updated to the new capture.
 
 Failed re-fetch handling (source-archive spec, "Source temporarily
 unreachable" scenario): when ``upsert_record`` receives a ``status:
@@ -43,8 +44,12 @@ simply replaces it.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import Any
+
+type JSONValue = None | bool | int | float | str | list[JSONValue] | dict[str, JSONValue]
+type ManifestRecord = dict[str, JSONValue]
+
 
 REQUIRED_FIELDS = (
     "id",
@@ -63,7 +68,45 @@ class MalformedManifestError(ValueError):
     """Raised when a manifest record is missing a field this project reads."""
 
 
-def load_manifest(path: Path) -> list[dict[str, Any]]:
+_STRING_FIELDS = (
+    "capability",
+    "source",
+    "mime",
+    "fetched_at",
+    "notes",
+    "last_error_at",
+)
+_NULLABLE_STRING_FIELDS = ("source_url", "archived_path", "sha256", "last_error")
+
+
+def _validate_record_types(record: ManifestRecord, *, index: int | None = None) -> None:
+    label = f"manifest record {index}" if index is not None else "manifest record"
+
+    record_id = record.get("id")
+    if not isinstance(record_id, str) or not record_id.strip():
+        raise MalformedManifestError(f"{label} id must be a non-empty string")
+
+    status = record.get("status")
+    if not isinstance(status, str) or status not in ("ok", "error"):
+        raise MalformedManifestError(f"{label} status must be exactly 'ok' or 'error'")
+
+    for field in _STRING_FIELDS:
+        if field in record and not isinstance(record[field], str):
+            raise MalformedManifestError(f"{label} {field} must be a string")
+
+    for field in _NULLABLE_STRING_FIELDS:
+        if field in record and not isinstance(record[field], str | None):
+            raise MalformedManifestError(f"{label} {field} must be a string or null")
+
+    if "bytes" in record:
+        byte_count = record["bytes"]
+        if byte_count is not None and (
+            isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0
+        ):
+            raise MalformedManifestError(f"{label} bytes must be a nonnegative integer or null")
+
+
+def load_manifest(path: Path) -> list[ManifestRecord]:
     """Load the manifest array, or an empty list if it does not exist yet.
 
     Every record is CHECKED for the fields the READERS here dereference --
@@ -71,17 +114,32 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
     eight call sites deciding for itself what it can rely on. A record
     missing them made `latest_ok_record` answer "never archived" for a
     source that is archived.
-    
+
     Deliberately NOT the whole of `REQUIRED_FIELDS`: that is the schema
     `upsert_record` WRITES (and now validates on the way out), and demanding
     it on the way in would refuse a hand-written record this code reads
     perfectly well. `archived_path` is not here either -- it has its own
     named refusal in `__main__.archived_filename`, where it is read.
     """
-    if not path.exists():
+    try:
+        raw_manifest = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return []
-    records = json.loads(path.read_text(encoding="utf-8"))
-    for index, record in enumerate(records):
+    except OSError as exc:
+        raise MalformedManifestError(f"could not read manifest {path}: {exc}") from exc
+
+    try:
+        loaded: JSONValue = json.loads(raw_manifest)
+    except json.JSONDecodeError as exc:
+        raise MalformedManifestError(f"manifest {path} is not valid JSON: {exc}") from exc
+
+    if not isinstance(loaded, list):
+        raise MalformedManifestError("manifest top level must be a JSON array")
+
+    records: list[ManifestRecord] = []
+    for index, record in enumerate(loaded):
+        if not isinstance(record, dict):
+            raise MalformedManifestError(f"manifest record {index} must be a JSON object")
         missing = [field for field in ("id", "status") if field not in record]
         if missing:
             raise MalformedManifestError(
@@ -89,14 +147,14 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
                 f"{', '.join(missing)}; refusing to read an archive whose "
                 "provenance record is incomplete"
             )
+        _validate_record_types(record, index=index)
+        records.append(record)
     return records
 
 
-def save_manifest(path: Path, records: list[dict[str, Any]]) -> None:
+def save_manifest(path: Path, records: list[ManifestRecord]) -> None:
     """Write the manifest array as pretty-printed, UTF-8 JSON."""
-    path.write_text(
-        json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    path.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 # NO `entries_for_source` and NO `ok_records_with_local_path`. Both were
@@ -111,6 +169,7 @@ def save_manifest(path: Path, records: list[dict[str, Any]]) -> None:
 # archived corpus, it can reintroduce whichever shape it actually needs,
 # tested through that entry point.
 
+
 class DuplicateManifestRecordError(ValueError):
     """Raised when one source id carries more than one manifest record.
 
@@ -120,9 +179,25 @@ class DuplicateManifestRecordError(ValueError):
     """
 
 
-def latest_ok_record(
-    records: list[dict[str, Any]], record_id: str
-) -> dict[str, Any] | None:
+def _ensure_unique_record_ids(
+    records: list[ManifestRecord], *, record_id: str | None = None
+) -> None:
+    counts: dict[str, int] = {}
+    for record in records:
+        candidate = record.get("id")
+        if isinstance(candidate, str) and (record_id is None or candidate == record_id):
+            counts[candidate] = counts.get(candidate, 0) + 1
+
+    for candidate, count in counts.items():
+        if count > 1:
+            raise DuplicateManifestRecordError(
+                f"the manifest holds {count} records for {candidate!r}; "
+                "`upsert_record` keeps one per id, so this file was written by "
+                "something else and there is no honest way to choose between them"
+            )
+
+
+def latest_ok_record(records: list[ManifestRecord], record_id: str) -> ManifestRecord | None:
     """Return the current ``status: "ok"`` record for ``record_id``, or
     ``None`` if that source has never been successfully archived.
 
@@ -138,21 +213,14 @@ def latest_ok_record(
     answer "never archived" for a source that IS archived. Every other
     two-candidate site in this codebase refuses rather than chooses.
     """
+    _ensure_unique_record_ids(records, record_id=record_id)
     matches = [record for record in records if record.get("id") == record_id]
-    if len(matches) > 1:
-        raise DuplicateManifestRecordError(
-            f"the manifest holds {len(matches)} records for {record_id!r}; "
-            "`upsert_record` keeps one per id, so this file was written by "
-            "something else and there is no honest way to choose between them"
-        )
     if not matches:
         return None
     return matches[0] if matches[0].get("status") == "ok" else None
 
 
-def upsert_record(
-    records: list[dict[str, Any]], record: dict[str, Any]
-) -> list[dict[str, Any]]:
+def upsert_record(records: list[ManifestRecord], record: ManifestRecord) -> list[ManifestRecord]:
     """Insert or replace a record by ``id``, detecting content drift.
 
     See module docstring for the drift and failed-refetch rules.
@@ -163,6 +231,8 @@ def upsert_record(
     shape nothing enforced, and the one place that CAN enforce it is the
     single writer.
     """
+    _ensure_unique_record_ids(records)
+
     missing = [field for field in REQUIRED_FIELDS if field not in record]
     if missing:
         raise MalformedManifestError(
@@ -170,8 +240,12 @@ def upsert_record(
             f"{', '.join(missing)}; this file is the archive's provenance and an "
             "incomplete record cannot be traced back to a fetch"
         )
+    _validate_record_types(record)
 
-    result: list[dict[str, Any]] = []
+    result: list[ManifestRecord] = []
+    reserved_ids = {
+        existing_id for existing in records if isinstance((existing_id := existing.get("id")), str)
+    }
     replaced = False
     for existing in records:
         if existing["id"] != record["id"]:
@@ -180,9 +254,7 @@ def upsert_record(
 
         replaced = True
 
-        is_failed_overwrite = (
-            record.get("status") == "error" and existing.get("status") == "ok"
-        )
+        is_failed_overwrite = record.get("status") == "error" and existing.get("status") == "ok"
         if is_failed_overwrite:
             preserved = dict(existing)
             preserved["last_error"] = record.get("notes") or None
@@ -197,19 +269,22 @@ def upsert_record(
             and existing["sha256"] != record["sha256"]
         )
         if is_drift:
-            # The FULL timestamp, not `fetched_at[:10]`. Two content drifts on
-            # one calendar date produced two records sharing the dated id, and
-            # `latest_ok_record` now REFUSES a duplicated id -- so the single
-            # writer that maintains the one-per-id invariant was the thing
-            # that broke it, making that archived capture permanently
-            # unreadable. Colons are stripped so the id stays filename-safe.
-            stamp = (existing.get("fetched_at") or "unknown").replace(":", "")
+            fetched_at = existing.get("fetched_at")
+            raw_stamp = fetched_at if isinstance(fetched_at, str) and fetched_at else "unknown"
+            stamp = re.sub(r"[^A-Za-z0-9._-]", "", raw_stamp) or "unknown"
+            historical_base = f"{existing['id']}@{stamp}-{existing['sha256']}"
+            historical_id = historical_base
+            suffix = 2
+            while historical_id in reserved_ids:
+                historical_id = f"{historical_base}-{suffix}"
+                suffix += 1
+            reserved_ids.add(historical_id)
+
             prior = dict(existing)
-            prior["id"] = f"{existing['id']}@{stamp}"
+            prior["id"] = historical_id
             prior_note = prior.get("notes") or ""
             prior["notes"] = (
-                f"{prior_note} [superseded by newer capture on "
-                f"{record.get('fetched_at')}]"
+                f"{prior_note} [superseded by newer capture on {record.get('fetched_at')}]"
             ).strip()
             result.append(prior)
 

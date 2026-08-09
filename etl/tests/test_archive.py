@@ -5,9 +5,14 @@ source-archive spec's immutability, sha256, and content-drift
 requirements (D2, D8).
 """
 
+import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from etl.archive import FetchResponse, archive_source, run_archive_all
+import pytest
+
+from etl.__main__ import fetch_source
+from etl.archive import ArchiveIntegrityError, FetchResponse, archive_source, read_verified_archive
 from etl.manifest import load_manifest
 from etl.storage import LocalArchiveStore, sha256_of
 
@@ -26,6 +31,13 @@ class FakeFetcher:
 
 
 FIXED_NOW = datetime(2026, 8, 3, 20, 0, 0, tzinfo=UTC)
+
+
+def _required_string(record: Mapping[str, object], field: str) -> str:
+    value = record[field]
+    assert isinstance(value, str), f"{field} must be a string in this valid-record test"
+    return value
+
 
 ENTRY = {
     "id": "national/2023-generales",
@@ -52,10 +64,13 @@ def test_first_fetch_creates_immutable_entry(tmp_path) -> None:
         now=FIXED_NOW,
     )
 
+    digest = sha256_of(data)
+    archived_file = tmp_path / "national" / f"2023-generales.{digest}.zip"
     assert result.record["status"] == "ok"
     assert result.record["source_url"] == ENTRY["source_url"]
     assert result.record["fetched_at"] == "2026-08-03T20:00:00Z"
-    assert (tmp_path / "national" / "2023-generales.zip").read_bytes() == data
+    assert result.record["archived_path"] == f"{tmp_path.name}/national/{archived_file.name}"
+    assert archived_file.read_bytes() == data
 
 
 def test_refetch_never_mutates_prior_entry(tmp_path) -> None:
@@ -67,31 +82,141 @@ def test_refetch_never_mutates_prior_entry(tmp_path) -> None:
     first_bytes = b"PK\x03\x04 version one"
     second_bytes = b"PK\x03\x04 version two, different content"
 
-    run_archive_all(
-        {"national": [{**ENTRY, "filename": "2023-generales.zip"}]},
+    sources = {"national": [{**ENTRY, "filename": "2023-generales.zip"}]}
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
         fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, first_bytes)}),
         local_root=local_root,
         manifest_path=manifest_path,
-        now=FIXED_NOW,
     )
-    first_archived = (local_root / "national" / "2023-generales.zip").read_bytes()
-    assert first_archived == first_bytes
-
-    later = datetime(2026, 8, 10, 12, 0, 0, tzinfo=UTC)
-    run_archive_all(
-        {"national": [{**ENTRY, "filename": "2023-generales.zip"}]},
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
         fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, second_bytes)}),
         local_root=local_root,
         manifest_path=manifest_path,
-        now=later,
     )
 
     records = load_manifest(manifest_path)
-    prior = next(r for r in records if r["id"].startswith("national/2023-generales@2026-08-03"))
-    assert prior["sha256"] == sha256_of(first_bytes)
-
+    prior = next(r for r in records if str(r["id"]).startswith("national/2023-generales@"))
     canonical = next(r for r in records if r["id"] == "national/2023-generales")
+
+    assert prior["sha256"] == sha256_of(first_bytes)
     assert canonical["sha256"] == sha256_of(second_bytes)
+    assert prior["archived_path"] != canonical["archived_path"]
+    assert (tmp_path / str(prior["archived_path"])).read_bytes() == first_bytes
+    assert (tmp_path / str(canonical["archived_path"])).read_bytes() == second_bytes
+
+
+def test_identical_content_reuses_archive_without_rewriting(tmp_path) -> None:
+    data = b"PK\x03\x04 stable archive"
+    fetcher = FakeFetcher({ENTRY["source_url"]: FetchResponse(200, data)})
+    local_store = LocalArchiveStore(root=tmp_path / "archive")
+    configured_entry = {**ENTRY, "filename": "results.tar.gz"}
+
+    first = archive_source(
+        configured_entry, fetcher=fetcher, local_store=local_store, now=FIXED_NOW
+    )
+    archived_file = tmp_path / str(first.record["archived_path"])
+    fixed_timestamp_ns = 1_000_000_000
+    os.utime(archived_file, ns=(fixed_timestamp_ns, fixed_timestamp_ns))
+
+    second = archive_source(
+        configured_entry, fetcher=fetcher, local_store=local_store, now=FIXED_NOW
+    )
+
+    assert second.record["archived_path"] == first.record["archived_path"]
+    assert archived_file.name == f"results.{sha256_of(data)}.tar.gz"
+    assert archived_file.stat().st_mtime_ns == fixed_timestamp_ns
+    assert archived_file.read_bytes() == data
+
+
+@pytest.mark.parametrize("digest", [None, "not-a-sha256", "0" * 63, "g" * 64])
+def test_verified_archive_read_rejects_missing_or_invalid_manifest_digest(tmp_path, digest) -> None:
+    local_store = LocalArchiveStore(root=tmp_path)
+    local_store.write("national", "capture.csv", b"valid bytes")
+
+    with pytest.raises(ArchiveIntegrityError, match="sha256"):
+        read_verified_archive(
+            local_store,
+            capability="national",
+            filename="capture.csv",
+            expected_sha256=digest,
+        )
+
+
+def test_verified_archive_read_rejects_bytes_that_do_not_match_manifest(tmp_path) -> None:
+    local_store = LocalArchiveStore(root=tmp_path)
+    expected = b"original bytes"
+    local_store.write("national", "capture.csv", b"modified but schema-valid bytes")
+
+    with pytest.raises(ArchiveIntegrityError, match=sha256_of(expected)):
+        read_verified_archive(
+            local_store,
+            capability="national",
+            filename="capture.csv",
+            expected_sha256=sha256_of(expected),
+        )
+
+
+def test_existing_content_address_with_wrong_bytes_refuses_overwrite(tmp_path) -> None:
+    data = b"expected capture"
+    digest = sha256_of(data)
+    local_store = LocalArchiveStore(root=tmp_path / "archive")
+    target = local_store.path_for("national", f"2023-generales.{digest}.zip")
+    target.parent.mkdir(parents=True)
+    corrupt_bytes = b"corrupt pre-existing bytes"
+    target.write_bytes(corrupt_bytes)
+
+    with pytest.raises(ArchiveIntegrityError, match=digest):
+        archive_source(
+            {**ENTRY, "filename": "2023-generales.zip"},
+            fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, data)}),
+            local_store=local_store,
+            now=FIXED_NOW,
+        )
+
+    assert target.read_bytes() == corrupt_bytes
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["../escape.zip", "nested/file.zip", r"nested\file.zip", ".", "", "capture\0.zip"],
+)
+def test_configured_filename_must_be_a_safe_basename(tmp_path, filename) -> None:
+    fetcher = FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"data")})
+
+    with pytest.raises(ValueError, match="safe basename"):
+        archive_source(
+            {**ENTRY, "filename": filename},
+            fetcher=fetcher,
+            local_store=LocalArchiveStore(root=tmp_path),
+            now=FIXED_NOW,
+        )
+
+    assert fetcher.calls == []
+
+
+@pytest.mark.parametrize(
+    "capability", ["../escaped", "national/extra", r"national\extra", ".", "..", ""]
+)
+def test_archive_source_rejects_an_unsafe_capability_before_fetch_or_write(
+    tmp_path, capability: str
+) -> None:
+    fetcher = FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"data")})
+    local_store = LocalArchiveStore(root=tmp_path / "archive")
+
+    with pytest.raises(ValueError, match="capability"):
+        archive_source(
+            {**ENTRY, "capability": capability, "filename": "capture.zip"},
+            fetcher=fetcher,
+            local_store=local_store,
+            now=FIXED_NOW,
+        )
+
+    assert fetcher.calls == []
+    assert not (tmp_path / "escaped" / "capture.zip").exists()
 
 
 def test_sha256_recorded_on_fetch(tmp_path) -> None:
@@ -116,24 +241,25 @@ def test_drift_flagged_on_changed_hash(tmp_path) -> None:
     manifest_path = tmp_path / "archive-manifest.json"
     local_root = tmp_path / "archive"
 
-    run_archive_all(
-        {"national": [{**ENTRY, "filename": "2023-generales.zip"}]},
+    sources = {"national": [{**ENTRY, "filename": "2023-generales.zip"}]}
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
         fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"first content")}),
         local_root=local_root,
         manifest_path=manifest_path,
-        now=FIXED_NOW,
     )
-    run_archive_all(
-        {"national": [{**ENTRY, "filename": "2023-generales.zip"}]},
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
         fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"second, different")}),
         local_root=local_root,
         manifest_path=manifest_path,
-        now=datetime(2026, 8, 4, 0, 0, 0, tzinfo=UTC),
     )
 
     records = load_manifest(manifest_path)
     canonical = next(r for r in records if r["id"] == "national/2023-generales")
-    assert "drift" in canonical["notes"].lower()
+    assert "drift" in _required_string(canonical, "notes").lower()
 
 
 def test_no_drift_on_identical_refetch(tmp_path) -> None:
@@ -143,60 +269,67 @@ def test_no_drift_on_identical_refetch(tmp_path) -> None:
     local_root = tmp_path / "archive"
     same_bytes = b"PK\x03\x04 unchanged content"
 
-    run_archive_all(
-        {"national": [{**ENTRY, "filename": "2023-generales.zip"}]},
+    sources = {"national": [{**ENTRY, "filename": "2023-generales.zip"}]}
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
         fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, same_bytes)}),
         local_root=local_root,
         manifest_path=manifest_path,
-        now=FIXED_NOW,
     )
-    run_archive_all(
-        {"national": [{**ENTRY, "filename": "2023-generales.zip"}]},
+    fetch_source(
+        ENTRY["id"],
+        sources=sources,
         fetcher=FakeFetcher({ENTRY["source_url"]: FetchResponse(200, same_bytes)}),
         local_root=local_root,
         manifest_path=manifest_path,
-        now=datetime(2026, 8, 4, 0, 0, 0, tzinfo=UTC),
     )
 
     records = load_manifest(manifest_path)
     assert len(records) == 1
-    assert "drift" not in records[0]["notes"].lower()
+    assert "drift" not in _required_string(records[0], "notes").lower()
 
 
-def test_run_archive_all_writes_manifest_for_every_capability(tmp_path) -> None:
+def test_repeated_production_fetches_write_manifest_for_every_capability(tmp_path) -> None:
+    fiscal_url = "https://example.test/fiscalizacion.csv"
     sources = {
-        "national": [
-            {**ENTRY, "filename": "2023-generales.zip"},
+        "national": [{**ENTRY, "filename": "2023-generales.zip"}],
+        "fiscalizacion": [
             {
-                "id": "national/2025-legislativas",
-                "source": "datos.mininterior.gob.ar",
-                "source_url": (
-                    "https://datos.mininterior.gob.ar/dataset/x/resource/y/download/"
-                    "elecciones_legislativas_2025.zip"
-                ),
-                "mime": "application/zip",
+                "id": "fiscalizacion/2025-test",
+                "source": "internal",
+                "source_url": fiscal_url,
+                "mime": "text/csv",
                 "notes": "",
-                "filename": "2025-legislativas.zip",
-            },
-        ]
+                "filename": "fiscalizacion.csv",
+                "upload": "never",
+            }
+        ],
     }
     fetcher = FakeFetcher(
         {
-            ENTRY["source_url"]: FetchResponse(200, b"a"),
-            sources["national"][1]["source_url"]: FetchResponse(200, b"b"),
+            ENTRY["source_url"]: FetchResponse(200, b"national"),
+            fiscal_url: FetchResponse(200, b"fiscalizacion"),
         }
     )
     manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
 
-    records = run_archive_all(
-        sources,
-        fetcher=fetcher,
-        local_root=tmp_path / "archive",
-        manifest_path=manifest_path,
-        now=FIXED_NOW,
-    )
+    for source_id in (ENTRY["id"], "fiscalizacion/2025-test"):
+        fetch_source(
+            source_id,
+            sources=sources,
+            fetcher=fetcher,
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
 
-    assert len(records) == 2
-    assert load_manifest(manifest_path) == records
-    ids = {r["id"] for r in records}
-    assert ids == {"national/2023-generales", "national/2025-legislativas"}
+    records = load_manifest(manifest_path)
+    by_id = {str(record["id"]): record for record in records}
+    assert set(by_id) == {"national/2023-generales", "fiscalizacion/2025-test"}
+    for source_id, capability in (
+        ("national/2023-generales", "national"),
+        ("fiscalizacion/2025-test", "fiscalizacion"),
+    ):
+        archived_path = _required_string(by_id[source_id], "archived_path")
+        assert (local_root / capability / archived_path.rsplit("/", 1)[-1]).exists()

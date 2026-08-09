@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from .manifest import load_manifest, save_manifest, upsert_record
 from .storage import LocalArchiveStore, sha256_of
 
 DEFAULT_USER_AGENT = (
@@ -39,9 +38,7 @@ POLITENESS_DELAY_SECONDS: dict[str, float] = {"pba": 4.0}
 class Fetcher(Protocol):
     """Minimal fetch surface, swappable with a fake in tests."""
 
-    def get(
-        self, url: str, *, timeout: float, headers: dict[str, str]
-    ) -> FetchResponse: ...
+    def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse: ...
 
 
 @dataclass
@@ -54,6 +51,70 @@ class FetchResponse:
 @dataclass
 class ArchiveResult:
     record: dict
+
+
+class ArchiveIntegrityError(RuntimeError):
+    """Raised when a content-addressed archive path contains different bytes."""
+
+
+class UnsafeArchiveFilenameError(ValueError):
+    """Raised when a source filename is not a safe basename."""
+
+
+def read_verified_archive(
+    local_store: LocalArchiveStore,
+    *,
+    capability: str,
+    filename: str,
+    expected_sha256: object,
+) -> bytes:
+    """Read an archive artifact only when it matches its manifest digest."""
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in expected_sha256)
+    ):
+        raise ArchiveIntegrityError(
+            f"archive artifact {filename!r} has missing or invalid manifest sha256 "
+            f"{expected_sha256!r}"
+        )
+
+    try:
+        data = local_store.read(capability, filename)
+    except OSError as exc:
+        raise ArchiveIntegrityError(
+            f"archive artifact {filename!r} cannot be read for sha256 verification: {exc}"
+        ) from exc
+
+    actual_sha256 = sha256_of(data)
+    if actual_sha256 != expected_sha256.lower():
+        raise ArchiveIntegrityError(
+            f"archive artifact {filename!r} claims sha256 {expected_sha256} but contains "
+            f"bytes with sha256 {actual_sha256}; refusing to consume it"
+        )
+    return data
+
+
+def _safe_archive_basename(filename: object) -> str:
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or filename in {".", ".."}
+        or "\0" in filename
+        or "/" in filename
+        or "\\" in filename
+        or Path(filename).name != filename
+    ):
+        raise UnsafeArchiveFilenameError(
+            f"archive filename must be a non-empty safe basename, got {filename!r}"
+        )
+    return filename
+
+
+def _content_addressed_filename(filename: str, digest: str) -> str:
+    suffix = "".join(Path(filename).suffixes)
+    stem = filename[: -len(suffix)] if suffix else filename
+    return f"{stem}.{digest}{suffix}"
 
 
 def _empty_record(entry: dict, fetched_at: str, note: str) -> dict:
@@ -91,6 +152,12 @@ def archive_source(
     source_url = entry["source_url"]
     notes = entry.get("notes", "")
     timeout = entry.get("timeout", 60)
+    configured_filename = _safe_archive_basename(
+        entry["filename"] if "filename" in entry else entry["id"].split("/")[-1]
+    )
+    # Validate both path components before any fetch. ``path_for`` is the final
+    # filesystem boundary and must police direct callers as well as this pipeline.
+    local_store.path_for(capability, configured_filename)
 
     try:
         response = fetcher.get(
@@ -103,15 +170,22 @@ def archive_source(
 
     if response.status_code >= 400:
         return ArchiveResult(
-            record=_empty_record(
-                entry, fetched_at, f"{notes} [HTTP {response.status_code}]"
-            )
+            record=_empty_record(entry, fetched_at, f"{notes} [HTTP {response.status_code}]")
         )
 
     data = response.content
     digest = sha256_of(data)
-    filename = entry.get("filename") or entry["id"].split("/")[-1]
-    local_store.write(capability, filename, data)
+    filename = _content_addressed_filename(configured_filename, digest)
+    if local_store.exists(capability, filename):
+        existing_digest = sha256_of(local_store.read(capability, filename))
+        if existing_digest != digest:
+            raise ArchiveIntegrityError(
+                f"archive target {filename!r} claims sha256 {digest} but contains "
+                f"bytes with sha256 {existing_digest}; refusing to overwrite"
+            )
+    else:
+        local_store.write(capability, filename, data)
+
     # Portable, repo-relative path (never the absolute machine path), so the
     # manifest works identically for every developer/CI checkout.
     archived_path = f"{local_store.root.name}/{capability}/{filename}"
@@ -130,38 +204,3 @@ def archive_source(
         "notes": notes,
     }
     return ArchiveResult(record=record)
-
-
-def run_archive_all(
-    sources: dict[str, list[dict]],
-    *,
-    fetcher: Fetcher,
-    local_root: Path,
-    manifest_path: Path,
-    sleep: object | None = None,
-    now: datetime | None = None,
-) -> list[dict]:
-    """Archive every entry across every capability family, updating the manifest.
-
-    ``sleep`` (defaults to ``time.sleep`` when ``None``) is injected so
-    tests never actually pause; production callers get real politeness
-    delays between sequential fetches for capabilities listed in
-    ``POLITENESS_DELAY_SECONDS``.
-    """
-    import time
-
-    sleep_fn = sleep or time.sleep
-    local_store = LocalArchiveStore(root=local_root)
-    records = load_manifest(manifest_path)
-    for capability, entries in sources.items():
-        delay = POLITENESS_DELAY_SECONDS.get(capability, 0)
-        for index, entry in enumerate(entries):
-            full_entry = {**entry, "capability": capability}
-            result = archive_source(
-                full_entry, fetcher=fetcher, local_store=local_store, now=now
-            )
-            records = upsert_record(records, result.record)
-            if delay and index < len(entries) - 1:
-                sleep_fn(delay)
-    save_manifest(manifest_path, records)
-    return records
