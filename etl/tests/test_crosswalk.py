@@ -44,6 +44,8 @@ import yaml
 
 from etl.__main__ import find_unmapped_jurisdictions
 from etl.crosswalk import (
+    OFFICIAL_AGRUPACION_NAME_BY_COLUMN,
+    OFFICIAL_VOTOS_TIPO_BY_COLUMN,
     CrosswalkTable,
     CrosswalkValidationError,
     DuplicateCrosswalkKeyError,
@@ -536,6 +538,50 @@ def _official_by_mesa_from_fixture() -> dict[int, OfficialMesaVotes]:
         )
         for mesa in votes_by_mesa
     }
+
+
+def test_official_vector_refuses_missing_party_and_vote_type_tallies() -> None:
+    votes_by_name = {name: 1 for name in OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values()}
+    totals_by_type = {vote_type: 1 for vote_type in OFFICIAL_VOTOS_TIPO_BY_COLUMN.values()}
+    missing_name = OFFICIAL_AGRUPACION_NAME_BY_COLUMN["Liber.AR"]
+    missing_type = OFFICIAL_VOTOS_TIPO_BY_COLUMN["Impugnado"]
+    votes_by_name.pop(missing_name)
+    totals_by_type.pop(missing_type)
+
+    with pytest.raises(ValueError) as excinfo:
+        OfficialMesaVotes(
+            mesa=147,
+            votes_by_agrupacion_name=votes_by_name,
+            votos_tipo_totals=totals_by_type,
+        ).vector()
+
+    assert type(excinfo.value).__name__ == "IncompleteOfficialMesaError"
+    message = str(excinfo.value)
+    assert "mesa 147" in message
+    assert missing_name in message
+    assert missing_type in message
+
+
+def test_official_vector_contains_all_curated_parties_and_vote_types() -> None:
+    votes_by_name = {
+        name: index
+        for index, name in enumerate(OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values(), start=1)
+    }
+    totals_by_type = {
+        vote_type: index
+        for index, vote_type in enumerate(OFFICIAL_VOTOS_TIPO_BY_COLUMN.values(), start=101)
+    }
+
+    vector = OfficialMesaVotes(
+        mesa=148,
+        votes_by_agrupacion_name=votes_by_name,
+        votos_tipo_totals=totals_by_type,
+    ).vector()
+
+    assert set(vector) == set(OFFICIAL_AGRUPACION_NAME_BY_COLUMN) | set(
+        OFFICIAL_VOTOS_TIPO_BY_COLUMN
+    )
+    assert len(vector) == 17
 
 
 def test_fiscalizacion_mesa_identity_is_accepted_and_injective() -> None:

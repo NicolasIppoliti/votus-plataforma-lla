@@ -3460,8 +3460,8 @@ def test_the_same_circuito_written_two_ways_is_not_a_fabricated_ambiguity() -> N
             # which is what a re-export with different padding looks like.
             # Two DIFFERENT tallies under one circuito would be genuine drift,
             # and the collapse still refuses to pick between those.
-            "02,027,248,144,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
-            "02,027,00248,144,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,248,144,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n",
+            "02,027,00248,144,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n",
         ]
     )
 
@@ -3472,7 +3472,29 @@ def test_the_same_circuito_written_two_ways_is_not_a_fabricated_ambiguity() -> N
         category="DIPUTADO NACIONAL",
     )
 
-    assert tallies[144].votes_by_agrupacion_name == {"LLA": 10}
+    assert tallies[144].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
+    assert not any("more than one circuito" in reason for reason in skipped)
+
+
+def test_official_comparison_keeps_canonical_alphanumeric_circuito() -> None:
+    from etl.__main__ import official_mesa_votes_from_national
+
+    csv_text = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+        "02,027,249a,145,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n"
+        "02,027,0249A,145,DIPUTADO NACIONAL,EN BLANCO,2,\n"
+    )
+
+    tallies, skipped = official_mesa_votes_from_national(
+        csv_text.encode(),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    assert tallies[145].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
+    assert tallies[145].votos_tipo_totals == {"EN BLANCO": 2}
     assert not any("more than one circuito" in reason for reason in skipped)
 
 
@@ -3489,8 +3511,8 @@ def test_a_withheld_ambiguous_mesa_is_named_with_its_circuitos(capsys) -> None:
     )
     csv_text = header + "".join(
         [
-            "02,027,00248,146,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
-            "02,027,00249,146,DIPUTADO NACIONAL,POSITIVO,40,LLA\n",
+            "02,027,00248,146,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n",
+            "02,027,00249,146,DIPUTADO NACIONAL,POSITIVO,40,ALIANZA LA LIBERTAD AVANZA\n",
         ]
     )
 
@@ -3505,13 +3527,34 @@ def test_a_withheld_ambiguous_mesa_is_named_with_its_circuitos(capsys) -> None:
     assert "mesa 146 in circuitos 00248, 00249" in report
 
 
-def test_a_missing_circuito_cell_is_not_counted_as_a_second_circuito() -> None:
-    """`circuito_id` is not a required column, so a mesa can carry the code on
-    some rows and an empty cell on others. Coerced to `""`, the empty cell
-    became a SECOND circuito: the mesa was declared ambiguous and its tallies
-    withheld under "appears under more than one circuito" -- a verdict about
-    data that names exactly one.
-    """
+@pytest.mark.parametrize("official_name", ["ALIANZA LIBERTAD AVANZA", "", "   "])
+def test_official_comparison_refuses_unknown_or_blank_positive_party_names(
+    official_name: str,
+) -> None:
+    from etl.__main__ import official_mesa_votes_from_national
+
+    csv_text = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+        f"02,027,00248,147,DIPUTADO NACIONAL,POSITIVO,10,{official_name}\n"
+    )
+
+    with pytest.raises(NationalSchemaError) as excinfo:
+        official_mesa_votes_from_national(
+            csv_text.encode("utf-8"),
+            distrito="02",
+            seccion="027",
+            category="DIPUTADO NACIONAL",
+        )
+
+    message = str(excinfo.value)
+    assert "mesa 147" in message
+    assert repr(official_name) in message
+    assert "official party name" in message
+
+
+def test_a_missing_circuito_cell_refuses_the_official_comparison() -> None:
+    """A compared tally without circuito identity cannot be attributed safely."""
     from etl.__main__ import official_mesa_votes_from_national
 
     header = (
@@ -3520,20 +3563,65 @@ def test_a_missing_circuito_cell_is_not_counted_as_a_second_circuito() -> None:
     )
     csv_text = header + "".join(
         [
-            "02,027,00248,147,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,00248,147,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n",
             "02,027,,147,DIPUTADO NACIONAL,EN BLANCO,2,\n",
         ]
     )
 
-    tallies, skipped = official_mesa_votes_from_national(
-        csv_text.encode("utf-8"),
-        distrito="02",
-        seccion="027",
-        category="DIPUTADO NACIONAL",
+    with pytest.raises(NationalSchemaError) as excinfo:
+        official_mesa_votes_from_national(
+            csv_text.encode("utf-8"),
+            distrito="02",
+            seccion="027",
+            category="DIPUTADO NACIONAL",
+        )
+
+    message = str(excinfo.value)
+    assert "mesa 147" in message
+    assert "circuito_id" in message
+
+
+def test_official_comparison_requires_the_circuito_column() -> None:
+    from etl.__main__ import official_mesa_votes_from_national
+
+    csv_text = (
+        "distrito_id,seccion_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+        "02,027,147,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n"
     )
 
-    assert tallies[147].votes_by_agrupacion_name == {"LLA": 10}
-    assert not any("more than one circuito" in reason for reason in skipped)
+    with pytest.raises(NationalSchemaError, match="circuito_id"):
+        official_mesa_votes_from_national(
+            csv_text.encode("utf-8"),
+            distrito="02",
+            seccion="027",
+            category="DIPUTADO NACIONAL",
+        )
+
+
+@pytest.mark.parametrize("circuito", ["   ", "2_7"])
+def test_official_comparison_refuses_an_unreadable_circuito_before_adding_tally(
+    circuito: str,
+) -> None:
+    from etl.__main__ import official_mesa_votes_from_national
+
+    csv_text = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+        f"02,027,{circuito},148,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n"
+    )
+
+    with pytest.raises(NationalSchemaError) as excinfo:
+        official_mesa_votes_from_national(
+            csv_text.encode("utf-8"),
+            distrito="02",
+            seccion="027",
+            category="DIPUTADO NACIONAL",
+        )
+
+    message = str(excinfo.value)
+    assert "mesa 148" in message
+    assert "circuito_id" in message
 
 
 def test_validate_fiscalizacion_refuses_a_circuito_blind_baseline_before_review_writes(
@@ -3770,7 +3858,7 @@ def test_a_non_comparable_row_cannot_declare_a_mesa_ambiguous() -> None:
     )
     csv_text = header + "".join(
         [
-            "02,027,00248,145,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
+            "02,027,00248,145,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n",
             "02,027,00248,145,DIPUTADO NACIONAL,EN BLANCO,2,\n",
             # A DIFFERENT circuito, on a row that contributes no tally.
             "02,027,00249,145,DIPUTADO NACIONAL,RECURRIDO,1,\n",
@@ -3784,7 +3872,7 @@ def test_a_non_comparable_row_cannot_declare_a_mesa_ambiguous() -> None:
         category="DIPUTADO NACIONAL",
     )
 
-    assert tallies[145].votes_by_agrupacion_name == {"LLA": 10}
+    assert tallies[145].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
     assert not any("more than one circuito" in reason for reason in skipped)
 
 

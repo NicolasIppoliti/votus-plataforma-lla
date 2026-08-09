@@ -410,11 +410,26 @@ class OfficialMesaVotes:
 
     def vector(self) -> dict[str, int]:
         """Project onto the same 17-column shape as a fiscalización row."""
+        required_names = frozenset(OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values())
+        required_types = frozenset(OFFICIAL_VOTOS_TIPO_BY_COLUMN.values())
+        missing_names = sorted(required_names - self.votes_by_agrupacion_name.keys())
+        missing_types = sorted(required_types - self.votos_tipo_totals.keys())
+        if missing_names or missing_types:
+            missing = []
+            if missing_names:
+                missing.append(f"agrupacion_nombre keys {missing_names}")
+            if missing_types:
+                missing.append(f"votos_tipo keys {missing_types}")
+            raise IncompleteOfficialMesaError(
+                f"mesa {self.mesa} has an incomplete official comparison vector; missing "
+                + " and ".join(missing)
+            )
+
         vector: dict[str, int] = {}
         for column, agrupacion_name in OFFICIAL_AGRUPACION_NAME_BY_COLUMN.items():
-            vector[column] = self.votes_by_agrupacion_name.get(agrupacion_name, 0)
+            vector[column] = self.votes_by_agrupacion_name[agrupacion_name]
         for column, votos_tipo in OFFICIAL_VOTOS_TIPO_BY_COLUMN.items():
-            vector[column] = self.votos_tipo_totals.get(votos_tipo, 0)
+            vector[column] = self.votos_tipo_totals[votos_tipo]
         return vector
 
 
