@@ -1,0 +1,3 @@
+año,eleccion_tipo,recuento_tipo,distrito_id,distrito_nombre,seccion_id,seccion_nombre,localvotacion_codigo,localvotacion_nombre,localvotacion_direccion,localvotacion_localidad,localvotacion_cp,localvotacion_geolat,localvotacion_geolng,mesa_id,mesa_electores,mesa_tipo
+2025,LEGISLATIVAS,PROVISORIOS,02,BUENOS AIRES,027,CORONEL DE MARINA L. ROSALES,37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79,RIVADAVIA N° 140 ENTRE HUMBERTO 1° Y ROCA,PUNTA ALTA,,,,00001,349,NATIVOS
+2025,LEGISLATIVAS,PROVISORIOS,02,BUENOS AIRES,027,CORONEL DE MARINA L. ROSALES,37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79,RIVADAVIA N° 140 ENTRE HUMBERTO 1° Y ROCA,PUNTA ALTA,,,,00002,350,NATIVOS

@@ -26,12 +26,11 @@ import sys
 import tempfile
 import zipfile
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import psycopg
 import yaml
-from psycopg import sql
 
 from .archive import (
     ArchiveIntegrityError,
@@ -55,12 +54,10 @@ from .crosswalk import (
     load_crosswalk,
 )
 from .db import (
-    MERGE_KEY_SQL,
     archive_entry_from_evidence,
     insert_review_items,
     load_crosswalk_rows,
     load_party_map_rows,
-    merge_key,
     project_archive_entry,
 )
 from .http_client import (
@@ -81,6 +78,7 @@ from .ingest.fiscalizacion import (
 )
 from .ingest.national import (
     REQUIRED_COLUMNS,
+    REQUIRED_ESTABLECIMIENTO_COLUMNS,
     NationalSchemaError,
     extract_raw_mesa_identities,
     ingest_national,
@@ -446,8 +444,14 @@ def resolve_database_url(explicit: str | None) -> str:
     return url
 
 
-def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> bytes:
-    """Return the national results CSV bytes `ingest_national` expects.
+@dataclass(frozen=True)
+class NationalArchiveCsvs:
+    results: bytes
+    establecimientos: bytes | None
+
+
+def resolve_national_archive_csvs(raw_bytes: bytes, *, extract_dir: Path) -> NationalArchiveCsvs:
+    """Return the results and optional establecimiento CSV bytes ingestion expects.
 
     A registered national source is archived as a ZIP (`sources.yaml`),
     with the results file's own name differing across years
@@ -457,13 +461,14 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
     this extracts the whole archive (`storage.extract_zip_safely`, the
     same safe-extraction path `tests/test_ingest_national.py` already
     exercises) and picks the one CSV member whose header declares every
-    column `ingest_national.REQUIRED_COLUMNS` needs.
+    column `ingest_national.REQUIRED_COLUMNS` needs, plus at most one member
+    matching the measured 2025 establecimiento companion shape.
 
     `raw_bytes` that is not a ZIP at all (a bare CSV, e.g. a test fixture)
     passes through unchanged.
     """
     if not zipfile.is_zipfile(io.BytesIO(raw_bytes)):
-        return raw_bytes
+        return NationalArchiveCsvs(results=raw_bytes, establecimientos=None)
 
     extracted = extract_zip_safely(raw_bytes, extract_dir)
     # Every member and why it was rejected. The raise below used to name the
@@ -472,6 +477,7 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
     # that the file was there all along.
     rejected: list[tuple[str, str]] = []
     matches: list[Path] = []
+    establecimiento_matches: list[Path] = []
     for path in extracted:
         if path.suffix.lower() != ".csv":
             rejected.append((path.name, "not a .csv member"))
@@ -498,6 +504,9 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
         if set(REQUIRED_COLUMNS) <= header_fields:
             matches.append(path)
             continue
+        if set(REQUIRED_ESTABLECIMIENTO_COLUMNS) <= header_fields:
+            establecimiento_matches.append(path)
+            continue
         missing = sorted(set(REQUIRED_COLUMNS) - header_fields)
         rejected.append((path.name, f"header lacks {', '.join(missing)}"))
 
@@ -521,6 +530,13 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
             f"{len(matches)} members of the archived ZIP declare the national results "
             f"schema ({', '.join(sorted(p.name for p in matches))}); refusing to pick one"
         )
+    if len(establecimiento_matches) > 1:
+        report_rejected()
+        raise NationalResultsCsvNotFoundError(
+            f"{len(establecimiento_matches)} members of the archived ZIP declare the national "
+            "establecimiento companion schema "
+            f"({', '.join(sorted(p.name for p in establecimiento_matches))}); refusing to pick one"
+        )
     if matches:
         if rejected:
             print(
@@ -529,7 +545,12 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
                 file=sys.stderr,
             )
             report_rejected()
-        return matches[0].read_bytes()
+        return NationalArchiveCsvs(
+            results=matches[0].read_bytes(),
+            establecimientos=(
+                establecimiento_matches[0].read_bytes() if establecimiento_matches else None
+            ),
+        )
 
     report_rejected()
     raise NationalResultsCsvNotFoundError(
@@ -537,6 +558,11 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
         f"schema (looked for columns: {', '.join(REQUIRED_COLUMNS)}); "
         f"examined {len(rejected)} member(s), each reported above"
     )
+
+
+def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> bytes:
+    """Return only the results member for result-only validation call sites."""
+    return resolve_national_archive_csvs(raw_bytes, extract_dir=extract_dir).results
 
 
 class NationalResultsCsvNotFoundError(ValueError):
@@ -646,12 +672,13 @@ def ingest_source(
     try:
         project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
-            csv_bytes = national_csv_bytes(raw_bytes)
+            csvs = national_archive_csvs(raw_bytes)
             rows = ingest_national(
-                csv_bytes,
+                csvs.results,
                 archive_entry_id=source_id,
                 election_year=registered_year,
                 election_round=registered_round,
+                establecimientos_csv_bytes=csvs.establecimientos,
             )
             inserted = load_national_rows(
                 conn, rows, year=year, round_=round_, archive_entry_id=source_id
@@ -1035,6 +1062,12 @@ def national_csv_bytes(raw_bytes: bytes) -> bytes:
     """
     with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
         return resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
+
+
+def national_archive_csvs(raw_bytes: bytes) -> NationalArchiveCsvs:
+    """Materialize the results and optional establecimiento companion together."""
+    with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
+        return resolve_national_archive_csvs(raw_bytes, extract_dir=Path(extract_dir))
 
 
 def collect_national_jurisdiction_codes(
@@ -2636,71 +2669,48 @@ def apply_mesa_tipo_mapping(
         # 16,5 million rows; measured, that ran past 13 minutes without
         # finishing. Resolving the mapping to `jurisdiction_id` ONCE — a few
         # hundred thousand rows — turns the second step into an indexed join.
-        # ONE set-based insert, not one lookup per tuple. `IS NOT DISTINCT
-        # FROM` across several nullable columns is not hash-joinable and
-        # degrades to a nested loop, so issuing it 163.000 times is the
-        # shape rule 10 warns about. Collapsing the lineage to a single
-        # NULL-safe text key restores a hash join.
+        # ONE set-based insert, not one lookup per tuple. Every mapping
+        # component is required and normalized before this point, so ordinary
+        # equality is both truthful and hash-joinable; establecimiento is an
+        # optional ancestor published separately in 2025 and cannot be part of
+        # this results-file mapping key.
         cur.execute(
-            "create temporary table jur_tipo (jurisdiction_id uuid, tipo text, merge_key text)"
+            "create temporary table jur_tipo ("
+            "jurisdiction_id uuid, tipo text, distrito text, seccion text, circuito text, mesa int)"
         )
-        jur_tipo_insert = sql.SQL(
+        cur.execute(
             """
-            insert into jur_tipo (jurisdiction_id, tipo, merge_key)
-            select j.id, v.tipo, v.merge_key
-              from unnest(%s::text[], %s::text[]) as v(merge_key, tipo)
+            insert into jur_tipo (jurisdiction_id, tipo, distrito, seccion, circuito, mesa)
+            select j.id, v.tipo, v.distrito, v.seccion, v.circuito, v.mesa
+              from unnest(%s::text[], %s::text[], %s::text[], %s::int[], %s::text[])
+                   as v(distrito, seccion, circuito, mesa, tipo)
               join jurisdiction j
-                -- No lpad here. Both sides now go through
-                -- `jurisdiction.py`'s normalizers -- the write boundary in
-                -- `db.upsert_jurisdiction` pads all three codes, and the keys
-                -- above use the same functions. Compensating in SQL would be a
-                -- second idea of the same code, and `lpad` additionally
-                -- TRUNCATES a wider value from the right where `zfill` never
-                -- does, so the two would disagree on any longer code.
-                -- `establecimiento_code` IS part of `jurisdiction`'s unique
-                -- key, so it belongs in the merge key. The Python side passes
-                -- `None` for it, which is CHECKED below rather than assumed:
-                -- the day a source publishes an establecimiento, a hardcoded
-                -- `None` would stop matching and the backfill would silently
-                -- update nothing, so the run refuses instead.
-                on {} = v.merge_key
+                on j.distrito_code = v.distrito
+               and j.seccion_code = v.seccion
+               and j.circuito_code = v.circuito
+               and j.mesa_code = v.mesa
                -- mesa_tipo is a property of a MESA, so only mesa-level
                -- jurisdictions can carry it. Without this, a national
                -- lineage tuple could bind a PBA row, where `027` means a
                -- PARTIDO rather than a seccion — the scheme collision that
                -- attributed 32.291 Coronel Rosales votes to the province.
                and j.mesa_code is not null
-            """
-        ).format(sql.SQL(MERGE_KEY_SQL))
-        cur.execute(
-            jur_tipo_insert,
+            """,
             (
-                [merge_key(k[0], k[1], k[2], None, k[3]) for k in mapping],
+                [key[0] for key in mapping],
+                [key[1] for key in mapping],
+                [key[2] for key in mapping],
+                [key[3] for key in mapping],
                 list(mapping.values()),
             ),
         )
-        # THE CHECK behind the `None` above. `merge_key(..., establecimiento
-        # =None, ...)` only matches rows whose `establecimiento_code` is null,
-        # so the moment a mesa-level jurisdiction carries one, this backfill
-        # would quietly match nothing for it and report a smaller number with
-        # no indication why. Stated assumptions get checked.
-        cur.execute(
-            "select count(*) from jurisdiction"
-            " where mesa_code is not null and establecimiento_code is not null"
-        )
-        with_establecimiento = cur.fetchone()[0]
-        if with_establecimiento:
-            raise NationalSchemaError(
-                f"{with_establecimiento} mesa-level jurisdiction(s) carry an "
-                "establecimiento_code, which this backfill's merge key does not "
-                "supply -- it would silently match none of them, so it refuses "
-                "rather than under-report"
-            )
         # NO two-tipo conflict guard here. It grouped `jur_tipo` by
         # `jurisdiction_id` and refused `count(distinct tipo) > 1`, which needs
         # ONE jurisdiction row matched by two mapping keys carrying different
-        # tipos — and the join is exact text equality on a lineage the row
-        # itself determines, so two distinct keys cannot match one row.
+        # tipos — and the join is exact equality on the four required lineage
+        # fields the row itself determines, so two distinct keys cannot match
+        # one row. More than one establishment-specific jurisdiction may match
+        # one source key, but all receive that mesa's single validated tipo.
         # Duplicate `jurisdiction` rows for one lineage do not reach it either:
         # they have different ids, so each carries one tipo.
         #
@@ -2715,12 +2725,11 @@ def apply_mesa_tipo_mapping(
         # ingested from scattered lineage mismatches inside one that was, and
         # those need opposite fixes. Same standard the per-source
         # `remaining_breakdown` below already applies.
-        cur.execute("select distinct merge_key from jur_tipo")
-        resolved_keys = {row[0] for row in cur.fetchall()}
+        cur.execute("select distinct distrito, seccion, circuito, mesa from jur_tipo")
+        resolved_keys = {tuple(row) for row in cur.fetchall()}
         unresolved: dict[tuple[str, str], int] = {}
         for key in mapping:
-            key_text = merge_key(key[0], key[1], key[2], None, key[3])
-            if key_text not in resolved_keys:
+            if key not in resolved_keys:
                 scope = (key[0] or "", key[1] or "")
                 unresolved[scope] = unresolved.get(scope, 0) + 1
         unresolved_breakdown = sorted(unresolved.items())

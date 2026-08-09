@@ -765,6 +765,13 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("resultados2025.csv", NATIONAL_CSV)
+        zf.writestr(
+            "localesDeVotacionyMesas.csv",
+            (
+                "distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+                "2,27,37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79,00001\n"
+            ),
+        )
         zf.writestr("ambitosElectorales.csv", "not,the,results,file\n")
     zip_bytes = buffer.getvalue()
 
@@ -808,11 +815,37 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
         )
         assert inserted == 2
 
+        second_inserted = ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="legislativas",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+        assert second_inserted == 2
+
         with conn.cursor() as cur:
-            cur.execute("select count(*) from result_row where archive_entry_id = %s", (source_id,))
-            count_row = cur.fetchone()
-            assert count_row == (2,), (
-                f"ZIP ingestion must persist exactly two result rows; got {count_row!r}"
+            cur.execute(
+                """
+                select count(*), count(distinct j.id), min(j.establecimiento_code),
+                       min(j.establecimiento_name)
+                  from result_row rr
+                  join jurisdiction j on j.id = rr.jurisdiction_id
+                 where rr.archive_entry_id = %s
+                """,
+                (source_id,),
+            )
+            persisted = cur.fetchone()
+            assert persisted == (
+                2,
+                1,
+                "37974",
+                "INSTITUTO SUPERIOR DE FORM.DOCENTE N°79",
+            ), (
+                "ZIP re-ingestion must preserve two rows under one fully sourced "
+                f"establecimiento lineage; got {persisted!r}"
             )
     finally:
         with conn.cursor() as cur:
@@ -3343,6 +3376,72 @@ def test_backfill_mesa_tipo_applies_the_mapping_through_the_real_update_path() -
     assert written[distrito_jur] is None, (
         "the distrito-level row must stay NULL: a partido total is not a mesa"
     )
+
+
+def test_backfill_mesa_tipo_updates_only_the_matching_enriched_circuit() -> None:
+    _require_ephemeral_postgres()
+
+    from etl.__main__ import apply_mesa_tipo_mapping
+    from etl.db import upsert_category, upsert_election, upsert_jurisdiction
+
+    marker = f"X{uuid.uuid4().hex[:8]}"
+    archive_entry_id = f"test-enriched-mesa-tipo-{uuid.uuid4()}"
+    with psycopg.connect(TEST_DSN) as conn:
+        enriched_jur = upsert_jurisdiction(
+            conn,
+            distrito=marker,
+            seccion="27",
+            circuito="1",
+            establecimiento="37974",
+            mesa=4242,
+        )
+        sibling_jur = upsert_jurisdiction(
+            conn,
+            distrito=marker,
+            seccion="27",
+            circuito="999",
+            establecimiento="99999",
+            mesa=4242,
+        )
+        election_id = upsert_election(conn, year=2025, round_="enriched-mesa-tipo-test")
+        category_id = upsert_category(conn, name="ENRICHED MESA TIPO TEST")
+        with conn.cursor() as cur:
+            for jurisdiction_id in (enriched_jur, sibling_jur):
+                cur.execute(
+                    """
+                    insert into result_row (election_id, jurisdiction_id, category_id,
+                                            granularity, list_id, votes, source_kind,
+                                            archive_entry_id, source_row_index)
+                    values (%s,%s,%s,'mesa','TEST',1,'official',%s,0)
+                    """,
+                    (election_id, jurisdiction_id, category_id, archive_entry_id),
+                )
+        conn.commit()
+
+        try:
+            mapping = {(marker, "027", "00001", 4242): "EXTRANJEROS"}
+            updated, resolved, _, unresolved = apply_mesa_tipo_mapping(conn, mapping, batch_size=10)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "select jurisdiction_id, mesa_tipo from result_row where archive_entry_id = %s",
+                    (archive_entry_id,),
+                )
+                written = dict(cur.fetchall())
+        finally:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
+                )
+                cur.execute(
+                    "delete from jurisdiction where id = any(%s)", ([enriched_jur, sibling_jur],)
+                )
+            conn.commit()
+
+    assert resolved == 1
+    assert updated == 1
+    assert unresolved == []
+    assert written[enriched_jur] == "EXTRANJEROS"
+    assert written[sibling_jur] is None, "the sibling circuit must not inherit this mesa's tipo"
 
 
 def test_backfill_mesa_tipo_preserves_a_disagreement_across_sources() -> None:

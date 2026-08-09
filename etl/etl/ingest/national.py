@@ -31,10 +31,18 @@ from etl.jurisdiction import (
     is_canonicalizable_circuito_code,
     is_canonicalizable_code,
     make_result_row,
+    normalize_circuito_code,
 )
 from etl.numeric import parse_source_int
 
 REQUIRED_IDENTITY_COLUMNS = ("distrito_id", "seccion_id", "circuito_id", "mesa_id")
+REQUIRED_ESTABLECIMIENTO_COLUMNS = (
+    "distrito_id",
+    "seccion_id",
+    "mesa_id",
+    "localvotacion_codigo",
+    "localvotacion_nombre",
+)
 SUPPORTED_MESA_TIPOS = frozenset({"NATIVOS", "EXTRANJEROS"})
 
 REQUIRED_COLUMNS = (
@@ -85,6 +93,7 @@ class NationalRow:
     mesa_tipo: str | None
     archive_entry_id: str
     source_row_index: int
+    establecimiento_name: str | None = None
     # NO `natural_key` field. It was `(archive_entry_id, mesa_id, agrupacion_id,
     # cargo_nombre, votos_tipo)` — a SECOND, weaker idea of the key that nothing
     # read: `mesa_id` is globally unique in 2025 and NOT in 2023, so it collides
@@ -109,6 +118,10 @@ class NationalRow:
     @property
     def list_id(self) -> str | None:
         return self.result.list_id
+
+    @property
+    def establecimiento(self) -> str | None:
+        return self.result.establecimiento
 
 
 def _normalize_mesa_id(raw: str | None) -> int | None:
@@ -209,6 +222,7 @@ def ingest_national(
     archive_entry_id: str,
     election_year: int,
     election_round: str,
+    establecimientos_csv_bytes: bytes | None = None,
 ) -> list[NationalRow]:
     """Parse one archived national results CSV into normalized rows.
 
@@ -235,6 +249,10 @@ def ingest_national(
             f"column(s): {', '.join(missing)}"
         )
 
+    establecimientos, conflicting_establecimientos = _parse_establecimientos(
+        establecimientos_csv_bytes,
+        source_label=archive_entry_id,
+    )
     rows: list[NationalRow] = []
     # Rule 3: an exclusion is reported PER REASON, in rows AND in votes.
     # These two `continue`s used to be silent, and their plausibility is
@@ -249,6 +267,7 @@ def ingest_national(
     # It is counted in rows under its own reason, so the votes total is never
     # quietly padded with a zero that stands in for a number nobody read.
     excluded_unparseable: dict[str, int] = {}
+    circuits_by_companion_key: dict[tuple[int, int, int], set[str]] = {}
 
     def exclude(reason: str, raw_votes: str | None) -> None:
         excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
@@ -259,6 +278,23 @@ def ingest_national(
         excluded_votes[reason] = excluded_votes.get(reason, 0) + votes
 
     for index, raw in enumerate(reader):
+        if establecimientos_csv_bytes is not None:
+            distrito_identity = _parse_int(raw.get("distrito_id"))
+            seccion_identity = _parse_int(raw.get("seccion_id"))
+            mesa_identity = _parse_int(raw.get("mesa_id"))
+            raw_circuito = raw.get("circuito_id")
+            if (
+                distrito_identity is not None
+                and seccion_identity is not None
+                and mesa_identity is not None
+                and is_canonicalizable_circuito_code(raw_circuito)
+            ):
+                circuito_identity = normalize_circuito_code(raw_circuito)
+                assert circuito_identity is not None
+                circuits_by_companion_key.setdefault(
+                    (distrito_identity, seccion_identity, mesa_identity), set()
+                ).add(circuito_identity)
+
         mesa_tipo = validate_mesa_tipo(
             raw.get("mesa_tipo"),
             source_label=archive_entry_id,
@@ -324,11 +360,30 @@ def ingest_national(
             # says. Same rule `ingest.fiscalizacion` applies to a blank cell.
             exclude("unreadable votos_cantidad", None)
             continue
+        establecimiento: str | None = None
+        establecimiento_name: str | None = None
+        if establecimientos_csv_bytes is not None:
+            distrito_id = _parse_int(raw.get("distrito_id"))
+            seccion_id = _parse_int(raw.get("seccion_id"))
+            assert distrito_id is not None and seccion_id is not None
+            mesa_key = (distrito_id, seccion_id, mesa_id)
+            if mesa_key in conflicting_establecimientos:
+                exclude(
+                    "conflicting establecimiento companion metadata",
+                    raw.get("votos_cantidad"),
+                )
+                continue
+            metadata = establecimientos.get(mesa_key)
+            if metadata is None:
+                exclude("missing establecimiento companion match", raw.get("votos_cantidad"))
+                continue
+            establecimiento, establecimiento_name = metadata
         result = make_result_row(
             granularity="mesa",
             distrito=raw["distrito_id"],
             seccion=raw["seccion_id"],
             circuito=raw["circuito_id"],
+            establecimiento=establecimiento,
             mesa=mesa_id,
             category=raw["cargo_nombre"],
             list_id=list_id,
@@ -345,13 +400,106 @@ def ingest_national(
                 # cross-year comparisons must be able to see. `.get()`
                 # mirrors `estado_final`'s absent-column tolerance.
                 mesa_tipo=mesa_tipo,
+                establecimiento_name=establecimiento_name,
                 archive_entry_id=archive_entry_id,
                 source_row_index=index,
             )
         )
 
+    ambiguous_companion_keys = {
+        key for key, circuits in circuits_by_companion_key.items() if len(circuits) > 1
+    }
+    if ambiguous_companion_keys:
+        unambiguous_rows: list[NationalRow] = []
+        for row in rows:
+            distrito = _parse_int(row.result.distrito)
+            seccion = _parse_int(row.result.seccion)
+            assert distrito is not None and seccion is not None and row.mesa is not None
+            if (distrito, seccion, row.mesa) in ambiguous_companion_keys:
+                exclude(
+                    "ambiguous result circuits for establecimiento companion",
+                    str(row.result.votes),
+                )
+            else:
+                unambiguous_rows.append(row)
+        rows = unambiguous_rows
+
     _report_exclusions(excluded_rows, excluded_votes, excluded_unparseable)
     return _quarantine_ambiguous_rows(rows)
+
+
+def _parse_establecimientos(
+    csv_bytes: bytes | None,
+    *,
+    source_label: str,
+) -> tuple[dict[tuple[int, int, int], tuple[str, str]], set[tuple[int, int, int]]]:
+    """Read the optional companion using its measured distrito/seccion/mesa key.
+
+    The hash-matching 2025 source has 108,992 unique normalized mesa keys and
+    maps each establecimiento code to exactly one name. Both assumptions are
+    checked here; registered 2023 sources have no companion and remain unknown.
+    """
+    if csv_bytes is None:
+        return {}, set()
+
+    reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+    fieldnames = set(reader.fieldnames or ())
+    missing = [column for column in REQUIRED_ESTABLECIMIENTO_COLUMNS if column not in fieldnames]
+    if missing:
+        raise NationalSchemaError(
+            f"{source_label}: unrecognized establecimiento companion structure — missing "
+            f"required column(s): {', '.join(missing)}"
+        )
+
+    by_mesa: dict[tuple[int, int, int], tuple[str, str]] = {}
+    conflicts: set[tuple[int, int, int]] = set()
+    names_by_code: dict[str, set[str]] = {}
+    keys_by_code: dict[str, set[tuple[int, int, int]]] = {}
+    excluded: dict[str, int] = {}
+    for raw in reader:
+        distrito = _parse_int(raw.get("distrito_id"))
+        seccion = _parse_int(raw.get("seccion_id"))
+        mesa = _parse_int(raw.get("mesa_id"))
+        if distrito is None or seccion is None or mesa is None:
+            reason = "unreadable distrito/seccion/mesa identity"
+            excluded[reason] = excluded.get(reason, 0) + 1
+            continue
+        code = (raw.get("localvotacion_codigo") or "").strip()
+        name = (raw.get("localvotacion_nombre") or "").strip()
+        if not code or not name:
+            reason = "absent establecimiento code or name"
+            excluded[reason] = excluded.get(reason, 0) + 1
+            continue
+
+        key = (distrito, seccion, mesa)
+        metadata = (code, name)
+        names_by_code.setdefault(code, set()).add(name)
+        keys_by_code.setdefault(code, set()).add(key)
+        existing = by_mesa.get(key)
+        if existing is not None and existing != metadata:
+            conflicts.add(key)
+        else:
+            by_mesa[key] = metadata
+
+    for code, names in names_by_code.items():
+        if len(names) > 1:
+            conflicts.update(keys_by_code[code])
+
+    if excluded:
+        breakdown = "; ".join(
+            f"{reason}: {count} row(s)" for reason, count in sorted(excluded.items())
+        )
+        print(
+            f"excluded {sum(excluded.values())} establecimiento companion row(s) — {breakdown}",
+            file=sys.stderr,
+        )
+    if conflicts:
+        print(
+            f"quarantined {len(conflicts)} establecimiento companion mesa key(s) — "
+            "conflicting metadata",
+            file=sys.stderr,
+        )
+    return by_mesa, conflicts
 
 
 def _report_exclusions(
@@ -512,10 +660,25 @@ def load_national_rows(
     # per first-seen mesa `upsert_jurisdiction` cost here before (~109k
     # round trips at real national 2025 scale, spikes/003).
     jurisdiction_keys = [
-        (row.result.distrito, row.result.seccion, row.result.circuito, None, row.result.mesa)
+        (
+            row.result.distrito,
+            row.result.seccion,
+            row.result.circuito,
+            row.establecimiento,
+            row.result.mesa,
+        )
         for row in rows
     ]
-    jurisdiction_ids = db.batch_upsert_jurisdictions(conn, jurisdiction_keys)
+    jurisdiction_names = {
+        key: row.establecimiento_name
+        for key, row in zip(jurisdiction_keys, rows)
+        if row.establecimiento_name is not None
+    }
+    jurisdiction_ids = db.batch_upsert_jurisdictions(
+        conn,
+        jurisdiction_keys,
+        establecimiento_names=jurisdiction_names,
+    )
 
     records: list[db.ResultRowRecord] = []
 
@@ -529,7 +692,7 @@ def load_national_rows(
             row.result.distrito,
             row.result.seccion,
             row.result.circuito,
-            None,
+            row.establecimiento,
             row.result.mesa,
         )
         jurisdiction_id = jurisdiction_ids[j_key]

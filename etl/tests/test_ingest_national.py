@@ -8,13 +8,19 @@ network fetch or the gitignored 88 MB archived ZIP:
   027 (Coronel Rosales), mesas 1-2, cargo PRESIDENTE/A, agrupaciones 134/135 —
   real bytes, real vote counts, extracted by a one-off `python3 -c` streaming
   filter (never fully materializing the 3.7 GB uncompressed CSV).
-- `fixtures/national_2025_sample.csv`: no 2025 ZIP is present on this
-  machine (only the 2023 PASO archive survived the SPIKE session). This
-  fixture is RECONSTRUCTED using the exact real 2025 header and the exact
+- `fixtures/national_2025_sample.csv`: this legacy fixture was RECONSTRUCTED
+  before the hash-matching 2025 ZIP was independently downloaded, using the
+  exact real 2025 header and the exact
   real distrito/seccion/agrupación values recorded in
   `spikes/001-granularity-and-join-keys.md` (a)/(c)/(h) — not invented, but
   reassembled rather than sliced from a live download. Documented here per
   the apply instructions' "derive a MINIMAL one and say exactly how".
+- `fixtures/national_2025_establecimientos_sample.csv`: exact header and two
+  complete rows sliced from `localesDeVotacionyMesas.csv` in the independently
+  downloaded 2025 ZIP whose SHA-256 is
+  `5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b`,
+  matching `archive-manifest.json`. The rows are distrito 02 / seccion 027 /
+  mesas 00001-00002 and retain the source's zero padding and metadata.
 """
 
 from __future__ import annotations
@@ -63,6 +69,116 @@ def test_2023_paso_fixture_keeps_internal_lists_one_row_per_mesa_list_combinatio
         # `estado_final` is absent from the 2023 schema entirely (SPIKE b) —
         # MUST be treated as absent, never defaulted to a guessed status.
         assert row.estado_final is None
+        # Every registered 2023 national round omits polling-place metadata.
+        # Unknown is the truthful value; neither circuito nor mesa may be
+        # copied into the establecimiento fields as a surrogate.
+        assert row.establecimiento is None
+        assert row.establecimiento_name is None
+
+
+def test_2025_companion_enriches_mesas_across_source_zero_padding() -> None:
+    rows = ingest_national(
+        _read("national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
+        establecimientos_csv_bytes=_read("national_2025_establecimientos_sample.csv"),
+    )
+
+    assert len(rows) == 2
+    assert {(row.mesa, row.establecimiento, row.establecimiento_name) for row in rows} == {
+        (1, "37974", "INSTITUTO SUPERIOR DE FORM.DOCENTE N°79"),
+        (2, "37974", "INSTITUTO SUPERIOR DE FORM.DOCENTE N°79"),
+    }
+
+
+def test_companion_quarantines_a_mesa_present_under_multiple_result_circuits(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = _read("national_2025_sample.csv").decode("utf-8")
+    header, mesa_1, mesa_2 = results.splitlines()
+    same_mesa_different_circuit = mesa_2.replace("00248,00248,2", "00999,00999,1")
+
+    rows = ingest_national(
+        f"{header}\n{mesa_1}\n{same_mesa_different_circuit}\n".encode(),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
+        establecimientos_csv_bytes=_read("national_2025_establecimientos_sample.csv"),
+    )
+
+    assert rows == [], "a companion with no circuito_id cannot choose between result circuits"
+    assert "ambiguous result circuits for establecimiento companion: 2 rows / 175 votes" in (
+        capsys.readouterr().err
+    )
+
+
+def test_present_companion_quarantines_unmatched_mesas_with_vote_breakdown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    companion = _read("national_2025_establecimientos_sample.csv").decode("utf-8")
+    header, mesa_1, _mesa_2 = companion.splitlines()
+
+    rows = ingest_national(
+        _read("national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
+        establecimientos_csv_bytes=f"{header}\n{mesa_1}\n".encode(),
+    )
+
+    assert [row.mesa for row in rows] == [1]
+    assert "missing establecimiento companion match: 1 rows / 85 votes" in capsys.readouterr().err
+
+
+def test_present_companion_quarantines_conflicting_mesa_metadata_without_picking(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    companion = _read("national_2025_establecimientos_sample.csv").decode("utf-8")
+    header, mesa_1, mesa_2 = companion.splitlines()
+    conflicting_mesa_1 = mesa_1.replace(
+        "37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79",
+        "99999,OTRO ESTABLECIMIENTO",
+    )
+
+    rows = ingest_national(
+        _read("national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
+        establecimientos_csv_bytes=(
+            f"{header}\n{mesa_1}\n{conflicting_mesa_1}\n{mesa_2}\n"
+        ).encode(),
+    )
+
+    assert [row.mesa for row in rows] == [2]
+    assert "conflicting establecimiento companion metadata: 1 rows / 90 votes" in (
+        capsys.readouterr().err
+    )
+
+
+def test_present_companion_quarantines_one_code_with_conflicting_names(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    companion = _read("national_2025_establecimientos_sample.csv").decode("utf-8")
+    header, mesa_1, mesa_2 = companion.splitlines()
+    conflicting_mesa_2 = mesa_2.replace(
+        "INSTITUTO SUPERIOR DE FORM.DOCENTE N°79",
+        "OTRO ESTABLECIMIENTO",
+    )
+
+    rows = ingest_national(
+        _read("national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
+        establecimientos_csv_bytes=(f"{header}\n{mesa_1}\n{conflicting_mesa_2}\n").encode(),
+    )
+
+    assert rows == []
+    assert "conflicting establecimiento companion metadata: 2 rows / 175 votes" in (
+        capsys.readouterr().err
+    )
 
 
 def test_2025_bup_format_parsed_or_fails_loudly() -> None:

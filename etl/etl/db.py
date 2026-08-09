@@ -474,9 +474,14 @@ def merge_key(
     )
 
 
-def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[JurisdictionKey, str]:
+def batch_upsert_jurisdictions(
+    conn,
+    keys: Sequence[JurisdictionKey],
+    *,
+    establecimiento_names: Mapping[JurisdictionKey, str] | None = None,
+) -> dict[JurisdictionKey, str]:
     """Resolve or create every `jurisdiction` row for a batch of lineage
-    tuples in TWO round trips total, instead of one SELECT-then-INSERT
+    tuples in a bounded number of round trips, instead of one SELECT-then-INSERT
     round trip per distinct tuple (task 14.4/14.5 -- ~109k distinct mesas,
     5m53s at real national 2025 scale, measured in
     `spikes/003-first-end-to-end-run.md`; `load_national_rows`'s per-call
@@ -506,6 +511,7 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
     keys are what the returned mapping is keyed by.
     """
     original_keys = list(keys)
+    establecimiento_names = establecimiento_names or {}
     normalized_keys = [
         (
             normalize_distrito_code(distrito),
@@ -543,7 +549,8 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
         merge_keys = [merge_key(*key) for key in distinct_keys]
         resolve_existing = sql.SQL(
             """
-            select v.distrito, v.seccion, v.circuito, v.establecimiento, v.mesa, j.id
+            select v.distrito, v.seccion, v.circuito, v.establecimiento, v.mesa,
+                   j.id, j.establecimiento_name
             from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[],
                         %s::text[])
                  with ordinality as v(distrito, seccion, circuito, establecimiento, mesa,
@@ -567,12 +574,22 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
         # than one, the way `apply_mesa_tipo_mapping` refuses a mesa with two
         # tipos.
         matches: dict[JurisdictionKey, set[str]] = {}
-        for distrito, seccion, circuito, establecimiento, mesa, jurisdiction_id in cur.fetchall():
+        existing_names: dict[JurisdictionKey, str | None] = {}
+        for (
+            distrito,
+            seccion,
+            circuito,
+            establecimiento,
+            mesa,
+            jurisdiction_id,
+            establecimiento_name,
+        ) in cur.fetchall():
             key = (distrito, seccion, circuito, establecimiento, mesa)
             if jurisdiction_id is None:
                 missing.append(key)
             else:
                 matches.setdefault(key, set()).add(jurisdiction_id)
+                existing_names[key] = establecimiento_name
 
         ambiguous = {key: ids for key, ids in matches.items() if len(ids) > 1}
         if ambiguous:
@@ -585,6 +602,32 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
         for key, ids in matches.items():
             resolved[key] = next(iter(ids))
 
+        names_by_normalized_key: dict[JurisdictionKey, str] = {}
+        for original_key, normalized_key in zip(original_keys, normalized_keys):
+            if original_key not in establecimiento_names:
+                continue
+            name = establecimiento_names[original_key]
+            previous = names_by_normalized_key.get(normalized_key)
+            if previous is not None and previous != name:
+                raise ValueError(
+                    "one normalized establecimiento lineage tuple carries conflicting "
+                    f"names {previous!r} and {name!r}; refusing to pick one"
+                )
+            names_by_normalized_key[normalized_key] = name
+        name_conflicts = {
+            key: (existing_names[key], name)
+            for key, name in names_by_normalized_key.items()
+            if key in existing_names
+            and existing_names[key] is not None
+            and existing_names[key] != name
+        }
+        if name_conflicts:
+            key, names = next(iter(sorted(name_conflicts.items())))
+            raise ValueError(
+                f"{len(name_conflicts)} establecimiento lineage tuple(s) conflict with an "
+                f"existing jurisdiction name; refusing to overwrite. First: {key} -> {names}"
+            )
+
         # Round trip 2 -- bulk-insert every tuple with no existing row.
         # Safe without `ON CONFLICT`: `missing` is already de-duplicated
         # (derived from `distinct_keys` above, itself de-duplicated), and
@@ -593,9 +636,11 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
             cur.execute(
                 """
                 insert into jurisdiction (
-                    distrito_code, seccion_code, circuito_code, establecimiento_code, mesa_code
+                    distrito_code, seccion_code, circuito_code, establecimiento_code, mesa_code,
+                    establecimiento_name
                 )
-                select * from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[])
+                select * from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[],
+                                     %s::text[])
                 returning distrito_code, seccion_code, circuito_code, establecimiento_code,
                           mesa_code, id
                 """,
@@ -605,6 +650,7 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
                     [key[2] for key in missing],
                     [key[3] for key in missing],
                     [key[4] for key in missing],
+                    [names_by_normalized_key.get(key) for key in missing],
                 ),
             )
             for (
@@ -616,6 +662,17 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
                 jurisdiction_id,
             ) in cur.fetchall():
                 resolved[(distrito, seccion, circuito, establecimiento, mesa)] = jurisdiction_id
+
+        unnamed = [
+            (resolved[key], name)
+            for key, name in names_by_normalized_key.items()
+            if key in existing_names and existing_names[key] is None
+        ]
+        if unnamed:
+            cur.executemany(
+                "update jurisdiction set establecimiento_name = %s where id = %s",
+                [(name, jurisdiction_id) for jurisdiction_id, name in unnamed],
+            )
 
     return {
         original_key: resolved[normalized_key]
