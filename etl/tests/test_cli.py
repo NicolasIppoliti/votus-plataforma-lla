@@ -296,6 +296,64 @@ def test_fetch_rejects_an_unregistered_source_name(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("year", "round_", "expected", "received"),
+    [
+        (2025, "generales", "2023", "2025"),
+        (2023, "legislativas", "generales", "legislativas"),
+    ],
+)
+def test_ingest_refuses_source_election_mismatch_before_archive_or_db_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    year: int,
+    round_: str,
+    expected: str,
+    received: str,
+) -> None:
+    from etl.__main__ import SourceElectionValidationError
+
+    sources = {
+        "national": [
+            {
+                **FAKE_SOURCES["national"][0],
+                "election_year": 2023,
+                "election_round": "generales",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps([{"id": "national/fake-test", "status": "ok"}]), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "etl.__main__.read_archived_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("election mismatch must fail before archive byte access")
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.psycopg.connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("election mismatch must fail before database access")
+        ),
+    )
+
+    with pytest.raises(SourceElectionValidationError) as excinfo:
+        ingest_source(
+            "national/fake-test",
+            database_url="postgresql://must-not-connect/unused",
+            year=year,
+            round_=round_,
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+        )
+
+    message = str(excinfo.value)
+    assert "expected" in message and expected in message
+    assert "received" in message and received in message
+
 def test_pba_pdf_reference_is_not_ingestible_before_archive_parser_or_database_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -723,12 +781,12 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     )
 
 
-def test_a_distrito_level_code_with_no_seccion_resolves_through_its_distrito() -> None:
-    """The coarser-than-seccion branch, which nothing exercised.
+def test_a_synthetic_truncated_coarse_row_with_no_seccion_resolves_by_distrito() -> None:
+    """Exercise fail/report behavior for a malformed or coarser future row.
 
-    The 2023 national file bundles ten categories down to MIEMBROS DE JUNTA
-    COMUNAL, so rows with NO seccion are what actually runs against it. Every
-    other test passes a pair with both halves populated.
+    The measured loaded corpus has non-null ``seccion`` on every row. This
+    synthetic ``None`` directly tests how a future truncated or genuinely coarse
+    row resolves or is reported; it does not describe the observed 2023 corpus.
     """
     crosswalk = CrosswalkTable(
         jurisdictions=(
@@ -753,7 +811,6 @@ def test_a_distrito_level_code_with_no_seccion_resolves_through_its_distrito() -
         "the report must not invent a seccion for a row that carries none; "
         f"got {unmapped[0].code!r}"
     )
-
 
 
 def test_a_zip_with_no_results_member_raises_rather_than_returning_a_wrong_file(
@@ -893,9 +950,7 @@ def test_an_id_registered_under_two_capabilities_is_refused() -> None:
         find_source_entry(sources, "shared/id")
 
 
-def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(
-    tmp_path: Path, capsys
-) -> None:
+def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, capsys) -> None:
     """The disagreement was PRESERVED and provably nothing acted on it.
 
     The accumulator test asserted the set stays open at `{NATIVOS,
@@ -1004,8 +1059,7 @@ def test_backfill_mesa_tipo_reaches_its_real_work_through_main(tmp_path: Path) -
         "votos_tipo,votos_cantidad,estado_final,mesa_tipo\n"
     )
     csv_text = (
-        header
-        + f"97,027,00001,{mesa},DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,EXTRANJEROS\n"
+        header + f"97,027,00001,{mesa},DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,EXTRANJEROS\n"
     )
 
     local_root = tmp_path / "archive"
@@ -1045,6 +1099,7 @@ def test_backfill_mesa_tipo_reaches_its_real_work_through_main(tmp_path: Path) -
     )
 
     archive_entry_id = f"backfill-cli-{uuid.uuid4()}"
+    jurisdiction_id: str | None = None
     conn = psycopg.connect(TEST_DSN)
     try:
         jurisdiction_id = upsert_jurisdiction(
@@ -1078,7 +1133,8 @@ def test_backfill_mesa_tipo_reaches_its_real_work_through_main(tmp_path: Path) -
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
-            cur.execute("delete from jurisdiction where id = %s", (jurisdiction_id,))
+            if jurisdiction_id is not None:
+                cur.execute("delete from jurisdiction where id = %s", (jurisdiction_id,))
         conn.commit()
         conn.close()
 
@@ -2777,14 +2833,37 @@ def test_collect_mesa_tipo_mapping_collapses_source_rows_to_distinct_mesas() -> 
     rows, which is what makes the backfill cheap.
     """
     rows = [
-        {"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
-         "mesa_id": "1", "mesa_tipo": "NATIVOS", "cargo_nombre": "A"},
-        {"distrito_id": "2", "seccion_id": "27", "circuito_id": "00001",
-         "mesa_id": "1", "mesa_tipo": "NATIVOS", "cargo_nombre": "B"},
-        {"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
-         "mesa_id": "9001", "mesa_tipo": "EXTRANJEROS", "cargo_nombre": "A"},
-        {"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
-         "mesa_id": "5", "cargo_nombre": "A"},
+        {
+            "distrito_id": "02",
+            "seccion_id": "027",
+            "circuito_id": "00001",
+            "mesa_id": "1",
+            "mesa_tipo": "NATIVOS",
+            "cargo_nombre": "A",
+        },
+        {
+            "distrito_id": "2",
+            "seccion_id": "27",
+            "circuito_id": "00001",
+            "mesa_id": "1",
+            "mesa_tipo": "NATIVOS",
+            "cargo_nombre": "B",
+        },
+        {
+            "distrito_id": "02",
+            "seccion_id": "027",
+            "circuito_id": "00001",
+            "mesa_id": "9001",
+            "mesa_tipo": "EXTRANJEROS",
+            "cargo_nombre": "A",
+        },
+        {
+            "distrito_id": "02",
+            "seccion_id": "027",
+            "circuito_id": "00001",
+            "mesa_id": "5",
+            "cargo_nombre": "A",
+        },
     ]
 
     mapping = collect_mesa_tipo_mapping(rows)
@@ -2802,6 +2881,86 @@ def test_collect_mesa_tipo_mapping_collapses_source_rows_to_distinct_mesas() -> 
         ("02", "027", "00001", 1): {"NATIVOS"},
         ("02", "027", "00001", 9001): {"EXTRANJEROS"},
     }, "four source rows must collapse to two distinct mesas"
+
+
+@pytest.mark.parametrize("mesa_tipo", ["DESCONOCIDO", "nativos", " NATIVOS ", "\tEXTRANJEROS", " "])
+def test_collect_mesa_tipo_mapping_refuses_unsupported_nonblank_values(
+    mesa_tipo: str,
+) -> None:
+    rows = [
+        {
+            "distrito_id": "02",
+            "seccion_id": "027",
+            "circuito_id": "00001",
+            "mesa_id": "12",
+            "mesa_tipo": mesa_tipo,
+        }
+    ]
+
+    with pytest.raises(NationalSchemaError) as excinfo:
+        collect_mesa_tipo_mapping(rows, source_label="national/mesa-tipo-contract")
+
+    message = str(excinfo.value)
+    assert repr(mesa_tipo) in message
+    assert "source row 0" in message
+    assert "national/mesa-tipo-contract" in message
+
+
+@pytest.mark.parametrize("mesa_tipo", ["NATIVOS", "EXTRANJEROS"])
+def test_collect_mesa_tipo_mapping_accepts_exact_supported_values(mesa_tipo: str) -> None:
+    rows = [
+        {
+            "distrito_id": "02",
+            "seccion_id": "027",
+            "circuito_id": "00001",
+            "mesa_id": "12",
+            "mesa_tipo": mesa_tipo,
+        }
+    ]
+
+    assert collect_mesa_tipo_mapping(rows) == {("02", "027", "00001", 12): {mesa_tipo}}
+
+
+def test_collect_mesa_tipo_mapping_keeps_alphanumeric_circuito() -> None:
+    rows = [
+        {
+            "distrito_id": "02",
+            "seccion_id": "027",
+            "circuito_id": "249a",
+            "mesa_id": "12",
+            "mesa_tipo": "NATIVOS",
+        }
+    ]
+
+    assert collect_mesa_tipo_mapping(rows) == {("02", "027", "0249A", 12): {"NATIVOS"}}
+
+
+def test_collect_mesa_tipo_mapping_rejects_malformed_ids_without_aliasing_a_mesa(
+    capsys,
+) -> None:
+    base = {
+        "distrito_id": "02",
+        "seccion_id": "027",
+        "circuito_id": "00001",
+        "mesa_tipo": "NATIVOS",
+    }
+    rows = [
+        {**base, "mesa_id": "12"},
+        {**base, "mesa_id": "1_2"},
+        {**base, "mesa_id": "+12"},
+        {**base, "mesa_id": "-1"},
+        {**base, "mesa_id": ""},
+    ]
+
+    assert collect_mesa_tipo_mapping(rows, source_label="national/test") == {
+        ("02", "027", "00001", 12): {"NATIVOS"}
+    }
+    assert capsys.readouterr().err == (
+        "  national/test: 0 rows carried no mesa_tipo, 0 lacked a required column, "
+        "1 had an absent mesa_id, 3 had an unreadable mesa_id, "
+        "0 had an incomplete lineage, 0 carried a non-numeric code the "
+        "normalizers cannot canonicalize\n"
+    )
 
 
 def test_backfill_mesa_tipo_applies_the_mapping_through_the_real_update_path() -> None:
@@ -2830,9 +2989,7 @@ def test_backfill_mesa_tipo_applies_the_mapping_through_the_real_update_path() -
         # Created through the WRITE BOUNDARY with unpadded codes, not raw SQL.
         # `upsert_jurisdiction` normalizes them, which is why the backfill's
         # padded merge key matches without compensating in SQL.
-        mesa_jur = upsert_jurisdiction(
-            conn, distrito=marker, seccion="27", circuito="1", mesa=4242
-        )
+        mesa_jur = upsert_jurisdiction(conn, distrito=marker, seccion="27", circuito="1", mesa=4242)
         # A distrito-level row sharing the distrito. mesa_tipo is a property of
         # a MESA, so this must never bind a mesa lineage -- the scheme collision
         # that attributed 32.291 votes to a province.
@@ -2858,14 +3015,11 @@ def test_backfill_mesa_tipo_applies_the_mapping_through_the_real_update_path() -
 
         try:
             mapping = {(marker, "027", "00001", 4242): "EXTRANJEROS"}
-            updated, resolved, _, unresolved = apply_mesa_tipo_mapping(
-                conn, mapping, batch_size=10
-            )
+            updated, resolved, _, unresolved = apply_mesa_tipo_mapping(conn, mapping, batch_size=10)
 
             with conn.cursor() as cur:
                 cur.execute(
-                    "select jurisdiction_id, mesa_tipo from result_row"
-                    " where archive_entry_id = %s",
+                    "select jurisdiction_id, mesa_tipo from result_row where archive_entry_id = %s",
                     (archive_entry_id,),
                 )
                 written = dict(cur.fetchall())
@@ -2890,6 +3044,7 @@ def test_backfill_mesa_tipo_applies_the_mapping_through_the_real_update_path() -
         "the distrito-level row must stay NULL: a partido total is not a mesa"
     )
 
+
 def test_backfill_mesa_tipo_preserves_a_disagreement_across_sources() -> None:
     """One mesa cannot be both NATIVOS and EXTRANJEROS, and the disagreement
     must survive until every source has been read.
@@ -2900,14 +3055,28 @@ def test_backfill_mesa_tipo_preserves_a_disagreement_across_sources() -> None:
     """
     shared: dict = {}
     collect_mesa_tipo_mapping(
-        [{"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
-          "mesa_id": "1", "mesa_tipo": "NATIVOS"}],
+        [
+            {
+                "distrito_id": "02",
+                "seccion_id": "027",
+                "circuito_id": "00001",
+                "mesa_id": "1",
+                "mesa_tipo": "NATIVOS",
+            }
+        ],
         source_label="national/2023-generales",
         into=shared,
     )
     collect_mesa_tipo_mapping(
-        [{"distrito_id": "02", "seccion_id": "027", "circuito_id": "00001",
-          "mesa_id": "1", "mesa_tipo": "EXTRANJEROS"}],
+        [
+            {
+                "distrito_id": "02",
+                "seccion_id": "027",
+                "circuito_id": "00001",
+                "mesa_id": "1",
+                "mesa_tipo": "EXTRANJEROS",
+            }
+        ],
         source_label="national/2025-legislativas",
         into=shared,
     )
@@ -3608,3 +3777,15 @@ def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_f
     reported = capsys.readouterr().err
     assert "curated for 02/027/DIPUTADO NACIONAL" in reported
     assert "not real" in reported
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_apply_mesa_tipo_mapping_rejects_nonpositive_batch_size_before_db_access(
+    batch_size: int,
+) -> None:
+    from etl.__main__ import apply_mesa_tipo_mapping
+
+    class ConnectionThatMustNotBeTouched:
+        def cursor(self):
+            raise AssertionError("invalid batch size must fail before database access")
+
+    with pytest.raises(ValueError, match="batch_size must be positive"):
+        apply_mesa_tipo_mapping(ConnectionThatMustNotBeTouched(), {}, batch_size=batch_size)

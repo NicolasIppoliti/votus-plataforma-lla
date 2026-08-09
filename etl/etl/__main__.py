@@ -31,6 +31,7 @@ from pathlib import Path
 
 import psycopg
 import yaml
+from psycopg import sql
 
 from .archive import (
     ArchiveIntegrityError,
@@ -79,9 +80,11 @@ from .ingest.national import (
     extract_raw_mesa_identities,
     ingest_national,
     load_national_rows,
+    validate_mesa_tipo,
 )
 from .ingest.pba import PbaSchemaError, ingest_pba, load_pba_rows
 from .jurisdiction import (
+    is_canonicalizable_circuito_code,
     is_canonicalizable_code,
     normalize_circuito_code,
     normalize_distrito_code,
@@ -95,6 +98,7 @@ from .manifest import (
     save_manifest,
     upsert_record,
 )
+from .numeric import parse_source_int
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
 from .review_item import (
     ReviewItemRecord,
@@ -761,7 +765,6 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         DuplicateManifestRecordError,
         MalformedManifestError,
         MissingDatabaseUrlError,
-        ArchiveIntegrityError,
         # `ValueError` LAST, and deliberately: `load_fiscalizacion_rows`
         # refuses a jurisdiction scheme that does not match the distrito/
         # seccion it is placing rows on, and `db.load_result_rows` refuses a
@@ -1079,9 +1082,6 @@ def collect_national_jurisdiction_codes(
     return sorted(codes, key=lambda pair: (pair[0] or "", pair[1] or ""))
 
 
-
-
-
 def collect_mesa_tipo_mapping(
     rows, *, source_label: str = "(unnamed source)", into: dict | None = None
 ) -> dict[tuple[str, str, str, int], set[str]]:
@@ -1110,26 +1110,34 @@ def collect_mesa_tipo_mapping(
     # all" and "scattered rows have a hole in the lineage" need opposite fixes
     # and are indistinguishable inside one `skipped_malformed` total.
     skipped_missing_column = 0
+    skipped_absent_mesa_id = 0
     skipped_bad_mesa_id = 0
     skipped_incomplete_lineage = 0
     # A code the boundary could not canonicalize is NOT the same as a missing
     # one: it is present, wrong-shaped, and would pass through unchanged and
     # silently join nothing.
     skipped_uncanonical_code = 0
-    for raw in rows:
+    for source_row_index, raw in enumerate(rows):
         missing = [column for column in required if column not in raw]
         if missing:
             skipped_missing_column += 1
             continue
-        tipo = (raw.get("mesa_tipo") or "").strip()
-        if not tipo:
+        tipo = validate_mesa_tipo(
+            raw.get("mesa_tipo"),
+            source_label=source_label,
+            source_row_index=source_row_index,
+        )
+        if tipo is None:
             # Counted, never silently dropped: a skip with no number looks
             # identical whether it discarded nothing or everything.
             skipped_no_tipo += 1
             continue
-        try:
-            mesa = int(raw["mesa_id"])
-        except (TypeError, ValueError):
+        raw_mesa = raw.get("mesa_id")
+        if not isinstance(raw_mesa, str) or not raw_mesa.strip():
+            skipped_absent_mesa_id += 1
+            continue
+        mesa = parse_source_int(raw_mesa)
+        if mesa is None:
             skipped_bad_mesa_id += 1
             continue
         # `required` proves the columns are PRESENT, not that they carry a
@@ -1143,12 +1151,14 @@ def collect_mesa_tipo_mapping(
         if not distrito or not seccion or not circuito:
             skipped_incomplete_lineage += 1
             continue
-        if not all(
-            is_canonicalizable_code(raw[column])
-            for column in ("distrito_id", "seccion_id", "circuito_id")
+        if not (
+            is_canonicalizable_code(raw["distrito_id"])
+            and is_canonicalizable_code(raw["seccion_id"])
+            and is_canonicalizable_circuito_code(raw["circuito_id"])
         ):
             skipped_uncanonical_code += 1
             continue
+
         key = (distrito, seccion, circuito, mesa)
         # A SET, not a last-write-wins assignment. Two source rows for one mesa
         # disagreeing on its tipo would otherwise collapse in memory before any
@@ -1159,6 +1169,7 @@ def collect_mesa_tipo_mapping(
     if (
         skipped_no_tipo
         or skipped_missing_column
+        or skipped_absent_mesa_id
         or skipped_bad_mesa_id
         or skipped_incomplete_lineage
         or skipped_uncanonical_code
@@ -1166,7 +1177,8 @@ def collect_mesa_tipo_mapping(
         print(
             f"  {source_label}: {skipped_no_tipo} rows carried no mesa_tipo, "
             f"{skipped_missing_column} lacked a required column, "
-            f"{skipped_bad_mesa_id} had an unparseable mesa_id, "
+            f"{skipped_absent_mesa_id} had an absent mesa_id, "
+            f"{skipped_bad_mesa_id} had an unreadable mesa_id, "
             f"{skipped_incomplete_lineage} had an incomplete lineage, "
             f"{skipped_uncanonical_code} carried a non-numeric code the "
             "normalizers cannot canonicalize",
@@ -1241,7 +1253,6 @@ def readable_national_sources(
     return readable
 
 
-
 def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
@@ -1304,7 +1315,6 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
 
     print(f"crosswalk: all {len(codes)} archived jurisdiction code(s) resolve")
     return 0
-
 
 
 # ---------------------------------------------------------------------------
@@ -1442,7 +1452,6 @@ def collect_national_party_keys(
     return sorted(keys)
 
 
-
 def cmd_validate_curated(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
@@ -1504,7 +1513,6 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
 
     print(f"curated party map: all {len(keys)} archived (year, category, list_id) key(s) resolve")
     return 0
-
 
 
 # ---------------------------------------------------------------------------
@@ -2391,6 +2399,17 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def positive_int(value: str) -> int:
+    """Parse an argparse integer that must be greater than zero."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m etl", description=__doc__)
     parser.add_argument("--sources-path", default=str(DEFAULT_SOURCES_PATH))
@@ -2453,6 +2472,16 @@ def build_parser() -> argparse.ArgumentParser:
     load_curated_parser.add_argument("--crosswalk-path", default=str(DEFAULT_CROSSWALK_PATH))
     load_curated_parser.set_defaults(func=cmd_load_curated)
 
+    backfill_parser = subparsers.add_parser(
+        "backfill-mesa-tipo",
+        help="Populate result_row.mesa_tipo from the archived sources without re-ingesting.",
+    )
+    backfill_parser.add_argument("--database-url", default=None)
+    # Batched so progress commits incrementally: a single 16,5-million-row
+    # UPDATE loses everything if the client dies, which it did.
+    backfill_parser.add_argument("--batch-size", type=positive_int, default=1_500_000)
+    backfill_parser.set_defaults(func=cmd_backfill_mesa_tipo)
+
     return parser
 
 
@@ -2477,6 +2506,9 @@ def apply_mesa_tipo_mapping(
     Returns `(updated, resolved_jurisdictions, remaining_breakdown,
     unresolved_breakdown)`.
     """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
     with conn.cursor() as cur:
         # Two steps, deliberately. Joining the lineage tuples straight onto
         # `result_row` makes Postgres re-resolve every mesa for each of the
@@ -2489,10 +2521,9 @@ def apply_mesa_tipo_mapping(
         # shape rule 10 warns about. Collapsing the lineage to a single
         # NULL-safe text key restores a hash join.
         cur.execute(
-            "create temporary table jur_tipo "
-            "(jurisdiction_id uuid, tipo text, merge_key text)"
+            "create temporary table jur_tipo (jurisdiction_id uuid, tipo text, merge_key text)"
         )
-        cur.execute(
+        jur_tipo_insert = sql.SQL(
             """
             insert into jur_tipo (jurisdiction_id, tipo, merge_key)
             select j.id, v.tipo, v.merge_key
@@ -2511,16 +2542,17 @@ def apply_mesa_tipo_mapping(
                 -- the day a source publishes an establecimiento, a hardcoded
                 -- `None` would stop matching and the backfill would silently
                 -- update nothing, so the run refuses instead.
-                on """
-            + MERGE_KEY_SQL
-            + """ = v.merge_key
+                on {} = v.merge_key
                -- mesa_tipo is a property of a MESA, so only mesa-level
                -- jurisdictions can carry it. Without this, a national
                -- lineage tuple could bind a PBA row, where `027` means a
                -- PARTIDO rather than a seccion — the scheme collision that
                -- attributed 32.291 Coronel Rosales votes to the province.
                and j.mesa_code is not null
-            """,
+            """
+        ).format(sql.SQL(MERGE_KEY_SQL))
+        cur.execute(
+            jur_tipo_insert,
             (
                 [merge_key(k[0], k[1], k[2], None, k[3]) for k in mapping],
                 list(mapping.values()),
@@ -2614,6 +2646,145 @@ def apply_mesa_tipo_mapping(
     return updated, resolved_jurisdictions, remaining_breakdown, unresolved_breakdown
 
 
+def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
+    """Populate `result_row.mesa_tipo` without re-ingesting the corpus.
+
+    The column was added late, so already-correct rows carry NULL.
+    Re-ingesting to fill one column means re-parsing 13,6 million PASO rows
+    — about 47 minutes, which this environment could not sustain.
+
+    But `mesa_tipo` is a property of the MESA: mesa 9001 in distrito 02 /
+    seccion 027 is EXTRANJEROS for every category and every list. Collapsing
+    the sources to the distinct lineage->tipo mapping is a few hundred
+    thousand tuples, and applying it is an UPDATE joined on jurisdiction.
+    """
+    # Resolved BEFORE the archives are parsed, and reported as an exit code
+    # rather than a traceback — matching `cmd_ingest` and `cmd_load_curated`.
+    # Parsing 13,6 million rows first and only then discovering there is no
+    # database URL burns minutes to reach an error known at argument time.
+    try:
+        database_url = resolve_database_url(args.database_url)
+    except MissingDatabaseUrlError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    sources = load_sources(Path(args.sources_path))
+    records = load_manifest(Path(args.manifest_path))
+    local_store = LocalArchiveStore(root=Path(args.local_root))
+
+    candidates: dict[tuple[str, str, str, int], set[str]] = {}
+    # Split by REASON: "never fetched" and "manifest says ok but the local
+    # mirror has no such file" are different failures -- one needs a fetch, the
+    # other means the archive drifted -- and one shared counter hides which.
+    skipped_not_archived = 0
+    skipped_missing_file = 0
+    sources_seen = 0
+    for entry in sources.get("national", []):
+        archived = latest_ok_record(records, entry["id"])
+        sources_seen += 1
+        if archived is None:
+            skipped_not_archived += 1
+            continue
+        try:
+            filename = archived_filename(archived, source_id=entry["id"])
+        except MalformedManifestRecordError as exc:
+            # INSIDE the try that names this exception. It sat one line above,
+            # so the handler was dead and the traceback live -- the same defect
+            # `cmd_validate_crosswalk` already fixed.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if not local_store.exists("national", filename):
+            skipped_missing_file += 1
+            continue
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
+        try:
+            csv_bytes = national_csv_bytes(raw_bytes)
+        except (
+            NationalResultsCsvNotFoundError,
+            NationalSchemaError,
+            FiscalizacionSchemaError,
+            PbaSchemaError,
+            UnknownSourceError,
+            MalformedManifestRecordError,
+            DuplicateManifestRecordError,
+            MalformedManifestError,
+            AmbiguousSourceError,
+        ) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        # Same BOM reason as `resolve_national_results_bytes`: with `utf-8`
+        # every row would miss `distrito_id` and land in `skipped_malformed`,
+        # emptying the mapping and failing the backfill on a valid file.
+        reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+        collect_mesa_tipo_mapping(reader, source_label=entry["id"], into=candidates)
+
+    if skipped_not_archived:
+        print(
+            f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
+            "no successful archive record and were excluded from the mapping",
+            file=sys.stderr,
+        )
+    if skipped_missing_file:
+        print(
+            f"  {skipped_missing_file} of {sources_seen} registered source(s) are "
+            "recorded as archived but absent from the local mirror and were "
+            "excluded from the mapping",
+            file=sys.stderr,
+        )
+
+    # One conflict check over EVERY source, not per file: mesa (02,027,00001,1)
+    # being NATIVOS in 2023 and EXTRANJEROS in 2025 is exactly the disagreement
+    # a per-file check cannot see.
+    conflicts = {key: tipos for key, tipos in candidates.items() if len(tipos) > 1}
+    if conflicts:
+        key, tipos = next(iter(conflicts.items()))
+        print(
+            f"{len(conflicts)} mesa(s) carry more than one mesa_tipo across the archived "
+            f"sources; refusing to pick one. First: {key} -> {sorted(tipos)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    mapping = {key: next(iter(tipos)) for key, tipos in candidates.items()}
+    if not mapping:
+        print("no mesa_tipo mapping found in any archived national source", file=sys.stderr)
+        return 1
+
+    with psycopg.connect(database_url) as conn:
+        (
+            updated,
+            resolved_jurisdictions,
+            remaining_breakdown,
+            unresolved_breakdown,
+        ) = apply_mesa_tipo_mapping(conn, mapping, batch_size=args.batch_size)
+    remaining = sum(count for _, count in remaining_breakdown)
+
+    print(
+        f"backfilled mesa_tipo on {updated} rows; {len(mapping)} distinct mesas mapped, "
+        f"{resolved_jurisdictions} resolved to a jurisdiction"
+    )
+    if unresolved_breakdown:
+        total_unresolved = sum(count for _, count in unresolved_breakdown)
+        print(
+            f"  {total_unresolved} mapped mesas matched no jurisdiction, by scope:",
+            file=sys.stderr,
+        )
+        for (distrito, seccion), count in unresolved_breakdown:
+            print(f"    distrito={distrito} seccion={seccion}: {count}", file=sys.stderr)
+    # The remainder is REPORTED per source, never explained by assertion. It may
+    # be a source that does not publish the field, or a lineage that failed to
+    # match — those look identical in a single total.
+    print(f"{remaining} rows still have no mesa_tipo:")
+    for source, count in remaining_breakdown:
+        print(f"  {source}: {count}")
+    return 0
+
 
 # THE module contract, in one place: "non-zero on any argument or validation
 # failure", never a traceback. Eight `except` tuples each listed a different
@@ -2630,6 +2801,7 @@ VALIDATION_FAILURES = (
     MalformedManifestError,
     MissingDatabaseUrlError,
     MissingArchivedYearError,
+    ArchiveIntegrityError,
     NationalResultsCsvNotFoundError,
     FiscalizacionUploadForbiddenError,
     # `ValueError` covers `NationalSchemaError`, `PbaSchemaError`,
