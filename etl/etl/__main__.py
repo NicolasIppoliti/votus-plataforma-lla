@@ -1002,7 +1002,7 @@ def national_csv_bytes(raw_bytes: bytes) -> bytes:
 
 def collect_national_jurisdiction_codes(
     sources: dict[str, list[dict]], *, local_root: Path, manifest_path: Path
-) -> list[tuple[str | None, str | None]]:
+) -> list[tuple[str, str | None]]:
     """Gather every distinct `(distrito, seccion)` actually present in
     already-archived national sources -- the real codes an `ingest` run
     would need the crosswalk to resolve."""
@@ -1025,12 +1025,30 @@ def collect_national_jurisdiction_codes(
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        raw_bytes = local_store.read("national", filename)
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
         csv_bytes = national_csv_bytes(raw_bytes)
-        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
+        election_year, election_round = registered_source_election(entry)
+        for row in ingest_national(
+            csv_bytes,
+            archive_entry_id=entry["id"],
+            election_year=election_year,
+            election_round=election_round,
+        ):
+            distrito = row.result.distrito
+            if distrito is None:
+                raise NationalSchemaError(
+                    f"{entry['id']}: parser invariant violated: national source row "
+                    f"{row.source_row_index} has no distrito"
+                )
             # `seccion` stays `None` for coarser-than-seccion rows: absence is
             # not the empty string. See `find_unmapped_jurisdictions`.
-            codes.add((row.result.distrito, row.result.seccion))
+            codes.add((distrito, row.result.seccion))
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
@@ -1061,6 +1079,7 @@ def collect_national_jurisdiction_codes(
     # handler downstream never ran, while the module contract promises a
     # non-zero EXIT on a validation failure, not a stack trace.
     return sorted(codes, key=lambda pair: (pair[0] or "", pair[1] or ""))
+
 
 
 def collect_mesa_tipo_mapping(
@@ -1210,7 +1229,8 @@ def readable_national_sources(
     local_store = LocalArchiveStore(root=local_root)
     readable = 0
     for entry in sources.get("national", []):
-        if year is not None and source_year(entry["id"]) != year:
+        election_year, _ = registered_source_election(entry)
+        if year is not None and election_year != year:
             continue
         archived = latest_ok_record(records, entry["id"])
         if archived is None:
@@ -1221,14 +1241,19 @@ def readable_national_sources(
     return readable
 
 
+
 def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, DuplicateManifestRecordError,
-            AmbiguousSourceError) as exc:
+    except (
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        AmbiguousSourceError,
+    ) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -1244,11 +1269,17 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
         codes = collect_national_jurisdiction_codes(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
-            PbaSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, DuplicateManifestRecordError,
-            MalformedManifestError,
-            AmbiguousSourceError) as exc:
+    except (
+        NationalResultsCsvNotFoundError,
+        NationalSchemaError,
+        FiscalizacionSchemaError,
+        PbaSchemaError,
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
+        AmbiguousSourceError,
+    ) as exc:
         # The module contract is "non-zero on any validation failure". A ZIP
         # whose schema drifted is a validation failure, not a crash — and
         # `ingest_national` raises `NationalSchemaError` for a header that
@@ -1273,6 +1304,7 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
 
     print(f"crosswalk: all {len(codes)} archived jurisdiction code(s) resolve")
     return 0
+
 
 
 # ---------------------------------------------------------------------------
@@ -1304,9 +1336,9 @@ def collect_national_party_keys(
     sources: dict[str, list[dict]], *, local_root: Path, manifest_path: Path
 ) -> list[tuple[int, str, str, str]]:
     """Gather every distinct `(year, "national", category, list_id)` key
-    actually present in already-archived national sources. `year` is parsed
-    from each source id's leading 4 digits (e.g. `national/2025-legislativas`),
-    matching the convention every registered national entry already follows.
+    actually present in already-archived national sources. The registered
+    `election_year` metadata is authoritative; a parseable id year is checked
+    only for disagreement.
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
@@ -1328,9 +1360,10 @@ def collect_national_party_keys(
     keys: set[tuple[int, str, str, str]] = set()
     skipped_not_archived = 0
     skipped_missing_file = 0
-    skipped_no_year = 0
     sources_seen = 0
     for entry in sources.get("national", []):
+        year, election_round = registered_source_election(entry)
+
         archived = latest_ok_record(records, entry["id"])
         sources_seen += 1
         if archived is None:
@@ -1340,12 +1373,13 @@ def collect_national_party_keys(
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        parsed_year = source_year(entry["id"])
-        if parsed_year is None:
-            skipped_no_year += 1
-            continue
-        year = parsed_year
-        raw_bytes = local_store.read("national", filename)
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
         csv_bytes = national_csv_bytes(raw_bytes)
         # What this source YIELDED, not what was new to the shared
         # accumulator. `len(keys)` deltas counted zero for a source whose
@@ -1354,10 +1388,21 @@ def collect_national_party_keys(
         # list_id)` tuple, so whichever was read second reported "the corpus
         # is missing it" about a file read in full. A manufactured warning is
         # the same broken distribution as a hidden one.
-        contributed = {
-            (year, "national", row.category, row.list_id)
-            for row in ingest_national(csv_bytes, archive_entry_id=entry["id"])
-        }
+        contributed: set[tuple[int, str, str, str]] = set()
+        for row in ingest_national(
+            csv_bytes,
+            archive_entry_id=entry["id"],
+            election_year=year,
+            election_round=election_round,
+        ):
+            list_id = row.list_id
+
+            if list_id is None:
+                raise NationalSchemaError(
+                    f"{entry['id']}: parser invariant violated: national source row "
+                    f"{row.source_row_index} has no list_id"
+                )
+            contributed.add((year, "national", row.category, list_id))
         keys.update(contributed)
         keys_by_source[entry["id"]] = len(contributed)
         sources_read += 1
@@ -1372,10 +1417,9 @@ def collect_national_party_keys(
                 "key at all; the corpus this validates is missing it",
                 file=sys.stderr,
             )
-    # Per REASON, not one total: "2 of 3 sources excluded" and "1 source has an
-    # unparseable year" are different failures with different fixes, and either
-    # one alone still lets `validate-curated` print a green "all N key(s)
-    # resolve" over a fraction of the corpus.
+    # Per REASON, not one total: sources not archived and archived artifacts
+    # missing from the mirror require different fixes, and either one alone still
+    # lets `validate-curated` describe only a fraction of the registered corpus.
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) were "
@@ -1388,12 +1432,7 @@ def collect_national_party_keys(
             "recorded as archived but absent from the local mirror and were excluded",
             file=sys.stderr,
         )
-    if skipped_no_year:
-        print(
-            f"  {skipped_no_year} of {sources_seen} registered source(s) carry no "
-            "parseable year in their id and were excluded",
-            file=sys.stderr,
-        )
+
     if sources_read == 0:
         print(
             "  no archived national source was read; this result describes an "
@@ -1403,14 +1442,19 @@ def collect_national_party_keys(
     return sorted(keys)
 
 
+
 def cmd_validate_curated(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, DuplicateManifestRecordError,
-            AmbiguousSourceError) as exc:
+    except (
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        AmbiguousSourceError,
+    ) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -1426,11 +1470,17 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
         keys = collect_national_party_keys(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
-            PbaSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, DuplicateManifestRecordError,
-            MalformedManifestError,
-            AmbiguousSourceError) as exc:
+    except (
+        NationalResultsCsvNotFoundError,
+        NationalSchemaError,
+        FiscalizacionSchemaError,
+        PbaSchemaError,
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
+        AmbiguousSourceError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     try:
@@ -1454,6 +1504,7 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
 
     print(f"curated party map: all {len(keys)} archived (year, category, list_id) key(s) resolve")
     return 0
+
 
 
 # ---------------------------------------------------------------------------

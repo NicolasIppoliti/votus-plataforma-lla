@@ -20,6 +20,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -1846,6 +1847,7 @@ def _archived_national_corpus(tmp_path: Path, csv_text: str) -> tuple[Path, Path
 
 
 
+
 def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> list[str]:
     return [
         "--sources-path",
@@ -1923,6 +1925,45 @@ def test_ingest_refuses_schema_valid_bytes_modified_after_archival(
     assert exit_code == 1
     assert "sha256" in capsys.readouterr().err
 
+
+
+def test_validate_crosswalk_refuses_a_parser_row_without_distrito(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
+    malformed = SimpleNamespace(
+        result=SimpleNamespace(distrito=None, seccion="027"),
+        category="DIPUTADO NACIONAL",
+        list_id="110",
+        source_row_index=7,
+    )
+    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [malformed])
+
+    exit_code = main(_main_args(sources_path, local_root, manifest_path) + ["validate-crosswalk"])
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert "parser invariant violated" in reported
+    assert "distrito" in reported
+
+def test_validate_curated_refuses_a_parser_row_without_list_id(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
+    malformed = SimpleNamespace(
+        result=SimpleNamespace(distrito="02", seccion="027"),
+        category="DIPUTADO NACIONAL",
+        list_id=None,
+        source_row_index=7,
+    )
+    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [malformed])
+
+    exit_code = main(_main_args(sources_path, local_root, manifest_path) + ["validate-curated"])
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert "parser invariant violated" in reported
+    assert "list_id" in reported
 
 
 def test_fetch_is_reachable_through_main(tmp_path: Path, capsys) -> None:
@@ -2102,6 +2143,43 @@ def test_validate_crosswalk_is_reachable_through_main(tmp_path: Path, capsys) ->
         "the code read FROM THE ARCHIVE must appear in the report; "
         f"got {output.out + output.err!r}"
     )
+
+
+@pytest.mark.parametrize("loader", ["crosswalk", "party_map"])
+def test_duplicate_curated_keys_exit_cleanly_through_main(
+    tmp_path: Path, capsys, loader: str
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
+    if loader == "crosswalk":
+        entry = {
+            "pba_distrito": "027",
+            "national_distrito": "02",
+            "national_seccion": "027",
+            "name": "Coronel Rosales",
+        }
+        curated_path = tmp_path / "crosswalk.yaml"
+        curated_path.write_text(yaml.safe_dump({"jurisdictions": [entry, entry]}), encoding="utf-8")
+        command = ["validate-crosswalk", "--crosswalk-path", str(curated_path)]
+    else:
+        entry = {
+            "year": 2025,
+            "jurisdiction": "national",
+            "category": "DIPUTADO NACIONAL",
+            "list_id": "135",
+            "canonical_party": "LLA",
+            "party_name": "LA LIBERTAD AVANZA",
+        }
+        curated_path = tmp_path / "party_map.yaml"
+        curated_path.write_text(yaml.safe_dump({"mappings": [entry, entry]}), encoding="utf-8")
+        command = ["validate-curated", "--party-map-path", str(curated_path)]
+
+    exit_code = main(_main_args(sources_path, local_root, manifest_path) + command)
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "error:" in reported
+    assert "duplicate" in reported
+    assert "Traceback" not in reported
 
 
 def test_validate_curated_is_reachable_through_main(tmp_path: Path, capsys) -> None:
