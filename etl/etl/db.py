@@ -18,6 +18,9 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import LiteralString
+
+from psycopg import sql
 
 from etl.crosswalk import CrosswalkTable, MesaStability
 from etl.jurisdiction import (
@@ -217,31 +220,27 @@ lineage tuple `upsert_jurisdiction` resolves one at a time."""
 
 # One definition of the NULL-safe lineage key, used by every large join that
 # would otherwise need four `IS NOT DISTINCT FROM` predicates (rule 10).
-#
-# `establecimiento_code` is FREE TEXT -- `test_jurisdiction.py` writes
-# "Escuela N.1" and no normalizer touches it -- so a bare `'|'` join is not
-# injective: `("00001", "A|B")` and `("00001|A", "B")` would produce the same
-# key and bind two distinct lineages to one jurisdiction. Both sides therefore
-# escape `\` then `|` before joining, which makes the encoding reversible and
-# the key exact.
-def _escape_sql(column: str) -> str:
-    """Escape one text column for `MERGE_KEY_SQL`."""
-    return f"replace(replace(coalesce({column},''), '\\', '\\\\'), '|', '\\|')"
+# Each component is tagged as NULL (`N`) or present (`P...`) BEFORE escaping
+# backslashes and separators. This preserves the semantic difference between
+# SQL NULL and an empty string while keeping one reversible, hash-joinable key.
+def _tagged_escape_sql(column: LiteralString) -> LiteralString:
+    """Encode one SQL value exactly like `merge_key`'s Python helper."""
+    return (
+        f"case when {column} is null then 'N' else "
+        f"replace(replace('P' || {column}::text, '\\', '\\\\'), '|', '\\|') end"
+    )
 
 
-# EVERY text component is escaped, not only `establecimiento_code`. The
-# docstring justified escaping that one because it is free text and implied
-# the rest were safe by normalization -- an assumption, not a check, and a
-# false one: `normalize_circuito_code` passes a value WIDER than the padding
-# width through unchanged (`test_normalize_circuito_code_pads_and_never_
-# truncates` pins exactly that), so a circuito is not guaranteed `|`-free
-# either. A separator appearing inside a component makes the join silently
-# miss, which is the one failure this key exists to prevent.
-MERGE_KEY_SQL = (
-    f"{_escape_sql('j.distrito_code')} || '|' || {_escape_sql('j.seccion_code')}"
-    f" || '|' || {_escape_sql('j.circuito_code')}"
-    f" || '|' || {_escape_sql('j.establecimiento_code')}"
-    " || '|' || coalesce(j.mesa_code::text,'')"
+# EVERY component uses the same encoding, including integer `mesa_code`.
+# Text fields may contain either reserved character; tagging and escaping the
+# complete component makes the concatenation injective without changing the
+# parameterized runtime values or the hash-join query shape.
+MERGE_KEY_SQL: LiteralString = (
+    f"{_tagged_escape_sql('j.distrito_code')} || '|'"
+    f" || {_tagged_escape_sql('j.seccion_code')} || '|'"
+    f" || {_tagged_escape_sql('j.circuito_code')} || '|'"
+    f" || {_tagged_escape_sql('j.establecimiento_code')} || '|'"
+    f" || {_tagged_escape_sql('j.mesa_code')}"
 )
 
 
@@ -255,22 +254,22 @@ def merge_key(
     """Python side of `MERGE_KEY_SQL` -- the two MUST agree character for
     character, which is why they live next to each other.
 
-    Every text component is escaped, matching the SQL: see the comment on
-    `MERGE_KEY_SQL` for why "normalized, therefore separator-free" was an
-    assumption and not a check. `mesa_code` is an integer on both sides and
-    cannot carry either character.
+    Every component is tagged NULL/present before escaping, matching the SQL.
+    The tag is part of the escaped component, so `None`, `""`, separators, and
+    backslashes all retain distinct reversible encodings.
     """
 
-    def escape(value: str | None) -> str:
-        return (value or "").replace("\\", "\\\\").replace("|", "\\|")
+    def encode(value: str | int | None) -> str:
+        tagged = "N" if value is None else f"P{value}"
+        return tagged.replace("\\", "\\\\").replace("|", "\\|")
 
     return "|".join(
         (
-            escape(distrito),
-            escape(seccion),
-            escape(circuito),
-            escape(establecimiento),
-            "" if mesa is None else str(mesa),
+            encode(distrito),
+            encode(seccion),
+            encode(circuito),
+            encode(establecimiento),
+            encode(mesa),
         )
     )
 
@@ -342,7 +341,7 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
         # which at this call site's ~109k distinct mesas is the shape rule 10
         # warns about.
         merge_keys = [merge_key(*key) for key in distinct_keys]
-        cur.execute(
+        resolve_existing = sql.SQL(
             """
             select v.distrito, v.seccion, v.circuito, v.establecimiento, v.mesa, j.id
             from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[],
@@ -350,11 +349,12 @@ def batch_upsert_jurisdictions(conn, keys: Sequence[JurisdictionKey]) -> dict[Ju
                  with ordinality as v(distrito, seccion, circuito, establecimiento, mesa,
                                       merge_key, idx)
             left join jurisdiction j
-              on """
-            + MERGE_KEY_SQL
-            + """ = v.merge_key
+              on {} = v.merge_key
             order by v.idx
-            """,
+            """
+        ).format(sql.SQL(MERGE_KEY_SQL))
+        cur.execute(
+            resolve_existing,
             (distritos, seccions, circuitos, establecimientos, mesas, merge_keys),
         )
         # A `left join` yields ONE ROW PER MATCH, so a tuple with two
@@ -461,6 +461,17 @@ def load_result_rows(
             f"({', '.join(foreign)}); refusing rather than widening the delete scope"
         )
 
+    foreign_archive_entries = sorted(
+        {record.archive_entry_id for record in records} - {archive_entry_id}
+    )
+    if foreign_archive_entries:
+        raise ValueError(
+            f"load_result_rows expected archive_entry_id={archive_entry_id!r} but "
+            "record(s) carry offending archive_entry_id(s) "
+            f"{', '.join(repr(value) for value in foreign_archive_entries)}; "
+            "refusing before deleting or inserting rows"
+        )
+
     with conn.cursor() as cur:
         # Scoped by election, not just by archive entry: one archived file may
         # hold several elections (the PBA open-data catalogue publishes
@@ -468,8 +479,7 @@ def load_result_rows(
         # other election's rows that share the entry. ALWAYS scoped now — there
         # is no records-derived fallback to lose the scope in.
         cur.execute(
-            "delete from result_row where archive_entry_id = %s "
-            "and election_id = %s",
+            "delete from result_row where archive_entry_id = %s and election_id = %s",
             (archive_entry_id, election_id),
         )
         if records:
@@ -587,6 +597,61 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
                     entry.source,
                 ),
             )
+
+        desired_keys = [
+            (entry.year, entry.jurisdiction, entry.category, entry.list_id)
+            for entry in table.entries
+        ]
+        key_parameters = (
+            [key[0] for key in desired_keys],
+            [key[1] for key in desired_keys],
+            [key[2] for key in desired_keys],
+            [key[3] for key in desired_keys],
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                delete from party_mapping as current
+                where not exists (
+                    select 1
+                    from unnest(%s::int[], %s::text[], %s::text[], %s::text[])
+                         as desired(year, jurisdiction, category, list_id)
+                    where desired.year = current.year
+                      and desired.jurisdiction = current.jurisdiction
+                      and desired.category = current.category
+                      and desired.list_id = current.list_id
+                )
+                """
+            ),
+            key_parameters,
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                delete from list_identity as current
+                where not exists (
+                    select 1
+                    from unnest(%s::int[], %s::text[], %s::text[], %s::text[])
+                         as desired(year, jurisdiction, category, list_id)
+                    where desired.year = current.year
+                      and desired.jurisdiction = current.jurisdiction
+                      and desired.category = current.category
+                      and desired.list_id = current.list_id
+                )
+                """
+            ),
+            key_parameters,
+        )
+        cur.execute(
+            """
+            delete from party_canonical as current
+            where not exists (
+                select 1 from unnest(%s::text[]) as desired(id)
+                where desired.id = current.id
+            )
+            """,
+            (list(display_name_by_canonical_party),),
+        )
 
     return {
         "party_canonical": len(display_name_by_canonical_party),

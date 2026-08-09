@@ -9,15 +9,22 @@ municipal's 22xx family is a scheme unrelated to national ids.
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
+import psycopg
 import pytest
+import yaml
 
+from etl.db import load_party_map_rows
 from etl.ingest.national import ingest_national
 from etl.jurisdiction import make_result_row
 from etl.party_map import (
+    DuplicatePartyMappingKeyError,
     PartyMappingEntry,
     PartyMappingTable,
+    PartyMapValidationError,
     UnmappedListId,
     load_party_map,
 )
@@ -35,6 +42,160 @@ CURATED = Path(__file__).parent.parent.parent / "curated"
 
 def _load_party_map_table() -> PartyMappingTable:
     return load_party_map(CURATED / "party_map.yaml")
+
+
+def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears_it() -> None:
+    dsn = os.environ.get(
+        "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )
+    try:
+        conn = psycopg.connect(dsn, connect_timeout=2)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {dsn!r}: {exc}")
+
+    token = uuid.uuid4().hex
+    desired = PartyMappingEntry(
+        year=2025,
+        jurisdiction=f"desired-{token}",
+        category="TEST",
+        list_id="1",
+        canonical_party=f"desired-party-{token}",
+        party_name="Desired Party",
+    )
+    stale = PartyMappingEntry(
+        year=2023,
+        jurisdiction=f"stale-{token}",
+        category="TEST",
+        list_id="2",
+        canonical_party=f"stale-party-{token}",
+        party_name="Stale Party",
+    )
+
+    try:
+        load_party_map_rows(conn, PartyMappingTable(entries=(desired, stale)))
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from archive_entry")
+            archive_count = cur.fetchone()
+            cur.execute("select count(*) from election")
+            election_count = cur.fetchone()
+            cur.execute("select count(*) from result_row")
+            result_count = cur.fetchone()
+
+        load_party_map_rows(conn, PartyMappingTable(entries=(desired,)))
+        with conn.cursor() as cur:
+            cur.execute(
+                "select jurisdiction, list_id from party_mapping order by jurisdiction, list_id"
+            )
+            assert cur.fetchall() == [(desired.jurisdiction, desired.list_id)]
+            cur.execute(
+                "select jurisdiction, list_id from list_identity order by jurisdiction, list_id"
+            )
+            assert cur.fetchall() == [(desired.jurisdiction, desired.list_id)]
+            cur.execute("select id from party_canonical order by id")
+            assert cur.fetchall() == [(desired.canonical_party,)]
+
+        load_party_map_rows(conn, PartyMappingTable(entries=()))
+        with conn.cursor() as cur:
+            for table_name in ("party_mapping", "list_identity", "party_canonical"):
+                cur.execute(f"select count(*) from {table_name}")
+                assert cur.fetchone() == (0,)
+            cur.execute("select count(*) from archive_entry")
+            assert cur.fetchone() == archive_count
+            cur.execute("select count(*) from election")
+            assert cur.fetchone() == election_count
+            cur.execute("select count(*) from result_row")
+            assert cur.fetchone() == result_count
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "- not-a-mapping\n",
+        "mappings: not-a-list\n",
+        "mappings:\n  - not-a-mapping\n",
+    ],
+)
+def test_party_map_loader_rejects_invalid_yaml_shapes(tmp_path: Path, content: str) -> None:
+    path = tmp_path / "party_map.yaml"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(PartyMapValidationError, match="party_map.yaml"):
+        load_party_map(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("year", True, "year must be an integer"),
+        ("year", "2025", "year must be an integer"),
+        ("jurisdiction", 1, "jurisdiction must be a non-empty string"),
+        ("category", "", "category must be a non-empty string"),
+        ("list_id", False, "list_id must be a non-empty string"),
+        ("canonical_party", None, "canonical_party must be a non-empty string"),
+        ("party_name", [], "party_name must be a non-empty string"),
+        ("source", 1, "source must be a string or null"),
+        ("verified", "false", "verified must be a boolean"),
+    ],
+)
+def test_party_map_loader_rejects_wrong_field_types(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    entry = {
+        "year": 2025,
+        "jurisdiction": "national",
+        "category": "DIPUTADO NACIONAL",
+        "list_id": "110",
+        "canonical_party": "LLA",
+        "party_name": "LA LIBERTAD AVANZA",
+        field: value,
+    }
+    path = tmp_path / "party_map.yaml"
+    path.write_text(yaml.safe_dump({"mappings": [entry]}), encoding="utf-8")
+
+    with pytest.raises(PartyMapValidationError, match=message):
+        load_party_map(path)
+
+
+def test_party_map_loader_preserves_explicit_false_and_nullable_source(tmp_path: Path) -> None:
+    entry = {
+        "year": 2025,
+        "jurisdiction": "national",
+        "category": "DIPUTADO NACIONAL",
+        "list_id": "110",
+        "canonical_party": "LLA",
+        "party_name": "LA LIBERTAD AVANZA",
+        "source": None,
+        "verified": False,
+    }
+    path = tmp_path / "party_map.yaml"
+    path.write_text(yaml.safe_dump({"mappings": [entry]}), encoding="utf-8")
+
+    loaded = load_party_map(path).entries[0]
+
+    assert loaded.source is None
+    assert loaded.verified is False
+
+
+def test_party_map_loader_rejects_duplicate_natural_key(tmp_path: Path) -> None:
+    entry = {
+        "year": 2025,
+        "jurisdiction": "national",
+        "category": "DIPUTADO NACIONAL",
+        "list_id": "110",
+        "canonical_party": "LLA",
+        "party_name": "LA LIBERTAD AVANZA",
+    }
+    path = tmp_path / "party_map.yaml"
+    path.write_text(
+        yaml.safe_dump({"mappings": [entry, {**entry, "canonical_party": "OTHER"}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DuplicatePartyMappingKeyError, match="duplicate"):
+        load_party_map(path)
 
 
 # --- 7.1 -------------------------------------------------------------------

@@ -18,7 +18,7 @@ import uuid
 import psycopg
 import pytest
 
-from etl.db import insert_review_items, upsert_jurisdiction
+from etl.db import ResultRowRecord, insert_review_items, load_result_rows, upsert_jurisdiction
 from etl.ingest.national import NationalRow, load_national_rows
 from etl.jurisdiction import make_result_row
 from etl.review_item import ReviewItemRecord
@@ -45,6 +45,97 @@ def test_unreachable_reason_names_the_dsn_and_the_remedy() -> None:
     assert "postgresql://x/y" in reason
     assert "supabase db start" in reason
     assert "boom" in reason
+
+
+class _RecordingCursor:
+    def __init__(self, statements: list[tuple[str, object]]) -> None:
+        self.statements = statements
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def execute(self, query: str, params=None) -> None:
+        self.statements.append((query, params))
+
+    def executemany(self, query: str, params) -> None:
+        self.statements.append((query, list(params)))
+
+
+class _RecordingConnection:
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, object]] = []
+        self.commit_calls = 0
+        self.cursor_calls = 0
+
+    def cursor(self) -> _RecordingCursor:
+        self.cursor_calls += 1
+        return _RecordingCursor(self.statements)
+
+    def commit(self) -> None:
+        self.commit_calls += 1
+
+
+def _result_record(*, archive_entry_id: str) -> ResultRowRecord:
+    return ResultRowRecord(
+        election_id="election-1",
+        jurisdiction_id="jurisdiction-1",
+        category_id="category-1",
+        granularity="mesa",
+        list_id="list-1",
+        votes=12,
+        source_kind="official",
+        archive_entry_id=archive_entry_id,
+        source_row_index=0,
+    )
+
+
+def test_load_result_rows_refuses_a_foreign_archive_entry_before_any_sql() -> None:
+    conn = _RecordingConnection()
+
+    with pytest.raises(ValueError, match="expected-entry.*offending-entry"):
+        load_result_rows(
+            conn,
+            archive_entry_id="expected-entry",
+            election_id="election-1",
+            records=[_result_record(archive_entry_id="offending-entry")],
+        )
+
+    assert conn.cursor_calls == 0
+    assert conn.statements == []
+    assert conn.commit_calls == 0
+
+
+def test_load_result_rows_matching_archive_entry_keeps_delete_insert_idempotency_shape() -> None:
+    conn = _RecordingConnection()
+    record = _result_record(archive_entry_id="entry-1")
+
+    assert (
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[record],
+        )
+        == 1
+    )
+    first_statements = list(conn.statements)
+    assert (
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[record],
+        )
+        == 1
+    )
+
+    assert conn.statements == first_statements * 2
+    assert "delete from result_row" in first_statements[0][0]
+    assert "insert into result_row" in first_statements[1][0]
+    assert conn.commit_calls == 0
 
 
 def _require_ephemeral_postgres() -> psycopg.Connection:
@@ -119,13 +210,19 @@ def test_ephemeral_postgres_reingest_matches_original(pg_conn: psycopg.Connectio
     rows = _fixture_rows(archive_entry_id)
 
     inserted_first = load_national_rows(
-        pg_conn, rows, year=2025, round_="legislativas",
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
         archive_entry_id=archive_entry_id,
     )
     first_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     inserted_second = load_national_rows(
-        pg_conn, rows, year=2025, round_="legislativas",
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
         archive_entry_id=archive_entry_id,
     )
     second_snapshot = _snapshot(pg_conn, archive_entry_id)
@@ -144,7 +241,10 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
     rows = _fixture_rows(archive_entry_id)
 
     load_national_rows(
-        pg_conn, rows, year=2025, round_="legislativas",
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
         archive_entry_id=archive_entry_id,
     )
     original_snapshot = _snapshot(pg_conn, archive_entry_id)
@@ -155,7 +255,10 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
     assert _snapshot(pg_conn, archive_entry_id) == set()
 
     load_national_rows(
-        pg_conn, rows, year=2025, round_="legislativas",
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
         archive_entry_id=archive_entry_id,
     )
     rebuilt_snapshot = _snapshot(pg_conn, archive_entry_id)
@@ -218,13 +321,19 @@ def test_two_elections_in_one_archive_entry_do_not_collide(
 
     rows_2023 = _fixture_rows(archive_entry_id)
     inserted_2023 = load_national_rows(
-        pg_conn, rows_2023, year=2023, round_="generales",
+        pg_conn,
+        rows_2023,
+        year=2023,
+        round_="generales",
         archive_entry_id=archive_entry_id,
     )
 
     rows_2025 = _fixture_rows(archive_entry_id)
     inserted_2025 = load_national_rows(
-        pg_conn, rows_2025, year=2025, round_="legislativas",
+        pg_conn,
+        rows_2025,
+        year=2025,
+        round_="legislativas",
         archive_entry_id=archive_entry_id,
     )
 
@@ -237,13 +346,14 @@ def test_two_elections_in_one_archive_entry_do_not_collide(
             """,
             (archive_entry_id,),
         )
-        distinct_elections, total_rows = cur.fetchone()
+        count_row = cur.fetchone()
+        assert count_row is not None
+        distinct_elections, total_rows = count_row
 
     assert inserted_2023 == len(rows_2023)
     assert inserted_2025 == len(rows_2025)
     assert distinct_elections == 2, (
-        "both elections must survive in the same archive entry; "
-        f"only {distinct_elections} did"
+        f"both elections must survive in the same archive entry; only {distinct_elections} did"
     )
     assert total_rows == len(rows_2023) + len(rows_2025), (
         "rows from the two elections collided on a natural key that omits "
@@ -327,7 +437,9 @@ def test_padded_and_unpadded_national_codes_share_one_jurisdiction_row(
             "select count(*) from jurisdiction where circuito_code = %s and mesa_code = %s",
             ("00248", mesa),
         )
-        (count,) = cur.fetchone()
+        count_row = cur.fetchone()
+        assert count_row is not None
+        (count,) = count_row
     assert count == 1, "expected exactly one jurisdiction row, not a padding-only duplicate"
 
 
@@ -370,7 +482,10 @@ def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connect
 
     counting_conn = _CountingConnectionProxy(pg_conn)
     inserted = load_national_rows(
-        counting_conn, rows, year=2025, round_="legislativas",
+        counting_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
         archive_entry_id=archive_entry_id,
     )
 
@@ -407,7 +522,10 @@ def test_a_reingest_that_now_yields_no_national_rows_clears_the_old_ones(
 
     try:
         load_national_rows(
-            pg_conn, rows, year=2025, round_="legislativas",
+            pg_conn,
+            rows,
+            year=2025,
+            round_="legislativas",
             archive_entry_id=archive_entry_id,
         )
         with pg_conn.cursor() as cur:
@@ -415,10 +533,15 @@ def test_a_reingest_that_now_yields_no_national_rows_clears_the_old_ones(
                 "select count(*) from result_row where archive_entry_id = %s",
                 (archive_entry_id,),
             )
-            assert cur.fetchone()[0] > 0
+            count_row = cur.fetchone()
+            assert count_row is not None
+            assert count_row[0] > 0
 
         load_national_rows(
-            pg_conn, [], year=2025, round_="legislativas",
+            pg_conn,
+            [],
+            year=2025,
+            round_="legislativas",
             archive_entry_id=archive_entry_id,
         )
         with pg_conn.cursor() as cur:
@@ -426,12 +549,12 @@ def test_a_reingest_that_now_yields_no_national_rows_clears_the_old_ones(
                 "select count(*) from result_row where archive_entry_id = %s",
                 (archive_entry_id,),
             )
-            assert cur.fetchone()[0] == 0, "the stale rows must not survive"
+            count_row = cur.fetchone()
+            assert count_row is not None
+            assert count_row[0] == 0, "the stale rows must not survive"
     finally:
         with pg_conn.cursor() as cur:
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
         pg_conn.commit()
 
 
@@ -445,15 +568,24 @@ def test_an_empty_national_reingest_leaves_another_election_on_the_entry_alone(
 
     try:
         load_national_rows(
-            pg_conn, rows, year=2023, round_="generales",
+            pg_conn,
+            rows,
+            year=2023,
+            round_="generales",
             archive_entry_id=archive_entry_id,
         )
         load_national_rows(
-            pg_conn, rows, year=2025, round_="legislativas",
+            pg_conn,
+            rows,
+            year=2025,
+            round_="legislativas",
             archive_entry_id=archive_entry_id,
         )
         load_national_rows(
-            pg_conn, [], year=2025, round_="legislativas",
+            pg_conn,
+            [],
+            year=2025,
+            round_="legislativas",
             archive_entry_id=archive_entry_id,
         )
 
@@ -472,7 +604,5 @@ def test_an_empty_national_reingest_leaves_another_election_on_the_entry_alone(
         assert by_year.get(2025, 0) == 0
     finally:
         with pg_conn.cursor() as cur:
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
         pg_conn.commit()
