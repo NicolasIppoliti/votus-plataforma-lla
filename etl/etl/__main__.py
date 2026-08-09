@@ -43,8 +43,10 @@ from .archive import (
 )
 from .crosswalk import (
     CURATED_NAME_TABLE_SCOPE,
+    OFFICIAL_AGRUPACION_NAME_BY_COLUMN,
     CrosswalkTable,
     FiscalizacionMesaRow,
+    IncompleteOfficialMesaError,
     MesaStability,
     OfficialMesaVotes,
     QuarantinedJurisdiction,
@@ -68,6 +70,7 @@ from .ingest.fiscalizacion import (
     FISCALIZACION_CATEGORY,
     FISCALIZACION_DISTRITO,
     FISCALIZACION_SECCION,
+    FiscalizacionRow,
     FiscalizacionSchemaError,
     FiscalizacionUploadForbiddenError,
     QuarantinedFiscalizacionRow,
@@ -1922,6 +1925,7 @@ def official_mesa_votes_from_national(
     for required in (
         "distrito_id",
         "seccion_id",
+        "circuito_id",
         "mesa_id",
         "cargo_nombre",
         "votos_tipo",
@@ -1952,8 +1956,6 @@ def official_mesa_votes_from_national(
     # silently, and differing ones surface as SCHEMA DRIFT on data that is
     # perfectly well-formed.
     #
-    # `circuito_id` is not in the required set: the 2023 files this also reads
-    # may not carry it. Absent, the scope is circuito-blind and says so below.
     circuitos_by_mesa: dict[int, set[str]] = {}
     # Rows per mesa that CONTRIBUTED A TALLY. Counting every row that reached
     # the loop body double-counted the ones already skipped as
@@ -1962,7 +1964,7 @@ def official_mesa_votes_from_national(
     # largest exclusion by an order of magnitude. Neither total is truthful;
     # this one is.
     tallied_rows_by_mesa: dict[int, int] = {}
-    has_circuito = "circuito_id" in fieldnames
+    known_official_names = frozenset(OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values())
 
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
@@ -1977,17 +1979,30 @@ def official_mesa_votes_from_national(
         if raw["cargo_nombre"] != category:
             skip("a different category")
             continue
-        try:
-            mesa = int(raw["mesa_id"])
-            cantidad = int(raw["votos_cantidad"])
-        except (TypeError, ValueError):
-            skip("unparseable mesa_id or votos_cantidad")
-            continue
 
         votos_tipo = raw["votos_tipo"]
+        official_name = raw["agrupacion_nombre"]
+        if votos_tipo == "POSITIVO" and official_name not in known_official_names:
+            raise NationalSchemaError(
+                f"mesa {raw['mesa_id']} reports unknown official party name "
+                f"{official_name!r} within distrito={target_distrito}, "
+                f"seccion={target_seccion}, category={category!r}; refusing fiscal "
+                "comparison because the curated official party-name mapping no "
+                "longer matches the source"
+            )
+
+        mesa = parse_source_int(raw["mesa_id"])
+        if mesa is None:
+            skip("unreadable mesa_id")
+            continue
+        cantidad = parse_source_int(raw["votos_cantidad"])
+        if cantidad is None:
+            skip("unreadable votos_cantidad")
+            continue
+
         contributes_tally = votos_tipo in ("POSITIVO", "EN BLANCO", "IMPUGNADO")
 
-        if has_circuito and contributes_tally:
+        if contributes_tally:
             # ONLY from rows that contribute a tally -- the same set
             # `tallied_rows_by_mesa` tracks. Accumulating from every row that
             # passed the distrito/seccion/category filter meant a NULO or
@@ -2000,21 +2015,19 @@ def official_mesa_votes_from_national(
             # file. Compared raw, `"248"` and `"00248"` -- the same circuito
             # written two ways, which is why `normalize_circuito_code` exists
             # -- counted as two, with the same fabricated result.
-            # ABSENT IS NOT A SECOND CIRCUITO. `circuito_id` is not in
-            # `REQUIRED_COLUMNS`, so a mesa whose tally rows carry the code on
-            # some rows and an empty cell on others yielded `{"00248", ""}`
-            # and was declared ambiguous -- its tallies withheld and reported
-            # under "the mesa number appears under more than one circuito",
-            # a verdict about data that names exactly one. Coercing absence to
-            # a value is what `find_unmapped_jurisdictions` refuses by name.
-            circuito = normalize_circuito_code(raw["circuito_id"])
-            if circuito:
-                circuitos_by_mesa.setdefault(mesa, set()).add(circuito)
+            raw_circuito = raw["circuito_id"]
+            if not is_canonicalizable_circuito_code(raw_circuito):
+                raise NationalSchemaError(
+                    f"mesa {mesa} has missing, blank, or unreadable circuito_id "
+                    f"{raw_circuito!r} within distrito={target_distrito}, "
+                    f"seccion={target_seccion}, category={category!r}; refusing to "
+                    "add a tally without circuito identity"
+                )
+            circuito = normalize_circuito_code(raw_circuito.strip())
+            circuitos_by_mesa.setdefault(mesa, set()).add(circuito)
 
         if votos_tipo == "POSITIVO":
-            votes_by_mesa.setdefault(mesa, {}).setdefault(
-                raw["agrupacion_nombre"], set()
-            ).add(cantidad)
+            votes_by_mesa.setdefault(mesa, {}).setdefault(official_name, set()).add(cantidad)
             tallied_rows_by_mesa[mesa] = tallied_rows_by_mesa.get(mesa, 0) + 1
         elif votos_tipo in ("EN BLANCO", "IMPUGNADO"):
             tipo_by_mesa.setdefault(mesa, {}).setdefault(votos_tipo, set()).add(cantidad)
@@ -2048,19 +2061,9 @@ def official_mesa_votes_from_national(
             f"  {len(ambiguous)} mesa(s) withheld because their number appears under "
             "more than one circuito: "
             + ", ".join(
-                f"mesa {mesa} in circuitos "
-                + ", ".join(sorted(circuitos_by_mesa[mesa]))
+                f"mesa {mesa} in circuitos " + ", ".join(sorted(circuitos_by_mesa[mesa]))
                 for mesa in sorted(ambiguous)
             ),
-            file=sys.stderr,
-        )
-    if not has_circuito:
-        # A REGIME, on its own line. Riding `skipped` printed it as
-        # "0 row(s) not used — the scope is circuito-blind": a zero beside a
-        # fact that is not zero-shaped.
-        print(
-            "  baseline: no circuito_id column, so the scope cannot tell two "
-            "same-numbered mesas apart",
             file=sys.stderr,
         )
 
@@ -2112,7 +2115,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     # column reads 0, and the run writes 17 fabricated divergences per mesa.
     # Refused the way `load_fiscalizacion_rows` refuses a scheme that does not
     # match the scope it writes to.
-    curated_distrito, curated_seccion, curated_category = CURATED_NAME_TABLE_SCOPE
+    curated_year, curated_distrito, curated_seccion, curated_category = CURATED_NAME_TABLE_SCOPE
     requested = (
         normalize_distrito_code(args.distrito),
         normalize_seccion_code(args.seccion),
@@ -2129,13 +2132,64 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         )
         return 1
 
+    sources = load_sources(Path(args.sources_path))
+    fiscalizacion_entry = find_source_entry(sources, args.source)
+    if fiscalizacion_entry is None:
+        print(f"error: no registered source with id {args.source!r}", file=sys.stderr)
+        return 1
+    if fiscalizacion_entry["capability"] != "fiscalizacion":
+        print(
+            f"error: {args.source!r} is registered under "
+            f"{fiscalizacion_entry['capability']!r}, but this argument requires a "
+            "'fiscalizacion' source",
+            file=sys.stderr,
+        )
+        return 1
+
+    baseline_entry = find_source_entry(sources, args.baseline)
+    if baseline_entry is None:
+        print(f"error: no registered source with id {args.baseline!r}", file=sys.stderr)
+        return 1
+    if baseline_entry["capability"] != "national":
+        print(
+            f"error: {args.baseline!r} is registered under "
+            f"{baseline_entry['capability']!r}, but this argument requires a "
+            "'national' source",
+            file=sys.stderr,
+        )
+        return 1
+
+    fiscalizacion_election = registered_source_election(fiscalizacion_entry)
+    baseline_election = registered_source_election(baseline_entry)
+    accepted_election = (curated_year, "legislativas")
+    for role, source_id, election in (
+        ("fiscalización source", args.source, fiscalizacion_election),
+        ("official baseline", args.baseline, baseline_election),
+    ):
+        if election != accepted_election:
+            print(
+                f"error: {role} {source_id!r} has registered election "
+                f"{election[0]}/{election[1]}, but validate-fiscalizacion accepts only "
+                f"{accepted_election[0]}/{accepted_election[1]}",
+                file=sys.stderr,
+            )
+            return 1
+    if fiscalizacion_election != baseline_election:
+        print(
+            f"error: fiscalización source {args.source!r} is registered for "
+            f"{fiscalizacion_election[0]}/{fiscalizacion_election[1]}, but baseline "
+            f"{args.baseline!r} is registered for "
+            f"{baseline_election[0]}/{baseline_election[1]}",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         database_url = resolve_database_url(args.database_url)
     except MissingDatabaseUrlError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    sources = load_sources(Path(args.sources_path))
     records = load_manifest(Path(args.manifest_path))
     local_store = LocalArchiveStore(root=Path(args.local_root))
 
@@ -2162,12 +2216,17 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         filename = archived_filename(archived, source_id=entry["id"])
         if not local_store.exists(entry["capability"], filename):
             print(
-                f"error: {source_id!r} is recorded as archived but absent from the "
-                "local mirror",
+                f"error: {source_id!r} is recorded as archived but absent from the local mirror",
                 file=sys.stderr,
             )
             return None
-        return read_archived_source(entry, local_store=local_store, filename=filename)
+        return read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability=capability,
+            local_store=local_store,
+            filename=filename,
+        )
 
     try:
         fiscalizacion_bytes = archived_bytes(args.source, "fiscalizacion")
@@ -2191,12 +2250,22 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         fiscalizacion_bytes.decode("utf-8-sig"),
         archive_entry_id=args.source,
     )
+    parser_review_records = [
+        replace(
+            review_item_draft_to_record(draft),
+            subject_ref=(
+                f"{args.source} {fiscalizacion_election[0]}-"
+                f"{fiscalizacion_election[1]} {draft.subject_ref}"
+            ),
+        )
+        for draft in result.review_items
+    ]
 
     # Same quarantine `ingest_source` reports, reported here too: reading only
     # `result.rows` made the join describe a smaller corpus with no word about
     # what was withheld.
     if result.quarantined:
-        by_reason: dict[str, list] = {}
+        by_reason: dict[str, list[QuarantinedFiscalizacionRow]] = {}
         for row in result.quarantined:
             by_reason.setdefault(row.reason, []).append(row)
         print(
@@ -2212,29 +2281,26 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
             print(
                 f"    {reason}: {len(quarantined_rows)} row(s)"
                 + (f", mesas {', '.join(str(m) for m in named)}" if named else "")
-                + (
-                    f", source row(s) {', '.join(str(i) for i in lines)}"
-                    if lines
-                    else ""
-                ),
+                + (f", source row(s) {', '.join(str(i) for i in lines)}" if lines else ""),
                 file=sys.stderr,
             )
     # PER ROW. A blank cell carries `None`, which cannot be compared against an
     # integer tally. Partitioned by row rather than by mesa: two rows for one
     # mesa, one complete and one blank, left the blank one excluded AND
     # unreported because its mesa number was in the comparable set.
-    comparable_rows = [
-        row for row in result.rows if all(value is not None for value in row.votes.values())
-    ]
-    incomparable_mesas = sorted(
-        row.mesa
-        for row in result.rows
-        if any(value is None for value in row.votes.values())
-    )
-    mesa_rows = [
-        FiscalizacionMesaRow(mesa=row.mesa, votes=dict(row.votes))
-        for row in comparable_rows
-    ]
+    comparable_rows: list[tuple[FiscalizacionRow, dict[str, int]]] = []
+    incomparable_mesas: list[int] = []
+    for row in result.rows:
+        votes: dict[str, int] = {}
+        for column, value in row.votes.items():
+            if value is None:
+                incomparable_mesas.append(row.mesa)
+                break
+            votes[column] = value
+        else:
+            comparable_rows.append((row, votes))
+    incomparable_mesas.sort()
+    mesa_rows = [FiscalizacionMesaRow(mesa=row.mesa, votes=votes) for row, votes in comparable_rows]
     if incomparable_mesas:
         # PER REASON, not one name for two facts. A `None` vote is either a
         # cell the fiscal left EMPTY or one carrying something unreadable
@@ -2284,9 +2350,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         # unexplained withdrawal, so it is reported rather than left out of
         # the breakdown entirely.
         unexplained = [
-            m
-            for m in incomparable_mesas
-            if not any(m in mesas for mesas in reasons.values())
+            m for m in incomparable_mesas if not any(m in mesas for mesas in reasons.values())
         ]
         if unexplained:
             print(
@@ -2303,11 +2367,17 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
             seccion=args.seccion,
             category=args.category,
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, FiscalizacionSchemaError,
-            PbaSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, DuplicateManifestRecordError,
-            MalformedManifestError,
-            AmbiguousSourceError) as exc:
+    except (
+        NationalResultsCsvNotFoundError,
+        NationalSchemaError,
+        FiscalizacionSchemaError,
+        PbaSchemaError,
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
+        AmbiguousSourceError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -2325,7 +2395,11 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         )
         return 1
 
-    join = join_fiscalizacion_identity(mesa_rows, official_by_mesa)
+    try:
+        join = join_fiscalizacion_identity(mesa_rows, official_by_mesa)
+    except IncompleteOfficialMesaError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     # Reported per reason, never as one total, and NEVER as a reason to
     # exclude a mesa: an unmatched or colliding mesa is a crosswalk problem to
@@ -2355,7 +2429,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     # two sources dropped the second run as "already present" whenever the note
     # text coincided. Same argument this file makes for `ingest_source`.
     # NORMALIZED, like every other writer of a `review_item` key here (see
-    # `ingest.fiscalizacion.mesa_subject_ref`, and migration 0013 keying on
+    # `ingest.fiscalizacion.mesa_subject_ref`, and migration 0018 keying on
     # the STORED seccion_code). Built from the raw args, running this once as
     # `--distrito 02 --seccion 027` and again as `--distrito 2 --seccion 27`
     # produced two scopes for ONE comparison -- `official_mesa_votes_from_
@@ -2367,13 +2441,14 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         f"{normalize_seccion_code(args.seccion) or '(sin seccion)'}/"
         f"{args.category}"
     )
-    records_to_write = [
+    divergence_records = [
         replace(
             record,
             subject_ref=f"{args.source} vs {args.baseline} [{scope}] {record.subject_ref}",
         )
         for record in mesa_divergences_to_review_items(list(join.divergences))
     ]
+    records_to_write = [*parser_review_records, *divergence_records]
 
     conn = psycopg.connect(database_url)
     try:
@@ -2386,10 +2461,23 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     finally:
         conn.close()
 
+    parser_counts: dict[str, int] = {}
+    for record in parser_review_records:
+        parser_counts[record.kind] = parser_counts.get(record.kind, 0) + 1
+    for kind, count in sorted(parser_counts.items()):
+        new_count = sum(1 for record in fresh if record.kind == kind)
+        print(
+            f"  {kind}: {count} review item(s) "
+            f"({new_count} new, {count - new_count} already present)",
+            file=sys.stderr,
+        )
+
+    fresh_divergences = sum(1 for record in fresh if record.kind == "mesa_tally_divergence")
     print(
         f"joined {len(join.joined)} of {len(mesa_rows)} fiscalización mesa(s) to "
         f"{args.baseline}; {len(join.divergences)} diverging column(s) recorded "
-        f"({len(fresh)} new, {len(records_to_write) - len(fresh)} already present)"
+        f"({fresh_divergences} new, "
+        f"{len(divergence_records) - fresh_divergences} already present)"
     )
     return 0
 

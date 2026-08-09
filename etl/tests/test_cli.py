@@ -12,6 +12,7 @@ silent default database connection.
 from __future__ import annotations
 
 import contextlib
+import csv
 import hashlib
 import io
 import json
@@ -1417,6 +1418,46 @@ def test_one_mesa_reporting_two_tallies_for_one_party_refuses() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("column", "raw", "reason"),
+    [
+        ("mesa_id", "-1", "unreadable mesa_id"),
+        ("mesa_id", "+1", "unreadable mesa_id"),
+        ("mesa_id", "1_2", "unreadable mesa_id"),
+        ("mesa_id", "٢", "unreadable mesa_id"),
+        ("votos_cantidad", "-1", "unreadable votos_cantidad"),
+        ("votos_cantidad", "+1", "unreadable votos_cantidad"),
+        ("votos_cantidad", "1_2", "unreadable votos_cantidad"),
+        ("votos_cantidad", "１２", "unreadable votos_cantidad"),
+    ],
+)
+def test_official_baseline_excludes_malformed_numeric_cells_by_exact_reason(
+    column: str, raw: str, reason: str
+) -> None:
+    from etl.__main__ import official_mesa_votes_from_national
+
+    malformed_mesa = raw if column == "mesa_id" else "2"
+    malformed_votes = raw if column == "votos_cantidad" else "999"
+    csv_text = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,votos_tipo,"
+        "votos_cantidad,agrupacion_nombre\n"
+        "02,027,00248,1,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n"
+        f"02,027,00248,{malformed_mesa},DIPUTADO NACIONAL,POSITIVO,"
+        f"{malformed_votes},ALIANZA LA LIBERTAD AVANZA\n"
+    )
+
+    tallies, skipped = official_mesa_votes_from_national(
+        csv_text.encode("utf-8"),
+        distrito="02",
+        seccion="027",
+        category="DIPUTADO NACIONAL",
+    )
+
+    assert set(tallies) == {1}
+    assert tallies[1].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
+    assert skipped == {reason: 1}
+
+
 def test_a_zip_with_no_results_member_exits_nonzero_through_main(tmp_path: Path, capsys) -> None:
     """The CLI CONTRACT, not just the exception.
 
@@ -1604,6 +1645,8 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                         "source": "internal",
                         "source_url": None,
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "divergence fixture",
                         "filename": "fisc.csv",
                         "upload": "never",
@@ -1615,6 +1658,8 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                         "source": "example.test",
                         "source_url": "https://example.test/nat.csv",
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "divergence baseline",
                         "filename": "nat.csv",
                     }
@@ -1666,8 +1711,7 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                 # below uses it: `_` is a LIKE wildcard and the source id
                 # carries one, so this could read ANOTHER test's rows and
                 # assert against them.
-                "select kind, severity from review_item"
-                " where starts_with(subject_ref, %s)",
+                "select kind, severity from review_item where starts_with(subject_ref, %s)",
                 (f"{fiscalizacion_id} ",),
             )
             written = cur.fetchall()
@@ -1688,6 +1732,107 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
     # D9.5: a divergence is ALWAYS informational, never a join failure.
     assert {kind for kind, _ in written} == {"mesa_tally_divergence"}
     assert {severity for _, severity in written} == {"info"}
+
+
+def test_validate_fiscalizacion_persists_duplicate_collapsed_once(tmp_path: Path, capsys) -> None:
+    _require_ephemeral_postgres()
+
+    fixtures = Path(__file__).parent / "fixtures"
+    fiscal_lines = (
+        (fixtures / "fiscalizacion_2025_stripped_sample.csv")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    fiscal_lines.insert(2, fiscal_lines[1])
+    fiscalizacion_bytes = ("\n".join(fiscal_lines) + "\n").encode("utf-8")
+    national_bytes = (fixtures / "national_2025_027_diputados_sample.csv").read_bytes()
+    fiscalizacion_id = f"fiscalizacion/duplicate-{uuid.uuid4()}"
+    national_id = f"national/2025-duplicate-{uuid.uuid4()}"
+    local_root = tmp_path / "archive"
+    store = LocalArchiveStore(root=local_root)
+    store.write("fiscalizacion", "fisc.csv", fiscalizacion_bytes)
+    store.write("national", "nat.csv", national_bytes)
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": fiscalizacion_id,
+                        "source": "internal",
+                        "source_url": None,
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "filename": "fisc.csv",
+                        "upload": "never",
+                    }
+                ],
+                "national": [
+                    {
+                        "id": national_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/nat.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "filename": "nat.csv",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": fiscalizacion_id,
+                    "status": "ok",
+                    "archived_path": "archive/fiscalizacion/fisc.csv",
+                    "sha256": hashlib.sha256(fiscalizacion_bytes).hexdigest(),
+                },
+                {
+                    "id": national_id,
+                    "status": "ok",
+                    "archived_path": "archive/national/nat.csv",
+                    "sha256": hashlib.sha256(national_bytes).hexdigest(),
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = _main_args(sources_path, local_root, manifest_path) + [
+        "validate-fiscalizacion",
+        "--source",
+        fiscalizacion_id,
+        "--baseline",
+        national_id,
+        "--database-url",
+        TEST_DSN,
+    ]
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        assert main(args) == 0
+        assert main(args) == 0
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from review_item where kind = 'duplicate_collapsed' "
+                "and starts_with(subject_ref, %s) and resolved_at is null",
+                (f"{fiscalizacion_id} ",),
+            )
+            written = cur.fetchone()
+    finally:
+        with conn.cursor() as cur:
+            cur.execute(
+                "delete from review_item where starts_with(subject_ref, %s)",
+                (f"{fiscalizacion_id} ",),
+            )
+        conn.commit()
+        conn.close()
+
+    assert written == (1,)
+    assert "duplicate_collapsed: 1 review item(s)" in capsys.readouterr().err
 
 
 def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
@@ -1735,6 +1880,8 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
                         "source": "internal",
                         "source_url": None,
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "scope fixture",
                         "filename": "fisc.csv",
                         "upload": "never",
@@ -1746,6 +1893,8 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
                         "source": "example.test",
                         "source_url": "https://example.test/nat.csv",
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "scope baseline",
                         "filename": "nat.csv",
                     }
@@ -2249,12 +2398,23 @@ def _unguarded_fiscalizacion_corpus(tmp_path: Path) -> tuple[Path, Path, Path, s
                         "source": "internal",
                         "source_url": None,
                         "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "notes": "guard fixture",
                         "filename": "leak.csv",
                         "source_kind": "fiscalizacion",
                         # `upload: never` deliberately absent.
                     }
-                ]
+                ],
+                "national": [
+                    {
+                        "id": "national/2025-guard-not-reached",
+                        "source": "example.test",
+                        "source_url": "https://example.test/baseline.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -2285,9 +2445,7 @@ def test_ingest_refuses_an_unguarded_fiscalizacion_entry(tmp_path: Path, capsys)
     `upload: never` was still ingestible. Blocking one path is not blocking the
     others.
     """
-    sources_path, local_root, manifest_path, source_id = _unguarded_fiscalizacion_corpus(
-        tmp_path
-    )
+    sources_path, local_root, manifest_path, source_id = _unguarded_fiscalizacion_corpus(tmp_path)
 
     exit_code = main(
         _main_args(sources_path, local_root, manifest_path)
@@ -2313,9 +2471,7 @@ def test_ingest_refuses_an_unguarded_fiscalizacion_entry(tmp_path: Path, capsys)
 
 def test_validate_fiscalizacion_refuses_an_unguarded_entry(tmp_path: Path, capsys) -> None:
     """Same guard, the command's own read path, its own exit code."""
-    sources_path, local_root, manifest_path, source_id = _unguarded_fiscalizacion_corpus(
-        tmp_path
-    )
+    sources_path, local_root, manifest_path, source_id = _unguarded_fiscalizacion_corpus(tmp_path)
 
     exit_code = main(
         _main_args(sources_path, local_root, manifest_path)
@@ -2324,7 +2480,7 @@ def test_validate_fiscalizacion_refuses_an_unguarded_entry(tmp_path: Path, capsy
             "--source",
             source_id,
             "--baseline",
-            source_id,
+            "national/2025-guard-not-reached",
             "--database-url",
             TEST_DSN,
         ]
@@ -3251,10 +3407,10 @@ def test_a_mesa_number_in_two_circuitos_is_not_reported_as_schema_drift() -> Non
     csv_text = header + "".join(
         [
             # ONE mesa number, two circuitos, two different tallies.
-            "02,027,00248C,142,DIPUTADO NACIONAL,POSITIVO,10,LLA\n",
-            "02,027,00248D,142,DIPUTADO NACIONAL,POSITIVO,40,LLA\n",
+            "02,027,00248C,142,DIPUTADO NACIONAL,POSITIVO,10,ALIANZA LA LIBERTAD AVANZA\n",
+            "02,027,00248D,142,DIPUTADO NACIONAL,POSITIVO,40,ALIANZA LA LIBERTAD AVANZA\n",
             # An unambiguous mesa, to prove the scope still produces figures.
-            "02,027,00248A,143,DIPUTADO NACIONAL,POSITIVO,7,LLA\n",
+            "02,027,00248A,143,DIPUTADO NACIONAL,POSITIVO,7,ALIANZA LA LIBERTAD AVANZA\n",
         ]
     )
 
@@ -3266,7 +3422,7 @@ def test_a_mesa_number_in_two_circuitos_is_not_reported_as_schema_drift() -> Non
     )
 
     assert 142 not in tallies, "an ambiguous mesa number cannot carry a tally"
-    assert tallies[143].votes_by_agrupacion_name == {"LLA": 7}
+    assert tallies[143].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 7}
     assert any("more than one circuito" in reason for reason in skipped), (
         "the drop must be reported per reason, not silently absent"
     )
@@ -3378,6 +3534,222 @@ def test_a_missing_circuito_cell_is_not_counted_as_a_second_circuito() -> None:
 
     assert tallies[147].votes_by_agrupacion_name == {"LLA": 10}
     assert not any("more than one circuito" in reason for reason in skipped)
+
+
+def test_validate_fiscalizacion_refuses_a_circuito_blind_baseline_before_review_writes(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+
+    fixtures = Path(__file__).parent / "fixtures"
+    fiscalizacion_bytes = (fixtures / "fiscalizacion_2025_stripped_sample.csv").read_bytes()
+    national_rows = list(
+        csv.reader(
+            io.StringIO(
+                (fixtures / "national_2025_027_diputados_sample.csv").read_text(encoding="utf-8")
+            )
+        )
+    )
+    circuito_index = national_rows[0].index("circuito_id")
+    for row in national_rows:
+        row.pop(circuito_index)
+    rendered = io.StringIO(newline="")
+    csv.writer(rendered).writerows(national_rows)
+    national_bytes = rendered.getvalue().encode("utf-8")
+
+    fiscalizacion_id = f"fiscalizacion/missing-circuito-{uuid.uuid4()}"
+    national_id = f"national/2025-missing-circuito-{uuid.uuid4()}"
+    local_root = tmp_path / "archive"
+    store = LocalArchiveStore(root=local_root)
+    store.write("fiscalizacion", "fisc.csv", fiscalizacion_bytes)
+    store.write("national", "nat.csv", national_bytes)
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": fiscalizacion_id,
+                        "source": "internal",
+                        "source_url": None,
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "filename": "fisc.csv",
+                        "upload": "never",
+                    }
+                ],
+                "national": [
+                    {
+                        "id": national_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/nat.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "filename": "nat.csv",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": fiscalizacion_id,
+                    "status": "ok",
+                    "archived_path": "archive/fiscalizacion/fisc.csv",
+                    "sha256": hashlib.sha256(fiscalizacion_bytes).hexdigest(),
+                },
+                {
+                    "id": national_id,
+                    "status": "ok",
+                    "archived_path": "archive/national/nat.csv",
+                    "sha256": hashlib.sha256(national_bytes).hexdigest(),
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden_write(*_args, **_kwargs):
+        raise AssertionError("schema refusal must happen before any review item write")
+
+    monkeypatch.setattr(cli.psycopg, "connect", forbidden_write)
+    monkeypatch.setattr(cli, "insert_review_items", forbidden_write)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "validate-fiscalizacion",
+            "--source",
+            fiscalizacion_id,
+            "--baseline",
+            national_id,
+            "--database-url",
+            "postgresql://must-not-connect/nowhere",
+        ]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "circuito_id" in reported
+    assert "error:" in reported
+
+
+@pytest.mark.parametrize(
+    ("baseline_defect", "expected_report"),
+    [
+        ("renamed party", "ALIANZA LIBERTAD AVANZA"),
+        ("missing party tally", "LIBER.AR"),
+    ],
+)
+def test_validate_fiscalizacion_refuses_an_invalid_official_vector_before_any_write(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    baseline_defect: str,
+    expected_report: str,
+) -> None:
+    import etl.__main__ as cli
+
+    fixtures = Path(__file__).parent / "fixtures"
+    fiscalizacion_bytes = (fixtures / "fiscalizacion_2025_stripped_sample.csv").read_bytes()
+    national_text = (fixtures / "national_2025_027_diputados_sample.csv").read_text(
+        encoding="utf-8"
+    )
+    if baseline_defect == "renamed party":
+        national_text = national_text.replace(
+            "ALIANZA LA LIBERTAD AVANZA", "ALIANZA LIBERTAD AVANZA", 1
+        )
+    else:
+        lines = national_text.splitlines(keepends=True)
+        national_text = "".join(
+            line for line in lines if not (",1,NATIVOS," in line and ",LIBER.AR," in line)
+        )
+    national_bytes = national_text.encode("utf-8")
+
+    fiscalizacion_id = f"fiscalizacion/invalid-vector-{uuid.uuid4()}"
+    national_id = f"national/2025-invalid-vector-{uuid.uuid4()}"
+    local_root = tmp_path / "archive"
+    store = LocalArchiveStore(root=local_root)
+    store.write("fiscalizacion", "fisc.csv", fiscalizacion_bytes)
+    store.write("national", "nat.csv", national_bytes)
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": fiscalizacion_id,
+                        "source": "internal",
+                        "source_url": None,
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "filename": "fisc.csv",
+                        "upload": "never",
+                    }
+                ],
+                "national": [
+                    {
+                        "id": national_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/nat.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "filename": "nat.csv",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": fiscalizacion_id,
+                    "status": "ok",
+                    "archived_path": "archive/fiscalizacion/fisc.csv",
+                    "sha256": hashlib.sha256(fiscalizacion_bytes).hexdigest(),
+                },
+                {
+                    "id": national_id,
+                    "status": "ok",
+                    "archived_path": "archive/national/nat.csv",
+                    "sha256": hashlib.sha256(national_bytes).hexdigest(),
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden_write(*_args, **_kwargs):
+        raise AssertionError("party-name refusal must happen before database/review writes")
+
+    monkeypatch.setattr(cli.psycopg, "connect", forbidden_write)
+    monkeypatch.setattr(cli, "insert_review_items", forbidden_write)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "validate-fiscalizacion",
+            "--source",
+            fiscalizacion_id,
+            "--baseline",
+            national_id,
+            "--database-url",
+            "postgresql://must-not-connect/nowhere",
+        ]
+    )
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert expected_report in reported
+    assert "error:" in reported
+    assert "Traceback" not in reported
 
 
 def test_a_non_comparable_row_cannot_declare_a_mesa_ambiguous() -> None:
@@ -3742,6 +4114,60 @@ def test_a_manifest_record_missing_status_exits_nonzero(tmp_path: Path, capsys) 
 
     assert exit_code == 1
     assert "status" in capsys.readouterr().err
+
+
+def test_validate_fiscalizacion_uses_registered_baseline_metadata_and_refuses_mismatch(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": "fiscalizacion/current",
+                        "source": "internal",
+                        "source_url": None,
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    }
+                ],
+                "national": [
+                    {
+                        "id": "national/current-baseline",
+                        "source": "example.test",
+                        "source_url": "https://example.test/current.csv",
+                        "election_year": 2023,
+                        "election_round": "generales",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden_connect(*_args, **_kwargs):
+        raise AssertionError("baseline mismatch must refuse before database access")
+
+    monkeypatch.setattr("etl.__main__.psycopg.connect", forbidden_connect)
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", tmp_path / "must-not-be-read.json")
+        + [
+            "validate-fiscalizacion",
+            "--source",
+            "fiscalizacion/current",
+            "--baseline",
+            "national/current-baseline",
+            "--database-url",
+            "postgresql://must-not-connect/nowhere",
+        ]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "2025" in reported
+    assert "2023" in reported
+    assert "must-not-be-read" not in reported
 
 
 def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_for(
