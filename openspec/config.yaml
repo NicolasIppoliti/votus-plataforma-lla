@@ -17,21 +17,21 @@ context: |
 strict_tdd: true
 
 testing:
-  status: blocked
+  status: ready
   detected: 2026-08-09
   strict_tdd: true
   note: >
-    Two runners are required, but only `web` is ready. The ETL suite has mandatory
-    Postgres integration tests, and the repository has no command that provisions
-    their expected disposable schema and fails when they skip. `apply` and `verify`
-    remain blocked until that fail-closed harness exists. The Playwright suite in
+    Both required runners are ready. The ETL command provisions a UUID-named,
+    ownership-marked sibling database, applies every migration, rejects every skip,
+    and verifies cleanup without connecting to the project database. The Playwright suite in
     `apps/web/e2e/` is deliberately NOT a runner here -- see the note below
     `archive` for what it would take to wire it honestly.
   runners:
     - name: etl
-      working_dir: etl
-      status: blocked
-      note: No supported fail-closed disposable-Postgres command exists.
+      working_dir: .
+      status: ready
+      test_command: "uv --directory etl run etl-verify"
+      note: Requires ETL_TEST_ADMIN_DATABASE_URL to name the local template1 database.
     - name: web
       working_dir: apps/web
       status: ready
@@ -45,8 +45,8 @@ testing:
     integration:
       available: true
       tools: [pytest, Postgres, vitest]
-      release_gate: false
-      note: ETL integration tests exist, but their disposable-schema gate is not provisioned.
+      release_gate: true
+      note: ETL Postgres tests run only through the fail-closed disposable-database command.
     e2e:
       available: true
       tool: playwright
@@ -90,11 +90,11 @@ rules:
       - Follow existing code patterns once established
       - Strict TDD: RED-GREEN-REFACTOR is mandatory, no exceptions
     tdd: true
-    test_status: blocked
-    test_blocker: ETL has no supported fail-closed disposable-Postgres verification command.
+    test_status: ready
+    test_command: "uv --directory etl run etl-verify"
   verify:
-    test_status: blocked
-    test_blocker: ETL has no supported fail-closed disposable-Postgres verification command.
+    test_status: ready
+    test_command: "uv --directory etl run etl-verify"
     # Composed from the `web` runner's `typecheck_command` + `build_command`.
     build_command: "cd apps/web && pnpm exec tsc --noEmit && pnpm build"
     # ZERO on purpose, and this is the one number in this file that means

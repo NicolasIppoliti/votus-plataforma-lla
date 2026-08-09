@@ -10,22 +10,11 @@ from typing import LiteralString, cast
 import psycopg
 import pytest
 from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+from etl.verify import DisposablePostgres, maintenance_dsn_from_disposable
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-
-
-def _connection_params(dsn: str) -> dict[str, str]:
-    return {key: str(value) for key, value in conninfo_to_dict(dsn).items()}
-
-
-def _maintenance_dsn(configured_dsn: str) -> tuple[str, str]:
-    params = _connection_params(configured_dsn)
-    configured_database = params.get("dbname", "postgres")
-    params["dbname"] = "postgres"
-    params["connect_timeout"] = "2"
-    return make_conninfo(**params), configured_database
 
 
 def _apply_migration(database_dsn: str, number: int) -> None:
@@ -199,111 +188,95 @@ def _seed_pre_0018_fiscalizacion_case(
 
 
 def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> None:
-    configured_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
-    if not configured_dsn:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
         pytest.skip(
             "ETL_TEST_DATABASE_URL is required to create an isolated sibling migration database"
         )
 
+    admin_dsn = maintenance_dsn_from_disposable(database_dsn)
+    database = DisposablePostgres(admin_dsn)
     try:
-        maintenance_dsn, configured_database = _maintenance_dsn(configured_dsn)
-    except Exception as exc:
-        pytest.skip(f"ETL_TEST_DATABASE_URL could not be parsed for sibling database use: {exc}")
-
-    database_name = f"votus_migration_{uuid.uuid4().hex}"
-    if database_name == configured_database:
-        pytest.fail("generated sibling database unexpectedly matches the configured database")
-
+        database_dsn = database.open()
+    except (psycopg.Error, RuntimeError) as exc:
+        pytest.skip(f"cannot create safely marked sibling migration database: {exc}")
     try:
-        admin = psycopg.connect(maintenance_dsn, autocommit=True)
-    except psycopg.Error as exc:
-        pytest.skip(f"maintenance Postgres connection unavailable for sibling database: {exc}")
+        available_numbers = _available_migration_numbers(maximum=18)
+        assert available_numbers == list(range(1, 19))
 
-    created = False
-    database_dsn = make_conninfo(**(_connection_params(configured_dsn) | {"dbname": database_name}))
-    try:
-        try:
-            admin.execute(sql.SQL("create database {}").format(sql.Identifier(database_name)))
-            created = True
-        except psycopg.Error as exc:
-            pytest.skip(f"cannot create isolated sibling migration database: {exc}")
-        else:
-            available_numbers = _available_migration_numbers(maximum=18)
-            assert available_numbers == list(range(1, 19))
+        for number in range(1, 12):
+            _apply_migration(database_dsn, number)
 
-            for number in range(1, 12):
-                _apply_migration(database_dsn, number)
+        (
+            old_pba_jurisdiction_id,
+            obsolete_circuito_alias_id,
+            obsolete_suffix_alias_id,
+        ) = _seed_pre_0012_history(database_dsn)
 
-            (
-                old_pba_jurisdiction_id,
-                obsolete_circuito_alias_id,
-                obsolete_suffix_alias_id,
-            ) = _seed_pre_0012_history(database_dsn)
+        _apply_migration(database_dsn, 12)
+        with psycopg.connect(database_dsn) as connection:
+            old_0012_pair = connection.execute(
+                """
+                select j.distrito_code, j.seccion_code
+                from result_row rr
+                join jurisdiction j on j.id = rr.jurisdiction_id
+                where rr.archive_entry_id = 'pba/2025-distrito-027'
+                """
+            ).fetchone()
+        assert old_0012_pair == ("02", None)
 
-            _apply_migration(database_dsn, 12)
-            with psycopg.connect(database_dsn) as connection:
-                old_0012_pair = connection.execute(
-                    """
-                    select j.distrito_code, j.seccion_code
-                    from result_row rr
-                    join jurisdiction j on j.id = rr.jurisdiction_id
-                    where rr.archive_entry_id = 'pba/2025-distrito-027'
-                    """
-                ).fetchone()
-            assert old_0012_pair == ("02", None)
+        _apply_migration(database_dsn, 13)
+        with psycopg.connect(database_dsn) as connection:
+            result_count_after_0013 = connection.execute(
+                "select count(*) from result_row"
+            ).fetchone()
+            pba_count_after_0013 = connection.execute(
+                """
+                select count(*)
+                from result_row
+                where archive_entry_id = 'pba/2025-distrito-027'
+                """
+            ).fetchone()
+        assert result_count_after_0013 == (1,)
+        assert pba_count_after_0013 == (1,)
 
-            _apply_migration(database_dsn, 13)
-            with psycopg.connect(database_dsn) as connection:
-                result_count_after_0013 = connection.execute(
-                    "select count(*) from result_row"
-                ).fetchone()
-                pba_count_after_0013 = connection.execute(
-                    """
-                    select count(*)
-                    from result_row
-                    where archive_entry_id = 'pba/2025-distrito-027'
-                    """
-                ).fetchone()
-            assert result_count_after_0013 == (1,)
-            assert pba_count_after_0013 == (1,)
+        _apply_migration(database_dsn, 14)
+        _apply_migration(database_dsn, 15)
+        _apply_migration(database_dsn, 16)
 
-            _apply_migration(database_dsn, 14)
-            _apply_migration(database_dsn, 15)
-            _apply_migration(database_dsn, 16)
+        control_delimiter_id, control_sentinel_id = _seed_pre_0017_control_tuples(database_dsn)
 
-            control_delimiter_id, control_sentinel_id = _seed_pre_0017_control_tuples(database_dsn)
-
-            with pytest.raises(psycopg.Error, match="metadata conflict"):
-                _apply_migration(database_dsn, 17)
-            with psycopg.connect(database_dsn) as connection:
-                conflicted_aliases = connection.execute(
-                    "select circuito_name from jurisdiction where id in (%s, %s) order by id",
-                    (
-                        uuid.UUID("00000000-0000-0000-0000-000000000020"),
-                        obsolete_circuito_alias_id,
-                    ),
-                ).fetchall()
-                assert conflicted_aliases == [
-                    ("conflicting alias A",),
-                    ("conflicting alias B",),
-                ]
-                connection.execute(
-                    "update jurisdiction set circuito_name = case when id = %s then null "
-                    "else 'Circuit 248' end where id in (%s, %s)",
-                    (
-                        uuid.UUID("00000000-0000-0000-0000-000000000020"),
-                        uuid.UUID("00000000-0000-0000-0000-000000000020"),
-                        obsolete_circuito_alias_id,
-                    ),
-                )
+        with pytest.raises(psycopg.Error, match="metadata conflict"):
             _apply_migration(database_dsn, 17)
+        with psycopg.connect(database_dsn) as connection:
+            conflicted_aliases = connection.execute(
+                "select circuito_name from jurisdiction where id in (%s, %s) order by id",
+                (
+                    uuid.UUID("00000000-0000-0000-0000-000000000020"),
+                    obsolete_circuito_alias_id,
+                ),
+            ).fetchall()
+            assert conflicted_aliases == [
+                ("conflicting alias A",),
+                ("conflicting alias B",),
+            ]
+            connection.execute(
+                "update jurisdiction set circuito_name = case when id = %s then null "
+                "else 'Circuit 248' end where id in (%s, %s)",
+                (
+                    uuid.UUID("00000000-0000-0000-0000-000000000020"),
+                    uuid.UUID("00000000-0000-0000-0000-000000000020"),
+                    obsolete_circuito_alias_id,
+                ),
+            )
+        _apply_migration(database_dsn, 17)
 
-            (
-                official_jurisdiction_id,
-                fiscalizacion_jurisdiction_id,
-                result_count_before_0018,
-            ) = _seed_pre_0018_fiscalizacion_case(database_dsn)
-            _apply_migration(database_dsn, 18)
+        (
+            official_jurisdiction_id,
+            fiscalizacion_jurisdiction_id,
+            result_count_before_0018,
+        ) = _seed_pre_0018_fiscalizacion_case(database_dsn)
+        _apply_migration(database_dsn, 18)
 
         with psycopg.connect(database_dsn) as connection:
             repaired_pair = connection.execute(
@@ -412,14 +385,4 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             ["distrito_code", "seccion_code", "circuito_code", "mesa_code"],
         )
     finally:
-        try:
-            if created:
-                admin.execute(
-                    sql.SQL("drop database {} with (force)").format(sql.Identifier(database_name))
-                )
-                remaining = admin.execute(
-                    "select count(*) from pg_database where datname = %s", (database_name,)
-                ).fetchone()
-                assert remaining == (0,)
-        finally:
-            admin.close()
+        database.close()
