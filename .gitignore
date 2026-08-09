@@ -1,5 +1,6 @@
 # Local AI runtime state
 .atl/
+.codegraph/
 
 # Raw immutable archive (D2) — sha256-tracked via archive-manifest.json, not git
 archive/

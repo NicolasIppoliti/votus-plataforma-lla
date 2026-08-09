@@ -1,0 +1,11 @@
+{
+  "include": ["etl"],
+  "pythonVersion": "3.12",
+  "venvPath": "etl",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "etl"
+    }
+  ]
+}
