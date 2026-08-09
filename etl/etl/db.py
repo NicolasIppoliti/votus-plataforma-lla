@@ -18,7 +18,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import LiteralString
+from types import TracebackType
+from typing import LiteralString, Protocol
 
 from psycopg import sql
 
@@ -156,8 +157,33 @@ def upsert_jurisdiction(
         return cur.fetchone()[0]
 
 
+class _OfficialJurisdictionCursor(Protocol):
+    """Typed view of the one database query used to resolve official mesas."""
+
+    def __enter__(self) -> _OfficialJurisdictionCursor: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
+
+    def execute(
+        self,
+        query: str,
+        params: tuple[str, str | None, int, str],
+    ) -> object: ...
+
+    def fetchall(self) -> Sequence[tuple[object, str | None]]: ...
+
+
+class _OfficialJurisdictionConnection(Protocol):
+    def cursor(self) -> _OfficialJurisdictionCursor: ...
+
+
 def official_jurisdictions_for_mesa(
-    conn,
+    conn: _OfficialJurisdictionConnection,
     *,
     election_id: str,
     distrito: str,
