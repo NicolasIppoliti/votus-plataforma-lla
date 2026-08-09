@@ -1,41 +1,72 @@
 schema: spec-driven
 
+execution_mode: auto
+
+artifact_store:
+  mode: hybrid
+
 context: |
-  Project: Votus — internal electoral analysis tool for La Libertad Avanza,
-  Coronel Rosales (Buenos Aires Province, Argentina).
-  SHIPPED and on main: the electoral-analysis-platform change is archived, the
-  ETL, web app and 12 migrations are merged, and `result_row` holds ~18,17M
-  rows across 2023 PASO/generales/balotaje and 2025 legislativas/PBA plus the
-  Coronel Rosales fiscalización sheet. Plan against the existing parsers,
-  repository and schema — never from scratch. Scrapes and normalizes PUBLIC
-  official election results (2023, 2025) at national/provincial/municipal
-  levels down to per-mesa / per-establecimiento granularity for 2027 scenario
-  analysis.
-  Stack LOCKED by sdd-design ADR D1: Python/uv ETL producing an immutable
-  sha256-tracked archive, feeding a Supabase Postgres projection behind Auth/RLS,
-  with a Next.js App Router front end on Vercel. Seat-allocation domain logic is
-  pure TypeScript in apps/web/ (ADR D3).
+  Project: Votus, an internal electoral analysis tool for Coronel Rosales, Buenos Aires.
+  Stack: Python 3.12/uv ETL, Supabase Postgres/Auth/RLS, Next.js 16 App Router,
+  React 19, TypeScript 7, Zod 4, and Vercel.
+  Architecture: immutable sha256 source archive -> normalized Postgres projection ->
+  authenticated server-rendered UI; statutory seat allocation remains pure TypeScript.
+  Data scope: public official 2023/2025 results plus separately labeled fiscalización data.
+  Conventions: fail closed, expose exclusions, preserve provenance, and test real entry points.
 
 strict_tdd: true
 
 testing:
-  status: ready
+  status: blocked
+  detected: 2026-08-09
+  strict_tdd: true
   note: >
-    Two runners, both mandatory. `etl` (Python, etl/) and `web` (all web and
-    domain TypeScript including seat allocation, apps/web/) are BOTH run by
-    `apply` and `verify`; neither alone covers a change, since the two runtimes
-    were established by Phase 1 and verified passing. The Playwright suite in
+    Two runners are required, but only `web` is ready. The ETL suite has mandatory
+    Postgres integration tests, and the repository has no command that provisions
+    their expected disposable schema and fails when they skip. `apply` and `verify`
+    remain blocked until that fail-closed harness exists. The Playwright suite in
     `apps/web/e2e/` is deliberately NOT a runner here -- see the note below
     `archive` for what it would take to wire it honestly.
   runners:
     - name: etl
       working_dir: etl
-      test_command: "uv run pytest"
+      status: blocked
+      note: No supported fail-closed disposable-Postgres command exists.
     - name: web
       working_dir: apps/web
+      status: ready
       test_command: "pnpm vitest run"
       typecheck_command: "pnpm exec tsc --noEmit"
       build_command: "pnpm build"
+  layers:
+    unit:
+      available: true
+      tools: [pytest, vitest]
+    integration:
+      available: true
+      tools: [pytest, Postgres, vitest]
+      release_gate: false
+      note: ETL integration tests exist, but their disposable-schema gate is not provisioned.
+    e2e:
+      available: true
+      tool: playwright
+      release_gate: false
+      note: Requires explicit local provisioning and environment assertions; specs otherwise skip.
+  coverage:
+    available: false
+    threshold: 0
+    note: No pytest-cov or Vitest coverage provider is configured.
+  quality:
+    linter:
+      python: "uv run ruff check ."
+      web: unavailable
+      note: The web lint script names ESLint, but ESLint is not installed.
+    type_checker:
+      web: "pnpm exec tsc --noEmit"
+      python: unavailable
+    formatter:
+      python: "uv run ruff format ."
+      web: unavailable
 rules:
   proposal:
     - Include rollback plan for risky changes
@@ -52,21 +83,18 @@ rules:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
     - First task of any implementation change MUST establish the test runner if none exists yet
-  # AUTHORITATIVE source for how to run things: `testing.runners` above. Every
-  # command below is a COMPOSITION of those, restated because this schema has
-  # no reference syntax. Change a runner command and change every composition
-  # in the same commit — three spellings of one fact is how the same padding
-  # bug landed in two independent functions.
+  # AUTHORITATIVE source for runner readiness: `testing.runners` above. Do not
+  # add composed apply/verify commands until every mandatory runner is ready.
   apply:
     guidelines:
       - Follow existing code patterns once established
       - Strict TDD: RED-GREEN-REFACTOR is mandatory, no exceptions
     tdd: true
-    # Relative `cd ../apps/web` only resolves if the gate starts at the repo root,
-    # which nothing here guarantees; both paths are therefore repo-root-relative.
-    test_command: "(cd etl && uv run pytest) && (cd apps/web && pnpm vitest run)"
+    test_status: blocked
+    test_blocker: ETL has no supported fail-closed disposable-Postgres verification command.
   verify:
-    test_command: "(cd etl && uv run pytest) && (cd apps/web && pnpm vitest run)"
+    test_status: blocked
+    test_blocker: ETL has no supported fail-closed disposable-Postgres verification command.
     # Composed from the `web` runner's `typecheck_command` + `build_command`.
     build_command: "cd apps/web && pnpm exec tsc --noEmit && pnpm build"
     # ZERO on purpose, and this is the one number in this file that means
