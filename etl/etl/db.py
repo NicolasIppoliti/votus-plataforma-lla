@@ -606,18 +606,14 @@ def load_crosswalk_rows(
     tasks 15.6-15.8).
 
     `mesa_stabilities` is `(distrito_code, seccion_code, MesaStability)`
-    triples -- `etl.crosswalk.MesaStability` itself carries only a mesa
-    number, not the jurisdiction it was observed in, so the caller (the
-    `load-curated` CLI command, task 15.10/15.11) supplies the scope
-    alongside each record. `compute_mesa_stability` MUST NOT default a
-    code to "stable" (jurisdiction-model spec); this loader does not
-    recompute stability, it only persists whatever the caller already
-    computed.
+    triples. `MesaStability` carries the exact normalized circuito/mesa pair;
+    the caller supplies its distrito/seccion scope. `compute_mesa_stability`
+    MUST NOT default a code to "stable" (jurisdiction-model spec); this loader
+    does not recompute stability, it only persists whatever the caller computed.
 
     Idempotent by plain `ON CONFLICT`: `jurisdiction_crosswalk` keys on
-    `pba_distrito_code` (not null, migration 0003) and `mesa_crosswalk`
-    keys on `(distrito_code, seccion_code, mesa_code)` (all not null) --
-    same no-nullable-key-column reasoning as `load_party_map_rows`.
+    `pba_distrito_code` (not null, migration 0003) and `mesa_crosswalk` keys on
+    `(distrito_code, seccion_code, circuito_code, mesa_code)`.
     """
     with conn.cursor() as cur:
         for jurisdiction in table.jurisdictions:
@@ -648,27 +644,69 @@ def load_crosswalk_rows(
                 ),
             )
 
-        for distrito_code, seccion_code, stability in mesa_stabilities:
+        normalized_mesa_stabilities = [
+            (
+                normalize_distrito_code(distrito_code),
+                normalize_seccion_code(seccion_code),
+                normalize_circuito_code(stability.circuito),
+                stability,
+            )
+            for distrito_code, seccion_code, stability in mesa_stabilities
+        ]
+        for distrito_code, seccion_code, circuito_code, stability in normalized_mesa_stabilities:
             cur.execute(
                 """
                 insert into mesa_crosswalk (
-                    distrito_code, seccion_code, mesa_code,
+                    distrito_code, seccion_code, circuito_code, mesa_code,
                     present_2023, present_2025, stable_across_years
-                ) values (%s, %s, %s, %s, %s, %s)
-                on conflict (distrito_code, seccion_code, mesa_code) do update set
+                ) values (%s, %s, %s, %s, %s, %s, %s)
+                on conflict (distrito_code, seccion_code, circuito_code, mesa_code)
+                do update set
                     present_2023 = excluded.present_2023,
                     present_2025 = excluded.present_2025,
                     stable_across_years = excluded.stable_across_years
                 """,
                 (
-                    normalize_distrito_code(distrito_code),
-                    normalize_seccion_code(seccion_code),
+                    distrito_code,
+                    seccion_code,
+                    circuito_code,
                     stability.mesa,
                     stability.present_2023,
                     stability.present_2025,
                     stability.stable,
                 ),
             )
+
+        cur.execute(
+            """
+            delete from jurisdiction_crosswalk as current
+            where not exists (
+                select 1 from unnest(%s::text[]) as desired(pba_distrito_code)
+                where desired.pba_distrito_code = current.pba_distrito_code
+            )
+            """,
+            ([entry.pba_distrito_code for entry in table.jurisdictions],),
+        )
+        cur.execute(
+            """
+            delete from mesa_crosswalk as current
+            where not exists (
+                select 1
+                from unnest(%s::text[], %s::text[], %s::text[], %s::int[])
+                     as desired(distrito_code, seccion_code, circuito_code, mesa_code)
+                where desired.distrito_code = current.distrito_code
+                  and desired.seccion_code = current.seccion_code
+                  and desired.circuito_code = current.circuito_code
+                  and desired.mesa_code = current.mesa_code
+            )
+            """,
+            (
+                [row[0] for row in normalized_mesa_stabilities],
+                [row[1] for row in normalized_mesa_stabilities],
+                [row[2] for row in normalized_mesa_stabilities],
+                [row[3].mesa for row in normalized_mesa_stabilities],
+            ),
+        )
 
     return {
         "jurisdiction_crosswalk": len(table.jurisdictions),

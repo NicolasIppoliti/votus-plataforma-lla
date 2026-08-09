@@ -34,21 +34,30 @@ Fixtures, all derived from real data, never from a live network fetch:
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
+import psycopg
+import pytest
+import yaml
+
+from etl.__main__ import find_unmapped_jurisdictions
 from etl.crosswalk import (
     CrosswalkTable,
+    CrosswalkValidationError,
+    DuplicateCrosswalkKeyError,
     FiscalizacionMesaRow,
     JurisdictionCrosswalkEntry,
+    MesaStability,
     OfficialMesaVotes,
-    QuarantinedJurisdiction,
     compute_mesa_stability,
     join_fiscalizacion_identity,
     load_crosswalk,
 )
-from etl.__main__ import find_unmapped_jurisdictions
-from etl.jurisdiction import QuarantinedPbaDistrito, resolve_pba_distrito_code
+from etl.db import load_crosswalk_rows
 from etl.ingest.national import ingest_national
+from etl.jurisdiction import QuarantinedPbaDistrito, resolve_pba_distrito_code
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CURATED = Path(__file__).parent.parent.parent / "curated"
@@ -60,6 +69,273 @@ def _read(name: str) -> bytes:
 
 def _load_crosswalk_table() -> CrosswalkTable:
     return load_crosswalk(CURATED / "crosswalk.yaml")
+
+
+def test_crosswalk_loader_replaces_the_curated_projection_and_empty_input_clears_it() -> None:
+    dsn = os.environ.get(
+        "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )
+    try:
+        conn = psycopg.connect(dsn, connect_timeout=2)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {dsn!r}: {exc}")
+
+    token = uuid.uuid4().int
+    desired = JurisdictionCrosswalkEntry(
+        pba_distrito_code=str(token),
+        national_distrito_code="2",
+        national_seccion_code="27",
+        name="Desired",
+    )
+    stale = JurisdictionCrosswalkEntry(
+        pba_distrito_code=str(token + 1),
+        national_distrito_code="3",
+        national_seccion_code="28",
+        name="Stale",
+    )
+    desired_stability = MesaStability(circuito="1", mesa=1, present_2023=True, present_2025=True)
+    stale_stability = MesaStability(circuito="2", mesa=2, present_2023=True, present_2025=False)
+
+    try:
+        load_crosswalk_rows(
+            conn,
+            CrosswalkTable(jurisdictions=(desired, stale)),
+            mesa_stabilities=(("2", "27", desired_stability), ("3", "28", stale_stability)),
+        )
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from archive_entry")
+            archive_count = cur.fetchone()
+            cur.execute("select count(*) from election")
+            election_count = cur.fetchone()
+            cur.execute("select count(*) from result_row")
+            result_count = cur.fetchone()
+
+        load_crosswalk_rows(
+            conn,
+            CrosswalkTable(jurisdictions=(desired,)),
+            mesa_stabilities=(("2", "27", desired_stability),),
+        )
+        with conn.cursor() as cur:
+            cur.execute("select pba_distrito_code from jurisdiction_crosswalk")
+            assert cur.fetchall() == [(desired.pba_distrito_code,)]
+            cur.execute(
+                "select distrito_code, seccion_code, circuito_code, mesa_code from mesa_crosswalk"
+            )
+            assert cur.fetchall() == [
+                ("02", "027", desired_stability.circuito, desired_stability.mesa)
+            ]
+
+        load_crosswalk_rows(conn, CrosswalkTable(jurisdictions=()), mesa_stabilities=())
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from jurisdiction_crosswalk")
+            assert cur.fetchone() == (0,)
+            cur.execute("select count(*) from mesa_crosswalk")
+            assert cur.fetchone() == (0,)
+            cur.execute("select count(*) from archive_entry")
+            assert cur.fetchone() == archive_count
+            cur.execute("select count(*) from election")
+            assert cur.fetchone() == election_count
+            cur.execute("select count(*) from result_row")
+            assert cur.fetchone() == result_count
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "- not-a-mapping\n",
+        "jurisdictions: not-a-list\n",
+        "jurisdictions:\n  - not-a-mapping\n",
+    ],
+)
+def test_crosswalk_loader_rejects_invalid_yaml_shapes(tmp_path: Path, content: str) -> None:
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(CrosswalkValidationError, match="crosswalk.yaml"):
+        load_crosswalk(path)
+
+
+@pytest.mark.parametrize("field", ["pba_distrito", "national_distrito", "national_seccion", "name"])
+@pytest.mark.parametrize("bad_value", [None, True, False, 27, "   ", [], {}])
+def test_crosswalk_loader_rejects_non_string_or_empty_required_scalars(
+    tmp_path: Path, field: str, bad_value: object
+) -> None:
+    entry: dict[str, object] = {
+        "pba_distrito": "027",
+        "national_distrito": "02",
+        "national_seccion": "027",
+        "name": "Coronel Rosales",
+    }
+    entry[field] = bad_value
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(yaml.safe_dump({"jurisdictions": [entry]}), encoding="utf-8")
+
+    with pytest.raises(CrosswalkValidationError) as excinfo:
+        load_crosswalk(path)
+
+    message = str(excinfo.value)
+    assert "entry 0" in message
+    assert field in message
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("pba_distrito", "O2"),
+        ("pba_distrito", "2_7"),
+        ("national_distrito", "O2"),
+        ("national_distrito", "2_7"),
+        ("national_seccion", "O2"),
+        ("national_seccion", "2_7"),
+    ],
+)
+def test_crosswalk_loader_rejects_codes_that_cannot_be_canonicalized(
+    tmp_path: Path, field: str, bad_value: str
+) -> None:
+    entry = {
+        "pba_distrito": "027",
+        "national_distrito": "02",
+        "national_seccion": "027",
+        "name": "Coronel Rosales",
+    }
+    entry[field] = bad_value
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(yaml.safe_dump({"jurisdictions": [entry]}), encoding="utf-8")
+
+    with pytest.raises(CrosswalkValidationError) as excinfo:
+        load_crosswalk(path)
+
+    message = str(excinfo.value)
+    assert "entry 0" in message
+    assert field in message
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [
+            {
+                "pba_distrito": "027",
+                "national_distrito": "02",
+                "national_seccion": "027",
+                "name": "A",
+            },
+            {
+                "pba_distrito": "027",
+                "national_distrito": "02",
+                "national_seccion": "028",
+                "name": "B",
+            },
+        ],
+        [
+            {
+                "pba_distrito": "027",
+                "national_distrito": "2",
+                "national_seccion": "27",
+                "name": "A",
+            },
+            {
+                "pba_distrito": "028",
+                "national_distrito": "02",
+                "national_seccion": "027",
+                "name": "B",
+            },
+        ],
+    ],
+)
+def test_crosswalk_loader_rejects_duplicate_natural_keys(
+    tmp_path: Path, entries: list[dict[str, object]]
+) -> None:
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(yaml.safe_dump({"jurisdictions": entries}), encoding="utf-8")
+
+    with pytest.raises(DuplicateCrosswalkKeyError, match="duplicate"):
+        load_crosswalk(path)
+
+
+def test_crosswalk_loader_normalizes_pba_codes_before_resolution(tmp_path: Path) -> None:
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "jurisdictions": [
+                    {
+                        "pba_distrito": "27",
+                        "national_distrito": "02",
+                        "national_seccion": "027",
+                        "name": "Coronel Rosales",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    table = load_crosswalk(path)
+
+    assert table.jurisdictions[0].pba_distrito_code == "027"
+    assert table.resolve_pba("27") == table.resolve_pba("027")
+    assert table.resolve_pba(" 27 ") == table.resolve_pba("027")
+
+
+def test_crosswalk_loader_rejects_normalized_duplicate_pba_codes(tmp_path: Path) -> None:
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "jurisdictions": [
+                    {
+                        "pba_distrito": "27",
+                        "national_distrito": "02",
+                        "national_seccion": "027",
+                        "name": "A",
+                    },
+                    {
+                        "pba_distrito": "027",
+                        "national_distrito": "03",
+                        "national_seccion": "028",
+                        "name": "B",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DuplicateCrosswalkKeyError, match="027"):
+        load_crosswalk(path)
+
+
+def test_crosswalk_loader_allows_different_secciones_in_one_national_distrito(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "crosswalk.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "jurisdictions": [
+                    {
+                        "pba_distrito": "027",
+                        "national_distrito": "02",
+                        "national_seccion": "027",
+                        "name": "A",
+                    },
+                    {
+                        "pba_distrito": "028",
+                        "national_distrito": "02",
+                        "national_seccion": "028",
+                        "name": "B",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert len(load_crosswalk(path).jurisdictions) == 2
 
 
 def test_coronel_rosales_resolves_across_numbering_schemes() -> None:
@@ -89,15 +365,41 @@ def test_unmapped_jurisdiction_code_is_quarantined() -> None:
     assert result.reason
 
 
+def test_same_mesa_number_in_different_circuitos_is_two_discontinuities() -> None:
+    stability = compute_mesa_stability({("A", 142)}, {("B", 142)})
+
+    assert stability == [
+        MesaStability(circuito="A", mesa=142, present_2023=True, present_2025=False),
+        MesaStability(circuito="B", mesa=142, present_2023=False, present_2025=True),
+    ]
+    assert all(item.discontinuous and not item.stable for item in stability)
+
+
 def test_mesa_code_stable_across_years() -> None:
     rows_2023 = ingest_national(
-        _read("crosswalk_national_2023_sample.csv"), archive_entry_id="national/2023-generales"
+        _read("crosswalk_national_2023_sample.csv"),
+        archive_entry_id="national/2023-generales",
+        election_year=2023,
+        election_round="paso",
     )
     rows_2025 = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"), archive_entry_id="national/2025-legislativas"
+        _read("crosswalk_national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
     )
-    mesas_2023 = {r.mesa for r in rows_2023}
-    mesas_2025 = {r.mesa for r in rows_2025}
+    assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2023)
+    assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2025)
+    mesas_2023: set[tuple[str, int]] = {
+        (r.result.circuito, r.mesa)
+        for r in rows_2023
+        if r.mesa is not None and r.result.circuito is not None
+    }
+    mesas_2025: set[tuple[str, int]] = {
+        (r.result.circuito, r.mesa)
+        for r in rows_2025
+        if r.mesa is not None and r.result.circuito is not None
+    }
 
     stability = compute_mesa_stability(mesas_2023, mesas_2025)
     by_mesa = {s.mesa: s for s in stability}
@@ -110,13 +412,29 @@ def test_mesa_code_stable_across_years() -> None:
 
 def test_mesa_code_absent_in_one_year_reported_as_discontinuity() -> None:
     rows_2023 = ingest_national(
-        _read("crosswalk_national_2023_sample.csv"), archive_entry_id="national/2023-generales"
+        _read("crosswalk_national_2023_sample.csv"),
+        archive_entry_id="national/2023-generales",
+        election_year=2023,
+        election_round="paso",
     )
     rows_2025 = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"), archive_entry_id="national/2025-legislativas"
+        _read("crosswalk_national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
     )
-    mesas_2023 = {r.mesa for r in rows_2023}
-    mesas_2025 = {r.mesa for r in rows_2025}
+    assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2023)
+    assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2025)
+    mesas_2023: set[tuple[str, int]] = {
+        (r.result.circuito, r.mesa)
+        for r in rows_2023
+        if r.mesa is not None and r.result.circuito is not None
+    }
+    mesas_2025: set[tuple[str, int]] = {
+        (r.result.circuito, r.mesa)
+        for r in rows_2025
+        if r.mesa is not None and r.result.circuito is not None
+    }
 
     stability = compute_mesa_stability(mesas_2023, mesas_2025)
     by_mesa = {s.mesa: s for s in stability}
@@ -143,7 +461,10 @@ def test_a_national_code_absent_from_the_crosswalk_is_reported_not_passed() -> N
     What the codes are checked against instead is this command.
     """
     rows = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"), archive_entry_id="national/2025-legislativas"
+        _read("crosswalk_national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
     )
     codes = sorted({(row.result.distrito, row.result.seccion) for row in rows})
     assert codes, "fixture must carry at least one jurisdiction code"
@@ -157,7 +478,10 @@ def test_a_national_code_absent_from_the_crosswalk_is_reported_not_passed() -> N
 
 def test_a_curated_national_code_resolves_through_the_crosswalk() -> None:
     rows = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"), archive_entry_id="national/2025-legislativas"
+        _read("crosswalk_national_2025_sample.csv"),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="fixture-legacy",
     )
     codes = sorted({(row.result.distrito, row.result.seccion) for row in rows})
     crosswalk = CrosswalkTable(
@@ -319,8 +643,9 @@ def test_a_row_with_no_distrito_does_not_kill_the_sort_before_its_handler_runs()
     handler downstream never ran, while the module contract promises a
     non-zero exit on a validation failure, not a stack trace.
     """
-    codes = sorted({(None, None), ("02", "027"), ("02", None)},
-                   key=lambda pair: (pair[0] or "", pair[1] or ""))
+    codes = sorted(
+        {(None, None), ("02", "027"), ("02", None)}, key=lambda pair: (pair[0] or "", pair[1] or "")
+    )
 
     unmapped = find_unmapped_jurisdictions(codes, CrosswalkTable(jurisdictions=()))
 
