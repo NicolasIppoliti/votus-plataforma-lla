@@ -22,6 +22,7 @@ apps/web/node_modules/
 .env
 .env.local
 .env.*.local
+apps/web/e2e.env
 
 # Playwright run output
 test-results/
