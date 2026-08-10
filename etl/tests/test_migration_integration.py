@@ -125,6 +125,38 @@ def _seed_pre_0017_control_tuples(database_dsn: str) -> tuple[uuid.UUID, uuid.UU
     return control_delimiter_id, control_sentinel_id
 
 
+def _seed_pre_0017_mesa_level_merge_group(database_dsn: str) -> tuple[uuid.UUID, uuid.UUID]:
+    """Two mesa-level aliases whose survivor is NOT the already-canonical row.
+
+    The unique constraint on `jurisdiction` treats NULLs as distinct, so a
+    merge group only collides when `establecimiento_code` AND `mesa_code` are
+    both present -- which is every mesa-level jurisdiction, the bulk of the
+    projection, and exactly what the other fixtures leave NULL.
+
+    0017 picks the survivor with `min(id::text)`, which is arbitrary and not
+    "the row that is already canonical". Here the padded alias sorts lower, so
+    it survives while the already-canonical row is the one scheduled for
+    removal.
+    """
+    surviving_alias_id = uuid.UUID("00000000-0000-0000-0000-000000000035")
+    already_canonical_id = uuid.UUID("00000000-0000-0000-0000-000000000036")
+
+    with psycopg.connect(database_dsn) as connection:
+        connection.execute(
+            """
+            insert into jurisdiction (
+              id, distrito_code, seccion_code, circuito_code,
+              establecimiento_code, mesa_code, circuito_name
+            ) values
+              (%s, E'\t2\t', E'\t27\t', E'\t248\t', 'E1', 4243, 'Circuit 248'),
+              (%s, '02', '027', '00248', 'E1', 4243, 'Circuit 248')
+            """,
+            (surviving_alias_id, already_canonical_id),
+        )
+
+    return surviving_alias_id, already_canonical_id
+
+
 def _seed_pre_0018_fiscalizacion_case(
     database_dsn: str,
 ) -> tuple[uuid.UUID, uuid.UUID, int]:
@@ -246,6 +278,10 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
         _apply_migration(history_dsn, 16)
 
         control_delimiter_id, control_sentinel_id = _seed_pre_0017_control_tuples(history_dsn)
+        (
+            surviving_mesa_alias_id,
+            already_canonical_mesa_id,
+        ) = _seed_pre_0017_mesa_level_merge_group(history_dsn)
 
         with pytest.raises(psycopg.Error, match="metadata conflict"):
             _apply_migration(history_dsn, 17)
@@ -370,6 +406,21 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             historical_requested_granularity = connection.execute(
                 "select distinct requested_granularity from result_row"
             ).fetchall()
+            mesa_level_merge_rows = connection.execute(
+                """
+                select id
+                from jurisdiction
+                where distrito_code = '02'
+                  and seccion_code = '027'
+                  and circuito_code = '00248'
+                  and establecimiento_code = 'E1'
+                  and mesa_code = 4243
+                """
+            ).fetchall()
+            removed_canonical_duplicate = connection.execute(
+                "select count(*) from jurisdiction where id = %s",
+                (already_canonical_mesa_id,),
+            ).fetchone()
 
         assert repaired_pair == ("02", "027")
         assert len(alias_rows) == 1
@@ -390,6 +441,11 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             ["distrito_code", "seccion_code", "circuito_code", "mesa_code"],
         )
         assert historical_requested_granularity == [(None,)]
+        # The merge collapses the pair onto the arbitrary `min(id::text)`
+        # survivor, so the already-canonical duplicate must be gone rather than
+        # standing in the survivor's way while it is canonicalized.
+        assert mesa_level_merge_rows == [(surviving_mesa_alias_id,)]
+        assert removed_canonical_duplicate == (0,)
     finally:
         with psycopg.connect(database_dsn) as connection:
             connection.execute(

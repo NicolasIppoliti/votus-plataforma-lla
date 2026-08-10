@@ -26,6 +26,24 @@ declare
   removed_jurisdiction_count bigint := 0;
   general_removed_count bigint := 0;
 begin
+  -- 0012 creates `jurisdiction_canonical`, `jurisdiction_merge_target` and
+  -- `jurisdiction_remap` WITHOUT `on commit drop`, so they are scoped to the
+  -- SESSION rather than to 0012's transaction. An applier that opens a fresh
+  -- connection per migration file (`etl.verify.apply_migrations`) never sees
+  -- them again, but a single-session applier -- `supabase db push` keeps one
+  -- connection for the whole run -- carries them past 0012's commit, and the
+  -- identically named `create temporary table` statements below then fail
+  -- with 42P07 on a cold 0001->0019 apply. 0012 is immutable applied history
+  -- (pinned by `test_0012_matches_the_immutable_main_history`), so the repair
+  -- belongs here, in the migration that already exists to repair 0012.
+  --
+  -- Qualified with `pg_temp` so this can only ever drop this session's own
+  -- temporary leftovers, never a permanent table that shares a name.
+  drop table if exists
+    pg_temp.jurisdiction_canonical,
+    pg_temp.jurisdiction_merge_target,
+    pg_temp.jurisdiction_remap;
+
   select count(*) into before_count from result_row;
 
   create temporary table pba_provenance on commit drop as
@@ -421,6 +439,23 @@ begin
   from jurisdiction_remap remap
   where rr.jurisdiction_id = remap.old_id;
 
+  -- Remove the merged-away duplicates BEFORE canonicalizing the survivors.
+  -- The survivor is `min(id::text)`, which is arbitrary and not necessarily
+  -- the member that already holds the canonical tuple. When it is not, the
+  -- update below rewrites the survivor into a tuple another group member
+  -- still occupies, and the non-deferrable `unique (distrito_code,
+  -- seccion_code, circuito_code, establecimiento_code, mesa_code)` from 0001
+  -- aborts the whole migration with 23505. NULLs count as distinct there, so
+  -- this only bites when `establecimiento_code` and `mesa_code` are both
+  -- present -- every mesa-level jurisdiction. Every result row was repointed
+  -- onto the survivor immediately above, so the guard below still refuses to
+  -- delete any jurisdiction something still references.
+  delete from jurisdiction j
+  where j.id in (select old_id from jurisdiction_remap)
+    and not exists (select 1 from result_row rr where rr.jurisdiction_id = j.id);
+  get diagnostics general_removed_count = row_count;
+  removed_jurisdiction_count := removed_jurisdiction_count + general_removed_count;
+
   update jurisdiction j
   set distrito_code = canonical.canonical_distrito,
       seccion_code = canonical.canonical_seccion,
@@ -444,12 +479,6 @@ begin
       or j.establecimiento_name is distinct from target.establecimiento_name
     );
   get diagnostics normalized_count = row_count;
-
-  delete from jurisdiction j
-  where j.id in (select old_id from jurisdiction_remap)
-    and not exists (select 1 from result_row rr where rr.jurisdiction_id = j.id);
-  get diagnostics general_removed_count = row_count;
-  removed_jurisdiction_count := removed_jurisdiction_count + general_removed_count;
 
   select count(*) into after_count from result_row;
   if before_count <> after_count then

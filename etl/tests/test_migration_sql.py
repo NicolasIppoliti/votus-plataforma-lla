@@ -249,3 +249,23 @@ def test_0018_has_an_explicit_non_reversible_down_artifact() -> None:
     sql = down.read_text(encoding="utf-8").lower()
     assert "not reversible" in sql
     assert "raise exception" in sql
+
+
+def test_0017_drops_0012_session_scoped_temp_tables_before_recreating_them() -> None:
+    """A cold single-session apply must survive 0012's leftover temp tables.
+
+    `apply_migrations` opens a fresh connection per file, so 0012's three
+    temp tables -- created without `on commit drop` and therefore scoped to
+    the session, not the transaction -- never outlive their own migration.
+    A single-session applier such as `supabase db push` keeps one connection
+    for the whole run, so they DO survive 0012's commit and collide with the
+    identically named tables 0017 creates. 0012 is pinned immutable by
+    `test_0012_matches_the_immutable_main_history`, so the guard lives here.
+    """
+    sql = _sql("0017_repair_jurisdiction_reconciliation.sql")
+
+    guard = "drop table if exists"
+    assert guard in sql
+    for leftover in ("jurisdiction_canonical", "jurisdiction_merge_target", "jurisdiction_remap"):
+        assert leftover in sql.split(guard, 1)[1].split(";", 1)[0]
+        assert sql.index(guard) < sql.index(f"create temporary table {leftover}")
