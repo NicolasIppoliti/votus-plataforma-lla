@@ -8,7 +8,11 @@ import {
   CouncilCompositionError,
   type CouncilComposition,
 } from "@/domain/seat-allocation/council";
-import type { AllocationInput, AllocationResult } from "@/domain/seat-allocation/types";
+import type {
+  AllocationInput,
+  AllocationResult,
+} from "@/domain/seat-allocation/types";
+import { AllocationEvidence } from "./allocation-evidence";
 
 interface SimulatePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -83,7 +87,9 @@ const councilSeatHoldersSchema = z.array(
   z.object({ listId: z.string().min(1), listName: z.string().min(1) }),
 );
 
-export default async function SimulatePage({ searchParams }: SimulatePageProps): Promise<ReactNode> {
+export default async function SimulatePage({
+  searchParams,
+}: SimulatePageProps): Promise<ReactNode> {
   const params = await searchParams;
 
   // Refused BEFORE anything is read, like the other three routes: without
@@ -151,7 +157,10 @@ export default async function SimulatePage({ searchParams }: SimulatePageProps):
 
   if (result && input && rawHeldOver !== undefined) {
     try {
-      if (input.level !== "pba_municipal" || councilJurisdiction !== COUNCIL_JURISDICTION_LABEL) {
+      if (
+        input.level !== "pba_municipal" ||
+        councilJurisdiction !== COUNCIL_JURISDICTION_LABEL
+      ) {
         // 18 seats is LOM Art. 2 for a PBA PARTIDO in the 40.000-80.000
         // bracket — Coronel Rosales. Composing that roster from a national
         // allocation (D'Hondt, Ley 19.945 Art. 161) attaches a municipal
@@ -186,7 +195,9 @@ export default async function SimulatePage({ searchParams }: SimulatePageProps):
         // the value was on the input and got discarded on the way to the
         // display. Absent a match, labelled unmapped rather than as a number.
         newlyAllocated: result.seatAwards.map((award) => {
-          const source = input?.lists.find((list) => list.listId === award.listId);
+          const source = input?.lists.find(
+            (list) => list.listId === award.listId,
+          );
           return {
             listId: award.listId,
             listName: source?.listName ?? `unmapped (list ${award.listId})`,
@@ -207,12 +218,18 @@ export default async function SimulatePage({ searchParams }: SimulatePageProps):
       <h1>Seat simulation</h1>
       <p>
         Pass an <code>input</code> query parameter with a JSON-encoded
-        `AllocationInput` (design.md D3) — `level`, `seatsToFill`, `lists`, and either
-        the Hare-quota fields (PBA levels) or `padron`/`threshold` (national).
+        `AllocationInput` (design.md D3) — `level`, `seatsToFill`, `lists`, and
+        either the Hare-quota fields (PBA levels) or `padron`/`threshold`
+        (national).
       </p>
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}
+      {!input && !parseError ? (
+        <p role="status">
+          No simulation run: provide a valid input scenario to calculate seats.
+        </p>
+      ) : null}
       {result &&
       input?.level === "pba_municipal" &&
       councilJurisdiction === COUNCIL_JURISDICTION_LABEL &&
@@ -220,21 +237,24 @@ export default async function SimulatePage({ searchParams }: SimulatePageProps):
       !councilError ? (
         <p role="note">
           No council roster: pass a <code>heldOver</code> query parameter with
-          the {COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION} seats NOT up for
-          renewal this election. They are sourced from the prior election, never
-          derived here — Ley 5109 Art. 121 resolves which sitting councillors
-          leave by sorteo, which this system does not model.
+          the {COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION} seats NOT up
+          for renewal this election. They are sourced from the prior election,
+          never derived here — Ley 5109 Art. 121 resolves which sitting
+          councillors leave by sorteo, which this system does not model.
         </p>
       ) : null}
       {council ? (
         <section aria-label="council-composition">
           <h2>
-            Council roster: {council.councilTotal} seats, {council.seatsUpForRenewal}{" "}
-            renewed this election
+            Council roster: {council.councilTotal} seats,{" "}
+            {council.seatsUpForRenewal} renewed this election
           </h2>
           <ul>
             {[
-              ...council.newlyAllocated.map((seat) => ({ seat, renewed: true })),
+              ...council.newlyAllocated.map((seat) => ({
+                seat,
+                renewed: true,
+              })),
               ...council.heldOver.map((seat) => ({ seat, renewed: false })),
             ].map(({ seat, renewed }, index) => (
               // Labelled from WHICH LIST the seat came from, not from its index
@@ -252,21 +272,12 @@ export default async function SimulatePage({ searchParams }: SimulatePageProps):
       {result ? (
         <section aria-label="allocation-result">
           <h2>Result ({result.level})</h2>
-          <p>{result.isProjection ? "Projection (hypothetical)" : "Historical run"}</p>
-          <ul>
-            {result.seatAwards.map((award, index) => (
-              <li key={`${award.listId}-${index}`}>
-                {/* The NAME, like the roster below. Rendering the raw id here
-                    presented `110` as a party. */}
-                {input?.lists.find((list) => list.listId === award.listId)?.listName ??
-                  `unmapped (list ${award.listId})`}
-                : {award.awardedBy}
-                {award.tieBreak
-                  ? ` (tie-break: ${award.tieBreak.rule}, ${award.tieBreak.basis})`
-                  : ""}
-              </li>
-            ))}
-          </ul>
+          <p>
+            {result.isProjection
+              ? "Projection (hypothetical)"
+              : "Historical run"}
+          </p>
+          <AllocationEvidence result={result} />
         </section>
       ) : null}
     </main>

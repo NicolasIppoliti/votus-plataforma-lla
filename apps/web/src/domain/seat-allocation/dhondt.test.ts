@@ -59,6 +59,22 @@ describe("allocateDhondt", () => {
     expect(result.quotientTable.every((q) => q.listId !== "B")).toBe(true);
   });
 
+  it("refuses when no positive-vote list clears the threshold", () => {
+    const input: DhondtInput = {
+      padron: 100_000,
+      thresholdPercent: 3,
+      seatsToFill: 5,
+      lists: [
+        { listId: "A", listName: "Lista A", votes: 2_000 },
+        { listId: "B", listName: "Lista B", votes: 1_000 },
+      ],
+    };
+
+    expect(() => allocateDhondt(input)).toThrow(
+      /no positive-vote list clears/i,
+    );
+  });
+
   it("resolves an equal-quotient tie by higher raw vote total and flags it statutory (Art. 161(c) first clause)", () => {
     const input: DhondtInput = {
       padron: 1_000,
@@ -76,10 +92,31 @@ describe("allocateDhondt", () => {
     const byList = Object.fromEntries(result.results.map((r) => [r.listId, r]));
     expect(byList.A?.seats).toBe(2);
     expect(byList.B?.seats).toBe(0);
-    const tieAward = result.seatAwards.find((award) => award.tieBreak !== undefined);
+    const tieAward = result.seatAwards.find(
+      (award) => award.tieBreak !== undefined,
+    );
     expect(tieAward?.listId).toBe("A");
     expect(tieAward?.tieBreak?.basis).toBe("statutory");
     expect(tieAward?.tieBreak?.citation).toContain("161");
+  });
+
+  it("orders mathematically distinct quotients exactly when Number rounds them equal", () => {
+    const input: DhondtInput = {
+      padron: Number.MAX_SAFE_INTEGER,
+      thresholdPercent: 0,
+      seatsToFill: 4,
+      lists: [
+        { listId: "A", listName: "Lista A", votes: 9_000_000_000_000_001 },
+        { listId: "B", listName: "Lista B", votes: 6_000_000_000_000_001 },
+      ],
+    };
+
+    const result = allocateDhondt(input);
+    const byList = Object.fromEntries(
+      result.results.map((entry) => [entry.listId, entry]),
+    );
+    expect(byList.A?.seats).toBe(2);
+    expect(byList.B?.seats).toBe(2);
   });
 
   it("flags an equal-quotient AND equal-vote tie as a declared simulation convention, not statute (Art. 161(c) ends in sorteo)", () => {
