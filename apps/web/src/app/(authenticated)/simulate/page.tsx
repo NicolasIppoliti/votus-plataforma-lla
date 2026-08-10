@@ -167,7 +167,70 @@ const COUNCIL_SEATS_PER_ELECTION = 9;
 /** The shape `heldOver` must have before it crosses into the domain. */
 const councilSeatHoldersSchema = z.array(
   z.strictObject({ listId: z.string().min(1), listName: z.string().min(1) }),
-);
+).length(COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION, {
+  error:
+    "heldOver expected councilTotal - seatsUpForRenewal " +
+    `(${COUNCIL_TOTAL_SEATS} - ${COUNCIL_SEATS_PER_ELECTION} = ` +
+    `${COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION}) seats`,
+});
+
+interface CouncilInputParams {
+  input: AllocationInput | undefined;
+  council: string | undefined;
+  rawHeldOver: string | undefined;
+}
+
+interface ValidatedCouncilInput {
+  council?: typeof COUNCIL_JURISDICTION_LABEL;
+  heldOver?: CouncilComposition["heldOver"];
+}
+
+function validateCouncilInput({
+  input,
+  council,
+  rawHeldOver,
+}: CouncilInputParams): ValidatedCouncilInput {
+  if (rawHeldOver !== undefined && council === undefined) {
+    throw new CouncilCompositionError(
+      `heldOver requires a supported council: pass council=${COUNCIL_JURISDICTION_LABEL}`,
+    );
+  }
+  if (council === undefined) return {};
+  if (council !== COUNCIL_JURISDICTION_LABEL) {
+    throw new CouncilCompositionError(
+      `unsupported council: this route supports only ${COUNCIL_JURISDICTION_LABEL}`,
+    );
+  }
+  if (!input) return { council: COUNCIL_JURISDICTION_LABEL };
+  if (input.level !== "pba_municipal") {
+    throw new CouncilCompositionError(
+      `${COUNCIL_JURISDICTION_LABEL} is available only for pba_municipal ` +
+        `projections; got ${input.level}`,
+    );
+  }
+  if (input.seatsToFill !== COUNCIL_SEATS_PER_ELECTION) {
+    throw new CouncilCompositionError(
+      `LOM Art. 3 renews ${COUNCIL_SEATS_PER_ELECTION} of the ` +
+        `${COUNCIL_TOTAL_SEATS} council seats per election; this allocation ` +
+        `fills ${input.seatsToFill}`,
+    );
+  }
+  if (rawHeldOver === undefined) {
+    return { council: COUNCIL_JURISDICTION_LABEL };
+  }
+  try {
+    return {
+      council: COUNCIL_JURISDICTION_LABEL,
+      heldOver: councilSeatHoldersSchema.parse(JSON.parse(rawHeldOver)),
+    };
+  } catch (error) {
+    throw new CouncilCompositionError(
+      error instanceof z.ZodError
+        ? `the \`heldOver\` query parameter is not a valid heldOver roster: ${error.message}`
+        : "invalid JSON in the `heldOver` query parameter",
+    );
+  }
+}
 
 export default async function SimulatePage({
   searchParams,
@@ -201,37 +264,17 @@ export default async function SimulatePage({
   let councilError: string | undefined;
   const rawHeldOver = stringParam(params, "heldOver");
   const councilJurisdiction = stringParam(params, "council");
-  let heldOver: CouncilComposition["heldOver"] | undefined;
+  let validatedCouncil: ValidatedCouncilInput = {};
 
-  if (rawHeldOver !== undefined && councilJurisdiction === undefined) {
-    councilError =
-      `heldOver requires a supported council: pass council=` +
-      `${COUNCIL_JURISDICTION_LABEL}`;
-  } else if (
-    councilJurisdiction !== undefined &&
-    councilJurisdiction !== COUNCIL_JURISDICTION_LABEL
-  ) {
-    councilError =
-      `unsupported council: this route supports only ` +
-      `${COUNCIL_JURISDICTION_LABEL}`;
-  } else if (
-    councilJurisdiction !== undefined &&
-    input &&
-    input.level !== "pba_municipal"
-  ) {
-    councilError =
-      `${COUNCIL_JURISDICTION_LABEL} is available only for pba_municipal ` +
-      `projections; got ${input.level}`;
-  }
-
-  if (rawHeldOver !== undefined && !councilError) {
+  if (!parseError) {
     try {
-      heldOver = councilSeatHoldersSchema.parse(JSON.parse(rawHeldOver));
+      validatedCouncil = validateCouncilInput({
+        input,
+        council: councilJurisdiction,
+        rawHeldOver,
+      });
     } catch (error) {
-      councilError =
-        error instanceof z.ZodError
-          ? `the \`heldOver\` query parameter is not a valid heldOver roster: ${error.message}`
-          : "invalid JSON in the `heldOver` query parameter";
+      councilError = error instanceof Error ? error.message : String(error);
     }
   }
 
@@ -258,38 +301,8 @@ export default async function SimulatePage({
   // operator omitted an unrelated query param. LOM Art. 3 fixes the half at 9.
   // Gated on the PARTIDO, not on the level: `?council=` names which one, and
   // this route only knows the seat counts for the one it was verified against.
-  const inputTrace = projectionInput && !councilError
-    ? suppliedInputTrace(projectionInput, councilJurisdiction, heldOver)
-    : undefined;
-  if (
-    result &&
-    input?.level === "pba_municipal" &&
-    councilJurisdiction === COUNCIL_JURISDICTION_LABEL &&
-    input.seatsToFill !== COUNCIL_SEATS_PER_ELECTION
-  ) {
-    councilError =
-      `LOM Art. 3 renews ${COUNCIL_SEATS_PER_ELECTION} of the ` +
-      `${COUNCIL_TOTAL_SEATS} council seats per election; this allocation ` +
-      `fills ${input.seatsToFill}`;
-    result = undefined;
-  }
-
-  if (result && input && heldOver !== undefined) {
+  if (result && input && validatedCouncil.heldOver !== undefined) {
     try {
-      if (
-        input.level !== "pba_municipal" ||
-        councilJurisdiction !== COUNCIL_JURISDICTION_LABEL
-      ) {
-        // 18 seats is LOM Art. 2 for a PBA PARTIDO in the 40.000-80.000
-        // bracket — Coronel Rosales. Composing that roster from a national
-        // allocation (D'Hondt, Ley 19.945 Art. 161) attaches a municipal
-        // council to a race that does not elect one.
-        throw new CouncilCompositionError(
-          `a council roster is defined only for ${COUNCIL_JURISDICTION_LABEL} at the ` +
-            `pba_municipal level; got level ${input.level} and council ` +
-            `${councilJurisdiction ?? "(unspecified)"}`,
-        );
-      }
       if (result.seatAwards.length !== COUNCIL_SEATS_PER_ELECTION) {
         throw new CouncilCompositionError(
           `the allocation returned ${result.seatAwards.length} awards for ` +
@@ -321,15 +334,25 @@ export default async function SimulatePage({
             listName: source?.listName ?? `unmapped (list ${award.listId})`,
           };
         }),
-        heldOver,
+        heldOver: validatedCouncil.heldOver,
       });
     } catch (error) {
       councilError =
         error instanceof CouncilCompositionError || error instanceof Error
           ? error.message
           : String(error);
+      result = undefined;
+      council = undefined;
     }
   }
+
+  const inputTrace = projectionInput && result && !councilError
+    ? suppliedInputTrace(
+        projectionInput,
+        validatedCouncil.council,
+        validatedCouncil.heldOver,
+      )
+    : undefined;
 
   return (
     <main>

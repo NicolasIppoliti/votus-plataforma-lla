@@ -268,6 +268,9 @@ describe("simulate page — the council roster is reachable", () => {
 
     expect(markup).toContain("expected councilTotal - seatsUpForRenewal");
     expect(markup).not.toContain("council-composition");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+    expect(markup).not.toContain("Projection (hypothetical");
   });
 
   it("test_without_held_over_seats_the_page_says_why_there_is_no_roster", async () => {
@@ -375,6 +378,8 @@ describe("simulate page — the request cannot move the statute", () => {
 
     expect(markup).toContain("renews 9 of the 18 council seats");
     expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+    expect(markup).not.toContain("Projection (hypothetical");
   });
 
   it("test_a_non_statutory_seat_count_is_refused", async () => {
