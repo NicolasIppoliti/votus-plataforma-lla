@@ -155,7 +155,7 @@ def test_a_different_record_id_is_never_substituted(tmp_path: Path) -> None:
     # An "ok" record for a DIFFERENT id. Nothing may fall back to it.
     manifest_path.write_text(
         '[{"id": "pba/2025-distrito-999", "status": "ok",'
-        ' "archived_path": "archive/pba/distrito_999.html", "sha256": "deadbeef"}]',
+        ' "archived_path": "archive/pba/distrito_999.html", "sha256": "' + "d" * 64 + '"}]',
         encoding="utf-8",
     )
 

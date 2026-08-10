@@ -8,13 +8,15 @@ requirements (D2, D8).
 import json
 import os
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 
 import pytest
 
 from etl.__main__ import fetch_source
 from etl.archive import ArchiveIntegrityError, FetchResponse, archive_source, read_verified_archive
-from etl.manifest import load_manifest
+from etl.manifest import load_fetch_events, load_manifest
 from etl.storage import LocalArchiveStore, sha256_of
 
 
@@ -62,6 +64,25 @@ FISCALIZACION_ENTRY = {
     "source_kind": "fiscalizacion",
     "upload": "never",
 }
+
+
+def _fetch(sources, fetcher, local_root, manifest_path, invocation_id=None, source_id=ENTRY["id"]):
+    return fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=fetcher,
+        local_root=local_root,
+        manifest_path=manifest_path,
+        invocation_id=invocation_id,
+    )
+
+
+def _artifact_snapshot(root):
+    return {
+        path.relative_to(root).as_posix(): sha256_of(path.read_bytes())
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
 def test_first_fetch_creates_immutable_entry(tmp_path) -> None:
@@ -305,6 +326,208 @@ def test_no_drift_on_identical_refetch(tmp_path) -> None:
     assert "drift" not in _required_string(records[0], "notes").lower()
 
 
+def test_identical_refetches_append_ordered_events_and_reuse_one_artifact(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    payload = b"identical"
+    sources = {"national": [{**ENTRY, "filename": "same.zip"}]}
+
+    for invocation_id in ("fetch-a", "fetch-b"):
+        _fetch(
+            sources,
+            FakeFetcher({ENTRY["source_url"]: FetchResponse(200, payload)}),
+            local_root,
+            manifest_path,
+            invocation_id,
+        )
+
+    events = load_fetch_events(manifest_path, ENTRY["id"])
+    assert [event["event_id"] for event in events] == ["fetch-a", "fetch-b"]
+    assert [event["sequence"] for event in events] == [1, 2]
+    assert [event["classification"] for event in events] == ["initial", "identical"]
+    assert events[0]["fetched_at"] == events[1]["fetched_at"]
+    assert len(list((local_root / "national").iterdir())) == 1
+
+
+def test_failure_and_changed_content_events_preserve_canonical_success(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"national": [{**ENTRY, "filename": "history.zip"}]}
+    outcomes = (
+        ("ok-1", FetchResponse(200, b"first")),
+        ("failed", FetchResponse(503, b"ignored")),
+        ("ok-2", FetchResponse(200, b"changed")),
+    )
+    for invocation_id, outcome in outcomes:
+        _fetch(
+            sources,
+            FakeFetcher({ENTRY["source_url"]: outcome}),
+            local_root,
+            manifest_path,
+            invocation_id,
+        )
+
+    events = load_fetch_events(manifest_path, ENTRY["id"])
+    assert [event["classification"] for event in events] == [
+        "initial",
+        "fetch_error",
+        "content_drift",
+    ]
+    assert events[1]["record"]["sha256"] is None
+    assert events[1]["record"]["bytes"] is None
+    canonical = next(
+        record for record in load_manifest(manifest_path) if record["id"] == ENTRY["id"]
+    )
+    assert canonical["sha256"] == sha256_of(b"changed")
+
+
+def test_invocation_retry_is_idempotent_but_distinct_invocations_are_not(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"national": [{**ENTRY, "filename": "retry.zip"}]}
+    fetcher = FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"same")})
+
+    for invocation_id in ("same-invocation", "same-invocation", "different-invocation"):
+        _fetch(sources, fetcher, local_root, manifest_path, invocation_id)
+
+    assert fetcher.calls == [ENTRY["source_url"]] * 3
+    assert [event["event_id"] for event in load_fetch_events(manifest_path)] == [
+        "same-invocation",
+        "different-invocation",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("attempt", "shared", "event_count"),
+    [
+        (FetchResponse(200, b"changed"), False, 1),
+        (FetchResponse(200, b"shared"), True, 2),
+        (FetchResponse(503, b"failure"), False, 1),
+    ],
+)
+def test_invocation_conflict_preserves_manifest_and_artifacts(
+    tmp_path, attempt: FetchResponse, shared: bool, event_count: int
+) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    other = {**ENTRY, "id": "national/other", "filename": "evidence.zip"}
+    sources = {"national": [{**ENTRY, "filename": "evidence.zip"}, other]}
+    _fetch(
+        sources,
+        FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"first")}),
+        local_root,
+        manifest_path,
+        "same-id",
+    )
+    if shared:
+        _fetch(
+            sources,
+            FakeFetcher({other["source_url"]: attempt}),
+            local_root,
+            manifest_path,
+            "shared-owner",
+            other["id"],
+        )
+    manifest_before = manifest_path.read_bytes()
+    artifacts_before = _artifact_snapshot(local_root)
+
+    with pytest.raises(ValueError, match="invocation.*conflicts"):
+        _fetch(
+            sources,
+            FakeFetcher({ENTRY["source_url"]: attempt}),
+            local_root,
+            manifest_path,
+            "same-id",
+        )
+
+    assert manifest_path.read_bytes() == manifest_before
+    assert _artifact_snapshot(local_root) == artifacts_before
+    assert load_manifest(manifest_path)[0]["status"] == "ok"
+    assert len(load_fetch_events(manifest_path)) == event_count
+
+
+@pytest.mark.parametrize("preexisting", [False, True])
+def test_manifest_save_failure_rolls_back_only_new_artifacts(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, preexisting: bool
+) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    payload = b"atomic"
+    sources = {"national": [{**ENTRY, "filename": "atomic.zip"}]}
+    if preexisting:
+        digest = sha256_of(payload)
+        LocalArchiveStore(local_root).write("national", f"atomic.{digest}.zip", payload)
+    before = _artifact_snapshot(local_root)
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("manifest failed")
+
+    monkeypatch.setattr("etl.__main__.save_manifest", fail_save)
+    with pytest.raises(OSError, match="manifest failed"):
+        _fetch(
+            sources,
+            FakeFetcher({ENTRY["source_url"]: FetchResponse(200, payload)}),
+            local_root,
+            manifest_path,
+        )
+
+    assert _artifact_snapshot(local_root) == before
+
+
+def test_manifest_and_rollback_failures_are_both_reported(tmp_path, monkeypatch) -> None:
+    local_root = tmp_path / "archive"
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("manifest failed")
+
+    def fail_unlink(self, *_args, **_kwargs):
+        raise OSError("rollback failed")
+
+    monkeypatch.setattr("etl.__main__.save_manifest", fail_save)
+    monkeypatch.setattr(type(local_root), "unlink", fail_unlink)
+    with pytest.raises(ExceptionGroup) as excinfo:
+        _fetch(
+            {"national": [{**ENTRY, "filename": "dual.zip"}]},
+            FakeFetcher({ENTRY["source_url"]: FetchResponse(200, b"dual")}),
+            local_root,
+            tmp_path / "archive-manifest.json",
+        )
+
+    causes = {str(error) for error in excinfo.value.exceptions}
+    assert causes == {"manifest failed", "rollback failed"}
+
+
+def test_concurrent_distinct_invocations_append_without_lost_history(tmp_path) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    sources = {"national": [{**ENTRY, "filename": "concurrent.zip"}]}
+    barrier = Barrier(2)
+
+    class ConcurrentFetcher:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+
+        def get(self, *_args, **_kwargs):
+            barrier.wait()
+            return FetchResponse(200, self.payload)
+
+    def run(invocation_id: str, payload: bytes) -> None:
+        _fetch(sources, ConcurrentFetcher(payload), local_root, manifest_path, invocation_id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(run, "concurrent-a", b"a"),
+            executor.submit(run, "concurrent-b", b"b"),
+        ]
+        for future in futures:
+            future.result()
+
+    events = load_fetch_events(manifest_path)
+    assert [event["sequence"] for event in events] == [1, 2]
+    assert {event["event_id"] for event in events} == {"concurrent-a", "concurrent-b"}
+    assert {event["classification"] for event in events} == {"initial", "content_drift"}
+
+
 def test_changed_fiscalizacion_hash_is_an_informational_reexport(tmp_path) -> None:
     manifest_path = tmp_path / "archive-manifest.json"
     local_root = tmp_path / "archive"
@@ -332,6 +555,7 @@ def test_changed_fiscalizacion_hash_is_an_informational_reexport(tmp_path) -> No
     assert [(item.kind, item.severity) for item in changed.review_items] == [
         ("source_reexported", "info")
     ]
+    assert load_fetch_events(manifest_path)[-1]["classification"] == "source_reexported"
     canonical = next(
         record
         for record in load_manifest(manifest_path)
@@ -395,6 +619,7 @@ def test_changed_official_hash_remains_content_drift_warning(tmp_path) -> None:
     assert [(item.kind, item.severity) for item in changed.review_items] == [
         ("content_drift", "warning")
     ]
+    assert load_fetch_events(manifest_path)[-1]["classification"] == "content_drift"
     assert all(item.kind != "source_reexported" for item in changed.review_items)
     canonical = next(
         record for record in load_manifest(manifest_path) if record["id"] == ENTRY["id"]
@@ -492,7 +717,7 @@ def test_refetch_refuses_malformed_prior_hash_before_archive_mutation(tmp_path) 
     manifest_before = manifest_path.read_bytes()
     files_before = sorted(path.name for path in (local_root / "fiscalizacion").iterdir())
 
-    with pytest.raises(ValueError, match="verified sha256.*refus"):
+    with pytest.raises(ValueError, match="sha256.*hexadecimal"):
         fetch_source(
             FISCALIZACION_ENTRY["id"],
             sources=sources,

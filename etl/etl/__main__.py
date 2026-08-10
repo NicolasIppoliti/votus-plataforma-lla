@@ -24,9 +24,11 @@ import io
 import os
 import sys
 import tempfile
+import uuid
 import zipfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg
@@ -95,10 +97,16 @@ from .jurisdiction import (
 )
 from .manifest import (
     DuplicateManifestRecordError,
+    FetchEventConflictError,
     MalformedManifestError,
+    append_fetch_event,
     canonical_record,
+    fetch_event,
     latest_ok_record,
+    load_fetch_events,
     load_manifest,
+    manifest_lock,
+    normalized_fetch_evidence,
     save_manifest,
     upsert_record,
 )
@@ -112,7 +120,7 @@ from .review_item import (
     source_refetch_review_items,
     validate_prior_source_identity,
 )
-from .storage import LocalArchiveStore, extract_zip_safely
+from .storage import LocalArchiveStore, extract_zip_safely, sha256_of
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SOURCES_PATH = REPO_ROOT / "etl" / "sources.yaml"
@@ -226,13 +234,12 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                     f"sources.yaml capability {capability!r} entry {index} source_url "
                     "must be a string or null"
                 )
-            if "election_year" in entry or "election_round" in entry:
-                try:
-                    registered_source_election(entry)
-                except SourcesValidationError as exc:
-                    raise SourcesValidationError(
-                        f"sources.yaml capability {capability!r} entry {index}: {exc}"
-                    ) from exc
+            try:
+                registered_source_election(entry)
+            except SourcesValidationError as exc:
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index}: {exc}"
+                ) from exc
         sources[capability] = list(entries)
     return sources
 
@@ -270,6 +277,7 @@ def fetch_source(
     local_root: Path,
     manifest_path: Path,
     local_file: Path | None = None,
+    invocation_id: str | None = None,
 ) -> ArchiveResult:
     """Archive one registered source by id.
 
@@ -287,6 +295,11 @@ def fetch_source(
     # A fiscalización entry that loses its `upload: never` declaration now fails
     # here, before its bytes exist on disk.
     guard_local_mirror_only(entry)
+    event_id = str(uuid.uuid4()) if invocation_id is None else invocation_id
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise ValueError("fetch invocation id must be a non-empty opaque string")
+    event_id = event_id.strip()
+    invoked_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     source_url = entry.get("source_url")
     is_local_source = isinstance(source_url, str) and source_url.startswith("local://")
@@ -328,6 +341,69 @@ def fetch_source(
         pba_fetcher = PolicedHostFetcher(fetcher, PBA_HOST_POLICY)
 
     local_store = LocalArchiveStore(root=local_root)
+    staged_artifacts: dict[tuple[str, str], bytes] = {}
+
+    class StagedArchiveStore:
+        root = local_store.root
+
+        def path_for(self, capability: str, filename: str) -> Path:
+            return local_store.path_for(capability, filename)
+
+        def exists(self, capability: str, filename: str) -> bool:
+            return (capability, filename) in staged_artifacts or local_store.exists(
+                capability, filename
+            )
+
+        def read(self, capability: str, filename: str) -> bytes:
+            staged = staged_artifacts.get((capability, filename))
+            return staged if staged is not None else local_store.read(capability, filename)
+
+        def write(self, capability: str, filename: str, data: bytes) -> Path:
+            target = local_store.path_for(capability, filename)
+            staged_artifacts[(capability, filename)] = data
+            return target
+
+    staged_store = StagedArchiveStore()
+
+    def promote_staged_artifacts(protected_paths: set[str]) -> list[tuple[Path, str]]:
+        promoted: list[tuple[Path, str]] = []
+        for (capability, filename), data in staged_artifacts.items():
+            target = local_store.path_for(capability, filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            digest = sha256_of(data)
+            if target.exists():
+                existing_digest = sha256_of(target.read_bytes())
+                if existing_digest != digest:
+                    raise ArchiveIntegrityError(
+                        f"archive target {filename!r} claims sha256 {digest} but contains "
+                        f"bytes with sha256 {existing_digest}; refusing to overwrite"
+                    )
+                continue
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", dir=target.parent
+            )
+            try:
+                with os.fdopen(descriptor, "wb") as temporary:
+                    temporary.write(data)
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                try:
+                    os.link(temporary_name, target)
+                    archive_path = f"{local_store.root.name}/{capability}/{filename}"
+                    if archive_path not in protected_paths:
+                        promoted.append((target, digest))
+                except FileExistsError:
+                    existing_digest = sha256_of(target.read_bytes())
+                    if existing_digest != digest:
+                        raise ArchiveIntegrityError(
+                            f"archive target {filename!r} claims sha256 {digest} but contains "
+                            f"bytes with sha256 {existing_digest}; refusing to overwrite"
+                        )
+            finally:
+                if os.path.exists(temporary_name):
+                    os.unlink(temporary_name)
+        return promoted
+
     records = load_manifest(manifest_path)
     previous = canonical_record(records, source_id)
     identity = source_archive_identity(entry)
@@ -348,7 +424,7 @@ def fetch_source(
         result = archive_pba_source(
             entry,
             fetcher=pba_fetcher,
-            local_store=local_store,
+            local_store=staged_store,
             records=records,
         )
     elif local_bytes is not None:
@@ -363,22 +439,90 @@ def fetch_source(
         result = archive_source(
             entry,
             fetcher=LocalBytesFetcher(),
-            local_store=local_store,
+            local_store=staged_store,
         )
     else:
-        result = archive_source(entry, fetcher=fetcher, local_store=local_store)
+        result = archive_source(entry, fetcher=fetcher, local_store=staged_store)
 
     record = dict(result.record)
     if identity is not None:
         record.update(identity.manifest_fields())
-    review_items = source_refetch_review_items(verified_previous, record, identity)
-    drift_label = (
-        "source re-export"
-        if any(item.kind == "source_reexported" for item in review_items)
-        else "content drift"
-    )
-    records = upsert_record(records, record, drift_label=drift_label)
-    save_manifest(manifest_path, records)
+    with manifest_lock(manifest_path):
+        records = load_manifest(manifest_path)
+        events = load_fetch_events(manifest_path)
+        prior_event = fetch_event(events, event_id)
+        if prior_event is not None:
+            if prior_event.get("source_id") != source_id:
+                raise FetchEventConflictError(
+                    f"fetch invocation {event_id!r} already belongs to another source"
+                )
+            prior_record = prior_event.get("record")
+            if not isinstance(prior_record, dict):
+                raise MalformedManifestError(f"fetch event {event_id!r} has no usable record")
+            if normalized_fetch_evidence(prior_record) != normalized_fetch_evidence(record):
+                raise FetchEventConflictError(
+                    f"fetch invocation {event_id!r} conflicts with its recorded evidence"
+                )
+            promote_staged_artifacts({str(prior_record.get("archived_path"))})
+            return replace(result, record=prior_record, review_items=())
+        protected_paths = {
+            str(item.get("archived_path"))
+            for item in [*records, *(event["record"] for event in events)]
+            if item.get("archived_path") is not None
+        }
+        previous = canonical_record(records, source_id)
+        validate_prior_source_identity(previous, identity)
+        verified_previous = (
+            previous if previous is not None and previous.get("status") == "ok" else None
+        )
+        review_items = source_refetch_review_items(verified_previous, record, identity)
+        drift_label = (
+            "source re-export"
+            if any(item.kind == "source_reexported" for item in review_items)
+            else "content drift"
+        )
+        classification = "fetch_error"
+        if record.get("status") == "ok":
+            if verified_previous is None:
+                classification = "initial"
+            elif verified_previous.get("sha256") == record.get("sha256"):
+                classification = "identical"
+            elif any(item.kind == "source_reexported" for item in review_items):
+                classification = "source_reexported"
+            else:
+                classification = "content_drift"
+        records = upsert_record(records, record, drift_label=drift_label)
+        events = append_fetch_event(
+            events,
+            {
+                "event_id": event_id,
+                "sequence": 0,
+                "source_id": source_id,
+                "fetched_at": invoked_at,
+                "status": str(record["status"]),
+                "classification": classification,
+                "record": record,
+            },
+        )
+        promoted = promote_staged_artifacts(protected_paths)
+        try:
+            save_manifest(manifest_path, records, events=events)
+        except Exception as save_error:
+            rollback_errors: list[Exception] = []
+            for target, digest in promoted:
+                try:
+                    actual_digest = sha256_of(target.read_bytes())
+                    if actual_digest != digest:
+                        raise ArchiveIntegrityError(f"rollback sha256 mismatch for {target.name!r}")
+                    target.unlink()
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                raise ExceptionGroup(
+                    "manifest persistence and artifact rollback both failed",
+                    [save_error, *rollback_errors],
+                )
+            raise
     return replace(result, record=record, review_items=review_items)
 
 
@@ -392,10 +536,14 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             local_root=Path(args.local_root),
             manifest_path=Path(args.manifest_path),
             local_file=Path(args.local_file) if args.local_file is not None else None,
+            invocation_id=args.invocation_id,
         )
     except (
         UnknownSourceError,
         AmbiguousSourceError,
+        DuplicateManifestRecordError,
+        FetchEventConflictError,
+        MalformedManifestError,
         MalformedManifestRecordError,
         FiscalizacionUploadForbiddenError,
         LocalFileValidationError,
@@ -421,6 +569,30 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print(f"  {kind} ({severity}): {count} review item(s)", file=sys.stderr)
 
     print(f"archived {args.source} -> {result.record['archived_path']}")
+    return 0
+
+
+def cmd_archive_history(args: argparse.Namespace) -> int:
+    try:
+        events = load_fetch_events(Path(args.manifest_path), args.source)
+    except MalformedManifestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    status_counts: dict[str, int] = {}
+    classification_counts: dict[str, int] = {}
+    for event in events:
+        status = str(event["status"])
+        classification = str(event["classification"])
+        status_counts[status] = status_counts.get(status, 0) + 1
+        classification_counts[classification] = classification_counts.get(classification, 0) + 1
+        print(
+            f"{event['sequence']} {event['event_id']} {event['fetched_at']} "
+            f"{event['source_id']} {status} {classification}"
+        )
+    for status, count in sorted(status_counts.items()):
+        print(f"status {status}: {count}")
+    for classification, count in sorted(classification_counts.items()):
+        print(f"classification {classification}: {count}")
     return 0
 
 
@@ -2574,7 +2746,14 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser = subparsers.add_parser("fetch", help="Archive one registered source.")
     fetch_parser.add_argument("--source", required=True)
     fetch_parser.add_argument("--local-file", default=None)
+    fetch_parser.add_argument("--invocation-id", default=None)
     fetch_parser.set_defaults(func=cmd_fetch)
+
+    history_parser = subparsers.add_parser(
+        "archive-history", help="List ordered source fetch events and aggregate counts."
+    )
+    history_parser.add_argument("--source", default=None)
+    history_parser.set_defaults(func=cmd_archive_history)
 
     ingest_parser = subparsers.add_parser(
         "ingest", help="Load one archived source's rows into result_row."

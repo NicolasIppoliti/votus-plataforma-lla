@@ -52,6 +52,7 @@ from etl.crosswalk import (
     JurisdictionCrosswalkEntry,
     load_crosswalk,
 )
+from etl.manifest import load_fetch_events, load_manifest, save_manifest
 from etl.party_map import PartyMappingTable, load_party_map
 from etl.storage import LocalArchiveStore
 
@@ -139,6 +140,8 @@ def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
                         "id": source_id,
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "mime": "text/csv",
                         "filename": "fiscal.csv",
                         "source_kind": "fiscalizacion",
@@ -167,7 +170,7 @@ def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
     digest = hashlib.sha256(payload).hexdigest()
     archived = local_root / "fiscalizacion" / f"fiscal.{digest}.csv"
     assert archived.read_bytes() == payload
-    records = json.loads(manifest_path.read_text(encoding="utf-8"))
+    records = load_manifest(manifest_path)
     assert len(records) == 1
     assert records[0]["sha256"] == digest
     assert records[0]["archived_path"] == f"archive/fiscalizacion/{archived.name}"
@@ -240,6 +243,8 @@ def test_fetch_local_source_requires_a_local_file_argument(
                         "id": source_id,
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "source_kind": "fiscalizacion",
                         "upload": "never",
                     }
@@ -277,6 +282,8 @@ def test_fetch_local_source_refuses_a_missing_file_without_disclosing_its_path(
                         "id": source_id,
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "source_kind": "fiscalizacion",
                         "upload": "never",
                     }
@@ -1164,6 +1171,8 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
                         "id": "national/2025-tipo-a",
                         "source": "example.test",
                         "source_url": "https://example.test/a.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "mime": "text/csv",
                         "notes": "conflict fixture",
                         "filename": "a.csv",
@@ -1172,6 +1181,8 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
                         "id": "national/2025-tipo-b",
                         "source": "example.test",
                         "source_url": "https://example.test/b.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "mime": "text/csv",
                         "notes": "conflict fixture",
                         "filename": "b.csv",
@@ -1254,6 +1265,8 @@ def test_backfill_mesa_tipo_reaches_its_real_work_through_main(tmp_path: Path) -
                         "id": "national/2025-tipo-real",
                         "source": "example.test",
                         "source_url": "https://example.test/tipo.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "mime": "text/csv",
                         "notes": "backfill fixture",
                         "filename": "tipo.csv",
@@ -2193,6 +2206,219 @@ def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> lis
     ]
 
 
+def test_archive_history_cli_lists_order_and_status_classification_counts(
+    tmp_path: Path, capsys
+) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "records": [],
+                "fetch_events": [
+                    {
+                        "event_id": "one",
+                        "sequence": 1,
+                        "source_id": "national/test",
+                        "fetched_at": "2026-08-10T00:00:00Z",
+                        "status": "ok",
+                        "classification": "initial",
+                        "record": {
+                            "id": "national/test",
+                            "status": "ok",
+                            "sha256": "a" * 64,
+                            "archived_path": "archive/national/test.csv",
+                            "bytes": 10,
+                        },
+                    },
+                    {
+                        "event_id": "two",
+                        "sequence": 2,
+                        "source_id": "national/test",
+                        "fetched_at": "2026-08-10T00:00:00Z",
+                        "status": "error",
+                        "classification": "fetch_error",
+                        "record": {
+                            "id": "national/test",
+                            "status": "error",
+                            "sha256": None,
+                            "archived_path": None,
+                            "bytes": None,
+                            "notes": "private row value",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        _main_args(tmp_path / "unused.yaml", tmp_path / "archive", manifest_path)
+        + ["archive-history", "--source", "national/test"]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output.index("one") < output.index("two")
+    assert "status ok: 1" in output
+    assert "status error: 1" in output
+    assert "classification initial: 1" in output
+    assert "classification fetch_error: 1" in output
+    assert "private row value" not in output
+
+
+@pytest.mark.parametrize(("fetch_status", "expected_exit"), [(200, 0), (404, 1)])
+def test_fetch_pba_script_entrypoint_records_fetch_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fetch_status: int,
+    expected_exit: int,
+) -> None:
+    import runpy
+
+    import etl.__main__ as cli
+    import etl.http_client as http_client
+    from etl.ingest.pba import PBA_ALLOWED_PATHS, PBA_HOST
+    from etl.manifest import load_fetch_events
+
+    script = tmp_path / "scripts" / "fetch_pba_2025.py"
+    script.parent.mkdir()
+    script.write_bytes((REPO_ROOT / "scripts" / script.name).read_bytes())
+    etl_root = tmp_path / "etl"
+    etl_root.mkdir()
+    (etl_root / "sources.yaml").write_text(
+        f"""pba:
+  - id: pba/script-entrypoint
+    source: {PBA_HOST}
+    source_url: https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}
+    filename: script.html
+    election_year: 2025
+    election_round: provinciales
+""",
+        encoding="utf-8",
+    )
+
+    class ScriptFetcher:
+        def get(self, url: str, **_kwargs):
+            status = 404 if url.endswith("/robots.txt") else fetch_status
+            return FetchResponse(status_code=status, content=b"pba-script", headers={})
+
+    fetcher = ScriptFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+    monkeypatch.setattr(http_client, "RequestsFetcher", lambda: fetcher)
+    monkeypatch.setattr("sys.argv", [str(script)])
+
+    with pytest.raises(SystemExit, match=str(expected_exit)):
+        runpy.run_path(str(script), run_name="__main__")
+
+    events = load_fetch_events(tmp_path / "archive-manifest.json")
+    assert len(events) == 1
+    assert events[0]["status"] == ("ok" if fetch_status == 200 else "error")
+
+
+def test_fetch_cli_invocation_id_makes_retry_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(FAKE_SOURCES), encoding="utf-8")
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+    manifest_path = tmp_path / "archive-manifest.json"
+    command = _main_args(sources_path, tmp_path / "archive", manifest_path) + [
+        "fetch",
+        "--source",
+        "national/fake-test",
+        "--invocation-id",
+        "stable-cli-invocation",
+    ]
+
+    assert main(command) == main(command) == 0
+    assert fetcher.calls == ["https://example.test/results.zip"] * 2
+    from etl.manifest import load_fetch_events
+
+    assert [event["event_id"] for event in load_fetch_events(manifest_path)] == [
+        "stable-cli-invocation"
+    ]
+
+
+@pytest.mark.parametrize("invocation_id", ["", "   "])
+def test_fetch_cli_rejects_blank_invocation_id_before_archive_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    invocation_id: str,
+) -> None:
+    import etl.__main__ as cli
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(FAKE_SOURCES), encoding="utf-8")
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "fetch",
+            "--source",
+            "national/fake-test",
+            "--invocation-id",
+            invocation_id,
+        ]
+    )
+
+    assert exit_code == 1
+    assert "non-empty opaque string" in capsys.readouterr().err
+    assert fetcher.calls == []
+    assert not local_root.exists()
+    assert not manifest_path.exists()
+
+
+def test_fetch_cli_omitted_invocation_id_generates_one_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+    from etl.manifest import load_fetch_events
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(FAKE_SOURCES), encoding="utf-8")
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+    manifest_path = tmp_path / "archive-manifest.json"
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["fetch", "--source", "national/fake-test"]
+    )
+
+    assert exit_code == 0
+    events = load_fetch_events(manifest_path)
+    assert len(events) == 1
+    assert isinstance(events[0]["event_id"], str) and events[0]["event_id"]
+
+
+def test_fetch_cli_reports_malformed_history_without_a_traceback(tmp_path: Path, capsys) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(FAKE_SOURCES), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps({"schema_version": 2, "records": [], "fetch_events": "truncated"}),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["fetch", "--source", "national/fake-test"]
+    )
+
+    assert exit_code == 1
+    assert "fetch_events must both be JSON arrays" in capsys.readouterr().err
+
+
 def _archived_national_sources(
     tmp_path: Path, payloads: dict[str, bytes | None]
 ) -> tuple[Path, Path, Path]:
@@ -2352,7 +2578,7 @@ def test_load_curated_requires_every_registered_source_before_database_access(
             "national/2025-missing-file": None,
         },
     )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = load_manifest(manifest_path)
     manifest.append(
         {
             "id": "national/2025-missing-file",
@@ -2360,7 +2586,7 @@ def test_load_curated_requires_every_registered_source_before_database_access(
             "archived_path": "archive/national/absent.csv",
         }
     )
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    save_manifest(manifest_path, manifest, events=load_fetch_events(manifest_path))
     party_map_path = tmp_path / "party-map.yaml"
     party_map_path.write_text("mappings: []\n", encoding="utf-8")
     crosswalk_path = tmp_path / "crosswalk.yaml"
@@ -2533,6 +2759,8 @@ def test_fetch_is_reachable_through_main(tmp_path: Path, capsys) -> None:
                         "id": source_id,
                         "source": "internal",
                         "source_url": "https://example.test/should-never-be-fetched.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                         "mime": "text/csv",
                         "notes": "main() fetch fixture",
                         "filename": "nope.csv",
@@ -4218,7 +4446,7 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
     # so the manifest carries WHY instead of the run dying with a traceback.
     assert calls[-1] == "https://www.juntaelectoral.gba.gov.ar/robots.txt"
     assert len(calls) == 4, "an unregistered source path must not reach the host"
-    written = json.loads(manifest_path.read_text(encoding="utf-8"))
+    written = load_manifest(manifest_path)
     refused = [r for r in written if r["id"] == "pba/off-allowlist"]
     assert refused and refused[0]["status"] != "ok"
     assert (
@@ -4294,6 +4522,8 @@ def test_pba_robots_appearance_exits_fetch_command_cleanly(
                             "https://www.juntaelectoral.gba.gov.ar/"
                             "escrutinio-definitivo-2025/concejales_distri/2025027.pdf"
                         ),
+                        "election_year": 2025,
+                        "election_round": "provinciales",
                         "mime": "application/pdf",
                         "notes": "robots CLI refusal fixture",
                     }
@@ -4430,6 +4660,8 @@ def test_a_manifest_record_missing_status_exits_nonzero(tmp_path: Path, capsys) 
                         "id": "national/2025",
                         "source": "x",
                         "source_url": "https://example.test/2025.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                     }
                 ]
             }
@@ -4820,6 +5052,77 @@ def test_sources_boundary_accepts_required_election_metadata_and_nullable_url(
     assert load_sources(path) == minimal
 
 
+@pytest.mark.parametrize(
+    "election_fields",
+    [{}, {"election_year": 2025}, {"election_round": "legislativas"}],
+)
+def test_sources_boundary_requires_complete_election_identity(
+    tmp_path: Path, election_fields: dict[str, object]
+) -> None:
+    from etl.__main__ import SourcesValidationError, load_sources
+
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": "fiscalizacion/missing-election",
+                        "source": "local",
+                        "source_url": "local://fiscalizacion/test.csv",
+                        **election_fields,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourcesValidationError, match="election_year|election_round"):
+        load_sources(path)
+
+
+def test_loaded_fiscalizacion_identity_reaches_reexport_classification(tmp_path: Path) -> None:
+    from etl.__main__ import load_sources
+    from etl.manifest import load_fetch_events
+
+    source_id = "fiscalizacion/2025-registry-classification"
+    source_url = "https://example.test/fiscal.csv"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": source_id,
+                        "source": "local",
+                        "source_url": source_url,
+                        "mime": "text/csv",
+                        "filename": "fiscal.csv",
+                        "upload": "never",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sources = load_sources(sources_path)
+    manifest_path = tmp_path / "archive-manifest.json"
+    for invocation_id, payload in (("first", b"v1"), ("second", b"v2")):
+        fetch_source(
+            source_id,
+            sources=sources,
+            fetcher=FakeFetcher(payload=payload),
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+            invocation_id=invocation_id,
+        )
+
+    assert load_fetch_events(manifest_path)[-1]["classification"] == "source_reexported"
+
+
 def test_numeric_archived_path_is_a_clean_cli_validation_failure(tmp_path: Path, capsys) -> None:
     sources_path = tmp_path / "sources.yaml"
     sources_path.write_text(
@@ -4830,6 +5133,8 @@ def test_numeric_archived_path_is_a_clean_cli_validation_failure(tmp_path: Path,
                         "id": "national/2025-numeric-path",
                         "source": "example.test",
                         "source_url": "https://example.test/x.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
                     }
                 ]
             }

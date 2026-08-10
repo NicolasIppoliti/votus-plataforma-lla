@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from etl import db
-from etl.__main__ import ingest_source
+from etl.__main__ import fetch_source, ingest_source
+from etl.archive import FetchResponse
+from etl.manifest import load_fetch_events, load_manifest
 from etl.storage import LocalArchiveStore
 
 
@@ -88,6 +90,32 @@ def test_mapping_uses_registry_notes_only_when_manifest_notes_are_absent() -> No
     projected = db.archive_entry_from_evidence(manifest, source)
 
     assert projected.notes == source["notes"]
+
+
+def test_identical_fetch_history_keeps_one_canonical_archive_projection(tmp_path: Path) -> None:
+    source = _source("national/one-projection") | {"filename": "one.csv"}
+    sources = {"national": [source]}
+
+    class Fetcher:
+        def get(self, *_args, **_kwargs):
+            return FetchResponse(200, b"same")
+
+    manifest_path = tmp_path / "archive-manifest.json"
+    for invocation_id in ("first", "second"):
+        fetch_source(
+            source["id"],
+            sources=sources,
+            fetcher=Fetcher(),
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+            invocation_id=invocation_id,
+        )
+
+    records = load_manifest(manifest_path)
+    assert len(load_fetch_events(manifest_path)) == 2
+    assert len([record for record in records if record["id"] == source["id"]]) == 1
+    projected = db.archive_entry_from_evidence(records[0], source)
+    assert projected.id == source["id"]
 
 
 class _Connection:

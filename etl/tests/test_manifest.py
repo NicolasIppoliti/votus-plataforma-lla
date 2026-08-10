@@ -16,6 +16,7 @@ from etl.manifest import (
     REQUIRED_FIELDS,
     ManifestRecord,
     latest_ok_record,
+    load_fetch_events,
     load_manifest,
     save_manifest,
     upsert_record,
@@ -38,6 +39,18 @@ def _record(**overrides: object) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def _event(event_id: str, sequence: int) -> dict:
+    return {
+        "event_id": event_id,
+        "sequence": sequence,
+        "source_id": "national/2023-generales",
+        "fetched_at": "2026-08-03T20:00:00Z",
+        "status": "ok",
+        "classification": "initial" if sequence == 1 else "identical",
+        "record": _record(),
+    }
 
 
 def _required_string(record: Mapping[str, object], field: str) -> str:
@@ -91,11 +104,11 @@ def test_load_manifest_rejects_non_array_or_non_mapping_records(tmp_path, payloa
 
 def test_save_then_load_roundtrips(tmp_path) -> None:
     path = tmp_path / "archive-manifest.json"
-    save_manifest(path, [_record()])
+    save_manifest(path, [_record()], events=[])
 
     loaded = load_manifest(path)
     assert loaded == [_record()]
-    assert path.read_text(encoding="utf-8").endswith("]\n")
+    assert path.read_text(encoding="utf-8").endswith("}\n")
 
 
 @pytest.mark.parametrize(
@@ -149,6 +162,96 @@ def test_load_manifest_accepts_legacy_minimal_records_and_nullable_fields(tmp_pa
     path.write_text(json.dumps(records), encoding="utf-8")
 
     assert load_manifest(path) == records
+    assert load_fetch_events(path) == []
+
+    save_manifest(path, records, events=[])
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated == {"schema_version": 2, "records": records, "fetch_events": []}
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [_event("duplicate", 1), _event("duplicate", 2)],
+        [_event("later", 2), _event("earlier", 1)],
+    ],
+)
+def test_load_fetch_events_refuses_conflicting_or_reordered_history(tmp_path, events) -> None:
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(
+        json.dumps({"schema_version": 2, "records": [_record()], "fetch_events": events}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="fetch event|history"):
+        load_fetch_events(path)
+
+
+@pytest.mark.parametrize(
+    ("status", "classification"),
+    [
+        ("error", "initial"),
+        ("error", "identical"),
+        ("error", "content_drift"),
+        ("error", "source_reexported"),
+        ("ok", "fetch_error"),
+    ],
+)
+def test_load_fetch_events_refuses_status_classification_contradictions(
+    tmp_path: Path, status: str, classification: str
+) -> None:
+    event = _event("contradiction", 1)
+    event["status"] = status
+    event["classification"] = classification
+    event["record"] = (
+        _record()
+        if status == "ok"
+        else _record(status="error", sha256=None, archived_path=None, bytes=None)
+    )
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(
+        json.dumps({"schema_version": 2, "records": [], "fetch_events": [event]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="status.*classification"):
+        load_fetch_events(path)
+
+
+@pytest.mark.parametrize(
+    ("status", "classification", "malformed_field", "malformed_value"),
+    [
+        ("ok", "initial", "sha256", "g" * 64),
+        ("ok", "initial", "source_url", 123),
+        ("error", "fetch_error", "source_url", 123),
+        ("error", "fetch_error", "fetched_at", 123),
+    ],
+)
+def test_fetch_event_record_reuses_canonical_known_field_validation(
+    tmp_path: Path,
+    status: str,
+    classification: str,
+    malformed_field: str,
+    malformed_value: object,
+) -> None:
+    event = _event("malformed-record", 1)
+    event["status"] = status
+    event["classification"] = classification
+    record = (
+        _record()
+        if status == "ok"
+        else _record(status="error", sha256=None, archived_path=None, bytes=None)
+    )
+    record[malformed_field] = malformed_value
+    event["record"] = record
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(
+        json.dumps({"schema_version": 2, "records": [], "fetch_events": [event]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=malformed_field):
+        load_fetch_events(path)
 
 
 def test_upsert_rejects_wrong_types_at_the_writer_boundary() -> None:
@@ -292,7 +395,7 @@ def test_upsert_still_overwrites_when_prior_status_was_already_error() -> None:
 
 def test_manifest_is_valid_json_array(tmp_path) -> None:
     path = tmp_path / "archive-manifest.json"
-    save_manifest(path, [_record(), _record(id="other/id")])
+    path.write_text(json.dumps([_record(), _record(id="other/id")]) + "\n", encoding="utf-8")
 
     parsed = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(parsed, list)
