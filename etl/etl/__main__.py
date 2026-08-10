@@ -19,6 +19,7 @@ Exit codes: 0 on success, non-zero on any argument or validation failure.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import io
 import os
@@ -26,10 +27,11 @@ import sys
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 
 import psycopg
 import yaml
@@ -82,7 +84,7 @@ from .ingest.national import (
     REQUIRED_COLUMNS,
     REQUIRED_ESTABLECIMIENTO_COLUMNS,
     NationalSchemaError,
-    extract_raw_mesa_identities,
+    extract_raw_mesa_identities_from_text,
     ingest_national,
     load_national_rows,
     validate_mesa_tipo,
@@ -622,8 +624,40 @@ class NationalArchiveCsvs:
     establecimientos: bytes | None
 
 
+@dataclass(frozen=True)
+class NationalArchivePaths:
+    """Which extracted members carry the national schema, before any read.
+
+    `results is None` marks the bare-CSV passthrough: `raw_bytes` was not a
+    ZIP at all, so there is no member on disk to point at.
+    """
+
+    results: Path | None
+    establecimientos: Path | None
+
+
 def resolve_national_archive_csvs(raw_bytes: bytes, *, extract_dir: Path) -> NationalArchiveCsvs:
-    """Return the results and optional establecimiento CSV bytes ingestion expects.
+    """Read the members `resolve_national_archive_paths` selected, fully.
+
+    Kept as the bytes-returning face of one selection: every call site that
+    parses after `extract_dir` is gone depends on being handed data rather
+    than a view into a directory that no longer exists. Callers that can
+    consume the member as a stream should use `national_results_text`
+    instead -- the 2023 PASO member is 3,76 GB and does not belong in memory.
+    """
+    paths = resolve_national_archive_paths(raw_bytes, extract_dir=extract_dir)
+    if paths.results is None:
+        return NationalArchiveCsvs(results=raw_bytes, establecimientos=None)
+    return NationalArchiveCsvs(
+        results=paths.results.read_bytes(),
+        establecimientos=(
+            paths.establecimientos.read_bytes() if paths.establecimientos is not None else None
+        ),
+    )
+
+
+def resolve_national_archive_paths(raw_bytes: bytes, *, extract_dir: Path) -> NationalArchivePaths:
+    """Select the results and optional establecimiento CSV members, without reading them.
 
     A registered national source is archived as a ZIP (`sources.yaml`),
     with the results file's own name differing across years
@@ -640,7 +674,7 @@ def resolve_national_archive_csvs(raw_bytes: bytes, *, extract_dir: Path) -> Nat
     passes through unchanged.
     """
     if not zipfile.is_zipfile(io.BytesIO(raw_bytes)):
-        return NationalArchiveCsvs(results=raw_bytes, establecimientos=None)
+        return NationalArchivePaths(results=None, establecimientos=None)
 
     extracted = extract_zip_safely(raw_bytes, extract_dir)
     # Every member and why it was rejected. The raise below used to name the
@@ -717,11 +751,9 @@ def resolve_national_archive_csvs(raw_bytes: bytes, *, extract_dir: Path) -> Nat
                 file=sys.stderr,
             )
             report_rejected()
-        return NationalArchiveCsvs(
-            results=matches[0].read_bytes(),
-            establecimientos=(
-                establecimiento_matches[0].read_bytes() if establecimiento_matches else None
-            ),
+        return NationalArchivePaths(
+            results=matches[0],
+            establecimientos=(establecimiento_matches[0] if establecimiento_matches else None),
         )
 
     report_rejected()
@@ -1229,6 +1261,32 @@ def national_csv_bytes(raw_bytes: bytes) -> bytes:
     """
     with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
         return resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
+
+
+@contextlib.contextmanager
+def national_results_text(raw_bytes: bytes) -> Iterator[TextIO]:
+    """The national results CSV as a text stream, never materialized.
+
+    `national_csv_bytes` holds the whole decompressed member, which is the
+    right contract for call sites that parse after the temp directory is
+    gone. It is the wrong one for a pass that only walks rows: the 2023 PASO
+    member decompresses to 3,76 GB, and decoding it for `csv` allocated a
+    second copy of the same size, so `load-curated` peaked at 6,59 GB and was
+    killed by the OS.
+
+    THE TEMP DIRECTORY'S LIFETIME IS THE `with` BLOCK. The handle is only
+    valid inside it -- that is the point, and it is why this is a context
+    manager rather than a function returning a handle.
+    """
+    with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
+        paths = resolve_national_archive_paths(raw_bytes, extract_dir=Path(extract_dir))
+        if paths.results is None:
+            # Bare CSV (a test fixture, not a registered archive). Wrapping the
+            # bytes we already hold adds no second copy; decoding them would.
+            yield io.TextIOWrapper(io.BytesIO(raw_bytes), encoding="utf-8-sig", newline="")
+            return
+        with paths.results.open("r", encoding="utf-8-sig", newline="") as handle:
+            yield handle
 
 
 def national_archive_csvs(raw_bytes: bytes) -> NationalArchiveCsvs:
@@ -1813,8 +1871,11 @@ def collect_national_mesa_codes(
             local_store=local_store,
             filename=filename,
         )
-        csv_bytes = national_csv_bytes(raw_bytes)
-        for distrito, seccion, circuito, mesa in extract_raw_mesa_identities(csv_bytes):
+        # Streamed, not materialized: the 2023 PASO member is 3,76 GB and this
+        # pass only walks rows. See `national_results_text`.
+        with national_results_text(raw_bytes) as results_text:
+            raw_identities = extract_raw_mesa_identities_from_text(results_text)
+        for distrito, seccion, circuito, mesa in raw_identities:
             if normalize_distrito_code(distrito) != target_distrito:
                 dropped["outside the requested distrito"] = (
                     dropped.get("outside the requested distrito", 0) + 1
@@ -3004,8 +3065,23 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
             local_store=local_store,
             filename=filename,
         )
+        # Streamed for the same reason `collect_national_mesa_codes` is:
+        # `collect_mesa_tipo_mapping` only walks rows, and materializing the
+        # 3,76 GB 2023 PASO member plus its decoded copy is what made this
+        # command unrunnable against the real corpus.
+        #
+        # The member is resolved inside the `try` and consumed outside it, so
+        # the handler still covers exactly the resolution failures it always
+        # covered -- widening it over `collect_mesa_tipo_mapping` would turn a
+        # mapping-time schema error into this command's "error:" exit.
+        #
+        # `national_results_text` opens with `utf-8-sig` for the same BOM
+        # reason as `resolve_national_results_bytes`: with `utf-8` every row
+        # would miss `distrito_id` and land in `skipped_malformed`, emptying
+        # the mapping and failing the backfill on a valid file.
+        member = contextlib.ExitStack()
         try:
-            csv_bytes = national_csv_bytes(raw_bytes)
+            results_text = member.enter_context(national_results_text(raw_bytes))
         except (
             NationalResultsCsvNotFoundError,
             NationalSchemaError,
@@ -3019,11 +3095,10 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
         ) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-        # Same BOM reason as `resolve_national_results_bytes`: with `utf-8`
-        # every row would miss `distrito_id` and land in `skipped_malformed`,
-        # emptying the mapping and failing the backfill on a valid file.
-        reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
-        collect_mesa_tipo_mapping(reader, source_label=entry["id"], into=candidates)
+        with member:
+            collect_mesa_tipo_mapping(
+                csv.DictReader(results_text), source_label=entry["id"], into=candidates
+            )
 
     if skipped_not_archived:
         print(

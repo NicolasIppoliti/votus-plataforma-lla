@@ -23,6 +23,7 @@ from __future__ import annotations
 import csv
 import io
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from etl import db
@@ -148,9 +149,18 @@ def _parse_int(raw: str | None) -> int | None:
     return parse_source_int(raw)
 
 
-def extract_raw_mesa_identities(csv_bytes: bytes) -> set[tuple[str, str, str, int]]:
-    """Extract distinct distrito/seccion/circuito/mesa identities before filtering."""
-    reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+def extract_raw_mesa_identities_from_text(
+    csv_text: Iterable[str],
+) -> set[tuple[str, str, str, int]]:
+    """Distinct distrito/seccion/circuito/mesa identities, before any filtering.
+
+    Reads row by row from an open text stream, so peak memory is bounded by
+    the widest row rather than by the file. There is deliberately no
+    bytes-taking sibling: the only production caller holds the 2023 PASO
+    member, which is 3,76 GB uncompressed, and decoding that in one
+    allocation is what made `load-curated` unrunnable.
+    """
+    reader = csv.DictReader(csv_text)
     fieldnames = set(reader.fieldnames or ())
     missing = [column for column in REQUIRED_IDENTITY_COLUMNS if column not in fieldnames]
     if missing:

@@ -5373,3 +5373,98 @@ def test_apply_mesa_tipo_mapping_rejects_nonpositive_batch_size_before_db_access
 
     with pytest.raises(ValueError, match="batch_size must be positive"):
         apply_mesa_tipo_mapping(ConnectionThatMustNotBeTouched(), {}, batch_size=batch_size)
+
+
+def _national_zip_of(row_count: int, *, distinct_mesas: int | None = None) -> tuple[bytes, int]:
+    """A registered-shape national ZIP plus its uncompressed CSV size.
+
+    `distinct_mesas` bounds how many identities the projection can return, so
+    a memory assertion can separate "the file was copied" from "the result set
+    is legitimately large".
+    """
+    import zipfile as _zipfile
+
+    distinct = distinct_mesas if distinct_mesas is not None else row_count
+    header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,"
+        "agrupacion_id,votos_tipo,votos_cantidad\n"
+    )
+    body = "".join(
+        f"02,027,00248,{9000 + index % distinct},DIPUTADO NACIONAL,110,POSITIVO,7\n"
+        for index in range(row_count)
+    )
+    csv_text = header + body
+    buffer = io.BytesIO()
+    with _zipfile.ZipFile(buffer, "w", _zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("ResultadosElectorales.csv", csv_text)
+    return buffer.getvalue(), len(csv_text.encode("utf-8"))
+
+
+def test_national_results_text_streams_without_materializing_the_member() -> None:
+    """Peak memory must scale with the row, not with the decompressed file.
+
+    The 2023 PASO member decompresses to 3,76 GB. `national_csv_bytes` holds
+    it whole and `extract_raw_mesa_identities` then decoded a second copy, so
+    `load-curated` needed 6,59 GB resident and was killed by the OS. Measured
+    here rather than asserted structurally: a refactor that reintroduces a
+    full-file buffer fails this even if the call shape still looks streaming.
+    """
+    import tracemalloc
+
+    from etl.__main__ import national_results_text
+    from etl.ingest.national import extract_raw_mesa_identities_from_text
+
+    # Many rows, few identities: the returned set stays small, so anything
+    # that shows up in the peak is a copy of the file rather than the answer.
+    raw_bytes, uncompressed_size = _national_zip_of(400_000, distinct_mesas=50)
+
+    tracemalloc.start()
+    try:
+        with national_results_text(raw_bytes) as handle:
+            identities = extract_raw_mesa_identities_from_text(handle)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(identities) == 50
+    # The archived ZIP itself is already in memory (the caller read it), so the
+    # floor is `len(raw_bytes)`; what must NOT appear is a copy of the
+    # decompressed member on top of it.
+    assert peak < len(raw_bytes) + uncompressed_size // 4
+
+
+def test_national_results_text_reads_the_member_the_bytes_path_selects() -> None:
+    """Streaming must resolve the same member `national_csv_bytes` picks.
+
+    Selection and reading are now separate steps, so the risk is that the
+    streaming path walks a different member of the same ZIP -- an unrelated
+    companion CSV, say. Asserted against the member's own bytes rather than
+    against a second identity projection, which would only prove the two
+    parsers agree.
+    """
+    from etl.__main__ import national_csv_bytes, national_results_text
+    from etl.ingest.national import extract_raw_mesa_identities_from_text
+
+    raw_bytes, _ = _national_zip_of(500, distinct_mesas=25)
+
+    with national_results_text(raw_bytes) as handle:
+        streamed_text = handle.read()
+    with national_results_text(raw_bytes) as handle:
+        streamed_identities = extract_raw_mesa_identities_from_text(handle)
+
+    assert streamed_text == national_csv_bytes(raw_bytes).decode("utf-8-sig")
+    assert streamed_identities == {("02", "027", "00248", 9000 + index) for index in range(25)}
+
+
+def test_national_results_text_streams_a_bare_csv_passthrough() -> None:
+    from etl.__main__ import national_results_text
+    from etl.ingest.national import extract_raw_mesa_identities_from_text
+
+    csv_bytes = (
+        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        b"votos_tipo,votos_cantidad\n"
+        b"02,027,0249A,9001,DIPUTADO NACIONAL,110,POSITIVO,7\n"
+    )
+
+    with national_results_text(csv_bytes) as handle:
+        assert extract_raw_mesa_identities_from_text(handle) == {("02", "027", "0249A", 9001)}

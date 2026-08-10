@@ -25,13 +25,14 @@ network fetch or the gitignored 88 MB archived ZIP:
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
 
 from etl.ingest.national import (
     NationalSchemaError,
-    extract_raw_mesa_identities,
+    extract_raw_mesa_identities_from_text,
     ingest_national,
 )
 from etl.storage import extract_zip_safely
@@ -41,6 +42,16 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def _read(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+def _text_of(csv_bytes: bytes) -> io.TextIOWrapper:
+    """A fixture's bytes as the text stream the identity projection reads.
+
+    Production hands it a file handle over an extracted ZIP member; these
+    fixtures are small literals, so wrapping them keeps the tests reading the
+    same entry point without inventing a second one for their convenience.
+    """
+    return io.TextIOWrapper(io.BytesIO(csv_bytes), encoding="utf-8-sig", newline="")
 
 
 def test_2023_paso_fixture_keeps_internal_lists_one_row_per_mesa_list_combination() -> None:
@@ -771,7 +782,9 @@ def test_alphanumeric_circuito_survives_ingest_and_raw_identity_extraction() -> 
     assert len(rows) == 1
     assert rows[0].result.circuito == "0249A"
     assert rows[0].result.votes == 7
-    assert extract_raw_mesa_identities(csv_bytes) == {("02", "027", "0249A", 9001)}
+    assert extract_raw_mesa_identities_from_text(_text_of(csv_bytes)) == {
+        ("02", "027", "0249A", 9001)
+    }
 
 
 @pytest.mark.parametrize("bad_circuito", ["249AB", "24A9", "24_9A", "+249A", "٢49A"])
@@ -805,7 +818,7 @@ def test_raw_mesa_identities_include_circuito_in_the_exact_identity(capsys) -> N
         b"02,027,circuito,145,DIPUTADO NACIONAL,110,POSITIVO,11\n"
     )
 
-    identities = extract_raw_mesa_identities(csv_bytes)
+    identities = extract_raw_mesa_identities_from_text(_text_of(csv_bytes))
 
     assert identities == {
         ("02", "027", "00001", 142),
@@ -833,7 +846,7 @@ def test_raw_mesa_identities_precede_vote_filters_and_quarantine(capsys) -> None
         b"02,,1,9007,DIPUTADO NACIONAL,110,POSITIVO,1\n"
     )
 
-    identities = extract_raw_mesa_identities(csv_bytes)
+    identities = extract_raw_mesa_identities_from_text(_text_of(csv_bytes))
 
     assert identities == {
         ("02", "027", "1", 9001),
@@ -855,7 +868,7 @@ def test_raw_mesa_identity_schema_requires_named_columns(missing_column: str) ->
     csv_bytes = (",".join(columns) + "\n" + ",".join("1" for _ in columns) + "\n").encode()
 
     with pytest.raises(NationalSchemaError, match=missing_column):
-        extract_raw_mesa_identities(csv_bytes)
+        extract_raw_mesa_identities_from_text(_text_of(csv_bytes))
 
 
 @pytest.mark.parametrize("bad_value", ["1_2", "+12", "-1"])
