@@ -18,14 +18,12 @@ strict_tdd: true
 
 testing:
   status: ready
-  detected: 2026-08-09
+  detected: 2026-08-10
   strict_tdd: true
   note: >
-    Both required runners are ready. The ETL command provisions a UUID-named,
-    ownership-marked sibling database, applies every migration, rejects every skip,
-    and verifies cleanup without connecting to the project database. The Playwright suite in
-    `apps/web/e2e/` is deliberately NOT a runner here -- see the note below
-    `archive` for what it would take to wire it honestly.
+    ETL, web, and browser release runners are ready and fail closed. ETL and E2E
+    provision uniquely owned disposable infrastructure, reject skips, and verify cleanup.
+    The browser gate asserts the exact eight-spec inventory and runs production servers.
   runners:
     - name: etl
       working_dir: .
@@ -35,10 +33,15 @@ testing:
     - name: web
       working_dir: apps/web
       status: ready
-      test_command: "pnpm vitest run"
+      test_command: "pnpm test"
       lint_command: "pnpm lint"
-      typecheck_command: "pnpm exec tsc --noEmit"
+      typecheck_command: "pnpm typecheck"
       build_command: "pnpm build"
+    - name: e2e
+      working_dir: apps/web
+      status: ready
+      test_command: "pnpm test:e2e:gate"
+      note: Requires Docker, Supabase CLI, and installed Playwright Chromium; provisions and cleans its own stack.
   layers:
     unit:
       available: true
@@ -51,8 +54,9 @@ testing:
     e2e:
       available: true
       tool: playwright
-      release_gate: false
-      note: Requires explicit local provisioning and environment assertions; specs otherwise skip.
+      release_gate: true
+      command: "pnpm test:e2e:gate"
+      expected: "8 passed, 0 skipped, 0 failed, zero owned residue"
   coverage:
     available: false
     threshold: 0
@@ -62,13 +66,12 @@ testing:
       python: "uv run ruff check ."
       web: "pnpm lint"
       note: >
-        Web lint runs `eslint . --max-warnings=0` explicitly because Next.js 16 does
-        not lint during builds. TypeScript 7 remains the application compiler through
-        `@typescript/native`; `pnpm build` runs that compiler before Next, whose internal
-        check is disabled. The official `typescript` alias exposes the TypeScript 6 API
-        required by typescript-eslint.
+        ESLint 9 is ready and `pnpm lint` runs `eslint . --max-warnings=0` because
+        Next.js 16 does not lint during builds. TypeScript 7 is the application compiler
+        through `@typescript/native`; `pnpm typecheck` asserts that major before checking.
+        The `typescript` alias exposes the TypeScript 6 API required only by typescript-eslint.
     type_checker:
-      web: "pnpm exec tsc --noEmit"
+      web: "pnpm typecheck"
       python: unavailable
     formatter:
       python: "uv run ruff format ."
@@ -89,20 +92,19 @@ rules:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
     - First task of any implementation change MUST establish the test runner if none exists yet
-  # AUTHORITATIVE source for runner readiness: `testing.runners` above. Do not
-  # add composed apply/verify commands until every mandatory runner is ready.
+  # AUTHORITATIVE source for runner readiness: `testing.runners` above.
   apply:
     guidelines:
       - Follow existing code patterns once established
       - Strict TDD: RED-GREEN-REFACTOR is mandatory, no exceptions
     tdd: true
     test_status: ready
-    test_command: "uv --directory etl run etl-verify"
+    test_command: "uv --directory etl run etl-verify && (cd apps/web && pnpm lint && pnpm typecheck && pnpm test)"
   verify:
     test_status: ready
-    test_command: "uv --directory etl run etl-verify"
-    # Composed from the `web` runner's `typecheck_command` + `build_command`.
-    build_command: "cd apps/web && pnpm exec tsc --noEmit && pnpm build"
+    test_command: "uv --directory etl run etl-verify && (cd apps/web && pnpm lint && pnpm typecheck && pnpm test)"
+    build_command: "cd apps/web && pnpm build"
+    e2e_command: "cd apps/web && pnpm test:e2e:gate"
     # ZERO on purpose, and this is the one number in this file that means
     # "deliberately not enforced". Coverage never caught a real defect in this
     # repo: the quarantine that discarded 6.462.906 legitimate PASO rows ran
@@ -114,23 +116,6 @@ rules:
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
-  # NO release gate declaring the Playwright suite, and no `e2e_command` in
-  # `testing.runners`. I wrote both and they were wrong in three ways, each
-  # verified against the code rather than assumed:
-  #   - `load-curated` seeds the curated reference tables, NOT `result_row`;
-  #     `ingest` does that, and the fiscalización and comparison pages read
-  #     `result_row`. The chain provisioned the wrong tables.
-  #   - `load_curated` raises `MissingArchivedYearError` unless archived 2023
-  #     AND 2025 sources are already on disk, so on a fresh checkout the gate
-  #     fails for environment reasons -- the exact failure it existed to avoid.
-  #   - `apps/web/e2e/global-setup.ts` no-ops and every spec skips when the
-  #     four env vars are absent, so Playwright exits 0 having asserted
-  #     nothing. A green gate over 100% skipped specs is worse than no gate.
-  # Declaring a command that cannot run is the correct-tested-unreachable shape
-  # this repo keeps hitting. The suite lives in `apps/web/e2e/` and is run by
-  # hand; wiring it needs a real provisioning chain (fetch -> ingest ->
-  # load-curated, plus asserting the env vars are set and that specs actually
-  # executed), which is its own work unit, not a line in this file.
 
 delivery:
   strategy: auto-chain
