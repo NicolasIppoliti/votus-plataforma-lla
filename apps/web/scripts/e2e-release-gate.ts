@@ -16,7 +16,7 @@ import { SERVER_SCENARIOS, planScenarioServers, resultScenarioIdentity, type Sce
   type ServerScenario } from "../e2e/scenario-ownership.ts";
 import {
   assertStackStatus, assertTs7Version, establishOwnership, reserveUniquePorts, runOwnedCleanup,
-  runOwnedServerCleanup, type PortReservation,
+  runOwnedServerCleanup, SUPABASE_START_TIMEOUT_MS, type PortReservation,
 } from "./e2e-gate-runtime.ts";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REQUIRE = createRequire(import.meta.url);
@@ -349,7 +349,7 @@ async function executeGate(state: GateState): Promise<void> {
   if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
   state.stackMutationAttempted = true;
   runChecked("supabase", ["start", "--workdir", ownership.workdir, "--exclude", EXCLUDED_SERVICES, "--yes"],
-    "disposable Supabase start");
+    "disposable Supabase start", REPO_ROOT, process.env, SUPABASE_START_TIMEOUT_MS);
   await installRemainingMigrations(ownership.workdir);
   runChecked("supabase", ["migration", "up", "--local", "--include-all", "--workdir", ownership.workdir, "--yes"],
     "disposable Supabase incremental migrations");

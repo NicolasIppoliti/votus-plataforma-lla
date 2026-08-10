@@ -13,7 +13,7 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 54322:5432
         options: >-
@@ -50,7 +50,7 @@ jobs:
         run: |
           docker exec "${{ job.services.postgres.id }}" psql -U postgres -d template1 -v ON_ERROR_STOP=1 -c \
             "create role anon nologin; create role authenticated nologin; create role etl_writer login bypassrls password null; grant etl_writer to postgres;"
-          export ETL_TEST_ADMIN_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/template1"
+          export ETL_TEST_ADMIN_DATABASE_URL="postgresql://postgres@127.0.0.1:54322/template1"
           uv run --project etl etl-verify
       - run: pnpm build
         working-directory: apps/web

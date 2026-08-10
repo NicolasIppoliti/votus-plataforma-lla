@@ -1,4 +1,5 @@
 import type { CleanupAction, GateOwnership } from "../e2e/gate-contract";
+export const SUPABASE_START_TIMEOUT_MS = 10 * 60_000;
 export interface PortReservation { port: number; release(): Promise<void>; }
 interface OwnershipState { ownership?: GateOwnership; }
 interface OwnershipEffects { createWorkdir(): void; writeMarker(): void; rollbackWorkdir(): void; }

@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { FullConfig, FullResult, Suite, TestCase, TestResult } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
@@ -6,7 +8,8 @@ import { EXPECTED_E2E_SPECS, assertE2eEnvironment, assertGateReport,
   planOwnedCleanup, planStaleWorkdirReap, storageStateForSpec,
   type CleanupAction, type GateOwnership, type GateTestResult } from "./gate-contract";
 import { assertStackStatus, assertTs7Version, establishOwnership, reserveUniquePorts,
-  runOwnedCleanup, type PortReservation } from "../scripts/e2e-gate-runtime";
+  runOwnedCleanup, SUPABASE_START_TIMEOUT_MS,
+  type PortReservation } from "../scripts/e2e-gate-runtime";
 const OWNERSHIP: GateOwnership = { workdir: "/private/tmp/votus-e2e-owned",
   projectId: "votus-e2e-project", token: "token" };
 const ACTIONS: CleanupAction[] = [{ kind: "stop-stack", projectId: OWNERSHIP.projectId },
@@ -14,7 +17,8 @@ const ACTIONS: CleanupAction[] = [{ kind: "stop-stack", projectId: OWNERSHIP.pro
 const ENV = {
   NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321", NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
   SUPABASE_SERVICE_ROLE_KEY: "service", VOTUS_E2E_TEST_USER_EMAIL: "fixture@example.test",
-  VOTUS_E2E_TEST_USER_PASSWORD: "password", VOTUS_E2E_BASE_URL: "http://127.0.0.1:4100",
+  VOTUS_E2E_TEST_USER_PASSWORD: randomBytes(24).toString("base64url"),
+  VOTUS_E2E_BASE_URL: "http://127.0.0.1:4100",
   VOTUS_E2E_STORAGE_STATE: "/owned/auth-state.json",
   VOTUS_E2E_BASE_URL_COMPARISON: "http://127.0.0.1:4101",
   VOTUS_E2E_BASE_URL_FISCALIZACION: "http://127.0.0.1:4102",
@@ -29,9 +33,21 @@ const STALE_EVIDENCE = {
   ownerProcessActive: false, projectResourcesActive: false,
 } as const;
 describe("base contracts", () => {
+  it("keeps the isolated CI Postgres service passwordless", () => {
+    const workflow = readFileSync(new URL("../../../.github/workflows/release-gates.yml", import.meta.url), "utf8");
+    const gateContract = readFileSync(new URL("./gate-contract.ts", import.meta.url), "utf8");
+    const passwordEnvironmentName = ["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_");
+    expect(workflow).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
+    expect(workflow).not.toContain(`${["POSTGRES", "PASSWORD"].join("_")}:`);
+    expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
+    expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
+  });
+  it("allows a cold CI runner to pull and start Supabase", () => {
+    expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
+  });
   it("requires and returns every generated environment value", () => {
     expect(assertE2eEnvironment(ENV)).toEqual(ENV);
-    expect(() => assertE2eEnvironment({})).toThrow("VOTUS_E2E_TEST_USER_PASSWORD");
+    expect(() => assertE2eEnvironment({})).toThrow(["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_"));
   });
   it("accepts only the exact eight-pass inventory", () => {
     expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
