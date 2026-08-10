@@ -583,7 +583,8 @@ describe("simulate page — projection provenance boundary", () => {
   });
 
   it("requires and renders normalized projection granularity", async () => {
-    const { granularity: _omitted, ...missingGranularity } = ALLOCATION_INPUT;
+    const missingGranularity = { ...ALLOCATION_INPUT };
+    Reflect.deleteProperty(missingGranularity, "granularity");
     const missing = await renderSimulation(missingGranularity);
     expect(missing).toContain("not a valid projection input");
     expect(missing).not.toContain("allocation-result");

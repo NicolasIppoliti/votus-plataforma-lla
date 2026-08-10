@@ -453,7 +453,7 @@ export function allocateHareQuota(input: HareQuotaInput): HareAllocationResult {
   }
 
   // Art. 109(c): largest-remainder top-up for the leftover seats.
-  let remainingSeats = input.seatsToFill - totalByCuociente;
+  const remainingSeats = input.seatsToFill - totalByCuociente;
   const remainderOrder = byCuociente
     .filter((entry) => entry.initialSeatsByCuociente > 0)
     .sort((a, b) => {

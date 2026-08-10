@@ -36,6 +36,7 @@ testing:
       working_dir: apps/web
       status: ready
       test_command: "pnpm vitest run"
+      lint_command: "pnpm lint"
       typecheck_command: "pnpm exec tsc --noEmit"
       build_command: "pnpm build"
   layers:
@@ -59,8 +60,13 @@ testing:
   quality:
     linter:
       python: "uv run ruff check ."
-      web: unavailable
-      note: The web lint script names ESLint, but ESLint is not installed.
+      web: "pnpm lint"
+      note: >
+        Web lint runs `eslint . --max-warnings=0` explicitly because Next.js 16 does
+        not lint during builds. TypeScript 7 remains the application compiler through
+        `@typescript/native`; `pnpm build` runs that compiler before Next, whose internal
+        check is disabled. The official `typescript` alias exposes the TypeScript 6 API
+        required by typescript-eslint.
     type_checker:
       web: "pnpm exec tsc --noEmit"
       python: unavailable

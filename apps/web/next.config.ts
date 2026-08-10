@@ -1,13 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // TypeScript 7 (installed here, see package.json) does not yet provide
-  // the compiler API Next.js 16 expects by default; this opts into the
-  // TypeScript-CLI-based type-check path instead. Dev-server infra
-  // requirement discovered while setting up the Phase 9 e2e run — unrelated
-  // to access-control logic itself.
-  experimental: {
-    useTypeScriptCli: true,
+  // `pnpm build` runs the TypeScript 7 CLI before Next. Next resolves the
+  // `typescript` package directly, which is the TypeScript 6 API alias needed
+  // by typescript-eslint and exposes `tsc6`, not the application `tsc` bin.
+  typescript: {
+    ignoreBuildErrors: true,
   },
 };
 
