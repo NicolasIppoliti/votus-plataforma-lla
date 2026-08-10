@@ -18,7 +18,8 @@ const ALLOCATION_INPUT = {
   annulledVotes: 0,
   unmodeledVotes: 0,
   seatsToFill: 9,
-  isProjection: false,
+  isProjection: true,
+  granularity: "mesa",
   lists: [
     { listId: "110", listName: "LA LIBERTAD AVANZA", votes: 6000 },
     { listId: "999", listName: "FUERZA PATRIA", votes: 4000 },
@@ -39,7 +40,8 @@ const OFFICIAL_PBA_2025_INPUT = {
   unmodeledVotes: 5_901,
   seatsToFill: 9,
   councilTotal: 18,
-  isProjection: false,
+  isProjection: true,
+  granularity: "seccion",
   lists: [
     { listId: "lla", listName: "ALIANZA LA LIBERTAD AVANZA", votes: 14_550 },
     { listId: "fp", listName: "ALIANZA FUERZA PATRIA", votes: 7_300 },
@@ -58,7 +60,7 @@ async function renderSimulation(input?: object): Promise<string> {
 }
 
 describe("simulate page — complete statutory evidence", () => {
-  it("renders the official PBA Hare computation without relabelling it D’Hondt", async () => {
+  it("renders a published PBA vote scenario without relabelling it D’Hondt", async () => {
     const markup = await renderSimulation(OFFICIAL_PBA_2025_INPUT);
 
     expect(markup).toContain("Hare quota with largest remainder");
@@ -88,6 +90,7 @@ describe("simulate page — complete statutory evidence", () => {
       unmodeledVotes: 0,
       seatsToFill: 4,
       isProjection: true,
+      granularity: "seccion",
       lists: [
         { listId: "A", listName: "Lista A", votes: 40 },
         { listId: "B", listName: "Lista B", votes: 30 },
@@ -106,7 +109,8 @@ describe("simulate page — complete statutory evidence", () => {
       annulledVotes: 0,
       unmodeledVotes: 2,
       seatsToFill: 4,
-      isProjection: false,
+      isProjection: true,
+      granularity: "seccion",
       lists: [
         { listId: "P", listName: "Lista P", votes: 24 },
         { listId: "Q", listName: "Lista Q", votes: 14 },
@@ -125,7 +129,8 @@ describe("simulate page — complete statutory evidence", () => {
       unmodeledVotes: 0,
       threshold: { value: 3, basis: "padron" },
       seatsToFill: 2,
-      isProjection: false,
+      isProjection: true,
+      granularity: "distrito",
       lists: [
         { listId: "A", listName: "Lista A", votes: 10_000 },
         { listId: "B", listName: "Lista B", votes: 4_000 },
@@ -136,7 +141,7 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toContain("D’Hondt");
     expect(markup).toContain("Ley 19.945 Arts. 160–161");
     expect(markup).not.toContain("Ley 5109");
-    expect(markup).toContain("Statutory threshold basis");
+    expect(markup).toContain("Scenario policy threshold basis");
     expect(markup).toContain("3% of padrón 100,000 = 3,000 votes");
     expect(markup).toContain("Lista C");
     expect(markup).toContain("excluded: 2,000 votes are below 3,000");
@@ -155,6 +160,7 @@ describe("simulate page — complete statutory evidence", () => {
       threshold: { value: 0, basis: "padron" },
       seatsToFill: 1,
       isProjection: true,
+      granularity: "distrito",
       lists: [
         { listId: "A", listName: "Lista A", votes: 100 },
         { listId: "B", listName: "Lista B", votes: 100 },
@@ -175,7 +181,7 @@ describe("simulate page — complete statutory evidence", () => {
       ...OFFICIAL_PBA_2025_INPUT,
       lists: [],
     });
-    expect(invalid).toContain("not a valid AllocationInput");
+    expect(invalid).toContain("not a valid projection input");
     expect(invalid).not.toContain("Hare allocation by list");
 
     const insufficient = await renderSimulation({
@@ -185,7 +191,8 @@ describe("simulate page — complete statutory evidence", () => {
       unmodeledVotes: 0,
       threshold: { value: 3, basis: "padron" },
       seatsToFill: 2,
-      isProjection: false,
+      isProjection: true,
+      granularity: "distrito",
       lists: [{ listId: "A", listName: "Lista A", votes: 1_000 }],
     });
     expect(insufficient).toContain("no positive-vote list clears");
@@ -201,6 +208,7 @@ describe("simulate page — complete statutory evidence", () => {
       unmodeledVotes: 0,
       seatsToFill: 2,
       isProjection: true,
+      granularity: "seccion",
       lists: [{ listId: "A", listName: "Lista A", votes: 90 }],
     });
     expect(projection).toContain("Incomplete vote coverage: 10");
@@ -216,11 +224,10 @@ describe("simulate page — complete statutory evidence", () => {
       unmodeledVotes: 0,
       seatsToFill: 2,
       isProjection: false,
+      granularity: "seccion",
       lists: [{ listId: "A", listName: "Lista A", votes: 90 }],
     });
-    expect(historical).toContain(
-      "historical simulation has 10 uncovered votes",
-    );
+    expect(historical).toContain("Historical simulation is unavailable at this route");
     expect(historical).not.toContain("Hare allocation by list");
   });
 });
@@ -245,6 +252,7 @@ describe("simulate page — the council roster is reachable", () => {
     // a vote total, list `999` — so it could not fail, on the very assertion
     // that is supposed to keep the two statutory quantities apart.
     expect(markup).toContain("18 seats, 9 renewed this election");
+    expect(markup).toContain("held over, caller-supplied projection input");
   });
 
   it("test_a_wrong_held_over_count_is_refused_not_padded", async () => {
@@ -274,8 +282,8 @@ describe("simulate page — the council roster is reachable", () => {
 
     // Ley 5109 Art. 121 resolves which sitting councillors leave by sorteo —
     // a different question this system does not answer, so the held-over half
-    // is sourced input. Absent it, say so rather than showing 9 as if it were
-    // the council.
+    // is caller-supplied projection input. Absent it, say so rather than
+    // showing 9 as if it were the council.
     expect(markup).toContain("heldOver");
     expect(markup).not.toContain("council-composition");
   });
@@ -297,7 +305,8 @@ describe("simulate page — the roster belongs to one statute", () => {
             totalVotes: 10000,
             unmodeledVotes: 0,
             threshold: { value: 3, basis: "padron" },
-            isProjection: false,
+            isProjection: true,
+            granularity: "distrito",
             lists: [
               { listId: "110", listName: "LA LIBERTAD AVANZA", votes: 6000 },
               { listId: "999", listName: "FUERZA PATRIA", votes: 4000 },
@@ -310,8 +319,43 @@ describe("simulate page — the roster belongs to one statute", () => {
 
     // The message now names the PARTIDO too: the seat counts are Coronel
     // Rosales's, not every PBA municipality's.
-    expect(markup).toContain("a council roster is defined only for");
+    expect(markup).toContain("available only for pba_municipal projections");
     expect(markup).not.toContain("council-composition");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+  });
+
+  it("refuses an unsupported council even when no held-over roster is supplied", async () => {
+    const markup = renderToStaticMarkup(
+      (await SimulatePage({
+        searchParams: Promise.resolve({
+          council: "Unsupported council",
+          input: JSON.stringify(ALLOCATION_INPUT),
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("unsupported council");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+  });
+
+  it("refuses held-over seats without a council before allocation or trace", async () => {
+    const markup = renderToStaticMarkup(
+      (await SimulatePage({
+        searchParams: Promise.resolve({
+          input: JSON.stringify(ALLOCATION_INPUT),
+          heldOver: JSON.stringify(HELD_OVER),
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("heldOver requires a supported council");
+    expect(markup.match(/role="alert"/g)).toHaveLength(1);
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+    expect(markup).not.toContain("Projection (hypothetical");
+    expect(markup).not.toContain("<p>Historical run</p>");
   });
 });
 
@@ -363,7 +407,7 @@ describe("simulate page — the request cannot move the statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("not a valid AllocationInput");
+    expect(markup).toContain("not a valid projection input");
     expect(markup).not.toContain("council-composition");
   });
 
@@ -435,5 +479,173 @@ describe("simulate page — the statutory gate's own boundary", () => {
 
     expect(markup).toMatch(/MAYORIA.*not implemented.*Ley 5109/i);
     expect(markup).not.toContain("allocation-result");
+  });
+});
+
+describe("simulate page — projection provenance boundary", () => {
+  const projection = {
+    ...ALLOCATION_INPUT,
+    isProjection: true,
+    granularity: "mesa",
+  };
+
+  async function renderCouncilProjection(heldOver: unknown): Promise<string> {
+    return renderToStaticMarkup(
+      (await SimulatePage({
+        searchParams: Promise.resolve({
+          council: "Coronel de Marina Leonardo Rosales",
+          input: JSON.stringify(projection),
+          heldOver: JSON.stringify(heldOver),
+        }),
+      })) as ReactElement,
+    );
+  }
+
+  function traceFrom(markup: string): string | undefined {
+    return markup.match(
+      /Supplied-input trace \(not archive provenance\): sha256 ([a-f0-9]{64})/,
+    )?.[1];
+  }
+
+  it("refuses caller-supplied historical status and source references", async () => {
+    const markup = await renderSimulation({
+      ...projection,
+      isProjection: false,
+      archiveEntryId: "forged-archive-entry",
+      sha256: "f".repeat(64),
+      sourceUrl: "https://forged.invalid/results.csv",
+      fetchedAt: "2026-01-01T00:00:00Z",
+    });
+
+    expect(markup).toContain("Historical simulation is unavailable at this route");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("<p>Historical run</p>");
+    expect(markup).not.toContain("forged-archive-entry");
+    expect(markup).not.toContain("forged.invalid");
+    expect(markup).not.toContain("f".repeat(64));
+  });
+
+  it("rejects forged archive fields on an otherwise valid projection", async () => {
+    const markup = await renderSimulation({
+      ...projection,
+      archiveEntryId: "projection-cannot-cite-this",
+      sha256: "a".repeat(64),
+    });
+
+    expect(markup).toContain("not a valid projection input");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("projection-cannot-cite-this");
+    expect(markup).not.toContain("a".repeat(64));
+    expect(markup).not.toContain('aria-label="provenance"');
+  });
+
+  it("requires and renders normalized projection granularity", async () => {
+    const { granularity: _omitted, ...missingGranularity } = ALLOCATION_INPUT;
+    const missing = await renderSimulation(missingGranularity);
+    expect(missing).toContain("not a valid projection input");
+    expect(missing).not.toContain("allocation-result");
+
+    const unnormalized = await renderSimulation({
+      ...projection,
+      granularity: "precinct",
+    });
+    expect(unnormalized).toContain("not a valid projection input");
+    expect(unnormalized).not.toContain("allocation-result");
+
+    const markup = await renderSimulation(projection);
+    expect(markup).toContain("Projection (hypothetical, caller supplied)");
+    expect(markup).toContain("Input granularity");
+    expect(markup).toContain('aria-label="granularity: mesa"');
+  });
+
+  it("renders a canonical supplied-input trace that is stable only for equivalent input", async () => {
+    const reordered = {
+      granularity: "mesa",
+      lists: projection.lists.map(({ listId, listName, votes }) => ({
+        votes,
+        listName,
+        listId,
+      })),
+      isProjection: true,
+      seatsToFill: projection.seatsToFill,
+      unmodeledVotes: projection.unmodeledVotes,
+      annulledVotes: projection.annulledVotes,
+      blankVotes: projection.blankVotes,
+      totalVotes: projection.totalVotes,
+      level: projection.level,
+    };
+    const changed = {
+      ...projection,
+      lists: projection.lists.map((list, index) =>
+        index === 0 ? { ...list, votes: list.votes + 1 } : list,
+      ),
+    };
+
+    const firstMarkup = await renderSimulation(projection);
+    const reorderedMarkup = await renderSimulation(reordered);
+    const changedMarkup = await renderSimulation(changed);
+    const councilMarkup = await renderCouncilProjection(HELD_OVER);
+    const changedHeldOverMarkup = await renderCouncilProjection([
+      { ...HELD_OVER[0], listId: "changed-held-over" },
+      ...HELD_OVER.slice(1),
+    ]);
+    const trace = /Supplied-input trace \(not archive provenance\): sha256 ([a-f0-9]{64})/;
+    const firstDigest = firstMarkup.match(trace)?.[1];
+    const reorderedDigest = reorderedMarkup.match(trace)?.[1];
+    const changedDigest = changedMarkup.match(trace)?.[1];
+    const councilDigest = councilMarkup.match(trace)?.[1];
+    const changedHeldOverDigest = changedHeldOverMarkup.match(trace)?.[1];
+
+    expect(firstDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(reorderedDigest).toBe(firstDigest);
+    expect(changedDigest).not.toBe(firstDigest);
+    expect(changedHeldOverDigest).not.toBe(councilDigest);
+  });
+
+  it("rejects unknown held-over keys before allocation or trace generation", async () => {
+    const markup = await renderCouncilProjection([
+      { ...HELD_OVER[0], untrusted: "must-not-be-stripped" },
+      ...HELD_OVER.slice(1),
+    ]);
+
+    expect(markup).toContain("not a valid heldOver roster");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+  });
+
+  it("rejects malformed held-over values before allocation or trace generation", async () => {
+    const markup = await renderCouncilProjection([
+      { ...HELD_OVER[0], listName: 7 },
+      ...HELD_OVER.slice(1),
+    ]);
+
+    expect(markup).toContain("not a valid heldOver roster");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Supplied-input trace");
+  });
+
+  it("canonicalizes equivalent validated held-over rosters", async () => {
+    const reordered = HELD_OVER.map(({ listId, listName }) => ({
+      listName,
+      listId,
+    }));
+
+    const originalDigest = traceFrom(await renderCouncilProjection(HELD_OVER));
+    const reorderedDigest = traceFrom(await renderCouncilProjection(reordered));
+
+    expect(originalDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(reorderedDigest).toBe(originalDigest);
+  });
+
+  it("changes the trace for a meaningful validated held-over change", async () => {
+    const changed = [
+      { ...HELD_OVER[0], listId: "changed-held-over" },
+      ...HELD_OVER.slice(1),
+    ];
+
+    const originalDigest = traceFrom(await renderCouncilProjection(HELD_OVER));
+    const changedDigest = traceFrom(await renderCouncilProjection(changed));
+
+    expect(changedDigest).not.toBe(originalDigest);
   });
 });

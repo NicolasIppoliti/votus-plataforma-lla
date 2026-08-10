@@ -201,14 +201,18 @@ every time.
 - **THEN** the system MUST allocate only those 9 seats via the Hare quota method
 - **AND** MUST report the resulting full 18-seat council composition by combining the newly
   allocated seats with the 9 seats not up for renewal that election
-- **AND** MUST report the held-over seats as sourced input, distinguishable from the seats
-  it allocated, since their composition comes from a prior election rather than this
-  computation
+- **AND** MUST report the held-over seats as input distinguishable from the seats it allocated
+- **AND** for a historical composition, MUST derive those seats from a trusted prior-election
+  source with archived provenance
+- **AND** for a hypothetical composition, MUST label caller-supplied held-over seats as
+  projection input rather than prior-election evidence
 
 ### Requirement: What-if vote inputs for 2027 projection
 The system MUST allow an operator to supply hypothetical vote totals or vote-share inputs
 (rather than only historical archived results) as input to a seat-allocation simulation,
-for 2027 scenario planning.
+for 2027 scenario planning. Caller-supplied JSON MUST always be treated as projection input,
+MUST declare a normalized input granularity, and MUST NOT establish historical status or
+archived provenance.
 
 #### Scenario: Operator runs a hypothetical 2027 scenario
 - **GIVEN** an operator supplies hypothetical vote totals for each canonical party for a
@@ -218,6 +222,32 @@ for 2027 scenario planning.
   hypothetical votes
 - **AND** MUST clearly label the result as a hypothetical projection, not an archived
   historical result
+- **AND** MUST display the normalized input granularity
+- **AND** MUST bind the validated scenario to a stable canonical supplied-input digest that
+  is explicitly labelled as not being archive provenance
+
+#### Scenario: Caller JSON cannot forge a historical allocation
+- **GIVEN** caller-supplied simulation JSON declares `isProjection: false` or supplies archive
+  identifiers, hashes, source URLs, or fetch timestamps
+- **WHEN** the `/simulate` route validates the request
+- **THEN** the route MUST NOT display an allocation as historical
+- **AND** MUST NOT display any caller-supplied field as archived provenance
+- **AND** MUST fail closed with an actionable diagnostic when trusted historical loading is
+  unavailable at that route
+
+### Requirement: Historical simulations use trusted archived vote rows
+A historical simulation MUST derive vote totals and normalized granularity from trusted
+archived/database source rows loaded server-side. Its displayed source references MUST
+include the validated archive entry identifier, sha256 digest, original source URL, and fetch
+timestamp. A route without a complete trusted historical loader MUST refuse historical mode
+rather than decorate caller-supplied totals with an archive identifier.
+
+#### Scenario: Historical mode is unavailable without a trusted loader
+- **GIVEN** a simulation route accepts public query JSON but has no complete server-side
+  historical loader
+- **WHEN** a caller requests a historical allocation
+- **THEN** the route MUST refuse the request with an actionable diagnostic
+- **AND** MUST NOT render any allocation derived from the caller's vote totals
 
 ### Requirement: Full computation traceability
 The system MUST make the intermediate computation of every allocation run inspectable: the

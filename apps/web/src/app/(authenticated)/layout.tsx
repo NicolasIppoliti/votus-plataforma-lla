@@ -28,6 +28,8 @@ import { SourceDisclaimer } from "@/components/SourceDisclaimer";
  * Phase 16c: `/municipal` is linked here for the same reason — the
  * `coronel_rosales_municipal` party mappings (Phase 15) had no reachable
  * route, this project's 8th instance of shipped-correct-but-unreachable code.
+ * `/simulate` follows the same production reachability contract: an operator
+ * can enter the projection workflow from this authenticated navigation.
  */
 export default async function AuthenticatedLayout({
   children,
@@ -65,6 +67,8 @@ export default async function AuthenticatedLayout({
         <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
         {" | "}
         <Link href="/municipal">Municipal (Concejales)</Link>
+        {" | "}
+        <Link href="/simulate">Seat simulation</Link>
         {" | "}
         <Link href="/review">Review</Link>
       </nav>
