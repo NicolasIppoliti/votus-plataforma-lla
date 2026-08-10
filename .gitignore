@@ -24,6 +24,14 @@ apps/web/node_modules/
 .env.*.local
 apps/web/e2e.env
 
+# Vercel link state (project id / org id — machine local)
+.vercel/
+
+# Agent skills vendored by `vercel integration add` (regenerated on install)
+apps/web/.agents/
+apps/web/.claude/
+apps/web/skills-lock.json
+
 # Playwright run output
 test-results/
 apps/web/test-results/
