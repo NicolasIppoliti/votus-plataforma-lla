@@ -52,6 +52,7 @@ from etl.crosswalk import (
     JurisdictionCrosswalkEntry,
     load_crosswalk,
 )
+from etl.ingest.fiscalizacion import FiscalizacionSchemaError, ingest_fiscalizacion
 from etl.manifest import load_fetch_events, load_manifest, save_manifest
 from etl.party_map import PartyMappingTable, load_party_map
 from etl.storage import LocalArchiveStore
@@ -875,6 +876,8 @@ def _fiscalizacion_csv(rows: list[str]) -> str:
 
 def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
 ) -> None:
     """Drives `ingest_source`, not the projection function.
 
@@ -888,7 +891,19 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     zeros = ",".join(["0"] * (len(FISCALIZACION_VOTE_COLUMNS) - 1))
     # One blank vote cell: blank is MISSING, not zero, so ingestion raises a
     # `blank_vote_cell` review item -- the draft this test follows to the table.
-    csv_text = _fiscalizacion_csv([f"ESCUELA TEST,Mesa 4242,,{zeros}\n"])
+    private_cells = ("PRIVATE_CELL_C", "PRIVATE_CELL_D")
+    csv_text = "Nombre,Apellido," + _fiscalizacion_csv(
+        [f"{private_cells[0]},{private_cells[1]},ESCUELA TEST,Mesa 4242,,{zeros}\n"]
+    )
+    decoded: list[bytes] = []
+
+    def decode_retained(data: bytes, *, context: str) -> str:
+        del context
+        decoded.append(bytes(data))
+        assert all(cell.encode() not in data for cell in private_cells)
+        return bytes(data).decode("utf-8")
+
+    monkeypatch.setattr("etl.ingest.fiscalizacion._decode_utf8", decode_retained, raising=False)
 
     source_id = f"fiscalizacion/cli-review-item-{uuid.uuid4()}"
     filename = "cli-review-item.csv"
@@ -940,8 +955,9 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
         )
         with conn.cursor() as cur:
             cur.execute(
-                "select kind, severity from review_item where subject_ref = %s",
-                (f"{source_id} 2025-legislativas mesa 4242",),
+                "select kind, severity, note, subject_ref from review_item "
+                "where starts_with(subject_ref, %s)",
+                (f"{source_id} ",),
             )
             written = cur.fetchall()
             cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
@@ -963,10 +979,133 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
         conn.commit()
         conn.close()
 
-    assert written == [("blank_vote_cell", "info")], (
+    assert [(kind, severity) for kind, severity, *_rest in written] == [
+        ("blank_vote_cell", "info"),
+        ("mesa_absent_from_official_import", "warning"),
+    ], (
         "the ingestion's review item must reach `review_item`, scoped by source "
         f"id so two sources observing the same mesa number stay distinct; got {written}"
     )
+    assert decoded
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert all(cell not in output and cell not in repr(written) for cell in private_cells)
+
+
+@pytest.mark.parametrize(
+    ("header", "expected_diagnosis"),
+    [
+        (
+            "PRIVATE_UNKNOWN_HEADER,Escuela,Mesa\n",
+            "1 unexpected header field at position 1",
+        ),
+        (
+            "PRIVATE_DUPLICATE_HEADER,PRIVATE_DUPLICATE_HEADER,Escuela,Mesa\n",
+            "1 duplicate header group involving 2 fields at positions 1, 2",
+        ),
+    ],
+)
+def test_validate_fiscalizacion_header_errors_never_disclose_source_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    caplog: pytest.LogCaptureFixture,
+    header: str,
+    expected_diagnosis: str,
+) -> None:
+    sentinel = header.split(",", 1)[0]
+    fiscalizacion_bytes = header.encode("utf-8")
+    baseline_bytes = b"unused baseline"
+    fiscalizacion_id = "fiscalizacion/private-header"
+    baseline_id = "national/private-header-baseline"
+    local_root = tmp_path / "archive"
+    store = LocalArchiveStore(root=local_root)
+    store.write("fiscalizacion", "fisc.csv", fiscalizacion_bytes)
+    store.write("national", "nat.csv", baseline_bytes)
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "fiscalizacion": [
+                    {
+                        "id": fiscalizacion_id,
+                        "source": "internal",
+                        "source_url": None,
+                        "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "notes": "private header fixture",
+                        "filename": "fisc.csv",
+                        "upload": "never",
+                    }
+                ],
+                "national": [
+                    {
+                        "id": baseline_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/nat.csv",
+                        "mime": "text/csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                        "notes": "private header baseline",
+                        "filename": "nat.csv",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": fiscalizacion_id,
+                    "status": "ok",
+                    "archived_path": "archive/fiscalizacion/fisc.csv",
+                    "sha256": hashlib.sha256(fiscalizacion_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "id": baseline_id,
+                    "status": "ok",
+                    "archived_path": "archive/national/nat.csv",
+                    "sha256": hashlib.sha256(baseline_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    review_writes: list[object] = []
+    monkeypatch.setattr(
+        "etl.__main__.insert_review_items",
+        lambda _conn, records: review_writes.extend(records),
+    )
+
+    with pytest.raises(FiscalizacionSchemaError) as excinfo:
+        ingest_fiscalizacion(fiscalizacion_bytes, archive_entry_id=fiscalizacion_id)
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "validate-fiscalizacion",
+            "--source",
+            fiscalizacion_id,
+            "--baseline",
+            baseline_id,
+            "--database-url",
+            "postgresql://unused/unused",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    observable = "\n".join((str(excinfo.value), captured.out, captured.err, caplog.text))
+    assert exit_code == 1
+    assert expected_diagnosis in observable
+    assert sentinel not in observable
+    assert sentinel not in repr(review_writes)
+    assert review_writes == []
 
 
 def test_a_synthetic_truncated_coarse_row_with_no_seccion_resolves_by_distrito() -> None:

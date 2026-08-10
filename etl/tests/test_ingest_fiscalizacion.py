@@ -24,6 +24,7 @@ Two kinds of test data are used, deliberately:
 from __future__ import annotations
 
 import csv
+import io
 import os
 import uuid
 from pathlib import Path
@@ -39,13 +40,16 @@ from etl.ingest.fiscalizacion import (
     FISCALIZACION_DISTRITO,
     FISCALIZACION_SECCION,
     FiscalizacionRow,
+    FiscalizacionSchemaError,
     FiscalizacionUploadForbiddenError,
     _merge_wrapped_rows,
     _resolve_official_mesa,
     guard_local_mirror_only,
-    ingest_fiscalizacion,
     load_fiscalizacion_rows,
     strip_personal_columns,
+)
+from etl.ingest.fiscalizacion import (
+    ingest_fiscalizacion as _ingest_fiscalizacion,
 )
 from etl.party_map import load_party_map
 from etl.review_item import ReviewItemRecord
@@ -86,6 +90,11 @@ def _synthetic_csv(rows: list[str], *, with_names: bool = False) -> str:
     if with_names:
         header = "Nombre,Apellido," + header
     return "\n".join([header, *rows]) + "\n"
+
+
+def ingest_fiscalizacion(raw_csv: str | bytes, *, archive_entry_id: str):
+    raw_bytes = raw_csv.encode("utf-8") if isinstance(raw_csv, str) else raw_csv
+    return _ingest_fiscalizacion(raw_bytes, archive_entry_id=archive_entry_id)
 
 
 # ---------------------------------------------------------------------------
@@ -214,14 +223,14 @@ def test_the_raw_escuela_string_is_preserved_exactly_as_written() -> None:
 
 
 def test_no_loaded_column_or_review_note_contains_a_name() -> None:
-    fake_given_name = "Testigo Sintetico Uno"
-    fake_surname = "Apellido Sintetico Dos"
+    fake_given_name = "PRIVATE_CELL_A"
+    fake_surname = "PRIVATE_CELL_B"
     row = (
         f"{fake_given_name},{fake_surname},ESCUELA TEST N7,Mesa 9,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
     )
     csv_text = _synthetic_csv([row], with_names=True)
 
-    stripped = strip_personal_columns(csv_text)
+    stripped = strip_personal_columns(csv_text.encode("utf-8"))
     assert fake_given_name not in stripped
     assert fake_surname not in stripped
     assert "Nombre" not in stripped.splitlines()[0].split(",")
@@ -238,6 +247,84 @@ def test_no_loaded_column_or_review_note_contains_a_name() -> None:
     for quarantined in result.quarantined:
         assert fake_given_name not in quarantined.note
         assert fake_surname not in quarantined.note
+
+
+def test_personal_payload_is_never_decoded_or_sliced_into_a_value() -> None:
+    sentinel = b"PRIVATE_CELL_MUST_STAY_OPAQUE"
+
+    class MaterializationProbe(bytes):
+        def decode(self, *_args, **_kwargs):
+            raise AssertionError("raw personal-bearing CSV must not be decoded")
+
+        def __getitem__(self, key):
+            value = super().__getitem__(key)
+            if isinstance(value, bytes) and sentinel in value:
+                raise AssertionError("personal payload was sliced into a bytes value")
+            return value
+
+    raw = MaterializationProbe(
+        b"Nombre,Escuela,Apellido,Mesa\n" + sentinel + b",SCHOOL,PRIVATE_CELL_B,1\n"
+    )
+
+    stripped = strip_personal_columns(raw)
+
+    assert sentinel.decode("ascii") not in stripped
+    assert list(csv.DictReader(stripped.splitlines())) == [{"Escuela": "SCHOOL", "Mesa": "1"}]
+
+
+@pytest.mark.parametrize("line_ending", [b"\n", b"\r\n"])
+def test_personal_projection_supports_quoted_rfc4180_shapes(line_ending: bytes) -> None:
+    raw = (
+        b"Nombre,Escuela,Apellido,Mesa"
+        + line_ending
+        + b'"PRIVATE,""QUOTED""\nCELL",SCHOOL,,7'
+        + line_ending
+    )
+
+    stripped = strip_personal_columns(raw)
+    rows = list(csv.DictReader(io.StringIO(stripped)))
+
+    assert rows == [{"Escuela": "SCHOOL", "Mesa": "7"}]
+    assert "PRIVATE" not in stripped
+
+
+def test_malformed_personal_field_reports_shape_without_payload() -> None:
+    raw = b'Nombre,Escuela,Mesa\n"PRIVATE_MALFORMED,SCHOOL,7\n'
+
+    with pytest.raises(FiscalizacionSchemaError) as excinfo:
+        strip_personal_columns(raw)
+
+    message = str(excinfo.value)
+    assert "row 1" in message and "column 1" in message
+    assert "PRIVATE_MALFORMED" not in message
+
+
+def test_personal_projection_rejects_unknown_columns_without_cell_values() -> None:
+    raw = b"Escuela,Mesa,Unexpected\nSCHOOL,7,PRIVATE_UNKNOWN_VALUE\n"
+
+    with pytest.raises(FiscalizacionSchemaError) as excinfo:
+        strip_personal_columns(raw)
+
+    message = str(excinfo.value)
+    assert "1 unexpected header field at position 3" in message
+    assert "Unexpected" not in message
+    assert "PRIVATE_UNKNOWN_VALUE" not in message
+
+
+@pytest.mark.parametrize(
+    ("raw", "diagnosis"),
+    [
+        (b"PRIVATE_INVALID_\xff,Escuela,Mesa\n", "invalid UTF-8 in header column 1"),
+        (b"Escuela,Mesa\nPRIVATE_INVALID_\xff,7\n", "invalid UTF-8 in retained CSV fields"),
+    ],
+)
+def test_invalid_utf8_errors_do_not_disclose_payload(raw: bytes, diagnosis: str) -> None:
+    with pytest.raises(FiscalizacionSchemaError) as excinfo:
+        strip_personal_columns(raw)
+
+    message = str(excinfo.value)
+    assert message == diagnosis
+    assert "PRIVATE_INVALID" not in message
 
 
 # ---------------------------------------------------------------------------

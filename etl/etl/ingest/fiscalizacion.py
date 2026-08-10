@@ -44,32 +44,190 @@ from ..party_map import PartyMappingTable
 # here would be a circular import.
 
 PERSONAL_DATA_COLUMNS: tuple[str, ...] = ("Nombre", "Apellido")
+_ALLOWED_COLUMNS = frozenset(("Escuela", "Mesa", *FISCALIZACION_VOTE_COLUMNS))
+_UTF8_BOM = b"\xef\xbb\xbf"
 
 
-def strip_personal_columns(raw_csv_text: str) -> str:
-    """Remove `Nombre`/`Apellido` columns from raw CSV text, if present.
+def _shape_error(row: int, column: int, detail: str) -> FiscalizacionSchemaError:
+    return FiscalizacionSchemaError(
+        f"malformed fiscalización CSV at row {row}, column {column}: {detail}"
+    )
 
-    Operates on TEXT, before any `csv.DictReader` row object exists (D9.3):
-    the personal values are dropped at the earliest possible point, never
-    parsed into a value that a later step could accidentally retain. A CSV
-    that is already stripped (no `Nombre`/`Apellido` header) passes through
-    unchanged, so this is safe to call unconditionally.
-    """
-    reader = csv.reader(io.StringIO(raw_csv_text))
-    rows = list(reader)
-    if not rows:
-        return raw_csv_text
 
-    header = rows[0]
-    drop_indices = {i for i, name in enumerate(header) if name in PERSONAL_DATA_COLUMNS}
-    if not drop_indices:
-        return raw_csv_text
+def _decode_utf8(data: bytes, *, context: str) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise FiscalizacionSchemaError(f"invalid UTF-8 in {context}") from None
 
-    out = io.StringIO()
-    writer = csv.writer(out)
-    for row in rows:
-        writer.writerow([cell for i, cell in enumerate(row) if i not in drop_indices])
-    return out.getvalue()
+
+def _scan_field(
+    raw: bytes,
+    offset: int,
+    output: bytearray | None,
+    *,
+    row: int,
+    column: int,
+) -> tuple[int, int]:
+    """Copy one retained raw field and return its delimiter byte (or -1 at EOF)."""
+    size = len(raw)
+    if offset < size and raw[offset] == ord('"'):
+        if output is not None:
+            output.append(ord('"'))
+        offset += 1
+        while offset < size:
+            byte = raw[offset]
+            if byte == ord('"'):
+                if offset + 1 < size and raw[offset + 1] == ord('"'):
+                    if output is not None:
+                        output.extend(b'""')
+                    offset += 2
+                    continue
+                if output is not None:
+                    output.append(byte)
+                offset += 1
+                if offset == size:
+                    return offset, -1
+                if raw[offset] not in (ord(","), ord("\n"), ord("\r")):
+                    raise _shape_error(row, column, "characters follow a closing quote")
+                return offset, raw[offset]
+            if output is not None:
+                output.append(byte)
+            offset += 1
+        raise _shape_error(row, column, "quoted field is not terminated")
+
+    while offset < size:
+        byte = raw[offset]
+        if byte in (ord(","), ord("\n"), ord("\r")):
+            return offset, byte
+        if byte == ord('"'):
+            raise _shape_error(row, column, "quote appears inside an unquoted field")
+        if output is not None:
+            output.append(byte)
+        offset += 1
+    return offset, -1
+
+
+def _consume_line_ending(raw: bytes, offset: int, *, row: int, column: int) -> tuple[int, bytes]:
+    if raw[offset] == ord("\n"):
+        return offset + 1, b"\n"
+    if offset + 1 >= len(raw) or raw[offset + 1] != ord("\n"):
+        raise _shape_error(row, column, "bare carriage return is not a valid record ending")
+    return offset + 2, b"\r\n"
+
+
+def _read_header(raw: bytes, offset: int) -> tuple[list[str], int, bytes]:
+    header: list[str] = []
+    column = 1
+    while True:
+        field = bytearray()
+        offset, delimiter = _scan_field(raw, offset, field, row=0, column=column)
+        text = _decode_utf8(bytes(field), context=f"header column {column}")
+        try:
+            parsed = next(csv.reader([text], strict=True))
+        except csv.Error:
+            raise _shape_error(0, column, "header field has invalid quoting") from None
+        if len(parsed) != 1:
+            raise _shape_error(0, column, "header field is ambiguous")
+        header.append(parsed[0])
+        if delimiter == ord(","):
+            offset += 1
+            column += 1
+            continue
+        if delimiter == -1:
+            return header, offset, b"\n"
+        offset, line_ending = _consume_line_ending(raw, offset, row=0, column=column)
+        return header, offset, line_ending
+
+
+def _project_data_rows(
+    raw: bytes, offset: int, keep_indices: set[int], expected_columns: int
+) -> bytes:
+    output = bytearray()
+    row = 1
+    while offset < len(raw):
+        column = 0
+        retained = 0
+        while True:
+            field_output = output if column in keep_indices else None
+            if field_output is not None and retained:
+                output.append(ord(","))
+            offset, delimiter = _scan_field(raw, offset, field_output, row=row, column=column + 1)
+            if field_output is not None:
+                retained += 1
+            column += 1
+            if delimiter == ord(","):
+                offset += 1
+                continue
+            if column > expected_columns:
+                raise _shape_error(
+                    row,
+                    column,
+                    f"row declares {column} column(s), expected {expected_columns}",
+                )
+            for missing_index in range(column, expected_columns):
+                if missing_index in keep_indices:
+                    if retained:
+                        output.append(ord(","))
+                    retained += 1
+            if delimiter == -1:
+                return bytes(output)
+            offset, line_ending = _consume_line_ending(raw, offset, row=row, column=column)
+            output.extend(line_ending)
+            row += 1
+            break
+    return bytes(output)
+
+
+def strip_personal_columns(raw_csv_bytes: bytes) -> str:
+    """Project allowlisted CSV fields before any personal payload is decoded."""
+    if not isinstance(raw_csv_bytes, bytes):
+        raise TypeError("fiscalización CSV input must be bytes")
+    offset = len(_UTF8_BOM) if raw_csv_bytes.startswith(_UTF8_BOM) else 0
+    if offset == len(raw_csv_bytes):
+        return ""
+    header, data_offset, line_ending = _read_header(raw_csv_bytes, offset)
+    positions_by_name: dict[str, list[int]] = {}
+    for position, name in enumerate(header, start=1):
+        positions_by_name.setdefault(name, []).append(position)
+    duplicate_groups = [positions for positions in positions_by_name.values() if len(positions) > 1]
+    if duplicate_groups:
+        duplicate_count = len(duplicate_groups)
+        field_count = sum(len(positions) for positions in duplicate_groups)
+        positions = "; ".join(", ".join(map(str, group)) for group in duplicate_groups)
+        raise FiscalizacionSchemaError(
+            "ambiguous fiscalización header -- "
+            f"{duplicate_count} duplicate header "
+            f"{'group' if duplicate_count == 1 else 'groups'} involving {field_count} "
+            f"{'field' if field_count == 1 else 'fields'} at "
+            f"{'position' if field_count == 1 else 'positions'} {positions}"
+        )
+    unexpected_positions = [
+        position
+        for position, name in enumerate(header, start=1)
+        if name not in _ALLOWED_COLUMNS and name not in PERSONAL_DATA_COLUMNS
+    ]
+    missing = [name for name in _ALLOWED_COLUMNS if name not in header]
+    if unexpected_positions:
+        unexpected_count = len(unexpected_positions)
+        details = [
+            f"{unexpected_count} unexpected header "
+            f"{'field' if unexpected_count == 1 else 'fields'} at "
+            f"{'position' if unexpected_count == 1 else 'positions'} "
+            + ", ".join(map(str, unexpected_positions))
+        ]
+        if missing:
+            details.append("missing required column(s): " + ", ".join(sorted(missing)))
+        raise FiscalizacionSchemaError(
+            "unrecognized fiscalización sheet structure -- " + "; ".join(details)
+        )
+    keep_indices = {index for index, name in enumerate(header) if name in _ALLOWED_COLUMNS}
+    header_output = io.StringIO(newline="")
+    csv.writer(
+        header_output, lineterminator=_decode_utf8(line_ending, context="line ending")
+    ).writerow([name for index, name in enumerate(header) if index in keep_indices])
+    projected = _project_data_rows(raw_csv_bytes, data_offset, keep_indices, len(header))
+    return header_output.getvalue() + _decode_utf8(projected, context="retained CSV fields")
 
 
 # NO `_normalize_escuela`. See `FiscalizacionRow`: the join it normalized
@@ -366,10 +524,12 @@ def _collapse_duplicates(
     return survivors, quarantined, review_items
 
 
-def ingest_fiscalizacion(raw_csv_text: str, *, archive_entry_id: str) -> FiscalizacionIngestResult:
+def ingest_fiscalizacion(
+    raw_csv_bytes: bytes, *, archive_entry_id: str
+) -> FiscalizacionIngestResult:
     """Parse one fiscalización spreadsheet export per D9.4's ordered contract.
 
-    Pure function of `raw_csv_text` — calling it twice on the same text
+    Pure function of `raw_csv_bytes` — calling it twice on the same bytes
     yields an identical result, matching the project's D8 idempotency
     convention. `archive_entry_id` is accepted for interface symmetry with
     `ingest.pba`/`ingest.national`. THIS function does not store anything —
@@ -384,7 +544,7 @@ def ingest_fiscalizacion(raw_csv_text: str, *, archive_entry_id: str) -> Fiscali
     # by column position. The comment here used to say it "does not exist yet
     # anywhere in this codebase" and point at a future phase — describing a
     # gap that two functions below had already closed.
-    stripped_text = strip_personal_columns(raw_csv_text)
+    stripped_text = strip_personal_columns(raw_csv_bytes)
     reader = csv.DictReader(io.StringIO(stripped_text))
     declared = set(reader.fieldnames or ())
     missing = [

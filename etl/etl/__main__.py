@@ -877,12 +877,7 @@ def ingest_source(
             from .ingest.fiscalizacion import load_fiscalizacion_rows
 
             party_map = load_party_map(party_map_path)
-            # `utf-8-sig`, not `utf-8`: these sheets are exported from Excel,
-            # where a BOM is the norm. Attached to the first field name it
-            # makes `"Mesa"` unreachable, and the parser would report a
-            # missing column instead of an encoding it did not strip. Same
-            # boundary as every other CSV reader here.
-            result = ingest_fiscalizacion(raw_bytes.decode("utf-8-sig"), archive_entry_id=source_id)
+            result = ingest_fiscalizacion(raw_bytes, archive_entry_id=source_id)
             inserted, loader_review_items = load_fiscalizacion_rows(
                 conn,
                 result.rows,
@@ -2482,10 +2477,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         return 1
 
     result = ingest_fiscalizacion(
-        # `utf-8-sig` for the same reason as `ingest_source`'s call: an
-        # Excel-exported sheet carries a BOM, and stripping it in one caller
-        # and not the other is two ideas of how this file decodes.
-        fiscalizacion_bytes.decode("utf-8-sig"),
+        fiscalizacion_bytes,
         archive_entry_id=args.source,
     )
     parser_review_records = [
