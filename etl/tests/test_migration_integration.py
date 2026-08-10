@@ -1,4 +1,4 @@
-"""Disposable-database integration coverage for the complete migration history."""
+"""Isolated integration coverage for the data-changing migration history."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from typing import LiteralString, cast
 import psycopg
 import pytest
 from psycopg import sql
-
-from etl.verify import DisposablePostgres, maintenance_dsn_from_disposable
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
@@ -191,30 +190,32 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip(
-            "ETL_TEST_DATABASE_URL is required to create an isolated sibling migration database"
+            "ETL_TEST_DATABASE_URL is required for isolated migration-history coverage"
         )
 
-    admin_dsn = maintenance_dsn_from_disposable(database_dsn)
-    database = DisposablePostgres(admin_dsn)
-    try:
-        database_dsn = database.open()
-    except (psycopg.Error, RuntimeError) as exc:
-        pytest.skip(f"cannot create safely marked sibling migration database: {exc}")
+    schema_name = f"votus_migration_history_{uuid.uuid4().hex}"
+    with psycopg.connect(database_dsn) as connection:
+        connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
+    params = conninfo_to_dict(database_dsn)
+    params["options"] = f"-csearch_path={schema_name}"
+    history_dsn = make_conninfo(**params)
     try:
         available_numbers = _available_migration_numbers(maximum=19)
         assert available_numbers == list(range(1, 20))
 
-        for number in range(1, 12):
-            _apply_migration(database_dsn, number)
+        # 0009/0010 only establish cluster-global etl_writer state. The harness
+        # applies and verifies those before this unprivileged child starts.
+        for number in (*range(1, 9), 11):
+            _apply_migration(history_dsn, number)
 
         (
             old_pba_jurisdiction_id,
             obsolete_circuito_alias_id,
             obsolete_suffix_alias_id,
-        ) = _seed_pre_0012_history(database_dsn)
+        ) = _seed_pre_0012_history(history_dsn)
 
-        _apply_migration(database_dsn, 12)
-        with psycopg.connect(database_dsn) as connection:
+        _apply_migration(history_dsn, 12)
+        with psycopg.connect(history_dsn) as connection:
             old_0012_pair = connection.execute(
                 """
                 select j.distrito_code, j.seccion_code
@@ -225,8 +226,8 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             ).fetchone()
         assert old_0012_pair == ("02", None)
 
-        _apply_migration(database_dsn, 13)
-        with psycopg.connect(database_dsn) as connection:
+        _apply_migration(history_dsn, 13)
+        with psycopg.connect(history_dsn) as connection:
             result_count_after_0013 = connection.execute(
                 "select count(*) from result_row"
             ).fetchone()
@@ -240,15 +241,15 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
         assert result_count_after_0013 == (1,)
         assert pba_count_after_0013 == (1,)
 
-        _apply_migration(database_dsn, 14)
-        _apply_migration(database_dsn, 15)
-        _apply_migration(database_dsn, 16)
+        _apply_migration(history_dsn, 14)
+        _apply_migration(history_dsn, 15)
+        _apply_migration(history_dsn, 16)
 
-        control_delimiter_id, control_sentinel_id = _seed_pre_0017_control_tuples(database_dsn)
+        control_delimiter_id, control_sentinel_id = _seed_pre_0017_control_tuples(history_dsn)
 
         with pytest.raises(psycopg.Error, match="metadata conflict"):
-            _apply_migration(database_dsn, 17)
-        with psycopg.connect(database_dsn) as connection:
+            _apply_migration(history_dsn, 17)
+        with psycopg.connect(history_dsn) as connection:
             conflicted_aliases = connection.execute(
                 "select circuito_name from jurisdiction where id in (%s, %s) order by id",
                 (
@@ -269,17 +270,17 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
                     obsolete_circuito_alias_id,
                 ),
             )
-        _apply_migration(database_dsn, 17)
+        _apply_migration(history_dsn, 17)
 
         (
             official_jurisdiction_id,
             fiscalizacion_jurisdiction_id,
             result_count_before_0018,
-        ) = _seed_pre_0018_fiscalizacion_case(database_dsn)
-        _apply_migration(database_dsn, 18)
-        _apply_migration(database_dsn, 19)
+        ) = _seed_pre_0018_fiscalizacion_case(history_dsn)
+        _apply_migration(history_dsn, 18)
+        _apply_migration(history_dsn, 19)
 
-        with psycopg.connect(database_dsn) as connection:
+        with psycopg.connect(history_dsn) as connection:
             repaired_pair = connection.execute(
                 """
                 select j.distrito_code, j.seccion_code
@@ -390,4 +391,7 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
         )
         assert historical_requested_granularity == [(None,)]
     finally:
-        database.close()
+        with psycopg.connect(database_dsn) as connection:
+            connection.execute(
+                sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))
+            )

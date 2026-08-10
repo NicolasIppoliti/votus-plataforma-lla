@@ -32,30 +32,62 @@ class _Result:
 class _AdminConnection:
     def __init__(self) -> None:
         self.databases: dict[str, str] = {}
+        self.database_owners: dict[str, str] = {}
+        self.roles: dict[str, str] = {}
         self.statements: list[tuple[str, object]] = []
         self.closed = False
         self.global_roles_safe = True
         self.elevated_role_attribute: str | None = None
         self.fail_comment = False
+        self.fail_create_database = False
         self.signal_on_drop = None
         self.interrupt_drop_once = False
         self.fail_drop = False
+        self.fail_drop_role = False
 
     def execute(self, query: object, params: object = None) -> _Result:
         statement = query.as_string() if isinstance(query, sql.Composable) else str(query)
         self.statements.append((statement, params))
         lowered = statement.lower()
+        if "from pg_authid" in lowered and params is not None:
+            assert isinstance(params, tuple)
+            name = str(params[-1])
+            if name not in self.roles:
+                return _Result()
+            return _Result((True, False, False, False, False, False, False, False))
         if "from pg_roles" in lowered and "pg_auth_members" in lowered:
+            if isinstance(params, tuple):
+                name = str(params[0])
+                return _Result(None if name not in self.roles else (1,))
             elevated_is_rejected = (
                 self.elevated_role_attribute is not None
                 and f"not {self.elevated_role_attribute}" in lowered
             )
             return _Result((self.global_roles_safe and not elevated_is_rejected,))
+        if "from pg_roles" in lowered:
+            assert isinstance(params, tuple)
+            name = str(params[0])
+            return _Result(None if name not in self.roles else (1,))
+        if lowered.startswith("create role"):
+            name = statement.split('"')[1]
+            if name in self.roles:
+                raise RuntimeError("role already exists")
+            self.roles[name] = ""
+            return _Result()
+        if lowered.startswith("comment on role"):
+            name = statement.split('"')[1]
+            self.roles[name] = statement.rsplit(" is ", 1)[1].strip("'")
+            return _Result()
         if lowered.startswith("create database"):
+            if self.fail_create_database:
+                raise RuntimeError("database create failed")
             name = statement.split('"')[1]
             if name in self.databases:
                 raise RuntimeError("database already exists")
             self.databases[name] = ""
+            quoted = statement.split('"')
+            if len(quoted) > 3:
+                self.database_owners[name] = quoted[3]
             return _Result()
         if lowered.startswith("comment on database"):
             if self.fail_comment:
@@ -82,6 +114,15 @@ class _AdminConnection:
                 raise RuntimeError("drop failed")
             name = statement.split('"')[1]
             self.databases.pop(name, None)
+            self.database_owners.pop(name, None)
+            return _Result()
+        if lowered.startswith("drop role"):
+            if self.fail_drop_role:
+                raise RuntimeError("role drop failed")
+            name = statement.split('"')[1]
+            self.roles.pop(name, None)
+            return _Result()
+        if lowered.startswith("grant connect, create, temporary on database"):
             return _Result()
         raise AssertionError(f"unexpected SQL: {statement}")
 
@@ -90,9 +131,17 @@ class _AdminConnection:
 
 
 class _TargetConnection:
-    def __init__(self, name: str, marker: str, *, fail_marker_install: bool = False) -> None:
+    def __init__(
+        self,
+        name: str,
+        marker: str,
+        *,
+        user: str = "admin",
+        fail_marker_install: bool = False,
+    ) -> None:
         self.name = name
         self.marker = marker
+        self.user = user
         self.fail_marker_install = fail_marker_install
         self.executed: list[str] = []
 
@@ -107,6 +156,8 @@ class _TargetConnection:
         if self.fail_marker_install and statement == "create schema votus_verification":
             raise RuntimeError("marker install failed")
         if "current_database()" in statement:
+            if "current_user" in statement:
+                return _Result((self.name, self.user, self.marker))
             return _Result((self.name, self.marker))
         self.executed.append(statement)
         return _Result()
@@ -117,15 +168,23 @@ class _Connections:
         self.admin = _AdminConnection()
         self.targets: list[_TargetConnection] = []
         self.fail_marker_install = False
+        self.dsns: list[str] = []
 
     def __call__(self, dsn: str, *, autocommit: bool = False):
+        self.dsns.append(dsn)
         if autocommit:
             return self.admin
         from psycopg.conninfo import conninfo_to_dict
 
-        name = conninfo_to_dict(dsn)["dbname"]
+        params = conninfo_to_dict(dsn)
+        name = params["dbname"]
         marker = self.admin.databases[name]
-        target = _TargetConnection(name, marker, fail_marker_install=self.fail_marker_install)
+        target = _TargetConnection(
+            name,
+            marker,
+            user=params.get("user", "admin"),
+            fail_marker_install=self.fail_marker_install,
+        )
         self.targets.append(target)
         return target
 
@@ -216,6 +275,173 @@ def test_provision_creates_a_marked_unique_sibling_and_never_logs_the_dsn(capsys
     assert capsys.readouterr() == ("", "")
     assert connections.admin.closed, "template1 must not stay locked during pytest"
     database.close()
+
+
+def test_provision_creates_a_non_elevated_login_role_and_isolated_database() -> None:
+    connections = _Connections()
+    identity = _identity()
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@localhost/template1",
+        identity=identity,
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+
+    child_dsn = database.open()
+
+    role_statements = [
+        statement
+        for statement, _ in connections.admin.statements
+        if statement.lower().startswith("create role")
+    ]
+    assert len(role_statements) == 1
+    assert all(
+        clause in role_statements[0].lower()
+        for clause in (
+            "login",
+            "nosuperuser",
+            "nocreatedb",
+            "nocreaterole",
+            "noreplication",
+            "nobypassrls",
+        )
+    )
+    assert identity.name not in connections.admin.database_owners
+    assert f"user={identity.role_name}" in child_dsn
+    assert "password=disposable-value" in child_dsn
+    assert "maintenance-value" not in child_dsn
+    database.close()
+
+
+def test_database_create_failure_cleans_created_role_without_deleting_any_database() -> None:
+    connections = _Connections()
+    connections.admin.fail_create_database = True
+    identity = _identity()
+
+    with pytest.raises(RuntimeError, match="database create failed"):
+        DisposablePostgres(
+            "postgresql://admin:maintenance-value@localhost/template1",
+            identity=identity,
+            connect=connections,
+            secret_factory=lambda: "disposable-value",
+        ).open()
+
+    assert identity.role_name not in connections.admin.roles
+    assert connections.admin.databases == {}
+
+
+def test_post_migration_grants_are_complete_and_role_remains_cluster_unprivileged() -> None:
+    connections = _Connections()
+    identity = _identity()
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@localhost/template1",
+        identity=identity,
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+    database.open()
+
+    database.grant_test_privileges()
+
+    grants = [
+        statement.lower()
+        for statement, _ in connections.admin.statements
+        if statement.lower().startswith("grant")
+    ] + [
+        statement.lower()
+        for target in connections.targets
+        for statement in target.executed
+        if statement.lower().startswith("grant")
+    ]
+    assert grants == [
+        f'grant connect, create, temporary on database "{identity.name}" '
+        f'to "{identity.role_name}"',
+        f'grant usage, create on schema public to "{identity.role_name}"',
+        f'grant usage on schema votus_verification to "{identity.role_name}"',
+        "grant select on table votus_verification.ownership_marker "
+        f'to "{identity.role_name}"',
+        f'grant all privileges on all tables in schema public to "{identity.role_name}"',
+        f'grant all privileges on all sequences in schema public to "{identity.role_name}"',
+        f'grant all privileges on all functions in schema public to "{identity.role_name}"',
+    ]
+    policy_statement = next(
+        statement
+        for target in connections.targets
+        for statement in target.executed
+        if "create policy" in statement.lower()
+    )
+    policy_sql = " ".join(policy_statement.lower().split())
+    assert "relation.relrowsecurity" in policy_sql
+    assert "using (true) with check (true)" in policy_sql
+    assert identity.role_name in policy_sql
+    database.close()
+
+
+def test_preexisting_role_is_never_deleted_when_create_refuses_it() -> None:
+    connections = _Connections()
+    identity = _identity()
+    connections.admin.roles[identity.role_name] = "preexisting"
+
+    with pytest.raises(RuntimeError, match="role already exists"):
+        DisposablePostgres(
+            "postgresql://admin:maintenance-value@localhost/template1",
+            identity=identity,
+            connect=connections,
+            secret_factory=lambda: "disposable-value",
+        ).open()
+
+    assert connections.admin.roles[identity.role_name] == "preexisting"
+    assert not any(
+        statement.lower().startswith("drop role")
+        for statement, _ in connections.admin.statements
+    )
+
+
+def test_cleanup_continues_to_role_and_aggregates_both_drop_failures() -> None:
+    connections = _Connections()
+    identity = _identity()
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@localhost/template1",
+        identity=identity,
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+    database.open()
+    connections.admin.fail_drop = True
+    connections.admin.fail_drop_role = True
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        database.close()
+
+    assert [str(error) for error in caught.value.exceptions] == [
+        "drop failed",
+        "role drop failed",
+    ]
+    cleanup = [
+        statement.lower()
+        for statement, _ in connections.admin.statements
+        if statement.lower().startswith("drop")
+    ]
+    assert cleanup[-2].startswith("drop database")
+    assert cleanup[-1].startswith("drop role")
+
+
+def test_reported_setup_and_cleanup_errors_never_include_credentials() -> None:
+    connections = _Connections()
+    connections.admin.fail_create_database = True
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@localhost/template1",
+        identity=_identity(),
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        database.open()
+
+    reported = database.safe_error(caught.value)
+    assert "maintenance-value" not in reported
+    assert "disposable-value" not in reported
 
 
 def test_provision_failure_after_create_uses_comment_marker_for_cleanup() -> None:
@@ -371,6 +597,8 @@ def test_pytest_child_receives_only_the_disposable_database_dsn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "admin-secret")
+    monkeypatch.setenv("ETL_TEST_ADMIN_USERNAME", "admin-user")
+    monkeypatch.setenv("ETL_TEST_ADMIN_PASSWORD", "admin-password")
     monkeypatch.setenv("PGPASSWORD", "password-secret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "cloud-secret")
 
@@ -413,6 +641,7 @@ def test_signal_interruption_inside_context_cleans_the_database() -> None:
             termination_as_interrupt(signal.SIGTERM, None)
 
     assert identity.name not in connections.admin.databases
+    assert identity.role_name not in connections.admin.roles
 
 
 def test_signal_during_drop_is_deferred_until_cleanup_finishes() -> None:
@@ -430,6 +659,7 @@ def test_signal_during_drop_is_deferred_until_cleanup_finishes() -> None:
         database.close()
 
     assert identity.name not in connections.admin.databases
+    assert identity.role_name not in connections.admin.roles
 
 
 def test_cleanup_retries_one_interrupted_drop_then_succeeds() -> None:

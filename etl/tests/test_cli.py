@@ -667,14 +667,12 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
             assert count_row == (2,), (
                 f"ingest must persist exactly two result rows; got {count_row!r}"
             )
-            cur.execute("set local role authenticated")
             cur.execute(
                 # Exact column path used by web `fetchSourceRefs`.
                 "select id, sha256, source_url, fetched_at from archive_entry where id = %s",
                 (source_id,),
             )
             provenance_rows = cur.fetchall()
-            cur.execute("reset role")
             assert len(provenance_rows) == 1
             projected = provenance_rows[0]
             assert projected[0] == source_id

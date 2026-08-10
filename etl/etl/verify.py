@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -42,6 +43,10 @@ class DatabaseIdentity:
     marker: str
     token: uuid.UUID
 
+    @property
+    def role_name(self) -> str:
+        return f"{NAME_PREFIX}role_{self.token.hex}"
+
     @classmethod
     def generate(cls) -> DatabaseIdentity:
         token = uuid.uuid4()
@@ -58,6 +63,8 @@ class DatabaseIdentity:
             raise UnsafeDatabaseError("database name or ownership marker is not disposable")
         if re.fullmatch(r"votus_etl_verify_[0-9a-f]{32}", self.name) is None:
             raise UnsafeDatabaseError("database name is outside the disposable identity contract")
+        if re.fullmatch(r"votus_etl_verify_role_[0-9a-f]{32}", self.role_name) is None:
+            raise UnsafeDatabaseError("role name is outside the disposable identity contract")
 
 
 @dataclass(frozen=True)
@@ -73,7 +80,13 @@ def _connection_params(dsn: str) -> dict[str, str]:
         raise UnsafeDatabaseError("administrative database URL is invalid") from exc
 
 
-def _target_dsn(admin_dsn: str, database_name: str) -> str:
+def _target_dsn(
+    admin_dsn: str,
+    database_name: str,
+    *,
+    user: str | None = None,
+    password: str | None = None,
+) -> str:
     params = _connection_params(admin_dsn)
     configured_database = params.get("dbname")
     if configured_database != ADMIN_DATABASE:
@@ -81,15 +94,10 @@ def _target_dsn(admin_dsn: str, database_name: str) -> str:
             f"administrative URL must name the {ADMIN_DATABASE!r} maintenance database"
         )
     params["dbname"] = database_name
-    return make_conninfo(**params)
-
-
-def maintenance_dsn_from_disposable(database_dsn: str) -> str:
-    params = _connection_params(database_dsn)
-    database_name = params.get("dbname", "")
-    if re.fullmatch(r"votus_etl_verify_[0-9a-f]{32}", database_name) is None:
-        raise UnsafeDatabaseError("test database is outside the disposable identity contract")
-    params["dbname"] = ADMIN_DATABASE
+    if user is not None:
+        params["user"] = user
+    if password is not None:
+        params["password"] = password
     return make_conninfo(**params)
 
 
@@ -102,14 +110,30 @@ class DisposablePostgres:
         *,
         identity: DatabaseIdentity | None = None,
         connect: _ConnectionFactory = psycopg.connect,
+        secret_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32),
     ) -> None:
         self.admin_dsn = admin_dsn
         self.identity = identity or DatabaseIdentity.generate()
         self.connect = connect
+        self.role_secret = secret_factory()
         self.admin = None
         self.created_by_this_run = False
+        self.role_created_by_this_run = False
         self.marker_table_created = False
         self.target_dsn: str | None = None
+        self.migration_dsn: str | None = None
+
+    def safe_error(self, error: BaseException) -> str:
+        message = str(error)
+        sensitive = {self.admin_dsn, self.role_secret}
+        sensitive.update(
+            value
+            for value in _connection_params(self.admin_dsn).values()
+            if value and value in message
+        )
+        for value in sorted(sensitive, key=len, reverse=True):
+            message = message.replace(value, "[redacted]")
+        return message
 
     def _database_exists(self) -> bool:
         assert self.admin is not None
@@ -119,19 +143,13 @@ class DisposablePostgres:
         ).fetchone()
         return row == (1,)
 
-    def _comment_marker(self) -> str | None:
+    def _role_exists(self) -> bool:
         assert self.admin is not None
         row = self.admin.execute(
-            """
-            select shobj_description(oid, 'pg_database')
-            from pg_database
-            where datname = %s
-            """,
-            (self.identity.name,),
+            "select 1 from pg_roles where rolname = %s",
+            (self.identity.role_name,),
         ).fetchone()
-        if row is None or row[0] is None:
-            return None
-        return str(row[0])
+        return row == (1,)
 
     def _verify_global_roles_are_already_final(self) -> None:
         assert self.admin is not None
@@ -168,8 +186,8 @@ class DisposablePostgres:
             )
 
     def _verify_target(self) -> None:
-        assert self.target_dsn is not None
-        with self.connect(self.target_dsn) as connection:
+        assert self.migration_dsn is not None
+        with self.connect(self.migration_dsn) as connection:
             row = connection.execute(
                 """
                 select current_database(), marker
@@ -179,16 +197,66 @@ class DisposablePostgres:
         if row != (self.identity.name, self.identity.marker):
             raise UnsafeDatabaseError("connected database failed its disposable identity check")
 
+    def _verify_role(self) -> None:
+        assert self.admin is not None
+        row = self.admin.execute(
+            """
+            select rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+                   rolreplication, rolbypassrls,
+                   exists (
+                     select 1 from pg_auth_members where member = pg_authid.oid
+                   ),
+                   exists (
+                     select 1
+                       from pg_database
+                      where datname <> %s
+                        and has_database_privilege(pg_authid.oid, oid, 'CREATE')
+                   )
+              from pg_authid
+             where rolname = %s
+            """,
+            (self.identity.name, self.identity.role_name),
+        ).fetchone()
+        expected = (True, False, False, False, False, False, False, False)
+        if row != expected:
+            categories = None if row is None else row[6:]
+            raise UnsafeDatabaseError(
+                "disposable role privilege verification failed "
+                f"(outbound memberships and cross-database CREATE: {categories})"
+            )
+
     def open(self) -> str:
         self.identity.validate()
-        self.target_dsn = _target_dsn(self.admin_dsn, self.identity.name)
+        self.migration_dsn = _target_dsn(self.admin_dsn, self.identity.name)
+        self.target_dsn = _target_dsn(
+            self.admin_dsn,
+            self.identity.name,
+            user=self.identity.role_name,
+            password=self.role_secret,
+        )
         self.admin = self.connect(self.admin_dsn, autocommit=True)
         try:
             self._verify_global_roles_are_already_final()
             self.admin.execute(
+                sql.SQL(
+                    "create role {} login password {} nosuperuser nocreatedb "
+                    "nocreaterole noreplication nobypassrls"
+                ).format(
+                    sql.Identifier(self.identity.role_name),
+                    sql.Literal(self.role_secret),
+                )
+            )
+            self.role_created_by_this_run = True
+            self.admin.execute(
+                sql.SQL("comment on role {} is {}").format(
+                    sql.Identifier(self.identity.role_name),
+                    sql.Literal(self.identity.marker),
+                )
+            )
+            self._verify_role()
+            self.admin.execute(
                 sql.SQL("create database {}").format(sql.Identifier(self.identity.name))
             )
-            # CREATE DATABASE succeeding proves this exact UUID name did not pre-exist.
             self.created_by_this_run = True
             self.admin.execute(
                 sql.SQL("comment on database {} is {}").format(
@@ -196,7 +264,7 @@ class DisposablePostgres:
                     sql.Literal(self.identity.marker),
                 )
             )
-            with self.connect(self.target_dsn) as connection:
+            with self.connect(self.migration_dsn) as connection:
                 connection.execute("create schema votus_verification")
                 connection.execute(
                     "create table votus_verification.ownership_marker (marker text primary key)"
@@ -211,7 +279,7 @@ class DisposablePostgres:
             self.admin = None
             return self.target_dsn
         except BaseException as original:
-            if self.created_by_this_run:
+            if self.created_by_this_run or self.role_created_by_this_run:
                 try:
                     self.close()
                 except BaseException as cleanup_error:
@@ -223,37 +291,126 @@ class DisposablePostgres:
                 self.admin.close()
             raise
 
+    def grant_test_privileges(self) -> None:
+        assert self.migration_dsn is not None
+        assert self.admin is None
+        self.admin = self.connect(self.admin_dsn, autocommit=True)
+        try:
+            self.admin.execute(
+                sql.SQL("grant connect, create, temporary on database {} to {}").format(
+                    sql.Identifier(self.identity.name),
+                    sql.Identifier(self.identity.role_name),
+                )
+            )
+            self._verify_role()
+        finally:
+            self.admin.close()
+            self.admin = None
+
+        with self.connect(self.migration_dsn) as connection:
+            role = sql.Identifier(self.identity.role_name)
+            connection.execute(sql.SQL("grant usage, create on schema public to {}").format(role))
+            connection.execute(
+                sql.SQL("grant usage on schema votus_verification to {}").format(role)
+            )
+            connection.execute(
+                sql.SQL(
+                    "grant select on table votus_verification.ownership_marker to {}"
+                ).format(role)
+            )
+            connection.execute(
+                sql.SQL("grant all privileges on all tables in schema public to {}").format(role)
+            )
+            connection.execute(
+                sql.SQL("grant all privileges on all sequences in schema public to {}").format(role)
+            )
+            connection.execute(
+                sql.SQL("grant all privileges on all functions in schema public to {}").format(role)
+            )
+            connection.execute(
+                sql.SQL(
+                    """
+                    do $$
+                    declare table_name text;
+                    begin
+                      for table_name in
+                        select relation.relname
+                          from pg_class relation
+                          join pg_namespace namespace on namespace.oid = relation.relnamespace
+                         where namespace.nspname = 'public'
+                           and relation.relkind in ('r', 'p')
+                           and relation.relrowsecurity
+                      loop
+                        execute format(
+                          'create policy %I on public.%I to %I using (true) with check (true)',
+                          'votus_etl_verify_access', table_name, {}
+                        );
+                      end loop;
+                    end
+                    $$
+                    """
+                ).format(sql.Literal(self.identity.role_name))
+            )
+
+        assert self.target_dsn is not None
+        with self.connect(self.target_dsn) as connection:
+            row = connection.execute(
+                "select current_database(), current_user, marker "
+                "from votus_verification.ownership_marker"
+            ).fetchone()
+        if row != (self.identity.name, self.identity.role_name, self.identity.marker):
+            raise UnsafeDatabaseError("disposable role cannot reach its marked database")
+
     def _close_once(self) -> None:
         if self.admin is None:
-            if not self.created_by_this_run:
+            if not self.created_by_this_run and not self.role_created_by_this_run:
                 return
             self.admin = self.connect(self.admin_dsn, autocommit=True)
         self.identity.validate()
-        if not self._database_exists():
-            self.created_by_this_run = False
-            self.admin.close()
-            self.admin = None
-            return
-        if self.marker_table_created:
+        errors: list[BaseException] = []
+        if self.created_by_this_run and self._database_exists():
             try:
-                self._verify_target()
-            except Exception as exc:
-                raise UnsafeDatabaseError(
-                    "refusing cleanup because the database ownership marker changed"
-                ) from exc
-        elif self._comment_marker() != self.identity.marker and not self.created_by_this_run:
-            raise UnsafeDatabaseError(
-                "refusing cleanup because the database ownership marker changed"
-            )
-        self.admin.execute(
-            sql.SQL("drop database {} with (force)").format(sql.Identifier(self.identity.name))
-        )
-        if self._database_exists():
-            raise RuntimeError("disposable database still exists after cleanup")
-        self.created_by_this_run = False
-        self.marker_table_created = False
+                if self.marker_table_created:
+                    try:
+                        self._verify_target()
+                    except Exception as exc:
+                        raise UnsafeDatabaseError(
+                            "refusing cleanup because the database ownership marker changed"
+                        ) from exc
+                self.admin.execute(
+                    sql.SQL("drop database {} with (force)").format(
+                        sql.Identifier(self.identity.name)
+                    )
+                )
+                if self._database_exists():
+                    raise RuntimeError("disposable database still exists after cleanup")
+                self.created_by_this_run = False
+                self.marker_table_created = False
+            except InterruptedError:
+                raise
+            except BaseException as error:
+                errors.append(error)
+        elif self.created_by_this_run:
+            self.created_by_this_run = False
+
+        if self.role_created_by_this_run and self._role_exists():
+            try:
+                self.admin.execute(
+                    sql.SQL("drop role {}").format(sql.Identifier(self.identity.role_name))
+                )
+                if self._role_exists():
+                    raise RuntimeError("disposable role still exists after cleanup")
+                self.role_created_by_this_run = False
+            except BaseException as error:
+                errors.append(error)
+        elif self.role_created_by_this_run:
+            self.role_created_by_this_run = False
         self.admin.close()
         self.admin = None
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("disposable cleanup failed", errors)
 
     def close(self) -> None:
         try:
@@ -403,7 +560,9 @@ def main() -> int:
 
     try:
         with database as database_dsn:
-            migration_count = apply_migrations(database_dsn, migrations)
+            assert database.migration_dsn is not None
+            migration_count = apply_migrations(database.migration_dsn, migrations)
+            database.grant_test_privileges()
             result = run_pytest(database_dsn, etl_root)
         print(
             f"ETL verification passed: {migration_count} migrations, "
@@ -412,7 +571,7 @@ def main() -> int:
         )
         return 0
     except (Exception, KeyboardInterrupt) as exc:
-        print(f"ETL verification failed: {exc}", file=sys.stderr)
+        print(f"ETL verification failed: {database.safe_error(exc)}", file=sys.stderr)
         return 1
     finally:
         for handled, previous in previous_handlers.items():
