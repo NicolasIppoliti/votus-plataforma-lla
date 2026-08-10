@@ -16,6 +16,15 @@ export async function runOwnedCleanup(actions: readonly CleanupAction[],
   try { await verifyResiduals(); } catch (error) { collect(errors, error); }
   if (errors.length > 0) throw new AggregateError(errors, "owned cleanup failed");
 }
+export async function runOwnedServerCleanup<T>(servers: readonly T[],
+  stop: (server: T) => Promise<void>, verify: (server: T) => Promise<void>): Promise<void> {
+  const errors: unknown[] = [];
+  for (const server of servers)
+    try { await stop(server); } catch (error) { collect(errors, error); }
+  for (const server of servers)
+    try { await verify(server); } catch (error) { collect(errors, error); }
+  if (errors.length > 0) throw new AggregateError(errors, "owned server cleanup failed");
+}
 export function establishOwnership(state: OwnershipState, ownership: GateOwnership,
   effects: OwnershipEffects): void {
   state.ownership = ownership;

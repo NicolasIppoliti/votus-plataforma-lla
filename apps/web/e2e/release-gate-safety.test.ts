@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FullConfig, FullResult, Suite, TestCase, TestResult } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
-import { EXPECTED_E2E_SPECS, assertE2eEnvironment, assertGateReport, planOwnedCleanup,
+import { EXPECTED_E2E_SPECS, assertE2eEnvironment, assertGateReport,
+  assertLoopbackStorageState, classifyStaleOwnership, emptyStorageState,
+  planOwnedCleanup, planStaleWorkdirReap, storageStateForSpec,
   type CleanupAction, type GateOwnership, type GateTestResult } from "./gate-contract";
 import { assertStackStatus, assertTs7Version, establishOwnership, reserveUniquePorts,
   runOwnedCleanup, type PortReservation } from "../scripts/e2e-gate-runtime";
@@ -12,19 +14,30 @@ const ACTIONS: CleanupAction[] = [{ kind: "stop-stack", projectId: OWNERSHIP.pro
 const ENV = {
   NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321", NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
   SUPABASE_SERVICE_ROLE_KEY: "service", VOTUS_E2E_TEST_USER_EMAIL: "fixture@example.test",
-  VOTUS_E2E_TEST_USER_PASSWORD: "password", NATIONAL_JURISDICTION_ID: "national",
-  FISCALIZACION_ELECTION_ID: "fiscal-election", FISCALIZACION_CATEGORY_ID: "fiscal-category",
+  VOTUS_E2E_TEST_USER_PASSWORD: "password", VOTUS_E2E_BASE_URL: "http://127.0.0.1:4100",
+  VOTUS_E2E_STORAGE_STATE: "/owned/auth-state.json",
+  VOTUS_E2E_BASE_URL_COMPARISON: "http://127.0.0.1:4101",
+  VOTUS_E2E_BASE_URL_FISCALIZACION: "http://127.0.0.1:4102",
+  VOTUS_E2E_BASE_URL_MUNICIPAL: "http://127.0.0.1:4103",
+  VOTUS_E2E_BASE_URL_PROVENANCE: "http://127.0.0.1:4104",
 };
 const PASSED: GateTestResult[] = EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" }));
+const STALE_EVIDENCE = {
+  tempRoot: "/private/tmp", expectedWorkdir: "/private/tmp/votus-e2e-stale",
+  marker: { workdir: "/private/tmp/votus-e2e-stale", projectId: "votus-e2e-stale", token: "token" },
+  ageMs: 3_600_000, staleAfterMs: 900_000, repositoryMatches: true,
+  ownerProcessActive: false, projectResourcesActive: false,
+} as const;
 describe("base contracts", () => {
   it("requires and returns every generated environment value", () => {
     expect(assertE2eEnvironment(ENV)).toEqual(ENV);
     expect(() => assertE2eEnvironment({})).toThrow("VOTUS_E2E_TEST_USER_PASSWORD");
   });
-  it("accepts only the exact four-pass inventory", () => {
+  it("accepts only the exact eight-pass inventory", () => {
     expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
     expect(() => assertGateReport([], "passed")).toThrow("discovered 0 tests");
     expect(() => assertGateReport([{ ...PASSED[0]!, spec: "e2e/other.spec.ts" }], "passed")).toThrow("spec inventory mismatch");
+    expect(() => assertGateReport(PASSED.slice(0, 4), "passed")).toThrow("discovered 4 tests; expected 8");
   });
   it.each(["skipped", "interrupted", "failed", "timedOut"] as const)("rejects %s", (status) => {
     expect(() => assertGateReport([{ spec: PASSED[0]!.spec, status }, ...PASSED.slice(1)], "passed")).toThrow(`${status}=1`);
@@ -36,6 +49,33 @@ describe("base contracts", () => {
     expect(() => planOwnedCleanup("/private/tmp", "/protected", OWNERSHIP, OWNERSHIP)).toThrow("outside");
     expect(() => planOwnedCleanup("/private/tmp", OWNERSHIP.workdir, OWNERSHIP,
       { ...OWNERSHIP, token: "x" })).toThrow("marker mismatch");
+  });
+  it("assigns authenticated state to every spec except the auth boundary test", () => {
+    const path = "/owned/auth-state.json";
+    for (const spec of EXPECTED_E2E_SPECS)
+      expect(storageStateForSpec(spec, path)).toEqual(
+        spec === "e2e/auth.spec.ts" ? emptyStorageState() : path);
+    expect(() => storageStateForSpec("e2e/unknown.spec.ts", path)).toThrow("unknown e2e spec");
+  });
+  it("accepts only loopback auth cookies whose domain is independent of port", () => {
+    const state = { cookies: [{ name: "sb-local-auth-token", value: "token", domain: "127.0.0.1",
+      path: "/", expires: -1, httpOnly: false, secure: false, sameSite: "Lax" as const }], origins: [] };
+    expect(() => assertLoopbackStorageState(state)).not.toThrow();
+    expect(() => assertLoopbackStorageState({ ...state,
+      cookies: [{ ...state.cookies[0]!, domain: "127.0.0.1:54321" }] })).toThrow("loopback host");
+  });
+  it("classifies and plans only proven stale owned workdirs", () => {
+    expect(classifyStaleOwnership(STALE_EVIDENCE)).toBe("reap");
+    expect(planStaleWorkdirReap(STALE_EVIDENCE)).toEqual([
+      { workdir: STALE_EVIDENCE.expectedWorkdir, projectId: "votus-e2e-stale" },
+    ]);
+    expect(classifyStaleOwnership({ ...STALE_EVIDENCE, ownerProcessActive: true })).toBe("live");
+    expect(classifyStaleOwnership({ ...STALE_EVIDENCE, projectResourcesActive: true })).toBe("live");
+    expect(classifyStaleOwnership({ ...STALE_EVIDENCE, ageMs: 1 })).toBe("live");
+    expect(classifyStaleOwnership({ ...STALE_EVIDENCE, repositoryMatches: false })).toBe("foreign");
+    expect(classifyStaleOwnership({ ...STALE_EVIDENCE,
+      marker: { ...STALE_EVIDENCE.marker, extra: true } })).toBe("ambiguous");
+    expect(classifyStaleOwnership({ ...STALE_EVIDENCE, projectResourcesActive: undefined })).toBe("ambiguous");
   });
 });
 it("continues every cleanup step, verifies residuals, and aggregates failures", async () => {
@@ -88,7 +128,7 @@ describe("ReleaseGateReporter", () => {
     reporter.onBegin({} as FullConfig, suite);
     for (const testCase of cases) reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
     await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
-    expect(JSON.parse(receipt).results).toHaveLength(4);
+    expect(JSON.parse(receipt).results).toHaveLength(8);
   });
   it("records a discovered test with no result as interrupted", async () => {
     let receipt = "";

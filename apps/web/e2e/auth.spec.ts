@@ -9,11 +9,12 @@ import { expect, test } from "@playwright/test";
  * Missing inputs fail globally before this scenario can run.
  */
 
-import { assertE2eEnvironment } from "./gate-contract";
+import { assertE2eEnvironment, storageStateForSpec } from "./gate-contract";
 
 const environment = assertE2eEnvironment(process.env);
 const TEST_USER_EMAIL = environment.VOTUS_E2E_TEST_USER_EMAIL;
 const TEST_USER_PASSWORD = environment.VOTUS_E2E_TEST_USER_PASSWORD;
+test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOTUS_E2E_STORAGE_STATE) });
 
 // The in-scope content marker rendered only inside `(authenticated)/`
 // routes (see `src/app/(authenticated)/dashboard/page.tsx`). No anonymous

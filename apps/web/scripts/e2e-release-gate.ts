@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -9,11 +9,14 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
-import { EXPECTED_E2E_SPECS, planOwnedCleanup } from "../e2e/gate-contract.ts";
+import { EXPECTED_E2E_SPECS, classifyStaleOwnership, planOwnedCleanup,
+  planStaleWorkdirReap } from "../e2e/gate-contract.ts";
 import type { CleanupAction, GateOwnership } from "../e2e/gate-contract.ts";
+import { SERVER_SCENARIOS, planScenarioServers, resultScenarioIdentity, type ScenarioServer,
+  type ServerScenario } from "../e2e/scenario-ownership.ts";
 import {
   assertStackStatus, assertTs7Version, establishOwnership, reserveUniquePorts, runOwnedCleanup,
-  type PortReservation,
+  runOwnedServerCleanup, type PortReservation,
 } from "./e2e-gate-runtime.ts";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REQUIRE = createRequire(import.meta.url);
@@ -22,11 +25,13 @@ const WEB_ROOT = path.resolve(SCRIPT_DIR, "..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
 const SOURCE_SUPABASE = path.join(REPO_ROOT, "supabase");
 const OWNER_FILE = ".votus-e2e-owner.json";
+const STALE_AFTER_MS = 30 * 60 * 1000;
 const EXPECTED_MIGRATIONS = Array.from({ length: 19 }, (_, index) => String(index + 1).padStart(4, "0"));
 const EXCLUDED_SERVICES =
   "realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor";
+interface OwnedNextServer extends ScenarioServer { child: ChildProcess; }
 interface GateState { ownership?: GateOwnership; stackMutationAttempted: boolean;
-  server?: ChildProcess; reservations?: PortReservation[]; interrupted?: string; }
+  servers?: OwnedNextServer[]; reservations?: PortReservation[]; interrupted?: string; }
 interface PlaywrightReceipt { suiteStatus: string; results: Array<{ spec: string; status: string }>; }
 function commandResult(command: string, args: readonly string[], cwd = REPO_ROOT) {
   return spawnSync(command, args, { cwd, encoding: "utf8", env: process.env,
@@ -80,7 +85,7 @@ async function assertSourceInventory(): Promise<void> {
   const specFiles = (await readdir(path.join(WEB_ROOT, "e2e")))
     .filter((name) => name.endsWith(".spec.ts")).map((name) => `e2e/${name}`).sort();
   if (JSON.stringify(specFiles) !== JSON.stringify([...EXPECTED_E2E_SPECS].sort()))
-    throw new Error("Playwright spec inventory must be exactly the four release-gate specs");
+    throw new Error("Playwright spec inventory must be exactly the eight release-gate specs");
 }
 function assertIsolationCapabilities(): void {
   requireCommand("pnpm", ["--version"], "pnpm");
@@ -151,7 +156,7 @@ async function waitForServer(url: string, child: ChildProcess): Promise<void> {
   throw new Error("production Next server did not become ready within 60 seconds");
 }
 async function runPlaywright(environment: NodeJS.ProcessEnv, receiptPath: string): Promise<void> {
-  const result = spawnSync("pnpm", ["exec", "playwright", "test", "--workers=1"],
+  const result = spawnSync("pnpm", ["exec", "playwright", "test"],
     { cwd: WEB_ROOT, env: environment, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (!result.error && result.status === 0) return;
   let summary = "no reporter receipt";
@@ -176,6 +181,10 @@ async function stopChild(child: ChildProcess): Promise<void> {
     await Promise.race([new Promise<void>((resolve) => child.once("exit", () => resolve())),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Next server did not stop")), 5_000))]);
   }
+}
+async function verifyServerStopped(server: OwnedNextServer): Promise<void> {
+  if (server.child.exitCode === null)
+    throw new Error(`production Next server still runs: ${server.scenario}:${server.port}`);
 }
 async function verifyResiduals(ownership: GateOwnership): Promise<void> {
   const errors: unknown[] = [];
@@ -202,9 +211,76 @@ function removeOwnedVolumes(projectId: string): void {
 function addErrors(target: unknown[], error: unknown): void {
   if (error instanceof AggregateError) target.push(...error.errors); else target.push(error);
 }
+function markerStrings(marker: unknown): { workdir: string; projectId: string } | undefined {
+  if (!marker || typeof marker !== "object") return undefined;
+  const value = marker as Record<string, unknown>;
+  if (typeof value["workdir"] !== "string" || typeof value["projectId"] !== "string") return undefined;
+  return { workdir: value["workdir"], projectId: value["projectId"] };
+}
+async function matchesRepository(candidate: string): Promise<boolean> {
+  try {
+    const target = path.join(candidate, "supabase", "migrations");
+    const sourceNames = (await readdir(path.join(SOURCE_SUPABASE, "migrations")))
+      .filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+    const targetNames = (await readdir(target)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+    const expected = [...sourceNames, "0020_e2e_service_role_grants.sql"].sort();
+    if (JSON.stringify(targetNames) !== JSON.stringify(expected)) return false;
+    for (const name of sourceNames)
+      if (await readFile(path.join(target, name), "utf8") !==
+          await readFile(path.join(SOURCE_SUPABASE, "migrations", name), "utf8")) return false;
+    return await readFile(path.join(target, "0020_e2e_service_role_grants.sql"), "utf8") ===
+      await readFile(path.join(WEB_ROOT, "e2e", "service-role-grants.sql"), "utf8");
+  } catch { return false; }
+}
+function matchingProcessActive(workdir: string, projectId: string): boolean | undefined {
+  const result = commandResult("ps", ["-axo", "command="]);
+  if (result.error || result.status !== 0) return undefined;
+  return result.stdout.split("\n").some((line) => line.includes(workdir) || line.includes(projectId));
+}
+function matchingProjectResourcesActive(projectId: string): boolean | undefined {
+  const checks = [
+    ["ps", "-a", "--filter", `name=${projectId}`, "--format", "{{.Names}}"],
+    ["volume", "ls", "--filter", `name=${projectId}`, "--format", "{{.Name}}"],
+  ] as const;
+  let active = false;
+  for (const args of checks) {
+    const result = commandResult("docker", args);
+    if (result.error || result.status !== 0) return undefined;
+    if (result.stdout.trim()) active = true;
+  }
+  return active;
+}
+async function reapStaleOwnedWorkdirs(): Promise<void> {
+  const tempRoot = os.tmpdir();
+  const entries = await readdir(tempRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("votus-e2e-")) continue;
+    const candidate = path.join(tempRoot, entry.name);
+    let marker: unknown;
+    let markerAgeMs: number;
+    try {
+      const markerPath = path.join(candidate, OWNER_FILE);
+      marker = JSON.parse(await readFile(markerPath, "utf8"));
+      markerAgeMs = Date.now() - (await stat(markerPath)).mtimeMs;
+    } catch { continue; }
+    const strings = markerStrings(marker);
+    const evidence = {
+      tempRoot, expectedWorkdir: candidate, marker, ageMs: markerAgeMs,
+      staleAfterMs: STALE_AFTER_MS, repositoryMatches: await matchesRepository(candidate),
+      ownerProcessActive: strings ? matchingProcessActive(strings.workdir, strings.projectId) : undefined,
+      projectResourcesActive: strings ? matchingProjectResourcesActive(strings.projectId) : undefined,
+    };
+    if (classifyStaleOwnership(evidence) !== "reap") continue;
+    for (const action of planStaleWorkdirReap(evidence))
+      await rm(action.workdir, { recursive: true });
+  }
+}
 async function cleanup(state: GateState): Promise<void> {
   const errors: unknown[] = [];
-  if (state.server) try { await stopChild(state.server); } catch (error) { addErrors(errors, error); }
+  if (state.servers) try {
+    await runOwnedServerCleanup(state.servers,
+      ({ child }) => stopChild(child), verifyServerStopped);
+  } catch (error) { addErrors(errors, error); }
   for (const reservation of state.reservations ?? [])
     try { await reservation.release(); } catch (error) { addErrors(errors, error); }
   if (!state.ownership) {
@@ -229,15 +305,42 @@ async function cleanup(state: GateState): Promise<void> {
   } catch (error) { addErrors(errors, error); }
   if (errors.length > 0) throw new AggregateError(errors, "cleanup failed");
 }
+const DATA_SPEC_BY_SCENARIO = {
+  comparison: "e2e/comparison.spec.ts",
+  fiscalizacion: "e2e/fiscalizacion.spec.ts",
+  municipal: "e2e/municipal.spec.ts",
+  provenance: "e2e/provenance.spec.ts",
+} as const;
+function productEnvironment(common: NodeJS.ProcessEnv, scenario: ServerScenario): NodeJS.ProcessEnv {
+  const spec = scenario === "shared" ? undefined : DATA_SPEC_BY_SCENARIO[scenario];
+  const identity = spec ? resultScenarioIdentity(spec) : undefined;
+  const prefix = `e2e-${scenario}`;
+  return {
+    ...common,
+    NATIONAL_JURISDICTION_ID: identity && scenario !== "municipal"
+      ? identity.jurisdictionId : `${prefix}-unused-national`,
+    MUNICIPAL_JURISDICTION_ID: identity && scenario === "municipal"
+      ? identity.jurisdictionId : `${prefix}-unused-municipal`,
+    MUNICIPAL_CATEGORY_ID: identity && scenario === "municipal"
+      ? identity.categoryId : `${prefix}-unused-municipal-category`,
+    FISCALIZACION_ELECTION_ID: identity && scenario === "fiscalizacion"
+      ? identity.electionIds[0] : `${prefix}-unused-fiscalizacion-election`,
+    FISCALIZACION_CATEGORY_ID: identity && scenario === "fiscalizacion"
+      ? identity.categoryId : `${prefix}-unused-fiscalizacion-category`,
+  };
+}
 async function executeGate(state: GateState): Promise<void> {
   await assertSourceInventory();
   assertIsolationCapabilities();
-  const reservations = await reserveUniquePorts(11, reservePort);
+  await reapStaleOwnedWorkdirs();
+  const reservations = await reserveUniquePorts(10 + SERVER_SCENARIOS.length, reservePort);
   state.reservations = reservations;
-  const [nextReservation, ...supabaseReservations] = reservations;
-  if (!nextReservation || supabaseReservations.length !== 10)
+  const nextReservations = reservations.slice(0, SERVER_SCENARIOS.length);
+  const supabaseReservations = reservations.slice(SERVER_SCENARIOS.length);
+  if (nextReservations.length !== SERVER_SCENARIOS.length || supabaseReservations.length !== 10)
     throw new Error("port reservation failed");
-  const nextPort = nextReservation.port;
+  const serverPlan = planScenarioServers(nextReservations.map(({ port }) => port));
+  const nextPort = serverPlan[0]!.port;
   const supabasePorts = supabaseReservations.map(({ port }) => port);
   await createIsolatedWorkdir(nextPort, supabasePorts, state);
   const ownership = state.ownership;
@@ -253,23 +356,34 @@ async function executeGate(state: GateState): Promise<void> {
   const statusOutput = requireCommand("supabase", ["status", "--workdir", ownership.workdir, "-o", "json"],
     "disposable Supabase status");
   const stack = assertStackStatus(statusOutput, supabasePorts[0]!);
-  const baseURL = `http://127.0.0.1:${nextPort}`;
+  const baseURLs = Object.fromEntries(serverPlan.map(({ scenario, port }) =>
+    [scenario, `http://127.0.0.1:${port}`])) as Record<ServerScenario, string>;
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     NEXT_PUBLIC_SUPABASE_URL: stack.API_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY: stack.ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY: stack.SERVICE_ROLE_KEY,
     VOTUS_E2E_TEST_USER_EMAIL: `votus-e2e-${randomUUID()}@example.test`,
     VOTUS_E2E_TEST_USER_PASSWORD: randomBytes(24).toString("base64url"),
-    VOTUS_E2E_BASE_URL: baseURL, VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
-    NATIONAL_JURISDICTION_ID: randomUUID(), MUNICIPAL_JURISDICTION_ID: randomUUID(),
-    FISCALIZACION_ELECTION_ID: randomUUID(), FISCALIZACION_CATEGORY_ID: randomUUID(),
+    VOTUS_E2E_BASE_URL: baseURLs.shared,
+    VOTUS_E2E_BASE_URL_COMPARISON: baseURLs.comparison,
+    VOTUS_E2E_BASE_URL_FISCALIZACION: baseURLs.fiscalizacion,
+    VOTUS_E2E_BASE_URL_MUNICIPAL: baseURLs.municipal,
+    VOTUS_E2E_BASE_URL_PROVENANCE: baseURLs.provenance,
+    VOTUS_E2E_STORAGE_STATE: path.join(ownership.workdir, "authenticated-state.json"),
+    VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
   };
-  runChecked("pnpm", ["build"], "production Next build", WEB_ROOT, environment);
-  await nextReservation.release();
+  runChecked("pnpm", ["build"], "production Next build", WEB_ROOT,
+    productEnvironment(environment, "shared"));
   if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
-  state.server = spawn(process.execPath, [NEXT_CLI, "start", "-H", "127.0.0.1", "-p", String(nextPort)],
-    { cwd: WEB_ROOT, env: environment, stdio: "ignore" });
-  await waitForServer(`${baseURL}/login`, state.server);
+  state.servers = [];
+  for (const [index, server] of serverPlan.entries()) {
+    await nextReservations[index]!.release();
+    const child = spawn(process.execPath,
+      [NEXT_CLI, "start", "-H", "127.0.0.1", "-p", String(server.port)],
+      { cwd: WEB_ROOT, env: productEnvironment(environment, server.scenario), stdio: "ignore" });
+    state.servers.push({ ...server, child });
+    await waitForServer(`${baseURLs[server.scenario]}/login`, child);
+  }
   await runPlaywright(environment, environment.VOTUS_E2E_RESULT_FILE!);
 }
 async function main(): Promise<void> {
@@ -290,7 +404,7 @@ async function main(): Promise<void> {
   try { await cleanOnce(); } catch (error) { failure = failure
     ? new AggregateError([failure, error], "gate execution and cleanup both failed") : error; }
   if (failure) throw failure;
-  process.stdout.write("E2E release gate passed: 4 passed, 0 skipped, disposable stack cleaned\n");
+  process.stdout.write("E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n");
 }
 main().catch((error: unknown) => { const message = error instanceof Error ? error.message : "unknown failure";
   process.stderr.write(`E2E release gate failed: ${message}\n`); process.exitCode = 1; });

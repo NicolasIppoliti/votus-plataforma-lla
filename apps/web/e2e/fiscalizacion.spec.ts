@@ -4,10 +4,10 @@ import { assertE2eEnvironment } from "./gate-contract";
 import {
   FISCALIZACION_VOTES,
   OFFICIAL_VOTES,
-  SOURCE_ISOLATION_FIXTURE,
-  SOURCE_SCOPE,
+  sourceIsolationFixture,
   withResultFixture,
 } from "./result-fixture";
+import { scenarioBaseUrl } from "./scenario-ownership";
 
 /**
  * fiscalizacion-analysis spec, "An operator route reaches fiscalización
@@ -19,24 +19,26 @@ import {
  */
 
 const environment = assertE2eEnvironment(process.env);
+const SPEC = "e2e/fiscalizacion.spec.ts";
+const { scope: SOURCE_SCOPE, seed: SOURCE_ISOLATION_FIXTURE } =
+  sourceIsolationFixture(SPEC);
+const baseURL = scenarioBaseUrl(SPEC, environment);
 
 test.describe("the fiscalizacion route renders labelled unofficial figures", () => {
   test("test_route_renders_labelled_unofficial_figures", async ({ page }) => {
-    await withResultFixture(SOURCE_ISOLATION_FIXTURE, async () => {
-      await page.goto("/login");
-      await page.getByLabel("Email").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
-      await page.getByLabel("Password").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
-      await page.getByRole("button", { name: "Sign in" }).click();
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => {
+      await page.goto(new URL("/dashboard", baseURL).toString());
       await expect(page).toHaveURL(/\/dashboard/);
 
       // Reachable from the authenticated layout (task 13.10), not merely
       // addressable by URL.
       await page.getByRole("link", { name: /Fiscalización/ }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
-      await page.goto(
+      await page.goto(new URL(
         `/fiscalizacion?electionId=${SOURCE_SCOPE.electionId}` +
           `&jurisdictionId=${SOURCE_SCOPE.jurisdictionId}&categoryId=${SOURCE_SCOPE.categoryId}`,
-      );
+        baseURL,
+      ).toString());
 
       const main = page.getByRole("main");
       await expect(main.getByText(

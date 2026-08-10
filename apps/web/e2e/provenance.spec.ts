@@ -4,10 +4,10 @@ import { assertE2eEnvironment } from "./gate-contract";
 import {
   FISCALIZACION_VOTES,
   OFFICIAL_VOTES,
-  SOURCE_ISOLATION_FIXTURE,
-  SOURCE_SCOPE,
+  sourceIsolationFixture,
   withResultFixture,
 } from "./result-fixture";
+import { resultScenarioIdentity, scenarioBaseUrl } from "./scenario-ownership";
 
 /**
  * Threat matrix, "Unofficial-source leakage into official figures", path 3
@@ -18,6 +18,11 @@ import {
  */
 
 const environment = assertE2eEnvironment(process.env);
+const SPEC = "e2e/provenance.spec.ts";
+const identity = resultScenarioIdentity(SPEC);
+const { scope: SOURCE_SCOPE, seed: SOURCE_ISOLATION_FIXTURE } =
+  sourceIsolationFixture(SPEC);
+const baseURL = scenarioBaseUrl(SPEC, environment);
 // The badge marker rendered only when a figure's `sourceKind` is
 // `fiscalizacion` (see `src/components/GranularityBadge.tsx` /
 // `SourceDisclaimer.tsx`, task 11.17). No page rendered without an
@@ -26,23 +31,16 @@ const FISCALIZACION_MARKER = "party-internal, unofficial";
 
 test.describe("no fiscalización leakage into the rendered page", () => {
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
-    await withResultFixture(SOURCE_ISOLATION_FIXTURE, async () => {
-      await page.goto("/login");
-      await page.getByLabel("Email").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
-      await page.getByLabel("Password").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      // Wait for the client-side sign-in to actually set the session cookie
-      // (visible as the redirect to /dashboard) before navigating away —
-      // otherwise the next `goto` can race ahead of authentication and land
-      // back on /login, which would make this test pass for the wrong
-      // reason (no page reached at all, not a genuine leakage check).
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => {
+      await page.goto(new URL("/dashboard", baseURL).toString());
       await expect(page).toHaveURL(/\/dashboard/);
 
-      await page.goto(
+      await page.goto(new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}` +
           `&jurisdictionId=${SOURCE_SCOPE.jurisdictionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
-          `&partyCategory=${encodeURIComponent("DIPUTADO NACIONAL")}&partyJurisdiction=national`,
-      );
+          `&partyCategory=${encodeURIComponent(identity.categoryName)}&partyJurisdiction=national`,
+        baseURL,
+      ).toString());
 
       const main = page.getByRole("main");
       const officialTotal = main.getByRole("note").filter({ hasText: "Official total:" });

@@ -77,6 +77,22 @@ describe("municipal page — loadMunicipalView", () => {
 });
 
 describe("municipal page — renderMunicipalView", () => {
+  it("test_unmapped_fixture_keeps_official_figure_and_source_exclusion_visible", () => {
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "ok",
+        rows: [{ ...MUNICIPAL_ROWS[0]!, listId: null, votes: 11_111 }],
+        excluded: { fiscalizacion: { rows: 1, votes: 22_222 } },
+        partyMappingConfigured: true,
+      }),
+    );
+
+    expect(html).toContain("By source kind: 1 official row(s) / 11111 vote(s).");
+    expect(html).toContain("granularity: seccion");
+    expect(html).toContain("1 fiscalizacion row(s) / 22222 vote(s)");
+    expect(html).not.toContain("33333");
+  });
+
   it("test_a_coarse_source_is_labelled_by_the_jurisdiction_never_by_the_province", () => {
     const html = renderToStaticMarkup(
       renderMunicipalView({
