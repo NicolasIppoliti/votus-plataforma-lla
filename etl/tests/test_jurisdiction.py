@@ -18,9 +18,12 @@ import pytest
 from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.jurisdiction import (
     QuarantinedPbaDistrito,
+    is_canonicalizable_circuito_code,
+    is_canonicalizable_code,
     make_result_row,
     normalize_circuito_code,
     normalize_distrito_code,
+    normalize_pba_distrito_code,
     normalize_seccion_code,
     resolve_pba_distrito_code,
 )
@@ -114,6 +117,29 @@ def test_normalize_seccion_code_passes_none_through_unchanged() -> None:
     assert normalize_seccion_code(None) is None
 
 
+def test_pba_distrito_normalization_is_a_distinct_three_digit_scheme() -> None:
+    assert normalize_pba_distrito_code(" 27 ") == "027"
+    assert normalize_pba_distrito_code("027") == "027"
+    assert normalize_pba_distrito_code(None) is None
+    assert normalize_pba_distrito_code("P27") == "P27"
+    assert normalize_distrito_code("27") == "27"
+
+
+@pytest.mark.parametrize("raw", ["٢", "１２", "²", "2_7", "+2", "-2"])
+def test_non_ascii_or_decorated_codes_are_not_canonicalizable(raw: str) -> None:
+    assert is_canonicalizable_code(raw) is False
+    assert normalize_distrito_code(raw) == raw
+    assert normalize_seccion_code(raw) == raw
+    assert normalize_circuito_code(raw) == raw
+
+
+def test_normalize_code_preserves_digit_string_too_long_for_int_conversion() -> None:
+    raw = "9" * 10_000
+
+    assert is_canonicalizable_code(raw) is True
+    assert normalize_distrito_code(raw) == raw
+
+
 def test_pba_distrito_code_resolves_through_the_crosswalk_to_the_national_pair() -> None:
     """Scheme cause (Phase 17): PBA writes its own `distrito_code = "027"`.
     `jurisdiction_crosswalk`'s single entry says PBA `"027"` maps to
@@ -156,6 +182,21 @@ def test_an_uncurated_pba_code_is_quarantined_not_silently_written() -> None:
     assert "999" in resolved.reason
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("248", "00248"), ("0249A", "0249A"), ("249a", "0249A"), ("12345A", "12345A")],
+)
+def test_circuito_codes_use_their_alphanumeric_canonical_scheme(raw: str, expected: str) -> None:
+    assert is_canonicalizable_circuito_code(raw) is True
+    assert normalize_circuito_code(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "٢", "１２", "+249A", "24_9A", "249AB", "24A9", "A249"])
+def test_malformed_circuito_codes_are_not_canonicalizable(raw: str) -> None:
+    assert is_canonicalizable_circuito_code(raw) is False
+    assert normalize_circuito_code(raw) == raw
+
+
 def test_normalize_circuito_code_pads_and_never_truncates() -> None:
     """Circuito is normalized at the same boundary as distrito and seccion.
 
@@ -174,3 +215,52 @@ def test_normalize_circuito_code_pads_and_never_truncates() -> None:
     assert normalize_circuito_code("123456") == "123456", (
         "a wider code must survive intact, never be truncated to the padding width"
     )
+
+
+def test_merge_key_distinguishes_null_empty_and_present_mesa_values() -> None:
+    from etl.db import merge_key
+
+    base = (None, "027", "A|B", "School\\C")
+    assert merge_key(*base, None) != merge_key("", *base[1:], None)
+    assert merge_key(*base, None) != merge_key(*base, 0)
+
+
+def test_the_sql_and_python_merge_keys_agree_on_nulls_and_escaped_characters() -> None:
+    """The production batch path keeps hostile and NULL-bearing lineages injective.
+
+    Calling the real batch entry point twice exercises both the Python merge-key
+    encoder and its SQL join expression. The transaction is always rolled back.
+    """
+    import os
+
+    import psycopg
+    import pytest
+
+    from etl.db import batch_upsert_jurisdictions
+
+    dsn = os.environ.get(
+        "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )
+    try:
+        conn = psycopg.connect(dsn, connect_timeout=2)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {dsn!r}: {exc}")
+
+    lineages = [
+        ("02", None, "A|B", "School\\C", None),
+        ("02", "", "A|B", "School\\C", None),
+        ("02", None, "A|B", "School\\C", 0),
+        ("02", "027", "A|B", "School\\C", 1),
+        ("02", "027", "A", "B|School\\C", 1),
+    ]
+    try:
+        first = batch_upsert_jurisdictions(conn, lineages)
+        second = batch_upsert_jurisdictions(conn, lineages)
+
+        assert len(set(first.values())) == len(lineages), (
+            "NULL, empty, mesa, separator, and backslash differences must stay distinct"
+        )
+        assert second == first, "a repeated batch must resolve the same jurisdiction ids"
+    finally:
+        conn.rollback()
+        conn.close()

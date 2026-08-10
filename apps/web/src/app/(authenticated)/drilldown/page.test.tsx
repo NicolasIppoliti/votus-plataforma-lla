@@ -364,7 +364,8 @@ describe("drilldown page — an omitted param is named as omitted", () => {
     // Run after the family guard, this rendered "j-027 is mapped by the
     // national party table, not undefined" — the wrong cause, with an empty
     // interpolation where a value belongs.
-    const { partyJurisdiction: _omitted, ...withoutJurisdiction } = PARAMS;
+    const withoutJurisdiction = { ...PARAMS };
+    Reflect.deleteProperty(withoutJurisdiction, "partyJurisdiction");
 
     const markup = renderToStaticMarkup(
       (await DrilldownPage({

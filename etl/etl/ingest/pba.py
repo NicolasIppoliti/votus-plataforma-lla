@@ -24,14 +24,25 @@ PDF/telegrama OCR extraction is explicitly out of scope
 
 from __future__ import annotations
 
+import datetime as dt
+import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 
 from .. import db
-from ..archive import POLITENESS_DELAY_SECONDS, ArchiveResult, FetchResponse, archive_source
+from ..archive import (
+    POLITENESS_DELAY_SECONDS,
+    ArchiveIntegrityError,
+    ArchiveResult,
+    FetchResponse,
+    archive_source,
+    read_verified_archive,
+)
 from ..crosswalk import CrosswalkTable
 from ..http_client import DEFAULT_USER_AGENT, HostPolicy, PolicedHostFetcher
 from ..jurisdiction import (
@@ -41,15 +52,15 @@ from ..jurisdiction import (
     resolve_pba_distrito_code,
 )
 from ..manifest import latest_ok_record
-from ..party_map import PartyMappingTable, PartyResolutionResult, resolve_party_for_rows
+from ..numeric import parse_source_int
 from ..storage import LocalArchiveStore
 
-# The distrito this ingestion path covers (Coronel Rosales); PBA municipal's
-# list-id scheme is a separate namespace from the national `agrupacion_id`
-# space even where numeric values coincide (party-identity-mapping spec,
-# task 7.6c) -- resolution always uses this jurisdiction label, never
-# ``"national"``.
-PBA_PARTY_MAP_JURISDICTION = "coronel_rosales_municipal"
+# NO `PBA_PARTY_MAP_JURISDICTION`. It named the `party_map.yaml` label PBA
+# municipal rows resolve under, for `resolve_pba_party` -- deleted with the
+# rest of the `is_unmapped` layer, leaving a constant whose only readers were
+# its own tests. The label is a fact about `curated/party_map.yaml`, and it
+# now lives in the test that actually asserts the contract it encodes: that
+# the 22xx municipal family never resolves against the national scheme.
 
 # ---------------------------------------------------------------------------
 # D10 — the real, discovered fetcher target (spikes/002-pba-2025-paths.md)
@@ -82,6 +93,18 @@ PBA_HOST_POLICY = HostPolicy(
 DEFAULT_MAX_ATTEMPTS = 3  # D10 constraint 6 — bounded retry, then stop
 
 
+class PbaSchemaError(ValueError):
+    """Raised when the archived PBA page does not carry the structure this
+    parser reads.
+
+    Named, and a `ValueError` subclass so existing callers still catch it:
+    these were bare `ValueError`s that no CLI `except` tuple listed, so a
+    re-skinned page exited with a traceback instead of the exit 1 the module
+    contract promises -- while `NationalSchemaError`, its exact twin, was
+    caught in four places.
+    """
+
+
 class PbaFetchExhaustedError(Exception):
     """Raised when the PBA host returns 429/5xx on every attempt up to
     ``DEFAULT_MAX_ATTEMPTS``. D10 constraint 6: back off and stop, never
@@ -102,20 +125,41 @@ class _PolicedBackoffFetcher:
 
     policed: PolicedHostFetcher
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
-    sleep: object = time.sleep
+    sleep: Callable[[float], None] = time.sleep
     default_backoff_seconds: float = POLITENESS_DELAY_SECONDS["pba"]
 
     def get(
         self, url: str, *, timeout: float, headers: dict[str, str] | None = None
     ) -> FetchResponse:
+        """`headers` is accepted because `archive.Fetcher` declares it, and
+        the User-Agent in it is deliberately SUPERSEDED by the host policy
+        (D10 constraint 4): the identifying UA for this host is the policy's,
+        not the caller's, which is the whole point of routing through
+        `PolicedHostFetcher`.
+
+        Any OTHER header is refused rather than silently dropped. A caller
+        that sets one is expressing an expectation this path cannot honour,
+        and swallowing it would make the request differ from the request the
+        caller believes it made.
+        """
+        unsupported = sorted(k for k in (headers or {}) if k.lower() != "user-agent")
+        if unsupported:
+            raise ValueError(
+                f"the PBA host policy owns this request's headers; {', '.join(unsupported)} "
+                "cannot be forwarded, so it is refused rather than silently dropped"
+            )
         last_response: FetchResponse | None = None
         for attempt in range(1, self.max_attempts + 1):
             response = self.policed.get(url, timeout=timeout)
             if response.status_code == 429 or response.status_code >= 500:
                 last_response = response
                 if attempt < self.max_attempts:
-                    retry_after = response.headers.get("Retry-After")
-                    delay = float(retry_after) if retry_after else self.default_backoff_seconds
+                    # `Retry-After` is legally an HTTP-date
+                    # ("Wed, 21 Oct 2015 07:28:00 GMT"), not only
+                    # delta-seconds. `float()` on one raised `ValueError` out
+                    # of the backoff loop, turning a routine 429 into a
+                    # traceback on the one path built to back off and stop.
+                    delay = self._retry_delay(response.headers.get("Retry-After"))
                     self.sleep(delay)
                 continue
             return response
@@ -123,6 +167,30 @@ class _PolicedBackoffFetcher:
             f"{url} failed after {self.max_attempts} attempts; last status "
             f"{last_response.status_code if last_response else 'unknown'}"
         )
+
+    def _retry_delay(self, retry_after: str | None) -> float:
+        """The delay this host asked for, or the policy default.
+
+        An HTTP-date is honoured as the interval until that instant; an
+        unreadable value falls back to the default rather than raising --
+        being unable to read the host's requested delay is not a reason to
+        stop backing off.
+        """
+        if not retry_after:
+            return self.default_backoff_seconds
+        try:
+            return float(retry_after)
+        except ValueError:
+            pass
+        try:
+            # It RAISES on an unreadable value; it does not return `None`.
+            parsed = parsedate_to_datetime(retry_after)
+        except (TypeError, ValueError):
+            return self.default_backoff_seconds
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.UTC)
+        remaining = (parsed - datetime.now(dt.UTC)).total_seconds()
+        return max(remaining, self.default_backoff_seconds)
 
 
 def archive_pba_source(
@@ -146,6 +214,18 @@ def archive_pba_source(
     """
     existing = latest_ok_record(records, entry["id"])
     if existing is not None:
+        archived_path = existing.get("archived_path")
+        if not isinstance(archived_path, str) or not archived_path:
+            raise ArchiveIntegrityError(
+                f"cached archive record for {entry['id']!r} has no archived_path"
+            )
+        filename = archived_path.rsplit("/", 1)[-1]
+        read_verified_archive(
+            local_store,
+            capability=entry["capability"],
+            filename=filename,
+            expected_sha256=existing.get("sha256"),
+        )
         return ArchiveResult(record=existing)
 
     return archive_source(
@@ -166,6 +246,7 @@ _CATEGORY_HEADER_MATCH: tuple[tuple[str, str], ...] = (
     ("Diputados", "DIPUTADOS PROVINCIALES"),
     ("Concejales", "CONCEJALES"),
 )
+_EXPECTED_CATEGORIES = frozenset(category for _, category in _CATEGORY_HEADER_MATCH)
 
 
 class _DistritoTableParser(HTMLParser):
@@ -243,8 +324,16 @@ def _category_column_indices(headers: list[str]) -> dict[str, int]:
     mapping: dict[str, int] = {}
     for index, header in enumerate(headers):
         for needle, category in _CATEGORY_HEADER_MATCH:
-            if needle in header:
-                mapping[category] = index
+            if needle not in header:
+                continue
+            previous_index = mapping.get(category)
+            if previous_index is not None:
+                raise PbaSchemaError(
+                    f"recognized category {category!r} appears in header positions "
+                    f"{previous_index + 1} ({headers[previous_index]!r}) and "
+                    f"{index + 1} ({header!r}); refusing to pick one"
+                )
+            mapping[category] = index
     return mapping
 
 
@@ -254,17 +343,23 @@ class PbaRow:
 
     Wraps `jurisdiction.ResultRow` the same way `ingest.national.NationalRow`
     does, adding this ingestion path's own fields: the D8
-    `(archive_entry_id, natural key)` idempotency pair, and `degraded_from`
-    — the requested granularity when it differs from what the source
-    actually provides. `degraded_from` is `None` when no degradation
-    occurred, never a log-only side note (task 5.6).
+    `(archive_entry_id, natural key)` idempotency pair, and the requested
+    granularity. The request is retained even when fulfilled so persisted
+    `NULL` can continue to mean "historical request unknown".
     """
 
     result: ResultRow
     archive_entry_id: str
     source_row_index: int
-    degraded_from: str | None
-    natural_key: tuple[str, str, str, str]
+    requested_granularity: str
+
+    @property
+    def degraded_from(self) -> str | None:
+        return (
+            self.requested_granularity
+            if self.requested_granularity != self.result.granularity
+            else None
+        )
 
     @property
     def granularity(self) -> str:
@@ -283,26 +378,52 @@ class PbaRow:
         return self.result.votes
 
 
-class PbaSourceUnavailable(Exception):
-    """Raised when no archived source exists yet for a given PBA record id.
+# NO `PbaSourceUnavailable`. It promised that a missing archived source is
+# reported as unavailable and never substituted with a zero or an estimate --
+# a promise `__main__.ingest_source` already keeps, one layer up and on the
+# only path production uses, by raising `UnknownSourceError("no archived copy
+# of ... -- run `fetch --source ...` first")` before it opens a connection.
+# Two exceptions for one refusal meant the tested one was the unreachable one.
 
-    Per `electoral-ingestion` spec's "No PBA source available for a given
-    category" scenario: callers MUST report the data as unavailable, and
-    MUST NOT substitute a zero-filled or estimated figure.
-    """
+
+# A sentinel, because `None` already means "this list did not run in this
+# category" -- a real electoral fact. An unreadable cell is a different fact
+# and gets its own reason, so the two are never counted together.
+class _UnreadableVote:
+    """Typed sentinel for a non-empty vote cell that cannot be parsed."""
 
 
-def _parse_votes(raw: str) -> int | None:
+_UNREADABLE = _UnreadableVote()
+_CANONICAL_SPANISH_INTEGER = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)")
+
+
+def _parse_votes(raw: str) -> int | None | _UnreadableVote:
     """Parse a Spanish-locale vote count (`"15.254"` -> 15254).
 
     Returns `None` for `"-"` or an empty cell — that list did not run in
     that category, which is NOT the same as zero votes, so no row is
     produced for it at all (see the `list_id == "962"` case in the fixture).
+
+    Returns the `_UNREADABLE` sentinel -- NOT `None`, and not `ValueError` --
+    for anything else that will not parse (`"1O"`, `"n/d"`, a footnote
+    marker). Saying `None` here would collapse the two facts the sentinel
+    exists to keep apart, and the next reader trusting the docstring would
+    write `if votes is None: continue` and swallow every unreadable cell.
+    This was the last parser here
+    still crashing on one bad cell: the exclusion report is printed AFTER the
+    loop, so a single unreadable figure destroyed the whole page's parse and
+    the breakdown for everything already excluded. `_parse_mesa`,
+    `ingest_fiscalizacion`'s vote cells and `ingest_national`'s `_parse_int`
+    all already refuse to do that. The caller counts it under its own reason,
+    so an unreadable cell is never confused with an absent one.
     """
     stripped = raw.strip()
     if stripped in ("", "-"):
         return None
-    return int(stripped.replace(".", ""))
+    if _CANONICAL_SPANISH_INTEGER.fullmatch(stripped) is None:
+        return _UNREADABLE
+    parsed = parse_source_int(stripped.replace(".", ""))
+    return parsed if parsed is not None else _UNREADABLE
 
 
 def ingest_pba(
@@ -316,33 +437,59 @@ def ingest_pba(
     `ingest.national.ingest_national` does.
     """
     parser = _DistritoTableParser()
-    parser.feed(html_bytes.decode("utf-8"))
+    # `utf-8-sig`: the same one decoding boundary the CSV readers use. A BOM
+    # here would land inside the first tag the parser sees.
+    parser.feed(html_bytes.decode("utf-8-sig"))
 
     if not parser.distrito_label:
-        raise ValueError("could not locate the distrito identifier in the source page")
+        raise PbaSchemaError("could not locate the distrito identifier in the source page")
     distrito_code = parser.distrito_label.split("-", 1)[0].strip()
 
     category_columns = _category_column_indices(parser.headers)
-    if not category_columns:
-        raise ValueError("could not locate any recognized category column header")
-
-    degraded_from = (
-        requested_granularity if requested_granularity != GRANULARITY_ACTUAL else None
-    )
+    missing_categories = _EXPECTED_CATEGORIES - category_columns.keys()
+    if missing_categories:
+        recognized_categories = sorted(category_columns)
+        raise PbaSchemaError(
+            "incomplete PBA category schema; missing categories: "
+            f"{', '.join(sorted(missing_categories))}; recognized categories: "
+            f"{', '.join(recognized_categories) if recognized_categories else '(none)'}"
+        )
 
     rows: list[PbaRow] = []
+    # Rule 3: every drop below is counted PER REASON and reported. All three
+    # were silent, and they are not equivalent -- a summary row is expected,
+    # while a SHORT ROW is malformed HTML, i.e. schema drift arriving as
+    # absence. Reported together as one total, the drift would have hidden
+    # inside the expected count.
+    excluded: dict[str, int] = {}
+    excluded_short_row_columns: set[str] = set()
+
+    def exclude(reason: str) -> None:
+        excluded[reason] = excluded.get(reason, 0) + 1
+
     for row_index, cells in enumerate(parser.rows):
         list_id = cells[0].strip() if cells else ""
         if not list_id:
             # "VOTOS POSITIVOS" / "VOTO EN BLANCO" summary rows carry an
             # empty list-id cell — not a normalized per-list result.
+            exclude("summary row (empty list-id cell)")
             continue
 
         for category, column in category_columns.items():
             if column >= len(cells):
+                # The header declared this category's column and the row does
+                # not reach it: the table changed shape under us.
+                exclude("short row (declared category column missing)")
+                excluded_short_row_columns.add(category)
                 continue
             votes = _parse_votes(cells[column])
+            if isinstance(votes, _UnreadableVote):
+                exclude("unreadable vote cell")
+                continue
             if votes is None:
+                # "-" or an empty cell: that list did not run in that
+                # category, which is NOT zero votes, so no row is produced.
+                exclude('list absent from this category ("-" or empty cell)')
                 continue
 
             result = make_result_row(
@@ -357,55 +504,53 @@ def ingest_pba(
                     result=result,
                     archive_entry_id=archive_entry_id,
                     source_row_index=row_index,
-                    degraded_from=degraded_from,
-                    natural_key=(archive_entry_id, distrito_code, category, list_id),
+                    requested_granularity=requested_granularity,
                 )
             )
+
+    if excluded:
+        report = "; ".join(
+            f"{reason}: {count}"
+            for reason, count in sorted(excluded.items(), key=lambda kv: -kv[1])
+        )
+        if excluded_short_row_columns:
+            report += (
+                " -- the short rows were missing the column(s) for "
+                + ", ".join(sorted(excluded_short_row_columns))
+                + ", so this page no longer has the shape this parser was written against"
+            )
+        print(
+            f"excluded {sum(excluded.values())} PBA table cell(s)/row(s) -- {report}",
+            file=sys.stderr,
+        )
 
     return rows
 
 
-def load_pba_distrito_totals(
-    records: list[dict],
-    local_store: LocalArchiveStore,
-    *,
-    record_id: str,
-    capability: str = "pba",
-    requested_granularity: str = "mesa",
-) -> list[PbaRow]:
-    """Resolve `record_id` against the manifest and parse its archived
-    bytes, or raise `PbaSourceUnavailable` — never a zero/default result.
-    """
-    entry = latest_ok_record(records, record_id)
-    if entry is None:
-        raise PbaSourceUnavailable(f"no archived source for {record_id!r}")
-
-    archived_path = entry.get("archived_path") or ""
-    filename = archived_path.rsplit("/", 1)[-1]
-    html_bytes = local_store.read(capability, filename)
-    return ingest_pba(
-        html_bytes, archive_entry_id=record_id, requested_granularity=requested_granularity
-    )
-
-
-def resolve_pba_party(
-    rows: list[PbaRow], party_map: PartyMappingTable, *, year: int
-) -> PartyResolutionResult:
-    """Resolve each PBA row's canonical party via `party_map`
-    (party-identity-mapping spec, task 7.8), always under
-    `PBA_PARTY_MAP_JURISDICTION` -- the 22xx municipal list family is never
-    resolved against the national `agrupacion_id` scheme (task 7.6c).
-    """
-    return resolve_party_for_rows(
-        rows, party_map, year=year, jurisdiction=PBA_PARTY_MAP_JURISDICTION
-    )
+# NO `load_pba_distrito_totals` and NO `resolve_pba_party`, both correct,
+# both tested, neither with a production caller.
+#
+# `load_pba_distrito_totals` re-implemented `ingest_source`'s manifest lookup
+# and archived read so it could call `ingest_pba` itself. One read path is
+# the point: a second one drifts, and the drift is invisible because only the
+# unused copy has tests describing it.
+#
+# `resolve_pba_party` fed the `is_unmapped` column, now dropped by migration
+# 0014. Whether a PBA list id resolves is answered by joining `party_mapping`
+# at query time, which stays correct when `curated/party_map.yaml` gains an
+# entry AFTER the 18.1M rows were loaded -- a boolean frozen at ingestion
+# would not, and nothing read it.
 
 
 @dataclass(frozen=True)
 class QuarantinedPbaRow:
     """A `PbaRow` whose PBA-native distrito code has no curated
-    `jurisdiction_crosswalk` entry -- kept as data alongside the reason,
-    mirroring `ingest.national.QuarantinedNationalRow` (task 17.3)."""
+    `jurisdiction_crosswalk` entry -- kept as data alongside the reason
+    (task 17.3).
+
+    It has no national counterpart, and that asymmetry is the correct
+    shape: the crosswalk is a PBA-to-national SCHEME TRANSLATOR, so only PBA
+    rows can fail to translate. National codes are already national."""
 
     row: PbaRow
     reason: str
@@ -461,11 +606,20 @@ def resolve_pba_jurisdictions(
             list_id=row.result.list_id,
             votes=row.result.votes,
         )
-        resolved.append(replace(row, result=translated_result))
+        translated_request = (
+            translated_result.granularity
+            if row.requested_granularity == row.result.granularity
+            else row.requested_granularity
+        )
+        resolved.append(
+            replace(
+                row,
+                result=translated_result,
+                requested_granularity=translated_request,
+            )
+        )
 
-    return PbaJurisdictionResolutionResult(
-        resolved=tuple(resolved), quarantined=tuple(quarantined)
-    )
+    return PbaJurisdictionResolutionResult(resolved=tuple(resolved), quarantined=tuple(quarantined))
 
 
 def load_pba_rows(
@@ -475,7 +629,7 @@ def load_pba_rows(
     year: int,
     round_: str,
     crosswalk: CrosswalkTable,
-    source_kind: str = "official",
+    archive_entry_id: str,
 ) -> int:
     """Task 8.5 (D8): same delete-by-`archive_entry_id`-then-bulk-insert
     wrapper as `ingest.national.load_national_rows`, adapted to `PbaRow`'s
@@ -489,11 +643,17 @@ def load_pba_rows(
     never accidentally skip this step and write a PBA-scheme island. A
     quarantined row (task 17.3) is reported to stderr and never written.
     """
-    if not rows:
-        return 0
-    archive_entry_id = rows[0].archive_entry_id
+    # NO early return on an empty batch, and none after the quarantine
+    # below either. `db.load_result_rows` is the delete-then-insert PAIR, so
+    # returning early skipped the DELETE: re-ingesting a source whose rows now
+    # all quarantine -- the curated `027` crosswalk entry removed, say -- left
+    # the previous run's rows live and read as current by every query, while
+    # the CLI printed "ingested 0 rows" and exited 0.
+    #
+    # `archive_entry_id` is REQUIRED rather than taken from `rows[0]`, because
+    # with zero rows the function cannot otherwise state its own scope.
     if any(row.archive_entry_id != archive_entry_id for row in rows):
-        raise ValueError("load_pba_rows requires every row to share one archive_entry_id")
+        raise ValueError("load_pba_rows requires every row to carry the archive_entry_id given")
 
     resolution = resolve_pba_jurisdictions(rows, crosswalk)
     if resolution.quarantined:
@@ -505,12 +665,38 @@ def load_pba_rows(
             file=sys.stderr,
         )
     rows = list(resolution.resolved)
-    if not rows:
-        return 0
+
+    # THE DEGRADATION, REPORTED AND STORED. `result_row.granularity` records
+    # what the normalized figure IS; `requested_granularity` records what this
+    # archived projection was asked to provide. Both are needed downstream to
+    # disclose a shortfall without reconstructing intent for historical rows.
+    degraded_rows = [row for row in rows if row.degraded_from]
+    degraded = {row.degraded_from for row in degraded_rows if row.degraded_from is not None}
+    if degraded:
+        stored_lineages = sorted(
+            {f"{row.result.distrito}/{row.result.seccion}" for row in degraded_rows}
+        )
+        print(
+            # The DEGRADED subset, not `len(rows)`. Production degrades every
+            # row today, so the wrong count was right by accident -- which is
+            # how it would have survived to the day a mixed batch made it
+            # report undegraded rows as degraded.
+            f"{len(degraded_rows)} PBA row(s) requested at "
+            f"{', '.join(sorted(degraded))} granularity: the source-native PBA "
+            f"distrito total was stored as national seccion {', '.join(stored_lineages)} -- "
+            "this source publishes no finer breakdown, and none was fabricated "
+            "to satisfy the request",
+            file=sys.stderr,
+        )
 
     election_id = db.upsert_election(conn, year=year, round_=round_)
     category_cache: dict[str, str] = {}
-    jurisdiction_cache: dict[str, str] = {}
+    # Keyed on the (distrito, seccion) LINEAGE, and the annotation says so:
+    # it read `dict[str, str]` while the code keyed on the tuple, which is
+    # the distrito-only shape that attributed 32.291 CONCEJALES votes to the
+    # whole province. A declaration that disagrees with the code is the bug
+    # still on file.
+    jurisdiction_cache: dict[tuple[str, str | None], str] = {}
     records: list[db.ResultRowRecord] = []
 
     for row in rows:
@@ -536,13 +722,25 @@ def load_pba_rows(
                 jurisdiction_id=jurisdiction_id,
                 category_id=category_id,
                 granularity=row.granularity,
+                requested_granularity=row.requested_granularity,
                 list_id=row.list_id,
                 votes=row.votes,
-                source_kind=source_kind,
-                is_unmapped=False,
+                # HARDCODED, and no override parameter. It was
+                # `source_kind: str = "official"`, a caller-settable kwarg no
+                # caller ever set: a writable door into the one invariant
+                # rule 5 says must never be crossed, with nothing in the write
+                # path to refuse a fiscalización batch labelled official.
+                # `load_fiscalizacion_rows` hardcodes its own kind for the
+                # same reason.
+                source_kind="official",
                 archive_entry_id=row.archive_entry_id,
                 source_row_index=row.source_row_index,
             )
         )
 
-    return db.load_result_rows(conn, archive_entry_id=archive_entry_id, records=records)
+    return db.load_result_rows(
+        conn,
+        archive_entry_id=archive_entry_id,
+        records=records,
+        election_id=election_id,
+    )

@@ -38,8 +38,10 @@ funnels through) and the return value of `resolve_pba_distrito_code` itself
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import overload
 
 from .crosswalk import CrosswalkTable
+from .numeric import is_ascii_decimal
 
 # Levels ordered coarsest-first; index also doubles as "how many of the
 # lineage fields below distrito are legitimately populated".
@@ -56,6 +58,7 @@ GRANULARITY_LEVELS: tuple[str, ...] = (
 # 01-24 nationwide, seccion codes run up to 3 digits within a distrito (the
 # widest observed, Buenos Aires province's ~135 partidos).
 DISTRITO_CODE_WIDTH = 2
+PBA_DISTRITO_CODE_WIDTH = 3
 SECCION_CODE_WIDTH = 3
 
 
@@ -74,17 +77,22 @@ def _zero_pad_numeric(raw: str | None, *, width: int) -> str | None:
     a value. Raising there would abort a whole backfill on one truncated row
     instead of letting it be counted and skipped.
     """
-    if not isinstance(raw, str) or not raw.strip().isdigit():
+    if not is_ascii_decimal(raw):
         # `int()` is NOT the shape test. It accepts `"2_7"` (PEP 515 numeric
         # underscores) and yields 27 -- a real but WRONG seccion, canonicalized
-        # confidently out of a malformed code. `isdigit()` after stripping
-        # accepts exactly what these codes are: digits, optionally padded.
+        # confidently out of a malformed code. The shared ASCII predicate also
+        # refuses Unicode digit classes that `isdigit()` would accept.
         return raw
-    return str(int(raw.strip())).zfill(width)
+    assert isinstance(raw, str)
+    try:
+        numeric = int(raw.strip())
+    except ValueError:
+        return raw
+    return str(numeric).zfill(width)
 
 
 def is_canonicalizable_code(raw: object) -> bool:
-    """Whether the normalizers can actually canonicalize `raw`.
+    """Whether the numeric-only normalizers can actually canonicalize `raw`.
 
     The normalizers pass an uncanonicalizable code through UNCHANGED, which
     leaves a caller unable to tell "already canonical" from "gave up": `"2A"`
@@ -93,40 +101,91 @@ def is_canonicalizable_code(raw: object) -> bool:
     countable at the call site.
 
     Surrounding whitespace is NOT a give-up: `" 2 "` canonicalizes to `"02"`.
-    `"2_7"` is -- Python's `int()` accepts it and would produce `"27"`, a real
-    but wrong seccion, so this agrees with `_zero_pad_numeric` rather than
-    reporting that case clean.
+    `"2_7"` is not -- Python's `int()` accepts it and would produce `"27"`, a
+    real but wrong seccion. Unicode digit classes are also refused rather than
+    normalized into a real ASCII code.
     """
-    return isinstance(raw, str) and raw.strip().isdigit()
+    return is_ascii_decimal(raw)
+
+
+def is_canonicalizable_circuito_code(raw: object) -> bool:
+    """Whether ``raw`` matches DINE's circuito-specific code scheme.
+
+    Circuitos are ASCII digits with an optional single trailing ASCII letter.
+    The suffix is case-insensitive at input and canonicalized to uppercase.
+    """
+    if not isinstance(raw, str):
+        return False
+    stripped = raw.strip()
+    if not stripped:
+        return False
+    numeric_part = stripped[:-1] if stripped[-1].isascii() and stripped[-1].isalpha() else stripped
+    return bool(numeric_part) and numeric_part.isascii() and numeric_part.isdecimal()
+
+
+@overload
+def normalize_distrito_code(raw: str) -> str: ...
+
+
+@overload
+def normalize_distrito_code(raw: None) -> None: ...
 
 
 def normalize_distrito_code(raw: str | None) -> str | None:
-    """Canonicalize a distrito code to the curated, zero-padded form.
-
-    `"2"` and `"02"` both normalize to `"02"` — the single source of truth
-    for what "the same distrito" means at every write boundary.
-    """
+    """Canonicalize a national distrito code to its two-digit form."""
     return _zero_pad_numeric(raw, width=DISTRITO_CODE_WIDTH)
+
+
+@overload
+def normalize_pba_distrito_code(raw: str) -> str: ...
+
+
+@overload
+def normalize_pba_distrito_code(raw: None) -> None: ...
+
+
+def normalize_pba_distrito_code(raw: str | None) -> str | None:
+    """Canonicalize a PBA partido/distrito code to its three-digit form.
+
+    PBA codes use a distinct scheme from national distrito codes. Numeric input
+    is trimmed and zero-padded to three digits; values that cannot be
+    canonicalized pass through unchanged like the other code normalizers.
+    """
+    return _zero_pad_numeric(raw, width=PBA_DISTRITO_CODE_WIDTH)
 
 
 CIRCUITO_CODE_WIDTH = 5
 
 
+@overload
+def normalize_circuito_code(raw: str) -> str: ...
+
+
+@overload
+def normalize_circuito_code(raw: None) -> None: ...
+
+
 def normalize_circuito_code(raw: str | None) -> str | None:
-    """Normalize a circuito code to the fixed DINE width.
+    """Canonicalize a circuito while preserving its distinct alphanumeric scheme.
 
-    Measured across the real archived files: `circuito_id` is 5 characters in
-    every row of both the 2023 generales and the 2025 legislativas sources, so
-    this is a no-op on existing data — which is exactly why it can be added as
-    a boundary now, before a source with a different convention arrives.
-
-    It exists because leaving circuito raw while distrito and seccion are
-    normalized is per-call-site handling of one rule, the pattern that produced
-    Coronel Rosales as three separate jurisdiction identities.
+    Numeric circuitos pad to five digits. A trailing ASCII letter occupies the
+    fifth position, so only the numeric portion pads to four digits. Wider
+    numeric portions are preserved rather than truncated.
     """
-    if raw is None:
-        return None
-    return _zero_pad_numeric(raw, width=CIRCUITO_CODE_WIDTH)
+    if raw is None or not is_canonicalizable_circuito_code(raw):
+        return raw
+    stripped = raw.strip()
+    if stripped[-1].isalpha():
+        return stripped[:-1].zfill(CIRCUITO_CODE_WIDTH - 1) + stripped[-1].upper()
+    return stripped.zfill(CIRCUITO_CODE_WIDTH)
+
+
+@overload
+def normalize_seccion_code(raw: str) -> str: ...
+
+
+@overload
+def normalize_seccion_code(raw: None) -> None: ...
 
 
 def normalize_seccion_code(raw: str | None) -> str | None:

@@ -1,5 +1,9 @@
 # seat-simulation
 
+> **Historical snapshot:** This archived copy records the requirement state when this change was
+> archived. The current canonical specification is
+> [`openspec/specs/seat-simulation/spec.md`](../../../../../specs/seat-simulation/spec.md).
+
 Real seat-allocation simulation for Coronel Rosales concejales and PBA provincial
 legislators, modelling the PBA municipal council rule of an 18-seat Concejo Deliberante
 renewing 9 seats per election, for 2027 what-if scenario analysis. Per the resolved product

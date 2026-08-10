@@ -9,6 +9,9 @@ dependencies = [
     "requests>=2.34.2",
 ]
 
+[project.scripts]
+etl-verify = "etl.verify:main"
+
 [dependency-groups]
 dev = [
   "pytest>=8.3",

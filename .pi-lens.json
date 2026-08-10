@@ -1,0 +1,9 @@
+{
+  "ignore": [
+    ".codegraph/**",
+    "apps/web/.env.local",
+    "apps/web/.next/**",
+    "apps/web/e2e.env",
+    "supabase/.temp/**"
+  ]
+}

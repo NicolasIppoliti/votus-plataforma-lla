@@ -24,18 +24,30 @@ import io
 import os
 import sys
 import tempfile
+import uuid
 import zipfile
-from collections.abc import Iterable
-from dataclasses import replace
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg
 import yaml
 
-from .archive import ArchiveResult, Fetcher, archive_source
+from .archive import (
+    ArchiveIntegrityError,
+    ArchiveResult,
+    Fetcher,
+    FetchResponse,
+    archive_source,
+    read_verified_archive,
+)
 from .crosswalk import (
+    CURATED_NAME_TABLE_SCOPE,
+    OFFICIAL_AGRUPACION_NAME_BY_COLUMN,
     CrosswalkTable,
     FiscalizacionMesaRow,
+    IncompleteOfficialMesaError,
     MesaStability,
     OfficialMesaVotes,
     QuarantinedJurisdiction,
@@ -44,38 +56,71 @@ from .crosswalk import (
     load_crosswalk,
 )
 from .db import (
-    MERGE_KEY_SQL,
+    archive_entry_from_evidence,
     insert_review_items,
     load_crosswalk_rows,
     load_party_map_rows,
-    merge_key,
+    project_archive_entry,
 )
-from .http_client import RequestsFetcher
+from .http_client import (
+    RequestsFetcher,
+    RobotsTxtAppearedError,
+    check_robots_txt_still_absent,
+)
 from .ingest.fiscalizacion import (
     FISCALIZACION_CATEGORY,
     FISCALIZACION_DISTRITO,
     FISCALIZACION_SECCION,
+    FiscalizacionRow,
+    FiscalizacionSchemaError,
     FiscalizacionUploadForbiddenError,
+    QuarantinedFiscalizacionRow,
     guard_local_mirror_only,
     ingest_fiscalizacion,
 )
 from .ingest.national import (
     REQUIRED_COLUMNS,
+    REQUIRED_ESTABLECIMIENTO_COLUMNS,
     NationalSchemaError,
+    extract_raw_mesa_identities,
     ingest_national,
     load_national_rows,
+    validate_mesa_tipo,
 )
-from .ingest.pba import ingest_pba, load_pba_rows
+from .ingest.pba import PbaSchemaError, ingest_pba, load_pba_rows
 from .jurisdiction import (
+    is_canonicalizable_circuito_code,
     is_canonicalizable_code,
     normalize_circuito_code,
     normalize_distrito_code,
     normalize_seccion_code,
 )
-from .manifest import latest_ok_record, load_manifest, save_manifest, upsert_record
+from .manifest import (
+    DuplicateManifestRecordError,
+    FetchEventConflictError,
+    MalformedManifestError,
+    append_fetch_event,
+    canonical_record,
+    fetch_event,
+    latest_ok_record,
+    load_fetch_events,
+    load_manifest,
+    manifest_lock,
+    normalized_fetch_evidence,
+    save_manifest,
+    upsert_record,
+)
+from .numeric import parse_source_int
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
-from .review_item import mesa_divergences_to_review_items, review_item_draft_to_record
-from .storage import LocalArchiveStore, extract_zip_safely
+from .review_item import (
+    ReviewItemRecord,
+    mesa_divergences_to_review_items,
+    review_item_draft_to_record,
+    source_archive_identity,
+    source_refetch_review_items,
+    validate_prior_source_identity,
+)
+from .storage import LocalArchiveStore, extract_zip_safely, sha256_of
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SOURCES_PATH = REPO_ROOT / "etl" / "sources.yaml"
@@ -83,6 +128,7 @@ DEFAULT_LOCAL_ROOT = REPO_ROOT / "archive"
 DEFAULT_MANIFEST_PATH = REPO_ROOT / "archive-manifest.json"
 DEFAULT_CROSSWALK_PATH = REPO_ROOT / "curated" / "crosswalk.yaml"
 DEFAULT_PARTY_MAP_PATH = REPO_ROOT / "curated" / "party_map.yaml"
+SUPPORTED_SOURCE_CAPABILITIES = frozenset({"national", "pba", "fiscalizacion"})
 
 # Never a hardcoded fallback DSN -- see `resolve_database_url` (task 12.6).
 DATABASE_URL_ENV_VAR = "ETL_DATABASE_URL"
@@ -107,12 +153,28 @@ class MalformedManifestRecordError(ValueError):
     """
 
 
+class SourcesValidationError(ValueError):
+    """Raised when ``sources.yaml`` is not a capability-to-entry-list mapping."""
+
+
+class SourceElectionValidationError(ValueError):
+    """Raised when an ingest request does not match its registered election."""
+
+
+class PbaIngestMimeValidationError(ValueError):
+    """Raised when a registered PBA source is archival reference material only."""
+
+
 class UnknownSourceError(ValueError):
     """Raised when `--source` names no entry in `sources.yaml`.
 
     Per task 12.2: an unrecognized source id is always an error, never a
     silent no-op.
     """
+
+
+class LocalFileValidationError(ValueError):
+    """Raised when fetch local-file arguments do not match the source transport."""
 
 
 class MissingDatabaseUrlError(RuntimeError):
@@ -130,8 +192,56 @@ class MissingDatabaseUrlError(RuntimeError):
 
 
 def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
-    """Load `sources.yaml`'s capability -> entries mapping."""
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    """Load and minimally validate ``sources.yaml`` at its trust boundary."""
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, Mapping):
+        raise SourcesValidationError("sources.yaml top level must be a mapping")
+
+    sources: dict[str, list[dict]] = {}
+    for capability, entries in loaded.items():
+        if not isinstance(capability, str):
+            raise SourcesValidationError("sources.yaml capability names must be strings")
+        if capability not in SUPPORTED_SOURCE_CAPABILITIES:
+            raise SourcesValidationError(
+                f"sources.yaml capability {capability!r} is unsupported; expected one of "
+                f"{sorted(SUPPORTED_SOURCE_CAPABILITIES)}"
+            )
+        if not isinstance(entries, list):
+            raise SourcesValidationError(
+                f"sources.yaml capability {capability!r} must contain a list of entries"
+            )
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} must be a mapping"
+                )
+            source_id = entry.get("id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} id "
+                    "must be a non-empty string"
+                )
+            source = entry.get("source")
+            if not isinstance(source, str) or not source.strip():
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} source "
+                    "must be a non-empty string"
+                )
+            if "source_url" not in entry or not isinstance(entry["source_url"], str | None):
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} source_url "
+                    "must be a string or null"
+                )
+            try:
+                registered_source_election(entry)
+            except SourcesValidationError as exc:
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index}: {exc}"
+                ) from exc
+        sources[capability] = list(entries)
+    return sources
 
 
 def find_source_entry(sources: dict[str, list[dict]], source_id: str) -> dict | None:
@@ -166,6 +276,8 @@ def fetch_source(
     fetcher: Fetcher,
     local_root: Path,
     manifest_path: Path,
+    local_file: Path | None = None,
+    invocation_id: str | None = None,
 ) -> ArchiveResult:
     """Archive one registered source by id.
 
@@ -183,13 +295,235 @@ def fetch_source(
     # A fiscalización entry that loses its `upload: never` declaration now fails
     # here, before its bytes exist on disk.
     guard_local_mirror_only(entry)
+    event_id = str(uuid.uuid4()) if invocation_id is None else invocation_id
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise ValueError("fetch invocation id must be a non-empty opaque string")
+    event_id = event_id.strip()
+    invoked_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    source_url = entry.get("source_url")
+    is_local_source = isinstance(source_url, str) and source_url.startswith("local://")
+    local_bytes: bytes | None = None
+    if is_local_source:
+        if local_file is None:
+            raise LocalFileValidationError(f"local source {source_id!r} requires --local-file")
+        if not local_file.is_file():
+            raise LocalFileValidationError(
+                f"local source {source_id!r} requires a regular readable file"
+            )
+        try:
+            local_bytes = local_file.read_bytes()
+        except OSError as exc:
+            raise LocalFileValidationError(
+                f"local source {source_id!r} requires a regular readable file"
+            ) from exc
+    elif local_file is not None:
+        raise LocalFileValidationError(
+            f"--local-file is only valid for local:// sources, not {source_id!r}"
+        )
+
+    pba_fetcher = None
+
+    if entry.get("capability") == "pba":
+        # THROUGH D10's etiquette. `archive_pba_source` was implemented and
+        # tested with no production caller, so the archive-first cache and the
+        # bounded-backoff wrapper around the policed fetcher never ran for a
+        # real PBA fetch: this CLI hit the host directly, every time, however
+        # many times.
+        from etl.http_client import PolicedHostFetcher
+
+        from .ingest.pba import PBA_HOST_POLICY
+
+        # Re-check on EVERY invocation, including an archive-cache hit. A newly
+        # published robots.txt is a policy change, so it must halt before source
+        # access or any archive/manifest mutation.
+        check_robots_txt_still_absent(fetcher, PBA_HOST_POLICY.host)
+        pba_fetcher = PolicedHostFetcher(fetcher, PBA_HOST_POLICY)
 
     local_store = LocalArchiveStore(root=local_root)
+    staged_artifacts: dict[tuple[str, str], bytes] = {}
+
+    class StagedArchiveStore:
+        root = local_store.root
+
+        def path_for(self, capability: str, filename: str) -> Path:
+            return local_store.path_for(capability, filename)
+
+        def exists(self, capability: str, filename: str) -> bool:
+            return (capability, filename) in staged_artifacts or local_store.exists(
+                capability, filename
+            )
+
+        def read(self, capability: str, filename: str) -> bytes:
+            staged = staged_artifacts.get((capability, filename))
+            return staged if staged is not None else local_store.read(capability, filename)
+
+        def write(self, capability: str, filename: str, data: bytes) -> Path:
+            target = local_store.path_for(capability, filename)
+            staged_artifacts[(capability, filename)] = data
+            return target
+
+    staged_store = StagedArchiveStore()
+
+    def promote_staged_artifacts(protected_paths: set[str]) -> list[tuple[Path, str]]:
+        promoted: list[tuple[Path, str]] = []
+        for (capability, filename), data in staged_artifacts.items():
+            target = local_store.path_for(capability, filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            digest = sha256_of(data)
+            if target.exists():
+                existing_digest = sha256_of(target.read_bytes())
+                if existing_digest != digest:
+                    raise ArchiveIntegrityError(
+                        f"archive target {filename!r} claims sha256 {digest} but contains "
+                        f"bytes with sha256 {existing_digest}; refusing to overwrite"
+                    )
+                continue
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", dir=target.parent
+            )
+            try:
+                with os.fdopen(descriptor, "wb") as temporary:
+                    temporary.write(data)
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                try:
+                    os.link(temporary_name, target)
+                    archive_path = f"{local_store.root.name}/{capability}/{filename}"
+                    if archive_path not in protected_paths:
+                        promoted.append((target, digest))
+                except FileExistsError:
+                    existing_digest = sha256_of(target.read_bytes())
+                    if existing_digest != digest:
+                        raise ArchiveIntegrityError(
+                            f"archive target {filename!r} claims sha256 {digest} but contains "
+                            f"bytes with sha256 {existing_digest}; refusing to overwrite"
+                        )
+            finally:
+                if os.path.exists(temporary_name):
+                    os.unlink(temporary_name)
+        return promoted
+
     records = load_manifest(manifest_path)
-    result = archive_source(entry, fetcher=fetcher, local_store=local_store)
-    records = upsert_record(records, result.record)
-    save_manifest(manifest_path, records)
-    return result
+    previous = canonical_record(records, source_id)
+    identity = source_archive_identity(entry)
+    # Identity is known before transport. Refuse a canonical id that changed
+    # election, round, or kind before writing another immutable archive file.
+    validate_prior_source_identity(previous, identity)
+    verified_previous = (
+        previous if previous is not None and previous.get("status") == "ok" else None
+    )
+    if entry.get("capability") == "pba":
+        from .ingest.pba import archive_pba_source
+
+        assert pba_fetcher is not None
+        # The POLICED fetcher, not the bare one: `archive_pba_source` wraps it
+        # in bounded backoff, and `PolicedHostFetcher` is what enforces the path
+        # allowlist, the serial cap and the minimum delay. Passing the raw
+        # fetcher would have kept the etiquette layer inert in a different way.
+        result = archive_pba_source(
+            entry,
+            fetcher=pba_fetcher,
+            local_store=staged_store,
+            records=records,
+        )
+    elif local_bytes is not None:
+        local_payload: bytes = local_bytes
+
+        class LocalBytesFetcher:
+            def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
+                if url != source_url:
+                    raise LocalFileValidationError("local archive transport mismatch")
+                return FetchResponse(status_code=200, content=local_payload, headers={})
+
+        result = archive_source(
+            entry,
+            fetcher=LocalBytesFetcher(),
+            local_store=staged_store,
+        )
+    else:
+        result = archive_source(entry, fetcher=fetcher, local_store=staged_store)
+
+    record = dict(result.record)
+    if identity is not None:
+        record.update(identity.manifest_fields())
+    with manifest_lock(manifest_path):
+        records = load_manifest(manifest_path)
+        events = load_fetch_events(manifest_path)
+        prior_event = fetch_event(events, event_id)
+        if prior_event is not None:
+            if prior_event.get("source_id") != source_id:
+                raise FetchEventConflictError(
+                    f"fetch invocation {event_id!r} already belongs to another source"
+                )
+            prior_record = prior_event.get("record")
+            if not isinstance(prior_record, dict):
+                raise MalformedManifestError(f"fetch event {event_id!r} has no usable record")
+            if normalized_fetch_evidence(prior_record) != normalized_fetch_evidence(record):
+                raise FetchEventConflictError(
+                    f"fetch invocation {event_id!r} conflicts with its recorded evidence"
+                )
+            promote_staged_artifacts({str(prior_record.get("archived_path"))})
+            return replace(result, record=prior_record, review_items=())
+        protected_paths = {
+            str(item.get("archived_path"))
+            for item in [*records, *(event["record"] for event in events)]
+            if item.get("archived_path") is not None
+        }
+        previous = canonical_record(records, source_id)
+        validate_prior_source_identity(previous, identity)
+        verified_previous = (
+            previous if previous is not None and previous.get("status") == "ok" else None
+        )
+        review_items = source_refetch_review_items(verified_previous, record, identity)
+        drift_label = (
+            "source re-export"
+            if any(item.kind == "source_reexported" for item in review_items)
+            else "content drift"
+        )
+        classification = "fetch_error"
+        if record.get("status") == "ok":
+            if verified_previous is None:
+                classification = "initial"
+            elif verified_previous.get("sha256") == record.get("sha256"):
+                classification = "identical"
+            elif any(item.kind == "source_reexported" for item in review_items):
+                classification = "source_reexported"
+            else:
+                classification = "content_drift"
+        records = upsert_record(records, record, drift_label=drift_label)
+        events = append_fetch_event(
+            events,
+            {
+                "event_id": event_id,
+                "sequence": 0,
+                "source_id": source_id,
+                "fetched_at": invoked_at,
+                "status": str(record["status"]),
+                "classification": classification,
+                "record": record,
+            },
+        )
+        promoted = promote_staged_artifacts(protected_paths)
+        try:
+            save_manifest(manifest_path, records, events=events)
+        except Exception as save_error:
+            rollback_errors: list[Exception] = []
+            for target, digest in promoted:
+                try:
+                    actual_digest = sha256_of(target.read_bytes())
+                    if actual_digest != digest:
+                        raise ArchiveIntegrityError(f"rollback sha256 mismatch for {target.name!r}")
+                    target.unlink()
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                raise ExceptionGroup(
+                    "manifest persistence and artifact rollback both failed",
+                    [save_error, *rollback_errors],
+                )
+            raise
+    return replace(result, record=record, review_items=review_items)
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
@@ -201,12 +535,19 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             fetcher=RequestsFetcher(),
             local_root=Path(args.local_root),
             manifest_path=Path(args.manifest_path),
+            local_file=Path(args.local_file) if args.local_file is not None else None,
+            invocation_id=args.invocation_id,
         )
     except (
         UnknownSourceError,
         AmbiguousSourceError,
+        DuplicateManifestRecordError,
+        FetchEventConflictError,
+        MalformedManifestError,
         MalformedManifestRecordError,
         FiscalizacionUploadForbiddenError,
+        LocalFileValidationError,
+        RobotsTxtAppearedError,
     ) as exc:
         # The personal-data guard is the one failure an operator is MOST likely
         # to hit by accident, and it was the only one exiting with a traceback
@@ -218,7 +559,40 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         print(f"error: fetch failed for {args.source!r}: {result.record['notes']}", file=sys.stderr)
         return 1
 
+    if result.review_items:
+        counts: dict[tuple[str, str], int] = {}
+        for item in result.review_items:
+            key = (item.kind, item.severity)
+            counts[key] = counts.get(key, 0) + 1
+        print("review items by reason:", file=sys.stderr)
+        for (kind, severity), count in sorted(counts.items()):
+            print(f"  {kind} ({severity}): {count} review item(s)", file=sys.stderr)
+
     print(f"archived {args.source} -> {result.record['archived_path']}")
+    return 0
+
+
+def cmd_archive_history(args: argparse.Namespace) -> int:
+    try:
+        events = load_fetch_events(Path(args.manifest_path), args.source)
+    except MalformedManifestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    status_counts: dict[str, int] = {}
+    classification_counts: dict[str, int] = {}
+    for event in events:
+        status = str(event["status"])
+        classification = str(event["classification"])
+        status_counts[status] = status_counts.get(status, 0) + 1
+        classification_counts[classification] = classification_counts.get(classification, 0) + 1
+        print(
+            f"{event['sequence']} {event['event_id']} {event['fetched_at']} "
+            f"{event['source_id']} {status} {classification}"
+        )
+    for status, count in sorted(status_counts.items()):
+        print(f"status {status}: {count}")
+    for classification, count in sorted(classification_counts.items()):
+        print(f"classification {classification}: {count}")
     return 0
 
 
@@ -242,8 +616,14 @@ def resolve_database_url(explicit: str | None) -> str:
     return url
 
 
-def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> bytes:
-    """Return the national results CSV bytes `ingest_national` expects.
+@dataclass(frozen=True)
+class NationalArchiveCsvs:
+    results: bytes
+    establecimientos: bytes | None
+
+
+def resolve_national_archive_csvs(raw_bytes: bytes, *, extract_dir: Path) -> NationalArchiveCsvs:
+    """Return the results and optional establecimiento CSV bytes ingestion expects.
 
     A registered national source is archived as a ZIP (`sources.yaml`),
     with the results file's own name differing across years
@@ -253,13 +633,14 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
     this extracts the whole archive (`storage.extract_zip_safely`, the
     same safe-extraction path `tests/test_ingest_national.py` already
     exercises) and picks the one CSV member whose header declares every
-    column `ingest_national.REQUIRED_COLUMNS` needs.
+    column `ingest_national.REQUIRED_COLUMNS` needs, plus at most one member
+    matching the measured 2025 establecimiento companion shape.
 
     `raw_bytes` that is not a ZIP at all (a bare CSV, e.g. a test fixture)
     passes through unchanged.
     """
     if not zipfile.is_zipfile(io.BytesIO(raw_bytes)):
-        return raw_bytes
+        return NationalArchiveCsvs(results=raw_bytes, establecimientos=None)
 
     extracted = extract_zip_safely(raw_bytes, extract_dir)
     # Every member and why it was rejected. The raise below used to name the
@@ -268,6 +649,7 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
     # that the file was there all along.
     rejected: list[tuple[str, str]] = []
     matches: list[Path] = []
+    establecimiento_matches: list[Path] = []
     for path in extracted:
         if path.suffix.lower() != ".csv":
             rejected.append((path.name, "not a .csv member"))
@@ -294,6 +676,9 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
         if set(REQUIRED_COLUMNS) <= header_fields:
             matches.append(path)
             continue
+        if set(REQUIRED_ESTABLECIMIENTO_COLUMNS) <= header_fields:
+            establecimiento_matches.append(path)
+            continue
         missing = sorted(set(REQUIRED_COLUMNS) - header_fields)
         rejected.append((path.name, f"header lacks {', '.join(missing)}"))
 
@@ -301,21 +686,55 @@ def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> by
     # silent pick between a re-export and the original, or between a full file
     # and a partial slice -- and `collapse()` in this same module refuses
     # rather than choose between two tallies for one key.
+    def report_rejected() -> None:
+        # ONE report, used by all three exits. It ran on the no-match path
+        # only, so a member rejected as "not valid UTF-8" -- the exact
+        # encoding-versus-schema misdiagnosis this function exists to prevent
+        # -- vanished whenever another member matched; then a copy was
+        # inlined into the two-match branch, which made two ideas of one
+        # report, the shape this file refuses everywhere else.
+        for name, reason in rejected:
+            print(f"  {name}: {reason}", file=sys.stderr)
+
     if len(matches) > 1:
+        report_rejected()
         raise NationalResultsCsvNotFoundError(
             f"{len(matches)} members of the archived ZIP declare the national results "
             f"schema ({', '.join(sorted(p.name for p in matches))}); refusing to pick one"
         )
+    if len(establecimiento_matches) > 1:
+        report_rejected()
+        raise NationalResultsCsvNotFoundError(
+            f"{len(establecimiento_matches)} members of the archived ZIP declare the national "
+            "establecimiento companion schema "
+            f"({', '.join(sorted(p.name for p in establecimiento_matches))}); refusing to pick one"
+        )
     if matches:
-        return matches[0].read_bytes()
+        if rejected:
+            print(
+                f"  selected {matches[0].name}; {len(rejected)} other member(s) were "
+                "examined and not used:",
+                file=sys.stderr,
+            )
+            report_rejected()
+        return NationalArchiveCsvs(
+            results=matches[0].read_bytes(),
+            establecimientos=(
+                establecimiento_matches[0].read_bytes() if establecimiento_matches else None
+            ),
+        )
 
-    for name, reason in rejected:
-        print(f"  {name}: {reason}", file=sys.stderr)
+    report_rejected()
     raise NationalResultsCsvNotFoundError(
         f"no member of the archived ZIP matches the expected national results "
         f"schema (looked for columns: {', '.join(REQUIRED_COLUMNS)}); "
         f"examined {len(rejected)} member(s), each reported above"
     )
+
+
+def resolve_national_results_bytes(raw_bytes: bytes, *, extract_dir: Path) -> bytes:
+    """Return only the results member for result-only validation call sites."""
+    return resolve_national_archive_csvs(raw_bytes, extract_dir=extract_dir).results
 
 
 class NationalResultsCsvNotFoundError(ValueError):
@@ -341,6 +760,8 @@ def archived_filename(record: dict, *, source_id: str) -> str:
 def read_archived_source(
     entry: dict,
     *,
+    manifest_record: dict,
+    capability: str,
     local_store: LocalArchiveStore,
     filename: str,
 ) -> bytes:
@@ -353,7 +774,12 @@ def read_archived_source(
     three now go through.
     """
     guard_local_mirror_only(entry)
-    return local_store.read(entry["capability"], filename)
+    return read_verified_archive(
+        local_store,
+        capability=capability,
+        filename=filename,
+        expected_sha256=manifest_record.get("sha256"),
+    )
 
 
 def ingest_source(
@@ -370,16 +796,16 @@ def ingest_source(
 ) -> int:
     """Load one already-archived source's parsed rows into `result_row`.
 
-    Resolves (and validates) the database URL BEFORE touching the archive
-    or opening any connection, so a missing URL never reaches even a
-    partial write attempt (task 12.6).
+    The registered election is validated before archive or database access, so
+    an operator cannot ingest immutable bytes under a different election label.
     """
-    resolved_url = resolve_database_url(database_url)
-
     entry = find_source_entry(sources, source_id)
     if entry is None:
         raise UnknownSourceError(f"no registered source with id {source_id!r}")
     capability = entry["capability"]
+    resolved_url: str | None = None
+    if capability != "pba":
+        resolved_url = resolve_database_url(database_url)
 
     records = load_manifest(manifest_path)
     archived = latest_ok_record(records, source_id)
@@ -388,26 +814,61 @@ def ingest_source(
             f"no archived copy of {source_id!r} -- run `fetch --source {source_id}` first"
         )
 
+    registered_year, registered_round = registered_source_election(entry)
+    if registered_year != year or registered_round != round_:
+        raise SourceElectionValidationError(
+            f"source {source_id!r} expected election "
+            f"{registered_year}/{registered_round}; received {year}/{round_}"
+        )
+    if capability == "pba":
+        if entry.get("mime") != "text/html":
+            raise PbaIngestMimeValidationError(
+                f"PBA source {source_id!r} has MIME {entry.get('mime')!r}; ingest requires "
+                "exactly 'text/html' (other registered formats are archival references only)"
+            )
+        resolved_url = resolve_database_url(database_url)
+
     local_store = LocalArchiveStore(root=local_root)
     filename = archived_filename(archived, source_id=entry["id"])
-    raw_bytes = read_archived_source(entry, local_store=local_store, filename=filename)
+    raw_bytes = read_archived_source(
+        entry,
+        manifest_record=archived,
+        capability=capability,
+        local_store=local_store,
+        filename=filename,
+    )
 
+    if resolved_url is None:
+        raise MissingDatabaseUrlError("database URL resolution produced no value")
     conn = psycopg.connect(resolved_url)
     try:
+        project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
-            with tempfile.TemporaryDirectory(prefix="votus-etl-ingest-") as extract_dir:
-                csv_bytes = resolve_national_results_bytes(
-                    raw_bytes, extract_dir=Path(extract_dir)
-                )
-                rows = ingest_national(csv_bytes, archive_entry_id=source_id)
-            inserted = load_national_rows(conn, rows, year=year, round_=round_)
+            csvs = national_archive_csvs(raw_bytes)
+            rows = ingest_national(
+                csvs.results,
+                archive_entry_id=source_id,
+                election_year=registered_year,
+                election_round=registered_round,
+                establecimientos_csv_bytes=csvs.establecimientos,
+            )
+            inserted = load_national_rows(
+                conn, rows, year=year, round_=round_, archive_entry_id=source_id
+            )
         elif capability == "pba":
             rows = ingest_pba(raw_bytes, archive_entry_id=source_id)
             # The CALLER's crosswalk, not a hardcoded default: validating
             # against a candidate file and then ingesting against a different
             # one silently breaks the guarantee `validate-crosswalk` gives.
             crosswalk = load_crosswalk(crosswalk_path)
-            inserted = load_pba_rows(conn, rows, year=year, round_=round_, crosswalk=crosswalk)
+            inserted = load_pba_rows(
+                conn,
+                rows,
+                year=year,
+                round_=round_,
+                crosswalk=crosswalk,
+                archive_entry_id=source_id,
+            )
         elif capability == "fiscalizacion":
             # Imported lazily: `load_fiscalizacion_rows` lands in sub-unit 12b,
             # chained on top of this one -- 12a's own tests never exercise the
@@ -416,8 +877,8 @@ def ingest_source(
             from .ingest.fiscalizacion import load_fiscalizacion_rows
 
             party_map = load_party_map(party_map_path)
-            result = ingest_fiscalizacion(raw_bytes.decode("utf-8"), archive_entry_id=source_id)
-            inserted = load_fiscalizacion_rows(
+            result = ingest_fiscalizacion(raw_bytes, archive_entry_id=source_id)
+            inserted, loader_review_items = load_fiscalizacion_rows(
                 conn,
                 result.rows,
                 year=year,
@@ -448,7 +909,11 @@ def ingest_source(
                     review_item_draft_to_record(draft),
                     subject_ref=f"{source_id} {year}-{round_} {draft.subject_ref}",
                 )
-                for draft in result.review_items
+                # BOTH producers. The parser's drafts and the LOADER's — a mesa
+                # whose circuito cannot be resolved is quarantined at load
+                # time, and those drafts had no path out of the function at
+                # all.
+                for draft in [*result.review_items, *loader_review_items]
             ]
             # `review_item` has no natural key and `subject_ref` is only
             # `"mesa N"`, so re-ingesting the same source would append the same
@@ -456,26 +921,7 @@ def ingest_source(
             # skipping rows already present makes it idempotent without ever
             # discarding a NEW observation -- and the skip count is reported,
             # not swallowed.
-            with conn.cursor() as cur:
-                # EXACT match against the very subject_refs about to be
-                # written -- not `like 'source %'`. `_` and `%` are LIKE
-                # wildcards, so a source id such as `fiscalizacion/2025_cnel`
-                # would match ANOTHER source's rows, pull them into `existing`,
-                # and drop this source's genuinely new observation while
-                # reporting it as "already present": the exact silent drop the
-                # scoping exists to prevent.
-                cur.execute(
-                    "select kind, severity, subject_ref, note from review_item"
-                    " where subject_ref = any(%s::text[])",
-                    ([record.subject_ref for record in records],),
-                )
-                existing = {tuple(row) for row in cur.fetchall()}
-            fresh = [
-                record
-                for record in records
-                if (record.kind, record.severity, record.subject_ref, record.note)
-                not in existing
-            ]
+            fresh = fresh_review_items(conn, records)
             insert_review_items(conn, fresh)
 
             # The quarantine, REPORTED. `ingest_fiscalizacion` produced these
@@ -485,19 +931,27 @@ def ingest_source(
             # large plausible number is how the PASO quarantine discarded
             # 6.462.906 legitimate rows and looked fine doing it.
             if result.quarantined:
-                by_reason: dict[str, list[int | None]] = {}
+                by_reason: dict[str, list[QuarantinedFiscalizacionRow]] = {}
                 for row in result.quarantined:
-                    by_reason.setdefault(row.reason, []).append(row.mesa)
+                    by_reason.setdefault(row.reason, []).append(row)
                 print(
                     f"quarantined {len(result.quarantined)} fiscalización row(s), "
                     "not written to result_row:",
                     file=sys.stderr,
                 )
-                for reason, mesas in sorted(by_reason.items()):
-                    named = sorted(m for m in mesas if m is not None)
+                for reason, quarantined_rows in sorted(by_reason.items()):
+                    named = sorted(r.mesa for r in quarantined_rows if r.mesa is not None)
+                    # THE SOURCE ROW INDICES, which the quarantine record
+                    # carries precisely so a human can find the line. Printed
+                    # only the mesa numbers, `unreadable_mesa` and
+                    # `unmergeable_empty_mesa` -- both `mesa=None` by
+                    # construction -- rendered as a bare count, which this
+                    # file elsewhere calls "visible and not actionable".
+                    lines = sorted(i for r in quarantined_rows for i in r.source_row_indices)
                     print(
-                        f"  {reason}: {len(mesas)} row(s)"
-                        + (f", mesas {', '.join(str(m) for m in named)}" if named else ""),
+                        f"  {reason}: {len(quarantined_rows)} row(s)"
+                        + (f", mesas {', '.join(str(m) for m in named)}" if named else "")
+                        + (f", source row(s) {', '.join(str(i) for i in lines)}" if lines else ""),
                         file=sys.stderr,
                     )
 
@@ -538,9 +992,28 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         UnknownSourceError,
         AmbiguousSourceError,
         MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
         MissingDatabaseUrlError,
+        # `ValueError` LAST, and deliberately: `load_fiscalizacion_rows`
+        # refuses a jurisdiction scheme that does not match the distrito/
+        # seccion it is placing rows on, and `db.load_result_rows` refuses a
+        # record carrying a foreign `election_id`. Both are validation
+        # failures under this module's "non-zero, never a traceback"
+        # contract, and both raised plain `ValueError` -- while
+        # `NationalSchemaError` and `PbaSchemaError`, `ValueError` subclasses
+        # listed above, already exit 1. The narrower names stay listed so the
+        # intent of each is on the page.
+        ValueError,
         NationalResultsCsvNotFoundError,
         NationalSchemaError,
+        # Their exact twins, and every one of them was missing: a drifted
+        # header in the HAND-MAINTAINED sheet -- the source most likely to
+        # drift, because a human edits it -- and a re-skinned PBA page both
+        # exited with a traceback instead of the exit 1 the module contract
+        # promises. The guards existed; the entry point did not reach them.
+        FiscalizacionSchemaError,
+        PbaSchemaError,
         FiscalizacionUploadForbiddenError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -556,7 +1029,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def find_unmapped_jurisdictions(
-    codes: Iterable[tuple[str, str | None]], crosswalk: CrosswalkTable
+    codes: Iterable[tuple[str | None, str | None]], crosswalk: CrosswalkTable
 ) -> list[QuarantinedJurisdiction]:
     """Report every `(distrito, seccion)` pair with no curated crosswalk
     entry -- never silently ignored (task 12.4).
@@ -574,6 +1047,7 @@ def find_unmapped_jurisdictions(
     """
     unmapped: list[QuarantinedJurisdiction] = []
     seen: set[tuple[str | None, str | None]] = set()
+    seen_uncanonical: set[tuple[str | None, str | None]] = set()
     for distrito, seccion in codes:
         normalized_distrito = normalize_distrito_code(distrito)
         normalized_seccion = normalize_seccion_code(seccion)
@@ -581,42 +1055,186 @@ def find_unmapped_jurisdictions(
         # both real and both present in the 2023/2025 corpus; deduping on the
         # raw pair reports one jurisdiction twice, under two different code
         # strings, as if they were two problems.
+        if normalized_distrito is None:
+            # NOT interpolated as the string "None", and NOT deduped with
+            # every other unparseable distrito into one `(None, None)` key.
+            # Both happened: the report named a jurisdiction nobody wrote
+            # (`None/(sin seccion)`) and collapsed every distinct unreadable
+            # code into a single line, so an operator could neither find the
+            # jurisdiction nor tell how many problems there were. The RAW
+            # spelling is what a human has to go look for here, because
+            # there is no canonical form to show. Deduped on that raw
+            # spelling, so one bad code repeated across a corpus is one
+            # reported problem and two DIFFERENT bad codes stay two.
+            if (distrito, seccion) in seen_uncanonical:
+                continue
+            seen_uncanonical.add((distrito, seccion))
+            # `None` is ABSENT, not a code. Rendering it with `!r` printed
+            # the literal string "None" as if it were the distrito -- the
+            # same fabricated identifier this branch exists to stop.
+            shown = "(sin distrito)" if distrito is None else repr(distrito)
+            unmapped.append(
+                QuarantinedJurisdiction(
+                    code=f"{shown}/(codigo ilegible)",
+                    reason=(
+                        f"distrito code {shown} cannot be canonicalized, so it "
+                        "resolves against no curated crosswalk entry"
+                    ),
+                )
+            )
+            continue
+
         key = (normalized_distrito, normalized_seccion)
+        # The report identifies the jurisdiction by its CANONICAL codes. It
+        # used the RAW first-seen spelling, so the same jurisdiction was named
+        # `2/27` or `02/027` depending only on which archived file the corpus
+        # happened to read first -- and the dedup two lines below already
+        # decided they are one thing. Rule 8: normalize once, then use it.
         if key in seen:
             continue
         seen.add(key)
         if normalized_seccion is None:
-            # A coarser-than-seccion national row carries NO seccion. Coercing
-            # it to `""` fabricates a code no source ever wrote, and
-            # `normalize_seccion_code("")` cannot parse it, so it would match no
-            # curated `"027"` and report every distrito-level row of the
-            # ten-category 2023 file as unmapped under `"02/"`. Such a row is
-            # mapped when its DISTRITO is curated.
-            resolved = any(
-                normalize_distrito_code(entry.national_distrito_code)
-                == normalized_distrito
-                for entry in crosswalk.jurisdictions
-            )
+            # WHY A ROW REACHES HERE, corrected. This said "the coarse rows of
+            # the ten-category 2023 file", which is a data-shape claim the
+            # corpus does not support: `ingest_national` builds every row at
+            # `granularity="mesa"` from the required `seccion_id` column, and
+            # all 18.170.843 loaded rows resolve to a jurisdiction with a
+            # non-null `seccion_code` -- zero coarse rows, measured.
+            #
+            # The reachable cause is narrower: `csv.DictReader` fills a
+            # TRUNCATED row's missing trailing fields with `None`, so a source
+            # cut short mid-line yields `seccion_id is None`. No archived file
+            # does this today; this is a guard against one that does, not a
+            # description of one that exists.
+            #
+            # Coercing to `""` instead would fabricate a code no source ever
+            # wrote, and `normalize_seccion_code("")` cannot parse it, so it
+            # would match no curated `"027"` and report the row as unmapped
+            # under `"02/"`. Such a row is mapped when its DISTRITO is curated.
+            # THROUGH the boundary, like the paired lookup below -- and via
+            # the method that returns EVERY match, so an ambiguity is
+            # REPORTED here rather than resolved by taking the first entry.
+            in_distrito = crosswalk.entries_in_distrito(normalized_distrito)
+            if len(in_distrito) > 1:
+                unmapped.append(
+                    QuarantinedJurisdiction(
+                        code=f"{normalized_distrito}/(sin seccion)",
+                        reason=(
+                            f"{len(in_distrito)} curated entries share national distrito "
+                            f"{normalized_distrito} ("
+                            + ", ".join(sorted(e.name for e in in_distrito))
+                            + "); this row names no seccion, so it cannot be attributed "
+                            "to one of them"
+                        ),
+                    )
+                )
+                continue
+            resolved = bool(in_distrito)
         else:
-            resolved = any(
-                normalize_distrito_code(entry.national_distrito_code)
-                == normalized_distrito
-                and normalize_seccion_code(entry.national_seccion_code)
-                == normalized_seccion
-                for entry in crosswalk.jurisdictions
+            # THROUGH the table's own comparison. This loop was a second idea
+            # of how a crosswalk entry's code compares, living outside the
+            # boundary that owns it -- `resolve_national` now normalizes both
+            # sides, so one table has one comparison semantics whichever
+            # caller asks.
+            resolved = (
+                # The NORMALIZED values, matching the dedup key computed two
+                # lines up. Passing the raw ones worked only because
+                # `resolve_national` re-normalizes -- two representations
+                # inside one loop.
+                crosswalk.resolve_national(
+                    distrito_code=normalized_distrito, seccion_code=normalized_seccion
+                )
+                is not None
             )
         if not resolved:
-            shown_seccion = "(sin seccion)" if seccion is None else seccion
+            shown_seccion = "(sin seccion)" if normalized_seccion is None else normalized_seccion
             unmapped.append(
                 QuarantinedJurisdiction(
-                    code=f"{distrito}/{shown_seccion}",
+                    code=f"{normalized_distrito}/{shown_seccion}",
                     reason=(
-                        f"no curated crosswalk entry for distrito={distrito!r} "
-                        f"seccion={seccion!r}"
+                        # CANONICAL here too. `code` was fixed and this was
+                        # not, so the same jurisdiction still produced two
+                        # different reason strings depending only on which
+                        # archived file the corpus read first -- the exact
+                        # defect the fix above claims to have closed, closed
+                        # halfway.
+                        # `shown_*`, not `!r`: an absent seccion printed as
+                        # the literal `seccion=None`, a code nobody wrote --
+                        # the very thing the distrito branch above refuses,
+                        # left half-closed here.
+                        f"no curated crosswalk entry for distrito="
+                        f"{normalized_distrito} seccion={shown_seccion}"
                     ),
                 )
             )
     return unmapped
+
+
+def fresh_review_items(conn, records):
+    """The review-queue records not already present, deduped BOTH ways.
+
+    `review_item` has no natural key, so re-running a command would append
+    the same observation again; and two drafts identical in
+    `(kind, severity, subject_ref, note)` within ONE run would both land,
+    showing one observation twice while the "already present" count described
+    a state that never existed.
+
+    ONE implementation. This existed as three separate copies against one
+    table -- `ingest_source`, `load_curated` and `cmd_validate_fiscalizacion`
+    -- and the third filtered only against what was stored, so the fix made
+    to the first two never reached it. Three ideas of one dedup is how the
+    third stays wrong.
+    """
+    records = list(records)
+    if not records:
+        # And `any(%s::text[])` below rather than `any(%s)`: with an EMPTY
+        # list psycopg cannot infer the array type and raises
+        # `IndeterminateDatatype`, so the success case -- nothing to record --
+        # crashed instead of exiting 0. Guarded twice, on purpose.
+        return []
+    with conn.cursor() as cur:
+        # EXACT match against the very subject_refs about to be written, never
+        # `like`: `_` and `%` are LIKE wildcards, so a source id such as
+        # `fiscalizacion/2025_cnel` would pull in ANOTHER source's rows and
+        # drop this one's genuinely new observation as "already present".
+        cur.execute(
+            "select kind, severity, subject_ref, note from review_item"
+            " where resolved_at is null and subject_ref = any(%s::text[])",
+            ([r.subject_ref for r in records],),
+        )
+        existing = {tuple(row) for row in cur.fetchall()}
+
+    fresh = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for record in records:
+        key = (record.kind, record.severity, record.subject_ref, record.note)
+        if key in existing or key in seen:
+            continue
+        seen.add(key)
+        fresh.append(record)
+    return fresh
+
+
+def national_csv_bytes(raw_bytes: bytes) -> bytes:
+    """The national results CSV inside an archived ZIP, fully materialized.
+
+    THE TEMP DIRECTORY'S LIFETIME LIVES HERE, once. Six call sites each
+    opened their own `tempfile.TemporaryDirectory`, and four of them parsed
+    the returned bytes AFTER the block exited -- surviving only because
+    `resolve_national_results_bytes` reads the member into memory. That is
+    one lifetime assumption per call site, and the day the passthrough
+    returns a lazy handle instead, four of them break silently and two do
+    not. Returning bytes makes the contract the signature: the caller is
+    handed data, not a view into a directory that is already gone.
+    """
+    with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
+        return resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
+
+
+def national_archive_csvs(raw_bytes: bytes) -> NationalArchiveCsvs:
+    """Materialize the results and optional establecimiento companion together."""
+    with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
+        return resolve_national_archive_csvs(raw_bytes, extract_dir=Path(extract_dir))
 
 
 def collect_national_jurisdiction_codes(
@@ -644,15 +1262,30 @@ def collect_national_jurisdiction_codes(
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        raw_bytes = local_store.read("national", filename)
-        with tempfile.TemporaryDirectory(prefix="votus-etl-validate-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(
-                raw_bytes, extract_dir=Path(extract_dir)
-            )
-        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
+        csv_bytes = national_csv_bytes(raw_bytes)
+        election_year, election_round = registered_source_election(entry)
+        for row in ingest_national(
+            csv_bytes,
+            archive_entry_id=entry["id"],
+            election_year=election_year,
+            election_round=election_round,
+        ):
+            distrito = row.result.distrito
+            if distrito is None:
+                raise NationalSchemaError(
+                    f"{entry['id']}: parser invariant violated: national source row "
+                    f"{row.source_row_index} has no distrito"
+                )
             # `seccion` stays `None` for coarser-than-seccion rows: absence is
             # not the empty string. See `find_unmapped_jurisdictions`.
-            codes.add((row.result.distrito, row.result.seccion))
+            codes.add((distrito, row.result.seccion))
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
@@ -675,7 +1308,14 @@ def collect_national_jurisdiction_codes(
             "empty corpus, not a clean one",
             file=sys.stderr,
         )
-    return sorted(codes, key=lambda pair: (pair[0], pair[1] or ""))
+    # `or ""` on BOTH halves. The seccion half had it and the distrito half
+    # did not, so a truncated row -- `csv.DictReader` fills missing trailing
+    # fields with `None`, the hazard named in three places here -- raised
+    # `TypeError: '<' not supported between 'NoneType' and 'str'` inside the
+    # sort. `validate-crosswalk` died with a traceback, and the `None`-distrito
+    # handler downstream never ran, while the module contract promises a
+    # non-zero EXIT on a validation failure, not a stack trace.
+    return sorted(codes, key=lambda pair: (pair[0] or "", pair[1] or ""))
 
 
 def collect_mesa_tipo_mapping(
@@ -706,26 +1346,34 @@ def collect_mesa_tipo_mapping(
     # all" and "scattered rows have a hole in the lineage" need opposite fixes
     # and are indistinguishable inside one `skipped_malformed` total.
     skipped_missing_column = 0
+    skipped_absent_mesa_id = 0
     skipped_bad_mesa_id = 0
     skipped_incomplete_lineage = 0
     # A code the boundary could not canonicalize is NOT the same as a missing
     # one: it is present, wrong-shaped, and would pass through unchanged and
     # silently join nothing.
     skipped_uncanonical_code = 0
-    for raw in rows:
+    for source_row_index, raw in enumerate(rows):
         missing = [column for column in required if column not in raw]
         if missing:
             skipped_missing_column += 1
             continue
-        tipo = (raw.get("mesa_tipo") or "").strip()
-        if not tipo:
+        tipo = validate_mesa_tipo(
+            raw.get("mesa_tipo"),
+            source_label=source_label,
+            source_row_index=source_row_index,
+        )
+        if tipo is None:
             # Counted, never silently dropped: a skip with no number looks
             # identical whether it discarded nothing or everything.
             skipped_no_tipo += 1
             continue
-        try:
-            mesa = int(raw["mesa_id"])
-        except (TypeError, ValueError):
+        raw_mesa = raw.get("mesa_id")
+        if not isinstance(raw_mesa, str) or not raw_mesa.strip():
+            skipped_absent_mesa_id += 1
+            continue
+        mesa = parse_source_int(raw_mesa)
+        if mesa is None:
             skipped_bad_mesa_id += 1
             continue
         # `required` proves the columns are PRESENT, not that they carry a
@@ -739,12 +1387,14 @@ def collect_mesa_tipo_mapping(
         if not distrito or not seccion or not circuito:
             skipped_incomplete_lineage += 1
             continue
-        if not all(
-            is_canonicalizable_code(raw[column])
-            for column in ("distrito_id", "seccion_id", "circuito_id")
+        if not (
+            is_canonicalizable_code(raw["distrito_id"])
+            and is_canonicalizable_code(raw["seccion_id"])
+            and is_canonicalizable_circuito_code(raw["circuito_id"])
         ):
             skipped_uncanonical_code += 1
             continue
+
         key = (distrito, seccion, circuito, mesa)
         # A SET, not a last-write-wins assignment. Two source rows for one mesa
         # disagreeing on its tipo would otherwise collapse in memory before any
@@ -755,6 +1405,7 @@ def collect_mesa_tipo_mapping(
     if (
         skipped_no_tipo
         or skipped_missing_column
+        or skipped_absent_mesa_id
         or skipped_bad_mesa_id
         or skipped_incomplete_lineage
         or skipped_uncanonical_code
@@ -762,7 +1413,8 @@ def collect_mesa_tipo_mapping(
         print(
             f"  {source_label}: {skipped_no_tipo} rows carried no mesa_tipo, "
             f"{skipped_missing_column} lacked a required column, "
-            f"{skipped_bad_mesa_id} had an unparseable mesa_id, "
+            f"{skipped_absent_mesa_id} had an absent mesa_id, "
+            f"{skipped_bad_mesa_id} had an unreadable mesa_id, "
             f"{skipped_incomplete_lineage} had an incomplete lineage, "
             f"{skipped_uncanonical_code} carried a non-numeric code the "
             "normalizers cannot canonicalize",
@@ -773,18 +1425,39 @@ def collect_mesa_tipo_mapping(
 
 
 def source_year(entry_id: str) -> int | None:
-    """The election year a registered source id declares, or `None`.
-
-    ONE definition. The same four-line parse lived in
-    `readable_national_sources`, `collect_national_party_keys` and
-    `collect_national_mesa_codes` -- three independent ideas of "the year of a
-    source", which is how two independent functions ended up with the same
-    padding bug.
-    """
+    """Return a year encoded in a source id, only for consistency diagnostics."""
     digits = "".join(c for c in entry_id.split("/")[-1][:4] if c.isdigit())
     if len(digits) != 4:
         return None
-    return int(digits)
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def registered_source_election(entry: Mapping) -> tuple[int, str]:
+    """Validate and return the election metadata authoritative for a source."""
+    source_id = entry.get("id")
+    election_year = entry.get("election_year")
+    election_round = entry.get("election_round")
+    if isinstance(election_year, bool) or not isinstance(election_year, int):
+        raise SourcesValidationError(
+            f"source {source_id!r} election_year must be an integer excluding booleans; "
+            f"received {election_year!r}"
+        )
+    if not isinstance(election_round, str) or not election_round.strip():
+        raise SourcesValidationError(
+            f"source {source_id!r} election_round must be a non-empty string; "
+            f"received {election_round!r}"
+        )
+
+    id_year = source_year(source_id) if isinstance(source_id, str) else None
+    if id_year is not None and id_year != election_year:
+        raise SourcesValidationError(
+            f"source {source_id!r} id declares year {id_year}, but election_year "
+            f"metadata declares {election_year}"
+        )
+    return election_year, election_round
 
 
 def readable_national_sources(
@@ -804,7 +1477,8 @@ def readable_national_sources(
     local_store = LocalArchiveStore(root=local_root)
     readable = 0
     for entry in sources.get("national", []):
-        if year is not None and source_year(entry["id"]) != year:
+        election_year, _ = registered_source_election(entry)
+        if year is not None and election_year != year:
             continue
         archived = latest_ok_record(records, entry["id"])
         if archived is None:
@@ -821,7 +1495,12 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        AmbiguousSourceError,
+    ) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -837,16 +1516,33 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
         codes = collect_national_jurisdiction_codes(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (
+        NationalResultsCsvNotFoundError,
+        NationalSchemaError,
+        FiscalizacionSchemaError,
+        PbaSchemaError,
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
+        AmbiguousSourceError,
+    ) as exc:
         # The module contract is "non-zero on any validation failure". A ZIP
         # whose schema drifted is a validation failure, not a crash — and
         # `ingest_national` raises `NationalSchemaError` for a header that
         # drifted a different way.
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    crosswalk = load_crosswalk(Path(args.crosswalk_path))
-    unmapped = find_unmapped_jurisdictions(codes, crosswalk)
+    try:
+        # INSIDE a try that names what this raises. `load_crosswalk` parses a
+        # HAND-EDITED YAML -- the file most likely to drift -- and exited with
+        # a `yaml` traceback while every archive-side failure in this same
+        # function exited 1.
+        crosswalk = load_crosswalk(Path(args.crosswalk_path))
+        unmapped = find_unmapped_jurisdictions(codes, crosswalk)
+    except (yaml.YAMLError, OSError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     if unmapped:
         for item in unmapped:
@@ -886,20 +1582,34 @@ def collect_national_party_keys(
     sources: dict[str, list[dict]], *, local_root: Path, manifest_path: Path
 ) -> list[tuple[int, str, str, str]]:
     """Gather every distinct `(year, "national", category, list_id)` key
-    actually present in already-archived national sources. `year` is parsed
-    from each source id's leading 4 digits (e.g. `national/2025-legislativas`),
-    matching the convention every registered national entry already follows.
+    actually present in already-archived national sources. The registered
+    `election_year` metadata is authoritative; a parseable id year is checked
+    only for disagreement.
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
-    skipped_no_list_id_by_source: dict[str, int] = {}
+    # NEW keys contributed by each source. This counted rows "carrying no
+    # list_id", a branch that could never fire: `ingest_national` excludes
+    # every row whose `agrupacion_id` is empty or `"0"` BEFORE building
+    # `list_id`, so `row.list_id` is never falsy and the counter was always
+    # zero and its report never printed. The comment justifying it was also
+    # wrong about the file -- `lista_numero` is empty throughout the 2023
+    # generales export, but `list_id` is not: it degrades to the bare
+    # `agrupacion_id`, which `ingest_national` documents.
+    #
+    # What the report was reaching for IS real and IS reachable: a source
+    # contributing ZERO keys while `sources_read > 0` suppresses the
+    # empty-corpus warning, so `validate-curated` prints "all N key(s)
+    # resolve" over a corpus one whole file is missing from.
+    keys_by_source: dict[str, int] = {}
     sources_read = 0
     keys: set[tuple[int, str, str, str]] = set()
     skipped_not_archived = 0
     skipped_missing_file = 0
-    skipped_no_year = 0
     sources_seen = 0
     for entry in sources.get("national", []):
+        year, election_round = registered_source_election(entry)
+
         archived = latest_ok_record(records, entry["id"])
         sources_seen += 1
         if archived is None:
@@ -909,44 +1619,53 @@ def collect_national_party_keys(
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        parsed_year = source_year(entry["id"])
-        if parsed_year is None:
-            skipped_no_year += 1
-            continue
-        year = parsed_year
-        raw_bytes = local_store.read("national", filename)
-        with tempfile.TemporaryDirectory(prefix="votus-etl-validate-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(
-                raw_bytes, extract_dir=Path(extract_dir)
-            )
-        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
-            if row.list_id:
-                keys.add((year, "national", row.category, row.list_id))
-            else:
-                skipped_no_list_id_by_source[entry["id"]] = (
-                    skipped_no_list_id_by_source.get(entry["id"], 0) + 1
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
+        csv_bytes = national_csv_bytes(raw_bytes)
+        # What this source YIELDED, not what was new to the shared
+        # accumulator. `len(keys)` deltas counted zero for a source whose
+        # every key another source had already contributed -- and 2023 PASO
+        # and 2023 generales key on the same `(year, "national", category,
+        # list_id)` tuple, so whichever was read second reported "the corpus
+        # is missing it" about a file read in full. A manufactured warning is
+        # the same broken distribution as a hidden one.
+        contributed: set[tuple[int, str, str, str]] = set()
+        for row in ingest_national(
+            csv_bytes,
+            archive_entry_id=entry["id"],
+            election_year=year,
+            election_round=election_round,
+        ):
+            list_id = row.list_id
+
+            if list_id is None:
+                raise NationalSchemaError(
+                    f"{entry['id']}: parser invariant violated: national source row "
+                    f"{row.source_row_index} has no list_id"
                 )
+            contributed.add((year, "national", row.category, list_id))
+        keys.update(contributed)
+        keys_by_source[entry["id"]] = len(contributed)
         sources_read += 1
 
-    # Both counted. `lista_numero` is empty throughout the 2023 generales file,
-    # so dropping those rows silently would make this collect zero keys and let
-    # `validate-curated` report "all 0 archived key(s) resolve" — green,
-    # plausible, and excluding a whole file. A run that read no source at all
-    # is likewise reported rather than passing as success.
-    # PER SOURCE. `lista_numero` is empty throughout the 2023 generales file,
-    # so one global total hides a whole file contributing ZERO keys while
-    # `sources_read > 0` suppresses the empty-corpus warning and
-    # `validate-curated` reports "all N key(s) resolve" over a corpus one file
-    # is missing from.
-    for source_id, count in sorted(skipped_no_list_id_by_source.items()):
-        print(
-            f"  {source_id}: {count} rows carried no list_id and were excluded",
-            file=sys.stderr,
-        )
-    # Per REASON, not one total: "2 of 3 sources excluded" and "1 source has an
-    # unparseable year" are different failures with different fixes, and either
-    # one alone still lets `validate-curated` print a green "all N key(s)
-    # resolve" over a fraction of the corpus.
+    # PER SOURCE, and only the ones that YIELDED nothing: a source read
+    # without error that carries no key at all is indistinguishable, in the
+    # totals, from one that was never read.
+    for source_id, count in sorted(keys_by_source.items()):
+        if count == 0:
+            print(
+                f"  {source_id}: read without error and carries NO curated "
+                "key at all; the corpus this validates is missing it",
+                file=sys.stderr,
+            )
+    # Per REASON, not one total: sources not archived and archived artifacts
+    # missing from the mirror require different fixes, and either one alone still
+    # lets `validate-curated` describe only a fraction of the registered corpus.
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) were "
@@ -959,12 +1678,7 @@ def collect_national_party_keys(
             "recorded as archived but absent from the local mirror and were excluded",
             file=sys.stderr,
         )
-    if skipped_no_year:
-        print(
-            f"  {skipped_no_year} of {sources_seen} registered source(s) carry no "
-            "parseable year in their id and were excluded",
-            file=sys.stderr,
-        )
+
     if sources_read == 0:
         print(
             "  no archived national source was read; this result describes an "
@@ -980,7 +1694,12 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
         readable = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (UnknownSourceError, MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        AmbiguousSourceError,
+    ) as exc:
         # A malformed manifest entry is a validation failure like any other.
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
@@ -996,12 +1715,28 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
         keys = collect_national_party_keys(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (
+        NationalResultsCsvNotFoundError,
+        NationalSchemaError,
+        FiscalizacionSchemaError,
+        PbaSchemaError,
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
+        AmbiguousSourceError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    party_map = load_party_map(Path(args.party_map_path))
-    unmapped = find_unmapped_parties(keys, party_map)
+    try:
+        # Same reason as `cmd_validate_crosswalk`'s: `party_map.yaml` is
+        # hand-edited, so a malformed one is a validation failure and must
+        # exit 1 like every archive-side failure above it, not raise `yaml`.
+        party_map = load_party_map(Path(args.party_map_path))
+        unmapped = find_unmapped_parties(keys, party_map)
+    except (yaml.YAMLError, OSError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     if unmapped:
         for item in unmapped:
@@ -1029,22 +1764,25 @@ def collect_national_mesa_codes(
     distrito_code: str,
     seccion_code: str,
     year: int,
-) -> set[int]:
-    """Gather every distinct mesa code observed in an already-archived
+) -> set[tuple[str, int]]:
+    """Gather every distinct circuito/mesa pair observed in an already-archived
     national source for one `(distrito, seccion)` scope and one year.
 
-    Reuses the same archived-file parsing path
-    `collect_national_jurisdiction_codes`/`collect_national_party_keys`
-    already exercise for `validate-crosswalk`/`validate-curated` -- this is
-    `mesa_crosswalk`'s per-year presence input (task 15.11), computed from
-    the REAL archived corpus rather than assumed or hand-authored in YAML
-    (jurisdiction-model spec: stability "MUST NOT be assumed by default").
+    Reads the raw identity projection before list/vote filters or ambiguous-row
+    quarantine. Every registered source for the requested year must be archived
+    locally first, so the result can never represent a partial year corpus.
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
+    _require_complete_national_corpus(
+        sources,
+        records=records,
+        local_store=local_store,
+        years=(year,),
+    )
     target_distrito = normalize_distrito_code(distrito_code)
     target_seccion = normalize_seccion_code(seccion_code)
-    mesas: set[int] = set()
+    mesas: set[tuple[str, int]] = set()
     dropped: dict[str, int] = {}
     # Split by REASON: "never fetched" and "manifest says ok but the local
     # mirror has no such file" are different failures -- one needs a fetch, the
@@ -1053,8 +1791,10 @@ def collect_national_mesa_codes(
     skipped_missing_file = 0
     sources_seen = 0
     for entry in sources.get("national", []):
-        if source_year(entry["id"]) != year:
+        entry_year, _ = registered_source_election(entry)
+        if entry_year != year:
             continue
+
         # Counted only after the year filter: a source for another year is out of
         # scope, not missing.
         sources_seen += 1
@@ -1066,28 +1806,31 @@ def collect_national_mesa_codes(
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        raw_bytes = local_store.read("national", filename)
-        with tempfile.TemporaryDirectory(prefix="votus-etl-load-curated-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
-        for row in ingest_national(csv_bytes, archive_entry_id=entry["id"]):
-            # PER REASON. This function reported which SOURCES it skipped and
-            # then dropped the rows themselves in silence, so an empty result
-            # had no distinguishable cause -- and an empty result is what makes
-            # `compute_mesa_stability` record a mesa as absent in a year.
-            if normalize_distrito_code(row.result.distrito) != target_distrito:
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
+        csv_bytes = national_csv_bytes(raw_bytes)
+        for distrito, seccion, circuito, mesa in extract_raw_mesa_identities(csv_bytes):
+            if normalize_distrito_code(distrito) != target_distrito:
                 dropped["outside the requested distrito"] = (
                     dropped.get("outside the requested distrito", 0) + 1
                 )
-            elif normalize_seccion_code(row.result.seccion) != target_seccion:
+            elif normalize_seccion_code(seccion) != target_seccion:
                 dropped["outside the requested seccion"] = (
                     dropped.get("outside the requested seccion", 0) + 1
                 )
-            elif row.mesa is None:
-                dropped["coarser than mesa granularity"] = (
-                    dropped.get("coarser than mesa granularity", 0) + 1
-                )
             else:
-                mesas.add(row.mesa)
+                normalized_circuito = normalize_circuito_code(circuito)
+                if normalized_circuito is None:
+                    raise NationalSchemaError(
+                        f"raw mesa identity carried unreadable circuito {circuito!r}"
+                    )
+                mesas.add((normalized_circuito, mesa))
+
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
@@ -1100,14 +1843,49 @@ def collect_national_mesa_codes(
             "recorded as archived but absent from the local mirror and were excluded",
             file=sys.stderr,
         )
+
     for reason, count in sorted(dropped.items()):
         print(f"  {year}: {count} row(s) not counted — {reason}", file=sys.stderr)
     return mesas
 
 
 class MissingArchivedYearError(RuntimeError):
-    """Raised when mesa stability is requested for a year with no readable
-    archived source -- absence of data is not evidence of instability."""
+    """Raised when mesa stability lacks a complete registered source corpus."""
+
+
+def _require_complete_national_corpus(
+    sources: dict[str, list[dict]],
+    *,
+    records: list[dict],
+    local_store: LocalArchiveStore,
+    years: tuple[int, ...],
+) -> None:
+    unavailable: list[str] = []
+    for year in years:
+        entries = [
+            entry
+            for entry in sources.get("national", [])
+            if registered_source_election(entry)[0] == year
+        ]
+        if not entries:
+            unavailable.append(f"{year}: no registered national source")
+            continue
+        for entry in entries:
+            archived = latest_ok_record(records, entry["id"])
+            if archived is None:
+                unavailable.append(f"{entry['id']}: no successful archive record")
+                continue
+            filename = archived_filename(archived, source_id=entry["id"])
+            if not local_store.exists("national", filename):
+                unavailable.append(
+                    f"{entry['id']}: archived local artifact {filename!r} is missing"
+                )
+
+    if unavailable:
+        raise MissingArchivedYearError(
+            "national source corpus is incomplete; refusing to compute mesa stability: "
+            + "; ".join(unavailable)
+        )
 
 
 def load_curated(
@@ -1124,37 +1902,34 @@ def load_curated(
     `jurisdiction_crosswalk`/`mesa_crosswalk` from `crosswalk_path`.
 
     `mesa_crosswalk`'s presence-per-year is computed for every jurisdiction
-    the crosswalk curates, from whichever national sources are ALREADY
-    archived on disk for 2023/2025 (task 15.11).
+    the crosswalk curates only after every registered 2023/2025 national source
+    has a successful manifest record and an existing local artifact.
 
-    A year with NO readable archived source is refused, not computed. An
-    unread year yields an empty mesa set, which `compute_mesa_stability`
-    cannot distinguish from a year whose mesas genuinely vanished: every mesa
-    would be persisted as `present_2023=False, stable_across_years=False` --
-    absence of a source rendered as measured instability, which the
-    jurisdiction-model spec states MUST NOT be assumed.
+    A partial year corpus is refused, not computed. Missing source data yields
+    an incomplete mesa set that `compute_mesa_stability` cannot distinguish
+    from mesas that genuinely vanished, rendering unmeasured coverage as
+    measured instability.
     """
+    for entry in sources.get("national", []):
+        registered_source_election(entry)
+
+    records = load_manifest(manifest_path)
+    local_store = LocalArchiveStore(root=local_root)
+
+    _require_complete_national_corpus(
+        sources,
+        records=records,
+        local_store=local_store,
+        years=(2023, 2025),
+    )
+
     party_map = load_party_map(party_map_path)
     crosswalk = load_crosswalk(crosswalk_path)
 
-    for required_year in (2023, 2025):
-        if (
-            readable_national_sources(
-                sources,
-                local_root=local_root,
-                manifest_path=manifest_path,
-                year=required_year,
-            )
-            == 0
-        ):
-            raise MissingArchivedYearError(
-                f"no archived national source is readable for {required_year}; "
-                "refusing to compute mesa stability, which would record every "
-                f"mesa as absent in {required_year} rather than unmeasured"
-            )
-
     mesa_stabilities: list[tuple[str, str, MesaStability]] = []
-    uncovered: list[str] = []
+    # Split by cause, because the fixes are opposite ones.
+    uncovered_absent: list[str] = []
+    uncovered_wrong_seccion: list[str] = []
     for jurisdiction in crosswalk.jurisdictions:
         mesas_2023 = collect_national_mesa_codes(
             sources,
@@ -1184,9 +1959,34 @@ def load_curated(
             # coverage rendered as a clean load. Reported, not refused: a
             # curated jurisdiction the archive does not reach yet is a real
             # state, unlike the half-covered one below.
-            uncovered.append(
-                f"{jurisdiction.national_distrito_code}/{jurisdiction.national_seccion_code}"
+            # PER REASON. One list collapsed two causes with OPPOSITE fixes:
+            # the archive genuinely does not reach this jurisdiction (fetch
+            # more), versus the curated codes do not match what the archive
+            # writes (fix `crosswalk.yaml`) -- the padding/scheme class of
+            # defect that produced Coronel Rosales as three identities. Which
+            # one it is, is answerable: does the corpus carry this DISTRITO
+            # at all?
+            in_corpus = collect_national_jurisdiction_codes(
+                sources, local_root=local_root, manifest_path=manifest_path
             )
+            target_distrito = normalize_distrito_code(jurisdiction.national_distrito_code)
+            distrito_seen = any(normalize_distrito_code(d) == target_distrito for d, _ in in_corpus)
+            label = f"{jurisdiction.national_distrito_code}/{jurisdiction.national_seccion_code}"
+            if distrito_seen:
+                seen_secciones = sorted(
+                    {
+                        normalize_seccion_code(s) or "(sin seccion)"
+                        for d, s in in_corpus
+                        if normalize_distrito_code(d) == target_distrito
+                    }
+                )
+                uncovered_wrong_seccion.append(
+                    f"{label} (the archive carries distrito "
+                    f"{jurisdiction.national_distrito_code} with seccion(s) "
+                    f"{', '.join(seen_secciones)})"
+                )
+            else:
+                uncovered_absent.append(label)
             continue
 
         if bool(mesas_2023) != bool(mesas_2025):
@@ -1208,10 +2008,19 @@ def load_curated(
                 )
             )
 
-    if uncovered:
+    if uncovered_absent:
         print(
-            f"  {len(uncovered)} curated jurisdiction(s) have no archived mesas in "
-            f"either year and get NO mesa_crosswalk row: {', '.join(uncovered)}",
+            f"  {len(uncovered_absent)} curated jurisdiction(s) get NO mesa_crosswalk "
+            "row because the archive does not carry their distrito at all -- fetch "
+            f"more sources: {', '.join(uncovered_absent)}",
+            file=sys.stderr,
+        )
+    if uncovered_wrong_seccion:
+        print(
+            f"  {len(uncovered_wrong_seccion)} curated jurisdiction(s) get NO "
+            "mesa_crosswalk row even though the archive DOES carry their distrito -- "
+            "the curated seccion does not match what the archive writes, so fix "
+            f"crosswalk.yaml: {'; '.join(uncovered_wrong_seccion)}",
             file=sys.stderr,
         )
 
@@ -1219,6 +2028,55 @@ def load_curated(
     try:
         counts = load_party_map_rows(conn, party_map)
         counts.update(load_crosswalk_rows(conn, crosswalk, mesa_stabilities=mesa_stabilities))
+
+        # THE DISCONTINUITIES, SURFACED. `MesaStability.discontinuous` had no
+        # production reader and `review_item`'s `mesa_discontinuity` kind had
+        # no production writer, so the spec's "a code present in only one
+        # year MUST be surfaced as a discontinuity, never silently dropped"
+        # was delivered by nothing: `mesa_crosswalk.stable_across_years`
+        # records the fact in a column nobody reports on.
+        #
+        # Deduped against what is already there, like the fiscalización
+        # drafts: re-running `load-curated` must not append the same
+        # observation again, and must not discard a genuinely new one.
+        drafts = [
+            ReviewItemRecord(
+                kind="mesa_discontinuity",
+                severity="warning",
+                # THROUGH the boundary, and through the SAME builder every
+                # other writer of this key uses. Built from the raw curated
+                # YAML strings, a `national_seccion: "27"` wrote
+                # `mesa_crosswalk` row `02/027` (which `load_crosswalk_rows`
+                # normalizes three lines later) and `review_item` key
+                # `02-27-mesa-N`. Two identities for one mesa, and
+                # `fresh_review_items` dedups on EXACT `subject_ref`, so the
+                # day the curated padding is corrected every discontinuity
+                # appends again.
+                subject_ref=(
+                    f"{normalize_distrito_code(distrito)}-"
+                    f"{normalize_seccion_code(seccion)}-circuito-"
+                    f"{stability.circuito}-mesa-{stability.mesa}"
+                ),
+                note=(
+                    f"mesa {stability.mesa} circuito {stability.circuito} in "
+                    f"{distrito}/{seccion} is present in "
+                    + ("2023 but not 2025" if stability.present_2023 else "2025 but not 2023")
+                    + "; it is NOT stable across years and must not be compared as if it were"
+                ),
+            )
+            for distrito, seccion, stability in mesa_stabilities
+            if stability.discontinuous
+        ]
+        if drafts:
+            fresh = fresh_review_items(conn, drafts)
+            insert_review_items(conn, fresh)
+            counts["mesa_discontinuity_review_items"] = len(fresh)
+            print(
+                f"  {len(drafts)} discontinuous mesa(s) recorded for review "
+                f"({len(fresh)} new, {len(drafts) - len(fresh)} already present)",
+                file=sys.stderr,
+            )
+
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1236,27 +2094,6 @@ def cmd_load_curated(args: argparse.Namespace) -> int:
         return 1
 
     sources = load_sources(Path(args.sources_path))
-    try:
-        readable = readable_national_sources(
-            sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
-        )
-    except (UnknownSourceError, MalformedManifestRecordError, AmbiguousSourceError) as exc:
-        # A malformed manifest entry is a validation failure like any other.
-        # This call sat OUTSIDE the try below, so it exited with a traceback.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    if readable == 0:
-        # `mesa_crosswalk`'s per-year presence is COMPUTED from the archived
-        # corpus. With nothing archived, every mesa set is empty, no stability
-        # row is emitted, and "loaded 0 row(s) into mesa_crosswalk" exits 0 --
-        # stability UNKNOWN rendered as a clean load. Same refusal the two
-        # validate commands make.
-        print(
-            "no archived national source is readable; refusing to compute mesa "
-            "stability over an empty corpus -- run `fetch` first",
-            file=sys.stderr,
-        )
-        return 1
     try:
         counts = load_curated(
             database_url=database_url,
@@ -1321,6 +2158,7 @@ def official_mesa_votes_from_national(
     for required in (
         "distrito_id",
         "seccion_id",
+        "circuito_id",
         "mesa_id",
         "cargo_nombre",
         "votos_tipo",
@@ -1343,6 +2181,23 @@ def official_mesa_votes_from_national(
     votes_by_mesa: dict[int, dict[str, set[int]]] = {}
     tipo_by_mesa: dict[int, dict[str, set[int]]] = {}
     skipped: dict[str, int] = {}
+    # A mesa NUMBER does not identify a mesa: within one partido the same
+    # `mesa_code` appears under more than one circuito — 8 of the 93
+    # fiscalización mesas, against the live 2025 import, which is why
+    # `db.official_jurisdictions_for_mesa` refuses them. Keying tallies on the
+    # number alone merges two physically different mesas: equal tallies sum
+    # silently, and differing ones surface as SCHEMA DRIFT on data that is
+    # perfectly well-formed.
+    #
+    circuitos_by_mesa: dict[int, set[str]] = {}
+    # Rows per mesa that CONTRIBUTED A TALLY. Counting every row that reached
+    # the loop body double-counted the ones already skipped as
+    # "votos_tipo not in the comparison vector", so the per-reason totals summed
+    # to more than the rows read. Counting mesas instead under-reported the
+    # largest exclusion by an order of magnitude. Neither total is truthful;
+    # this one is.
+    tallied_rows_by_mesa: dict[int, int] = {}
+    known_official_names = frozenset(OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values())
 
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
@@ -1357,25 +2212,93 @@ def official_mesa_votes_from_national(
         if raw["cargo_nombre"] != category:
             skip("a different category")
             continue
-        try:
-            mesa = int(raw["mesa_id"])
-            cantidad = int(raw["votos_cantidad"])
-        except (TypeError, ValueError):
-            skip("unparseable mesa_id or votos_cantidad")
-            continue
 
         votos_tipo = raw["votos_tipo"]
+        official_name = raw["agrupacion_nombre"]
+        if votos_tipo == "POSITIVO" and official_name not in known_official_names:
+            raise NationalSchemaError(
+                f"mesa {raw['mesa_id']} reports unknown official party name "
+                f"{official_name!r} within distrito={target_distrito}, "
+                f"seccion={target_seccion}, category={category!r}; refusing fiscal "
+                "comparison because the curated official party-name mapping no "
+                "longer matches the source"
+            )
+
+        mesa = parse_source_int(raw["mesa_id"])
+        if mesa is None:
+            skip("unreadable mesa_id")
+            continue
+        cantidad = parse_source_int(raw["votos_cantidad"])
+        if cantidad is None:
+            skip("unreadable votos_cantidad")
+            continue
+
+        contributes_tally = votos_tipo in ("POSITIVO", "EN BLANCO", "IMPUGNADO")
+
+        if contributes_tally:
+            # ONLY from rows that contribute a tally -- the same set
+            # `tallied_rows_by_mesa` tracks. Accumulating from every row that
+            # passed the distrito/seccion/category filter meant a NULO or
+            # RECURRIDO row carrying a different circuito declared the mesa
+            # ambiguous and dropped tallies that all sat in ONE circuito: a
+            # fabricated ambiguity verdict on well-formed data, which is the
+            # exact outcome this check exists to prevent.
+            #
+            # NORMALIZED, like every other administrative code read in this
+            # file. Compared raw, `"248"` and `"00248"` -- the same circuito
+            # written two ways, which is why `normalize_circuito_code` exists
+            # -- counted as two, with the same fabricated result.
+            raw_circuito = raw["circuito_id"]
+            if not is_canonicalizable_circuito_code(raw_circuito):
+                raise NationalSchemaError(
+                    f"mesa {mesa} has missing, blank, or unreadable circuito_id "
+                    f"{raw_circuito!r} within distrito={target_distrito}, "
+                    f"seccion={target_seccion}, category={category!r}; refusing to "
+                    "add a tally without circuito identity"
+                )
+            circuito = normalize_circuito_code(raw_circuito.strip())
+            circuitos_by_mesa.setdefault(mesa, set()).add(circuito)
+
         if votos_tipo == "POSITIVO":
-            votes_by_mesa.setdefault(mesa, {}).setdefault(
-                raw["agrupacion_nombre"], set()
-            ).add(cantidad)
+            votes_by_mesa.setdefault(mesa, {}).setdefault(official_name, set()).add(cantidad)
+            tallied_rows_by_mesa[mesa] = tallied_rows_by_mesa.get(mesa, 0) + 1
         elif votos_tipo in ("EN BLANCO", "IMPUGNADO"):
             tipo_by_mesa.setdefault(mesa, {}).setdefault(votos_tipo, set()).add(cantidad)
+            tallied_rows_by_mesa[mesa] = tallied_rows_by_mesa.get(mesa, 0) + 1
         else:
             # NULO, RECURRIDO and anything else the source reports: not part of
             # the 17-column fiscalización vector, so not comparable — counted
             # rather than vanishing.
             skip(f"votos_tipo {votos_tipo!r} is not in the comparison vector")
+
+    # DROPPED BEFORE the collapse, with their reason counted. Left in, an
+    # ambiguous mesa's two circuitos disagree about a tally and `collapse`
+    # reports that as schema drift — `validate-fiscalizacion` would exit 1 on
+    # data that is perfectly well-formed.
+    ambiguous = {mesa for mesa, circuitos in circuitos_by_mesa.items() if len(circuitos) > 1}
+    for mesa in ambiguous:
+        votes_by_mesa.pop(mesa, None)
+        tipo_by_mesa.pop(mesa, None)
+        for _ in range(tallied_rows_by_mesa.get(mesa, 0)):
+            skip(
+                "the mesa number appears under more than one circuito, so it does "
+                "not identify one mesa"
+            )
+    if ambiguous:
+        # NAMED, like every sibling report in this file (`unmatched_mesas`,
+        # `collided_mesas`, `incomparable_mesas`, the quarantine breakdown).
+        # A count with no identifiers is visible and not actionable: nobody
+        # can go look at the mesas whose tallies were withheld, or check the
+        # circuitos against the source.
+        print(
+            f"  {len(ambiguous)} mesa(s) withheld because their number appears under "
+            "more than one circuito: "
+            + ", ".join(
+                f"mesa {mesa} in circuitos " + ", ".join(sorted(circuitos_by_mesa[mesa]))
+                for mesa in sorted(ambiguous)
+            ),
+            file=sys.stderr,
+        )
 
     def collapse(source: dict[int, dict[str, set[int]]], label: str) -> dict[int, dict[str, int]]:
         collapsed: dict[int, dict[str, int]] = {}
@@ -1419,13 +2342,87 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     command exits zero on divergences and nonzero only when the join itself
     could not be performed.
     """
+    # THE CHECK behind the name table's curated scope. `vector()` maps every
+    # column through `OFFICIAL_AGRUPACION_NAME_BY_COLUMN`, curated for one
+    # (distrito, seccion, category); outside it every name misses, every
+    # column reads 0, and the run writes 17 fabricated divergences per mesa.
+    # Refused the way `load_fiscalizacion_rows` refuses a scheme that does not
+    # match the scope it writes to.
+    curated_year, curated_distrito, curated_seccion, curated_category = CURATED_NAME_TABLE_SCOPE
+    requested = (
+        normalize_distrito_code(args.distrito),
+        normalize_seccion_code(args.seccion),
+        args.category,
+    )
+    if requested != (curated_distrito, curated_seccion, curated_category):
+        print(
+            f"error: the official party-name table is curated for "
+            f"{curated_distrito}/{curated_seccion}/{curated_category}, and this run "
+            f"asks for {requested[0]}/{requested[1]}/{requested[2]}; outside that "
+            "scope every column would miss and every mesa would report 17 divergences "
+            "that are not real",
+            file=sys.stderr,
+        )
+        return 1
+
+    sources = load_sources(Path(args.sources_path))
+    fiscalizacion_entry = find_source_entry(sources, args.source)
+    if fiscalizacion_entry is None:
+        print(f"error: no registered source with id {args.source!r}", file=sys.stderr)
+        return 1
+    if fiscalizacion_entry["capability"] != "fiscalizacion":
+        print(
+            f"error: {args.source!r} is registered under "
+            f"{fiscalizacion_entry['capability']!r}, but this argument requires a "
+            "'fiscalizacion' source",
+            file=sys.stderr,
+        )
+        return 1
+
+    baseline_entry = find_source_entry(sources, args.baseline)
+    if baseline_entry is None:
+        print(f"error: no registered source with id {args.baseline!r}", file=sys.stderr)
+        return 1
+    if baseline_entry["capability"] != "national":
+        print(
+            f"error: {args.baseline!r} is registered under "
+            f"{baseline_entry['capability']!r}, but this argument requires a "
+            "'national' source",
+            file=sys.stderr,
+        )
+        return 1
+
+    fiscalizacion_election = registered_source_election(fiscalizacion_entry)
+    baseline_election = registered_source_election(baseline_entry)
+    accepted_election = (curated_year, "legislativas")
+    for role, source_id, election in (
+        ("fiscalización source", args.source, fiscalizacion_election),
+        ("official baseline", args.baseline, baseline_election),
+    ):
+        if election != accepted_election:
+            print(
+                f"error: {role} {source_id!r} has registered election "
+                f"{election[0]}/{election[1]}, but validate-fiscalizacion accepts only "
+                f"{accepted_election[0]}/{accepted_election[1]}",
+                file=sys.stderr,
+            )
+            return 1
+    if fiscalizacion_election != baseline_election:
+        print(
+            f"error: fiscalización source {args.source!r} is registered for "
+            f"{fiscalizacion_election[0]}/{fiscalizacion_election[1]}, but baseline "
+            f"{args.baseline!r} is registered for "
+            f"{baseline_election[0]}/{baseline_election[1]}",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         database_url = resolve_database_url(args.database_url)
     except MissingDatabaseUrlError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    sources = load_sources(Path(args.sources_path))
     records = load_manifest(Path(args.manifest_path))
     local_store = LocalArchiveStore(root=Path(args.local_root))
 
@@ -1452,12 +2449,17 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         filename = archived_filename(archived, source_id=entry["id"])
         if not local_store.exists(entry["capability"], filename):
             print(
-                f"error: {source_id!r} is recorded as archived but absent from the "
-                "local mirror",
+                f"error: {source_id!r} is recorded as archived but absent from the local mirror",
                 file=sys.stderr,
             )
             return None
-        return read_archived_source(entry, local_store=local_store, filename=filename)
+        return read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability=capability,
+            local_store=local_store,
+            filename=filename,
+        )
 
     try:
         fiscalizacion_bytes = archived_bytes(args.source, "fiscalizacion")
@@ -1474,66 +2476,138 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     if fiscalizacion_bytes is None or baseline_bytes is None:
         return 1
 
-    result = ingest_fiscalizacion(fiscalizacion_bytes.decode("utf-8"), archive_entry_id=args.source)
+    result = ingest_fiscalizacion(
+        fiscalizacion_bytes,
+        archive_entry_id=args.source,
+    )
+    parser_review_records = [
+        replace(
+            review_item_draft_to_record(draft),
+            subject_ref=(
+                f"{args.source} {fiscalizacion_election[0]}-"
+                f"{fiscalizacion_election[1]} {draft.subject_ref}"
+            ),
+        )
+        for draft in result.review_items
+    ]
 
     # Same quarantine `ingest_source` reports, reported here too: reading only
     # `result.rows` made the join describe a smaller corpus with no word about
     # what was withheld.
     if result.quarantined:
-        by_reason: dict[str, list[int | None]] = {}
+        by_reason: dict[str, list[QuarantinedFiscalizacionRow]] = {}
         for row in result.quarantined:
-            by_reason.setdefault(row.reason, []).append(row.mesa)
+            by_reason.setdefault(row.reason, []).append(row)
         print(
             f"  {len(result.quarantined)} fiscalización row(s) were quarantined at "
             "ingestion and are not part of this comparison:",
             file=sys.stderr,
         )
-        for reason, mesas in sorted(by_reason.items()):
-            named = sorted(m for m in mesas if m is not None)
+        for reason, quarantined_rows in sorted(by_reason.items()):
+            named = sorted(r.mesa for r in quarantined_rows if r.mesa is not None)
+            # Same locator as `ingest_source`'s report: a reason whose rows all
+            # carry `mesa=None` is otherwise a bare count.
+            lines = sorted(i for r in quarantined_rows for i in r.source_row_indices)
             print(
-                f"    {reason}: {len(mesas)} row(s)"
-                + (f", mesas {', '.join(str(m) for m in named)}" if named else ""),
+                f"    {reason}: {len(quarantined_rows)} row(s)"
+                + (f", mesas {', '.join(str(m) for m in named)}" if named else "")
+                + (f", source row(s) {', '.join(str(i) for i in lines)}" if lines else ""),
                 file=sys.stderr,
             )
     # PER ROW. A blank cell carries `None`, which cannot be compared against an
     # integer tally. Partitioned by row rather than by mesa: two rows for one
     # mesa, one complete and one blank, left the blank one excluded AND
     # unreported because its mesa number was in the comparable set.
-    comparable_rows = [
-        row for row in result.rows if all(value is not None for value in row.votes.values())
-    ]
-    incomparable_mesas = sorted(
-        row.mesa
-        for row in result.rows
-        if any(value is None for value in row.votes.values())
-    )
-    mesa_rows = [
-        FiscalizacionMesaRow(mesa=row.mesa, escuela=row.escuela, votes=dict(row.votes))
-        for row in comparable_rows
-    ]
+    comparable_rows: list[tuple[FiscalizacionRow, dict[str, int]]] = []
+    incomparable_mesas: list[int] = []
+    for row in result.rows:
+        votes: dict[str, int] = {}
+        for column, value in row.votes.items():
+            if value is None:
+                incomparable_mesas.append(row.mesa)
+                break
+            votes[column] = value
+        else:
+            comparable_rows.append((row, votes))
+    incomparable_mesas.sort()
+    mesa_rows = [FiscalizacionMesaRow(mesa=row.mesa, votes=votes) for row, votes in comparable_rows]
     if incomparable_mesas:
-        # NAMED, like the unmatched and collided mesas below. A bare count says
-        # how much was withheld and never which, so nobody can go look.
+        # PER REASON, not one name for two facts. A `None` vote is either a
+        # cell the fiscal left EMPTY or one carrying something unreadable
+        # ("1O", "n/d"), and the message named only the first -- so a
+        # transcription error a human could go fix against the source was
+        # reported as a blank the source genuinely has.
+        #
+        # NAMED, like the unmatched and collided mesas below: a bare count
+        # says how much was withheld and never which, so nobody can go look.
+        by_kind = {"blank_vote_cell": set(), "unreadable_vote_cell": set()}
+        for draft in result.review_items:
+            if draft.kind in by_kind:
+                by_kind[draft.kind].add(draft.subject_ref)
+        # EACH MESA IN EXACTLY ONE BUCKET. A mesa carrying one blank cell AND
+        # one unreadable cell produced both draft kinds, so it landed in both
+        # lists and the per-reason counts summed ABOVE the headline total --
+        # a breakdown whose parts do not reconcile, which is how a wrong
+        # distribution survives a plausible headline. Same correction
+        # `_quarantine_ambiguous_rows` needed for rows-versus-keys.
+        reasons: dict[str, list[int]] = {
+            "blank vote cell": [],
+            "unreadable vote cell": [],
+            "both a blank and an unreadable vote cell": [],
+        }
+        for m in incomparable_mesas:
+            blank = f"mesa {m}" in by_kind["blank_vote_cell"]
+            unreadable = f"mesa {m}" in by_kind["unreadable_vote_cell"]
+            if blank and unreadable:
+                reasons["both a blank and an unreadable vote cell"].append(m)
+            elif blank:
+                reasons["blank vote cell"].append(m)
+            elif unreadable:
+                reasons["unreadable vote cell"].append(m)
         print(
             f"  {len(incomparable_mesas)} of {len(result.rows)} fiscalización row(s) "
-            "carry a blank vote cell and cannot be compared; they are NOT counted as "
-            f"diverging: mesas {', '.join(str(m) for m in incomparable_mesas)}",
+            "cannot be compared; they are NOT counted as diverging:",
             file=sys.stderr,
         )
+        for reason, mesas in reasons.items():
+            if mesas:
+                print(
+                    f"    {reason}: {len(mesas)} row(s), mesas "
+                    f"{', '.join(str(m) for m in sorted(mesas))}",
+                    file=sys.stderr,
+                )
+        # A mesa carrying a `None` with no draft naming why would be an
+        # unexplained withdrawal, so it is reported rather than left out of
+        # the breakdown entirely.
+        unexplained = [
+            m for m in incomparable_mesas if not any(m in mesas for mesas in reasons.values())
+        ]
+        if unexplained:
+            print(
+                f"    reason not recorded: {len(unexplained)} row(s), mesas "
+                f"{', '.join(str(m) for m in sorted(unexplained))}",
+                file=sys.stderr,
+            )
 
     try:
-        with tempfile.TemporaryDirectory(prefix="votus-etl-divergence-") as extract_dir:
-            csv_bytes = resolve_national_results_bytes(
-                baseline_bytes, extract_dir=Path(extract_dir)
-            )
+        csv_bytes = national_csv_bytes(baseline_bytes)
         official_by_mesa, baseline_skipped = official_mesa_votes_from_national(
             csv_bytes,
             distrito=args.distrito,
             seccion=args.seccion,
             category=args.category,
         )
-    except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+    except (
+        NationalResultsCsvNotFoundError,
+        NationalSchemaError,
+        FiscalizacionSchemaError,
+        PbaSchemaError,
+        UnknownSourceError,
+        MalformedManifestRecordError,
+        DuplicateManifestRecordError,
+        MalformedManifestError,
+        AmbiguousSourceError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -1551,7 +2625,11 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         )
         return 1
 
-    join = join_fiscalizacion_identity(mesa_rows, official_by_mesa)
+    try:
+        join = join_fiscalizacion_identity(mesa_rows, official_by_mesa)
+    except IncompleteOfficialMesaError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     # Reported per reason, never as one total, and NEVER as a reason to
     # exclude a mesa: an unmatched or colliding mesa is a crosswalk problem to
@@ -1580,33 +2658,31 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     # different divergences for the same mesa -- and a key that named only the
     # two sources dropped the second run as "already present" whenever the note
     # text coincided. Same argument this file makes for `ingest_source`.
-    scope = f"{args.distrito}/{args.seccion}/{args.category}"
-    records_to_write = [
+    # NORMALIZED, like every other writer of a `review_item` key here (see
+    # `ingest.fiscalizacion.mesa_subject_ref`, and migration 0018 keying on
+    # the STORED seccion_code). Built from the raw args, running this once as
+    # `--distrito 02 --seccion 027` and again as `--distrito 2 --seccion 27`
+    # produced two scopes for ONE comparison -- `official_mesa_votes_from_
+    # national` normalizes internally, so both runs compare identically --
+    # and `fresh_review_items` dedups on EXACT `subject_ref`, so every
+    # observation appended a second time.
+    scope = (
+        f"{normalize_distrito_code(args.distrito)}/"
+        f"{normalize_seccion_code(args.seccion) or '(sin seccion)'}/"
+        f"{args.category}"
+    )
+    divergence_records = [
         replace(
             record,
             subject_ref=f"{args.source} vs {args.baseline} [{scope}] {record.subject_ref}",
         )
         for record in mesa_divergences_to_review_items(list(join.divergences))
     ]
+    records_to_write = [*parser_review_records, *divergence_records]
 
     conn = psycopg.connect(database_url)
     try:
-        with conn.cursor() as cur:
-            # `any(%s::text[])`, not `any(%s)`: with an EMPTY list psycopg
-            # cannot infer the array type and raises `IndeterminateDatatype`,
-            # so a run that found no divergences -- the success case -- crashed
-            # instead of exiting 0.
-            cur.execute(
-                "select kind, severity, subject_ref, note from review_item"
-                " where subject_ref = any(%s::text[])",
-                ([record.subject_ref for record in records_to_write],),
-            )
-            existing = {tuple(row) for row in cur.fetchall()}
-        fresh = [
-            record
-            for record in records_to_write
-            if (record.kind, record.severity, record.subject_ref, record.note) not in existing
-        ]
+        fresh = fresh_review_items(conn, records_to_write)
         insert_review_items(conn, fresh)
         conn.commit()
     except Exception:
@@ -1615,10 +2691,23 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     finally:
         conn.close()
 
+    parser_counts: dict[str, int] = {}
+    for record in parser_review_records:
+        parser_counts[record.kind] = parser_counts.get(record.kind, 0) + 1
+    for kind, count in sorted(parser_counts.items()):
+        new_count = sum(1 for record in fresh if record.kind == kind)
+        print(
+            f"  {kind}: {count} review item(s) "
+            f"({new_count} new, {count - new_count} already present)",
+            file=sys.stderr,
+        )
+
+    fresh_divergences = sum(1 for record in fresh if record.kind == "mesa_tally_divergence")
     print(
         f"joined {len(join.joined)} of {len(mesa_rows)} fiscalización mesa(s) to "
         f"{args.baseline}; {len(join.divergences)} diverging column(s) recorded "
-        f"({len(fresh)} new, {len(records_to_write) - len(fresh)} already present)"
+        f"({fresh_divergences} new, "
+        f"{len(divergence_records) - fresh_divergences} already present)"
     )
     return 0
 
@@ -1626,6 +2715,17 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------------
+
+
+def positive_int(value: str) -> int:
+    """Parse an argparse integer that must be greater than zero."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1637,7 +2737,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch_parser = subparsers.add_parser("fetch", help="Archive one registered source.")
     fetch_parser.add_argument("--source", required=True)
+    fetch_parser.add_argument("--local-file", default=None)
+    fetch_parser.add_argument("--invocation-id", default=None)
     fetch_parser.set_defaults(func=cmd_fetch)
+
+    history_parser = subparsers.add_parser(
+        "archive-history", help="List ordered source fetch events and aggregate counts."
+    )
+    history_parser.add_argument("--source", default=None)
+    history_parser.set_defaults(func=cmd_archive_history)
 
     ingest_parser = subparsers.add_parser(
         "ingest", help="Load one archived source's rows into result_row."
@@ -1696,14 +2804,25 @@ def build_parser() -> argparse.ArgumentParser:
     backfill_parser.add_argument("--database-url", default=None)
     # Batched so progress commits incrementally: a single 16,5-million-row
     # UPDATE loses everything if the client dies, which it did.
-    backfill_parser.add_argument("--batch-size", type=int, default=1_500_000)
+    backfill_parser.add_argument("--batch-size", type=positive_int, default=1_500_000)
     backfill_parser.set_defaults(func=cmd_backfill_mesa_tipo)
 
     return parser
 
 
-def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
+def apply_mesa_tipo_mapping(
+    conn,
+    mapping: dict[tuple[str, str, str, int], str],
+    *,
+    batch_size: int = 1_500_000,
+):
     """Apply a lineage->mesa_tipo mapping to `result_row`, in batches.
+
+    `mapping` values are ONE tipo each, and the annotation now says so.
+    Untyped, it accepted `collect_mesa_tipo_mapping`'s `dict[..., set[str]]`
+    verbatim -- `cmd_backfill_mesa_tipo` collapses the sets before calling and
+    nothing enforced it, so a direct caller would have passed `set` objects
+    into `%s::text[]` and written the repr of a set as a mesa_tipo.
 
     Extracted so the UPDATE path is testable at all. Its only prior
     coverage stopped at `parse_args` — the same shape as the two validate
@@ -1712,44 +2831,35 @@ def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
     Returns `(updated, resolved_jurisdictions, remaining_breakdown,
     unresolved_breakdown)`.
     """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
     with conn.cursor() as cur:
         # Two steps, deliberately. Joining the lineage tuples straight onto
         # `result_row` makes Postgres re-resolve every mesa for each of the
         # 16,5 million rows; measured, that ran past 13 minutes without
         # finishing. Resolving the mapping to `jurisdiction_id` ONCE — a few
         # hundred thousand rows — turns the second step into an indexed join.
-        # ONE set-based insert, not one lookup per tuple. `IS NOT DISTINCT
-        # FROM` across several nullable columns is not hash-joinable and
-        # degrades to a nested loop, so issuing it 163.000 times is the
-        # shape rule 10 warns about. Collapsing the lineage to a single
-        # NULL-safe text key restores a hash join.
+        # ONE set-based insert, not one lookup per tuple. Every mapping
+        # component is required and normalized before this point, so ordinary
+        # equality is both truthful and hash-joinable; establecimiento is an
+        # optional ancestor published separately in 2025 and cannot be part of
+        # this results-file mapping key.
         cur.execute(
-            "create temporary table jur_tipo "
-            "(jurisdiction_id uuid, tipo text, merge_key text)"
+            "create temporary table jur_tipo ("
+            "jurisdiction_id uuid, tipo text, distrito text, seccion text, circuito text, mesa int)"
         )
         cur.execute(
             """
-            insert into jur_tipo (jurisdiction_id, tipo, merge_key)
-            select j.id, v.tipo, v.merge_key
-              from unnest(%s::text[], %s::text[]) as v(merge_key, tipo)
+            insert into jur_tipo (jurisdiction_id, tipo, distrito, seccion, circuito, mesa)
+            select j.id, v.tipo, v.distrito, v.seccion, v.circuito, v.mesa
+              from unnest(%s::text[], %s::text[], %s::text[], %s::int[], %s::text[])
+                   as v(distrito, seccion, circuito, mesa, tipo)
               join jurisdiction j
-                -- No lpad here. Both sides now go through
-                -- `jurisdiction.py`'s normalizers -- the write boundary in
-                -- `db.upsert_jurisdiction` pads all three codes, and the keys
-                -- above use the same functions. Compensating in SQL would be a
-                -- second idea of the same code, and `lpad` additionally
-                -- TRUNCATES a wider value from the right where `zfill` never
-                -- does, so the two would disagree on any longer code.
-                -- `establecimiento_code` IS part of `jurisdiction`'s unique
-                -- key, so it belongs in the merge key. The national sources
-                -- publish no establecimiento column and every mesa-level row
-                -- this backfill targets carries NULL there, but omitting the
-                -- column would silently bind two mesa-level jurisdictions
-                -- differing only by establecimiento to one key the day a
-                -- source does publish it.
-                on """
-            + MERGE_KEY_SQL
-            + """ = v.merge_key
+                on j.distrito_code = v.distrito
+               and j.seccion_code = v.seccion
+               and j.circuito_code = v.circuito
+               and j.mesa_code = v.mesa
                -- mesa_tipo is a property of a MESA, so only mesa-level
                -- jurisdictions can carry it. Without this, a national
                -- lineage tuple could bind a PBA row, where `027` means a
@@ -1758,34 +2868,27 @@ def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
                and j.mesa_code is not null
             """,
             (
-                [merge_key(k[0], k[1], k[2], None, k[3]) for k in mapping],
+                [key[0] for key in mapping],
+                [key[1] for key in mapping],
+                [key[2] for key in mapping],
+                [key[3] for key in mapping],
                 list(mapping.values()),
             ),
         )
-        # Two lineage keys resolving to ONE jurisdiction would let Postgres
-        # pick a `tipo` arbitrarily and say nothing — rule 4's silent pick.
+        # NO two-tipo conflict guard here. It grouped `jur_tipo` by
+        # `jurisdiction_id` and refused `count(distinct tipo) > 1`, which needs
+        # ONE jurisdiction row matched by two mapping keys carrying different
+        # tipos — and the join is exact equality on the four required lineage
+        # fields the row itself determines, so two distinct keys cannot match
+        # one row. More than one establishment-specific jurisdiction may match
+        # one source key, but all receive that mesa's single validated tipo.
+        # Duplicate `jurisdiction` rows for one lineage do not reach it either:
+        # they have different ids, so each carries one tipo.
         #
-        # DEFENSIVE, and deliberately kept without a test: the merge key is an
-        # exact text equality against a lineage that is unique in
-        # `jurisdiction`, so two distinct keys cannot match one row, and a
-        # single key cannot appear twice in a dict. Reaching this needs
-        # duplicate `jurisdiction` rows for one lineage — which
-        # `batch_upsert_jurisdictions` now refuses outright, and which migration
-        # 0012 reconciled away. It stays because that reconciliation is a fact
-        # about today's data, not an invariant the schema enforces.
-        cur.execute(
-            """
-            select jurisdiction_id, count(distinct tipo)
-              from jur_tipo group by 1 having count(distinct tipo) > 1
-            """
-        )
-        conflicts = cur.fetchall()
-        if conflicts:
-            raise RuntimeError(
-                f"{len(conflicts)} jurisdiction(s) resolved to more than one mesa_tipo; "
-                "refusing to pick one arbitrarily. First: "
-                f"{conflicts[0][0]}"
-            )
+        # It was kept "defensive and deliberately without a test". Strict TDD
+        # has no such exemption, and trying to drive it is what showed it could
+        # not fire. `batch_upsert_jurisdictions` refuses the duplicate lineage
+        # that would be the real hazard, and that refusal IS tested.
         cur.execute("select count(distinct jurisdiction_id) from jur_tipo")
         resolved_jurisdictions = cur.fetchone()[0]
         # Which mesas failed to bind, by scope. A bare total ("N matched no
@@ -1793,12 +2896,11 @@ def apply_mesa_tipo_mapping(conn, mapping, *, batch_size: int = 1_500_000):
         # ingested from scattered lineage mismatches inside one that was, and
         # those need opposite fixes. Same standard the per-source
         # `remaining_breakdown` below already applies.
-        cur.execute("select distinct merge_key from jur_tipo")
-        resolved_keys = {row[0] for row in cur.fetchall()}
+        cur.execute("select distinct distrito, seccion, circuito, mesa from jur_tipo")
+        resolved_keys = {tuple(row) for row in cur.fetchall()}
         unresolved: dict[tuple[str, str], int] = {}
         for key in mapping:
-            key_text = merge_key(key[0], key[1], key[2], None, key[3])
-            if key_text not in resolved_keys:
+            if key not in resolved_keys:
                 scope = (key[0] or "", key[1] or "")
                 unresolved[scope] = unresolved.get(scope, 0) + 1
         unresolved_breakdown = sorted(unresolved.items())
@@ -1895,14 +2997,26 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
         if not local_store.exists("national", filename):
             skipped_missing_file += 1
             continue
-        raw_bytes = local_store.read("national", filename)
+        raw_bytes = read_archived_source(
+            entry,
+            manifest_record=archived,
+            capability="national",
+            local_store=local_store,
+            filename=filename,
+        )
         try:
-            with tempfile.TemporaryDirectory(prefix="votus-etl-backfill-") as extract_dir:
-                csv_bytes = resolve_national_results_bytes(
-                    raw_bytes, extract_dir=Path(extract_dir)
-                )
-        except (NationalResultsCsvNotFoundError, NationalSchemaError, UnknownSourceError,
-            MalformedManifestRecordError, AmbiguousSourceError) as exc:
+            csv_bytes = national_csv_bytes(raw_bytes)
+        except (
+            NationalResultsCsvNotFoundError,
+            NationalSchemaError,
+            FiscalizacionSchemaError,
+            PbaSchemaError,
+            UnknownSourceError,
+            MalformedManifestRecordError,
+            DuplicateManifestRecordError,
+            MalformedManifestError,
+            AmbiguousSourceError,
+        ) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         # Same BOM reason as `resolve_national_results_bytes`: with `utf-8`
@@ -1949,9 +3063,7 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
             resolved_jurisdictions,
             remaining_breakdown,
             unresolved_breakdown,
-        ) = apply_mesa_tipo_mapping(
-            conn, mapping, batch_size=args.batch_size
-        )
+        ) = apply_mesa_tipo_mapping(conn, mapping, batch_size=args.batch_size)
     remaining = sum(count for _, count in remaining_breakdown)
 
     print(
@@ -1975,10 +3087,60 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
     return 0
 
 
+# THE module contract, in one place: "non-zero on any argument or validation
+# failure", never a traceback. Eight `except` tuples each listed a different
+# subset of these, so the SAME malformed manifest exited 1 from one command
+# and raised from another -- and the calls that read the hand-maintained
+# `sources.yaml`, `crosswalk.yaml` and `party_map.yaml` sat outside every
+# handler, so the files most likely to drift were the ones least likely to
+# produce an exit code.
+VALIDATION_FAILURES = (
+    UnknownSourceError,
+    AmbiguousSourceError,
+    MalformedManifestRecordError,
+    DuplicateManifestRecordError,
+    MalformedManifestError,
+    MissingDatabaseUrlError,
+    MissingArchivedYearError,
+    ArchiveIntegrityError,
+    NationalResultsCsvNotFoundError,
+    FiscalizacionUploadForbiddenError,
+    # `ValueError` covers `NationalSchemaError`, `PbaSchemaError`,
+    # `FiscalizacionSchemaError` and the two bare-`ValueError` refusals in
+    # `load_fiscalizacion_rows` and `db.load_result_rows` -- a scheme that
+    # does not match the scope it writes to, and a record carrying a foreign
+    # election. Every one of them is a validation failure.
+    ValueError,
+    # The hand-edited YAML files. `yaml.YAMLError` is not a `ValueError`,
+    # and `OSError` covers a path that does not exist -- which for
+    # `sources.yaml`/`crosswalk.yaml`/`party_map.yaml` is an argument failure.
+    yaml.YAMLError,
+    OSError,
+    # NO `KeyError`. It is a PROGRAMMING bug here, not a validation failure:
+    # `load_national_rows`'s `jurisdiction_ids[j_key]`,
+    # `batch_upsert_jurisdictions`'s `resolved[normalized_key]` and
+    # `join_fiscalizacion_identity`'s `row.votes[column]` all raise it when an
+    # internal invariant breaks, and catching it here printed `error: '02'`,
+    # which reads as a drifted source. That is the misdiagnosis this module
+    # refuses everywhere else. A malformed curated YAML shape still exits 1:
+    # the three call sites that parse those files catch `KeyError` themselves,
+    # where the word means what it says.
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except VALIDATION_FAILURES as exc:
+        # The BACKSTOP, at the one place every subcommand passes through.
+        # The per-command handlers below still run first where they add
+        # context; this catches what none of them wrapped -- `load_sources`
+        # in every command, `load_manifest` in four, and `latest_ok_record`'s
+        # duplicate refusal in three.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

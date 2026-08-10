@@ -9,12 +9,14 @@ any bytes are written to disk.
 
 import io
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from etl.storage import (
     DecompressionBombError,
     LocalArchiveStore,
+    UnsafeArchivePathComponentError,
     UnsafeZipEntryError,
     extract_zip_safely,
     sha256_of,
@@ -50,10 +52,51 @@ def test_read_returns_previously_written_bytes(tmp_path) -> None:
     assert store.read("national", "results.zip") == b"PK\x03\x04 fake"
 
 
+@pytest.mark.parametrize(
+    ("capability", "filename"),
+    [
+        ("../escaped", "capture.bin"),
+        ("national/extra", "capture.bin"),
+        (r"national\extra", "capture.bin"),
+        (".", "capture.bin"),
+        ("..", "capture.bin"),
+        ("", "capture.bin"),
+        ("national", "../escaped.bin"),
+        ("national", "nested/capture.bin"),
+        ("national", r"nested\capture.bin"),
+        ("national", "."),
+        ("national", ".."),
+        ("national", ""),
+        ("national", "capture\0.bin"),
+    ],
+)
+def test_archive_store_rejects_unsafe_path_components_before_writing(
+    tmp_path, capability: str, filename: str
+) -> None:
+    root = tmp_path / "archive"
+    store = LocalArchiveStore(root=root)
+
+    with pytest.raises(UnsafeArchivePathComponentError):
+        store.path_for(capability, filename)
+    with pytest.raises(UnsafeArchivePathComponentError):
+        store.write(capability, filename, b"must not escape")
+
+    assert not (tmp_path / "escaped" / "capture.bin").exists()
+    assert not (root / "escaped.bin").exists()
+
+
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in entries.items():
+            zf.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _ordered_zip_bytes(entries: list[tuple[str, bytes]]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in entries:
             zf.writestr(name, data)
     return buffer.getvalue()
 
@@ -76,6 +119,72 @@ def test_zip_entry_with_dotdot_traversal_rejected(tmp_path) -> None:
         extract_zip_safely(data, dest)
 
     assert not dest.exists() or list(dest.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "unsafe_name",
+    [
+        r"..\escape.txt",
+        r"nested\..\escape.txt",
+        r"C:\escape.txt",
+        r"\\server\share\escape.txt",
+    ],
+)
+def test_zip_entry_with_windows_path_semantics_rejected_before_writing(
+    tmp_path, unsafe_name: str
+) -> None:
+    data = _zip_bytes({"safe-first.txt": b"must not be written", unsafe_name: b"escape"})
+    dest = tmp_path / "extracted"
+
+    with pytest.raises(UnsafeZipEntryError):
+        extract_zip_safely(data, dest)
+
+    assert not (dest / "safe-first.txt").exists()
+    assert not (tmp_path / "escape.txt").exists()
+    assert not dest.exists() or not any(path.is_file() for path in dest.rglob("*"))
+
+
+def test_zip_entry_with_regular_posix_nested_path_extracts(tmp_path) -> None:
+    data = _zip_bytes({"nested/file.txt": b"safe"})
+    dest = tmp_path / "extracted"
+
+    extracted = extract_zip_safely(data, dest)
+
+    assert extracted == [dest / "nested" / "file.txt"]
+    assert (dest / "nested" / "file.txt").read_bytes() == b"safe"
+
+
+def test_zip_file_prefix_collision_is_rejected_before_writing(tmp_path) -> None:
+    data = _ordered_zip_bytes([("nested/file.txt", b"must not remain"), ("nested", b"collision")])
+    dest = tmp_path / "extracted"
+
+    with pytest.raises(UnsafeZipEntryError, match="colliding ZIP entry targets"):
+        extract_zip_safely(data, dest)
+
+    assert not (dest / "nested" / "file.txt").exists()
+
+
+def test_zip_duplicate_file_target_is_rejected_before_writing(tmp_path) -> None:
+    data = _ordered_zip_bytes([("same.txt", b"first"), ("same.txt", b"second")])
+    dest = tmp_path / "extracted"
+
+    with pytest.raises(UnsafeZipEntryError, match="duplicate ZIP file target"):
+        extract_zip_safely(data, dest)
+
+    assert not dest.exists()
+
+
+def test_zip_refuses_to_overwrite_an_existing_target(tmp_path) -> None:
+    data = _zip_bytes({"nested/file.txt": b"replacement"})
+    dest = tmp_path / "extracted"
+    existing = dest / "nested" / "file.txt"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"caller data")
+
+    with pytest.raises(UnsafeZipEntryError, match="target already exists"):
+        extract_zip_safely(data, dest)
+
+    assert existing.read_bytes() == b"caller data"
 
 
 def test_decompression_bomb_exceeds_size_cap_fails_loudly(tmp_path) -> None:
@@ -106,3 +215,90 @@ def test_legitimate_high_ratio_zip_within_cap_extracts_successfully(tmp_path) ->
 
     assert extracted == [dest / "resultados2025.csv"]
     assert (dest / "resultados2025.csv").read_bytes() == payload
+
+
+def test_zip_members_are_streamed_in_bounded_chunks(monkeypatch, tmp_path) -> None:
+    payload = (b"bounded-read-check\n" * 150_000) + b"final"
+    data = _zip_bytes({"nested/resultados.csv": payload})
+    dest = tmp_path / "extracted"
+    original_read = zipfile.ZipExtFile.read
+    requested_sizes: list[int] = []
+
+    def recording_read(source, size=-1):
+        requested_sizes.append(size)
+        return original_read(source, size)
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", recording_read)
+
+    extract_zip_safely(data, dest, max_uncompressed_bytes=len(payload))
+
+    assert len(requested_sizes) >= 3
+    assert all(0 < size <= 1024 * 1024 for size in requested_sizes)
+    assert (dest / "nested" / "resultados.csv").read_bytes() == payload
+
+
+def test_runtime_read_failure_removes_created_files_and_directories(monkeypatch, tmp_path) -> None:
+    data = _ordered_zip_bytes([("first/file.txt", b"first"), ("second/file.txt", b"second")])
+    dest = tmp_path / "extracted"
+    original_read = zipfile.ZipExtFile.read
+
+    def failing_read(source, size=-1):
+        if source.name == "second/file.txt":
+            raise OSError("injected read failure")
+        return original_read(source, size)
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", failing_read)
+
+    with pytest.raises(OSError, match="injected read failure"):
+        extract_zip_safely(data, dest)
+
+    assert not dest.exists()
+
+
+def test_cleanup_failure_does_not_mask_runtime_failure(monkeypatch, tmp_path) -> None:
+    data = _zip_bytes({"nested/file.txt": b"payload"})
+    dest = tmp_path / "extracted"
+    original_read = zipfile.ZipExtFile.read
+    original_unlink = Path.unlink
+
+    def failing_read(source, size=-1):
+        chunk = original_read(source, size)
+        if chunk:
+            raise OSError("original extraction failure")
+        return chunk
+
+    def failing_unlink(path, *args, **kwargs):
+        if path.name == "file.txt":
+            raise PermissionError("cleanup failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", failing_read)
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    with pytest.raises(OSError, match="original extraction failure"):
+        extract_zip_safely(data, dest)
+
+
+def test_runtime_size_overflow_removes_every_file_created_by_attempt(monkeypatch, tmp_path) -> None:
+    first_payload = b"first member"
+    second_payload = b"second member"
+    data = _zip_bytes({"first.csv": first_payload, "nested/second.csv": second_payload})
+    declared_size = len(first_payload) + len(second_payload)
+    dest = tmp_path / "extracted"
+    original_read = zipfile.ZipExtFile.read
+    injected_sources: set[int] = set()
+
+    def underreported_read(source, size=-1):
+        chunk = original_read(source, size)
+        source_id = id(source)
+        if not chunk and source_id not in injected_sources:
+            injected_sources.add(source_id)
+            return b"x"
+        return chunk
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", underreported_read)
+
+    with pytest.raises(DecompressionBombError, match="actual uncompressed size"):
+        extract_zip_safely(data, dest, max_uncompressed_bytes=declared_size)
+
+    assert not dest.exists() or not any(path.is_file() for path in dest.rglob("*"))

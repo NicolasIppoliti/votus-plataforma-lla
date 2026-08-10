@@ -28,11 +28,19 @@ different year, jurisdiction or category (party-identity-mapping spec,
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
 
 import yaml
+
+
+class PartyMapValidationError(ValueError):
+    """Raised when curated party-map YAML has an invalid trust-boundary shape."""
+
+
+class DuplicatePartyMappingKeyError(PartyMapValidationError):
+    """Raised when a curated party mapping natural key appears more than once."""
 
 
 @dataclass(frozen=True)
@@ -105,74 +113,95 @@ class PartyMappingTable:
 
 
 def load_party_map(path: Path) -> PartyMappingTable:
-    """Load the curated `curated/party_map.yaml` party-identity mapping."""
-    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    entries = tuple(
-        PartyMappingEntry(
-            year=int(m["year"]),
-            jurisdiction=str(m["jurisdiction"]),
-            category=str(m["category"]),
-            list_id=str(m["list_id"]),
-            canonical_party=str(m["canonical_party"]),
-            party_name=str(m["party_name"]),
-            source=m.get("source"),
-            verified=bool(m.get("verified", True)),
-        )
-        for m in data.get("mappings", [])
+    """Load and validate the curated party mapping at the YAML boundary."""
+    data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        data = {}
+    if not isinstance(data, Mapping):
+        raise PartyMapValidationError("party_map.yaml top level must be a mapping")
+
+    raw_entries = data.get("mappings", [])
+    if not isinstance(raw_entries, list):
+        raise PartyMapValidationError("party_map.yaml mappings must be a list")
+
+    entries: list[PartyMappingEntry] = []
+    seen: set[tuple[int, str, str, str]] = set()
+    required = (
+        "year",
+        "jurisdiction",
+        "category",
+        "list_id",
+        "canonical_party",
+        "party_name",
     )
-    return PartyMappingTable(entries=entries)
+    for index, raw_entry in enumerate(raw_entries):
+        if not isinstance(raw_entry, Mapping):
+            raise PartyMapValidationError(
+                f"party_map.yaml mappings entry {index} must be a mapping"
+            )
+        missing = [field for field in required if field not in raw_entry]
+        if missing:
+            raise PartyMapValidationError(
+                f"party_map.yaml mappings entry {index} is missing {', '.join(missing)}"
+            )
 
+        year = raw_entry["year"]
+        if isinstance(year, bool) or not isinstance(year, int):
+            raise PartyMapValidationError(
+                f"party_map.yaml mappings entry {index} year must be an integer"
+            )
 
-class _PartyResolvableRow(Protocol):
-    """The minimal shape ingestion rows must satisfy to be party-resolved.
-    `ingest.national.NationalRow` and `ingest.pba.PbaRow` both already
-    expose these properties."""
+        strings: dict[str, str] = {}
+        for field in required[1:]:
+            value = raw_entry[field]
+            if not isinstance(value, str) or not value.strip():
+                raise PartyMapValidationError(
+                    f"party_map.yaml mappings entry {index} {field} must be a non-empty string"
+                )
+            strings[field] = value
 
-    category: str
-    list_id: str | None
+        source = raw_entry.get("source")
+        if not isinstance(source, str | None):
+            raise PartyMapValidationError(
+                f"party_map.yaml mappings entry {index} source must be a string or null"
+            )
+        verified = raw_entry.get("verified", True)
+        if not isinstance(verified, bool):
+            raise PartyMapValidationError(
+                f"party_map.yaml mappings entry {index} verified must be a boolean"
+            )
 
-
-@dataclass(frozen=True)
-class UnmappedPartyRow:
-    """A parsed row whose `(year, jurisdiction, category, list_id)` key has
-    no curated mapping entry. Carried as data for the D7 review queue
-    (`unmapped_party` kind) -- excluded from canonical-party rollups, never
-    silently dropped, and never falls back to another year/jurisdiction
-    (party-identity-mapping spec, tasks 7.4/7.5)."""
-
-    row: _PartyResolvableRow
-    reason: str
-
-
-@dataclass(frozen=True)
-class PartyResolutionResult:
-    mapped: tuple[tuple[_PartyResolvableRow, PartyMappingEntry], ...]
-    unmapped: tuple[UnmappedPartyRow, ...]
-
-
-def resolve_party_for_rows(
-    rows: list[_PartyResolvableRow],
-    table: PartyMappingTable,
-    *,
-    year: int,
-    jurisdiction: str,
-) -> PartyResolutionResult:
-    """Resolve each row's canonical party through `table`, at ingestion time
-    (task 7.8) -- never inferred later at query time. `year` and
-    `jurisdiction` are supplied by the caller (known from the source/archive
-    entry, not present on `jurisdiction.ResultRow` itself); `category` and
-    `list_id` come from the row.
-    """
-    mapped: list[tuple[_PartyResolvableRow, PartyMappingEntry]] = []
-    unmapped: list[UnmappedPartyRow] = []
-
-    for row in rows:
-        resolved = table.resolve(
-            year=year, jurisdiction=jurisdiction, category=row.category, list_id=row.list_id or ""
+        entry = PartyMappingEntry(
+            year=year,
+            jurisdiction=strings["jurisdiction"],
+            category=strings["category"],
+            list_id=strings["list_id"],
+            canonical_party=strings["canonical_party"],
+            party_name=strings["party_name"],
+            source=source,
+            verified=verified,
         )
-        if isinstance(resolved, UnmappedListId):
-            unmapped.append(UnmappedPartyRow(row=row, reason=resolved.reason))
-        else:
-            mapped.append((row, resolved))
+        key = (entry.year, entry.jurisdiction, entry.category, entry.list_id)
+        if key in seen:
+            raise DuplicatePartyMappingKeyError(
+                f"party_map.yaml duplicate mapping key {key!r} at entry {index}"
+            )
+        seen.add(key)
+        entries.append(entry)
 
-    return PartyResolutionResult(mapped=tuple(mapped), unmapped=tuple(unmapped))
+    return PartyMappingTable(entries=tuple(entries))
+
+
+# NO `_PartyResolvableRow` / `UnmappedPartyRow` / `PartyResolutionResult` /
+# `resolve_party_for_rows`. This layer existed to compute the `result_row`
+# `is_unmapped` column through `ingest.national.resolve_national_party` and
+# `ingest.pba.resolve_pba_party`; all three were correct, tested, and never
+# called in production, and the column they fed (always `false`, for all
+# 18.170.843 rows) is dropped by migration 0014.
+#
+# `PartyMappingTable.resolve` above is the live entry point, used by
+# `__main__.find_unmapped_parties` (the `validate-curated` command) and,
+# via `entries`, by `ingest.fiscalizacion.build_column_list_id_map`. Whether
+# a list id resolves is read at QUERY time by the web layer's join against
+# `party_mapping`, which stays correct when `curated/party_map.yaml` gains an
+# entry after a corpus is already loaded.

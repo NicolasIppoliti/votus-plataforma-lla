@@ -18,6 +18,7 @@ out of scope per the spec).
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import uuid
@@ -28,21 +29,22 @@ import psycopg
 import pytest
 import requests
 
-from etl.archive import FetchResponse
+from etl.archive import ArchiveIntegrityError, FetchResponse
 from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.http_client import (
     PolicedHostFetcher,
     UnregisteredPathError,
 )
 from etl.ingest.pba import (
+    _UNREADABLE,
     PBA_ALLOWED_PATHS,
     PBA_HOST,
     PBA_HOST_POLICY,
     PbaFetchExhaustedError,
-    PbaSourceUnavailable,
+    PbaSchemaError,
+    _parse_votes,
     archive_pba_source,
     ingest_pba,
-    load_pba_distrito_totals,
     load_pba_rows,
     resolve_pba_jurisdictions,
 )
@@ -97,31 +99,78 @@ def test_distrito_level_totals_ingested_without_fabricating_lower_levels() -> No
 # ---------------------------------------------------------------------------
 
 
-def test_no_source_available_reports_unavailable_not_zero(tmp_path: Path) -> None:
-    local_store = LocalArchiveStore(root=tmp_path)
+def test_no_archived_source_refuses_before_any_write(tmp_path: Path) -> None:
+    """Spec: "No PBA source available for a given category" -- report it as
+    unavailable, never substitute a zero-filled or estimated figure.
 
-    with pytest.raises(PbaSourceUnavailable):
-        load_pba_distrito_totals(
-            [],  # no archive entries at all for this record id
-            local_store,
-            record_id="pba/2025-distrito-027",
+    Driven through `ingest_source`, the ONLY path production takes. This was
+    covered by `load_pba_distrito_totals` raising `PbaSourceUnavailable`, a
+    function with no production caller; the live refusal, on the live path,
+    had no test at all.
+    """
+    from etl.__main__ import UnknownSourceError, ingest_source
+
+    sources = {
+        "pba": [
+            {
+                "id": "pba/2025-distrito-027",
+                "capability": "pba",
+                "url": f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(UnknownSourceError) as excinfo:
+        ingest_source(
+            "pba/2025-distrito-027",
+            # A URL that would fail to connect: the refusal must happen
+            # BEFORE any connection is opened, so reaching Postgres at all
+            # would itself be the failure.
+            database_url="postgresql://votus-refusal-must-precede-connect/nowhere",
+            year=2025,
+            round_="generales",
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
         )
 
+    assert "no archived copy" in str(excinfo.value)
 
-def test_no_source_available_does_not_substitute_a_prior_years_record(tmp_path: Path) -> None:
-    local_store = LocalArchiveStore(root=tmp_path)
-    # A record for a DIFFERENT record id must never be silently substituted.
-    records = [
-        {
-            "id": "pba/2025-distrito-999",
-            "status": "ok",
-            "archived_path": "archive/pba/distrito_999.html",
-            "sha256": "deadbeef",
-        }
-    ]
 
-    with pytest.raises(PbaSourceUnavailable):
-        load_pba_distrito_totals(records, local_store, record_id="pba/2025-distrito-027")
+def test_a_different_record_id_is_never_substituted(tmp_path: Path) -> None:
+    from etl.__main__ import UnknownSourceError, ingest_source
+
+    sources = {
+        "pba": [
+            {
+                "id": "pba/2025-distrito-027",
+                "capability": "pba",
+                "url": f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "manifest.json"
+    # An "ok" record for a DIFFERENT id. Nothing may fall back to it.
+    manifest_path.write_text(
+        '[{"id": "pba/2025-distrito-999", "status": "ok",'
+        ' "archived_path": "archive/pba/distrito_999.html", "sha256": "' + "d" * 64 + '"}]',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UnknownSourceError) as excinfo:
+        ingest_source(
+            "pba/2025-distrito-027",
+            database_url="postgresql://votus-refusal-must-precede-connect/nowhere",
+            year=2025,
+            round_="generales",
+            sources=sources,
+            local_root=tmp_path / "archive",
+            manifest_path=manifest_path,
+        )
+
+    assert "no archived copy" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +190,7 @@ def test_mesa_requested_but_only_distrito_available_marks_degradation() -> None:
         # Degradation is a first-class attribute of the row itself, never
         # log-only (task 5.6 / electoral-ingestion "Granularity degradation
         # is explicit, never silent").
+        assert row.requested_granularity == "mesa"
         assert row.degraded_from == "mesa"
         assert row.granularity == "distrito"
 
@@ -154,6 +204,7 @@ def test_no_degradation_flag_when_requested_granularity_matches_actual() -> None
 
     assert rows
     for row in rows:
+        assert row.requested_granularity == "distrito"
         assert row.degraded_from is None
 
 
@@ -229,13 +280,15 @@ ENTRY = {
 
 def test_fetcher_caches_and_does_not_refetch_existing_archive_entry(tmp_path: Path) -> None:
     local_store = LocalArchiveStore(root=tmp_path)
+    cached_bytes = b"cached PBA page"
+    local_store.write("pba", "distrito_027.html", cached_bytes)
     existing_record = {
         "id": ENTRY["id"],
         "capability": "pba",
         "source": PBA_HOST,
         "source_url": ENTRY["source_url"],
         "archived_path": "archive/pba/distrito_027.html",
-        "sha256": "cafef00d",
+        "sha256": hashlib.sha256(cached_bytes).hexdigest(),
         "mime": "text/html",
         "bytes": 6640,
         "fetched_at": "2025-09-08T12:00:00Z",
@@ -246,19 +299,86 @@ def test_fetcher_caches_and_does_not_refetch_existing_archive_entry(tmp_path: Pa
     calls: list[str] = []
 
     class NeverCalledFetcher:
-        def get(self, url: str, *, timeout: float) -> FetchResponse:
+        def get(
+            self, url: str, *, timeout: float, headers: dict[str, str] | None = None
+        ) -> FetchResponse:
             calls.append(url)
             raise AssertionError("the network must never be touched for a cached entry")
 
     result = archive_pba_source(
         ENTRY,
-        fetcher=NeverCalledFetcher(),
+        fetcher=PolicedHostFetcher(NeverCalledFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None),
         local_store=local_store,
         records=[existing_record],
     )
 
     assert calls == []
     assert result.record == existing_record
+
+
+def test_fetcher_refuses_missing_cached_archive_without_network(tmp_path: Path) -> None:
+    local_store = LocalArchiveStore(root=tmp_path)
+    existing_record = {
+        "id": ENTRY["id"],
+        "capability": "pba",
+        "archived_path": "archive/pba/distrito_027.html",
+        "sha256": hashlib.sha256(b"missing cached page").hexdigest(),
+        "status": "ok",
+    }
+    calls: list[str] = []
+
+    class NeverCalledFetcher:
+        def get(
+            self, url: str, *, timeout: float, headers: dict[str, str] | None = None
+        ) -> FetchResponse:
+            calls.append(url)
+            raise AssertionError("a missing cache must be refused without network healing")
+
+    with pytest.raises(ArchiveIntegrityError, match="cannot be read"):
+        archive_pba_source(
+            ENTRY,
+            fetcher=PolicedHostFetcher(
+                NeverCalledFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None
+            ),
+            local_store=local_store,
+            records=[existing_record],
+        )
+
+    assert calls == []
+
+
+def test_fetcher_refuses_invalid_cached_archive_without_network(tmp_path: Path) -> None:
+    local_store = LocalArchiveStore(root=tmp_path)
+    local_store.write("pba", "distrito_027.html", b"modified cached page")
+    existing_record = {
+        "id": ENTRY["id"],
+        "capability": "pba",
+        "source": PBA_HOST,
+        "source_url": ENTRY["source_url"],
+        "archived_path": "archive/pba/distrito_027.html",
+        "sha256": hashlib.sha256(b"original cached page").hexdigest(),
+        "status": "ok",
+    }
+    calls: list[str] = []
+
+    class NeverCalledFetcher:
+        def get(
+            self, url: str, *, timeout: float, headers: dict[str, str] | None = None
+        ) -> FetchResponse:
+            calls.append(url)
+            raise AssertionError("an invalid cache must be refused without network healing")
+
+    with pytest.raises(ArchiveIntegrityError, match=existing_record["sha256"]):
+        archive_pba_source(
+            ENTRY,
+            fetcher=PolicedHostFetcher(
+                NeverCalledFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None
+            ),
+            local_store=local_store,
+            records=[existing_record],
+        )
+
+    assert calls == []
 
 
 @pytest.mark.parametrize("status", [429, 503])
@@ -276,9 +396,7 @@ def test_fetcher_backs_off_and_stops_after_3_attempts_on_429_or_5xx(status: int)
             local_store_calls.append(url)
             return FetchResponse(status, b"")
 
-    policed = PolicedHostFetcher(
-        AlwaysUnavailableFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None
-    )
+    policed = PolicedHostFetcher(AlwaysUnavailableFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None)
 
     import tempfile
 
@@ -303,9 +421,7 @@ def test_pba_fetch_exhausted_error_message_names_the_url() -> None:
         def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
             return FetchResponse(429, b"")
 
-    policed = PolicedHostFetcher(
-        AlwaysUnavailableFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None
-    )
+    policed = PolicedHostFetcher(AlwaysUnavailableFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None)
 
     from etl.ingest.pba import _PolicedBackoffFetcher
 
@@ -347,8 +463,6 @@ _CROSSWALK = CrosswalkTable(
 )
 
 
-
-
 def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
     capsys,
 ) -> None:
@@ -374,18 +488,19 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
             year=2025,
             round_="legislativas",
             crosswalk=CrosswalkTable(jurisdictions=()),
+            archive_entry_id=archive_entry_id,
         )
         with conn.cursor() as cur:
             cur.execute(
                 "select count(*) from result_row where archive_entry_id = %s",
                 (archive_entry_id,),
             )
-            (written,) = cur.fetchone()
+            count_row = cur.fetchone()
+            assert count_row is not None
+            (written,) = count_row
     finally:
         with conn.cursor() as cur:
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
         conn.commit()
         conn.close()
 
@@ -424,6 +539,7 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
             year=2025,
             round_="legislativas",
             crosswalk=_CROSSWALK,
+            archive_entry_id=archive_entry_id,
         )
         assert inserted > 0, "sanity: the fixture must produce rows"
         with conn.cursor() as cur:
@@ -436,11 +552,18 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
                 (archive_entry_id,),
             )
             lineages = cur.fetchall()
+            cur.execute(
+                """
+                select distinct granularity, requested_granularity
+                  from result_row
+                 where archive_entry_id = %s
+                """,
+                (archive_entry_id,),
+            )
+            granularities = cur.fetchall()
     finally:
         with conn.cursor() as cur:
-            cur.execute(
-                "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
-            )
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
         conn.commit()
         conn.close()
 
@@ -448,6 +571,10 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
         "the write must carry the NATIONAL pair: `027` alone is PBA's partido "
         "code, and normalizing it as a national distrito yields `27`, a code in "
         f"neither scheme; got {lineages}"
+    )
+    assert granularities == [("seccion", "seccion")], (
+        "a fulfilled PBA distrito request becomes the same normalized seccion "
+        "level as the translated result; it must not render as degraded"
     )
 
 
@@ -466,8 +593,7 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
     assert not result.quarantined
     assert len(result.resolved) == len(rows)
     assert all(row.result.distrito == "02" for row in result.resolved), (
-        "every resolved row must carry the national distrito code, "
-        "never PBA's own 027"
+        "every resolved row must carry the national distrito code, never PBA's own 027"
     )
     # The SECCION is the half that was dropped. Asserting the distrito alone
     # passes for exactly the bug that attributed 32.291 Coronel Rosales votes
@@ -480,6 +606,10 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
     assert all(row.result.granularity == "seccion" for row in result.resolved), (
         "a PBA partido total is a seccion-level figure once translated"
     )
+    assert all(row.requested_granularity == "seccion" for row in result.resolved), (
+        "a fulfilled source-native distrito request must translate with the result"
+    )
+    assert all(row.degraded_from is None for row in result.resolved)
     # Everything else about each row is preserved verbatim.
     assert {row.list_id for row in result.resolved} == {row.list_id for row in rows}
     assert {row.votes for row in result.resolved} == {row.votes for row in rows}
@@ -539,3 +669,274 @@ def test_pba_partido_total_identifies_the_partido_not_the_whole_province() -> No
         "the resolver must yield BOTH the province and the partido; yielding "
         f"the province alone attributes the figure to all of Buenos Aires: got {resolved!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Rule 3 — every dropped cell/row is reported, and a SHORT ROW is named
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_recognized_category_headers_are_schema_drift() -> None:
+    html = (
+        b"<html><body>"
+        b'<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        b"<table><thead><tr><th>Lista</th><th>Diputados Prov. Tit.</th>"
+        b"<th>Diputados Provinciales</th><th>Concejales Titulares</th>"
+        b"</tr></thead><tbody>"
+        b"<tr><td>2206</td><td>1.000</td><td>2.000</td><td>3.000</td></tr>"
+        b"</tbody></table></body></html>"
+    )
+
+    with pytest.raises(PbaSchemaError, match=r"DIPUTADOS PROVINCIALES.*2.*3"):
+        ingest_pba(html, archive_entry_id="pba/test")
+
+
+@pytest.mark.parametrize(
+    ("category_header", "missing_category", "recognized_category"),
+    [
+        ("Diputados Prov. Tit.", "CONCEJALES", "DIPUTADOS PROVINCIALES"),
+        ("Concejales Titulares", "DIPUTADOS PROVINCIALES", "CONCEJALES"),
+    ],
+)
+def test_incomplete_category_schema_is_refused_before_partial_rows_are_returned(
+    category_header: str, missing_category: str, recognized_category: str
+) -> None:
+    html = (
+        "<html><body>"
+        '<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        f"<table><thead><tr><th>Lista</th><th>{category_header}</th></tr></thead>"
+        "<tbody><tr><td>2206</td><td>1.000</td></tr></tbody></table>"
+        "</body></html>"
+    ).encode()
+
+    with pytest.raises(PbaSchemaError) as excinfo:
+        ingest_pba(html, archive_entry_id="pba/test")
+
+    message = str(excinfo.value)
+    assert missing_category in message
+    assert recognized_category in message
+
+
+def test_a_short_row_is_reported_as_schema_drift_not_folded_into_the_expected_drops(
+    capsys,
+) -> None:
+    """The three drops in this parser are not equivalent. A summary row and a
+    `"-"` cell are expected; a row that does not reach a column the header
+    declared is MALFORMED HTML -- schema drift arriving as absence. Under one
+    shared total the drift is invisible, because the expected count is always
+    non-zero and always looks fine.
+    """
+    html = (
+        b"<html><body>"
+        b'<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        b"<table><thead><tr><th>Lista</th><th>Diputados Prov. Tit.</th>"
+        b"<th>Concejales Titulares</th></tr></thead><tbody>"
+        # a normal row
+        b"<tr><td>2206</td><td>1.000</td><td>2.000</td></tr>"
+        # a summary row: empty list-id cell
+        b"<tr><td></td><td>9.999</td><td>9.999</td></tr>"
+        # a list absent from the second category
+        b"<tr><td>962</td><td>500</td><td>-</td></tr>"
+        # a SHORT row: the Concejales column the header declared is missing
+        b"<tr><td>2207</td><td>300</td></tr>"
+        b"</tbody></table></body></html>"
+    )
+
+    rows = ingest_pba(html, archive_entry_id="pba/test")
+
+    assert len(rows) == 4  # 2206 x2, 962 x1, 2207 x1
+    report = capsys.readouterr().err
+    assert "summary row (empty list-id cell): 1" in report
+    assert 'list absent from this category ("-" or empty cell): 1' in report
+    assert "short row (declared category column missing): 1" in report
+    # And it says WHICH column vanished, which is what makes it actionable.
+    assert "missing the column(s) for CONCEJALES" in report
+
+
+def test_the_write_path_reports_the_granularity_it_could_not_honour(capsys) -> None:
+    """Rule 4: degradation MUST be visible.
+
+    `ingest_pba` computed `degraded_from` and `load_pba_rows` read it
+    nowhere. On the only production path -- `ingest_source` calls
+    `ingest_pba` with its default `requested_granularity="mesa"` -- every row
+    is degraded, so every row's degradation was announced to nobody. The
+    parser-level assertion above passed the whole time.
+    """
+    conn = _require_ephemeral_postgres()
+
+    archive_entry_id = f"pba/degraded-test-{uuid.uuid4()}"
+    rows = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id=archive_entry_id,
+        requested_granularity="mesa",  # what production actually asks for
+    )
+    assert all(row.degraded_from == "mesa" for row in rows), "sanity"
+    capsys.readouterr()  # discard the parser's own report
+
+    try:
+        load_pba_rows(
+            conn,
+            rows,
+            year=2025,
+            round_="legislativas",
+            crosswalk=_CROSSWALK,
+            archive_entry_id=archive_entry_id,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select distinct granularity, requested_granularity
+                  from result_row
+                 where archive_entry_id = %s
+                """,
+                (archive_entry_id,),
+            )
+            granularities = cur.fetchall()
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
+        conn.commit()
+        conn.close()
+
+    report = capsys.readouterr().err
+    assert "requested at mesa granularity" in report
+    assert "source-native PBA distrito total" in report
+    assert "stored as national seccion 02/027" in report
+    assert "none was fabricated" in report
+    assert granularities == [("seccion", "mesa")], (
+        "the database must retain the requested mesa level beside the actual "
+        "normalized seccion level so the UI can disclose the degradation"
+    )
+
+
+def test_an_unreadable_vote_cell_is_counted_apart_from_an_absent_one(capsys) -> None:
+    """`None` already means "this list did not run in this category" -- a real
+    electoral fact. A cell nobody can read is a different fact, and it used to
+    be a `ValueError` that destroyed the whole page's parse along with the
+    breakdown for everything already excluded.
+    """
+    html = (
+        b"<html><body>"
+        b'<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        b"<table><thead><tr><th>Lista</th><th>Diputados Prov. Tit.</th>"
+        b"<th>Concejales Titulares</th></tr></thead><tbody>"
+        b"<tr><td>2206</td><td>1.000</td><td>1O</td></tr>"
+        b"<tr><td>962</td><td>500</td><td>-</td></tr>"
+        b"</tbody></table></body></html>"
+    )
+
+    rows = ingest_pba(html, archive_entry_id="pba/test")
+
+    assert len(rows) == 2, "the readable figures on both rows still load"
+    report = capsys.readouterr().err
+    assert "unreadable vote cell: 1" in report
+    assert 'list absent from this category ("-" or empty cell): 1' in report
+
+
+@pytest.mark.parametrize("raw", ["1_2", "+12", "-1", "1.2", "12.34", ".123", "123."])
+def test_malformed_spanish_locale_vote_cells_are_unreadable(raw: str) -> None:
+    assert _parse_votes(raw) is _UNREADABLE
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("0", 0), ("12", 12), ("1.234", 1234), ("12.345.678", 12345678)],
+)
+def test_spanish_locale_vote_cells_accept_plain_digits_and_canonical_grouping(
+    raw: str, expected: int
+) -> None:
+    assert _parse_votes(raw) == expected
+
+
+def test_malformed_spanish_locale_vote_cell_uses_the_existing_exclusion_reason(capsys) -> None:
+    html = (
+        b"<html><body>"
+        b'<span class="detail-value-big">027 - CORONEL ROSALES</span>'
+        b"<table><thead><tr><th>Lista</th><th>Diputados Prov. Tit.</th>"
+        b"<th>Concejales Titulares</th></tr></thead><tbody>"
+        b"<tr><td>2206</td><td>1.2</td><td>2.000</td></tr>"
+        b"</tbody></table></body></html>"
+    )
+
+    rows = ingest_pba(html, archive_entry_id="pba/test")
+    assert [(row.category, row.votes) for row in rows] == [("CONCEJALES", 2000)]
+    assert "unreadable vote cell: 1" in capsys.readouterr().err
+
+
+def test_a_retry_after_http_date_is_honoured_instead_of_crashing() -> None:
+    """`Retry-After` is legally an HTTP-date, not only delta-seconds.
+    `float()` on one raised out of the backoff loop, turning a routine 429
+    into a traceback on the one path built to back off and stop.
+    """
+    from etl.ingest.pba import _PolicedBackoffFetcher
+
+    class NeverCalledFetcher:
+        def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
+            raise AssertionError("retry-delay parsing must not perform a request")
+
+    policed = PolicedHostFetcher(NeverCalledFetcher(), PBA_HOST_POLICY, sleep=lambda _seconds: None)
+    fetcher = _PolicedBackoffFetcher(policed=policed, default_backoff_seconds=2.0)
+
+    assert fetcher._retry_delay("Wed, 21 Oct 2015 07:28:00 GMT") == 2.0, (
+        "a date already past falls back to the policy delay, never a negative sleep"
+    )
+    assert fetcher._retry_delay("not a date at all") == 2.0
+    assert fetcher._retry_delay(None) == 2.0
+    assert fetcher._retry_delay("30") == 30.0
+
+
+def test_a_reingest_whose_rows_all_quarantine_clears_the_old_ones() -> None:
+    """The concrete failure: `pba/2025-distrito-027` loads 30 rows against a
+    curated crosswalk; the `027` entry is later removed; the re-ingest
+    quarantines every row, prints the quarantine, and returns 0 -- and the 30
+    old rows stay live and read as current by every query, while the CLI says
+    "ingested 0 rows" and exits 0.
+
+    `db.load_result_rows` is the delete-then-insert PAIR. Returning early
+    skipped the delete.
+    """
+    conn = _require_ephemeral_postgres()
+
+    archive_entry_id = f"pba/empty-reingest-{uuid.uuid4()}"
+    rows = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id=archive_entry_id,
+        requested_granularity="distrito",
+    )
+
+    def loaded() -> int:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from result_row where archive_entry_id = %s",
+                (archive_entry_id,),
+            )
+            count_row = cur.fetchone()
+            assert count_row is not None
+            return count_row[0]
+
+    try:
+        load_pba_rows(
+            conn,
+            rows,
+            year=2025,
+            round_="legislativas",
+            crosswalk=_CROSSWALK,
+            archive_entry_id=archive_entry_id,
+        )
+        assert loaded() > 0, "sanity: the first load must write rows"
+
+        # The curated entry is gone, so every row quarantines.
+        load_pba_rows(
+            conn,
+            rows,
+            year=2025,
+            round_="legislativas",
+            crosswalk=CrosswalkTable(jurisdictions=()),
+            archive_entry_id=archive_entry_id,
+        )
+        assert loaded() == 0, "the stale rows must not survive a fully-quarantined re-ingest"
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
+        conn.commit()
+        conn.close()

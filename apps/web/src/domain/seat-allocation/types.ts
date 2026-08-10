@@ -1,10 +1,14 @@
 import type { z } from "zod";
 import type {
   allocationInputSchema,
+  allocationVoteTotalsSchema,
   nationalInputSchema,
   pbaMunicipalInputSchema,
   pbaProvincialInputSchema,
 } from "./schemas";
+import { ALLOCATION_VOTE_TOTALS_KIND } from "./schemas";
+import type { UnmodeledVoteBreakdownEntry } from "./source-coverage";
+export type { UnmodeledVoteBreakdownEntry } from "./source-coverage";
 
 /**
  * Public type surface for the seat-allocation domain (design.md D3).
@@ -25,7 +29,8 @@ export const ALLOCATION_LEVEL = {
   NATIONAL: "national",
 } as const;
 
-export type AllocationLevel = (typeof ALLOCATION_LEVEL)[keyof typeof ALLOCATION_LEVEL];
+export type AllocationLevel =
+  (typeof ALLOCATION_LEVEL)[keyof typeof ALLOCATION_LEVEL];
 
 export type HareInput =
   | z.infer<typeof pbaMunicipalInputSchema>
@@ -34,6 +39,17 @@ export type HareInput =
 export type DhondtInput = z.infer<typeof nationalInputSchema>;
 
 export type AllocationInput = z.infer<typeof allocationInputSchema>;
+
+export interface ReportedAllocationVoteTotals {
+  kind: typeof ALLOCATION_VOTE_TOTALS_KIND.REPORTED_BREAKDOWN;
+  totalVotes: number;
+  blankVotes: number;
+  annulledVotes: number;
+}
+
+export type AllocationVoteTotals =
+  | ReportedAllocationVoteTotals
+  | z.infer<typeof allocationVoteTotalsSchema>;
 
 export interface TieBreak {
   rule: string;
@@ -55,26 +71,64 @@ export interface SeatAward {
   tieBreak?: TieBreak;
 }
 
+export interface VoteCoverage {
+  basisVotes: number;
+  listedVotes: number;
+  unmodeledVotes: number;
+  unmodeledVoteBreakdown: UnmodeledVoteBreakdownEntry[];
+  uncoveredVotes: number;
+  complete: boolean;
+}
+
+export const THRESHOLD_POLICY = {
+  STATUTORY: "statutory",
+  SCENARIO: "scenario_policy",
+} as const;
+
+export type ThresholdPolicy =
+  (typeof THRESHOLD_POLICY)[keyof typeof THRESHOLD_POLICY];
+
 export interface HareResultListEntry {
   listId: string;
   listName: string;
   votes: number;
   quotient: number;
+  initialSeatsByCuociente: number;
   seatsByCuociente: number;
   seatsByResidue: number;
   totalSeats: number;
   remainder: number;
 }
 
+export interface HareHalvingStep {
+  iteration: number;
+  cuociente: number;
+  qualifyingListIds: string[];
+}
+
+export interface HareSeatCapTrace {
+  availableSeats: number;
+  qualifyingListIds: string[];
+  awardedListIds: string[];
+  excludedListIds: string[];
+  tieBreak?: TieBreak;
+}
+
 export interface HareAllocationResult {
   level: "pba_municipal" | "pba_provincial";
   isProjection: boolean;
+  coverage: VoteCoverage;
+  initialCuociente: number;
   cuociente: number;
   halvingIterations: number;
+  halvingSteps: HareHalvingStep[];
+  seatCap?: HareSeatCapTrace;
   validVotes: number;
-  totalVotes: number;
-  blankVotes: number;
-  annulledVotes: number;
+  voteTotals: AllocationVoteTotals;
+  totalVotes?: number;
+  blankVotes?: number;
+  annulledVotes?: number;
+  combinedBlankAndAnnulledVotes?: number;
   seatsToFill: number;
   results: HareResultListEntry[];
   seatAwards: SeatAward[];
@@ -99,8 +153,11 @@ export interface DhondtQuotientEntry {
 export interface DhondtAllocationResult {
   level: "national";
   isProjection: boolean;
+  coverage: VoteCoverage;
   padron: number;
+  totalVotes: number;
   thresholdPercent: number;
+  thresholdPolicy: ThresholdPolicy;
   thresholdVotes: number;
   seatsToFill: number;
   results: DhondtResultListEntry[];

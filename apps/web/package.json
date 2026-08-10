@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm typecheck && next build",
     "start": "next start",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "node -e \"const v=require('@typescript/native').version;if(!/^7\\./.test(v))throw new Error('TypeScript 7.x required')\" && tsc --version && tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:gate": "node --experimental-strip-types ./scripts/e2e-release-gate.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -25,7 +26,10 @@
     "@types/node": "26.1.2",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
-    "typescript": "7.0.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.2.12",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "4.1.10"
   }
 }

@@ -6,7 +6,7 @@ Three independent concerns live here, all curator-reviewed rather than
 auto-inferred at ingest time (jurisdiction-model: "The crosswalk MUST NOT be
 inferred automatically from name-matching alone"):
 
-1. `CrosswalkTable` / `resolve_jurisdiction`: PBA distrito code <-> national
+1. `CrosswalkTable`: PBA distrito code <-> national
    (DINE) distrito/seccion code, loaded from the curated
    `curated/crosswalk.yaml`. An unmapped code is QUARANTINED (returned as
    `QuarantinedJurisdiction` data, never silently assigned to an unrelated
@@ -27,9 +27,9 @@ inferred automatically from name-matching alone"):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -63,6 +63,20 @@ FISCALIZACION_VOTE_COLUMNS: tuple[str, ...] = (
 # (curated by inspecting the real DINE values for distrito 02 / seccion 027,
 # cargo DIPUTADO NACIONAL) -- this is provisional curator input for Phase 7's
 # `curated/party_map.yaml`, not a substitute for that phase's formal review.
+# The scope `OFFICIAL_AGRUPACION_NAME_BY_COLUMN` was curated for, as a value
+# rather than only as prose in the comment above it. `cmd_validate_fiscalizacion`
+# exposes --distrito/--seccion/--category as free flags and nothing checked the
+# requested scope against this one: pointed at another distrito or at SENADOR
+# NACIONAL, every `agrupacion_nombre` misses, `vector()` returns 0 for all 15
+# columns, and every joined mesa produces 17 FABRICATED divergences written to
+# `review_item` as `info` for an operator to read as data.
+CURATED_NAME_TABLE_SCOPE: tuple[int, str, str, str] = (
+    2025,
+    "02",
+    "027",
+    "DIPUTADO NACIONAL",
+)
+
 OFFICIAL_AGRUPACION_NAME_BY_COLUMN: dict[str, str] = {
     "La Libertad Avanza": "ALIANZA LA LIBERTAD AVANZA",
     "Nuevo Buenos Aires": "PARTIDO NUEVO BUENOS AIRES",
@@ -97,6 +111,18 @@ EXPECTED_CATEGORY_DIVERGENCE_COLUMNS: frozenset[str] = frozenset({"En blanco", "
 # --- 1. PBA <-> national jurisdiction crosswalk ----------------------------
 
 
+class CrosswalkValidationError(ValueError):
+    """Raised when curated crosswalk YAML has an invalid trust-boundary shape."""
+
+
+class DuplicateCrosswalkKeyError(CrosswalkValidationError):
+    """Raised when a curated crosswalk natural key appears more than once."""
+
+
+class IncompleteOfficialMesaError(ValueError):
+    """Raised when an official mesa lacks a required comparison tally."""
+
+
 @dataclass(frozen=True)
 class JurisdictionCrosswalkEntry:
     """One curated PBA-distrito <-> national-distrito/seccion mapping."""
@@ -125,49 +151,164 @@ class CrosswalkTable:
     jurisdictions: tuple[JurisdictionCrosswalkEntry, ...]
 
     def resolve_pba(self, pba_distrito_code: str) -> JurisdictionCrosswalkEntry | None:
+        """The curated entry for one PBA distrito code, or `None`.
+
+        PRODUCTION CALLER: `etl.jurisdiction.resolve_pba_distrito_code`, which
+        wraps this lookup with the `QuarantinedPbaDistrito` refusal and is
+        what `ingest.pba.resolve_pba_jurisdictions` calls for every PBA row.
+        Named here because the caller lives in another module, and the
+        deleted `resolve_jurisdiction` below looked identical from inside
+        this file -- the difference between the two was exactly whether
+        anything called them.
+        """
+        from .jurisdiction import normalize_pba_distrito_code
+
+        target = normalize_pba_distrito_code(pba_distrito_code)
         for entry in self.jurisdictions:
-            if entry.pba_distrito_code == pba_distrito_code:
+            if normalize_pba_distrito_code(entry.pba_distrito_code) == target:
                 return entry
         return None
+
+    def entries_in_distrito(self, distrito_code: str | None) -> list[JurisdictionCrosswalkEntry]:
+        """EVERY curated entry whose national distrito matches, normalized.
+
+        The coarse question ("this row names no seccion -- is its distrito
+        curated?") gets its own method returning ALL matches, because the only
+        honest answers are "none", "exactly one" and "more than one, so it
+        cannot be attributed". Folded into `resolve_national`, it returned the
+        first match and its seccion/name would have been read as the row's.
+        """
+        from .jurisdiction import normalize_distrito_code
+
+        target = normalize_distrito_code(distrito_code)
+        return [
+            entry
+            for entry in self.jurisdictions
+            if normalize_distrito_code(entry.national_distrito_code) == target
+        ]
 
     def resolve_national(
         self, *, distrito_code: str, seccion_code: str
     ) -> JurisdictionCrosswalkEntry | None:
+        """Resolve a national (distrito, seccion) pair, normalizing BOTH sides.
+
+        Rule 8: the comparison lives behind ONE boundary. It was an exact
+        text match here while `__main__.find_unmapped_jurisdictions`
+        normalized both sides itself before calling in -- two ideas of how a
+        crosswalk entry's code compares, for one table, so `"2"/"27"` and
+        `"02"/"027"` resolved or did not depending on which caller asked.
+        Normalizing is idempotent, so a caller passing already-canonical
+        codes is unaffected.
+
+        `seccion_code` is REQUIRED. A row carrying no seccion is a different
+        question -- "is its distrito curated?" -- whose only honest answers
+        are none, exactly one, and more than one, so it belongs to
+        `entries_in_distrito`, which hands back every match instead of
+        picking. Passing `None` here is refused rather than quietly matching
+        nothing, which would read as "not curated" for a distrito that is.
+        """
+        from .jurisdiction import normalize_distrito_code, normalize_seccion_code
+
+        target_distrito = normalize_distrito_code(distrito_code)
+        target_seccion = normalize_seccion_code(seccion_code)
+        if target_seccion is None:
+            raise TypeError(
+                "seccion_code=None: call `entries_in_distrito` instead, which "
+                "returns every match rather than picking one"
+            )
         for entry in self.jurisdictions:
             if (
-                entry.national_distrito_code == distrito_code
-                and entry.national_seccion_code == seccion_code
+                normalize_distrito_code(entry.national_distrito_code) == target_distrito
+                and normalize_seccion_code(entry.national_seccion_code) == target_seccion
             ):
                 return entry
         return None
 
 
 def load_crosswalk(path: Path) -> CrosswalkTable:
-    """Load the curated `curated/crosswalk.yaml` jurisdiction mapping."""
-    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    entries = tuple(
-        JurisdictionCrosswalkEntry(
-            pba_distrito_code=str(j["pba_distrito"]),
-            national_distrito_code=str(j["national_distrito"]),
-            national_seccion_code=str(j["national_seccion"]),
-            name=j["name"],
-        )
-        for j in data.get("jurisdictions", [])
+    """Load and validate the curated jurisdiction mapping at the YAML boundary."""
+    data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        data = {}
+    if not isinstance(data, Mapping):
+        raise CrosswalkValidationError("crosswalk.yaml top level must be a mapping")
+
+    raw_entries = data.get("jurisdictions", [])
+    if not isinstance(raw_entries, list):
+        raise CrosswalkValidationError("crosswalk.yaml jurisdictions must be a list")
+
+    from .jurisdiction import (
+        is_canonicalizable_code,
+        normalize_distrito_code,
+        normalize_pba_distrito_code,
+        normalize_seccion_code,
     )
-    return CrosswalkTable(jurisdictions=entries)
 
+    entries: list[JurisdictionCrosswalkEntry] = []
+    seen_pba: set[str] = set()
+    seen_national: set[tuple[str | None, str | None]] = set()
+    required = ("pba_distrito", "national_distrito", "national_seccion", "name")
+    for index, raw_entry in enumerate(raw_entries):
+        if not isinstance(raw_entry, Mapping):
+            raise CrosswalkValidationError(
+                f"crosswalk.yaml jurisdictions entry {index} must be a mapping"
+            )
+        missing = [field for field in required if field not in raw_entry]
+        if missing:
+            raise CrosswalkValidationError(
+                f"crosswalk.yaml jurisdictions entry {index} is missing {', '.join(missing)}"
+            )
 
-def resolve_jurisdiction(
-    table: CrosswalkTable, *, pba_distrito_code: str
-) -> JurisdictionCrosswalkEntry | QuarantinedJurisdiction:
-    """Resolve a PBA distrito code, or quarantine it if uncurated."""
-    entry = table.resolve_pba(pba_distrito_code)
-    if entry is None:
-        return QuarantinedJurisdiction(
-            code=pba_distrito_code,
-            reason=f"no curated crosswalk entry for PBA distrito {pba_distrito_code!r}",
+        validated: dict[str, str] = {}
+        for field in required:
+            value = raw_entry[field]
+            if not isinstance(value, str) or not value.strip():
+                raise CrosswalkValidationError(
+                    f"crosswalk.yaml jurisdictions entry {index} field {field!r} "
+                    "must be a non-empty string"
+                )
+            validated[field] = value
+
+        for field in ("pba_distrito", "national_distrito", "national_seccion"):
+            if not is_canonicalizable_code(validated[field]):
+                raise CrosswalkValidationError(
+                    f"crosswalk.yaml jurisdictions entry {index} field {field!r} "
+                    f"must be a digit-canonicalizable code, got {validated[field]!r}"
+                )
+
+        entry = JurisdictionCrosswalkEntry(
+            pba_distrito_code=normalize_pba_distrito_code(validated["pba_distrito"]),
+            national_distrito_code=normalize_distrito_code(validated["national_distrito"]),
+            national_seccion_code=normalize_seccion_code(validated["national_seccion"]),
+            name=validated["name"],
         )
-    return entry
+        national_key = (
+            normalize_distrito_code(entry.national_distrito_code),
+            normalize_seccion_code(entry.national_seccion_code),
+        )
+        if entry.pba_distrito_code in seen_pba:
+            raise DuplicateCrosswalkKeyError(
+                "crosswalk.yaml duplicate PBA distrito key "
+                f"{entry.pba_distrito_code!r} at entry {index}"
+            )
+        if national_key in seen_national:
+            raise DuplicateCrosswalkKeyError(
+                "crosswalk.yaml duplicate normalized national key "
+                f"{national_key!r} at entry {index}"
+            )
+        seen_pba.add(entry.pba_distrito_code)
+        seen_national.add(national_key)
+        entries.append(entry)
+
+    return CrosswalkTable(jurisdictions=tuple(entries))
+
+
+# NO `resolve_jurisdiction`. It resolved a PBA distrito code or returned a
+# `QuarantinedJurisdiction`, was correct and tested, and had no production
+# caller: `ingest.pba.resolve_pba_jurisdictions` -- the path every PBA row
+# actually takes -- translates through `jurisdiction.resolve_pba_distrito_code`
+# and quarantines with `QuarantinedPbaDistrito`. Two resolvers for one
+# question, and the tested one was the unreachable one.
 
 
 # --- 2. Cross-year mesa code stability --------------------------------------
@@ -175,7 +316,7 @@ def resolve_jurisdiction(
 
 @dataclass(frozen=True)
 class MesaStability:
-    """Whether one mesa code was observed in each archived year.
+    """Whether one normalized circuito/mesa pair was observed in each year.
 
     jurisdiction-model spec: stability MUST NOT be assumed by default, and a
     code present in only one year MUST be surfaced as a discontinuity, never
@@ -185,6 +326,16 @@ class MesaStability:
     mesa: int
     present_2023: bool
     present_2025: bool
+    circuito: str = "00000"
+
+    def __post_init__(self) -> None:
+        # Lazy import avoids the existing jurisdiction -> crosswalk type dependency.
+        from etl.jurisdiction import normalize_circuito_code
+
+        normalized = normalize_circuito_code(self.circuito)
+        if normalized is None:
+            raise ValueError("MesaStability circuito cannot be absent")
+        object.__setattr__(self, "circuito", normalized)
 
     @property
     def stable(self) -> bool:
@@ -195,12 +346,33 @@ class MesaStability:
         return self.present_2023 != self.present_2025
 
 
-def compute_mesa_stability(mesas_2023: set[int], mesas_2025: set[int]) -> list[MesaStability]:
-    """Build a per-mesa stability record for every mesa seen in either year."""
-    all_mesas = mesas_2023 | mesas_2025
+def compute_mesa_stability(
+    mesas_2023: set[tuple[str, int]], mesas_2025: set[tuple[str, int]]
+) -> list[MesaStability]:
+    """Build stability for each exact normalized circuito/mesa identity."""
+
+    def normalize(pairs: set[tuple[str, int]]) -> set[tuple[str, int]]:
+        # Lazy import avoids the existing jurisdiction -> crosswalk type dependency.
+        from etl.jurisdiction import normalize_circuito_code
+
+        normalized: set[tuple[str, int]] = set()
+        for circuito, mesa in pairs:
+            circuito_code = normalize_circuito_code(circuito)
+            if circuito_code is None:
+                raise ValueError(f"circuito {circuito!r} cannot be normalized")
+            normalized.add((circuito_code, mesa))
+        return normalized
+
+    normalized_2023 = normalize(mesas_2023)
+    normalized_2025 = normalize(mesas_2025)
     return [
-        MesaStability(mesa=mesa, present_2023=mesa in mesas_2023, present_2025=mesa in mesas_2025)
-        for mesa in sorted(all_mesas)
+        MesaStability(
+            circuito=circuito,
+            mesa=mesa,
+            present_2023=(circuito, mesa) in normalized_2023,
+            present_2025=(circuito, mesa) in normalized_2025,
+        )
+        for circuito, mesa in sorted(normalized_2023 | normalized_2025)
     ]
 
 
@@ -217,7 +389,12 @@ class FiscalizacionMesaRow:
     """
 
     mesa: int
-    escuela: str
+    # NO `escuela`. It was set on every row and read by nothing:
+    # `join_fiscalizacion_identity` joins by MESA NUMBER, per the accepted
+    # decision (Engram #1410), so the school name had no part in the join it
+    # was carried for. Same argument that removed `escuela_normalized` from
+    # `FiscalizacionRow`, one dataclass over. The RAW string still lives on
+    # `FiscalizacionRow`, where the personal-data guard asserts against it.
     votes: dict[str, int]
 
 
@@ -233,11 +410,26 @@ class OfficialMesaVotes:
 
     def vector(self) -> dict[str, int]:
         """Project onto the same 17-column shape as a fiscalización row."""
+        required_names = frozenset(OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values())
+        required_types = frozenset(OFFICIAL_VOTOS_TIPO_BY_COLUMN.values())
+        missing_names = sorted(required_names - self.votes_by_agrupacion_name.keys())
+        missing_types = sorted(required_types - self.votos_tipo_totals.keys())
+        if missing_names or missing_types:
+            missing = []
+            if missing_names:
+                missing.append(f"agrupacion_nombre keys {missing_names}")
+            if missing_types:
+                missing.append(f"votos_tipo keys {missing_types}")
+            raise IncompleteOfficialMesaError(
+                f"mesa {self.mesa} has an incomplete official comparison vector; missing "
+                + " and ".join(missing)
+            )
+
         vector: dict[str, int] = {}
         for column, agrupacion_name in OFFICIAL_AGRUPACION_NAME_BY_COLUMN.items():
-            vector[column] = self.votes_by_agrupacion_name.get(agrupacion_name, 0)
+            vector[column] = self.votes_by_agrupacion_name[agrupacion_name]
         for column, votos_tipo in OFFICIAL_VOTOS_TIPO_BY_COLUMN.items():
-            vector[column] = self.votos_tipo_totals.get(votos_tipo, 0)
+            vector[column] = self.votos_tipo_totals[votos_tipo]
         return vector
 
 

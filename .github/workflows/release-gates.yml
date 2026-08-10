@@ -1,0 +1,61 @@
+name: Release gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54322:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.32.1 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v6
+        with: { version: "0.8.8", enable-cache: true }
+      - uses: supabase/setup-cli@v1
+        with: { version: 2.112.0 }
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/web
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: pnpm lint
+        working-directory: apps/web
+      - name: Typecheck with TypeScript 7.x
+        run: pnpm typecheck
+        working-directory: apps/web
+      - run: pnpm test
+        working-directory: apps/web
+      - name: Run disposable ETL gate
+        shell: bash
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d template1 -v ON_ERROR_STOP=1 -c \
+            "create role anon nologin; create role authenticated nologin; create role etl_writer login bypassrls password null; grant etl_writer to postgres;"
+          export ETL_TEST_ADMIN_DATABASE_URL="postgresql://postgres@127.0.0.1:54322/template1"
+          uv run --project etl etl-verify
+      - run: pnpm build
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-only-placeholder
+      - run: pnpm test:e2e:gate
+        working-directory: apps/web

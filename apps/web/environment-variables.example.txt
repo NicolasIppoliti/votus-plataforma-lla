@@ -4,11 +4,15 @@
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 
-# Only needed for e2e (Playwright) runs that seed a fixture auth user via the
-# Supabase Admin API. Never point this at a production project.
+# The release gate generates the remaining values internally for its disposable
+# local stack. They are listed only to document the fail-closed Playwright
+# Playwright contract; do not persist generated values.
 SUPABASE_SERVICE_ROLE_KEY=
 
 # Seeded fixture user for e2e/auth.spec.ts. Local/ephemeral only — this is
 # not a real fiscal's credential.
 VOTUS_E2E_TEST_USER_EMAIL=
 VOTUS_E2E_TEST_USER_PASSWORD=
+NATIONAL_JURISDICTION_ID=
+FISCALIZACION_ELECTION_ID=
+FISCALIZACION_CATEGORY_ID=

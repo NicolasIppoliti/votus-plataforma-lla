@@ -35,7 +35,7 @@ from etl.http_client import (
     check_robots_txt_still_absent,
 )
 from etl.manifest import latest_ok_record, upsert_record
-from etl.storage import LocalArchiveStore
+from etl.storage import LocalArchiveStore, sha256_of
 
 # ---------------------------------------------------------------------------
 # RequestsFetcher — ported, unmodified semantics
@@ -166,8 +166,11 @@ def test_fetch_failure_does_not_create_partial_entry(tmp_path) -> None:
     preserved = records[0]
     assert preserved["status"] == "ok"
     assert preserved["archived_path"] is not None
-    assert local_store.read("national", "2023-generales.zip") == good_bytes
-    assert "500" in (preserved.get("last_error") or "")
+    archived_filename = f"2023-generales.{sha256_of(good_bytes)}.zip"
+    assert local_store.read("national", archived_filename) == good_bytes
+    last_error = preserved.get("last_error")
+    assert isinstance(last_error, str)
+    assert "500" in last_error
 
 
 def test_unreachable_source_reports_unavailable(tmp_path) -> None:

@@ -6,13 +6,18 @@ manifest, committed alongside the gitignored ``archive/`` byte mirror).
 """
 
 import json
+from collections.abc import Mapping
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from etl.manifest import (
     REQUIRED_FIELDS,
-    entries_for_source,
+    ManifestRecord,
     latest_ok_record,
+    load_fetch_events,
     load_manifest,
-    ok_records_with_local_path,
     save_manifest,
     upsert_record,
 )
@@ -36,17 +41,224 @@ def _record(**overrides: object) -> dict:
     return base
 
 
+def _event(event_id: str, sequence: int) -> dict:
+    return {
+        "event_id": event_id,
+        "sequence": sequence,
+        "source_id": "national/2023-generales",
+        "fetched_at": "2026-08-03T20:00:00Z",
+        "status": "ok",
+        "classification": "initial" if sequence == 1 else "identical",
+        "record": _record(),
+    }
+
+
+def _required_string(record: Mapping[str, object], field: str) -> str:
+    value = record[field]
+    assert isinstance(value, str), f"{field} must be a string in this valid-record test"
+    return value
+
+
 def test_load_manifest_returns_empty_list_when_missing(tmp_path) -> None:
     assert load_manifest(tmp_path / "archive-manifest.json") == []
 
 
+def test_load_manifest_wraps_invalid_json_with_path_context(tmp_path) -> None:
+    from etl.manifest import MalformedManifestError
+
+    path = tmp_path / "archive-manifest.json"
+    path.write_text("not valid JSON", encoding="utf-8")
+
+    with pytest.raises(MalformedManifestError, match=str(path)) as excinfo:
+        load_manifest(path)
+
+    assert isinstance(excinfo.value.__cause__, json.JSONDecodeError)
+
+
+def test_load_manifest_wraps_read_errors_with_path_context(tmp_path) -> None:
+    from etl.manifest import MalformedManifestError
+
+    path = tmp_path / "archive-manifest.json"
+    path.touch()
+    read_error = OSError("permission denied")
+
+    with (
+        patch.object(Path, "read_text", side_effect=read_error),
+        pytest.raises(MalformedManifestError, match=str(path)) as excinfo,
+    ):
+        load_manifest(path)
+
+    assert excinfo.value.__cause__ is read_error
+
+
+@pytest.mark.parametrize("payload", [{}, ["not-a-record"]])
+def test_load_manifest_rejects_non_array_or_non_mapping_records(tmp_path, payload) -> None:
+    from etl.manifest import MalformedManifestError
+
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(MalformedManifestError):
+        load_manifest(path)
+
+
 def test_save_then_load_roundtrips(tmp_path) -> None:
     path = tmp_path / "archive-manifest.json"
-    save_manifest(path, [_record()])
+    save_manifest(path, [_record()], events=[])
 
     loaded = load_manifest(path)
     assert loaded == [_record()]
-    assert path.read_text(encoding="utf-8").endswith("]\n")
+    assert path.read_text(encoding="utf-8").endswith("}\n")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", ""),
+        ("id", 123),
+        ("status", "pending"),
+        ("status", 1),
+        ("capability", 1),
+        ("source", False),
+        ("source_url", 1),
+        ("archived_path", 123),
+        ("sha256", False),
+        ("mime", None),
+        ("bytes", -1),
+        ("bytes", True),
+        ("fetched_at", 1),
+        ("notes", []),
+        ("last_error", 500),
+        ("last_error_at", None),
+    ],
+)
+def test_load_manifest_rejects_wrong_types_for_known_fields(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    from etl.manifest import MalformedManifestError
+
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(json.dumps([_record(**{field: value})]), encoding="utf-8")
+
+    with pytest.raises(MalformedManifestError, match=field):
+        load_manifest(path)
+
+
+def test_load_manifest_accepts_legacy_minimal_records_and_nullable_fields(tmp_path: Path) -> None:
+    path = tmp_path / "archive-manifest.json"
+    records = [
+        {"id": "legacy/error", "status": "error"},
+        {
+            "id": "legacy/nullable",
+            "status": "error",
+            "source_url": None,
+            "archived_path": None,
+            "sha256": None,
+            "bytes": None,
+            "last_error": None,
+            "last_error_at": "2026-08-04T00:00:00Z",
+        },
+    ]
+    path.write_text(json.dumps(records), encoding="utf-8")
+
+    assert load_manifest(path) == records
+    assert load_fetch_events(path) == []
+
+    save_manifest(path, records, events=[])
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated == {"schema_version": 2, "records": records, "fetch_events": []}
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [_event("duplicate", 1), _event("duplicate", 2)],
+        [_event("later", 2), _event("earlier", 1)],
+    ],
+)
+def test_load_fetch_events_refuses_conflicting_or_reordered_history(tmp_path, events) -> None:
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(
+        json.dumps({"schema_version": 2, "records": [_record()], "fetch_events": events}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="fetch event|history"):
+        load_fetch_events(path)
+
+
+@pytest.mark.parametrize(
+    ("status", "classification"),
+    [
+        ("error", "initial"),
+        ("error", "identical"),
+        ("error", "content_drift"),
+        ("error", "source_reexported"),
+        ("ok", "fetch_error"),
+    ],
+)
+def test_load_fetch_events_refuses_status_classification_contradictions(
+    tmp_path: Path, status: str, classification: str
+) -> None:
+    event = _event("contradiction", 1)
+    event["status"] = status
+    event["classification"] = classification
+    event["record"] = (
+        _record()
+        if status == "ok"
+        else _record(status="error", sha256=None, archived_path=None, bytes=None)
+    )
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(
+        json.dumps({"schema_version": 2, "records": [], "fetch_events": [event]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="status.*classification"):
+        load_fetch_events(path)
+
+
+@pytest.mark.parametrize(
+    ("status", "classification", "malformed_field", "malformed_value"),
+    [
+        ("ok", "initial", "sha256", "g" * 64),
+        ("ok", "initial", "source_url", 123),
+        ("error", "fetch_error", "source_url", 123),
+        ("error", "fetch_error", "fetched_at", 123),
+    ],
+)
+def test_fetch_event_record_reuses_canonical_known_field_validation(
+    tmp_path: Path,
+    status: str,
+    classification: str,
+    malformed_field: str,
+    malformed_value: object,
+) -> None:
+    event = _event("malformed-record", 1)
+    event["status"] = status
+    event["classification"] = classification
+    record = (
+        _record()
+        if status == "ok"
+        else _record(status="error", sha256=None, archived_path=None, bytes=None)
+    )
+    record[malformed_field] = malformed_value
+    event["record"] = record
+    path = tmp_path / "archive-manifest.json"
+    path.write_text(
+        json.dumps({"schema_version": 2, "records": [], "fetch_events": [event]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=malformed_field):
+        load_fetch_events(path)
+
+
+def test_upsert_rejects_wrong_types_at_the_writer_boundary() -> None:
+    from etl.manifest import MalformedManifestError
+
+    with pytest.raises(MalformedManifestError, match="bytes"):
+        upsert_record([], _record(bytes=True))
 
 
 def test_required_fields_present_in_fixture_record() -> None:
@@ -66,26 +278,6 @@ def test_manifest_entry_created_per_fetch() -> None:
     assert entry["sha256"] == "a" * 64
     assert entry["fetched_at"] == "2026-08-03T20:00:00Z"
     assert entry["bytes"] == 28028857
-
-
-def test_manifest_queryable_by_source() -> None:
-    """source-archive spec: 'Manifest queryable by source' — returns every
-    archive entry for a URL, in fetch order."""
-    first = _record(fetched_at="2026-08-01T00:00:00Z", sha256="a" * 64)
-    records = upsert_record([], first)
-    second_input = _record(
-        id="national/2025-legislativas",
-        source_url="https://datos.mininterior.gob.ar/legislativas2025.zip",
-        fetched_at="2026-08-02T00:00:00Z",
-        sha256="b" * 64,
-    )
-    records = upsert_record(records, second_input)
-
-    matches = entries_for_source(records, first["source_url"])
-    assert [r["id"] for r in matches] == ["national/2023-generales"]
-
-    unrelated = entries_for_source(records, "https://example.org/never-archived.zip")
-    assert unrelated == []
 
 
 def test_upsert_inserts_new_record() -> None:
@@ -108,17 +300,55 @@ def test_upsert_detects_content_drift_and_keeps_prior_version() -> None:
 
     updated = upsert_record(existing, drifted)
 
-    ids = {r["id"] for r in updated}
+    ids = {_required_string(r, "id") for r in updated}
     assert "national/2023-generales" in ids
-    assert "national/2023-generales@2026-06-01" in ids
+    historical_id = f"national/2023-generales@2026-06-01T000000Z-{'a' * 64}"
+    assert historical_id in ids
 
     canonical = next(r for r in updated if r["id"] == "national/2023-generales")
     assert canonical["sha256"] == "b" * 64
-    assert "drift" in canonical["notes"].lower()
+    assert "drift" in _required_string(canonical, "notes").lower()
 
-    prior = next(r for r in updated if r["id"] == "national/2023-generales@2026-06-01")
+    prior = next(r for r in updated if r["id"] == historical_id)
     assert prior["sha256"] == "a" * 64
-    assert "superseded" in prior["notes"].lower()
+    assert "superseded" in _required_string(prior, "notes").lower()
+
+
+def test_repeated_same_second_drifts_preserve_every_capture_with_unique_readable_ids() -> None:
+    fetched_at = "2026-08-03T20:00:00Z"
+    canonical_id = "national/2023-generales"
+    captures = [
+        ("a" * 64, "archive/national/a.zip"),
+        ("b" * 64, "archive/national/b.zip"),
+        ("a" * 64, "archive/national/a-again.zip"),
+        ("c" * 64, "archive/national/c.zip"),
+    ]
+
+    records: list[ManifestRecord] = []
+    for sha256, archived_path in captures:
+        records = upsert_record(
+            records,
+            _record(fetched_at=fetched_at, sha256=sha256, archived_path=archived_path),
+        )
+
+    ids = [_required_string(record, "id") for record in records]
+    assert len(ids) == len(set(ids)) == len(captures)
+    stamp = "2026-08-03T200000Z"
+    expected = {
+        f"{canonical_id}@{stamp}-{'a' * 64}": ("a" * 64, "archive/national/a.zip"),
+        f"{canonical_id}@{stamp}-{'b' * 64}": ("b" * 64, "archive/national/b.zip"),
+        f"{canonical_id}@{stamp}-{'a' * 64}-2": (
+            "a" * 64,
+            "archive/national/a-again.zip",
+        ),
+        canonical_id: ("c" * 64, "archive/national/c.zip"),
+    }
+    assert set(ids) == set(expected)
+    for record_id, (sha256, archived_path) in expected.items():
+        found = latest_ok_record(records, record_id)
+        assert found is not None
+        assert found["sha256"] == sha256
+        assert found["archived_path"] == archived_path
 
 
 def test_upsert_does_not_flag_drift_when_prior_status_was_error() -> None:
@@ -149,7 +379,7 @@ def test_upsert_preserves_prior_ok_record_when_incoming_fetch_fails() -> None:
     assert preserved["sha256"] == "a" * 64
     assert preserved["archived_path"] == "archive/national/f.zip"
     assert preserved.get("last_error")
-    assert "429" in preserved["last_error"]
+    assert "429" in _required_string(preserved, "last_error")
     assert preserved.get("last_error_at") == "2026-08-04T00:00:00Z"
 
 
@@ -163,27 +393,9 @@ def test_upsert_still_overwrites_when_prior_status_was_already_error() -> None:
     assert updated[0]["notes"] == "[HTTP 500]"
 
 
-def test_ok_records_with_local_path_returns_matching_records() -> None:
-    records = [
-        _record(id="a", status="ok", archived_path="archive/a.zip"),
-        _record(id="b", status="ok", archived_path=None),
-        _record(id="c", status="error", archived_path=None),
-    ]
-    result = ok_records_with_local_path(records)
-    assert [r["id"] for r in result] == ["a"]
-
-
-def test_ok_records_with_local_path_returns_empty_when_none_qualify() -> None:
-    records = [
-        _record(id="b", status="ok", archived_path=None),
-        _record(id="c", status="error", archived_path="archive/c.zip"),
-    ]
-    assert ok_records_with_local_path(records) == []
-
-
 def test_manifest_is_valid_json_array(tmp_path) -> None:
     path = tmp_path / "archive-manifest.json"
-    save_manifest(path, [_record(), _record(id="other/id")])
+    path.write_text(json.dumps([_record(), _record(id="other/id")]) + "\n", encoding="utf-8")
 
     parsed = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(parsed, list)
@@ -200,12 +412,85 @@ def test_latest_ok_record_returns_none_when_source_never_succeeded() -> None:
     assert latest_ok_record(records, "national/2023-generales") is None
 
 
-def test_latest_ok_record_returns_most_recent_ok_entry() -> None:
+def test_latest_ok_record_returns_the_single_record_upsert_left_for_the_id() -> None:
+    """There is no "most recent" to choose, and choosing is what this stopped
+    doing: `upsert_record` replaces by id, and `latest_ok_record` now refuses
+    a manifest holding two records for one id. The drift capture is preserved
+    under a DATED id, so the canonical id carries exactly one record.
+    """
     records = upsert_record([], _record(fetched_at="2026-06-01T00:00:00Z", sha256="a" * 64))
-    records = upsert_record(
-        records, _record(fetched_at="2026-08-03T00:00:00Z", sha256="b" * 64)
-    )
+    records = upsert_record(records, _record(fetched_at="2026-08-03T00:00:00Z", sha256="b" * 64))
 
     found = latest_ok_record(records, "national/2023-generales")
     assert found is not None
     assert found["sha256"] == "b" * 64
+
+
+def test_upsert_refuses_existing_duplicate_ids_before_building_a_result() -> None:
+    from etl.manifest import DuplicateManifestRecordError
+
+    duplicate_id = "national/2023-generales"
+    records = [
+        _record(id=duplicate_id, sha256="a" * 64),
+        _record(id=duplicate_id, sha256="b" * 64),
+    ]
+
+    with pytest.raises(
+        DuplicateManifestRecordError,
+        match=r"2 records for 'national/2023-generales'",
+    ):
+        upsert_record(records, _record(id=duplicate_id, sha256="c" * 64))
+
+    assert records[0]["sha256"] == "a" * 64
+    assert records[1]["sha256"] == "b" * 64
+
+
+def test_upsert_refuses_duplicate_ids_unrelated_to_the_incoming_record() -> None:
+    from etl.manifest import DuplicateManifestRecordError
+
+    records = [
+        _record(id="other/duplicate", sha256="a" * 64),
+        _record(id="other/duplicate", sha256="b" * 64),
+    ]
+
+    with pytest.raises(
+        DuplicateManifestRecordError,
+        match=r"2 records for 'other/duplicate'",
+    ):
+        upsert_record(records, _record(id="new/canonical", sha256="c" * 64))
+
+
+def test_two_records_for_one_id_are_refused_not_picked_between() -> None:
+    """`upsert_record` replaces by id, so a well-formed manifest holds one
+    record per id. Scanning for the FIRST match silently chose between two
+    archived copies of one source -- deciding which bytes reach `result_row`.
+    """
+    from etl.manifest import DuplicateManifestRecordError
+
+    records: list[ManifestRecord] = [
+        {"id": "national/2025", "status": "ok", "sha256": "aaa"},
+        {"id": "national/2025", "status": "ok", "sha256": "bbb"},
+    ]
+
+    with pytest.raises(DuplicateManifestRecordError):
+        latest_ok_record(records, "national/2025")
+
+
+def test_a_stale_error_record_does_not_mask_the_archived_copy() -> None:
+    """The scan returned the first record for the id and answered `None` if it
+    was not `ok`, so an `error` record sitting ahead of an `ok` one reported
+    "never archived" for a source that IS archived.
+
+    `upsert_record` never produces that pair -- a failed re-fetch PRESERVES
+    the ok record and annotates it -- which is why the one-per-id invariant is
+    the thing to check.
+    """
+    preserved = upsert_record(
+        [_record(sha256="a" * 64)],
+        _record(status="error", sha256=None, notes="502"),
+    )
+
+    current = latest_ok_record(preserved, "national/2023-generales")
+    assert current is not None, "a failed re-fetch must not hide the archived copy"
+    assert current["sha256"] == "a" * 64
+    assert current["last_error"] == "502"

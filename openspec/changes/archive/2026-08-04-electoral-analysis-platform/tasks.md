@@ -559,6 +559,60 @@ where jurisdictions are CREATED — never was.
 - [x] 17.6 GREEN: migration `0012_reconcile_jurisdictions.sql` + down — merge duplicate jurisdictions that differ only by padding, repoint `result_row.jurisdiction_id`, and delete the emptied duplicates. It MUST NOT lose or duplicate a single result row; assert the total before and after.
 - [x] 17.7 REFACTOR: verify live that Coronel Rosales resolves to ONE jurisdiction set, that fiscalización mesas join to national mesas, and record the before/after counts in `spikes/006-jurisdiction-reconciliation.md`.
 
+## Phase 18: Fail-closed verification harness
+
+- [x] 18.1 Refresh OpenSpec testing configuration around executable repository commands.
+- [x] 18.2 Add `etl-verify` as the only release-safe ETL entry point: unique disposable database
+  and role ownership, all migrations, zero skipped tests, and verified cleanup.
+- [x] 18.3 Isolate the disposable verification role and prove database and role counts return to
+  zero. Final observed result at `fae210d`: **19 migrations, 670 passed, 0 skipped**.
+
+## Phase 19: Close the seven canonical evidence gaps
+
+- [x] 19.1 Project archive provenance before ingestion (`8ff505d`).
+- [x] 19.2 Expose PBA granularity degradation through the operator path (`c6f8ba0`).
+- [x] 19.3 Classify fiscalización re-exports without misreporting source drift (`1b7a71b`).
+- [x] 19.4 Preserve national establishment lineage (`bb97ae2`).
+- [x] 19.5 Retain complete source-fetch history (`0a8c4d4`).
+- [x] 19.6 Strip personal columns before parsing creates row values (`b57e61b`).
+- [x] 19.7 Use exact statutory allocation arithmetic (`f9b80db`).
+
+## Phase 20: Simulation provenance and validation
+
+- [x] 20.1 Align canonical Hare eligibility with the statute (`9290451`).
+- [x] 20.2 Require trusted archive provenance for historical simulations and supplied-input traces
+  for hypothetical projections (`e639385`).
+- [x] 20.3 Validate council composition before allocation (`15df6c8`).
+- [x] 20.4 Preserve vote-evidence breakdowns through simulation results (`c9d501c`).
+
+## Phase 21: Fail-closed web static gates
+
+- [x] 21.1 Add ESLint 9 with the explicit `eslint . --max-warnings=0` command (`1801c73`).
+- [x] 21.2 Keep TypeScript 7 as the application compiler while exposing the TypeScript 6 API only
+  to typescript-eslint.
+- [x] 21.3 Verify ESLint at **0 warnings/errors**, TypeScript 7.0.2, **325 web unit tests**, and a
+  passing production build.
+
+## Phase 22: Fail-closed browser release gate
+
+- [x] 22.1 Add `pnpm test:e2e:gate` with exact inventory, disposable Supabase, production servers,
+  zero-skip enforcement, signal-safe owned cleanup, and residue checks (`0fbd34d`).
+- [x] 22.2 Cover all eight operator routes/specs, including root, review, simulation, and municipal
+  reachability (`7c11314`).
+- [x] 22.3 Observe **8/8 passed, 0 skipped, 0 failed** and zero owned infrastructure residue.
+- [x] 22.4 Add the GitHub-hosted release workflow. It exists locally but has not yet run remotely.
+
+## Phase 23: Final documentation handoff
+
+- [x] 23.1 Record `fae210d` as the verified implementation boundary and retain the earlier
+  verification and archive reports unchanged as historical evidence.
+- [x] 23.2 Mark divergent archived spec copies as historical snapshots; canonical
+  `openspec/specs` remains authoritative.
+- [x] 23.3 Replace stale greenfield, RDD-on, 400-line-budget, and municipal D'Hondt handoff claims
+  with current operational truth.
+- [x] 23.4 Record the completed local delivery history and current fail-closed commands without
+  claiming a push, pull request, or remote workflow execution.
+
 ## Key Learnings
 
 1. The SPIKE's hard gates each remove or reshape specific downstream phases; gate (e)'s original DENY was itself later refuted by re-verification (Engram #1398), so tasks encode a conditional-pending-policy state for Phase 5 rather than a permanent removal.

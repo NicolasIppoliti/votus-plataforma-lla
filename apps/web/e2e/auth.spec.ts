@@ -5,21 +5,16 @@ import { expect, test } from "@playwright/test";
  * or query serving electoral data may return it without authentication,
  * including through cached or pre-rendered content.
  *
- * Requires a running Supabase stack (Auth + Postgres) and a seeded fixture
- * user, none of which are committed to the repo. If any required
- * environment variable is absent, this test skips explicitly with a clear
- * reason rather than failing or silently passing — see
- * apps/web/environment-variables.example.txt.
+ * The release gate provides an isolated Supabase stack and fixture user.
+ * Missing inputs fail globally before this scenario can run.
  */
 
-const SUPABASE_URL = process.env["NEXT_PUBLIC_SUPABASE_URL"];
-const SUPABASE_ANON_KEY = process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"];
-const TEST_USER_EMAIL = process.env["VOTUS_E2E_TEST_USER_EMAIL"];
-const TEST_USER_PASSWORD = process.env["VOTUS_E2E_TEST_USER_PASSWORD"];
+import { assertE2eEnvironment, storageStateForSpec } from "./gate-contract";
 
-const hasE2eCredentials = Boolean(
-  SUPABASE_URL && SUPABASE_ANON_KEY && TEST_USER_EMAIL && TEST_USER_PASSWORD,
-);
+const environment = assertE2eEnvironment(process.env);
+const TEST_USER_EMAIL = environment.VOTUS_E2E_TEST_USER_EMAIL;
+const TEST_USER_PASSWORD = environment.VOTUS_E2E_TEST_USER_PASSWORD;
+test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOTUS_E2E_STORAGE_STATE) });
 
 // The in-scope content marker rendered only inside `(authenticated)/`
 // routes (see `src/app/(authenticated)/dashboard/page.tsx`). No anonymous
@@ -27,16 +22,6 @@ const hasE2eCredentials = Boolean(
 const IN_SCOPE_MARKER = "Votus dashboard";
 
 test.describe("no anonymous read path", () => {
-  test.skip(
-    !hasE2eCredentials,
-    "Requires NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, " +
-      "VOTUS_E2E_TEST_USER_EMAIL and VOTUS_E2E_TEST_USER_PASSWORD in the " +
-      "environment (a running local Supabase stack plus a seeded fixture " +
-      "user). None are committed to the repo — see " +
-      "apps/web/environment-variables.example.txt. Skipping explicitly " +
-      "rather than failing or silently passing.",
-  );
-
   test("test_no_anonymous_read_path_including_cached_content", async ({
     page,
     context,
@@ -61,8 +46,8 @@ test.describe("no anonymous read path", () => {
     //    route now genuinely serves data — proves step 1/2 were a real
     //    gate, not a route that is simply broken for everyone.
     await page.goto("/login");
-    await page.getByLabel("Email").fill(TEST_USER_EMAIL as string);
-    await page.getByLabel("Password").fill(TEST_USER_PASSWORD as string);
+    await page.getByLabel("Email").fill(TEST_USER_EMAIL);
+    await page.getByLabel("Password").fill(TEST_USER_PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/dashboard/);
     expect(await page.content()).toContain(IN_SCOPE_MARKER);

@@ -69,16 +69,31 @@ export interface DhondtAllocationResult {
   quotientTable: DhondtQuotientEntry[];
 }
 
-/**
- * Floating-point comparison tolerance for quotient ties. Votes and
- * divisors here are always integers, so quotient noise is bounded far
- * below typical float epsilon accumulation; 1e-9 catches representation
- * error without masking a genuine ordering difference.
- */
-const EPSILON = 1e-9;
+export class DhondtValidationError extends Error {}
 
-function isEffectivelyEqual(a: number, b: number): boolean {
-  return Math.abs(a - b) < EPSILON;
+function exactInteger(value: number, label: string): bigint {
+  if (!Number.isSafeInteger(value)) {
+    throw new DhondtValidationError(`${label} must be a safe integer`);
+  }
+  return BigInt(value);
+}
+
+function compareExactQuotients(
+  a: DhondtQuotientEntry,
+  b: DhondtQuotientEntry,
+  votesByListId: Map<string, number>,
+): number {
+  const votesA = exactInteger(
+    votesByListId.get(a.listId) ?? 0,
+    `votes for ${a.listId}`,
+  );
+  const votesB = exactInteger(
+    votesByListId.get(b.listId) ?? 0,
+    `votes for ${b.listId}`,
+  );
+  const left = votesA * BigInt(b.divisor);
+  const right = votesB * BigInt(a.divisor);
+  return left === right ? 0 : left > right ? -1 : 1;
 }
 
 const STATUTORY_QUOTIENT_TIE_BREAK: DhondtTieBreak = {
@@ -95,18 +110,33 @@ const CONVENTION_QUOTIENT_TIE_BREAK: DhondtTieBreak = {
 };
 
 export function allocateDhondt(input: DhondtInput): DhondtAllocationResult {
+  exactInteger(input.padron, "padron");
+  exactInteger(input.seatsToFill, "seatsToFill");
+  for (const list of input.lists)
+    exactInteger(list.votes, `votes for ${list.listId}`);
   const thresholdVotes = input.padron * (input.thresholdPercent / 100);
+
+  const reachesThreshold = (votes: number): boolean =>
+    Number.isSafeInteger(input.thresholdPercent)
+      ? BigInt(votes) * 100n >=
+        BigInt(input.padron) * BigInt(input.thresholdPercent)
+      : votes >= thresholdVotes;
 
   const results: DhondtListResult[] = input.lists.map((list) => ({
     listId: list.listId,
     listName: list.listName,
     votes: list.votes,
     votingSharePercent: (list.votes / input.padron) * 100,
-    excludedByThreshold: list.votes < thresholdVotes,
+    excludedByThreshold: !reachesThreshold(list.votes),
     seats: 0,
   }));
 
-  const qualifying = input.lists.filter((list) => list.votes >= thresholdVotes);
+  const qualifying = input.lists.filter((list) => reachesThreshold(list.votes));
+  if (!qualifying.some((list) => list.votes > 0)) {
+    throw new DhondtValidationError(
+      "no positive-vote list clears the padrón threshold; refusing an empty allocation",
+    );
+  }
 
   const quotientTable: DhondtQuotientEntry[] = qualifying.flatMap((list) =>
     Array.from({ length: input.seatsToFill }, (_, i) => {
@@ -115,12 +145,13 @@ export function allocateDhondt(input: DhondtInput): DhondtAllocationResult {
     }),
   );
 
-  const votesByListId = new Map(input.lists.map((list) => [list.listId, list.votes]));
+  const votesByListId = new Map(
+    input.lists.map((list) => [list.listId, list.votes]),
+  );
 
   const ordered = [...quotientTable].sort((a, b) => {
-    if (!isEffectivelyEqual(a.quotient, b.quotient)) {
-      return b.quotient - a.quotient;
-    }
+    const exactOrder = compareExactQuotients(a, b, votesByListId);
+    if (exactOrder !== 0) return exactOrder;
     const votesA = votesByListId.get(a.listId) ?? 0;
     const votesB = votesByListId.get(b.listId) ?? 0;
     if (votesA !== votesB) {
@@ -142,7 +173,11 @@ export function allocateDhondt(input: DhondtInput): DhondtAllocationResult {
   const boundaryIsTied =
     awardedCount > 0 &&
     awardedCount < ordered.length &&
-    isEffectivelyEqual(ordered[awardedCount - 1]!.quotient, ordered[awardedCount]!.quotient);
+    compareExactQuotients(
+      ordered[awardedCount - 1]!,
+      ordered[awardedCount]!,
+      votesByListId,
+    ) === 0;
 
   for (let i = 0; i < awardedCount; i += 1) {
     const entry = ordered[i]!;
@@ -151,7 +186,8 @@ export function allocateDhondt(input: DhondtInput): DhondtAllocationResult {
     let tieBreak: DhondtTieBreak | undefined;
     if (boundaryIsTied && i === awardedCount - 1) {
       const votesWinner = votesByListId.get(entry.listId) ?? 0;
-      const votesRunnerUp = votesByListId.get(ordered[awardedCount]!.listId) ?? 0;
+      const votesRunnerUp =
+        votesByListId.get(ordered[awardedCount]!.listId) ?? 0;
       tieBreak =
         votesWinner === votesRunnerUp
           ? CONVENTION_QUOTIENT_TIE_BREAK

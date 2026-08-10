@@ -184,6 +184,16 @@ export function renderMunicipalView(
   // PATH 3. See `drilldown`: unreachable while the repository filter holds,
   // live the moment it does not.
   const levels = readGranularity(rows);
+  const requestedLevels = new Set(
+    rows
+      .map((row) => row.requestedGranularity)
+      .filter((level): level is NonNullable<typeof level> => level != null),
+  );
+  const requestedLevel =
+    requestedLevels.size === 1 && rows.every((row) => row.requestedGranularity != null)
+      ? [...requestedLevels][0]
+      : undefined;
+  const totalLevel = jurisdictionTotalLevel(levels.granularity);
   // Disclosure is not permission: this page announced the mix and then summed
   // across it anyway, so a seccion row and a mesa row inside it were added
   // together. See `mixedGranularityReason`.
@@ -271,7 +281,15 @@ export function renderMunicipalView(
           beside a refusal names one of the mixed levels as if it were the
           set's — hiding the mix the refusal exists to announce. */}
       {rows.length === 0 || unsummable !== null ? null : (
-        <GranularityBadge {...jurisdictionTotalLevel(levels.granularity)} />
+        <GranularityBadge
+          granularity={totalLevel.granularity}
+          {...(totalLevel.summedFrom !== undefined
+            ? { summedFrom: totalLevel.summedFrom }
+            : {})}
+          {...(requestedLevel !== undefined && requestedLevel !== levels.granularity
+            ? { requestedGranularity: requestedLevel }
+            : {})}
+        />
       )}
       {rows.length === 0 ? (
         <p>No municipal results found for this jurisdiction/category/election.</p>

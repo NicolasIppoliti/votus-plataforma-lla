@@ -5,8 +5,28 @@ national, PBA-provincial and municipal level to support scenario comparison for 
 Two runtimes: a Python/uv ETL producing an immutable sha256 archive, feeding a Supabase
 Postgres projection behind Auth/RLS, with a Next.js App Router UI.
 
-These rules are not generic advice. Every one of them exists because the failure it
-describes actually happened in this repository.
+These rules are not generic advice. Every numbered rule exists because the failure it
+describes actually happened in this repository. Apply the engineering approach below to
+new work, then use the numbered rules as repository-specific rejection criteria.
+
+## Engineering approach
+
+- Prefer the simplest implementation that fully meets the current requirements. Avoid
+  speculative abstractions, configuration, and indirection.
+- Grow the system in working end-to-end layers. Start with the smallest complete path,
+  then add capability without replacing a working product with unfinished complexity.
+- Keep components modular and concerns clearly separated.
+- Study how established products solve the problem before designing a solution. Adopt
+  proven patterns and conventions instead of inventing an approach from scratch.
+- Prefer established, well-maintained libraries when they reduce total complexity or
+  improve reliability. Check the dependencies already installed, their documentation,
+  and their types before writing custom code or adding another package.
+- Remove obsolete internal paths instead of adding compatibility layers, fallbacks, or
+  parallel implementations. This does **not** authorize breaking persisted database,
+  archive, public interface, or migration contracts; change those only through an
+  explicit, verified migration.
+- Make architectural decisions for the long term. Reject stopgaps whose intended future
+  replacement is already known.
 
 ## 1. Reachability is a separate property from correctness
 

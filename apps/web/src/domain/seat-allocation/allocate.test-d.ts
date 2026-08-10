@@ -12,7 +12,12 @@ export const illegalHareInput: HareInput = {
   totalVotes: 100,
   blankVotes: 0,
   annulledVotes: 0,
+  unmodeledVotes: 100,
+  unmodeledVoteBreakdown: [
+    { reason: "other_source_rows", votes: 100 },
+  ],
   seatsToFill: 9,
+  isProjection: false,
   lists: [],
   // @ts-expect-error HareInput has no `threshold` field — this pairing must fail to compile.
   threshold: { value: 3, basis: "padron" },
@@ -23,8 +28,12 @@ export const illegalHareInput: HareInput = {
 export const illegalDhondtInput: DhondtInput = {
   level: "national",
   padron: 100,
+  totalVotes: 0,
+  unmodeledVotes: 0,
+  unmodeledVoteBreakdown: [],
   threshold: { value: 3, basis: "padron" },
   seatsToFill: 5,
+  isProjection: false,
   lists: [],
   // @ts-expect-error DhondtInput has no `cuociente` field — this pairing must fail to compile.
   cuociente: 10,

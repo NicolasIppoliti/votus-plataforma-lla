@@ -6,7 +6,8 @@
 #     source_url: <https://... official URL>
 #     mime: <application/zip | text/csv | application/json | application/pdf>
 #     notes: <free text, e.g. size, verification date, known caveats>
-#     filename: <optional explicit local filename; defaults to id's last segment>
+#     filename: <optional explicit local filename; defaults to id's last
+#       segment>
 #
 # Per design D10 / task 2.8: PBA entries (host www.juntaelectoral.gba.gov.ar)
 # were added only after Phase 5's product-owner policy gate cleared (Engram
@@ -25,8 +26,11 @@
 
 national:
   - id: national/2023-generales
+    election_year: 2023
+    election_round: generales
     source: argentina.gob.ar
-    source_url: https://www.argentina.gob.ar/sites/default/files/2023_generales_1.zip
+    source_url: "https://www.argentina.gob.ar/sites/default/files/\
+      2023_generales_1.zip"
     mime: application/zip
     notes: >-
       2023 Elecciones Generales, mesa-level results ZIP. ~28MB, verified
@@ -35,16 +39,24 @@ national:
       2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b.
     filename: 2023-generales.zip
   - id: national/2023-balotaje
+    election_year: 2023
+    election_round: balotaje
     source: argentina.gob.ar
-    source_url: https://www.argentina.gob.ar/sites/default/files/2023_segundavuelta.zip
+    source_url: "https://www.argentina.gob.ar/sites/default/files/\
+      2023_segundavuelta.zip"
     mime: application/zip
     notes: >-
       2023 Balotaje (segunda vuelta), mesa-level results ZIP. ~3MB,
       verified reachable (200, content-length 3014122).
     filename: 2023-balotaje.zip
   - id: national/2025-legislativas
+    election_year: 2025
+    election_round: legislativas
     source: datos.mininterior.gob.ar
-    source_url: https://datos.mininterior.gob.ar/dataset/947e871a-650e-4b63-8939-ecb29acb717c/resource/a24110fb-bfcf-47a6-8aa7-2e53dab9caf5/download/elecciones_legislativas_2025.zip
+    source_url: "https://datos.mininterior.gob.ar/dataset/\
+      947e871a-650e-4b63-8939-ecb29acb717c/resource/\
+      a24110fb-bfcf-47a6-8aa7-2e53dab9caf5/download/\
+      elecciones_legislativas_2025.zip"
     mime: application/zip
     notes: >-
       2025 Elecciones Legislativas Nacionales, mesa-level results ZIP.
@@ -53,25 +65,32 @@ national:
       5fb19bb280af8895dc0bc2ac19d79e836fb4053b713a135357743bf35371ee4b.
     filename: 2025-legislativas.zip
   - id: national/2023-paso-wayback
+    election_year: 2023
+    election_round: paso
     source: web.archive.org
-    source_url: https://web.archive.org/web/20240106010034if_/https://www.argentina.gob.ar/sites/default/files/dine-resultados/2023-PROVISORIOS_PASO.zip
+    source_url: "https://web.archive.org/web/20240106010034if_/https://\
+      www.argentina.gob.ar/sites/default/files/dine-resultados/\
+      2023-PROVISORIOS_PASO.zip"
     mime: application/zip
-    notes: >-
-      2023 PASO, mesa-level results ZIP. Official URL
-      (argentina.gob.ar/sites/default/files/dine-resultados/2023-PROVISORIOS_PASO.zip)
-      returns 404 -- this is the only surviving copy, via the Wayback
-      Machine snapshot dated 2024-01-06 (the `if_` suffix requests the raw
-      archived bytes, not the Wayback UI wrapper). ~88MB, sha256
+    notes: "2023 PASO, mesa-level results ZIP. Official URL
+      (argentina.gob.ar/sites/default/files/dine-resultados/\
+      2023-PROVISORIOS_PASO.zip) returns 404 -- this is the only surviving
+      copy, via the Wayback Machine snapshot dated 2024-01-06 (the `if_`
+      suffix requests the raw archived bytes, not the Wayback UI wrapper).
+      ~88MB, sha256
       25558e7b73e8c273726ea12f04040e2fac8e693ad0eb866386502eb112bd2c0c per
-      SPIKE task 0.7 (archived to archive/national_2023_paso/, gitignored
-      per D2). ~42x deflate ratio measured on ResultadosElectorales.csv --
-      the reference case for task 2.6b's decompression-bomb size cap.
+      SPIKE task 0.7 (archived to archive/national_2023_paso/, gitignored per
+      D2). ~42x deflate ratio measured on ResultadosElectorales.csv -- the
+      reference case for task 2.6b's decompression-bomb size cap."
     filename: 2023-paso-wayback.zip
 
 pba:
   - id: pba/2025-distrito-027
+    election_year: 2025
+    election_round: provinciales
     source: www.juntaelectoral.gba.gov.ar
-    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/distrito_027.html
+    source_url: "https://www.juntaelectoral.gba.gov.ar/\
+      escrutinio-definitivo-2025/distrito_027.html"
     mime: text/html
     notes: >-
       2025 Elecciones Provinciales, distrito 027 (Coronel Rosales) escrutinio
@@ -83,8 +102,11 @@ pba:
       UA, cert verification on). Verified 200, text/html, this session.
     filename: distrito_027.html
   - id: pba/2025-concejales-bancas-027
+    election_year: 2025
+    election_round: provinciales
     source: www.juntaelectoral.gba.gov.ar
-    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/concejales/2025027.pdf
+    source_url: "https://www.juntaelectoral.gba.gov.ar/\
+      escrutinio-definitivo-2025/concejales/2025027.pdf"
     mime: application/pdf
     notes: >-
       "Bancas Concejales" seat-allocation PDF for distrito 027. Reference
@@ -94,8 +116,11 @@ pba:
       Verified 200, application/pdf, 606289 bytes, this session.
     filename: concejales-bancas-027.pdf
   - id: pba/2025-consejeros-bancas-027
+    election_year: 2025
+    election_round: provinciales
     source: www.juntaelectoral.gba.gov.ar
-    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/consejeros/2025027.pdf
+    source_url: "https://www.juntaelectoral.gba.gov.ar/\
+      escrutinio-definitivo-2025/consejeros/2025027.pdf"
     mime: application/pdf
     notes: >-
       "Bancas Consejeros Esc." seat-allocation PDF for distrito 027.
@@ -104,8 +129,11 @@ pba:
       303704 bytes, this session.
     filename: consejeros-bancas-027.pdf
   - id: pba/2025-concejales-distri-027
+    election_year: 2025
+    election_round: provinciales
     source: www.juntaelectoral.gba.gov.ar
-    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/concejales_distri/2025027.pdf
+    source_url: "https://www.juntaelectoral.gba.gov.ar/\
+      escrutinio-definitivo-2025/concejales_distri/2025027.pdf"
     mime: application/pdf
     notes: >-
       "Distribucion de Bancas Concejales" PDF for distrito 027. Reference
@@ -113,8 +141,11 @@ pba:
       bytes, this session.
     filename: concejales-distribucion-027.pdf
   - id: pba/2025-consejeros-distri-027
+    election_year: 2025
+    election_round: provinciales
     source: www.juntaelectoral.gba.gov.ar
-    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/consejeros_distri/2025027.pdf
+    source_url: "https://www.juntaelectoral.gba.gov.ar/\
+      escrutinio-definitivo-2025/consejeros_distri/2025027.pdf"
     mime: application/pdf
     notes: >-
       "Distribucion de Bancas Consejeros Esc." PDF for distrito 027.
@@ -134,6 +165,8 @@ pba:
 # data) and `source_row_index` survive for review-queue lineage.
 fiscalizacion:
   - id: fiscalizacion/2025-coronel-rosales
+    election_year: 2025
+    election_round: legislativas
     source: local-file
     source_url: local://fiscalizacion/2025-coronel-rosales-mesas-procesadas.csv
     mime: text/csv

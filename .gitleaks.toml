@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore generated local state and public Supabase demo fixtures"
+paths = [
+  '''^apps/web/\.env\.local$''',
+  '''^apps/web/\.next/''',
+  '''^apps/web/e2e\.env$''',
+  '''^supabase/\.temp/''',
+]

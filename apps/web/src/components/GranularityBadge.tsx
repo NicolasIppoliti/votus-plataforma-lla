@@ -3,8 +3,10 @@ import type { Granularity } from "@/lib/results/types";
 
 export interface GranularityBadgeProps {
   granularity: Granularity;
-  /** Set when the requested (finer) level was unavailable (design.md D7). */
+  /** Actual coarser source-row level used for this figure. */
   degradedFrom?: Granularity;
+  /** Persisted requested level, when it differs from the actual row level. */
+  requestedGranularity?: Granularity;
   /**
    * Set when finer rows were SUMMED into this figure.
    *
@@ -24,6 +26,7 @@ export interface GranularityBadgeProps {
 export function GranularityBadge({
   granularity,
   degradedFrom,
+  requestedGranularity,
   summedFrom,
 }: GranularityBadgeProps): ReactNode {
   return (
@@ -31,9 +34,12 @@ export function GranularityBadge({
       <span>{granularity}</span>
       {degradedFrom ? (
         <span role="alert">
-          {" "}
-          — degraded from {degradedFrom} (the source published {degradedFrom}
-          totals, so nothing finer is available)
+          {` — degraded from ${degradedFrom} (the source published ${degradedFrom} totals, so nothing finer is available)`}
+        </span>
+      ) : null}
+      {requestedGranularity ? (
+        <span role="alert">
+          {` — requested granularity: ${requestedGranularity}; actual granularity: ${granularity}`}
         </span>
       ) : null}
       {summedFrom ? (
