@@ -1,11 +1,22 @@
 import type { ReactNode } from "react";
+import { UNMODELED_VOTE_REASON } from "@/domain/seat-allocation/source-coverage";
 import {
   THRESHOLD_POLICY,
   type AllocationResult,
   type DhondtAllocationResult,
   type HareAllocationResult,
   type SeatAward,
+  type UnmodeledVoteBreakdownEntry,
 } from "@/domain/seat-allocation/types";
+
+const UNMODELED_VOTE_REASON_LABEL: Record<
+  UnmodeledVoteBreakdownEntry["reason"],
+  string
+> = {
+  [UNMODELED_VOTE_REASON.OMITTED_NON_QUALIFYING_LISTS]:
+    "Omitted non-qualifying lists",
+  [UNMODELED_VOTE_REASON.OTHER_SOURCE_ROWS]: "Other source rows",
+};
 
 function formatNumber(value: number): string {
   if (Number.isInteger(value)) return value.toLocaleString("en-US");
@@ -283,6 +294,16 @@ export function AllocationEvidence({ result }: { result: AllocationResult }) {
           {formatNumber(coverage.listedVotes)} listed +{" "}
           {formatNumber(coverage.unmodeledVotes)} explicitly unmodeled.
         </p>
+        {coverage.unmodeledVoteBreakdown.length > 0 ? (
+          <ul aria-label="Unmodeled vote breakdown">
+            {coverage.unmodeledVoteBreakdown.map((entry) => (
+              <li key={entry.reason}>
+                {UNMODELED_VOTE_REASON_LABEL[entry.reason]}:{" "}
+                {formatNumber(entry.votes)} votes
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {coverageNote ? <p role="note">{coverageNote}</p> : null}
       </section>
       {result.level === "national" ? (

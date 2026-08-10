@@ -26,6 +26,9 @@
  * this is an unexercised statutory provision, not a missing feature.
  */
 
+import { UNMODELED_VOTE_REASON } from "./source-coverage";
+import type { UnmodeledVoteBreakdownEntry } from "./source-coverage";
+
 export interface HareQuotaListInput {
   listId: string;
   listName: string;
@@ -63,11 +66,13 @@ export type HareQuotaVoteTotals =
 
 export interface HareSourceCoverageInput {
   unmodeledVotes: number;
+  unmodeledVoteBreakdown: UnmodeledVoteBreakdownEntry[];
 }
 
 export interface HareSourceCoverage {
   listedVotes: number;
   unmodeledVotes: number;
+  unmodeledVoteBreakdown: UnmodeledVoteBreakdownEntry[];
   uncoveredVotes: number;
   complete: boolean;
 }
@@ -254,11 +259,53 @@ export function allocateHareQuota(input: HareQuotaInput): HareAllocationResult {
     if (input.sourceCoverage.unmodeledVotes < 0) {
       throw new HareQuotaValidationError("unmodeledVotes must be nonnegative");
     }
+    if (!Array.isArray(input.sourceCoverage.unmodeledVoteBreakdown)) {
+      throw new HareQuotaValidationError(
+        "unmodeledVoteBreakdown is required for source coverage",
+      );
+    }
+    let breakdownVotes = 0n;
+    const seenReasons = new Set<string>();
+    for (const entry of input.sourceCoverage.unmodeledVoteBreakdown) {
+      if (!Object.values(UNMODELED_VOTE_REASON).includes(entry.reason)) {
+        throw new HareQuotaValidationError(
+          `unsupported unmodeled vote reason: ${entry.reason}`,
+        );
+      }
+      if (seenReasons.has(entry.reason)) {
+        throw new HareQuotaValidationError(
+          `duplicate unmodeled vote reason: ${entry.reason}`,
+        );
+      }
+      seenReasons.add(entry.reason);
+      const exactVotes = exactInteger(
+        entry.votes,
+        `unmodeled votes for ${entry.reason}`,
+      );
+      if (entry.votes <= 0) {
+        throw new HareQuotaValidationError(
+          `unmodeled votes for ${entry.reason} must be positive`,
+        );
+      }
+      breakdownVotes += exactVotes;
+    }
+    if (
+      breakdownVotes !== BigInt(input.sourceCoverage.unmodeledVotes)
+    ) {
+      throw new HareQuotaValidationError(
+        `unmodeled vote breakdown sums to ${breakdownVotes} but ` +
+          `unmodeledVotes is ${input.sourceCoverage.unmodeledVotes}`,
+      );
+    }
   }
   const sourceCoverage = input.sourceCoverage
     ? {
         listedVotes,
         unmodeledVotes: input.sourceCoverage.unmodeledVotes,
+        unmodeledVoteBreakdown:
+          input.sourceCoverage.unmodeledVoteBreakdown.map((entry) => ({
+            ...entry,
+          })),
         uncoveredVotes:
           validVotes - listedVotes - input.sourceCoverage.unmodeledVotes,
         complete: true,

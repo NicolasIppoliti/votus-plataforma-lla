@@ -17,6 +17,7 @@ const ALLOCATION_INPUT = {
   blankVotes: 0,
   annulledVotes: 0,
   unmodeledVotes: 0,
+  unmodeledVoteBreakdown: [],
   seatsToFill: 9,
   isProjection: true,
   granularity: "mesa",
@@ -34,10 +35,11 @@ const HELD_OVER = Array.from({ length: 9 }, (_, index) => ({
 
 const OFFICIAL_PBA_2025_INPUT = {
   level: "pba_municipal",
-  totalVotes: 32_291,
-  blankVotes: 0,
-  annulledVotes: 0,
+  voteTotals: { kind: "valid_votes_only", validVotes: 32_291 },
   unmodeledVotes: 5_901,
+  unmodeledVoteBreakdown: [
+    { reason: "omitted_non_qualifying_lists", votes: 5_901 },
+  ],
   seatsToFill: 9,
   councilTotal: 18,
   isProjection: true,
@@ -67,7 +69,11 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toContain("Ley 5109 Arts. 109–110");
     expect(markup).not.toContain("D’Hondt");
     expect(markup).toContain("Valid-vote basis");
+    expect(markup).toContain(
+      "32,291 valid votes; total, blank, and annulled values were not reported",
+    );
     expect(markup).toContain("5,901 explicitly unmodeled");
+    expect(markup).toContain("Omitted non-qualifying lists: 5,901 votes");
     expect(markup).toContain("Seats being allocated");
     expect(markup).toContain("Hare cuociente");
     expect(markup).toMatch(/3,?587\.888888/);
@@ -81,6 +87,28 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toContain("overflow-x-auto");
   });
 
+  it("renders combined blank-and-annulled evidence without inventing either category", async () => {
+    const markup = await renderSimulation({
+      level: "pba_municipal",
+      voteTotals: {
+        kind: "combined_blank_and_annulled",
+        totalVotes: 39_273,
+        combinedBlankAndAnnulledVotes: 3_914,
+      },
+      unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
+      seatsToFill: 9,
+      councilTotal: 18,
+      isProjection: true,
+      granularity: "seccion",
+      lists: [{ listId: "A", listName: "Lista A", votes: 35_359 }],
+    });
+
+    expect(markup).toContain("3,914 combined blank and annulled");
+    expect(markup).not.toContain("3,914 blank");
+    expect(markup).not.toContain("3,914 annulled");
+  });
+
   it("renders halving iterations and statutory tie evidence", async () => {
     const halving = await renderSimulation({
       level: "pba_provincial",
@@ -88,6 +116,7 @@ describe("simulate page — complete statutory evidence", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 4,
       isProjection: true,
       granularity: "seccion",
@@ -108,6 +137,9 @@ describe("simulate page — complete statutory evidence", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 2,
+      unmodeledVoteBreakdown: [
+        { reason: "other_source_rows", votes: 2 },
+      ],
       seatsToFill: 4,
       isProjection: true,
       granularity: "seccion",
@@ -127,6 +159,7 @@ describe("simulate page — complete statutory evidence", () => {
       padron: 100_000,
       totalVotes: 16_000,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       threshold: { value: 3, basis: "padron" },
       seatsToFill: 2,
       isProjection: true,
@@ -157,6 +190,7 @@ describe("simulate page — complete statutory evidence", () => {
       padron: 1_000,
       totalVotes: 200,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       threshold: { value: 0, basis: "padron" },
       seatsToFill: 1,
       isProjection: true,
@@ -189,6 +223,7 @@ describe("simulate page — complete statutory evidence", () => {
       padron: 100_000,
       totalVotes: 1_000,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       threshold: { value: 3, basis: "padron" },
       seatsToFill: 2,
       isProjection: true,
@@ -206,6 +241,7 @@ describe("simulate page — complete statutory evidence", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 2,
       isProjection: true,
       granularity: "seccion",
@@ -222,6 +258,7 @@ describe("simulate page — complete statutory evidence", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 2,
       isProjection: false,
       granularity: "seccion",
@@ -307,6 +344,7 @@ describe("simulate page — the roster belongs to one statute", () => {
             padron: 20000,
             totalVotes: 10000,
             unmodeledVotes: 0,
+            unmodeledVoteBreakdown: [],
             threshold: { value: 3, basis: "padron" },
             isProjection: true,
             granularity: "distrito",
@@ -574,6 +612,7 @@ describe("simulate page — projection provenance boundary", () => {
       isProjection: true,
       seatsToFill: projection.seatsToFill,
       unmodeledVotes: projection.unmodeledVotes,
+      unmodeledVoteBreakdown: projection.unmodeledVoteBreakdown,
       annulledVotes: projection.annulledVotes,
       blankVotes: projection.blankVotes,
       totalVotes: projection.totalVotes,

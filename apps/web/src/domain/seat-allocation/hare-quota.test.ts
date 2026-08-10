@@ -254,7 +254,7 @@ describe("allocateHareQuota", () => {
         totalVotes: 39_273,
         combinedBlankAndAnnulledVotes: 3_914,
       },
-      sourceCoverage: { unmodeledVotes: 0 },
+      sourceCoverage: { unmodeledVotes: 0, unmodeledVoteBreakdown: [] },
       seatsToFill: 9,
       lists: [{ listId: "A", listName: "Lista A", votes: 35_359 }],
     } as unknown as HareQuotaInput;
@@ -269,7 +269,12 @@ describe("allocateHareQuota", () => {
   it("preserves a valid-votes-only source without coercing unknown totals to zero", () => {
     const input = {
       voteTotals: { kind: "valid_votes_only", validVotes: 32_291 },
-      sourceCoverage: { unmodeledVotes: 5_901 },
+      sourceCoverage: {
+        unmodeledVotes: 5_901,
+        unmodeledVoteBreakdown: [
+          { reason: "omitted_non_qualifying_lists", votes: 5_901 },
+        ],
+      },
       seatsToFill: 9,
       lists: [
         { listId: "lla", listName: "LLA", votes: 14_550 },
@@ -288,7 +293,7 @@ describe("allocateHareQuota", () => {
   it("refuses omitted source rows that are presented as complete coverage", () => {
     const input = {
       voteTotals: { kind: "valid_votes_only", validVotes: 32_291 },
-      sourceCoverage: { unmodeledVotes: 0 },
+      sourceCoverage: { unmodeledVotes: 0, unmodeledVoteBreakdown: [] },
       seatsToFill: 9,
       lists: [
         { listId: "lla", listName: "LLA", votes: 14_550 },
@@ -343,7 +348,7 @@ describe("allocateHareQuota", () => {
         totalVotes: TOTAL_VOTES_2023,
         combinedBlankAndAnnulledVotes: BLANK_AND_ANNULLED_2023,
       },
-      sourceCoverage: { unmodeledVotes: 0 },
+      sourceCoverage: { unmodeledVotes: 0, unmodeledVoteBreakdown: [] },
       seatsToFill: 9,
       councilTotal: 18,
       lists: [
@@ -391,7 +396,12 @@ describe("allocateHareQuota", () => {
         kind: "valid_votes_only",
         validVotes: VALID_VOTES_2025,
       },
-      sourceCoverage: { unmodeledVotes: 5_901 },
+      sourceCoverage: {
+        unmodeledVotes: 5_901,
+        unmodeledVoteBreakdown: [
+          { reason: "omitted_non_qualifying_lists", votes: 5_901 },
+        ],
+      },
       seatsToFill: 9,
       councilTotal: 18,
       lists: [
@@ -414,6 +424,9 @@ describe("allocateHareQuota", () => {
     expect(result.sourceCoverage).toEqual({
       listedVotes: 26_390,
       unmodeledVotes: 5_901,
+      unmodeledVoteBreakdown: [
+        { reason: "omitted_non_qualifying_lists", votes: 5_901 },
+      ],
       uncoveredVotes: 0,
       complete: true,
     });

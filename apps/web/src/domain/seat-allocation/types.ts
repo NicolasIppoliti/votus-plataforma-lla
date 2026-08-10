@@ -7,6 +7,8 @@ import type {
   pbaProvincialInputSchema,
 } from "./schemas";
 import { ALLOCATION_VOTE_TOTALS_KIND } from "./schemas";
+import type { UnmodeledVoteBreakdownEntry } from "./source-coverage";
+export type { UnmodeledVoteBreakdownEntry } from "./source-coverage";
 
 /**
  * Public type surface for the seat-allocation domain (design.md D3).
@@ -73,6 +75,7 @@ export interface VoteCoverage {
   basisVotes: number;
   listedVotes: number;
   unmodeledVotes: number;
+  unmodeledVoteBreakdown: UnmodeledVoteBreakdownEntry[];
   uncoveredVotes: number;
   complete: boolean;
 }

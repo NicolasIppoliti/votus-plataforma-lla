@@ -9,6 +9,7 @@ const COVERAGE_INPUT = {
   blankVotes: 0,
   annulledVotes: 0,
   unmodeledVotes: 0,
+  unmodeledVoteBreakdown: [],
   seatsToFill: 2,
   lists: [{ listId: "A", listName: "Lista A", votes: 90 }],
 };
@@ -57,6 +58,7 @@ describe("allocateSeats", () => {
         combinedBlankAndAnnulledVotes: 3_914,
       },
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 9,
       councilTotal: 18,
       isProjection: false,
@@ -80,6 +82,9 @@ describe("allocateSeats", () => {
       level: "pba_municipal",
       voteTotals: { kind: "valid_votes_only", validVotes: 32_291 },
       unmodeledVotes: 5_901,
+      unmodeledVoteBreakdown: [
+        { reason: "omitted_non_qualifying_lists", votes: 5_901 },
+      ],
       seatsToFill: 9,
       councilTotal: 18,
       isProjection: false,
@@ -95,14 +100,49 @@ describe("allocateSeats", () => {
     ) as unknown as {
       voteTotals: unknown;
       totalVotes?: number;
-      coverage: { complete: boolean; unmodeledVotes: number };
+      coverage: {
+        complete: boolean;
+        unmodeledVotes: number;
+        unmodeledVoteBreakdown: unknown;
+      };
     };
     expect(result.voteTotals).toEqual(input.voteTotals);
     expect(result.totalVotes).toBeUndefined();
     expect(result.coverage).toMatchObject({
       complete: true,
       unmodeledVotes: 5_901,
+      unmodeledVoteBreakdown: [
+        { reason: "omitted_non_qualifying_lists", votes: 5_901 },
+      ],
     });
+  });
+
+  it("requires an explicit reason breakdown even when unmodeled votes are zero", () => {
+    const input = {
+      ...COVERAGE_INPUT,
+      lists: [{ listId: "A", listName: "Lista A", votes: 100 }],
+      isProjection: true,
+    };
+    Reflect.deleteProperty(input, "unmodeledVoteBreakdown");
+
+    expect(() => allocateSeats(input as unknown as AllocationInput)).toThrow(
+      /unmodeledVoteBreakdown/i,
+    );
+  });
+
+  it("rejects a reason breakdown whose sum differs from unmodeledVotes", () => {
+    const input = {
+      ...COVERAGE_INPUT,
+      unmodeledVotes: 10,
+      unmodeledVoteBreakdown: [
+        { reason: "other_source_rows", votes: 9 },
+      ],
+      isProjection: true,
+    };
+
+    expect(() => allocateSeats(input as unknown as AllocationInput)).toThrow(
+      /breakdown.*9.*unmodeledVotes.*10/i,
+    );
   });
 
   it("rejects positive MAYORIA evidence with a typed actionable error", () => {
@@ -122,6 +162,7 @@ describe("allocateSeats", () => {
     const input = {
       ...COVERAGE_INPUT,
       unmodeledVotes: 1,
+      unmodeledVoteBreakdown: [{ reason: "other_source_rows", votes: 1 }],
       isProjection: false,
       lists: [{ listId: "A", listName: "Lista A", votes: 100 }],
     };
@@ -150,6 +191,7 @@ describe("allocateSeats", () => {
       basisVotes: 100,
       listedVotes: 90,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       uncoveredVotes: 10,
       complete: false,
     });
@@ -161,6 +203,7 @@ describe("allocateSeats", () => {
       padron: 1_000,
       totalVotes: 500,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       threshold: { value: 4, basis: "padron" },
       seatsToFill: 1,
       isProjection: false,
@@ -185,6 +228,9 @@ describe("allocateSeats", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 40,
+      unmodeledVoteBreakdown: [
+        { reason: "other_source_rows", votes: 40 },
+      ],
       seatsToFill: 4,
       isProjection: false,
       lists: [{ listId: "A", listName: "Lista A", votes: 60 }],
@@ -203,6 +249,7 @@ describe("allocateSeats", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 4,
       isProjection: false,
       lists: [
@@ -223,6 +270,7 @@ describe("allocateSeats", () => {
       padron: 10_000,
       totalVotes: 9_000,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       threshold: { value: 3, basis: "padron" },
       seatsToFill: 3,
       isProjection: false,
@@ -245,6 +293,7 @@ describe("allocateSeats", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 4,
       isProjection: false,
       lists: [
@@ -269,6 +318,7 @@ describe("allocateSeats", () => {
       blankVotes: 0,
       annulledVotes: 0,
       unmodeledVotes: 0,
+      unmodeledVoteBreakdown: [],
       seatsToFill: 4,
       isProjection: true,
       lists: [

@@ -13,6 +13,9 @@ export const illegalHareInput: HareInput = {
   blankVotes: 0,
   annulledVotes: 0,
   unmodeledVotes: 100,
+  unmodeledVoteBreakdown: [
+    { reason: "other_source_rows", votes: 100 },
+  ],
   seatsToFill: 9,
   isProjection: false,
   lists: [],
@@ -27,6 +30,7 @@ export const illegalDhondtInput: DhondtInput = {
   padron: 100,
   totalVotes: 0,
   unmodeledVotes: 0,
+  unmodeledVoteBreakdown: [],
   threshold: { value: 3, basis: "padron" },
   seatsToFill: 5,
   isProjection: false,

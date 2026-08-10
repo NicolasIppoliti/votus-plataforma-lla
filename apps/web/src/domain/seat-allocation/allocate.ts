@@ -33,6 +33,7 @@ function reconcileCoverage(
   basisVotes: number,
   listedVotes: number,
   unmodeledVotes: number,
+  unmodeledVoteBreakdown: VoteCoverage["unmodeledVoteBreakdown"],
   isProjection: boolean,
 ): VoteCoverage {
   const uncoveredVotes = basisVotes - listedVotes - unmodeledVotes;
@@ -50,6 +51,7 @@ function reconcileCoverage(
     basisVotes,
     listedVotes,
     unmodeledVotes,
+    unmodeledVoteBreakdown,
     uncoveredVotes,
     complete: uncoveredVotes === 0,
   };
@@ -85,6 +87,7 @@ export function allocateSeats(rawInput: AllocationInput): AllocationResult {
       input.totalVotes,
       listedVotes,
       input.unmodeledVotes,
+      input.unmodeledVoteBreakdown,
       isProjection,
     );
     const result = allocateDhondt({
@@ -123,6 +126,7 @@ export function allocateSeats(rawInput: AllocationInput): AllocationResult {
     validVotes,
     listedVotes,
     input.unmodeledVotes,
+    input.unmodeledVoteBreakdown,
     isProjection,
   );
 
@@ -131,7 +135,12 @@ export function allocateSeats(rawInput: AllocationInput): AllocationResult {
       ...voteTotals,
     },
     ...(coverage.complete
-      ? { sourceCoverage: { unmodeledVotes: input.unmodeledVotes } }
+      ? {
+          sourceCoverage: {
+            unmodeledVotes: input.unmodeledVotes,
+            unmodeledVoteBreakdown: input.unmodeledVoteBreakdown,
+          },
+        }
       : {}),
     ...(input.mayoriaVotes !== undefined
       ? { mayoriaVotes: input.mayoriaVotes }
