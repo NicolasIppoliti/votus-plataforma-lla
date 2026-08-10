@@ -1,5 +1,9 @@
 # provenance-display
 
+> **Historical snapshot:** This archived copy records the requirement state when this change was
+> archived. The current canonical specification is
+> [`openspec/specs/provenance-display/spec.md`](../../../../../specs/provenance-display/spec.md).
+
 Every figure shown to an operator MUST be traceable to an archived source with its sha256,
 carry a visible granularity indicator, and the tool MUST carry a persistent "not an official
 electoral source" disclaimer.
