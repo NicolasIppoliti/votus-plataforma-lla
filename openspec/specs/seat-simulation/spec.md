@@ -54,23 +54,24 @@ not reach the cuociente MUST receive zero seats from this step.
 #### Scenario: List below the cuociente gets no representation
 - **GIVEN** a list whose vote total is below the computed cuociente electoral
 - **WHEN** the Hare allocation step runs
-- **THEN** the system MUST assign that list zero seats from the initial cuociente division
-- **AND** MUST still carry that list forward for the largest-remainder step if it has a
-  nonzero remainder
+- **THEN** the system MUST assign that list zero seats
+- **AND** MUST exclude that list from the largest-remainder step because Ley 5109 Art.
+  109(b) states that lists below the cuociente receive no representation
 
 ### Requirement: Largest-remainder top-up for PBA levels
-The system MUST allocate any seats remaining after the initial cuociente division per Ley
-5109 Art. 109(c): one additional seat to each list in descending order of remainder (votes
-minus seats-already-awarded times cuociente) until all seats are assigned. Where two lists
-have an equal remainder, the system MUST award the seat to the list with the higher raw
-vote total — this is a statutory rule (Art. 109(c)), not a simulation convention, and MUST
-NOT be labelled as one in output or documentation.
+The system MUST allocate any seats remaining after the initial cuociente division among
+lists that reached the cuociente, per Ley 5109 Art. 109(c): one additional seat to each
+eligible list in descending order of remainder (votes minus seats-already-awarded times
+cuociente) until all seats are assigned. Where two eligible lists have an equal remainder,
+the system MUST award the seat to the list with the higher raw vote total — this is a
+statutory rule (Art. 109(c)), not a simulation convention, and MUST NOT be labelled as one
+in output or documentation.
 
-#### Scenario: Remaining seats go to the largest remainders
-- **GIVEN** seats remain unallocated after the initial cuociente division across all lists
+#### Scenario: Remaining seats go to the largest eligible remainders
+- **GIVEN** seats remain unallocated after the initial cuociente division across eligible lists
 - **WHEN** the largest-remainder step runs
-- **THEN** the system MUST award one additional seat per list in descending remainder order
-  until no seats remain
+- **THEN** the system MUST award one additional seat per eligible list in descending
+  remainder order until no seats remain
 - **AND** MUST record each list's remainder value used in that ordering
 
 #### Scenario: Equal remainders resolve deterministically by vote total, per statute
