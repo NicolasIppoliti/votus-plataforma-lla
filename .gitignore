@@ -18,10 +18,13 @@ apps/web/node_modules/
 *.tsbuildinfo
 
 # Env files with real secrets (never commit; see
-# apps/web/environment-variables.example.txt for the placeholder template)
+# apps/web/environment-variables.example.txt for the placeholder template).
+# Matched by prefix rather than by the three known suffixes: a real
+# production credential landed in `.env.production-credentials`, which
+# `.env`/`.env.local`/`.env.*.local` all failed to cover. The template is a
+# `.txt`, so it stays visible.
 .env
-.env.local
-.env.*.local
+.env*
 apps/web/e2e.env
 
 # Vercel link state (project id / org id — machine local)
