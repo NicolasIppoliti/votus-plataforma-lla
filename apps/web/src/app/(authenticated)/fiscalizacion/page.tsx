@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { JuxtapositionBadge } from "@/components/JuxtapositionBadge";
 import type { ElectionFigure } from "@/components/JuxtapositionBadge";
@@ -28,13 +29,22 @@ import {
 } from "@/lib/results/granularity";
 import { pinnedCategoryId, servedJurisdictionId } from "@/lib/results/party-family";
 import type { Coverage, SourceRef } from "@/lib/results/types";
+import {
+  createResultsCoverageRepository,
+  type CoverageResult,
+} from "@/lib/results/coverage";
+import {
+  createResultsExplorationRepository,
+  normalizeExplorationParams,
+  type ExplorationFacets,
+} from "@/lib/results/exploration";
 
 /**
- * fiscalizacion-analysis spec, Requirement 8. The 26 Oct 2025 fiscalización
- * sheet's sourced coverage (design.md D9.2): 93 of 153 Coronel Rosales
- * mesas, exactly the mesas where the party had a fiscal present — never a
- * random sample. This is the ONLY coverage value this route ever supplies;
- * the route does not accept an operator-controlled coverage override.
+ * Legacy tally-view denominator. The production navigation and cold-start
+ * route no longer use this fixed figure: `renderCoverageExplorer` derives its
+ * denominator from official rows in the selected scope through migration 0021.
+ * It remains only for old explicit UUID deep links to the pre-existing tally
+ * comparison, whose contract still requires the original non-random label.
  */
 export const FISCALIZACION_COVERAGE: Coverage = {
   observedUnits: 93,
@@ -450,6 +460,193 @@ export function partyShare(
     status: "ok",
     sharePercent: Number(((partyVotes / totalVotes) * 100).toFixed(2)),
   };
+}
+
+interface CoverageFormSelection {
+  electionId?: string;
+  categoryId?: string;
+  distritoCode?: string;
+  seccionCode?: string;
+}
+
+function coverageOptionLabel(code: string, name: string | null): string {
+  return name ? `${code} — ${name}` : code;
+}
+
+function CoverageExplorerForm({
+  facets,
+  selected,
+}: {
+  facets: ExplorationFacets;
+  selected: CoverageFormSelection;
+}): ReactNode {
+  return (
+    <form action="/fiscalizacion" method="get">
+      <label htmlFor="coverage-election">Election</label>{" "}
+      <select id="coverage-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+        <option value="">Choose an election</option>
+        {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>{" "}
+      <label htmlFor="coverage-category">Category</label>{" "}
+      <select id="coverage-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+        <option value="">Choose a category</option>
+        {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+      </select>{" "}
+      <label htmlFor="coverage-distrito">Distrito</label>{" "}
+      <select id="coverage-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+        <option value="">Choose a distrito</option>
+        {facets.distritos.map((option) => <option key={option.code} value={option.code}>
+          {coverageOptionLabel(option.code, option.name)}
+        </option>)}
+      </select>{" "}
+      <label htmlFor="coverage-seccion">Sección</label>{" "}
+      <select id="coverage-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+        <option value="">Choose a sección</option>
+        {facets.secciones.map((option) => <option key={option.code} value={option.code}>
+          {coverageOptionLabel(option.code, option.name)}
+        </option>)}
+      </select>{" "}
+      <button type="submit">Show coverage</button>
+    </form>
+  );
+}
+
+function coverageCounts(counts: Record<string, number>): string {
+  return Object.entries(counts).map(([reason, count]) => `${reason}: ${count}`).join(", ");
+}
+
+function coverageExclusions(result: CoverageResult): ReactNode {
+  if (result.status !== "ok" || result.exclusions.length === 0) return null;
+  return (
+    <ul aria-label="Coverage exclusions">
+      {result.exclusions.map((entry) => (
+        <li key={entry.reason}>{entry.reason}: {entry.rows} row(s), {entry.votes} vote(s)</li>
+      ))}
+    </ul>
+  );
+}
+
+async function renderCoverageExplorer(
+  params: Record<string, string | string[] | undefined>,
+): Promise<ReactNode> {
+  const repeated = repeatedParams(params);
+  if (repeated.length > 0) {
+    return <main><h1>Fiscalización coverage</h1><p role="alert">
+      Refused: repeated query parameters cannot identify one scope ({repeated.join(", ")}).
+    </p></main>;
+  }
+  const electionId = stringParam(params, "electionId");
+  const categoryId = stringParam(params, "categoryId");
+  const rawDistritoCode = stringParam(params, "distritoCode");
+  const rawSeccionCode = stringParam(params, "seccionCode");
+  const normalized = normalizeExplorationParams({
+    ...(rawDistritoCode ? { distritoCode: rawDistritoCode } : {}),
+    ...(rawSeccionCode ? { seccionCode: rawSeccionCode } : {}),
+  });
+  if (normalized.status === "invalid") {
+    return <main><h1>Fiscalización coverage</h1><p role="alert">
+      Refused: {normalized.reason}. {coverageCounts(normalized.counts)}.
+    </p></main>;
+  }
+  const selected: CoverageFormSelection = {
+    ...(electionId ? { electionId } : {}), ...(categoryId ? { categoryId } : {}),
+    ...(normalized.value.distritoCode ? { distritoCode: normalized.value.distritoCode } : {}),
+    ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
+  };
+  let client;
+  let facets;
+  try {
+    client = await createSupabaseServerClient();
+    facets = await createResultsExplorationRepository(client).facets(selected);
+  } catch (error) {
+    return <main><h1>Fiscalización coverage</h1><p role="alert">
+      Refused: {error instanceof Error ? error.message : String(error)}
+    </p></main>;
+  }
+  const form = <CoverageExplorerForm facets={facets} selected={selected} />;
+  const distritoCode = normalized.value.distritoCode;
+  const seccionCode = normalized.value.seccionCode;
+  if (!electionId || !categoryId || !distritoCode || !seccionCode) {
+    return <main><h1>Fiscalización coverage</h1>{form}<p role="status">
+      Choose the available election, category, distrito and sección. The resulting URL is reusable.
+    </p></main>;
+  }
+  let result;
+  try {
+    result = await createResultsCoverageRepository(client).coverage({
+      electionId, categoryId, distritoCode, seccionCode,
+    });
+  } catch (error) {
+    return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+      Refused: {error instanceof Error ? error.message : String(error)}
+    </p></main>;
+  }
+  if (result.status !== "ok") {
+    return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+      Refused: {result.reason}. {coverageCounts(result.counts)}.
+    </p></main>;
+  }
+  const archiveIds = [...result.provenance.officialArchiveEntryIds,
+    ...result.provenance.fiscalizacionArchiveEntryIds];
+  let sources: SourceRef[];
+  try {
+    const provenance = await fetchSourceRefs(client, archiveIds);
+    if (provenance.missing.length > 0 || provenance.sources.length !== archiveIds.length) {
+      return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+        Refused: coverage provenance is incomplete ({provenance.missing.join(", ")}).
+      </p></main>;
+    }
+    sources = provenance.sources;
+  } catch (error) {
+    return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+      Refused: {error instanceof Error ? error.message : String(error)}
+    </p></main>;
+  }
+  const uncovered = result.mesas.filter((mesa) => !mesa.covered).length;
+  return (
+    <main>
+      <h1>Fiscalización coverage</h1>
+      {form}
+      <p role="note">
+        Uncovered means no fiscalización presence, not zero or missing official votes.
+        Official results remain separate.
+      </p>
+      <p role="status">
+        {result.mesasCoverage.observedUnits} covered of {result.mesasCoverage.denominatorUnits} official mesas;
+        {" "}{uncovered} uncovered. This is not a random sample.
+      </p>
+      <p>Scope: election {result.electionYear} {result.electionRound}, distrito {result.distritoCode},
+        sección {result.seccionCode}. Coverage is {result.isRandomSample ? "random" : "not a random sample"}.</p>
+      <h2>Mesas</h2>
+      <table>
+        <caption>Fiscalización presence by official mesa</caption>
+        <thead><tr><th scope="col">Mesa</th><th scope="col">Escuela</th><th scope="col">Coverage</th><th scope="col">Official result</th></tr></thead>
+        <tbody>{result.mesas.map((mesa) => <tr key={`${mesa.circuitoCode ?? "unknown"}-${mesa.code}`}>
+          <th scope="row">{mesa.code}</th>
+          <td>{mesa.establecimientoName ?? mesa.establecimientoCode ?? "School identity unavailable"}</td>
+          <td>{mesa.covered ? "Fiscal present" : "No fiscal present"}</td>
+          <td>{mesa.officialResultHref ? <Link href={mesa.officialResultHref}>View official votes</Link>
+            : "Official-result link unavailable: complete source identity is absent"}</td>
+        </tr>)}</tbody>
+      </table>
+      <h2>Escuelas</h2>
+      {result.escuelas.status === "source_unavailable" ? <p role="alert">
+        {result.escuelas.reason}. {result.escuelas.exclusions.map((entry) =>
+          `${entry.reason}: ${entry.rows} row(s), ${entry.votes} vote(s)`).join(", ")}.
+      </p> : <ul aria-label="School coverage">{result.escuelas.items.map((school) =>
+        <li key={`${school.circuitoCode}-${school.code}`}>
+        Circuito {school.circuitoCode} — {school.name ?? school.code}: {school.observedUnits} of
+        {" "}{school.denominatorUnits} mesas covered; not a random sample. {" "}
+        <Link href={school.officialResultHref}>View school official votes</Link>
+      </li>)}</ul>}
+      {coverageExclusions(result)}
+      <p role="note">Source audit: {result.sourceAudit.map((entry) =>
+        `${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`).join(", ")}.</p>
+      <p role="note">Denominator audit: {result.denominatorAudit.map((entry) =>
+        `${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`).join(", ")}.</p>
+      <ProvenanceLink sources={sources} />
+    </main>
+  );
 }
 
 
@@ -1150,10 +1347,9 @@ export async function loadOfficialComparison(
  * reaches data ONLY through `repository.queryFiscalizacion()` via
  * `loadFiscalizacionView`.
  */
-export default async function FiscalizacionPage({
-  searchParams,
-}: FiscalizacionPageProps): Promise<ReactNode> {
-  const params = await searchParams;
+async function renderLegacyFiscalizacionPage(
+  params: Record<string, string | string[] | undefined>,
+): Promise<ReactNode> {
 
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
@@ -1410,4 +1606,17 @@ export default async function FiscalizacionPage({
     officialMissingProvenance,
     ...(officialExcluded ? { officialExcluded } : {}),
   });
+}
+
+export default async function FiscalizacionPage({
+  searchParams,
+}: FiscalizacionPageProps): Promise<ReactNode> {
+  const params = await searchParams;
+  // The pre-existing tally comparison remains reachable only through its
+  // explicit UUID-shaped deep link. The production navigation and cold start
+  // enter the coverage explorer instead.
+  if (stringParam(params, "jurisdictionId") !== undefined) {
+    return renderLegacyFiscalizacionPage(params);
+  }
+  return renderCoverageExplorer(params);
 }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -43,6 +44,20 @@ describe("parallel scenario ownership", () => {
     for (const [index, left] of naturalKeys.entries())
       for (const right of naturalKeys.slice(index + 1))
         expect(left.filter((key) => right.includes(key))).toEqual([]);
+  });
+
+  it("uses valid normalized administrative codes for the coverage journey", () => {
+    const identity = resultScenarioIdentity("e2e/fiscalizacion.spec.ts");
+
+    expect(identity.distritoCode).toMatch(/^\d{2}$/);
+    expect(identity.seccionCode).toMatch(/^\d{3}$/);
+  });
+
+  it("grants the service-role fixture every table it mutates", () => {
+    const grants = readFileSync(new URL("./service-role-grants.sql", import.meta.url), "utf8");
+
+    for (const table of ["category", "jurisdiction", "election", "archive_entry", "result_row"])
+      expect(grants).toContain(`public.${table}`);
   });
 
   it("fails closed on unknown and duplicate scenario keys", () => {

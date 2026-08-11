@@ -29,6 +29,7 @@ let sourceRefs: SourceRef[] = [];
 /** When set, the mocked repository refuses the fiscalización query. */
 let refuseQueryWith: string | null = null;
 let refuseSourceReadWith: string | null = null;
+let coverageRpcResults: Record<string, unknown> = {};
 
 // Restored after EVERY test: `process.env` and `repositoryRows` are shared
 // module state, so leaving them set makes results depend on execution order.
@@ -40,10 +41,13 @@ afterEach(() => {
   sourceRefs = [];
   refuseQueryWith = null;
   refuseSourceReadWith = null;
+  coverageRpcResults = {};
 });
 
 vi.mock("@/lib/supabase/server-client", () => ({
-  createSupabaseServerClient: () => Promise.resolve({}),
+  createSupabaseServerClient: () => Promise.resolve({
+    rpc: (name: string) => Promise.resolve({ data: coverageRpcResults[name], error: null }),
+  }),
 }));
 
 vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
@@ -878,12 +882,73 @@ describe("fiscalizacion page — the real entry point", () => {
     expect(markup).not.toContain("no row resolved to a curated party");
   });
 
-  it("test_the_page_asks_for_the_parameters_it_needs", async () => {
+  it("test_the_page_offers_source_backed_coverage_selectors_from_a_cold_start", async () => {
+    coverageRpcResults = { results_exploration_facets: {
+      status: "ok", elections: [{ id: "e-2025", year: 2025, round: "legislativas",
+        label: "2025 legislativas" }], categories: [], distritos: [], secciones: [],
+      circuitos: [], establecimientos: [], mesas: [], available_levels: [],
+    } };
     const markup = renderToStaticMarkup(
       (await FiscalizacionPage({ searchParams: Promise.resolve({}) })) as ReactElement,
     );
 
-    expect(markup).toContain("electionId");
+    expect(markup).toContain("Fiscalización coverage");
+    expect(markup).toContain("Choose an election");
+    expect(markup).not.toContain("Provide <code>electionId</code>");
+  });
+
+  it("test_the_production_entry_renders_coverage_and_official_result_links", async () => {
+    sourceRefs = [
+      { archiveEntryId: "national/2025-legislativas", sha256: "a".repeat(64),
+        url: "https://example.test/official", fetchedAt: "2026-08-10T00:00:00Z" },
+      { archiveEntryId: "fiscalizacion/runtime", sha256: "b".repeat(64),
+        url: "https://example.test/internal", fetchedAt: "2026-08-10T00:00:00Z" },
+    ];
+    coverageRpcResults = {
+      results_exploration_facets: { status: "ok", elections: [], categories: [], distritos: [],
+        secciones: [], circuitos: [], establecimientos: [], mesas: [], available_levels: [] },
+      results_exploration_coverage: {
+        status: "ok", source_kind: "fiscalizacion", is_random_sample: false,
+        election_year: 2025, election_round: "legislativas", distrito_code: "02", seccion_code: "027",
+        mesas_coverage: { observed_units: 1, denominator_units: 2, is_random_sample: false },
+        mesas: [
+          { code: 1, circuito_code: "00001", establecimiento_code: "E1",
+            establecimiento_name: "Fixture school", covered: true,
+            official_result_href: "/drilldown?mesaCode=1" },
+          { code: 2, circuito_code: "00002", establecimiento_code: "E1",
+            establecimiento_name: "Other fixture school", covered: false,
+            official_result_href: "/drilldown?mesaCode=2" },
+        ],
+        escuelas: { status: "available", exclusions: [], items: [
+          { circuito_code: "00001", code: "E1", name: "Fixture school",
+            observed_units: 1, denominator_units: 1, is_random_sample: false,
+            official_archive_entry_ids: ["national/2025-legislativas"] },
+          { circuito_code: "00002", code: "E1", name: "Other fixture school",
+            observed_units: 0, denominator_units: 1, is_random_sample: false,
+            official_archive_entry_ids: ["national/2025-legislativas"] },
+        ] },
+        source_audit: [{ kind: "fiscalizacion", rows: 1, votes: 999, mesas: 1 }],
+        denominator_audit: [{ kind: "official", rows: 2, votes: 260, mesas: 2 }], exclusions: [],
+        provenance: { official_archive_entry_ids: ["national/2025-legislativas"],
+          fiscalizacion_archive_entry_ids: ["fiscalizacion/runtime"] },
+      },
+    };
+    const markup = renderToStaticMarkup((await FiscalizacionPage({ searchParams: Promise.resolve({
+      electionId: "20000000-0000-0000-0000-000000000001",
+      categoryId: "20000000-0000-0000-0000-000000000003",
+      distritoCode: "02", seccionCode: "027",
+    }) })) as ReactElement);
+
+    expect(markup).toContain("1 covered of 2 official mesas");
+    expect(markup).toContain("1 uncovered");
+    expect(markup).toContain("not a random sample");
+    expect(markup).toContain("Circuito 00001 — Fixture school: 1 of 1 mesas covered");
+    expect(markup).toContain("Circuito 00002 — Other fixture school: 0 of 1 mesas covered");
+    expect(markup).toContain("circuitoCode=00001&amp;establecimientoCode=E1&amp;level=establecimiento");
+    expect(markup).toContain("circuitoCode=00002&amp;establecimientoCode=E1&amp;level=establecimiento");
+    expect(markup).toContain("href=\"/drilldown?electionId=");
+    expect(markup).toContain("mesaCode=2");
+    expect(markup).toContain("Uncovered means no fiscalización presence, not zero or missing official votes");
   });
 });
 
