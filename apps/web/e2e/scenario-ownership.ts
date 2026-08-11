@@ -23,6 +23,7 @@ export interface ResultScenarioIdentity {
   categoryId: string;
   categoryName: string;
   jurisdictionId: string;
+  jurisdictionIds: string[];
   distritoCode: string;
   seccionCode: string;
   electionIds: string[];
@@ -71,14 +72,22 @@ export function resultScenarioIdentity(spec: string): ResultScenarioIdentity {
   const electionRounds = electionYears.map((year) => `${prefix}-round-${year}`);
   const archiveEntryIds = scenario === "comparison"
     ? [`${prefix}-result-2023`, `${prefix}-result-2025`]
-    : [`${prefix}-result-official`, `${prefix}-result-fiscalizacion`];
+    : scenario === "fiscalizacion"
+      ? [`${prefix}-result-official-covered`, `${prefix}-result-fiscalizacion`,
+        `${prefix}-result-official-uncovered`]
+      : [`${prefix}-result-official`, `${prefix}-result-fiscalizacion`];
+  const jurisdictionId = deterministicUuid(`${prefix}-jurisdiction`);
+  const jurisdictionIds = scenario === "fiscalizacion"
+    ? [jurisdictionId, deterministicUuid(`${prefix}-jurisdiction-uncovered`)]
+    : [jurisdictionId];
   return {
     scenario,
     categoryId: deterministicUuid(`${prefix}-category`),
     categoryName: `${prefix}-synthetic-category`,
-    jurisdictionId: deterministicUuid(`${prefix}-jurisdiction`),
-    distritoCode: `${prefix}-distrito`,
-    seccionCode: `${prefix}-seccion`,
+    jurisdictionId,
+    jurisdictionIds,
+    distritoCode: scenario === "fiscalizacion" ? "82" : `${prefix}-distrito`,
+    seccionCode: scenario === "fiscalizacion" ? "827" : `${prefix}-seccion`,
     electionIds,
     electionYears,
     electionRounds,
@@ -88,15 +97,22 @@ export function resultScenarioIdentity(spec: string): ResultScenarioIdentity {
 
 export function planResultNaturalKeys(spec: string): string[] {
   const identity = resultScenarioIdentity(spec);
-  const sourceKinds = identity.scenario === "comparison"
-    ? ["official", "official"] : ["official", "fiscalizacion"];
+  const sourceKinds = identity.scenario === "comparison" ? ["official", "official"]
+    : identity.scenario === "fiscalizacion" ? ["official", "fiscalizacion", "official"]
+      : ["official", "fiscalizacion"];
+  const resultJurisdictions = identity.scenario === "fiscalizacion"
+    ? [identity.jurisdictionIds[0]!, identity.jurisdictionIds[0]!, identity.jurisdictionIds[1]!]
+    : identity.archiveEntryIds.map(() => identity.jurisdictionId);
   return [
     `category:${identity.categoryName}`,
-    `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|null|null|null`,
+    ...identity.jurisdictionIds.map((_, index) =>
+      identity.scenario === "fiscalizacion"
+        ? `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|0000${index + 1}|E1|${index + 1}`
+        : `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|null|null|null`),
     ...identity.electionYears.map((year, index) =>
       `election:${year}|${identity.electionRounds[index]}`),
     ...identity.archiveEntryIds.map((archiveId, index) =>
-      `result:${archiveId}|${identity.jurisdictionId}|${identity.categoryId}|null|${sourceKinds[index]}`),
+      `result:${archiveId}|${resultJurisdictions[index]}|${identity.categoryId}|null|${sourceKinds[index]}`),
   ];
 }
 
@@ -104,8 +120,10 @@ export function planResultCleanup(spec: string): string[] {
   const identity = resultScenarioIdentity(spec);
   return [
     `category:${identity.categoryId}`,
-    `jurisdiction:${identity.jurisdictionId}`,
+    ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
     ...identity.electionIds.map((id) => `election:${id}`),
+    ...(identity.scenario === "fiscalizacion"
+      ? identity.archiveEntryIds.map((id) => `archive_entry:${id}`) : []),
     ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
   ];
 }

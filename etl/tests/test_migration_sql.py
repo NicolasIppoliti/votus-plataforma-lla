@@ -285,6 +285,8 @@ def test_0020_results_exploration_rpcs_are_authenticated_security_invokers() -> 
         assert f"grant execute on function {function}" in sql
     assert " to authenticated" in sql
     assert " to anon" not in sql
+
+
 def test_0020_official_results_preserve_identity_and_source_isolation() -> None:
     sql = _sql("0020_results_exploration.sql")
     official = sql.split("create or replace function results_exploration_official", 1)[1]
@@ -310,10 +312,15 @@ def test_0020_official_rpc_requires_complete_selector_parent_chains() -> None:
     sql = _sql("0020_results_exploration.sql")
     official = sql.split("create or replace function results_exploration_official", 1)[1]
 
-    for guard in ("missing_parent_selector", "p_circuito_code is not null and p_seccion_code is null",
-                  "p_establecimiento_code is not null and p_circuito_code is null",
-                  "p_mesa_code is not null and p_establecimiento_code is null"):
+    for guard in (
+        "missing_parent_selector",
+        "p_circuito_code is not null and p_seccion_code is null",
+        "p_establecimiento_code is not null and p_circuito_code is null",
+        "p_mesa_code is not null and p_establecimiento_code is null",
+    ):
         assert guard in official
+
+
 def test_0020_derives_pba_reporting_level_from_normalized_lineage_and_provenance() -> None:
     sql = _sql("0020_results_exploration.sql")
     boundary = sql.split("create or replace function results_exploration_reporting_level", 1)[1]
@@ -323,6 +330,8 @@ def test_0020_derives_pba_reporting_level_from_normalized_lineage_and_provenance
     assert "pba/[0-9]{4}-distrito-" in boundary and "then 'seccion'" in boundary
     assert "p_distrito_code" in boundary and "p_seccion_code" in boundary
     assert "results_exploration_reporting_level(" in official and "effective_level" in official
+
+
 def test_0020_is_official_only_and_exposes_source_backed_facets() -> None:
     sql = _sql("0020_results_exploration.sql")
     facets = sql.split("create or replace function results_exploration_facets", 1)[1]
@@ -331,8 +340,19 @@ def test_0020_is_official_only_and_exposes_source_backed_facets() -> None:
     assert "results_exploration_coverage" not in sql
     assert "fiscalizacion" not in sql
     assert "rr.source_kind = 'official'" in facets
-    for selector in ("elections", "categories", "distritos", "secciones", "circuitos", "establecimientos", "mesas", "available_levels"):
+    for selector in (
+        "elections",
+        "categories",
+        "distritos",
+        "secciones",
+        "circuitos",
+        "establecimientos",
+        "mesas",
+        "available_levels",
+    ):
         assert f"'{selector}'" in facets
+
+
 def test_0020_official_sql_validates_selectors_counts_levels_and_mapping_shapes() -> None:
     sql = _sql("0020_results_exploration.sql")
     official = sql.split("create or replace function results_exploration_official", 1)[1]
@@ -350,6 +370,8 @@ def test_0020_official_sql_validates_selectors_counts_levels_and_mapping_shapes(
     assert "coronel_rosales_municipal" in mapping
     assert "p_category = 'concejales'" in mapping
     assert "p_distrito_code = '02'" in mapping and "p_seccion_code = '027'" in mapping
+
+
 def test_0020_indexes_match_the_exploration_predicates_and_down_is_complete() -> None:
     sql = _sql("0020_results_exploration.sql")
     down = MIGRATIONS / "down" / "0020_results_exploration.down.sql"
@@ -360,3 +382,54 @@ def test_0020_indexes_match_the_exploration_predicates_and_down_is_complete() ->
     assert "drop function if exists results_exploration_official" in rollback
     assert "drop function if exists results_exploration_facets" in rollback
     assert "drop index if exists result_row_exploration_scope_idx" in rollback
+
+
+def test_0021_coverage_rpc_is_authenticated_and_source_isolated() -> None:
+    sql = _sql("0021_results_coverage.sql")
+    coverage = sql.split("create or replace function results_exploration_coverage", 1)[1]
+
+    assert "security invoker" in coverage.split("$$;", 1)[0]
+    assert "rr.source_kind = 'official'" in coverage
+    assert "rr.source_kind = 'fiscalizacion'" in coverage
+    assert "'source_kind', 'fiscalizacion'" in coverage
+    assert "'is_random_sample', false" in coverage
+    assert "grant execute on function results_exploration_coverage" in sql
+    assert " to authenticated" in sql
+    assert " to anon" not in sql
+
+
+def test_0021_coverage_derives_denominator_and_reports_every_exclusion() -> None:
+    sql = _sql("0021_results_coverage.sql")
+
+    for evidence in (
+        "official_mesas",
+        "covered_mesas",
+        "denominator_unavailable",
+        "denominator_audit",
+        "source_audit",
+        "official_mesas_without_establecimiento_identity",
+        "unmatched_fiscalizacion_mesas",
+        "official_archive_entry_ids",
+        "fiscalizacion_archive_entry_ids",
+    ):
+        assert evidence in sql
+    assert "93" not in sql and "153" not in sql
+
+
+def test_0021_school_identity_includes_circuit_in_conflicts_groups_and_output() -> None:
+    sql = " ".join(_sql("0021_results_coverage.sql").split())
+
+    assert "group by j.circuito_code, j.establecimiento_code having count(distinct j.establecimiento_name) > 1" in sql
+    assert "group by circuito_code, establecimiento_code" in sql
+    assert "'circuito_code', circuito_code" in sql
+    assert "order by circuito_code, code" in sql
+
+
+def test_0021_coverage_down_drops_only_coverage_objects() -> None:
+    down = MIGRATIONS / "down" / "0021_results_coverage.down.sql"
+
+    assert down.exists()
+    rollback = down.read_text(encoding="utf-8").lower()
+    assert "drop function if exists results_exploration_coverage" in rollback
+    assert "results_exploration_official" not in rollback
+    assert "results_exploration_facets" not in rollback

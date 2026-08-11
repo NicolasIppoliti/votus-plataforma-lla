@@ -3,8 +3,7 @@ import { expect, test } from "@playwright/test";
 import { assertE2eEnvironment } from "./gate-contract";
 import {
   FISCALIZACION_VOTES,
-  OFFICIAL_VOTES,
-  sourceIsolationFixture,
+  coverageFixture,
   withResultFixture,
 } from "./result-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
@@ -20,13 +19,12 @@ import { scenarioBaseUrl } from "./scenario-ownership";
 
 const environment = assertE2eEnvironment(process.env);
 const SPEC = "e2e/fiscalizacion.spec.ts";
-const { scope: SOURCE_SCOPE, seed: SOURCE_ISOLATION_FIXTURE } =
-  sourceIsolationFixture(SPEC);
+const { scope: COVERAGE_SCOPE, seed: COVERAGE_FIXTURE } = coverageFixture(SPEC);
 const baseURL = scenarioBaseUrl(SPEC, environment);
 
-test.describe("the fiscalizacion route renders labelled unofficial figures", () => {
-  test("test_route_renders_labelled_unofficial_figures", async ({ page }) => {
-    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => {
+test.describe("the fiscalizacion route explores coverage", () => {
+  test("test_route_reaches_uncovered_official_results", async ({ page }) => {
+    await withResultFixture(SPEC, COVERAGE_FIXTURE, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
       await expect(page).toHaveURL(/\/dashboard/);
 
@@ -35,25 +33,32 @@ test.describe("the fiscalizacion route renders labelled unofficial figures", () 
       await page.getByRole("link", { name: /Fiscalización/ }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
       await page.goto(new URL(
-        `/fiscalizacion?electionId=${SOURCE_SCOPE.electionId}` +
-          `&jurisdictionId=${SOURCE_SCOPE.jurisdictionId}&categoryId=${SOURCE_SCOPE.categoryId}`,
+        `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
+          `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
+          `&seccionCode=${COVERAGE_SCOPE.seccionCode}`,
         baseURL,
       ).toString());
 
       const main = page.getByRole("main");
-      await expect(main.getByText(
-        "Unofficial source — party-internal fiscalización, not an official Junta Electoral result.",
-        { exact: true },
-      )).toBeVisible();
-      await expect(main).toContainText("Coverage: 93 of 153 mesas");
+      await expect(main).toContainText("1 covered of 2 official mesas");
+      await expect(main).toContainText("1 uncovered");
       await expect(main).toContainText("not a random sample");
       await expect(main).toContainText(
-        `1 official row(s) / ${OFFICIAL_VOTES} vote(s) were excluded by the fiscalización-source filter`,
+        "Uncovered means no fiscalización presence, not zero or missing official votes",
       );
-      await expect(main).toContainText(
-        `By source kind: 1 fiscalizacion row(s) / ${FISCALIZACION_VOTES} vote(s).`,
-      );
-      await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));
+      await expect(main).toContainText(`fiscalizacion: 1 rows / ${FISCALIZACION_VOTES} votes / 1 mesas`);
+      const schools = main.getByRole("list", { name: "School coverage" });
+      await expect(schools.getByRole("listitem")).toHaveCount(2);
+      await expect(schools).toContainText("Circuito 00001 — Synthetic school: 1 of 1 mesas covered");
+      await expect(schools).toContainText("Circuito 00002 — Synthetic school: 0 of 1 mesas covered");
+      await expect(schools.getByRole("link", { name: "View school official votes" }).nth(0))
+        .toHaveAttribute("href", /circuitoCode=00001.*establecimientoCode=E1.*level=establecimiento/);
+      await expect(schools.getByRole("link", { name: "View school official votes" }).nth(1))
+        .toHaveAttribute("href", /circuitoCode=00002.*establecimientoCode=E1.*level=establecimiento/);
+      await main.getByRole("link", { name: "View official votes" }).last().click();
+      await expect(page).toHaveURL(/\/drilldown\?/);
+      await expect(page.getByRole("main")).toContainText("33333 votes at mesa level");
+      await expect(page.getByRole("main")).not.toContainText(String(FISCALIZACION_VOTES));
     });
   });
 });

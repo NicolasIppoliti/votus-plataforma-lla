@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(30);
+select plan(48);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -19,7 +19,9 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000012', '02', '027', '00002', null, null, 3),
   ('20000000-0000-0000-0000-000000000013', '03', null, null, null, null, null),
   ('20000000-0000-0000-0000-000000000014', '02', '027', null, null, null, null),
-  ('20000000-0000-0000-0000-000000000015', '02', '028', '00003', 'E2', 'Other fixture school', 3);
+  ('20000000-0000-0000-0000-000000000015', '02', '028', '00003', 'E2', 'Other fixture school', 3),
+  ('20000000-0000-0000-0000-000000000016', '02', '027', '00002', 'E1', 'Other fixture school', 4),
+  ('20000000-0000-0000-0000-000000000017', '02', '027', '00003', 'E1', 'Fixture school', 5);
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL');
 insert into party_mapping (
@@ -43,7 +45,10 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000013', '20000000-0000-0000-0000-000000000003', 'distrito', '77', 23, 'official', 'pba/2025-distrito-003', 8),
   ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 31, 'official', 'national/2023-generales', 9),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'distrito', '78', 29, 'official', 'pba/2025-distrito-027', 10),
-  ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000015', '20000000-0000-0000-0000-000000000003', 'mesa', '20135', 30, 'official', 'national/2023-generales', 11);
+  ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000015', '20000000-0000-0000-0000-000000000003', 'mesa', '20135', 30, 'official', 'national/2023-generales', 11),
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000016', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 30, 'official', 'national/2025-legislativas', 12),
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000017', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 20, 'official', 'national/2025-legislativas', 13),
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000017', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 777, 'fiscalizacion', 'fiscalizacion/wu1-runtime', 14);
 
 select is(jsonb_array_length(results_exploration_facets()->'elections'), 4,
   'cold-start facets expose every official election shape');
@@ -53,13 +58,13 @@ select is(jsonb_array_length(results_exploration_facets(
 select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'
-)->>'total_votes')::bigint, 300::bigint,
+)->>'total_votes')::bigint, 350::bigint,
   'official total excludes the internal source row');
 select is((select (party->>'votes')::bigint from jsonb_array_elements(
   results_exploration_official(
     '20000000-0000-0000-0000-000000000001',
     '20000000-0000-0000-0000-000000000003', '02', '027'
-  )->'parties') party where party->>'identity_status' = 'canonical'), 200::bigint,
+  )->'parties') party where party->>'identity_status' = 'canonical'), 250::bigint,
   'verified canonical identity carries exact votes');
 select is((select party->>'list_id' from jsonb_array_elements(
   results_exploration_official(
@@ -74,7 +79,7 @@ select is(results_exploration_official(
 select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'
-)->>'mesa_count')::integer, 2, 'mesa-backed total reports its mesa count');
+)->>'mesa_count')::integer, 4, 'mesa-backed total reports its mesa count');
 select is(results_exploration_official(
   '20000000-0000-0000-0000-000000000005',
   '20000000-0000-0000-0000-000000000003', '03', p_requested_level => 'distrito'
@@ -93,7 +98,7 @@ select is(results_exploration_official('20000000-0000-0000-0000-000000000005',
   'no_rows', 'province query excludes a single partido total');
 select is(results_exploration_official('20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027')->'source_audit',
-  '[{"kind":"official","rows":4,"votes":300}]'::jsonb,
+  '[{"kind":"official","rows":6,"votes":350}]'::jsonb,
   'aggregate source audit is derived from every included row');
 set local role authenticated;
 select is(results_exploration_official('20000000-0000-0000-0000-000000000002',
@@ -173,6 +178,82 @@ select throws_ok($$
     '20000000-0000-0000-0000-000000000003', '02', '027')
 $$, '42501', 'permission denied for function results_exploration_official',
   'anon cannot execute the official aggregation RPC');
+
+select is(results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->>'status',
+  'ok', 'coverage derives from the selected official section');
+select is((results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'mesas_coverage'->>'observed_units')::integer, 2, 'two official mesas have fiscalizacion presence');
+select is((results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'mesas_coverage'->>'denominator_units')::integer, 4, 'denominator is the four official mesas');
+select is(results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'mesas_coverage'->'is_random_sample', 'false'::jsonb, 'mesa coverage is literally non-random');
+select is((select mesa->>'code' from jsonb_array_elements(results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'mesas') mesa
+  where not (mesa->>'covered')::boolean and mesa->>'code' = '2'), '2',
+  'uncovered mesa identity is explicit');
+select is((select school->>'observed_units' from jsonb_array_elements(
+  results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'escuelas'->'items') school
+  where school->>'circuito_code' = '00001'), '1', 'first circuit keeps its observed school mesas');
+select is((select school->>'denominator_units' from jsonb_array_elements(
+  results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'escuelas'->'items') school
+  where school->>'circuito_code' = '00001'), '2', 'first circuit keeps its school denominator');
+select is((select school->>'observed_units' from jsonb_array_elements(
+  results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'escuelas'->'items') school
+  where school->>'circuito_code' = '00002'), '0', 'different-name school code in another circuit stays independent');
+select is((select school->>'observed_units' from jsonb_array_elements(
+  results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'escuelas'->'items') school
+  where school->>'circuito_code' = '00003'), '1', 'same-name school code in another circuit does not merge');
+select is(jsonb_array_length(results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'escuelas'->'items'), 3,
+  'school output preserves circuito plus establecimiento identity');
+select is(results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'source_audit',
+  '[{"kind":"fiscalizacion","rows":2,"votes":1776,"mesas":2}]'::jsonb,
+  'fiscalizacion source audit is row-derived and isolated');
+select is(results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'denominator_audit',
+  '[{"kind":"official","rows":6,"votes":350,"mesas":4}]'::jsonb,
+  'official denominator audit carries rows votes and mesas');
+select is((results_exploration_official('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027', '00001', 'E1', 2, 'mesa'
+)->>'total_votes')::bigint, 140::bigint,
+  'uncovered coverage does not erase positive official votes behind its link');
+select is(results_exploration_coverage('20000000-0000-0000-0000-000000000002',
+  '20000000-0000-0000-0000-000000000003', '02', '027')->'escuelas'->>'status',
+  'source_unavailable', 'missing school identity is unavailable rather than empty');
+select is(results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '999')->>'status',
+  'denominator_unavailable', 'coverage refuses when no official denominator exists');
+select is(jsonb_array_length(results_exploration_coverage(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'provenance'->'official_archive_entry_ids'), 1, 'coverage carries official denominator provenance');
+select lives_ok($$
+  set local role authenticated;
+  select results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000003', '02', '027');
+  reset role;
+$$, 'authenticated executes the coverage RPC');
+select throws_ok($$
+  set local role anon;
+  select results_exploration_coverage('20000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000003', '02', '027')
+$$, '42501', 'permission denied for function results_exploration_coverage',
+  'anon cannot execute the coverage RPC');
 
 select * from finish();
 rollback;

@@ -35,11 +35,11 @@ test.describe("mixed-granularity comparison is flagged in the display", () => {
       SPEC,
       {
         category: { id: categoryId, name: marker },
-        jurisdiction: {
+        jurisdictions: [{
           id: identity.jurisdictionId,
           distrito_code: identity.distritoCode,
           seccion_code: identity.seccionCode,
-        },
+        }],
         elections: [
           { id: election2023Id, year: identity.electionYears[0]!, round: identity.electionRounds[0]! },
           { id: election2025Id, year: identity.electionYears[1]!, round: identity.electionRounds[1]! },
