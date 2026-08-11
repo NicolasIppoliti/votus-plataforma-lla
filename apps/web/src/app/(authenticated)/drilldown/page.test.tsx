@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { SourceRef } from "@/lib/results/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PartyMappingContext, ResultRow } from "@/lib/fiscalizacion/repository";
+import type { ExplorationResult } from "@/lib/results/exploration";
 
 /**
  * A refused query and an empty result are different answers. This page turned
@@ -23,9 +24,35 @@ let aggregateUnsummable: string | null = null;
 let aggregateEntryIds: string[] = ["national/2025-legislativas"];
 let leakAggregate = false;
 let leakFiscalizacion = false;
+const explorationRpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+let explorationRpcResult: unknown = { status: "no_rows", reason: "fixture has no rows", counts: { selected_rows: 0 } };
+const EXPLORATION_FACETS = {
+  status: "ok",
+  elections: [{ id: "2025-legislativas-nacional", year: 2025, round: "legislativas", label: "2025 legislativas" }],
+  categories: [{ id: "c-diputados", name: "DIPUTADO NACIONAL" }],
+  distritos: [{ code: "02", name: "Buenos Aires" }],
+  secciones: [{ code: "027", name: "Coronel Rosales" }],
+  circuitos: [{ code: "0001", name: null }],
+  establecimientos: [{ code: "E1", name: "School one" }],
+  mesas: [{ code: 7 }],
+  available_levels: ["seccion", "circuito", "establecimiento", "mesa"],
+};
+let explorationFacetResult: unknown = EXPLORATION_FACETS;
+let explorationRpcError: string | null = null;
+let explorationRepositoryBypass: ExplorationResult | null = null;
 
 vi.mock("@/lib/supabase/server-client", () => ({
-  createSupabaseServerClient: () => Promise.resolve({}),
+  createSupabaseServerClient: () => Promise.resolve({
+    rpc: (name: string, args: Record<string, unknown>) => {
+      explorationRpcCalls.push({ name, args });
+      return Promise.resolve({
+        data: name === "results_exploration_facets" ? explorationFacetResult : explorationRpcResult,
+        error: name === "results_exploration_official" && explorationRpcError
+          ? { message: explorationRpcError }
+          : null,
+      });
+    },
+  }),
 }));
 
 const CATEGORY_NAMES: Record<string, string | undefined> = {
@@ -142,6 +169,15 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/results/exploration", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/results/exploration")>();
+  return { ...actual, createResultsExplorationRepository: (client: Parameters<typeof actual.createResultsExplorationRepository>[0]) => {
+    const repository = actual.createResultsExplorationRepository(client);
+    if (!explorationRepositoryBypass) return repository;
+    return { facets: repository.facets.bind(repository), official: () => Promise.resolve(explorationRepositoryBypass!) };
+  } };
+});
+
 const { default: DrilldownPage } = await import("./page");
 
 beforeEach(() => {
@@ -161,6 +197,11 @@ afterEach(() => {
   refuseSourceReadWith = null;
   mappingConfigured = true;
   sourceRefs = [];
+  explorationRpcCalls.length = 0;
+  explorationRpcResult = { status: "no_rows", reason: "fixture has no rows", counts: { selected_rows: 0 } };
+  explorationFacetResult = EXPLORATION_FACETS;
+  explorationRpcError = null;
+  explorationRepositoryBypass = null;
 });
 
 const PARAMS = {
@@ -171,8 +212,95 @@ const PARAMS = {
   partyCategory: "DIPUTADO NACIONAL",
   partyJurisdiction: "national",
 };
+const EXPLORER_PARAMS = { electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+  distritoCode: "02", seccionCode: "027", level: "seccion" };
+const officialRpc = (level = "seccion") => ({ status: "ok", source_kind: "official", level,
+  source_granularity: "mesa", election_year: 2025, election_round: "legislativas",
+  total_votes: 300, mesa_count: 2, source_audit: [{ kind: "official", rows: 4, votes: 300 }],
+  parties: [{ identity_status: "canonical", canonical_party_id: "lla", display_name: "LA LIBERTAD AVANZA",
+    list_id: null, votes: 300, vote_share: "1" }], archive_entry_ids: ["national/2025-legislativas"] });
 
 describe("drilldown page", () => {
+  it("renders authenticated selectors from a cold start", async () => {
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
+    expect(explorationRpcCalls.map((call) => call.name)).toEqual(["results_exploration_facets"]);
+    for (const text of ["Explore official results", '<form action="/drilldown" method="get">',
+      "2025 legislativas", "DIPUTADO NACIONAL"]) expect(markup).toContain(text);
+  });
+
+  it.each([["seccion", {}], ["circuito", { circuitoCode: "1" }],
+    ["establecimiento", { establecimientoCode: "E1" }], ["mesa", { mesaCode: "7" }]])(
+    "drives the %s repository level from a production selector", async (level, extra) => {
+    explorationRpcResult = officialRpc(level);
+
+    await DrilldownPage({ searchParams: Promise.resolve({
+      electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+      distritoCode: "2", seccionCode: "27", level, ...extra,
+    }) });
+
+    const call = explorationRpcCalls.find((entry) => entry.name === "results_exploration_official");
+    expect(call?.args["p_requested_level"]).toBe(level);
+  });
+
+  it("renders a copied deep link with canonical and unmapped figures plus RPC provenance", async () => {
+    explorationRpcResult = { ...officialRpc("mesa"), mesa_count: 1,
+      source_audit: [{ kind: "official", rows: 2, votes: 300 }],
+      parties: [
+        { identity_status: "canonical", canonical_party_id: "lla", display_name: "LA LIBERTAD AVANZA", list_id: null, votes: 200, vote_share: "0.6667" },
+        { identity_status: "unmapped", canonical_party_id: null, display_name: null, list_id: "999", votes: 100, vote_share: "0.3333" },
+      ],
+    };
+    sourceRefs = [{
+      archiveEntryId: "national/2025-legislativas", sha256: "e3b0c442",
+      url: "https://example.test/2025.zip", fetchedAt: "2026-01-01T00:00:00Z",
+    }];
+
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({
+      electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+      distritoCode: "2", seccionCode: "27", mesaCode: "7", level: "mesa",
+    }) })) as ReactElement);
+
+    for (const text of ["LA LIBERTAD AVANZA", "200 votes", "66.67%", "Unmapped list 999",
+      "https://example.test/2025.zip"]) expect(markup).toContain(text);
+    expect(markup).not.toContain("Provide <code>jurisdictionId</code>");
+  });
+
+  it("renders the actual official boundary result and fails closed on RPC errors", async () => {
+    explorationRpcResult = officialRpc();
+    const params = EXPLORER_PARAMS;
+    const ok = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
+    expect(ok).toContain("300 votes at seccion level from mesa source rows across 2 mesas");
+
+    explorationRpcError = "row-level security denied exploration";
+    const refused = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
+    expect(refused).toContain("Refused: results_exploration_official failed: row-level security denied exploration");
+  });
+
+  it("refuses a widened aggregate at the render even if parser protection regresses", async () => {
+    explorationRepositoryBypass = {
+      status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
+      electionYear: 2025, electionRound: "legislativas", totalVotes: 999, mesaCount: 1,
+      sourceAudit: [{ kind: "official", rows: 1, votes: 100 }, { kind: "fiscalizacion", rows: 1, votes: 899 }],
+      parties: [{ identityStatus: "canonical", canonicalPartyId: "leaked", displayName: "LEAKED PARTY", listId: null, votes: 999, voteShare: "1" }],
+      archiveEntryIds: ["national/2025-legislativas", "fiscalizacion/leaked"],
+    };
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
+    expect(markup).toContain("Refused:");
+    expect(markup).not.toContain("999 votes");
+    expect(markup).not.toContain("LEAKED PARTY");
+  });
+
+  it.each([
+    ["party total", { votes: 299, vote_share: "1" }],
+    ["party share", { votes: 300, vote_share: "0.5" }],
+  ])("never renders an inconsistent aggregate %s", async (_case, inconsistency) => {
+    explorationRpcResult = { ...officialRpc(), parties: [{
+      identity_status: "canonical", canonical_party_id: "invalid", display_name: "INVALID FIGURE",
+      list_id: null, ...inconsistency }] };
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
+    expect(markup).toContain("Refused:"); expect(markup).not.toContain("INVALID FIGURE");
+  });
+
   it("test_a_refused_query_is_reported_not_rendered_as_no_results", async () => {
     refuseWith = "row-level security denied the read";
 

@@ -269,3 +269,94 @@ def test_0017_drops_0012_session_scoped_temp_tables_before_recreating_them() -> 
     for leftover in ("jurisdiction_canonical", "jurisdiction_merge_target", "jurisdiction_remap"):
         assert leftover in sql.split(guard, 1)[1].split(";", 1)[0]
         assert sql.index(guard) < sql.index(f"create temporary table {leftover}")
+
+
+def test_0020_results_exploration_rpcs_are_authenticated_security_invokers() -> None:
+    sql = _sql("0020_results_exploration.sql")
+
+    for function in (
+        "results_exploration_facets",
+        "results_exploration_official",
+    ):
+        definition = sql.split(f"create or replace function {function}", 1)[1]
+        definition = definition.split("$$;", 1)[0]
+        assert "security invoker" in definition
+        assert f"revoke all on function {function}" in sql
+        assert f"grant execute on function {function}" in sql
+    assert " to authenticated" in sql
+    assert " to anon" not in sql
+def test_0020_official_results_preserve_identity_and_source_isolation() -> None:
+    sql = _sql("0020_results_exploration.sql")
+    official = sql.split("create or replace function results_exploration_official", 1)[1]
+    official = official.split("revoke all on function", 1)[0]
+
+    assert "rr.source_kind = 'official'" in official
+    assert "'source_kind', 'official'" in official
+    assert "'source_audit'" in official
+    assert "source_kind" in official and "count(*)" in official and "sum(votes)" in official
+    assert "pm.canonical_party_id" in official
+    assert "unmapped" in official
+    assert "sum(rr.votes)" in official
+    assert "total_votes" in official
+    assert "vote_share" in official
+    assert "count(distinct" in official and "mesa" in official
+    assert "archive_entry_id" in official
+    assert "e.round" in official
+    assert "source_granularity" in official
+    assert "mesa_count" in official and "then null" in official
+
+
+def test_0020_official_rpc_requires_complete_selector_parent_chains() -> None:
+    sql = _sql("0020_results_exploration.sql")
+    official = sql.split("create or replace function results_exploration_official", 1)[1]
+
+    for guard in ("missing_parent_selector", "p_circuito_code is not null and p_seccion_code is null",
+                  "p_establecimiento_code is not null and p_circuito_code is null",
+                  "p_mesa_code is not null and p_establecimiento_code is null"):
+        assert guard in official
+def test_0020_derives_pba_reporting_level_from_normalized_lineage_and_provenance() -> None:
+    sql = _sql("0020_results_exploration.sql")
+    boundary = sql.split("create or replace function results_exploration_reporting_level", 1)[1]
+    boundary = boundary.split("$$;", 1)[0]
+    official = sql.split("create or replace function results_exploration_official", 1)[1]
+
+    assert "pba/[0-9]{4}-distrito-" in boundary and "then 'seccion'" in boundary
+    assert "p_distrito_code" in boundary and "p_seccion_code" in boundary
+    assert "results_exploration_reporting_level(" in official and "effective_level" in official
+def test_0020_is_official_only_and_exposes_source_backed_facets() -> None:
+    sql = _sql("0020_results_exploration.sql")
+    facets = sql.split("create or replace function results_exploration_facets", 1)[1]
+    facets = facets.split("create or replace function results_exploration_official", 1)[0]
+
+    assert "results_exploration_coverage" not in sql
+    assert "fiscalizacion" not in sql
+    assert "rr.source_kind = 'official'" in facets
+    for selector in ("elections", "categories", "distritos", "secciones", "circuitos", "establecimientos", "mesas", "available_levels"):
+        assert f"'{selector}'" in facets
+def test_0020_official_sql_validates_selectors_counts_levels_and_mapping_shapes() -> None:
+    sql = _sql("0020_results_exploration.sql")
+    official = sql.split("create or replace function results_exploration_official", 1)[1]
+    official = official.split("revoke all on function", 1)[0]
+
+    assert "selection_invalid" in official
+    assert "missing_selector" in official
+    assert "granularity_counts" in official
+    assert "actual_level" in official
+    assert "'distrito'" in official
+    mapping = sql.split("create or replace function results_exploration_party_jurisdiction", 1)[1]
+    mapping = mapping.split("$$;", 1)[0]
+    for evidence in ("p_year", "p_round", "p_category", "p_distrito_code", "p_seccion_code"):
+        assert evidence in mapping
+    assert "coronel_rosales_municipal" in mapping
+    assert "p_category = 'concejales'" in mapping
+    assert "p_distrito_code = '02'" in mapping and "p_seccion_code = '027'" in mapping
+def test_0020_indexes_match_the_exploration_predicates_and_down_is_complete() -> None:
+    sql = _sql("0020_results_exploration.sql")
+    down = MIGRATIONS / "down" / "0020_results_exploration.down.sql"
+
+    assert "(election_id, category_id, source_kind, jurisdiction_id)" in sql
+    assert down.exists()
+    rollback = down.read_text(encoding="utf-8").lower()
+    assert "drop function if exists results_exploration_official" in rollback
+    assert "drop function if exists results_exploration_facets" in rollback
+    assert "drop index if exists result_row_exploration_scope_idx" in rollback

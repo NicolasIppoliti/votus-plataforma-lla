@@ -62,7 +62,7 @@ export default async function AuthenticatedLayout({
         {" | "}
         <Link href="/compare">Compare</Link>
         {" | "}
-        <Link href="/drilldown">Drilldown</Link>
+        <Link href="/drilldown">Explore results</Link>
         {" | "}
         <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
         {" | "}
