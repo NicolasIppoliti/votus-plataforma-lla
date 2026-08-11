@@ -26,3 +26,12 @@ it("links authenticated operators to the seat simulation route", async () => {
   expect(markup).toContain('href="/simulate"');
   expect(markup).toContain("Seat simulation");
 });
+
+it("links authenticated operators to the official results explorer", async () => {
+  const markup = renderToStaticMarkup(
+    (await AuthenticatedLayout({ children: <p>Current page</p> })) as ReactElement,
+  );
+
+  expect(markup).toContain('href="/drilldown"');
+  expect(markup).toContain("Explore results");
+});

@@ -26,7 +26,7 @@ const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
 const SOURCE_SUPABASE = path.join(REPO_ROOT, "supabase");
 const OWNER_FILE = ".votus-e2e-owner.json";
 const STALE_AFTER_MS = 30 * 60 * 1000;
-const EXPECTED_MIGRATIONS = Array.from({ length: 19 }, (_, index) => String(index + 1).padStart(4, "0"));
+const EXPECTED_MIGRATIONS = Array.from({ length: 20 }, (_, index) => String(index + 1).padStart(4, "0"));
 const EXCLUDED_SERVICES =
   "realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor";
 interface OwnedNextServer extends ScenarioServer { child: ChildProcess; }
@@ -81,7 +81,7 @@ async function assertSourceInventory(): Promise<void> {
     .filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
   const versions = migrationFiles.map((name) => name.slice(0, 4));
   if (JSON.stringify(versions) !== JSON.stringify(EXPECTED_MIGRATIONS))
-    throw new Error("migration inventory must be exactly versions 0001 through 0019");
+    throw new Error("migration inventory must be exactly versions 0001 through 0020");
   const specFiles = (await readdir(path.join(WEB_ROOT, "e2e")))
     .filter((name) => name.endsWith(".spec.ts")).map((name) => `e2e/${name}`).sort();
   if (JSON.stringify(specFiles) !== JSON.stringify([...EXPECTED_E2E_SPECS].sort()))
@@ -141,7 +141,7 @@ async function installRemainingMigrations(workdir: string): Promise<void> {
     .filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
   for (const name of migrationNames.slice(12))
     await cp(path.join(SOURCE_SUPABASE, "migrations", name), path.join(targetMigrations, name));
-  await cp(path.join(WEB_ROOT, "e2e", "service-role-grants.sql"), path.join(targetMigrations, "0020_e2e_service_role_grants.sql"));
+  await cp(path.join(WEB_ROOT, "e2e", "service-role-grants.sql"), path.join(targetMigrations, "0021_e2e_service_role_grants.sql"));
 }
 async function waitForServer(url: string, child: ChildProcess): Promise<void> {
   const deadline = Date.now() + 60_000;
@@ -223,12 +223,12 @@ async function matchesRepository(candidate: string): Promise<boolean> {
     const sourceNames = (await readdir(path.join(SOURCE_SUPABASE, "migrations")))
       .filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
     const targetNames = (await readdir(target)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
-    const expected = [...sourceNames, "0020_e2e_service_role_grants.sql"].sort();
+    const expected = [...sourceNames, "0021_e2e_service_role_grants.sql"].sort();
     if (JSON.stringify(targetNames) !== JSON.stringify(expected)) return false;
     for (const name of sourceNames)
       if (await readFile(path.join(target, name), "utf8") !==
           await readFile(path.join(SOURCE_SUPABASE, "migrations", name), "utf8")) return false;
-    return await readFile(path.join(target, "0020_e2e_service_role_grants.sql"), "utf8") ===
+    return await readFile(path.join(target, "0021_e2e_service_role_grants.sql"), "utf8") ===
       await readFile(path.join(WEB_ROOT, "e2e", "service-role-grants.sql"), "utf8");
   } catch { return false; }
 }

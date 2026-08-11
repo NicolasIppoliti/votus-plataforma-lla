@@ -28,9 +28,183 @@ import {
   unrecognizedLevels,
 } from "@/lib/results/granularity";
 import { partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-family";
+import {
+  createResultsExplorationRepository,
+  EXPLORATION_LEVEL,
+  hasOnlyOfficialSourceAudit,
+  normalizeExplorationParams,
+  type ExplorationFacets,
+  type ExplorationLevel,
+} from "@/lib/results/exploration";
 
 interface DrilldownPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+interface ExplorerFormProps {
+  facets: ExplorationFacets;
+  selected: {
+    electionId?: string; categoryId?: string; distritoCode?: string;
+    seccionCode?: string; circuitoCode?: string; establecimientoCode?: string;
+    mesaCode?: number; level?: ExplorationLevel;
+  };
+}
+
+function optionLabel(code: string, name: string | null): string {
+  return name ? `${code} — ${name}` : code;
+}
+
+function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
+  return (
+    <form action="/drilldown" method="get">
+      <label htmlFor="explorer-election">Election</label>{" "}<select id="explorer-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+        <option value="">Choose an election</option>
+        {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>{" "}
+      <label htmlFor="explorer-category">Category</label>{" "}<select id="explorer-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+        <option value="">Choose a category</option>
+        {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select>{" "}
+      <label htmlFor="explorer-distrito">Distrito</label>{" "}<select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+        <option value="">Choose a distrito</option>
+        {facets.distritos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+      <label htmlFor="explorer-seccion">Sección</label>{" "}<select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+        <option value="">Choose a sección</option>
+        {facets.secciones.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+      <label htmlFor="explorer-circuito">Circuito</label>{" "}<select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}>
+        <option value="">Any circuito</option>
+        {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+      <label htmlFor="explorer-establecimiento">Establecimiento</label>{" "}<select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}>
+        <option value="">Any establecimiento</option>
+        {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+      <label htmlFor="explorer-mesa">Mesa</label>{" "}<select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}>
+        <option value="">Any mesa</option>
+        {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select>{" "}
+      <label htmlFor="explorer-level">Report level</label>{" "}<select id="explorer-level" name="level" defaultValue={selected.level ?? ""}>
+        <option value="">Choose a level</option>
+        {facets.availableLevels.map((level) => <option key={level} value={level}>{level}</option>)}</select>{" "}
+      <button type="submit">Apply selection</button>
+    </form>
+  );
+}
+
+function formatShare(share: string | null): string {
+  return share === null ? "share unavailable" : `${(Number(share) * 100).toFixed(2)}%`;
+}
+
+function formatCounts(counts: Record<string, number>): string {
+  return Object.entries(counts).map(([reason, count]) => `${reason}: ${count}`).join(", ");
+}
+
+async function renderOfficialExplorer(
+  params: Record<string, string | string[] | undefined>,
+): Promise<ReactNode> {
+  const rawLevel = stringParam(params, "level");
+  const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel);
+  if (rawLevel && !level) {
+    return <main><h1>Explore official results</h1><p role="alert">Refused: unsupported report level {rawLevel}.</p></main>;
+  }
+  const rawCodes = {
+    distritoCode: stringParam(params, "distritoCode"),
+    seccionCode: stringParam(params, "seccionCode"),
+    circuitoCode: stringParam(params, "circuitoCode"),
+    establecimientoCode: stringParam(params, "establecimientoCode"),
+    mesaCode: stringParam(params, "mesaCode"),
+  };
+  const normalized = normalizeExplorationParams(Object.fromEntries(
+    Object.entries(rawCodes).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  ));
+  if (normalized.status === "invalid") {
+    return <main><h1>Explore official results</h1><p role="alert">Refused: {normalized.reason}. {formatCounts(normalized.counts)}.</p></main>;
+  }
+
+  const electionId = stringParam(params, "electionId");
+  const categoryId = stringParam(params, "categoryId");
+  const selected = {
+    ...(electionId ? { electionId } : {}),
+    ...(categoryId ? { categoryId } : {}),
+    ...normalized.value,
+    ...(level ? { level } : {}),
+  };
+  const client = await createSupabaseServerClient();
+  const repository = createResultsExplorationRepository(client);
+  let facets: ExplorationFacets;
+  try {
+    facets = await repository.facets({
+      ...(electionId ? { electionId } : {}),
+      ...(categoryId ? { categoryId } : {}),
+      ...(normalized.value.distritoCode ? { distritoCode: normalized.value.distritoCode } : {}),
+      ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
+      ...(normalized.value.circuitoCode ? { circuitoCode: normalized.value.circuitoCode } : {}),
+    });
+  } catch (error) {
+    return <main><h1>Explore official results</h1><p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+  }
+
+  const form = <ExplorerForm facets={facets} selected={selected} />;
+  const baseReady = Boolean(electionId && categoryId && normalized.value.distritoCode && level);
+  const scopeReady = level === EXPLORATION_LEVEL.DISTRITO || Boolean(normalized.value.seccionCode);
+  if (!baseReady || !scopeReady || !electionId || !categoryId || !normalized.value.distritoCode || !level) {
+    return <main><h1>Explore official results</h1>{form}<p role="status">Choose the available selectors, then apply the selection. The resulting URL is a reusable deep link.</p></main>;
+  }
+
+  let result;
+  try {
+    result = await repository.official({
+      electionId,
+      categoryId,
+      distritoCode: normalized.value.distritoCode,
+      ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
+      ...(normalized.value.circuitoCode ? { circuitoCode: normalized.value.circuitoCode } : {}),
+      ...(normalized.value.establecimientoCode ? { establecimientoCode: normalized.value.establecimientoCode } : {}),
+      ...(typeof normalized.value.mesaCode === "number" ? { mesaCode: normalized.value.mesaCode } : {}),
+      requestedLevel: level,
+    });
+  } catch (error) {
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+  }
+  if (result.status !== "ok") {
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {result.reason}. {formatCounts(result.counts)}.</p></main>;
+  }
+  if (!hasOnlyOfficialSourceAudit(result.sourceAudit)) {
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the aggregate source audit includes non-official rows.</p></main>;
+  }
+
+  let sources: SourceRef[] = [];
+  let missing: string[] = [];
+  try {
+    const sourceResult = await fetchSourceRefs(client, result.archiveEntryIds);
+    sources = sourceResult.sources;
+    missing = sourceResult.missing;
+  } catch (error) {
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+  }
+
+  return (
+    <main>
+      <h1>Explore official results</h1>
+      {form}
+      <h2>Official breakdown</h2>
+      <p role="status">
+        {result.totalVotes} votes at {result.level} level from {result.sourceGranularity} source rows
+        {result.mesaCount === null ? ". Mesa count is unavailable at the published source granularity." : ` across ${result.mesaCount} mesas.`}
+      </p>
+      <p>Election shape: {result.electionYear} {result.electionRound}.</p>
+      <table>
+        <caption>Official votes and share by party</caption>
+        <thead><tr><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
+        <tbody>
+          {result.parties.map((party, index) => (
+            <tr key={party.canonicalPartyId ?? `${party.listId ?? "missing-list"}-${index}`}>
+              <th scope="row">{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</th>
+              <td>{party.votes} votes</td>
+              <td>{formatShare(party.voteShare)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {missing.length > 0 ? <p role="alert">{missing.length} archive entry/entries resolved to no source record ({missing.join(", ")}); these figures cannot be traced.</p> : null}
+      <ProvenanceLink sources={sources} />
+    </main>
+  );
 }
 
 
@@ -64,6 +238,10 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   // Same reason as `compare`: a second mapping family exists, so pinning
   // national while accepting any jurisdiction resolves through the wrong one.
   const partyJurisdiction = stringParam(params, "partyJurisdiction");
+
+  if (!jurisdictionId && !partyCategory && !partyJurisdiction) {
+    return renderOfficialExplorer(params);
+  }
 
   if (!electionId || !jurisdictionId || !categoryId) {
     return (
