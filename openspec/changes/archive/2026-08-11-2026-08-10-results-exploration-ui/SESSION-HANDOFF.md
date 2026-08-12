@@ -22,7 +22,7 @@ two things that need a human decision.
 | `fiscalizacion/2025-coronel-rosales` | 1.395 |
 | `pba/2025-distrito-027` | 23 |
 
-- **Auth**: one account, `contacto.nicolasippoliti@gmail.com`. Verified in a real
+- **Auth**: one account, `[redacted-account-email]`. Verified in a real
   browser through the login form: sign-in works, an authenticated read reports
   `Content-Range: 0-0/3675711`, the same read with only the anon key returns
   **401**. RLS holds in both directions.

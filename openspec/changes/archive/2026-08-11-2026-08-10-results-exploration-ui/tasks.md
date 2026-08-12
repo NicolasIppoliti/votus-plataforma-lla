@@ -1,5 +1,5 @@
 # Tasks: Results Exploration UI
-> Planning reset: two pre-commit reviews rejected prior horizontal WU1 under the reachability rule. The maintainer explicitly authorized a native reset; PR1 and PR2 are complete, and only PR3 remains pending.
+> Planning reset: two pre-commit reviews rejected prior horizontal WU1 under the reachability rule. The maintainer explicitly authorized a native reset; PR1, PR2, and PR3 are now complete.
 ## Review Workload Forecast
 | Field | Value |
 |---|---|
@@ -27,6 +27,11 @@ Chain strategy: stacked-to-main
 - [x] 2.2 GREEN: implement coverage-only `0021` SQL/down, `apps/web/src/lib/results/coverage.ts`, and `fiscalizacion/page.tsx`; preserve circuito in school grouping, conflicts, provenance, typed parsing, selectors and links, and state that uncovered never means zero or missing official votes.
 - [x] 2.3 VERIFY: run focused static SQL/web/pgTAP, lint, TypeScript 7, build, diff checks and one final disposable E2E; record source isolation, independent same-code school denominators, all `isRandomSample` values, authored line count, and rollback proof.
 ## Phase 3: PR3 — Release, Scale, and Proof
-- [ ] 3.1 RED: extend `apps/web/e2e/fiscalizacion.spec.ts` and `provenance.spec.ts` with failing reachable journeys for auth, deep links, provenance, refusals, source separation, and coverage-to-official navigation; add SQL plan-budget assertions before any index.
-- [ ] 3.2 GREEN: update owned E2E fixtures and `docs/results-exploration.md`; add a separately droppable performance migration only when the RED plan evidence requires it.
-- [ ] 3.3 VERIFY: run lint, typecheck, unit, build, and E2E gates; record read-only production plans, buffers, row counts, timings, index use, authored line count, and rollback procedure.
+- [x] 3.1 RED: extend `apps/web/e2e/fiscalizacion.spec.ts` and `provenance.spec.ts` with failing reachable journeys for auth, deep links, provenance, refusals, source separation, and coverage-to-official navigation; add SQL plan-budget assertions before any index.
+- [x] 3.2 GREEN: update owned E2E fixtures and `docs/results-exploration.md`; add a separately droppable performance migration only when the RED plan evidence requires it.
+- [x] 3.3 VERIFY: run lint, typecheck, unit, build, and E2E gates; record read-only production plans, buffers, row counts, timings, index use, authored line count, and rollback procedure.
+
+## Remediation of verify evidence `sha256:4904053b85e727537fc91205a783f2ac4fff96b9b9a116b219d4b1841f29d655`
+- [x] R.1 RED: prove orphan-mesa entry, missing school RPC/parser, absent section SQL aggregation, and bypassed browser journey fail before implementation.
+- [x] R.2 GREEN: implement complete-parent refusal and bounded official section school breakdown with composite identity, audit, provenance, conflicts, rollback, and scale proof.
+- [x] R.3 VERIFY: one final post-correction disposable gate passed pgTAP 56/56, scale 4/4, rollback/reapply, and Playwright 8/8 with zero skips and cleanup. The real authenticated cold-start hierarchy reached mesa with complete parents, and the 2025 section-wide school table rendered both composite circuito/establecimiento identities with official party votes and mesa coverage. Historical verify FAIL remains authoritative until independent reverify.

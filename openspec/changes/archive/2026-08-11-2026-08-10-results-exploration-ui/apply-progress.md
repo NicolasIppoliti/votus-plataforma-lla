@@ -71,3 +71,70 @@
 **Evidence**: static SQL 30/30; focused web 111/111; disposable pgTAP 48/48; lint exit 0; TypeScript 7.0.2 exit 0; build exit 0; one final `test:e2e:gate` invocation passed 8/8 with zero skips and cleanup.
 **Work unit / rollback**: revert only the circuito-school additions in migration 0021, coverage parser/page, owned fixtures/tests, and this history; broader PR2 rollback remains the 0021 down migration.
 **Current staged snapshot**: **1,407 changed lines** (**1,331 additions + 76 deletions**); 0 excluded; 17 intended paths staged; `.gga` SHA-256 `2dedf2f3dd5e488847fb850492b4e2977e4582c37ddd4d35dffb7252d0b03e8f`; zero disposable residue. Tasks 2.1–2.3 remain complete; 3.1–3.3 remain pending.
+
+## PR3 — Release, Scale, and Proof (Complete)
+**Status**: tasks 3.1–3.3 complete after the separately authorized verification-only continuation passed the corrected fiscalización and provenance journeys 8/8. The prior 6/8 failure remains preserved below. | **Mode**: Strict TDD
+**Delivery / boundary**: auto-chain, stacked-to-main, PR3-only E2E journeys/fixtures, disposable release proof, scale migration 0022/down, and release runbook; base is merged PR1+PR2 `main`. No commit, push, PR, merge, hosted migration, Vercel deployment, or production mutation occurred.
+
+### Completed Tasks
+- [x] 3.1 RED — static release/scale artifacts failed 2/32 because both SQL proofs were absent; fixture/runtime contracts failed 2/28; the first representative coverage plan then failed at **115,449.425 ms** against a 15,000 ms disposable budget before any PR3 index or query replacement. The single final browser invocation later produced reachable RED for both extended specs (`fiscalizacion.spec.ts`, `provenance.spec.ts`).
+- [x] 3.2 GREEN — implementation, focused/scale checks, and the corrected reachable fiscalización/provenance browser journeys pass.
+- [x] 3.3 VERIFY — prior quality gates remain green and the verification-only continuation passed 8/8; hosted production plans remain deliberately unclaimed because migrations 0020–0022 were not deployed.
+
+### TDD Cycle Evidence
+| Task | Safety Net | RED | GREEN / TRIANGULATE | REFACTOR |
+|---|---|---|---|---|
+| 3.1 | static SQL 30/30; release harness 27/27 | static 2/32 failed; harness 2/28 failed; pre-index coverage plan 115,449.425 ms; final E2E 6/8 with both extended journeys failed | N/A — RED task complete | Plan evidence isolated the per-school provenance rescan rather than guessing at an index |
+| 3.2 | 3.1 evidence | quadratic coverage plus missing normalized provenance fixture ownership | static 33/33; focused web 161/161; pgTAP 48/48; 120,000-row scale plans and corrected browser journeys passed | One grouped `school_sources` pass preserves `(circuito, establecimiento)` identity and archive IDs |
+| 3.3 | full web 366/366 | final E2E failed 2 extended journeys | lint, TS 7.0.2, build, release/scale/rollback harness passed; verification-only continuation passed 8/8 | Generated `next-env.d.ts` restored; no rerun or source/test edit |
+
+### Work Unit Evidence
+| Evidence | Exact result |
+|---|---|
+| Source normalization | `git add --renormalize .` from the root produced no delta before testing. |
+| Focused/static | `uv --directory etl run pytest tests/test_migration_sql.py -q` → 33 passed; focused Vitest (`release-gate-safety`, scenario ownership, exploration, coverage, drilldown, fiscalización) → 6 files / 161 passed. |
+| Runtime pgTAP | `node --experimental-strip-types apps/web/scripts/e2e-release-gate.ts --release-proof-only` → 48/48 pgTAP PASS with authenticated RPC execution and anonymous denial. |
+| Scale / EXPLAIN | Representative 120,000 official rows across 12,000 mesas/schools: coverage **457.984 ms**, 150,173 shared hits / 0 reads; facets **259.030 ms**, 2,965 hits / 1 read; official **1,054.581 ms**, 5,702 hits / 0 reads. These are disposable local timings, not production claims. |
+| Rollback/reapply | Inventory 22; `0022 down → 0021 down → 0020 down → 0020 up → 0021 up → 0022 up`; restored `authenticated-execute/anon-denied`; all three RPCs returned their typed empty/refusal states after forward apply. |
+| Full quality | `pnpm --dir apps/web test` → 28 files / 366 passed; lint exit 0; TypeScript 7.0.2 exit 0; build exit 0. |
+| Final browser harness | Exactly one `pnpm --dir apps/web test:e2e:gate` invocation → exit 1: 8 discovered, 6 passed, 2 failed (`e2e/fiscalizacion.spec.ts`, `e2e/provenance.spec.ts`). Output remained redacted. Selector scoping/repeated-parameter corrections followed; no rerun. |
+| Verification-only continuation | Exactly one separately authorized `pnpm --dir apps/web test:e2e:gate` invocation → exit 0: pgTAP 48/48, scale 3/3, rollback/reapply proof passed, and Playwright 8 passed / 0 skipped with disposable cleanup. Corrected fiscalización and provenance selectors passed; no rerun. |
+| Runtime cleanup | Owned `votus-e2e-*` containers and volumes: 0; generated `apps/web/next-env.d.ts` restored; `.gga` unchanged. |
+| Rollback boundary | Revert PR3 E2E/fixture/harness/docs/proof files and apply `0022_results_exploration_scale.down.sql`; PR1 migration 0020 and PR2 migration 0021 remain independently removable in reverse order without removing unrelated history. |
+
+### Local readiness versus production
+Local deterministic release proof is reproducible and green outside the browser result. `docs/results-exploration.md` records the hosted dry-run/apply, read-only production EXPLAIN, auth/RLS smoke, and rollback sequence. Actual production migration state, buffers, timings, index use, and Vercel behavior are **not claimed**: this apply was explicitly non-deploying, and the production RPCs cannot be timed before migrations 0020–0022 exist there.
+**Readiness boundary**: PR3 is locally complete and ready for SDD verification. Production migration state, hosted timings/buffers/index use, Vercel behavior, commit, push, PR, merge, and deploy remain outside this apply and unclaimed.
+**Exact deltas / residue**: implementation/release artifacts **659 changed lines** (**634 additions + 25 deletions**) across 14 files; full staged snapshot including OpenSpec persistence **702 changed lines** (**673 additions + 29 deletions**) across 16 files; exclusions 0; `.gga` SHA-256 `2dedf2f3dd5e488847fb850492b4e2977e4582c37ddd4d35dffb7252d0b03e8f`; generated `next-env.d.ts` restored to `7ad303e40d4fddf44f156129e397511953a71481c5cfd86b1862649aaaf240cc`; owned disposable residue 0.
+
+## Verify remediation — implementation complete; independent reverify pending
+**Failed evidence retained**: `verify-report.md` and Engram remain historical `FAIL` at `sha256:4904053b85e727537fc91205a783f2ac4fff96b9b9a116b219d4b1841f29d655`; neither was rewritten to PASS.
+
+### Scenario mapping
+| Failed scenario | Remediation | Current result |
+|---|---|---|
+| Cold-start mesa selector reachability | Browser starts from authenticated navigation and submits election → category → distrito → sección → circuito → establecimiento → mesa; repository rejects orphan mesa before RPC; copied deep-link SSR remains separate. | Final post-correction browser gate passed the real authenticated selector traversal, exact complete-parent URL, mesa official votes, provenance, reload, and malformed repeated-parameter refusal. |
+| 2025 section-wide escuela breakdown | Added authenticated `results_exploration_schools`, typed parser/repository, section render, pgTAP, scale, rollback, and browser assertions for two `E1` schools in different circuits. Official-only audit, complete identity, exclusions, conflict refusal, provenance and 500-school cap are explicit. | Final browser gate rendered both `(00001, E1)` and `(00002, E1)` rows, three table rows including the header, official `33,333 votes`, and distinct school links/mesa coverage. |
+
+### TDD Cycle Evidence
+| Task | Safety net | RED | GREEN / triangulate | Refactor |
+|---|---|---|---|---|
+| R.1 hierarchy | 48/48 focused web | focused web failed 2 hierarchy cases | 52/52 focused web; orphan request makes zero official RPC calls; complete deep link passes | one repository hierarchy boundary |
+| R.2 schools | 33/33 static SQL | static 1/34 failed; focused web failed 2 school cases; disposable pgTAP exited 1 before function existed | static 34/34; focused 52/52; pgTAP 56/56; same-code circuits, conflict and 2023 refusal pass | one bounded SQL RPC and typed parser |
+| R.3 runtime | historical 8/8 did not cover these scenarios; focused safety net 72/72 | diagnostic browser proved `Category` disappeared after the election-only GET; focused RED failed 3/55 | blank form values normalize as absent; focused GREEN 75/75, triangulated with empty and whitespace values; one final post-correction gate passed 8/8 | one normalization boundary; generated `next-env.d.ts` restored; no rerun |
+
+### Work Unit Evidence
+| Evidence | Exact result |
+|---|---|
+| Focused/static | `uv --directory etl run pytest tests/test_migration_sql.py -q` → 34 passed; focused Vitest → 4 files / 85 passed. |
+| Full quality | full web → 28 files / 370 passed; lint exit 0; TypeScript 7.0.2 exit 0; build exit 0; diff checks exit 0. |
+| SQL/scale/rollback | pgTAP 56/56; scale 4/4. Final schools plan: 120,000 rows, 192.106 ms, 2,713 shared hits / 0 reads. `0022 down` drops school RPC/index and forward reapply restores authenticated execute/anonymous denial. |
+| Final disposable E2E | Exactly one invocation after the last fixture correction: exit 1; 8 discovered, 7 passed, `e2e/provenance.spec.ts` timed out. No rerun. |
+| Diagnostic browser | Exactly one disposable invocation with Playwright `pw:api` evidence: `Election` selected and submitted, URL carried every other selector as `""`, then `getByLabel('Category').selectOption(...)` waited until the 30 s test timeout because normalization rendered only the malformed-selector refusal. No post-correction browser invocation. |
+| Post-correction quality/runtime | lint exit 0; TypeScript 7.0.2 exit 0; build exit 0; pgTAP 56/56; scale 4/4 (schools 193.382 ms, 2,713 hits / 0 reads); rollback/reapply and grants passed. |
+| Final verification-only continuation | Exactly one post-correction `pnpm --dir apps/web test:e2e:gate` invocation → exit 0: pgTAP 56/56, scale 4/4, rollback/reapply restored all four authenticated RPC contracts with anonymous denial, and Playwright 8 passed / 0 skipped. `provenance.spec.ts` traversed authenticated cold start through election/category/distrito/sección/circuito/establecimiento/mesa and rendered the mesa result; `fiscalizacion.spec.ts` rendered the 2025 section-wide school table for `(00001, E1)` and `(00002, E1)` with official party votes and mesa coverage. No rerun. |
+| Cleanup | Owned containers 0, volumes 0, workdirs 0; `.gga` unchanged; generated `next-env.d.ts` restored. |
+| Rollback | Revert remediation repository/page/tests/E2E/proofs; `0022` down drops `results_exploration_schools` and the lineage index, then restores 0021 coverage without touching PR1/PR2. |
+
+### Settle disposition
+R.3 apply evidence is complete and ready for independent reverify. The historical verify report remains `FAIL` at `sha256:4904053b85e727537fc91205a783f2ac4fff96b9b9a116b219d4b1841f29d655`; it was not rewritten. No remediation-result envelope is emitted here because the orchestrator retains the native lineage/generation/fix-batch token and settlement authority.
