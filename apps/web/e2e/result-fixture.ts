@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
-import { planResultCleanup, planResultNaturalKeys, resultScenarioIdentity,
+import { planResultCleanup, planResultNaturalKeys, resultNaturalKey, resultScenarioIdentity,
   type DataScenarioSpec } from "./scenario-ownership";
 type SeedRow = Record<string, string | number | null>;
 export interface ResultFixtureSeed { category: SeedRow; jurisdictions: SeedRow[];
@@ -9,6 +9,14 @@ interface SupabaseOperation { error: { message: string } | null; }
 const environment = assertE2eEnvironment(process.env);
 export const OFFICIAL_VOTES = 11_111;
 export const FISCALIZACION_VOTES = 22_222;
+function archiveEntries(ids: readonly string[], fiscalizacionIndex: number): SeedRow[] {
+  return ids.map((id, index) => ({ id,
+    capability: index === fiscalizacionIndex ? "fiscalizacion" : "national",
+    source: "example.test", source_url: `https://example.test/${id}`,
+    sha256: String(index + 1).repeat(64), mime: "text/csv",
+    fetched_at: "2026-08-10T00:00:00Z", status: "ok",
+    source_kind: index === fiscalizacionIndex ? "fiscalizacion" : "official" }));
+}
 export function sourceIsolationFixture(spec: DataScenarioSpec) {
   const identity = resultScenarioIdentity(spec);
   if (identity.electionIds.length !== 1 || identity.archiveEntryIds.length !== 2)
@@ -18,19 +26,23 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
   const seed: ResultFixtureSeed = {
     category: { id: scope.categoryId, name: identity.categoryName },
     jurisdictions: [{ id: scope.jurisdictionId, distrito_code: identity.distritoCode,
-      seccion_code: identity.seccionCode }],
+      seccion_code: identity.seccionCode,
+      ...(identity.scenario === "provenance" ? { circuito_code: "00001",
+        establecimiento_code: "E1", establecimiento_name: "Synthetic school", mesa_code: 1 } : {}) }],
     elections: [{ id: scope.electionId, year: identity.electionYears[0]!,
       round: identity.electionRounds[0]! }],
+    ...(identity.scenario === "provenance"
+      ? { archiveEntries: archiveEntries(identity.archiveEntryIds, 1) } : {}),
     rows: [
     {
       election_id: scope.electionId, jurisdiction_id: scope.jurisdictionId,
-      category_id: scope.categoryId, granularity: "seccion", list_id: null,
+       category_id: scope.categoryId, granularity: identity.scenario === "provenance" ? "mesa" : "seccion", list_id: null,
       votes: OFFICIAL_VOTES, source_kind: "official", source_row_index: 0,
       archive_entry_id: identity.archiveEntryIds[0]!,
     },
     {
       election_id: scope.electionId, jurisdiction_id: scope.jurisdictionId,
-      category_id: scope.categoryId, granularity: "seccion", list_id: null,
+       category_id: scope.categoryId, granularity: identity.scenario === "provenance" ? "mesa" : "seccion", list_id: null,
       votes: FISCALIZACION_VOTES, source_kind: "fiscalizacion", source_row_index: 1,
       archive_entry_id: identity.archiveEntryIds[1]!,
     },
@@ -46,11 +58,7 @@ export function coverageFixture(spec: DataScenarioSpec) {
   const [officialCovered, fiscalizacion, officialUncovered] = identity.archiveEntryIds;
   const scope = { electionId: identity.electionIds[0]!, categoryId: identity.categoryId,
     distritoCode: identity.distritoCode, seccionCode: identity.seccionCode };
-  const archiveEntries = identity.archiveEntryIds.map((id, index) => ({ id,
-    capability: index === 1 ? "fiscalizacion" : "national", source: "example.test",
-    source_url: `https://example.test/${id}`, sha256: String(index + 1).repeat(64),
-    mime: "text/csv", fetched_at: "2026-08-10T00:00:00Z", status: "ok",
-    source_kind: index === 1 ? "fiscalizacion" : "official" }));
+  const ownedArchiveEntries = archiveEntries(identity.archiveEntryIds, 1);
   const seed: ResultFixtureSeed = {
     category: { id: identity.categoryId, name: identity.categoryName },
     jurisdictions: [
@@ -63,7 +71,7 @@ export function coverageFixture(spec: DataScenarioSpec) {
     ],
     elections: [{ id: scope.electionId, year: identity.electionYears[0]!,
       round: identity.electionRounds[0]! }],
-    archiveEntries,
+    archiveEntries: ownedArchiveEntries,
     rows: [
       { election_id: scope.electionId, jurisdiction_id: coveredId!, category_id: identity.categoryId,
         granularity: "mesa", list_id: null, votes: OFFICIAL_VOTES, source_kind: "official",
@@ -99,8 +107,12 @@ function assertSeedOwnership(spec: DataScenarioSpec, seed: ResultFixtureSeed): s
     ...seed.jurisdictions.map((row) =>
       `jurisdiction:${row["distrito_code"]}|${row["seccion_code"]}|${row["circuito_code"] ?? "null"}|${row["establecimiento_code"] ?? "null"}|${row["mesa_code"] ?? "null"}`),
     ...seed.elections.map((row) => `election:${row["year"]}|${row["round"]}`),
-    ...seed.rows.map((row) =>
-      `result:${row["archive_entry_id"]}|${row["jurisdiction_id"]}|${row["category_id"]}|${row["list_id"] ?? "null"}|${row["source_kind"]}`),
+    ...seed.rows.map((row) => resultNaturalKey({
+      archiveEntryId: String(row["archive_entry_id"]), electionId: String(row["election_id"]),
+      jurisdictionId: String(row["jurisdiction_id"]), categoryId: String(row["category_id"]),
+      listId: typeof row["list_id"] === "string" ? row["list_id"] : null,
+      sourceKind: String(row["source_kind"]),
+    })),
   ].sort();
   if (JSON.stringify(actualCleanup) !== JSON.stringify(planResultCleanup(spec).sort()) ||
       JSON.stringify(actualNaturalKeys) !== JSON.stringify(planResultNaturalKeys(spec).sort()) ||

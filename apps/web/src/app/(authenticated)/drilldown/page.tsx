@@ -35,6 +35,9 @@ import {
   normalizeExplorationParams,
   type ExplorationFacets,
   type ExplorationLevel,
+  type ExplorationSourceAudit,
+  type SchoolBreakdownExclusion,
+  type SchoolBreakdownResult,
 } from "@/lib/results/exploration";
 
 interface DrilldownPageProps {
@@ -92,6 +95,19 @@ function formatShare(share: string | null): string {
 
 function formatCounts(counts: Record<string, number>): string {
   return Object.entries(counts).map(([reason, count]) => `${reason}: ${count}`).join(", ");
+}
+
+function sourceExclusionNotes(exclusions: ExplorationSourceAudit[], aggregate: string): ReactNode {
+  return exclusions.map((exclusion) => <p role="note" key={`${aggregate}-${exclusion.kind}`}>
+    Excluded {exclusion.rows} {exclusion.kind} rows / {exclusion.votes} votes from the {aggregate} aggregate.
+  </p>);
+}
+
+function schoolExclusionNotes(
+  exclusions: SchoolBreakdownExclusion[], sourceExclusions: ExplorationSourceAudit[],
+): ReactNode {
+  return <>{sourceExclusionNotes(sourceExclusions, "school")}{exclusions.map((exclusion) =>
+    <p role="note" key={exclusion.reason}>Excluded {exclusion.rows} rows / {exclusion.votes} votes: {exclusion.reason}.</p>)}</>;
 }
 
 async function renderOfficialExplorer(
@@ -162,16 +178,38 @@ async function renderOfficialExplorer(
     return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
   }
   if (result.status !== "ok") {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {result.reason}. {formatCounts(result.counts)}.</p></main>;
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {result.reason}. {formatCounts(result.counts)}.</p>
+      {sourceExclusionNotes(result.sourceExclusions ?? [], "official")}</main>;
   }
   if (!hasOnlyOfficialSourceAudit(result.sourceAudit)) {
     return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the aggregate source audit includes non-official rows.</p></main>;
   }
 
+  let schoolBreakdown: SchoolBreakdownResult | null = null;
+  if (level === EXPLORATION_LEVEL.SECCION) {
+    const seccionCode = normalized.value.seccionCode;
+    if (!seccionCode) {
+      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: school breakdown requires a complete seccion selection.</p></main>;
+    }
+    try {
+      schoolBreakdown = await repository.schools({
+        electionId, categoryId, distritoCode: normalized.value.distritoCode,
+        seccionCode, requestedLevel: level,
+      });
+    } catch (error) {
+      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+    }
+    if (schoolBreakdown.status === "ok" && !hasOnlyOfficialSourceAudit(schoolBreakdown.sourceAudit)) {
+      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the school breakdown source audit includes non-official rows.</p></main>;
+    }
+  }
+
   let sources: SourceRef[] = [];
   let missing: string[] = [];
   try {
-    const sourceResult = await fetchSourceRefs(client, result.archiveEntryIds);
+    const schoolArchiveIds = schoolBreakdown?.status === "ok"
+      ? schoolBreakdown.schools.flatMap((school) => school.archiveEntryIds) : [];
+    const sourceResult = await fetchSourceRefs(client, [...new Set([...result.archiveEntryIds, ...schoolArchiveIds])]);
     sources = sourceResult.sources;
     missing = sourceResult.missing;
   } catch (error) {
@@ -188,6 +226,7 @@ async function renderOfficialExplorer(
         {result.mesaCount === null ? ". Mesa count is unavailable at the published source granularity." : ` across ${result.mesaCount} mesas.`}
       </p>
       <p>Election shape: {result.electionYear} {result.electionRound}.</p>
+      {sourceExclusionNotes(result.sourceExclusions, "official")}
       <table>
         <caption>Official votes and share by party</caption>
         <thead><tr><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
@@ -201,6 +240,28 @@ async function renderOfficialExplorer(
           ))}
         </tbody>
       </table>
+      {schoolBreakdown?.status === "ok" ? (
+        <section aria-labelledby="school-breakdown-heading">
+          <h2 id="school-breakdown-heading">Official school breakdown</h2>
+          {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}
+          <table>
+            <caption>Official votes by circuit and establishment</caption>
+            <thead><tr><th scope="col">Establishment</th><th scope="col">Mesas</th><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
+            <tbody>{schoolBreakdown.schools.flatMap((school) => school.parties.map((party, index) => (
+              <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
+                <th scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
+                <td>{school.mesaCount} mesas</td>
+                <td>{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</td>
+                <td>{party.votes} votes</td><td>{formatShare(party.voteShare)}</td>
+              </tr>
+            )))}</tbody>
+          </table>
+        </section>
+      ) : schoolBreakdown ? (
+        <section aria-labelledby="school-breakdown-heading"><h2 id="school-breakdown-heading">Official school breakdown</h2>
+          <p role="alert">Refused: {schoolBreakdown.reason}. {formatCounts(schoolBreakdown.counts)}.</p>
+          {schoolExclusionNotes(schoolBreakdown.exclusions ?? [], schoolBreakdown.sourceExclusions ?? [])}</section>
+      ) : null}
       {missing.length > 0 ? <p role="alert">{missing.length} archive entry/entries resolved to no source record ({missing.join(", ")}); these figures cannot be traced.</p> : null}
       <ProvenanceLink sources={sources} />
     </main>

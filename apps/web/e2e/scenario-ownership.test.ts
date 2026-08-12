@@ -8,6 +8,7 @@ import {
   planResultNaturalKeys,
   planResultCleanup,
   planScenarioServers,
+  resultNaturalKey,
   resultScenarioIdentity,
 } from "./scenario-ownership";
 import { runOwnedServerCleanup } from "../scripts/e2e-gate-runtime";
@@ -46,11 +47,36 @@ describe("parallel scenario ownership", () => {
         expect(left.filter((key) => right.includes(key))).toEqual([]);
   });
 
-  it("uses valid normalized administrative codes for the coverage journey", () => {
-    const identity = resultScenarioIdentity("e2e/fiscalizacion.spec.ts");
+  it("keeps otherwise identical result rows disjoint across elections", () => {
+    const row = { archiveEntryId: "shared-entry", jurisdictionId: "shared-jurisdiction",
+      categoryId: "shared-category", listId: null, sourceKind: "official" };
 
-    expect(identity.distritoCode).toMatch(/^\d{2}$/);
-    expect(identity.seccionCode).toMatch(/^\d{3}$/);
+    expect(resultNaturalKey({ ...row, electionId: "election-2023" }))
+      .not.toBe(resultNaturalKey({ ...row, electionId: "election-2025" }));
+  });
+
+  it.each(["e2e/fiscalizacion.spec.ts", "e2e/provenance.spec.ts"] as const)(
+    "uses valid normalized administrative codes for the reachable %s journey",
+    (spec) => {
+      const identity = resultScenarioIdentity(spec);
+      expect(identity.distritoCode).toMatch(/^\d{2}$/);
+      expect(identity.seccionCode).toMatch(/^\d{3}$/);
+    },
+  );
+
+  it("owns provenance archive entries needed by the reachable explorer journey", () => {
+    const identity = resultScenarioIdentity("e2e/provenance.spec.ts");
+
+    expect(planResultCleanup("e2e/provenance.spec.ts")).toEqual(expect.arrayContaining(
+      identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
+    ));
+  });
+
+  it("owns the complete provenance mesa lineage used by the cold selector chain", () => {
+    const identity = resultScenarioIdentity("e2e/provenance.spec.ts");
+    expect(planResultNaturalKeys("e2e/provenance.spec.ts")).toContain(
+      `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|00001|E1|1`,
+    );
   });
 
   it("grants the service-role fixture every table it mutates", () => {
