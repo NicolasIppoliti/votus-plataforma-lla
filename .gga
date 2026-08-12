@@ -22,7 +22,7 @@
 #   PROVIDER="github:deepseek-r1"
 #   PROVIDER="minimax"
 #   PROVIDER="minimax:MiniMax-M3"
-PROVIDER="claude"
+PROVIDER="opencode"
 
 # File patterns to include in review (comma-separated)
 # Default: * (all files)
@@ -30,8 +30,8 @@ PROVIDER="claude"
 #   FILE_PATTERNS="*.ts,*.tsx"
 #   FILE_PATTERNS="*.py"
 #   FILE_PATTERNS="*.go,*.mod"
-# This project is two runtimes plus schema and curated data: 34 Python files
-# in etl/, 57 TypeScript in apps/web/, 26 SQL migrations, 5 curated YAML.
+# This project is two runtimes plus schema and curated data: 41 Python files,
+# 89 TypeScript files, 47 SQL files, and 6 curated YAML files.
 # The default TS-only pattern would have skipped every serious defect this
 # project has hit — all of them lived in Python, SQL or curated YAML.
 FILE_PATTERNS="*.py,*.ts,*.tsx,*.sql,*.yaml,*.yml"
@@ -68,7 +68,7 @@ TIMEOUT="300"
 
 # OpenCode provider: optional agent profile
 # Keep this lightweight. Agent prompts can add significant token overhead.
-# OPENCODE_AGENT="gga-reviewer"
+OPENCODE_AGENT="gga-reviewer"
 
 # Base branch for --pr-mode (auto-detects main/master/develop if empty)
 # Default: auto-detect
