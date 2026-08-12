@@ -120,13 +120,18 @@ it("reserves one unique set and releases duplicate reservations", async () => {
     expect(released).toEqual([3100]);
 });
 it("requires the exact generated loopback API endpoint and all keys", () => {
-    const valid = JSON.stringify({ API_URL: "http://127.0.0.1:43123", ANON_KEY: "anon", SERVICE_ROLE_KEY: "service" });
+    const valid = JSON.stringify({ API_URL: "http://127.0.0.1:43123",
+      DB_URL: "postgresql://postgres@127.0.0.1:43124/postgres",
+      ANON_KEY: "anon", SERVICE_ROLE_KEY: "service" });
     expect(assertStackStatus(valid, 43123).API_URL).toBe("http://127.0.0.1:43123");
     expect(() => assertStackStatus(valid.replace("43123", "43124"), 43123)).toThrow("API port");
     expect(() => assertStackStatus(valid.replace("127.0.0.1", "example.test"), 43123)).toThrow("loopback");
     expect(() => assertStackStatus(JSON.stringify({ API_URL: "http://127.0.0.1:43123" }), 43123))
       .toThrow("ANON_KEY");
-});
+    expect(() => assertStackStatus(valid.replace(
+      "postgresql://postgres@127.0.0.1:43124/postgres", "https://example.test"), 43123))
+      .toThrow("DB_URL");
+  });
 it("accepts only an explicit 7.x compiler version", () => {
     expect(() => assertTs7Version("Version 7.0.2")).not.toThrow();
     expect(() => assertTs7Version("Version 6.0.3")).toThrow("TypeScript 7.x");

@@ -3,7 +3,12 @@ export const SUPABASE_START_TIMEOUT_MS = 10 * 60_000;
 export interface PortReservation { port: number; release(): Promise<void>; }
 interface OwnershipState { ownership?: GateOwnership; }
 interface OwnershipEffects { createWorkdir(): void; writeMarker(): void; rollbackWorkdir(): void; }
-export interface StackStatus { API_URL: string; ANON_KEY: string; SERVICE_ROLE_KEY: string; }
+export interface StackStatus {
+  API_URL: string;
+  DB_URL: string;
+  ANON_KEY: string;
+  SERVICE_ROLE_KEY: string;
+}
 function collect(errors: unknown[], error: unknown): void {
   if (error instanceof AggregateError) errors.push(...error.errors);
   else errors.push(error);
@@ -56,11 +61,14 @@ export function assertStackStatus(output: string, expectedApiPort: number): Stac
   try { parsed = JSON.parse(output); } catch { throw new Error("Supabase status is not valid JSON"); }
   if (!parsed || typeof parsed !== "object") throw new Error("Supabase status is not an object");
   const status = parsed as Record<string, unknown>;
-  for (const key of ["API_URL", "ANON_KEY", "SERVICE_ROLE_KEY"] as const)
+  for (const key of ["API_URL", "ANON_KEY", "SERVICE_ROLE_KEY", "DB_URL"] as const)
     if (typeof status[key] !== "string" || !status[key]) throw new Error(`Supabase status omitted ${key}`);
   const apiUrl = new URL(status["API_URL"] as string);
   if (apiUrl.hostname !== "127.0.0.1") throw new Error("Supabase API URL is not exact loopback");
   if (Number(apiUrl.port) !== expectedApiPort) throw new Error("Supabase API port does not match reservation");
+  const dbUrl = new URL(status["DB_URL"] as string);
+  if (!dbUrl.protocol.startsWith("postgres") || dbUrl.hostname !== "127.0.0.1")
+    throw new Error("Supabase DB_URL is not an exact loopback Postgres endpoint");
   return status as unknown as StackStatus;
 }
 export function assertTs7Version(output: string): void {

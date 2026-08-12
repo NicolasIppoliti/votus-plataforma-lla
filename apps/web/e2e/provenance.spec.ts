@@ -51,6 +51,41 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       );
       await expect(main).not.toContainText(FISCALIZACION_MARKER);
       await expect(main).not.toContainText(`Official total: ${OFFICIAL_VOTES + FISCALIZACION_VOTES}`);
+
+      await page.getByRole("link", { name: "Explore results" }).click();
+      await expect(page).toHaveURL(/\/drilldown/);
+      for (const [label, value] of [["Election", SOURCE_SCOPE.electionId],
+        ["Category", SOURCE_SCOPE.categoryId], ["Distrito", identity.distritoCode],
+        ["Sección", identity.seccionCode], ["Circuito", "00001"], ["Establecimiento", "E1"]] as const) {
+        await page.getByLabel(label).selectOption(value);
+        await page.getByRole("button", { name: "Apply selection" }).click();
+      }
+      await page.getByLabel("Mesa").selectOption("1");
+      await page.getByLabel("Report level").selectOption("mesa");
+      await page.getByRole("button", { name: "Apply selection" }).click();
+      const explorerUrl = new URL(
+        `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
+          `&distritoCode=${encodeURIComponent(identity.distritoCode)}` +
+          `&seccionCode=${encodeURIComponent(identity.seccionCode)}` +
+          `&circuitoCode=00001&establecimientoCode=E1&mesaCode=1&level=mesa`,
+        baseURL,
+      ).toString();
+      await expect(page).toHaveURL(explorerUrl);
+      const explorer = page.getByRole("main");
+      await expect(explorer).toContainText(`${OFFICIAL_VOTES} votes at mesa level from mesa source rows`);
+      await expect(explorer).toContainText(
+        `Excluded 1 fiscalizacion rows / ${FISCALIZACION_VOTES} votes from the official aggregate`);
+      await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votes at mesa level`);
+      await expect(page.getByRole("list", { name: "provenance" }).getByRole("listitem")).toHaveCount(1);
+      await page.reload();
+      await expect(page).toHaveURL(explorerUrl);
+
+      await page.goto(new URL(
+        `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
+          `&distritoCode=${identity.distritoCode}&distritoCode=84&level=distrito`,
+        baseURL,
+      ).toString());
+      await expect(page.getByRole("main").getByRole("alert")).toContainText("Refused");
     });
   });
 });

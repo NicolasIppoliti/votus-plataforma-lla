@@ -30,14 +30,27 @@ export interface ExplorationParty {
   listId: string | null; votes: number; voteShare: string | null;
 }
 export interface ExplorationSourceAudit { kind: string; rows: number; votes: number; }
+export interface SchoolBreakdownExclusion { reason: string; rows: number; votes: number; }
+export interface SchoolBreakdownItem {
+  circuitoCode: string; code: string; name: string | null; mesaCount: number;
+  totalVotes: number; parties: ExplorationParty[]; archiveEntryIds: string[];
+}
+export interface SchoolBreakdownOk {
+  status: "ok"; sourceKind: "official"; level: "seccion";
+  schools: SchoolBreakdownItem[]; sourceAudit: ExplorationSourceAudit[];
+  exclusions: SchoolBreakdownExclusion[]; sourceExclusions: ExplorationSourceAudit[];
+}
+export type SchoolBreakdownResult = SchoolBreakdownOk | ExplorationRefusal;
 export interface ExplorationOk {
   status: "ok"; sourceKind: "official"; level: ExplorationLevel; sourceGranularity: ExplorationLevel;
   electionYear: number; electionRound: string; totalVotes: number;
   mesaCount: number | null; parties: ExplorationParty[]; archiveEntryIds: string[];
   sourceAudit: ExplorationSourceAudit[];
+  sourceExclusions: ExplorationSourceAudit[];
 }
 export interface ExplorationRefusal { status: "no_rows" | "source_unavailable" | "selection_invalid";
-  reason: string; counts: Record<string, number>; }
+  reason: string; counts: Record<string, number>; exclusions?: SchoolBreakdownExclusion[];
+  sourceExclusions?: ExplorationSourceAudit[]; }
 export type ExplorationResult = ExplorationOk | ExplorationRefusal;
 interface RpcResponse { data: unknown; error: { message: string } | null; }
 export interface ExplorationRpcClient { rpc(name: string, args: Record<string, unknown>): Promise<RpcResponse>; }
@@ -45,6 +58,21 @@ export class ResultsExplorationContractError extends Error {
   constructor(readonly code: "results_exploration_facets_contract" | "results_exploration_official_contract" | "results_exploration_refusal_contract", detail: string) {
     super(`${code}: ${detail}`);
     this.name = "ResultsExplorationContractError";
+  }
+}
+function requireCompleteHierarchy(selection: ExplorationSelection): void {
+  if (selection.requestedLevel === EXPLORATION_LEVEL.MESA &&
+      (!selection.circuitoCode || !selection.establecimientoCode)) {
+    throw new ResultsExplorationContractError("results_exploration_official_contract",
+      "mesa requires circuito and establecimiento parents");
+  }
+  if (selection.requestedLevel === EXPLORATION_LEVEL.ESTABLECIMIENTO && !selection.circuitoCode) {
+    throw new ResultsExplorationContractError("results_exploration_official_contract",
+      "establecimiento requires a circuito parent");
+  }
+  if (selection.requestedLevel !== EXPLORATION_LEVEL.DISTRITO && !selection.seccionCode) {
+    throw new ResultsExplorationContractError("results_exploration_official_contract",
+      `${selection.requestedLevel} requires a seccion parent`);
   }
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,7 +113,10 @@ function parseRefusal(value: Record<string, unknown>): ExplorationRefusal | null
     return null;
   }
   try {
-    return { status, reason: stringField(value, "reason"), counts: countFields(value["counts"]) };
+    return { status, reason: stringField(value, "reason"), counts: countFields(value["counts"]),
+      ...("exclusions" in value ? { exclusions: parseExclusions(value["exclusions"]) } : {}),
+      ...("source_exclusions" in value
+        ? { sourceExclusions: parseSourceExclusions(value["source_exclusions"]) } : {}) };
   } catch {
     throw new ResultsExplorationContractError("results_exploration_refusal_contract", "malformed refusal payload");
   }
@@ -144,6 +175,34 @@ function parseSourceAudit(value: unknown): ExplorationSourceAudit[] {
     return { kind, rows, votes };
   });
 }
+function parseSourceExclusions(value: unknown): ExplorationSourceAudit[] {
+  if (!Array.isArray(value)) throw new Error("invalid source_exclusions");
+  let previous = "";
+  return value.map((entry) => {
+    if (!isRecord(entry)) throw new Error("invalid source_exclusions");
+    const kind = stringField(entry, "kind");
+    const rows = nonnegativeInteger(entry, "rows");
+    const votes = nonnegativeInteger(entry, "votes");
+    if (rows === 0 || kind === "official" || kind <= previous)
+      throw new Error("invalid source_exclusions");
+    previous = kind;
+    return { kind, rows, votes };
+  });
+}
+
+function parseExclusions(value: unknown): SchoolBreakdownExclusion[] {
+  if (!Array.isArray(value)) throw new Error("invalid exclusions");
+  let previous = "";
+  return value.map((entry) => {
+    if (!isRecord(entry)) throw new Error("invalid exclusions");
+    const reason = stringField(entry, "reason");
+    const rows = nonnegativeInteger(entry, "rows");
+    const votes = nonnegativeInteger(entry, "votes");
+    if (rows === 0 || reason <= previous) throw new Error("invalid exclusions");
+    previous = reason;
+    return { reason, rows, votes };
+  });
+}
 export function hasOnlyOfficialSourceAudit(audit: ExplorationSourceAudit[]): boolean {
   return audit.length === 1 && audit[0]?.kind === "official";
 }
@@ -152,12 +211,17 @@ function parseOfficial(value: unknown): ExplorationResult {
     throw new ResultsExplorationContractError("results_exploration_official_contract", "malformed success payload");
   }
   const refused = parseRefusal(value);
-  if (refused) return refused;
+  if (refused) {
+    if (!("source_exclusions" in value)) throw new ResultsExplorationContractError(
+      "results_exploration_refusal_contract", "malformed refusal payload");
+    return refused;
+  }
   try {
     const level = value["level"];
     const sourceGranularity = value["source_granularity"];
     const totalVotes = nonnegativeInteger(value, "total_votes");
     const sourceAudit = parseSourceAudit(value["source_audit"]);
+    const sourceExclusions = parseSourceExclusions(value["source_exclusions"]);
     const parties = value["parties"];
     const archiveEntryIds = value["archive_entry_ids"];
     if (
@@ -187,10 +251,58 @@ function parseOfficial(value: unknown): ExplorationResult {
       parties: parsedParties,
       archiveEntryIds,
       sourceAudit,
+      sourceExclusions,
     };
   } catch (error) {
     if (error instanceof ResultsExplorationContractError) throw error;
     throw new ResultsExplorationContractError("results_exploration_official_contract", "malformed success payload");
+  }
+}
+function parseSchoolBreakdown(value: unknown): SchoolBreakdownResult {
+  if (!isRecord(value)) throw new ResultsExplorationContractError(
+    "results_exploration_official_contract", "malformed school breakdown payload");
+  const refused = parseRefusal(value);
+  if (refused) {
+    if (!("exclusions" in value) || !("source_exclusions" in value))
+      throw new ResultsExplorationContractError(
+        "results_exploration_refusal_contract", "malformed refusal payload");
+    return refused;
+  }
+  try {
+    const sourceAudit = parseSourceAudit(value["source_audit"]);
+    const schools = value["schools"];
+    const exclusions = value["exclusions"];
+    const sourceExclusions = parseSourceExclusions(value["source_exclusions"]);
+    if (value["status"] !== "ok" || value["source_kind"] !== "official" ||
+        value["level"] !== "seccion" || !hasOnlyOfficialSourceAudit(sourceAudit) ||
+        !Array.isArray(schools) || schools.length === 0 || schools.length > 500 ||
+        !Array.isArray(exclusions)) throw new Error("invalid envelope");
+    const parsedSchools = schools.map((school): SchoolBreakdownItem => {
+      if (!isRecord(school)) throw new Error("invalid school");
+      const totalVotes = nonnegativeInteger(school, "total_votes");
+      const parties = school["parties"];
+      const archiveEntryIds = school["archive_entry_ids"];
+      if (!Array.isArray(parties) || parties.length === 0 || !Array.isArray(archiveEntryIds) ||
+          archiveEntryIds.length === 0 || !archiveEntryIds.every((id) => typeof id === "string"))
+        throw new Error("invalid school arrays");
+      const parsedParties = parties.map(parseParty);
+      if (parsedParties.reduce((sum, party) => sum + party.votes, 0) !== totalVotes ||
+          !parsedParties.every((party) => shareMatches(party, totalVotes)))
+        throw new Error("invalid school parties");
+      return { circuitoCode: stringField(school, "circuito_code"),
+        code: stringField(school, "code"), name: nullableStringField(school, "name"),
+        mesaCount: nonnegativeInteger(school, "mesa_count"), totalVotes,
+        parties: parsedParties, archiveEntryIds };
+    });
+    const parsedExclusions = parseExclusions(exclusions);
+    const includedVotes = parsedSchools.reduce((sum, school) => sum + school.totalVotes, 0);
+    if (sourceAudit.reduce((sum, entry) => sum + entry.votes, 0) !== includedVotes)
+      throw new Error("invalid audit totals");
+    return { status: "ok", sourceKind: "official", level: "seccion",
+      schools: parsedSchools, sourceAudit, sourceExclusions, exclusions: parsedExclusions };
+  } catch {
+    throw new ResultsExplorationContractError("results_exploration_official_contract",
+      "malformed school breakdown payload");
   }
 }
 function parseTextOptions(value: unknown): TextOption[] {
@@ -250,6 +362,7 @@ export type NormalizedExplorationParams =
 function numericCode(raw: string | undefined, width: number): string | null | undefined {
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
   if (!/^[0-9]+$/.test(trimmed)) return null;
   return trimmed.padStart(width, "0");
 }
@@ -260,15 +373,16 @@ export function normalizeExplorationParams(raw: RawAdministrativeParams): Normal
   if (raw.circuitoCode === undefined) {
     circuitoCode = undefined;
   } else {
-    const match = /^([0-9]+)([A-Za-z])?$/.exec(raw.circuitoCode.trim());
-    circuitoCode = match?.[1]
+    const trimmed = raw.circuitoCode.trim();
+    const match = /^([0-9]+)([A-Za-z])?$/.exec(trimmed);
+    circuitoCode = trimmed.length === 0 ? undefined : match?.[1]
       ? match[1].padStart(match[2] ? 4 : 5, "0") + (match[2]?.toUpperCase() ?? "")
       : null;
   }
   const establecimientoCode = raw.establecimientoCode?.trim() || undefined;
-  const mesaCode = raw.mesaCode === undefined || !/^[0-9]+$/.test(raw.mesaCode.trim())
-    ? raw.mesaCode === undefined ? undefined : null
-    : Number(raw.mesaCode.trim());
+  const rawMesaCode = raw.mesaCode?.trim();
+  const mesaCode = !rawMesaCode ? undefined
+    : /^[0-9]+$/.test(rawMesaCode) ? Number(rawMesaCode) : null;
   const invalid = Object.fromEntries(Object.entries({ distritoCode, seccionCode, circuitoCode, mesaCode })
     .filter(([, value]) => value === null)
     .map(([key]) => [key, 1]));
@@ -300,6 +414,7 @@ export class ResultsExplorationRepository {
     return parseFacets(data);
   }
   async official(selection: ExplorationSelection): Promise<ExplorationResult> {
+    requireCompleteHierarchy(selection);
     const { data, error } = await this.client.rpc("results_exploration_official", {
       p_election_id: selection.electionId,
       p_category_id: selection.categoryId,
@@ -312,6 +427,17 @@ export class ResultsExplorationRepository {
     });
     if (error) throw new Error(`results_exploration_official failed: ${error.message}`);
     return parseOfficial(data);
+  }
+  async schools(selection: ExplorationSelection): Promise<SchoolBreakdownResult> {
+    if (selection.requestedLevel !== EXPLORATION_LEVEL.SECCION || !selection.seccionCode)
+      throw new ResultsExplorationContractError("results_exploration_official_contract",
+        "school breakdown requires a complete seccion selection");
+    const { data, error } = await this.client.rpc("results_exploration_schools", {
+      p_election_id: selection.electionId, p_category_id: selection.categoryId,
+      p_distrito_code: selection.distritoCode, p_seccion_code: selection.seccionCode,
+    });
+    if (error) throw new Error(`results_exploration_schools failed: ${error.message}`);
+    return parseSchoolBreakdown(data);
   }
 }
 export function createResultsExplorationRepository(

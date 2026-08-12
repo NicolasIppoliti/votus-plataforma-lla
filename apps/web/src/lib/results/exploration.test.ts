@@ -31,11 +31,19 @@ describe("official results exploration repository", () => {
       p_seccion_code: null, p_circuito_code: null,
     } }]);
   });
+  it.each(["", "   "])("treats a blank form selector (%j) as absent", (blank) => {
+    expect(normalizeExplorationParams({ distritoCode: blank, seccionCode: blank,
+      circuitoCode: blank, establecimientoCode: blank, mesaCode: blank })).toEqual({
+      status: "ok", value: {},
+    });
+  });
   it("returns exact figures, actual granularity, election shape, and explicit unmapped identity", async () => {
     const fake = rpcClient({ results_exploration_official: {
       status: "ok", source_kind: "official", level: "seccion", source_granularity: "mesa",
       election_year: 2025, election_round: "legislativas", total_votes: 300, mesa_count: 2,
       source_audit: [{ kind: "official", rows: 4, votes: 300 }],
+      source_exclusions: [{ kind: "fiscalizacion", rows: 2, votes: 1776 },
+        { kind: "unknown", rows: 1, votes: 9 }],
       parties: [
         { identity_status: "canonical", canonical_party_id: "lla",
           display_name: "LA LIBERTAD AVANZA", list_id: null, votes: 200,
@@ -51,15 +59,54 @@ describe("official results exploration repository", () => {
       status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
       electionYear: 2025, electionRound: "legislativas", totalVotes: 300, mesaCount: 2,
       sourceAudit: [{ kind: "official", rows: 4, votes: 300 }],
+      sourceExclusions: [{ kind: "fiscalizacion", rows: 2, votes: 1776 },
+        { kind: "unknown", rows: 1, votes: 9 }],
       parties: [{ identityStatus: "canonical", canonicalPartyId: "lla", votes: 200 },
         { identityStatus: "unmapped", listId: "999", votes: 100 }],
     });
+  });
+  it("refuses an orphan mesa before crossing the RPC boundary", async () => {
+    const fake = rpcClient({});
+    await expect(new ResultsExplorationRepository(fake.client).official({
+      ...SELECTION, mesaCode: 7, requestedLevel: "mesa",
+    })).rejects.toEqual(new ResultsExplorationContractError(
+      "results_exploration_official_contract", "mesa requires circuito and establecimiento parents"));
+    expect(fake.calls).toEqual([]);
+  });
+  it("parses a bounded official section-wide school breakdown without merging circuit identities", async () => {
+    const fake = rpcClient({ results_exploration_schools: {
+      status: "ok", source_kind: "official", level: "seccion",
+      source_audit: [{ kind: "official", rows: 3, votes: 350 }], source_exclusions: [], exclusions: [],
+      schools: [
+        { circuito_code: "00001", code: "E1", name: "School one", mesa_count: 2, total_votes: 300,
+          archive_entry_ids: ["national/2025-legislativas"], parties: [
+          { identity_status: "canonical", canonical_party_id: "lla", display_name: "LA LIBERTAD AVANZA",
+            list_id: null, votes: 200, vote_share: "0.66666666666666666667" },
+          { identity_status: "unmapped", canonical_party_id: null, display_name: null,
+            list_id: "999", votes: 100, vote_share: "0.33333333333333333333" }] },
+        { circuito_code: "00002", code: "E1", name: "School two", mesa_count: 1, total_votes: 50,
+          archive_entry_ids: ["national/2025-legislativas"], parties: [{ identity_status: "canonical",
+            canonical_party_id: "lla", display_name: "LA LIBERTAD AVANZA", list_id: null,
+            votes: 50, vote_share: "1" }] },
+      ],
+    } });
+    const result = await new ResultsExplorationRepository(fake.client).schools(SELECTION);
+    expect(result).toMatchObject({ status: "ok", sourceKind: "official", schools: [
+      { circuitoCode: "00001", code: "E1", mesaCount: 2, totalVotes: 300,
+        parties: [{ displayName: "LA LIBERTAD AVANZA", votes: 200 }, { listId: "999", votes: 100 }] },
+      { circuitoCode: "00002", code: "E1", mesaCount: 1, totalVotes: 50 },
+    ] });
+    expect(fake.calls[0]).toEqual({ name: "results_exploration_schools", args: {
+      p_election_id: SELECTION.electionId, p_category_id: SELECTION.categoryId,
+      p_distrito_code: "02", p_seccion_code: "027",
+    } });
   });
   it("keeps mesa count unavailable when the source did not publish mesa rows", async () => {
     const fake = rpcClient({ results_exploration_official: {
       status: "ok", source_kind: "official", level: "distrito", source_granularity: "distrito",
       election_year: 2025, election_round: "provinciales", total_votes: 23,
       source_audit: [{ kind: "official", rows: 1, votes: 23 }],
+      source_exclusions: [],
       mesa_count: null, parties: [{ identity_status: "unmapped", canonical_party_id: null,
         display_name: null, list_id: "77", votes: 23, vote_share: "1" }],
       archive_entry_ids: ["pba/2025-distrito-027"],
@@ -75,7 +122,8 @@ describe("official results exploration repository", () => {
     const fake = rpcClient({ results_exploration_official: {
       status: "ok", source_kind: "official", level: "distrito", source_granularity: "distrito",
       election_year: 2025, election_round: "provinciales", total_votes: totalVotes, mesa_count: null,
-      source_audit: [{ kind: "official", rows: 1, votes: totalVotes }], parties: [{ identity_status: "unmapped",
+      source_audit: [{ kind: "official", rows: 1, votes: totalVotes }], source_exclusions: [],
+      parties: [{ identity_status: "unmapped",
         canonical_party_id: null, display_name: null, list_id: "77", votes, vote_share: voteShare }],
       archive_entry_ids: ["pba/2025-distrito-027"],
     } });
@@ -86,6 +134,7 @@ describe("official results exploration repository", () => {
     const fake = rpcClient({ results_exploration_official: { status: "ok", source_kind: "official",
       level: "distrito", source_granularity: "distrito", election_year: 2025, election_round: "provinciales",
       total_votes: 0, mesa_count: null, source_audit: [{ kind: "official", rows: 1, votes: 0 }],
+      source_exclusions: [],
       parties: [{ identity_status: "unmapped", canonical_party_id: null, display_name: null, list_id: "77",
         votes: 0, vote_share: null }], archive_entry_ids: ["pba/2025-distrito-027"] } });
     await expect(new ResultsExplorationRepository(fake.client).official(DISTRICT_SELECTION))
@@ -96,6 +145,7 @@ describe("official results exploration repository", () => {
       status: "ok", source_kind: "official", level: "seccion", source_granularity: "mesa",
       election_year: 2025, election_round: "legislativas", total_votes: 360, mesa_count: 2,
       source_audit: [{ kind: "official", rows: 4, votes: 300 }, { kind: "fiscalizacion", rows: 1, votes: 60 }],
+      source_exclusions: [],
       parties: [], archive_entry_ids: ["national/2025-legislativas", "fiscalizacion/leaked"],
     } });
     await expect(new ResultsExplorationRepository(fake.client).official(SELECTION)).rejects.toEqual(
@@ -106,12 +156,56 @@ describe("official results exploration repository", () => {
     const fake = rpcClient({ results_exploration_official: {
       status: "source_unavailable", reason,
       counts: { included_distrito_rows: 1, requested_mesa_rows: 0 },
+      source_exclusions: [{ kind: "fiscalizacion", rows: 3, votes: 90 }],
     } });
     await expect(new ResultsExplorationRepository(fake.client).official(SELECTION)).resolves.toEqual({
       status: "source_unavailable", reason,
       counts: { includedDistritoRows: 1, requestedMesaRows: 0 },
+      sourceExclusions: [{ kind: "fiscalizacion", rows: 3, votes: 90 }],
     });
   });
+  it("parses non-mesa school exclusions separately by official reason and excluded source", async () => {
+    const fake = rpcClient({ results_exploration_schools: {
+      status: "ok", source_kind: "official", level: "seccion",
+      source_audit: [{ kind: "official", rows: 1, votes: 30 }],
+      source_exclusions: [{ kind: "fiscalizacion", rows: 2, votes: 80 },
+        { kind: "unknown", rows: 1, votes: 9 }], exclusions: [
+        { reason: "official_rows_without_mesa_granularity", rows: 1, votes: 30 }],
+      schools: [{ circuito_code: "00001", code: "E1", name: null, mesa_count: 1,
+        total_votes: 30, archive_entry_ids: ["national/2025-legislativas"],
+        parties: [{ identity_status: "unmapped", canonical_party_id: null,
+          display_name: null, list_id: "110", votes: 30, vote_share: "1" }] }],
+    } });
+    await expect(new ResultsExplorationRepository(fake.client).schools(SELECTION)).resolves.toMatchObject({
+      status: "ok", sourceAudit: [{ kind: "official", rows: 1, votes: 30 }],
+      sourceExclusions: [{ kind: "fiscalizacion", rows: 2, votes: 80 },
+        { kind: "unknown", rows: 1, votes: 9 }], exclusions: [
+        { reason: "official_rows_without_mesa_granularity", rows: 1, votes: 30 }],
+    });
+  });
+  it.each([
+    ["selection_invalid", "the section school breakdown exceeds the bounded payload limit",
+      { schools: 501, payload_school_limit: 500 }],
+    ["selection_invalid", "one complete establecimiento identity carries conflicting names",
+      { ambiguous_establecimiento_name: 1 }],
+  ])("retains school exclusion evidence when %s refuses", async (status, reason, counts) => {
+    const fake = rpcClient({ results_exploration_schools: { status, reason, counts,
+      exclusions: [{ reason: "official_rows_without_mesa_code", rows: 2, votes: 40 }],
+      source_exclusions: [{ kind: "fiscalizacion", rows: 3, votes: 90 }] } });
+    await expect(new ResultsExplorationRepository(fake.client).schools(SELECTION)).resolves.toEqual({
+      status, reason, counts: Object.fromEntries(Object.entries(counts).map(([key, value]) =>
+        [key.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase()), value])),
+      exclusions: [{ reason: "official_rows_without_mesa_code", rows: 2, votes: 40 }],
+      sourceExclusions: [{ kind: "fiscalizacion", rows: 3, votes: 90 }],
+    });
+  });
+  it.each([[{ reason: "missing", rows: 1, votes: -1 }], [{ reason: "missing", rows: 0, votes: 1 }]])(
+    "fails closed on malformed school refusal exclusions %#", async (exclusions) => {
+      const fake = rpcClient({ results_exploration_schools: { status: "selection_invalid",
+        reason: "invalid school scope", counts: { schools: 501 }, exclusions, source_exclusions: [] } });
+      await expect(new ResultsExplorationRepository(fake.client).schools(SELECTION)).rejects.toEqual(
+        new ResultsExplorationContractError("results_exploration_refusal_contract", "malformed refusal payload"));
+    });
   it("fails closed with named errors for malformed success and refusal payloads", async () => {
     const malformedSuccess = rpcClient({
       results_exploration_official: { status: "ok", total_votes: "300", parties: [] },
