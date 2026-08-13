@@ -38,7 +38,9 @@ import type { Coverage, SourceRef } from "@/lib/results/types";
 import {
   createResultsCoverageRepository,
 	type CoverageExclusion,
+	type CoverageOk,
   type CoverageResult,
+	type CoverageSelection,
 } from "@/lib/results/coverage";
 import {
   createResultsExplorationRepository,
@@ -371,22 +373,44 @@ export function mixedSourceKindReason(rows: ResultRow[]): string | null {
  * `test_a_party_respelled_between_elections_still_matches` exists for.
  */
 export function topParty(rows: ResultRow[]): TopPartyResult {
+	const namesByParty = new Map<string, Set<string>>();
+	for (const row of rows) {
+		const id = row.canonicalPartyId;
+		const name = row.partyName;
+		if (!id || !name) continue;
+		const names = namesByParty.get(id) ?? new Set<string>();
+		names.add(name);
+		namesByParty.set(id, names);
+	}
+	const nameConflicts = [...namesByParty]
+		.filter(([, names]) => names.size > 1)
+		.sort(([leftId], [rightId]) => leftId.localeCompare(rightId));
+	const nameConflictReason =
+		nameConflicts.length === 0
+			? null
+			: `canonical party IDs have conflicting nonempty party names (${nameConflicts
+					.map(
+						([id, names]) =>
+							`${id}: ${[...names].sort().join(" | ")}`,
+					)
+					.join("; ")})`;
+
   // Refuses to RANK an inflated total -- but unmappability is independent of
   // granularity, so the unmapped tally is still computed and reported below.
   // Zeroing it hid the per-list-id breakdown entirely whenever levels were
   // mixed: a silent exclusion behind a plausible total.
 	const refusedReason =
-		mixedSourceKindReason(rows) ?? mixedGranularityReason(rows);
+		mixedSourceKindReason(rows) ??
+		mixedGranularityReason(rows) ??
+		nameConflictReason;
 
-  // Keyed on the CANONICAL id, labelled by the display name. Keying on the
-  // name merged nothing across a respelling and split one party in two within
-  // a year if the curated file ever spelled it two ways.
+  // Keyed on the CANONICAL id. Keying on the name merged nothing across a
+  // respelling and split one party in two within a year. Display names remain a
+  // separate invariant: a canonical id must have exactly one before it can be
+  // rendered, never whichever spelling happened to be encountered first.
   // NOT `votesByParty`: that name belongs to the imported fold, and shadowing
   // it here made the one identity boundary unreachable by name in this scope.
-	const totalsByParty = new Map<
-		string,
-		{ votes: number; displayName: string }
-	>();
+	const totalsByParty = new Map<string, number>();
   for (const row of rows) {
     // An unmapped row keeps its votes in the denominator, but it can never BE
     // the answer: naming a party we could not resolve is exactly the
@@ -396,22 +420,18 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     const id = row.canonicalPartyId;
     const name = row.partyName;
     if (!id || !name) continue;
-    const entry = totalsByParty.get(id) ?? { votes: 0, displayName: name };
-		totalsByParty.set(id, {
-			votes: entry.votes + row.votes,
-			displayName: entry.displayName,
-		});
+		totalsByParty.set(id, (totalsByParty.get(id) ?? 0) + row.votes);
   }
 
-  let top: { id: string; displayName: string } | null = null;
+  let topId: string | null = null;
   let topVotes = -1;
   let tied = false;
-  for (const [id, entry] of totalsByParty) {
-    if (entry.votes > topVotes) {
-      top = { id, displayName: entry.displayName };
-      topVotes = entry.votes;
+  for (const [id, votes] of totalsByParty) {
+    if (votes > topVotes) {
+      topId = id;
+      topVotes = votes;
       tied = false;
-    } else if (entry.votes === topVotes) {
+    } else if (votes === topVotes) {
       tied = true;
     }
   }
@@ -419,15 +439,20 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     // `votes > topVotes` kept whichever party the Map saw first, i.e. row
     // order, and that name then selected which party the whole cross-election
     // juxtaposition reported. A tie is ambiguous, not decided by input order.
-    top = null;
+    topId = null;
   }
+	const topNames = topId ? namesByParty.get(topId) : undefined;
+	let topName: string | null = null;
+	if (topNames?.size === 1) {
+		for (const name of topNames) topName = name;
+	}
 
   // PER LIST ID, not one aggregate. One id covering 40 % of the votes and
   // forty ids covering 1 % each render identically as a total, and a large
   // plausible total is exactly how a destructive filter survives review.
   return {
-    canonicalPartyId: refusedReason ? null : (top?.id ?? null),
-    partyName: refusedReason ? null : (top?.displayName ?? null),
+    canonicalPartyId: refusedReason ? null : topId,
+    partyName: refusedReason ? null : topName,
     refusedReason,
     // A "tie" computed from an untrustworthy total is not a finding. When the
     // rows cannot be summed at all, `tied` is an ARTIFACT of the same bad
@@ -594,8 +619,24 @@ function schoolExclusions(entries: CoverageExclusion[]): ReactNode {
 	);
 }
 
-async function renderCoverageExplorer(
+type CoverageLoader = (selection: CoverageSelection) => Promise<CoverageResult>;
+
+function passesRenderedCoverageSourceIsolation(result: CoverageOk): boolean {
+	return (
+		result.sourceKind === "fiscalizacion" &&
+		result.sourceAudit.length === 1 &&
+		result.sourceAudit.every((entry) => entry.kind === "fiscalizacion") &&
+		result.denominatorAudit.length === 1 &&
+		result.denominatorAudit.every((entry) => entry.kind === "official") &&
+		result.isRandomSample === false &&
+		result.mesasCoverage.isRandomSample === false &&
+		result.escuelas.items.every((school) => school.isRandomSample === false)
+	);
+}
+
+export async function renderCoverageExplorer(
   params: Record<string, string | string[] | undefined>,
+	loadCoverage?: CoverageLoader,
 ): Promise<ReactNode> {
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
@@ -669,12 +710,15 @@ async function renderCoverageExplorer(
   }
   let result;
   try {
-    result = await createResultsCoverageRepository(client).coverage({
+		const selection = {
 			electionId,
 			categoryId,
 			distritoCode,
 			seccionCode,
-    });
+		};
+		result = loadCoverage
+			? await loadCoverage(selection)
+			: await createResultsCoverageRepository(client).coverage(selection);
   } catch (error) {
 		return (
 			<main>
@@ -698,6 +742,20 @@ async function renderCoverageExplorer(
 			</main>
 		);
   }
+	// This is independent of the RPC parser and repository guard. A widened or
+	// regressed success payload must earn every rendered coverage claim again,
+	// before provenance is read and before any success evidence becomes visible.
+	if (!passesRenderedCoverageSourceIsolation(result)) {
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				<p role="alert">
+					Refused: coverage evidence failed the rendered-page source isolation
+					guard.
+				</p>
+			</main>
+		);
+	}
 	const archiveIds = [
 		...result.provenance.officialArchiveEntryIds,
 		...result.provenance.fiscalizacionArchiveEntryIds,
@@ -1068,14 +1126,15 @@ export function renderFiscalizacionView(
   // page-local wrapper gave the same question a second shape, so a change to
   // what `readGranularity` reports would land in one and not the other.
   const levels = readGranularity(rows);
-  const partyTotals = mixedLevels !== null ? [] : votesByParty(rows);
+  const unmapped = topParty(rows);
+	const partyFigureRefusal = mixedLevels ?? unmapped.refusedReason;
+  const partyTotals = partyFigureRefusal !== null ? [] : votesByParty(rows);
 
   // Computed for the party the comparison names, not for whichever list
   // happens to rank first here.
   const fiscalizacionShare = comparison
     ? partyShare(rows, comparison.canonicalPartyId, comparison.partyName)
     : null;
-  const unmapped = topParty(rows);
 
   return (
     <main>
@@ -1135,8 +1194,8 @@ export function renderFiscalizacionView(
             <GranularityBadge {...jurisdictionTotalLevel(levels.granularity)} />
           )}
           <UnorderableLevels entries={unorderable} />
-          {mixedLevels ? (
-            <p role="alert">No per-party figures: {mixedLevels}.</p>
+          {partyFigureRefusal ? (
+            <p role="alert">No per-party figures: {partyFigureRefusal}.</p>
           ) : (
             <ul>
               {partyTotals.map((entry) => (
