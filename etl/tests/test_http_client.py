@@ -1,7 +1,6 @@
 """Unit tests for the requests-based fetcher (etl.http_client).
 
-Mocks ``requests.get``/``requests.head`` — no real network I/O in this
-suite.
+Mocks ``requests.get`` — no real network I/O in this suite.
 
 Includes:
 - source-archive spec's fetch-failure-handling scenarios (2.6), exercised
@@ -49,9 +48,15 @@ def test_get_returns_fetch_response_on_success() -> None:
         result = fetcher.get("https://example.org/f.csv", timeout=10, headers={"User-Agent": "x"})
 
     mocked.assert_called_once()
+    assert mocked.call_args.kwargs["allow_redirects"] is False
     assert result.status_code == 200
     assert result.content == b"hello"
     assert result.headers["Content-Type"] == "text/csv"
+
+
+def _policed(fetcher, path: str, delay: float, **kwargs) -> PolicedHostFetcher:
+    policy = HostPolicy("example.org", 1, delay, "ua", (path,))
+    return PolicedHostFetcher(fetcher, policy, **kwargs)
 
 
 def test_get_retries_on_request_exception_then_succeeds() -> None:
@@ -63,54 +68,46 @@ def test_get_retries_on_request_exception_then_succeeds() -> None:
         ) as mocked,
         patch("etl.http_client.time.sleep") as mocked_sleep,
     ):
-        fetcher = RequestsFetcher(max_retries=2, retry_delay_seconds=0.1)
+        fetcher = _policed(RequestsFetcher(), "/f.csv", 0.1, sleep=mocked_sleep)
         result = fetcher.get("https://example.org/f.csv", timeout=10, headers={})
 
     assert mocked.call_count == 2
-    mocked_sleep.assert_called_once_with(0.1)
+    mocked_sleep.assert_called_once()
     assert result.content == b"ok"
 
 
-def test_head_returns_status_code_only_without_downloading_body() -> None:
-    fake_response = Mock(status_code=200, headers={"Content-Length": "88157604"})
-    with patch("etl.http_client.requests.head", return_value=fake_response) as mocked:
-        fetcher = RequestsFetcher()
-        result = fetcher.head(
-            "https://example.org/big.zip", timeout=10, headers={"User-Agent": "x"}
-        )
-
-    mocked.assert_called_once()
-    assert result.status_code == 200
-    assert result.headers["Content-Length"] == "88157604"
-
-
-def test_get_retries_on_429_honoring_retry_after_header() -> None:
-    throttled = Mock(status_code=429, content=b"", headers={"Retry-After": "3"})
+@pytest.mark.parametrize(("retry_after", "delay"), [("10", 9), ("3", 3), ("bad", 3), ("nan", 3)])
+def test_get_retries_on_429_honoring_retry_after_header(retry_after, delay) -> None:
+    throttled = Mock(status_code=429, content=b"", headers={"Retry-After": retry_after})
     ok_response = Mock(status_code=200, content=b"ok", headers={})
     with (
         patch("etl.http_client.requests.get", side_effect=[throttled, ok_response]) as mocked,
         patch("etl.http_client.time.sleep") as mocked_sleep,
     ):
-        fetcher = RequestsFetcher(max_retries=2, retry_delay_seconds=0.1)
+        clock = iter([0, 1])
+        fetcher = _policed(
+            RequestsFetcher(), "/f.pdf", 4, sleep=mocked_sleep, clock=lambda: next(clock)
+        )
         result = fetcher.get("https://example.org/f.pdf", timeout=10, headers={})
 
     assert mocked.call_count == 2
-    mocked_sleep.assert_called_once_with(3.0)
+    mocked_sleep.assert_called_once_with(delay)
     assert result.status_code == 200
     assert result.content == b"ok"
 
 
-def test_get_raises_after_exhausting_retries() -> None:
+def test_transport_raises_after_one_physical_attempt() -> None:
     with (
         patch(
             "etl.http_client.requests.get",
             side_effect=requests.ConnectionError("boom"),
-        ),
+        ) as mocked,
         patch("etl.http_client.time.sleep"),
     ):
-        fetcher = RequestsFetcher(max_retries=2, retry_delay_seconds=0.1)
+        fetcher = RequestsFetcher()
         with pytest.raises(requests.ConnectionError):
             fetcher.get("https://example.org/f.csv", timeout=10, headers={})
+    mocked.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +240,7 @@ def test_pba_host_concurrency_capped_at_one() -> None:
 
 def test_pba_host_delay_honours_politeness_seconds() -> None:
     sleeps: list[float] = []
-    clock_values = iter([0.0, 0.0, 1.0, 1.0])
+    clock_values = iter([0.0, 1.0])
 
     class FakeFetcher:
         def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
@@ -265,6 +262,25 @@ def test_pba_host_delay_honours_politeness_seconds() -> None:
 
     # elapsed = 1.0 - 0.0 = 1.0s; remaining = 4.0 - 1.0 = 3.0s
     assert sleeps == [3.0]
+
+
+def test_redirects_are_relative_host_bound_and_hop_bounded() -> None:
+    def fetcher(*locations):
+        transport = Mock()
+        transport.get.side_effect = [
+            *(FetchResponse(302, b"", {"Location": value}) for value in locations),
+            FetchResponse(200, b"ok"),
+        ]
+        policy = HostPolicy(PBA_HOST, 1, 0, "ua", ("/docs/",), max_redirect_hops=1)
+        return PolicedHostFetcher(transport, policy), transport
+
+    url = f"https://{PBA_HOST}/docs/start.pdf"
+    allowed, transport = fetcher("next.pdf")
+    assert allowed.get(url, timeout=5).content == b"ok"
+    assert transport.get.call_args.args[0] == f"https://{PBA_HOST}/docs/next.pdf"
+    for locations in [("https://x.test/docs/x",), ("next.pdf", "third.pdf")]:
+        with pytest.raises(UnregisteredPathError):
+            fetcher(*locations)[0].get(url, timeout=5)
 
 
 def test_pba_host_uses_identifying_user_agent() -> None:
@@ -330,7 +346,7 @@ def test_pba_host_tls_failure_is_a_hard_error_not_bypassed() -> None:
         ) as mocked,
         patch("etl.http_client.time.sleep"),
     ):
-        fetcher = RequestsFetcher(max_retries=1, retry_delay_seconds=0)
+        fetcher = RequestsFetcher()
         with pytest.raises(requests.exceptions.SSLError):
             fetcher.get(f"https://{PBA_HOST}/docs/x.pdf", timeout=5, headers={})
 

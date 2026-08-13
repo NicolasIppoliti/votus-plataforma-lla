@@ -888,19 +888,61 @@ def ingest_source(
                 conn, rows, year=year, round_=round_, archive_entry_id=source_id
             )
         elif capability == "pba":
-            rows = ingest_pba(raw_bytes, archive_entry_id=source_id)
+            parse_result = ingest_pba(raw_bytes, archive_entry_id=source_id)
             # The CALLER's crosswalk, not a hardcoded default: validating
             # against a candidate file and then ingesting against a different
             # one silently breaks the guarantee `validate-crosswalk` gives.
             crosswalk = load_crosswalk(crosswalk_path)
             inserted = load_pba_rows(
                 conn,
-                rows,
+                list(parse_result.rows),
                 year=year,
                 round_=round_,
                 crosswalk=crosswalk,
                 archive_entry_id=source_id,
             )
+
+            # Parser quarantine is operational data, not stderr. Persist one
+            # review item per semantic quarantine group while retaining every
+            # source-row index and only safe vote evidence.
+            quarantine_records = []
+            for quarantined in parse_result.quarantined:
+                evidence = [
+                    "source rows "
+                    + ", ".join(str(index) for index in quarantined.source_row_indices)
+                ]
+                if quarantined.rows:
+                    evidence.append(
+                        "votes " + ", ".join(str(row.votes) for row in quarantined.rows)
+                    )
+                if quarantined.raw_cell_shapes:
+                    evidence.append("raw cell shapes " + ", ".join(quarantined.raw_cell_shapes))
+                quarantine_records.append(
+                    ReviewItemRecord(
+                        kind=f"pba_{quarantined.reason}",
+                        severity="warning",
+                        subject_ref=(
+                            f"{source_id} {year}-{round_} distrito:{quarantined.distrito} "
+                            f"category:{quarantined.category} "
+                            f"list:{quarantined.list_id or '(none)'}"
+                        ),
+                        note="; ".join(evidence),
+                    )
+                )
+            fresh = fresh_review_items(conn, quarantine_records)
+            insert_review_items(conn, fresh)
+            if parse_result.quarantined:
+                reason_counts: dict[str, int] = {}
+                for quarantined in parse_result.quarantined:
+                    reason_counts[quarantined.reason] = reason_counts.get(quarantined.reason, 0) + 1
+                print(
+                    f"PBA parser quarantine: {len(parse_result.quarantined)} group(s), "
+                    f"{len(fresh)} review item(s) recorded -- "
+                    + "; ".join(
+                        f"{reason}: {count}" for reason, count in sorted(reason_counts.items())
+                    ),
+                    file=sys.stderr,
+                )
         elif capability == "fiscalizacion":
             # Imported lazily: `load_fiscalizacion_rows` lands in sub-unit 12b,
             # chained on top of this one -- 12a's own tests never exercise the
@@ -1139,13 +1181,9 @@ def find_unmapped_jurisdictions(
             # does this today; this is a guard against one that does, not a
             # description of one that exists.
             #
-            # Coercing to `""` instead would fabricate a code no source ever
-            # wrote, and `normalize_seccion_code("")` cannot parse it, so it
-            # would match no curated `"027"` and report the row as unmapped
-            # under `"02/"`. Such a row is mapped when its DISTRITO is curated.
-            # THROUGH the boundary, like the paired lookup below -- and via
-            # the method that returns EVERY match, so an ambiguity is
-            # REPORTED here rather than resolved by taking the first entry.
+            # A missing seccion is incomplete. Crosswalk entries are partido-level
+            # pairs; child existence is not evidence of an explicit distrito-only
+            # scheme. Keep every child only to make an ambiguity report explicit.
             in_distrito = crosswalk.entries_in_distrito(normalized_distrito)
             if len(in_distrito) > 1:
                 unmapped.append(
@@ -1161,7 +1199,7 @@ def find_unmapped_jurisdictions(
                     )
                 )
                 continue
-            resolved = bool(in_distrito)
+            resolved = False
         else:
             # THROUGH the table's own comparison. This loop was a second idea
             # of how a crosswalk entry's code compares, living outside the
@@ -1194,7 +1232,7 @@ def find_unmapped_jurisdictions(
                         # the literal `seccion=None`, a code nobody wrote --
                         # the very thing the distrito branch above refuses,
                         # left half-closed here.
-                        f"no curated crosswalk entry for distrito="
+                        f"no curated crosswalk entry for complete distrito="
                         f"{normalized_distrito} seccion={shown_seccion}"
                     ),
                 )
@@ -1518,39 +1556,81 @@ def registered_source_election(entry: Mapping) -> tuple[int, str]:
     return election_year, election_round
 
 
+@dataclass(frozen=True)
+class NationalSourceReadabilityIssue:
+    source_id: str
+    reason: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class NationalSourceReadability:
+    configured_source_ids: tuple[str, ...]
+    readable_source_ids: tuple[str, ...]
+    unavailable: tuple[NationalSourceReadabilityIssue, ...]
+
+    @property
+    def readable_count(self) -> int:
+        return len(self.readable_source_ids)
+
+
 def readable_national_sources(
     sources: dict[str, list[dict]],
     *,
     local_root: Path,
     manifest_path: Path,
     year: int | None = None,
-) -> int:
-    """How many registered national sources are actually readable right now.
-
-    Both validate commands answer "does the curated data cover the corpus?".
-    Over an EMPTY corpus the honest answer is "unknown", not "yes" -- and both
-    printed "all 0 ... resolve" and exited 0, which reads as coverage proven.
-    """
+) -> NationalSourceReadability:
+    """Classify every in-scope national source at one archive-read boundary."""
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
-    readable = 0
+    configured: list[str] = []
+    readable: list[str] = []
+    unavailable: list[NationalSourceReadabilityIssue] = []
     for entry in sources.get("national", []):
         election_year, _ = registered_source_election(entry)
         if year is not None and election_year != year:
             continue
-        archived = latest_ok_record(records, entry["id"])
+        source_id = entry["id"]
+        configured.append(source_id)
+        archived = latest_ok_record(records, source_id)
         if archived is None:
+            unavailable.append(
+                NationalSourceReadabilityIssue(
+                    source_id=source_id,
+                    reason="no successful archive record",
+                    detail="run fetch for this registered source",
+                )
+            )
             continue
-        filename = archived_filename(archived, source_id=entry["id"])
-        if local_store.exists("national", filename):
-            readable += 1
-    return readable
+        filename = archived_filename(archived, source_id=source_id)
+        if not local_store.exists("national", filename):
+            unavailable.append(
+                NationalSourceReadabilityIssue(
+                    source_id=source_id,
+                    reason="archive file missing or unreadable",
+                    detail=f"recorded artifact {filename!r} is absent from the local mirror",
+                )
+            )
+            continue
+        readable.append(source_id)
+    return NationalSourceReadability(tuple(configured), tuple(readable), tuple(unavailable))
+
+
+def report_national_source_readability(readability: NationalSourceReadability) -> None:
+    by_reason: dict[str, list[NationalSourceReadabilityIssue]] = {}
+    for issue in readability.unavailable:
+        by_reason.setdefault(issue.reason, []).append(issue)
+    for reason, issues in sorted(by_reason.items()):
+        print(f"  {reason}: {len(issues)} source(s)", file=sys.stderr)
+        for issue in issues:
+            print(f"    {issue.source_id}: {issue.detail}", file=sys.stderr)
 
 
 def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
-        readable = readable_national_sources(
+        readability = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
     except (
@@ -1563,7 +1643,8 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    if readable == 0:
+    report_national_source_readability(readability)
+    if readability.readable_count == 0:
         print(
             "no archived national source is readable; refusing to report coverage "
             "over an empty corpus -- run `fetch` first",
@@ -1749,7 +1830,7 @@ def collect_national_party_keys(
 def cmd_validate_curated(args: argparse.Namespace) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
-        readable = readable_national_sources(
+        readability = readable_national_sources(
             sources, local_root=Path(args.local_root), manifest_path=Path(args.manifest_path)
         )
     except (
@@ -1762,7 +1843,8 @@ def cmd_validate_curated(args: argparse.Namespace) -> int:
         # This call sat OUTSIDE the try below, so it exited with a traceback.
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    if readable == 0:
+    report_national_source_readability(readability)
+    if readability.readable_count == 0:
         print(
             "no archived national source is readable; refusing to report coverage "
             "over an empty corpus -- run `fetch` first",
@@ -2189,13 +2271,23 @@ def cmd_load_curated(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class OfficialMesaProjection:
+    tallies: dict[int, OfficialMesaVotes]
+    skipped: dict[str, int]
+    review_items: tuple[ReviewItemRecord, ...]
+
+
 def official_mesa_votes_from_national(
     csv_bytes: bytes,
     *,
     distrito: str,
     seccion: str,
     category: str,
-) -> tuple[dict[int, OfficialMesaVotes], dict[str, int]]:
+    source_id: str,
+    election_year: int,
+    election_round: str,
+) -> OfficialMesaProjection:
     """Project an archived national CSV onto per-mesa official tallies WITHIN
     ONE `(distrito, seccion, category)` scope.
 
@@ -2258,6 +2350,7 @@ def official_mesa_votes_from_national(
     # largest exclusion by an order of magnitude. Neither total is truthful;
     # this one is.
     tallied_rows_by_mesa: dict[int, int] = {}
+    evidence_by_mesa: dict[int, list[tuple[str, str, str, int]]] = {}
     known_official_names = frozenset(OFFICIAL_AGRUPACION_NAME_BY_COLUMN.values())
 
     def skip(reason: str) -> None:
@@ -2319,6 +2412,9 @@ def official_mesa_votes_from_national(
                 )
             circuito = normalize_circuito_code(raw_circuito.strip())
             circuitos_by_mesa.setdefault(mesa, set()).add(circuito)
+            evidence_by_mesa.setdefault(mesa, []).append(
+                (circuito, votos_tipo, official_name.strip(), cantidad)
+            )
 
         if votos_tipo == "POSITIVO":
             votes_by_mesa.setdefault(mesa, {}).setdefault(official_name, set()).add(cantidad)
@@ -2337,7 +2433,31 @@ def official_mesa_votes_from_national(
     # reports that as schema drift — `validate-fiscalizacion` would exit 1 on
     # data that is perfectly well-formed.
     ambiguous = {mesa for mesa, circuitos in circuitos_by_mesa.items() if len(circuitos) > 1}
-    for mesa in ambiguous:
+    review_items: list[ReviewItemRecord] = []
+    for mesa in sorted(ambiguous):
+        evidence = sorted(evidence_by_mesa.get(mesa, []))
+        rendered_tallies = ", ".join(
+            f"{circuito} {votos_tipo}"
+            + (f" {official_name}" if official_name else "")
+            + f"={cantidad}"
+            for circuito, votos_tipo, official_name, cantidad in evidence
+        )
+        review_items.append(
+            ReviewItemRecord(
+                kind="ambiguous_official_mesa_identity",
+                severity="warning",
+                subject_ref=(
+                    f"{source_id} {election_year}-{election_round} official "
+                    f"[{target_distrito}/{target_seccion or '(sin seccion)'}/{category}] "
+                    f"mesa-{mesa}"
+                ),
+                note=(
+                    f"mesa {mesa} appears in circuitos "
+                    f"{', '.join(sorted(circuitos_by_mesa[mesa]))}; "
+                    f"{len(evidence)} official row(s) quarantined; tallies {rendered_tallies}"
+                ),
+            )
+        )
         votes_by_mesa.pop(mesa, None)
         tipo_by_mesa.pop(mesa, None)
         for _ in range(tallied_rows_by_mesa.get(mesa, 0)):
@@ -2377,8 +2497,8 @@ def official_mesa_votes_from_national(
     votes = collapse(votes_by_mesa, "positive")
     tipos = collapse(tipo_by_mesa, "votos_tipo")
 
-    return (
-        {
+    return OfficialMesaProjection(
+        tallies={
             mesa: OfficialMesaVotes(
                 mesa=mesa,
                 votes_by_agrupacion_name=votes.get(mesa, {}),
@@ -2386,7 +2506,8 @@ def official_mesa_votes_from_national(
             )
             for mesa in set(votes) | set(tipos)
         },
-        skipped,
+        skipped=skipped,
+        review_items=tuple(review_items),
     )
 
 
@@ -2652,12 +2773,19 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
 
     try:
         csv_bytes = national_csv_bytes(baseline_bytes)
-        official_by_mesa, baseline_skipped = official_mesa_votes_from_national(
+
+        official_projection = official_mesa_votes_from_national(
             csv_bytes,
             distrito=args.distrito,
             seccion=args.seccion,
             category=args.category,
+            source_id=args.baseline,
+            election_year=baseline_election[0],
+            election_round=baseline_election[1],
         )
+        official_by_mesa = official_projection.tallies
+        baseline_skipped = official_projection.skipped
+
     except (
         NationalResultsCsvNotFoundError,
         NationalSchemaError,
@@ -2677,7 +2805,26 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     # as `info` for an operator to read as data.
     for reason, count in sorted(baseline_skipped.items()):
         print(f"  baseline: {count} row(s) not used — {reason}", file=sys.stderr)
+
+    def persist_records(records_to_write: list[ReviewItemRecord]) -> list[ReviewItemRecord]:
+        conn = psycopg.connect(database_url)
+        try:
+            fresh_records = fresh_review_items(conn, records_to_write)
+            insert_review_items(conn, fresh_records)
+            conn.commit()
+            return fresh_records
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     if not official_by_mesa:
+        # Quarantine evidence remains operationally reachable even when every
+        # official row in the requested scope is ambiguous and the comparison
+        # must fail for lack of a safe baseline.
+        if official_projection.review_items:
+            persist_records(list(official_projection.review_items))
         print(
             f"error: no baseline row matched distrito={args.distrito} "
             f"seccion={args.seccion} category={args.category!r}; there is nothing "
@@ -2739,18 +2886,12 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         )
         for record in mesa_divergences_to_review_items(list(join.divergences))
     ]
-    records_to_write = [*parser_review_records, *divergence_records]
-
-    conn = psycopg.connect(database_url)
-    try:
-        fresh = fresh_review_items(conn, records_to_write)
-        insert_review_items(conn, fresh)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    records_to_write = [
+        *parser_review_records,
+        *official_projection.review_items,
+        *divergence_records,
+    ]
+    fresh = persist_records(records_to_write)
 
     parser_counts: dict[str, int] = {}
     for record in parser_review_records:
@@ -2760,6 +2901,18 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         print(
             f"  {kind}: {count} review item(s) "
             f"({new_count} new, {count - new_count} already present)",
+            file=sys.stderr,
+        )
+
+    official_quarantine_count = len(official_projection.review_items)
+    if official_quarantine_count:
+        fresh_official_quarantines = sum(
+            1 for record in fresh if record.kind == "ambiguous_official_mesa_identity"
+        )
+        print(
+            f"  ambiguous_official_mesa_identity: {official_quarantine_count} review item(s) "
+            f"({fresh_official_quarantines} new, "
+            f"{official_quarantine_count - fresh_official_quarantines} already present)",
             file=sys.stderr,
         )
 

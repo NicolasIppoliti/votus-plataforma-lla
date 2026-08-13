@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -40,7 +39,6 @@ from etl.ingest.pba import (
     PBA_ALLOWED_PATHS,
     PBA_HOST,
     PBA_HOST_POLICY,
-    PbaFetchExhaustedError,
     PbaSchemaError,
     _parse_votes,
     archive_pba_source,
@@ -64,11 +62,13 @@ def _read(name: str) -> bytes:
 
 
 def test_distrito_level_totals_ingested_without_fabricating_lower_levels() -> None:
-    rows = ingest_pba(
+    result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id="pba/2025-distrito-027",
         requested_granularity="distrito",
     )
+    rows = result.rows
+    assert not result.quarantined
 
     assert rows, "expected at least one normalized row from the real fixture table"
     for row in rows:
@@ -179,11 +179,12 @@ def test_a_different_record_id_is_never_substituted(tmp_path: Path) -> None:
 
 
 def test_mesa_requested_but_only_distrito_available_marks_degradation() -> None:
-    rows = ingest_pba(
+    result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id="pba/2025-distrito-027",
         requested_granularity="mesa",
     )
+    rows = result.rows
 
     assert rows
     for row in rows:
@@ -196,11 +197,12 @@ def test_mesa_requested_but_only_distrito_available_marks_degradation() -> None:
 
 
 def test_no_degradation_flag_when_requested_granularity_matches_actual() -> None:
-    rows = ingest_pba(
+    result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id="pba/2025-distrito-027",
         requested_granularity="distrito",
     )
+    rows = result.rows
 
     assert rows
     for row in rows:
@@ -236,9 +238,7 @@ def test_fetcher_pinned_to_www_host_cert_verification_on_no_dash_k() -> None:
     ):
         from etl.http_client import RequestsFetcher
 
-        policed = PolicedHostFetcher(
-            RequestsFetcher(max_retries=1), PBA_HOST_POLICY, sleep=lambda _s: None
-        )
+        policed = PolicedHostFetcher(RequestsFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None)
         with pytest.raises(requests.exceptions.SSLError):
             policed.get(f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}", timeout=5)
 
@@ -407,30 +407,12 @@ def test_fetcher_backs_off_and_stops_after_3_attempts_on_429_or_5xx(status: int)
             fetcher=policed,
             local_store=local_store,
             records=[],
-            sleep=lambda _s: None,
         )
 
     assert len(local_store_calls) == 3, "must stop after exactly 3 attempts, never retry through it"
     assert result.record["status"] == "error"
     assert result.record["sha256"] is None
     assert result.record["archived_path"] is None
-
-
-def test_pba_fetch_exhausted_error_message_names_the_url() -> None:
-    class AlwaysUnavailableFetcher:
-        def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
-            return FetchResponse(429, b"")
-
-    policed = PolicedHostFetcher(AlwaysUnavailableFetcher(), PBA_HOST_POLICY, sleep=lambda _s: None)
-
-    from etl.ingest.pba import _PolicedBackoffFetcher
-
-    backoff = _PolicedBackoffFetcher(policed=policed, sleep=lambda _s: None)
-    url = f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}"
-    # The NAME promises the message names the url. Asserting only the exception
-    # type leaves an operator with "exhausted" and no idea which page failed.
-    with pytest.raises(PbaFetchExhaustedError, match=re.escape(url)):
-        backoff.get(url, timeout=5, headers={})
 
 
 # ---------------------------------------------------------------------------
@@ -476,11 +458,12 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
     conn = _require_ephemeral_postgres()
 
     archive_entry_id = f"pba/quarantine-test-{uuid.uuid4()}"
-    rows = ingest_pba(
+    parse_result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id=archive_entry_id,
         requested_granularity="distrito",
     )
+    rows = list(parse_result.rows)
     try:
         inserted = load_pba_rows(
             conn,
@@ -512,6 +495,7 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
         f"the withheld rows must be reported, not just absent; got {reported!r}"
     )
     assert "027" in reported, "the report must name the distrito that failed to resolve"
+    assert f"no curated crosswalk entry for PBA distrito '027': {len(rows)}" in reported
 
 
 def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
@@ -527,11 +511,12 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
     conn = _require_ephemeral_postgres()
 
     archive_entry_id = f"pba/load-test-{uuid.uuid4()}"
-    rows = ingest_pba(
+    parse_result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id=archive_entry_id,
         requested_granularity="distrito",
     )
+    rows = list(parse_result.rows)
     try:
         inserted = load_pba_rows(
             conn,
@@ -579,11 +564,12 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
 
 
 def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() -> None:
-    rows = ingest_pba(
+    parse_result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id="pba/2025-distrito-027",
         requested_granularity="distrito",
     )
+    rows = list(parse_result.rows)
     assert rows and all(row.result.distrito == "027" for row in rows), (
         "sanity: ingest_pba itself still carries PBA's own, untranslated code"
     )
@@ -616,18 +602,20 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
 
 
 def test_resolve_pba_jurisdictions_quarantines_an_uncurated_distrito_code() -> None:
-    rows = ingest_pba(
+    parse_result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id="pba/2025-distrito-027",
         requested_granularity="distrito",
     )
+    rows = list(parse_result.rows)
     empty_crosswalk = CrosswalkTable(jurisdictions=())
 
     result = resolve_pba_jurisdictions(rows, empty_crosswalk)
 
     assert result.resolved == ()
     assert len(result.quarantined) == len(rows)
-    assert all(q.row.result.distrito == "027" for q in result.quarantined)
+    assert all(q.distrito == "027" for q in result.quarantined)
+    assert all(len(q.rows) == 1 for q in result.quarantined)
     assert all("027" in q.reason for q in result.quarantined)
 
 
@@ -674,6 +662,54 @@ def test_pba_partido_total_identifies_the_partido_not_the_whole_province() -> No
 # ---------------------------------------------------------------------------
 # Rule 3 — every dropped cell/row is reported, and a SHORT ROW is named
 # ---------------------------------------------------------------------------
+
+
+def test_list_id_column_must_be_declared_first_before_rows_are_processed() -> None:
+    source = _read("pba_distrito_027_2025_sample.html")
+    html = source.replace(b"<th>Lista</th>", b"<th>Party</th><th>Lista</th>", 1)
+    with pytest.raises(PbaSchemaError, match=r"first list-id header.*Lista"):
+        ingest_pba(html, archive_entry_id="pba/test")
+
+
+@pytest.mark.parametrize(
+    ("second_votes", "reason"),
+    [
+        (b"15.254", "exact_duplicate_semantic_result"),
+        (b"15.255", "conflicting_duplicate_semantic_result"),
+    ],
+)
+def test_duplicate_semantic_result_rows_are_structurally_quarantined(
+    second_votes: bytes, reason: str, capsys
+) -> None:
+    source = _read("pba_distrito_027_2025_sample.html")
+    row = source.split(b"<tbody>", 1)[1].split(b"</tr>", 1)[0] + b"</tr>"
+    duplicate = row.replace(b"15.254", second_votes, 1).replace(b"14.550", b"-", 1)
+
+    result = ingest_pba(source.replace(row, row + duplicate, 1), archive_entry_id="pba/test")
+
+    accepted_2206 = [
+        (row.category, row.votes, row.source_row_index)
+        for row in result.rows
+        if row.list_id == "2206"
+    ]
+    assert accepted_2206 == [("CONCEJALES", 14550, 0)]
+    duplicate_quarantine = [q for q in result.quarantined if q.reason == reason]
+    assert len(duplicate_quarantine) == 1
+    quarantined = duplicate_quarantine[0]
+    assert quarantined.archive_entry_id == "pba/test"
+    assert quarantined.distrito == "027"
+    assert quarantined.category == "DIPUTADOS PROVINCIALES"
+    assert quarantined.list_id == "2206"
+    assert quarantined.source_row_indices == (0, 1)
+    assert [row.votes for row in quarantined.rows] == [15254, int(second_votes.replace(b".", b""))]
+    assert not [
+        row
+        for row in result.rows
+        if row.list_id == "2206" and row.category == "DIPUTADOS PROVINCIALES"
+    ], "a duplicate semantic key must emit no accepted row"
+    report = capsys.readouterr().err
+    assert f"{reason}: 2" in report
+    assert "('027', 'DIPUTADOS PROVINCIALES', '2206'): source rows 0, 1" in report
 
 
 def test_duplicate_recognized_category_headers_are_schema_drift() -> None:
@@ -742,7 +778,8 @@ def test_a_short_row_is_reported_as_schema_drift_not_folded_into_the_expected_dr
         b"</tbody></table></body></html>"
     )
 
-    rows = ingest_pba(html, archive_entry_id="pba/test")
+    result = ingest_pba(html, archive_entry_id="pba/test")
+    rows = result.rows
 
     assert len(rows) == 4  # 2206 x2, 962 x1, 2207 x1
     report = capsys.readouterr().err
@@ -765,11 +802,12 @@ def test_the_write_path_reports_the_granularity_it_could_not_honour(capsys) -> N
     conn = _require_ephemeral_postgres()
 
     archive_entry_id = f"pba/degraded-test-{uuid.uuid4()}"
-    rows = ingest_pba(
+    parse_result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id=archive_entry_id,
         requested_granularity="mesa",  # what production actually asks for
     )
+    rows = list(parse_result.rows)
     assert all(row.degraded_from == "mesa" for row in rows), "sanity"
     capsys.readouterr()  # discard the parser's own report
 
@@ -825,11 +863,21 @@ def test_an_unreadable_vote_cell_is_counted_apart_from_an_absent_one(capsys) -> 
         b"</tbody></table></body></html>"
     )
 
-    rows = ingest_pba(html, archive_entry_id="pba/test")
+    result = ingest_pba(html, archive_entry_id="pba/test")
 
-    assert len(rows) == 2, "the readable figures on both rows still load"
+    assert len(result.rows) == 2, "the readable figures on both rows still load"
+    assert len(result.quarantined) == 1
+    quarantined = result.quarantined[0]
+    assert quarantined.archive_entry_id == "pba/test"
+    assert quarantined.distrito == "027"
+    assert quarantined.category == "CONCEJALES"
+    assert quarantined.list_id == "2206"
+    assert quarantined.source_row_indices == (0,)
+    assert quarantined.reason == "unreadable_vote_cell"
+    assert quarantined.raw_cell_shapes == ("length=2; character_classes=ascii_letter,digit",)
+    assert quarantined.rows == ()
     report = capsys.readouterr().err
-    assert "unreadable vote cell: 1" in report
+    assert "unreadable_vote_cell: 1" in report
     assert 'list absent from this category ("-" or empty cell): 1' in report
 
 
@@ -858,31 +906,10 @@ def test_malformed_spanish_locale_vote_cell_uses_the_existing_exclusion_reason(c
         b"</tbody></table></body></html>"
     )
 
-    rows = ingest_pba(html, archive_entry_id="pba/test")
-    assert [(row.category, row.votes) for row in rows] == [("CONCEJALES", 2000)]
-    assert "unreadable vote cell: 1" in capsys.readouterr().err
-
-
-def test_a_retry_after_http_date_is_honoured_instead_of_crashing() -> None:
-    """`Retry-After` is legally an HTTP-date, not only delta-seconds.
-    `float()` on one raised out of the backoff loop, turning a routine 429
-    into a traceback on the one path built to back off and stop.
-    """
-    from etl.ingest.pba import _PolicedBackoffFetcher
-
-    class NeverCalledFetcher:
-        def get(self, url: str, *, timeout: float, headers: dict[str, str]) -> FetchResponse:
-            raise AssertionError("retry-delay parsing must not perform a request")
-
-    policed = PolicedHostFetcher(NeverCalledFetcher(), PBA_HOST_POLICY, sleep=lambda _seconds: None)
-    fetcher = _PolicedBackoffFetcher(policed=policed, default_backoff_seconds=2.0)
-
-    assert fetcher._retry_delay("Wed, 21 Oct 2015 07:28:00 GMT") == 2.0, (
-        "a date already past falls back to the policy delay, never a negative sleep"
-    )
-    assert fetcher._retry_delay("not a date at all") == 2.0
-    assert fetcher._retry_delay(None) == 2.0
-    assert fetcher._retry_delay("30") == 30.0
+    result = ingest_pba(html, archive_entry_id="pba/test")
+    assert [(row.category, row.votes) for row in result.rows] == [("CONCEJALES", 2000)]
+    assert [row.reason for row in result.quarantined] == ["unreadable_vote_cell"]
+    assert "unreadable_vote_cell: 1" in capsys.readouterr().err
 
 
 def test_a_reingest_whose_rows_all_quarantine_clears_the_old_ones() -> None:
@@ -898,11 +925,12 @@ def test_a_reingest_whose_rows_all_quarantine_clears_the_old_ones() -> None:
     conn = _require_ephemeral_postgres()
 
     archive_entry_id = f"pba/empty-reingest-{uuid.uuid4()}"
-    rows = ingest_pba(
+    parse_result = ingest_pba(
         _read("pba_distrito_027_2025_sample.html"),
         archive_entry_id=archive_entry_id,
         requested_granularity="distrito",
     )
+    rows = list(parse_result.rows)
 
     def loaded() -> int:
         with conn.cursor() as cur:

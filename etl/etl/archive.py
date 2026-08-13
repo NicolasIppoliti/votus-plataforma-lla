@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from .storage import LocalArchiveStore, sha256_of
+from .storage import ArchiveStore, sha256_of
 
 if TYPE_CHECKING:
     from .review_item import ReviewItemRecord
@@ -66,7 +66,7 @@ class UnsafeArchiveFilenameError(ValueError):
 
 
 def read_verified_archive(
-    local_store: LocalArchiveStore,
+    local_store: ArchiveStore,
     *,
     capability: str,
     filename: str,
@@ -141,7 +141,7 @@ def archive_source(
     entry: dict,
     *,
     fetcher: Fetcher,
-    local_store: LocalArchiveStore,
+    local_store: ArchiveStore,
     now: datetime | None = None,
 ) -> ArchiveResult:
     """Fetch one source entry and produce its manifest record.

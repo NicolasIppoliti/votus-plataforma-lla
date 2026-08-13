@@ -702,19 +702,15 @@ def test_a_row_with_no_distrito_does_not_kill_the_sort_before_its_handler_runs()
         assert "None" not in entry.reason
 
 
-def test_a_row_with_no_seccion_maps_on_its_distrito_through_the_table() -> None:
-    """One table, one comparison. The distrito-only match lived as its own
-    loop in `find_unmapped_jurisdictions` after the paired lookup moved into
-    `CrosswalkTable.resolve_national` -- the half-closed fix. Both now ask the
-    table, so `"2"` and `"02"` resolve the same whichever caller asks.
-    """
+def test_distrito_lookup_normalizes_without_mapping_an_incomplete_row() -> None:
+    """Distrito lookup normalizes codes but cannot supply a missing seccion."""
     table = _load_crosswalk_table()
 
     assert len(table.entries_in_distrito("2")) == 1
     assert len(table.entries_in_distrito("02")) == 1
     assert table.entries_in_distrito("99") == []
-    # And a coarse row is reported as mapped, not as unmapped under "02/".
-    assert find_unmapped_jurisdictions([("2", None)], table) == []
+    unmapped = find_unmapped_jurisdictions([("2", None)], table)
+    assert [entry.code for entry in unmapped] == ["02/(sin seccion)"]
 
 
 def test_a_seccion_less_row_refuses_when_two_entries_share_its_distrito() -> None:

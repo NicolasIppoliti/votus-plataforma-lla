@@ -24,14 +24,11 @@ PDF/telegrama OCR extraction is explicitly out of scope
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 import sys
-import time
-from collections.abc import Callable
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
-from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 
 from .. import db
@@ -39,7 +36,6 @@ from ..archive import (
     POLITENESS_DELAY_SECONDS,
     ArchiveIntegrityError,
     ArchiveResult,
-    FetchResponse,
     archive_source,
     read_verified_archive,
 )
@@ -53,7 +49,7 @@ from ..jurisdiction import (
 )
 from ..manifest import latest_ok_record
 from ..numeric import parse_source_int
-from ..storage import LocalArchiveStore
+from ..storage import ArchiveStore
 
 # NO `PBA_PARTY_MAP_JURISDICTION`. It named the `party_map.yaml` label PBA
 # municipal rows resolve under, for `resolve_pba_party` -- deleted with the
@@ -90,8 +86,6 @@ PBA_HOST_POLICY = HostPolicy(
     allowed_path_prefixes=PBA_ALLOWED_PATHS,  # D10 constraint 7
 )
 
-DEFAULT_MAX_ATTEMPTS = 3  # D10 constraint 6 — bounded retry, then stop
-
 
 class PbaSchemaError(ValueError):
     """Raised when the archived PBA page does not carry the structure this
@@ -105,102 +99,13 @@ class PbaSchemaError(ValueError):
     """
 
 
-class PbaFetchExhaustedError(Exception):
-    """Raised when the PBA host returns 429/5xx on every attempt up to
-    ``DEFAULT_MAX_ATTEMPTS``. D10 constraint 6: back off and stop, never
-    retry through it indefinitely.
-    """
-
-
-@dataclass
-class _PolicedBackoffFetcher:
-    """Adapts a `PolicedHostFetcher` to the `archive.Fetcher` protocol,
-    adding D10 constraint 6's bounded backoff-then-stop on 429/5xx.
-
-    `PolicedHostFetcher` already owns concurrency, delay, User-Agent and
-    path-allowlist enforcement (D10 constraints 1-4, 7); this adapter adds
-    only the retry/backoff loop so `archive.archive_source` can be reused
-    unmodified.
-    """
-
-    policed: PolicedHostFetcher
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS
-    sleep: Callable[[float], None] = time.sleep
-    default_backoff_seconds: float = POLITENESS_DELAY_SECONDS["pba"]
-
-    def get(
-        self, url: str, *, timeout: float, headers: dict[str, str] | None = None
-    ) -> FetchResponse:
-        """`headers` is accepted because `archive.Fetcher` declares it, and
-        the User-Agent in it is deliberately SUPERSEDED by the host policy
-        (D10 constraint 4): the identifying UA for this host is the policy's,
-        not the caller's, which is the whole point of routing through
-        `PolicedHostFetcher`.
-
-        Any OTHER header is refused rather than silently dropped. A caller
-        that sets one is expressing an expectation this path cannot honour,
-        and swallowing it would make the request differ from the request the
-        caller believes it made.
-        """
-        unsupported = sorted(k for k in (headers or {}) if k.lower() != "user-agent")
-        if unsupported:
-            raise ValueError(
-                f"the PBA host policy owns this request's headers; {', '.join(unsupported)} "
-                "cannot be forwarded, so it is refused rather than silently dropped"
-            )
-        last_response: FetchResponse | None = None
-        for attempt in range(1, self.max_attempts + 1):
-            response = self.policed.get(url, timeout=timeout)
-            if response.status_code == 429 or response.status_code >= 500:
-                last_response = response
-                if attempt < self.max_attempts:
-                    # `Retry-After` is legally an HTTP-date
-                    # ("Wed, 21 Oct 2015 07:28:00 GMT"), not only
-                    # delta-seconds. `float()` on one raised `ValueError` out
-                    # of the backoff loop, turning a routine 429 into a
-                    # traceback on the one path built to back off and stop.
-                    delay = self._retry_delay(response.headers.get("Retry-After"))
-                    self.sleep(delay)
-                continue
-            return response
-        raise PbaFetchExhaustedError(
-            f"{url} failed after {self.max_attempts} attempts; last status "
-            f"{last_response.status_code if last_response else 'unknown'}"
-        )
-
-    def _retry_delay(self, retry_after: str | None) -> float:
-        """The delay this host asked for, or the policy default.
-
-        An HTTP-date is honoured as the interval until that instant; an
-        unreadable value falls back to the default rather than raising --
-        being unable to read the host's requested delay is not a reason to
-        stop backing off.
-        """
-        if not retry_after:
-            return self.default_backoff_seconds
-        try:
-            return float(retry_after)
-        except ValueError:
-            pass
-        try:
-            # It RAISES on an unreadable value; it does not return `None`.
-            parsed = parsedate_to_datetime(retry_after)
-        except (TypeError, ValueError):
-            return self.default_backoff_seconds
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.UTC)
-        remaining = (parsed - datetime.now(dt.UTC)).total_seconds()
-        return max(remaining, self.default_backoff_seconds)
-
-
 def archive_pba_source(
     entry: dict,
     *,
     fetcher: PolicedHostFetcher,
-    local_store: LocalArchiveStore,
+    local_store: ArchiveStore,
     records: list[dict],
     now: datetime | None = None,
-    sleep=time.sleep,
 ) -> ArchiveResult:
     """Archive one PBA source entry, honouring D10's full etiquette.
 
@@ -208,9 +113,7 @@ def archive_pba_source(
     "ok"`` record is never re-fetched — the network is not touched at all
     for it on this call. Otherwise delegates to
     ``archive.archive_source``, which already handles "no partial entry on
-    failure" and content-drift detection; the only addition here is
-    ``fetcher`` being a bounded-backoff adapter around the policed fetcher
-    (constraint 6).
+    failure" and content-drift detection.
     """
     existing = latest_ok_record(records, entry["id"])
     if existing is not None:
@@ -230,7 +133,7 @@ def archive_pba_source(
 
     return archive_source(
         entry,
-        fetcher=_PolicedBackoffFetcher(policed=fetcher, sleep=sleep),
+        fetcher=fetcher,
         local_store=local_store,
         now=now,
     )
@@ -426,21 +329,49 @@ def _parse_votes(raw: str) -> int | None | _UnreadableVote:
     return parsed if parsed is not None else _UNREADABLE
 
 
+@dataclass(frozen=True)
+class QuarantinedPbaRow:
+    archive_entry_id: str
+    distrito: str
+    category: str
+    list_id: str | None
+    source_row_indices: tuple[int, ...]
+    reason: str
+    raw_cell_shapes: tuple[str, ...] = ()
+    rows: tuple[PbaRow, ...] = ()
+
+
+@dataclass(frozen=True)
+class PbaParseResult:
+    rows: tuple[PbaRow, ...]
+    quarantined: tuple[QuarantinedPbaRow, ...]
+
+
+def _safe_cell_shape(raw: str) -> str:
+    classes: list[str] = []
+    if any(character.isascii() and character.isalpha() for character in raw):
+        classes.append("ascii_letter")
+    if any(character.isdigit() for character in raw):
+        classes.append("digit")
+    if any(character.isspace() for character in raw):
+        classes.append("whitespace")
+    if any(not character.isalnum() and not character.isspace() for character in raw):
+        classes.append("punctuation_or_symbol")
+    if any(not character.isascii() for character in raw):
+        classes.append("non_ascii")
+    return f"length={len(raw)}; character_classes={','.join(classes) or 'none'}"
+
+
 def ingest_pba(
     html_bytes: bytes, *, archive_entry_id: str, requested_granularity: str = "mesa"
-) -> list[PbaRow]:
-    """Parse one archived `distrito_<code>.html` page into normalized rows.
-
-    Pure function of `(html_bytes, archive_entry_id, requested_granularity)`
-    — calling it twice against the same bytes yields an identical list,
-    matching D8's idempotency precondition the same way
-    `ingest.national.ingest_national` does.
-    """
+) -> PbaParseResult:
     parser = _DistritoTableParser()
     # `utf-8-sig`: the same one decoding boundary the CSV readers use. A BOM
     # here would land inside the first tag the parser sees.
     parser.feed(html_bytes.decode("utf-8-sig"))
 
+    if parser.headers[:1] != ["Lista"]:
+        raise PbaSchemaError(f"expected first list-id header 'Lista', got {parser.headers[:1]!r}")
     if not parser.distrito_label:
         raise PbaSchemaError("could not locate the distrito identifier in the source page")
     distrito_code = parser.distrito_label.split("-", 1)[0].strip()
@@ -456,6 +387,7 @@ def ingest_pba(
         )
 
     rows: list[PbaRow] = []
+    quarantined: list[QuarantinedPbaRow] = []
     # Rule 3: every drop below is counted PER REASON and reported. All three
     # were silent, and they are not equivalent -- a summary row is expected,
     # while a SHORT ROW is malformed HTML, i.e. schema drift arriving as
@@ -482,9 +414,22 @@ def ingest_pba(
                 exclude("short row (declared category column missing)")
                 excluded_short_row_columns.add(category)
                 continue
-            votes = _parse_votes(cells[column])
+            raw_votes = cells[column].strip()
+            votes = _parse_votes(raw_votes)
             if isinstance(votes, _UnreadableVote):
-                exclude("unreadable vote cell")
+                reason = "unreadable_vote_cell"
+                exclude(reason)
+                quarantined.append(
+                    QuarantinedPbaRow(
+                        archive_entry_id=archive_entry_id,
+                        distrito=distrito_code,
+                        category=category,
+                        list_id=list_id,
+                        source_row_indices=(row_index,),
+                        reason=reason,
+                        raw_cell_shapes=(_safe_cell_shape(raw_votes),),
+                    )
+                )
                 continue
             if votes is None:
                 # "-" or an empty cell: that list did not run in that
@@ -508,11 +453,37 @@ def ingest_pba(
                 )
             )
 
+    grouped: dict[tuple[str, str, str | None], list[PbaRow]] = {}
+    for row in rows:
+        grouped.setdefault((row.result.distrito, row.category, row.list_id), []).append(row)
+    duplicates = {key: group for key, group in grouped.items() if len(group) > 1}
+    for (distrito, category, list_id), group in duplicates.items():
+        kind = "conflicting" if len({row.votes for row in group}) > 1 else "exact"
+        reason = f"{kind}_duplicate_semantic_result"
+        excluded[reason] = excluded.get(reason, 0) + len(group)
+        quarantined.append(
+            QuarantinedPbaRow(
+                archive_entry_id=archive_entry_id,
+                distrito=distrito,
+                category=category,
+                list_id=list_id,
+                source_row_indices=tuple(row.source_row_index for row in group),
+                reason=reason,
+                rows=tuple(group),
+            )
+        )
+    rows = [group[0] for group in grouped.values() if len(group) == 1]
+
     if excluded:
         report = "; ".join(
             f"{reason}: {count}"
             for reason, count in sorted(excluded.items(), key=lambda kv: -kv[1])
         )
+        if duplicates:
+            report += " -- duplicate evidence: " + "; ".join(
+                f"{key!r}: source rows {', '.join(str(r.source_row_index) for r in group)}"
+                for key, group in duplicates.items()
+            )
         if excluded_short_row_columns:
             report += (
                 " -- the short rows were missing the column(s) for "
@@ -524,7 +495,7 @@ def ingest_pba(
             file=sys.stderr,
         )
 
-    return rows
+    return PbaParseResult(rows=tuple(rows), quarantined=tuple(quarantined))
 
 
 # NO `load_pba_distrito_totals` and NO `resolve_pba_party`, both correct,
@@ -540,20 +511,6 @@ def ingest_pba(
 # at query time, which stays correct when `curated/party_map.yaml` gains an
 # entry AFTER the 18.1M rows were loaded -- a boolean frozen at ingestion
 # would not, and nothing read it.
-
-
-@dataclass(frozen=True)
-class QuarantinedPbaRow:
-    """A `PbaRow` whose PBA-native distrito code has no curated
-    `jurisdiction_crosswalk` entry -- kept as data alongside the reason
-    (task 17.3).
-
-    It has no national counterpart, and that asymmetry is the correct
-    shape: the crosswalk is a PBA-to-national SCHEME TRANSLATOR, so only PBA
-    rows can fail to translate. National codes are already national."""
-
-    row: PbaRow
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -584,7 +541,17 @@ def resolve_pba_jurisdictions(
     for row in rows:
         translated = resolve_pba_distrito_code(row.result.distrito, crosswalk)
         if isinstance(translated, QuarantinedPbaDistrito):
-            quarantined.append(QuarantinedPbaRow(row=row, reason=translated.reason))
+            quarantined.append(
+                QuarantinedPbaRow(
+                    archive_entry_id=row.archive_entry_id,
+                    distrito=row.result.distrito,
+                    category=row.category,
+                    list_id=row.list_id,
+                    source_row_indices=(row.source_row_index,),
+                    reason=translated.reason,
+                    rows=(row,),
+                )
+            )
             continue
 
         national_distrito, national_seccion = translated
@@ -657,11 +624,15 @@ def load_pba_rows(
 
     resolution = resolve_pba_jurisdictions(rows, crosswalk)
     if resolution.quarantined:
-        codes = sorted({q.row.result.distrito for q in resolution.quarantined})
+        codes = sorted({q.distrito for q in resolution.quarantined})
+        reasons = "; ".join(
+            f"{reason}: {count}"
+            for reason, count in sorted(Counter(q.reason for q in resolution.quarantined).items())
+        )
         print(
             f"quarantined {len(resolution.quarantined)} PBA row(s) with no curated "
             f"jurisdiction_crosswalk entry for distrito(s) {', '.join(codes)} -- "
-            "not written to result_row",
+            f"reasons: {reasons} -- not written to result_row",
             file=sys.stderr,
         )
     rows = list(resolution.resolved)

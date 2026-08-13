@@ -32,6 +32,7 @@ from etl.__main__ import (
     MissingDatabaseUrlError,
     NationalResultsCsvNotFoundError,
     NationalSchemaError,
+    NationalSourceReadability,
     PbaIngestMimeValidationError,
     UnknownSourceError,
     collect_mesa_tipo_mapping,
@@ -1106,13 +1107,8 @@ def test_validate_fiscalizacion_header_errors_never_disclose_source_tokens(
     assert review_writes == []
 
 
-def test_a_synthetic_truncated_coarse_row_with_no_seccion_resolves_by_distrito() -> None:
-    """Exercise fail/report behavior for a malformed or coarser future row.
-
-    The measured loaded corpus has non-null ``seccion`` on every row. This
-    synthetic ``None`` directly tests how a future truncated or genuinely coarse
-    row resolves or is reported; it does not describe the observed 2023 corpus.
-    """
+def test_a_synthetic_truncated_row_does_not_borrow_a_curated_child_seccion() -> None:
+    """A partido crosswalk entry cannot resolve its parent province identity."""
     crosswalk = CrosswalkTable(
         jurisdictions=(
             JurisdictionCrosswalkEntry(
@@ -1124,18 +1120,11 @@ def test_a_synthetic_truncated_coarse_row_with_no_seccion_resolves_by_distrito()
         )
     )
 
-    mapped = find_unmapped_jurisdictions([("2", None)], crosswalk)
-    unmapped = find_unmapped_jurisdictions([("7", None)], crosswalk)
+    incomplete = find_unmapped_jurisdictions([("2", None)], crosswalk)
 
-    assert mapped == [], (
-        "a distrito-level row whose DISTRITO is curated is mapped; requiring a "
-        "seccion match would report every coarse row of the 2023 file unmapped"
-    )
-    assert len(unmapped) == 1, "an uncurated distrito must still be reported"
-    assert "(sin seccion)" in unmapped[0].code, (
-        "the report must not invent a seccion for a row that carries none; "
-        f"got {unmapped[0].code!r}"
-    )
+    assert [entry.code for entry in incomplete] == ["02/(sin seccion)"]
+    assert "no curated crosswalk entry" in incomplete[0].reason
+    assert find_unmapped_jurisdictions([("2", "27")], crosswalk) == []
 
 
 def test_a_zip_with_no_results_member_raises_rather_than_returning_a_wrong_file(
@@ -1572,6 +1561,102 @@ def test_ingest_drives_the_pba_branch_with_the_callers_crosswalk(tmp_path: Path)
     )
 
 
+def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    html = (
+        (Path(__file__).parent / "fixtures" / "pba_distrito_027_2025_sample.html")
+        .read_bytes()
+        .replace(b"15.254", b"1O", 1)
+    )
+    source_id = f"pba/cli-parser-quarantine-{uuid.uuid4()}"
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("pba", "d027.html", html)
+    sources = {
+        "pba": [
+            {
+                "id": source_id,
+                "capability": "pba",
+                "source": "juntaelectoral.gba.gov.ar",
+                "source_url": "https://www.juntaelectoral.gba.gov.ar/d027.html",
+                "mime": "text/html",
+                "election_year": 2025,
+                "election_round": "provinciales",
+                "notes": "parser quarantine test",
+                "filename": "d027.html",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/d027.html",
+                    "sha256": hashlib.sha256(html).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    persisted = []
+    accepted_rows = []
+    monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _url: FakeConnection())
+    monkeypatch.setattr("etl.__main__.project_archive_entry", lambda *_args: None)
+    monkeypatch.setattr("etl.__main__.load_crosswalk", lambda _path: object())
+
+    def fake_load(_conn, rows, **_kwargs) -> int:
+        accepted_rows.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr("etl.__main__.load_pba_rows", fake_load)
+    monkeypatch.setattr("etl.__main__.fresh_review_items", lambda _conn, records: list(records))
+    monkeypatch.setattr(
+        "etl.__main__.insert_review_items",
+        lambda _conn, records: persisted.extend(records) or len(records),
+    )
+
+    inserted = ingest_source(
+        source_id,
+        database_url="postgresql://not-opened/test",
+        year=2025,
+        round_="provinciales",
+        sources=sources,
+        local_root=local_root,
+        manifest_path=manifest_path,
+        crosswalk_path=tmp_path / "unused-crosswalk.yaml",
+    )
+
+    assert inserted == len(accepted_rows) > 0
+    assert len(persisted) == 1
+    record = persisted[0]
+    assert record.kind == "pba_unreadable_vote_cell"
+    assert record.severity == "warning"
+    assert source_id in record.subject_ref
+    assert "distrito:027" in record.subject_ref
+    assert "category:DIPUTADOS PROVINCIALES" in record.subject_ref
+    assert "list:2206" in record.subject_ref
+    assert "source rows 0" in record.note
+    assert "length=2; character_classes=ascii_letter,digit" in record.note
+    report = capsys.readouterr().err
+    assert "PBA parser quarantine" in report
+    assert "unreadable_vote_cell: 1" in report
+
+
 def test_a_manifest_record_without_an_archived_path_exits_nonzero(tmp_path: Path, capsys) -> None:
     """A malformed manifest entry is a validation failure, not a crash.
 
@@ -1745,6 +1830,9 @@ def test_one_mesa_reporting_two_tallies_for_one_party_refuses() -> None:
             distrito="02",
             seccion="027",
             category="DIPUTADO NACIONAL",
+            source_id="national/2025-official-fixture",
+            election_year=2025,
+            election_round="legislativas",
         )
 
 
@@ -1776,12 +1864,17 @@ def test_official_baseline_excludes_malformed_numeric_cells_by_exact_reason(
         f"{malformed_votes},ALIANZA LA LIBERTAD AVANZA\n"
     )
 
-    tallies, skipped = official_mesa_votes_from_national(
+    projection = official_mesa_votes_from_national(
         csv_text.encode("utf-8"),
         distrito="02",
         seccion="027",
         category="DIPUTADO NACIONAL",
+        source_id="national/2025-official-fixture",
+        election_year=2025,
+        election_round="legislativas",
     )
+    tallies = projection.tallies
+    skipped = projection.skipped
 
     assert set(tallies) == {1}
     assert tallies[1].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
@@ -1956,7 +2049,16 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
 
     fixtures = Path(__file__).parent / "fixtures"
     fiscalizacion_bytes = (fixtures / "fiscalizacion_2025_stripped_sample.csv").read_bytes()
-    national_bytes = (fixtures / "national_2025_027_diputados_sample.csv").read_bytes()
+    national_lines = (
+        (fixtures / "national_2025_027_diputados_sample.csv")
+        .read_text(encoding="utf-8")
+        .splitlines(keepends=True)
+    )
+    # Preserve every official row, but make one mesa number belong to two
+    # circuitos. The caller must persist this baseline quarantine alongside the
+    # ordinary divergence records for the remaining comparable mesas.
+    national_lines[1] = national_lines[1].replace(",00248,248,1,", ",00249,249,1,")
+    national_bytes = "".join(national_lines).encode("utf-8")
 
     fiscalizacion_id = f"fiscalizacion/divergence-{uuid.uuid4()}"
     national_id = f"national/2025-divergence-{uuid.uuid4()}"
@@ -2041,8 +2143,9 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                 # below uses it: `_` is a LIKE wildcard and the source id
                 # carries one, so this could read ANOTHER test's rows and
                 # assert against them.
-                "select kind, severity from review_item where starts_with(subject_ref, %s)",
-                (f"{fiscalizacion_id} ",),
+                "select kind, severity from review_item "
+                "where starts_with(subject_ref, %s) or starts_with(subject_ref, %s)",
+                (f"{fiscalizacion_id} ", f"{national_id} "),
             )
             written = cur.fetchall()
     finally:
@@ -2051,17 +2154,25 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                 # `starts_with`, not `like`: `_` and `%` are LIKE wildcards and a
                 # uuid-bearing source id carries `_`, so this could delete
                 # ANOTHER test's rows from the shared database.
-                "delete from review_item where starts_with(subject_ref, %s)",
-                (f"{fiscalizacion_id} ",),
+                "delete from review_item "
+                "where starts_with(subject_ref, %s) or starts_with(subject_ref, %s)",
+                (f"{fiscalizacion_id} ", f"{national_id} "),
             )
         conn.commit()
         conn.close()
 
-    assert exit_code == 0, "a clean identity join must exit zero"
-    assert written, "a diverging mesa must be recorded in review_item"
-    # D9.5: a divergence is ALWAYS informational, never a join failure.
-    assert {kind for kind, _ in written} == {"mesa_tally_divergence"}
-    assert {severity for _, severity in written} == {"info"}
+    assert exit_code == 0, "remaining unambiguous identities must still be compared"
+    assert written, "divergence and official quarantine evidence must reach review_item"
+    assert {kind for kind, _ in written} == {
+        "ambiguous_official_mesa_identity",
+        "mesa_tally_divergence",
+    }
+    assert {severity for kind, severity in written if kind == "mesa_tally_divergence"} == {
+        "info"
+    }, "D9.5 divergences remain informational"
+    assert {
+        severity for kind, severity in written if kind == "ambiguous_official_mesa_identity"
+    } == {"warning"}
 
 
 def test_validate_fiscalizacion_persists_duplicate_collapsed_once(tmp_path: Path, capsys) -> None:
@@ -2437,8 +2548,11 @@ def test_fetch_pba_script_entrypoint_records_fetch_history(
     )
 
     class ScriptFetcher:
+        robots_appeared = False
+
         def get(self, url: str, **_kwargs):
-            status = 404 if url.endswith("/robots.txt") else fetch_status
+            robots_status = 200 if self.robots_appeared else 404
+            status = robots_status if url.endswith("/robots.txt") else fetch_status
             return FetchResponse(status_code=status, content=b"pba-script", headers={})
 
     fetcher = ScriptFetcher()
@@ -2452,6 +2566,9 @@ def test_fetch_pba_script_entrypoint_records_fetch_history(
     events = load_fetch_events(tmp_path / "archive-manifest.json")
     assert len(events) == 1
     assert events[0]["status"] == ("ok" if fetch_status == 200 else "error")
+    fetcher.robots_appeared = True
+    with pytest.raises(SystemExit, match="1"):
+        runpy.run_path(str(script), run_name="__main__")
 
 
 def test_fetch_cli_invocation_id_makes_retry_idempotent(
@@ -2663,7 +2780,10 @@ def test_load_curated_refuses_any_registered_national_source_without_year_before
         def close(self) -> None:
             calls.append("close")
 
-    monkeypatch.setattr("etl.__main__.readable_national_sources", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        "etl.__main__.readable_national_sources",
+        lambda *_args, **_kwargs: NationalSourceReadability((), ("fixture",), ()),
+    )
     monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: PartyMappingTable(entries=()))
     monkeypatch.setattr(
         "etl.__main__.load_crosswalk", lambda _path: CrosswalkTable(jurisdictions=())
@@ -3034,6 +3154,58 @@ def test_validate_fiscalizacion_refuses_an_unguarded_entry(tmp_path: Path, capsy
     assert "upload" in reported.lower(), (
         f"the personal-data guard must be the one that fired; got {reported!r}"
     )
+
+
+@pytest.mark.parametrize("command", ["validate-crosswalk", "validate-curated"])
+def test_validate_commands_report_each_unavailable_source_reason_before_exit(
+    tmp_path: Path, capsys, command: str
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": "national/2023-never-fetched",
+                        "source": "example.test",
+                        "source_url": "https://example.test/2023.csv",
+                        "election_year": 2023,
+                        "election_round": "generales",
+                    },
+                    {
+                        "id": "national/2025-missing-file",
+                        "source": "example.test",
+                        "source_url": "https://example.test/2025.csv",
+                        "election_year": 2025,
+                        "election_round": "legislativas",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "national/2025-missing-file",
+                    "status": "ok",
+                    "archived_path": "archive/national/missing.csv",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(_main_args(sources_path, tmp_path / "archive", manifest_path) + [command])
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert "no successful archive record: 1 source(s)" in reported
+    assert "national/2023-never-fetched" in reported
+    assert "archive file missing or unreadable: 1 source(s)" in reported
+    assert "national/2025-missing-file" in reported
 
 
 def test_validate_crosswalk_is_reachable_through_main(tmp_path: Path, capsys) -> None:
@@ -4022,18 +4194,36 @@ def test_a_mesa_number_in_two_circuitos_is_not_reported_as_schema_drift() -> Non
         ]
     )
 
-    tallies, skipped = official_mesa_votes_from_national(
+    projection = official_mesa_votes_from_national(
         csv_text.encode("utf-8"),
         distrito="02",
         seccion="027",
         category="DIPUTADO NACIONAL",
+        source_id="national/2025-ambiguous-fixture",
+        election_year=2025,
+        election_round="legislativas",
     )
+    tallies = projection.tallies
+    skipped = projection.skipped
 
     assert 142 not in tallies, "an ambiguous mesa number cannot carry a tally"
     assert tallies[143].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 7}
     assert any("more than one circuito" in reason for reason in skipped), (
         "the drop must be reported per reason, not silently absent"
     )
+    assert len(projection.review_items) == 1
+    review = projection.review_items[0]
+    assert review.kind == "ambiguous_official_mesa_identity"
+    assert review.severity == "warning"
+    assert "national/2025-ambiguous-fixture" in review.subject_ref
+    assert "2025-legislativas" in review.subject_ref
+    assert "02/027" in review.subject_ref
+    assert "mesa-142" in review.subject_ref
+    assert review.note is not None
+    assert "circuitos 00248C, 00248D" in review.note
+    assert "2 official row(s)" in review.note
+    assert "ALIANZA LA LIBERTAD AVANZA=10" in review.note
+    assert "ALIANZA LA LIBERTAD AVANZA=40" in review.note
     # ROWS, and only the ones that contributed a tally. Counting mesas
     # under-reported the largest exclusion by an order of magnitude; counting
     # every row that reached the loop double-counted the ones already skipped
@@ -4073,12 +4263,17 @@ def test_the_same_circuito_written_two_ways_is_not_a_fabricated_ambiguity() -> N
         ]
     )
 
-    tallies, skipped = official_mesa_votes_from_national(
+    projection = official_mesa_votes_from_national(
         csv_text.encode("utf-8"),
         distrito="02",
         seccion="027",
         category="DIPUTADO NACIONAL",
+        source_id="national/2025-official-fixture",
+        election_year=2025,
+        election_round="legislativas",
     )
+    tallies = projection.tallies
+    skipped = projection.skipped
 
     assert tallies[144].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
     assert not any("more than one circuito" in reason for reason in skipped)
@@ -4094,12 +4289,17 @@ def test_official_comparison_keeps_canonical_alphanumeric_circuito() -> None:
         "02,027,0249A,145,DIPUTADO NACIONAL,EN BLANCO,2,\n"
     )
 
-    tallies, skipped = official_mesa_votes_from_national(
+    projection = official_mesa_votes_from_national(
         csv_text.encode(),
         distrito="02",
         seccion="027",
         category="DIPUTADO NACIONAL",
+        source_id="national/2025-official-fixture",
+        election_year=2025,
+        election_round="legislativas",
     )
+    tallies = projection.tallies
+    skipped = projection.skipped
 
     assert tallies[145].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
     assert tallies[145].votos_tipo_totals == {"EN BLANCO": 2}
@@ -4129,6 +4329,9 @@ def test_a_withheld_ambiguous_mesa_is_named_with_its_circuitos(capsys) -> None:
         distrito="02",
         seccion="027",
         category="DIPUTADO NACIONAL",
+        source_id="national/2025-official-fixture",
+        election_year=2025,
+        election_round="legislativas",
     )
 
     report = capsys.readouterr().err
@@ -4153,6 +4356,9 @@ def test_official_comparison_refuses_unknown_or_blank_positive_party_names(
             distrito="02",
             seccion="027",
             category="DIPUTADO NACIONAL",
+            source_id="national/2025-official-fixture",
+            election_year=2025,
+            election_round="legislativas",
         )
 
     message = str(excinfo.value)
@@ -4182,6 +4388,9 @@ def test_a_missing_circuito_cell_refuses_the_official_comparison() -> None:
             distrito="02",
             seccion="027",
             category="DIPUTADO NACIONAL",
+            source_id="national/2025-official-fixture",
+            election_year=2025,
+            election_round="legislativas",
         )
 
     message = str(excinfo.value)
@@ -4204,6 +4413,9 @@ def test_official_comparison_requires_the_circuito_column() -> None:
             distrito="02",
             seccion="027",
             category="DIPUTADO NACIONAL",
+            source_id="national/2025-official-fixture",
+            election_year=2025,
+            election_round="legislativas",
         )
 
 
@@ -4225,6 +4437,9 @@ def test_official_comparison_refuses_an_unreadable_circuito_before_adding_tally(
             distrito="02",
             seccion="027",
             category="DIPUTADO NACIONAL",
+            source_id="national/2025-official-fixture",
+            election_year=2025,
+            election_round="legislativas",
         )
 
     message = str(excinfo.value)
@@ -4473,12 +4688,17 @@ def test_a_non_comparable_row_cannot_declare_a_mesa_ambiguous() -> None:
         ]
     )
 
-    tallies, skipped = official_mesa_votes_from_national(
+    projection = official_mesa_votes_from_national(
         csv_text.encode("utf-8"),
         distrito="02",
         seccion="027",
         category="DIPUTADO NACIONAL",
+        source_id="national/2025-official-fixture",
+        election_year=2025,
+        election_round="legislativas",
     )
+    tallies = projection.tallies
+    skipped = projection.skipped
 
     assert tallies[145].votes_by_agrupacion_name == {"ALIANZA LA LIBERTAD AVANZA": 10}
     assert not any("more than one circuito" in reason for reason in skipped)
@@ -4586,10 +4806,8 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
     written = load_manifest(manifest_path)
     refused = [r for r in written if r["id"] == "pba/off-allowlist"]
     assert refused and refused[0]["status"] != "ok"
-    assert (
-        UnregisteredPathError.__name__ in refused[0]["notes"]
-        or "allowlist" in (refused[0]["notes"])
-    )
+    assert isinstance(notes := refused[0]["notes"], str)
+    assert UnregisteredPathError.__name__ in notes or "allowlist" in notes
 
 
 def test_pba_fetch_halts_before_source_or_archive_mutation_when_robots_appears(
@@ -5330,7 +5548,11 @@ def test_party_map_string_boolean_is_a_clean_cli_validation_failure(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(cli, "readable_national_sources", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(
+        cli,
+        "readable_national_sources",
+        lambda *args, **kwargs: NationalSourceReadability((), ("fixture",), ()),
+    )
     monkeypatch.setattr(cli, "collect_national_party_keys", lambda *args, **kwargs: [])
 
     exit_code = main(

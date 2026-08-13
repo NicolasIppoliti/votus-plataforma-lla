@@ -6,21 +6,16 @@ generous timeout, since some sources are large (electoral ZIPs) or slow
 project with unmodified semantics. Certificate verification is never
 disabled anywhere in this module — no code path passes ``verify=False``.
 
-``HostPolicy`` / ``PolicedHostFetcher`` / ``check_robots_txt_still_absent``
-are NEW additions for design D10: binding etiquette for fetching a host
-with no declared programmatic permission (``www.juntaelectoral.gba.gov.ar``
-today; the constraint mechanism itself is general and host-agnostic). This
-module intentionally does NOT register that host or build a fetcher for
-it — that is Phase 5, gated on a product-owner policy decision. What
-exists here is the reusable, testable contract Phase 5 will configure.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from email.utils import parsedate_to_datetime
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -33,50 +28,32 @@ DEFAULT_USER_AGENT = (
 )
 
 
+def _retry_after_delay(retry_after: str | None, fallback: float) -> float:
+    if retry_after is None:
+        return fallback
+    try:
+        delay = float(retry_after)
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(retry_after)
+            parsed = parsed.replace(tzinfo=parsed.tzinfo if parsed.tzinfo is not None else dt.UTC)
+            delay = (parsed - dt.datetime.now(dt.UTC)).total_seconds()
+        except (TypeError, ValueError):
+            return fallback
+    return max(delay, fallback) if 0 <= delay < 1e309 else fallback
+
+
 @dataclass
 class RequestsFetcher:
-    max_retries: int = 3
-    retry_delay_seconds: float = 2.0
-
-    def head(
-        self, url: str, *, timeout: float = 30, headers: dict[str, str] | None = None
-    ) -> FetchResponse:
-        """Lightweight reachability check: no retries, no response body."""
-        response = requests.head(
-            url, timeout=timeout, headers=headers or {}, allow_redirects=True
-        )
-        return FetchResponse(
-            status_code=response.status_code, content=b"", headers=dict(response.headers)
-        )
-
     def get(
         self, url: str, *, timeout: float = 60, headers: dict[str, str] | None = None
     ) -> FetchResponse:
-        last_exc: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = requests.get(
-                    url, timeout=timeout, headers=headers or {}, allow_redirects=True
-                )
-            except requests.RequestException as exc:
-                last_exc = exc
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_delay_seconds)
-                continue
-
-            if response.status_code == 429 and attempt < self.max_retries:
-                retry_after = response.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after else self.retry_delay_seconds
-                time.sleep(delay)
-                continue
-
-            return FetchResponse(
-                status_code=response.status_code,
-                content=response.content,
-                headers=dict(response.headers),
-            )
-        assert last_exc is not None
-        raise last_exc
+        response = requests.get(url, timeout=timeout, headers=headers or {}, allow_redirects=False)
+        return FetchResponse(
+            status_code=response.status_code,
+            content=response.content,
+            headers=dict(response.headers),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +75,8 @@ class HostPolicy:
     min_delay_seconds: float
     user_agent: str
     allowed_path_prefixes: tuple[str, ...]
+    max_attempts: int = 3
+    max_redirect_hops: int = 5
 
 
 class UnregisteredPathError(Exception):
@@ -145,31 +124,73 @@ class PolicedHostFetcher:
         self._delay_lock = threading.Lock()
         self._last_request_at: float | None = None
 
-    def get(self, url: str, *, timeout: float) -> FetchResponse:
+    def get(
+        self, url: str, *, timeout: float, headers: dict[str, str] | None = None
+    ) -> FetchResponse:
         self._enforce_registered_path(url)
         with self._semaphore:
-            self._enforce_delay()
-            headers = {"User-Agent": self._policy.user_agent}
-            return self._fetcher.get(url, timeout=timeout, headers=headers)
+            delay = 0.0
+            for attempt in range(self._policy.max_attempts):
+                last_attempt = attempt + 1 == self._policy.max_attempts
+                try:
+                    response = self._request_with_redirects(url, timeout, delay)
+                except requests.RequestException as exc:
+                    if last_attempt:
+                        raise exc
+                    continue
+                retryable = response.status_code == 429 or response.status_code >= 500
+                if last_attempt or not retryable:
+                    return response
+                delay = _retry_after_delay(
+                    response.headers.get("Retry-After"), self._policy.min_delay_seconds
+                )
+        raise AssertionError("max_attempts must be positive")
+
+    def _request_with_redirects(self, url: str, timeout: float, delay: float) -> FetchResponse:
+        visited = {url}
+        for hop in range(self._policy.max_redirect_hops + 1):
+            self._enforce_delay(delay if hop == 0 else 0.0)
+            response = self._fetcher.get(
+                url, timeout=timeout, headers={"User-Agent": self._policy.user_agent}
+            )
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                return response
+            location = response.headers.get("Location")
+            if not isinstance(location, str) or not location:
+                raise UnregisteredPathError(f"invalid redirect Location: {location!r}")
+            try:
+                target = urljoin(url, location)
+                self._enforce_registered_path(target)
+            except ValueError as exc:
+                raise UnregisteredPathError(f"invalid redirect Location: {location!r}") from exc
+            if target in visited or hop == self._policy.max_redirect_hops:
+                raise UnregisteredPathError("redirect loop or hop limit exceeded")
+            visited.add(target)
+            url = target
+        raise AssertionError("unreachable")
 
     def _enforce_registered_path(self, url: str) -> None:
-        path = urlparse(url).path
-        if not any(
-            path.startswith(prefix) for prefix in self._policy.allowed_path_prefixes
-        ):
-            raise UnregisteredPathError(
-                f"{path!r} is not in the registered allowlist for {self._policy.host}"
-            )
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.netloc != self._policy.host:
+            raise UnregisteredPathError(f"unregistered HTTPS host in {url!r}")
+        allowed = any(
+            parsed.path.startswith(path) if path.endswith("/") else parsed.path == path
+            for path in self._policy.allowed_path_prefixes
+        )
+        if not allowed:
+            raise UnregisteredPathError(f"path {parsed.path!r} is not in the allowlist")
 
-    def _enforce_delay(self) -> None:
+    def _enforce_delay(self, retry_after_delay: float = 0.0) -> None:
         with self._delay_lock:
             now = self._clock()
             if self._last_request_at is not None:
+                required = max(self._policy.min_delay_seconds, retry_after_delay)
                 elapsed = now - self._last_request_at
-                remaining = self._policy.min_delay_seconds - elapsed
+                remaining = required - elapsed
                 if remaining > 0:
                     self._sleep(remaining)
-            self._last_request_at = self._clock()
+                    now += remaining
+            self._last_request_at = now
 
 
 def check_robots_txt_still_absent(fetcher, host: str) -> None:

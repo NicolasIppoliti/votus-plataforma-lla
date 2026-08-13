@@ -20,6 +20,7 @@ import hashlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Protocol
 
 DEFAULT_MAX_UNCOMPRESSED_BYTES = 8 * 1024**3  # 8 GiB — comfortably above the
 # ~3.7 GB / ~42x ratio the SPIKE measured on the largest real national ZIP
@@ -61,6 +62,21 @@ def _safe_archive_path_component(value: object, *, label: str) -> str:
 def sha256_of(data: bytes) -> str:
     """Return the hex-encoded SHA-256 digest of ``data``."""
     return hashlib.sha256(data).hexdigest()
+
+
+class ArchiveStore(Protocol):
+    """Storage operations required by the archive pipeline."""
+
+    @property
+    def root(self) -> Path: ...
+
+    def path_for(self, capability: str, filename: str) -> Path: ...
+
+    def write(self, capability: str, filename: str, data: bytes) -> Path: ...
+
+    def exists(self, capability: str, filename: str) -> bool: ...
+
+    def read(self, capability: str, filename: str) -> bytes: ...
 
 
 @dataclass(frozen=True)
