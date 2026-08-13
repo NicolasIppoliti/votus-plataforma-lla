@@ -130,10 +130,14 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 ];
 
 function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
-	if (argv.includes("--rollback-proofs-only"))
-		return RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
-	if (argv.includes("--release-proof-only"))
-		return RELEASE_GATE_MODE.RELEASE_PROOF_ONLY;
+	const releaseProofOnly = argv.includes("--release-proof-only");
+	const rollbackProofsOnly = argv.includes("--rollback-proofs-only");
+	if (releaseProofOnly && rollbackProofsOnly)
+		throw new Error(
+			"--release-proof-only and --rollback-proofs-only cannot be combined",
+		);
+	if (rollbackProofsOnly) return RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
+	if (releaseProofOnly) return RELEASE_GATE_MODE.RELEASE_PROOF_ONLY;
 	return RELEASE_GATE_MODE.FULL;
 }
 

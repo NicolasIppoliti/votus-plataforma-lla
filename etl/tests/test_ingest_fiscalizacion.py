@@ -28,6 +28,7 @@ import io
 import os
 import uuid
 from pathlib import Path
+from typing import SupportsIndex, overload
 
 import psycopg
 import pytest
@@ -256,7 +257,13 @@ def test_personal_payload_is_never_decoded_or_sliced_into_a_value() -> None:
         def decode(self, *_args, **_kwargs):
             raise AssertionError("raw personal-bearing CSV must not be decoded")
 
-        def __getitem__(self, key):
+        @overload
+        def __getitem__(self, key: SupportsIndex, /) -> int: ...
+
+        @overload
+        def __getitem__(self, key: slice, /) -> bytes: ...
+
+        def __getitem__(self, key: SupportsIndex | slice, /) -> int | bytes:
             value = super().__getitem__(key)
             if isinstance(value, bytes) and sentinel in value:
                 raise AssertionError("personal payload was sliced into a bytes value")
@@ -1294,6 +1301,36 @@ def test_a_typod_mesa_cell_is_quarantined_not_mined_for_digits() -> None:
     assert [q.reason for q in result.quarantined] == ["unreadable_mesa"] * 2
 
 
+def test_fiscalizacion_matches_source_spelling_not_canonical_display_name() -> None:
+    from etl.ingest.fiscalizacion import build_column_list_id_map
+    from etl.party_map import (
+        CanonicalPartyDeclaration,
+        PartyMappingEntry,
+        PartyMappingTable,
+    )
+
+    table = PartyMappingTable(
+        canonical_parties=(
+            CanonicalPartyDeclaration(id="LLA", display_name="Canonical Parent Label"),
+        ),
+        entries=(
+            PartyMappingEntry(
+                year=2025,
+                jurisdiction="national",
+                category="DIPUTADO NACIONAL",
+                list_id="110",
+                canonical_party="LLA",
+                party_name="ALIANZA LA LIBERTAD AVANZA",
+            ),
+        ),
+    )
+
+    mapping, _unresolved = build_column_list_id_map(table, year=2025)
+
+    assert mapping["La Libertad Avanza"] == "110"
+    assert "Canonical Parent Label" not in mapping
+
+
 def test_a_non_party_column_is_not_reported_as_a_curated_typo() -> None:
     """`En blanco`/`Impugnado` carry no party identity to map -- they key on
     `votos_tipo` -- while a curated typo silently drops a real party's entire
@@ -1367,9 +1404,14 @@ def test_two_curated_names_that_normalize_alike_are_refused_not_picked_between()
     second, with `unresolved` empty and no review item fired.
     """
     from etl.ingest.fiscalizacion import build_column_list_id_map
-    from etl.party_map import PartyMappingEntry, PartyMappingTable
+    from etl.party_map import (
+        CanonicalPartyDeclaration,
+        PartyMappingEntry,
+        PartyMappingTable,
+    )
 
     table = PartyMappingTable(
+        canonical_parties=(CanonicalPartyDeclaration(id="UL", display_name="UNION LIBERAL"),),
         entries=(
             PartyMappingEntry(
                 year=2025,
@@ -1387,7 +1429,7 @@ def test_two_curated_names_that_normalize_alike_are_refused_not_picked_between()
                 party_name="UNIÓN LIBERAL",
                 canonical_party="UL",
             ),
-        )
+        ),
     )
 
     with pytest.raises(ValueError) as excinfo:

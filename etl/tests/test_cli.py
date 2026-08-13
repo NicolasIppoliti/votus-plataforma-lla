@@ -53,6 +53,11 @@ from etl.crosswalk import (
     JurisdictionCrosswalkEntry,
     load_crosswalk,
 )
+from etl.db import (
+    CrosswalkReplacementSummary,
+    PartyMapReplacementSummary,
+    TableReplacementCount,
+)
 from etl.ingest.fiscalizacion import FiscalizacionSchemaError, ingest_fiscalizacion
 from etl.manifest import load_fetch_events, load_manifest, save_manifest
 from etl.party_map import PartyMappingTable, load_party_map
@@ -142,9 +147,10 @@ def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
                         "id": source_id,
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
+                        "mime": "text/csv",
+                        "notes": "local archive fixture",
                         "election_year": 2025,
                         "election_round": "legislativas",
-                        "mime": "text/csv",
                         "filename": "fiscal.csv",
                         "source_kind": "fiscalizacion",
                         "upload": "never",
@@ -196,6 +202,7 @@ def test_fetch_cli_reports_changed_fiscalizacion_hash_per_reason(
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
                         "mime": "text/csv",
+                        "notes": "re-export fixture",
                         "filename": "fiscal.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -245,6 +252,8 @@ def test_fetch_local_source_requires_a_local_file_argument(
                         "id": source_id,
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
+                        "mime": "text/csv",
+                        "notes": "local-file requirement fixture",
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "source_kind": "fiscalizacion",
@@ -284,6 +293,8 @@ def test_fetch_local_source_refuses_a_missing_file_without_disclosing_its_path(
                         "id": source_id,
                         "source": "local-file",
                         "source_url": "local://fiscalizacion/fiscal.csv",
+                        "mime": "text/csv",
+                        "notes": "missing local-file fixture",
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "source_kind": "fiscalizacion",
@@ -427,6 +438,7 @@ def test_pba_pdf_reference_is_not_ingestible_before_archive_parser_or_database_a
                 "source": "example.test",
                 "source_url": "https://example.test/reference.pdf",
                 "mime": "application/pdf",
+                "notes": "reference-only fixture",
                 "election_year": 2025,
                 "election_round": "provinciales",
             }
@@ -496,6 +508,7 @@ def test_main_reports_archived_pba_pdf_as_a_clean_validation_failure(
                         "source": "example.test",
                         "source_url": "https://example.test/reference.pdf",
                         "mime": "application/pdf",
+                        "notes": "reference-only CLI fixture",
                         "election_year": 2025,
                         "election_round": "provinciales",
                     }
@@ -1030,7 +1043,7 @@ def test_validate_fiscalizacion_header_errors_never_disclose_source_tokens(
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
-                        "source_url": None,
+                        "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -1217,7 +1230,9 @@ def test_load_curated_refuses_a_jurisdiction_present_in_only_one_year(
     )
 
     party_map_path = tmp_path / "party_map.yaml"
-    party_map_path.write_text(yaml.safe_dump({"parties": []}), encoding="utf-8")
+    party_map_path.write_text(
+        yaml.safe_dump({"canonical_parties": [], "mappings": []}), encoding="utf-8"
+    )
     crosswalk_path = tmp_path / "crosswalk.yaml"
     crosswalk_path.write_text(
         yaml.safe_dump(
@@ -2075,7 +2090,7 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
-                        "source_url": None,
+                        "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -2201,7 +2216,9 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(tmp_path: Path
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
-                        "source_url": None,
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
+                        "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
@@ -2212,6 +2229,8 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(tmp_path: Path
                     {
                         "id": national_id,
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/nat.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -2319,7 +2338,7 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
-                        "source_url": None,
+                        "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -2540,6 +2559,8 @@ def test_fetch_pba_script_entrypoint_records_fetch_history(
   - id: pba/script-entrypoint
     source: {PBA_HOST}
     source_url: https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}
+    mime: text/html
+    notes: synthetic script entry-point fixture
     filename: script.html
     election_year: 2025
     election_round: provinciales
@@ -2751,6 +2772,8 @@ def test_load_curated_refuses_any_registered_national_source_without_year_before
                     {
                         "id": "national/2023-valid",
                         "source": "example",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://x",
                         "election_year": 2023,
                         "election_round": "generales",
@@ -2758,11 +2781,19 @@ def test_load_curated_refuses_any_registered_national_source_without_year_before
                     {
                         "id": "national/2025-valid",
                         "source": "example",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://x",
                         "election_year": 2025,
                         "election_round": "legislativas",
                     },
-                    {"id": "national/unknown-year", "source": "example", "source_url": "https://x"},
+                    {
+                        "id": "national/unknown-year",
+                        "source": "example",
+                        "source_url": "https://x",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
+                    },
                 ]
             }
         ),
@@ -2784,7 +2815,10 @@ def test_load_curated_refuses_any_registered_national_source_without_year_before
         "etl.__main__.readable_national_sources",
         lambda *_args, **_kwargs: NationalSourceReadability((), ("fixture",), ()),
     )
-    monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: PartyMappingTable(entries=()))
+    monkeypatch.setattr(
+        "etl.__main__.load_party_map",
+        lambda _path: PartyMappingTable(canonical_parties=(), entries=()),
+    )
     monkeypatch.setattr(
         "etl.__main__.load_crosswalk", lambda _path: CrosswalkTable(jurisdictions=())
     )
@@ -2845,7 +2879,7 @@ def test_load_curated_requires_every_registered_source_before_database_access(
     )
     save_manifest(manifest_path, manifest, events=load_fetch_events(manifest_path))
     party_map_path = tmp_path / "party-map.yaml"
-    party_map_path.write_text("mappings: []\n", encoding="utf-8")
+    party_map_path.write_text("canonical_parties: []\nmappings: []\n", encoding="utf-8")
     crosswalk_path = tmp_path / "crosswalk.yaml"
     crosswalk_path.write_text("jurisdictions: []\n", encoding="utf-8")
 
@@ -2896,7 +2930,7 @@ def test_load_curated_records_raw_mesa_presence_before_vote_filters(
         },
     )
     party_map_path = tmp_path / "party-map.yaml"
-    party_map_path.write_text("mappings: []\n", encoding="utf-8")
+    party_map_path.write_text("canonical_parties: []\nmappings: []\n", encoding="utf-8")
     crosswalk_path = tmp_path / "crosswalk.yaml"
     crosswalk_path.write_text(
         yaml.safe_dump(
@@ -2926,11 +2960,21 @@ def test_load_curated_records_raw_mesa_presence_before_vote_filters(
             pass
 
     monkeypatch.setattr("etl.__main__.psycopg.connect", lambda *_args, **_kwargs: FakeConnection())
-    monkeypatch.setattr("etl.__main__.load_party_map_rows", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "etl.__main__.load_party_map_rows",
+        lambda *_args, **_kwargs: PartyMapReplacementSummary(
+            party_canonical=TableReplacementCount(loaded=0, deleted=0),
+            list_identity=TableReplacementCount(loaded=0, deleted=0),
+            party_mapping=TableReplacementCount(loaded=0, deleted=0),
+        ),
+    )
 
     def capture_crosswalk(_conn, _crosswalk, *, mesa_stabilities):
         captured_stabilities.extend(mesa_stabilities)
-        return {"mesa_crosswalk": len(mesa_stabilities)}
+        return CrosswalkReplacementSummary(
+            jurisdiction_crosswalk=TableReplacementCount(loaded=1, deleted=0),
+            mesa_crosswalk=TableReplacementCount(loaded=len(mesa_stabilities), deleted=0),
+        )
 
     monkeypatch.setattr("etl.__main__.load_crosswalk_rows", capture_crosswalk)
 
@@ -3059,7 +3103,7 @@ def _unguarded_fiscalizacion_corpus(tmp_path: Path) -> tuple[Path, Path, Path, s
                     {
                         "id": source_id,
                         "source": "internal",
-                        "source_url": None,
+                        "source_url": "local://fiscalizacion/leak.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -3073,6 +3117,8 @@ def _unguarded_fiscalizacion_corpus(tmp_path: Path) -> tuple[Path, Path, Path, s
                     {
                         "id": "national/2025-guard-not-reached",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/baseline.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -3168,6 +3214,8 @@ def test_validate_commands_report_each_unavailable_source_reason_before_exit(
                     {
                         "id": "national/2023-never-fetched",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/2023.csv",
                         "election_year": 2023,
                         "election_round": "generales",
@@ -3175,6 +3223,8 @@ def test_validate_commands_report_each_unavailable_source_reason_before_exit(
                     {
                         "id": "national/2025-missing-file",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/2025.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -3258,7 +3308,15 @@ def test_duplicate_curated_keys_exit_cleanly_through_main(
             "party_name": "LA LIBERTAD AVANZA",
         }
         curated_path = tmp_path / "party_map.yaml"
-        curated_path.write_text(yaml.safe_dump({"mappings": [entry, entry]}), encoding="utf-8")
+        curated_path.write_text(
+            yaml.safe_dump(
+                {
+                    "canonical_parties": [{"id": "LLA", "display_name": "LA LIBERTAD AVANZA"}],
+                    "mappings": [entry, entry],
+                }
+            ),
+            encoding="utf-8",
+        )
         command = ["validate-curated", "--party-map-path", str(curated_path)]
 
     exit_code = main(_main_args(sources_path, local_root, manifest_path) + command)
@@ -3274,7 +3332,9 @@ def test_validate_curated_is_reachable_through_main(tmp_path: Path, capsys) -> N
     """Same wiring proof for the second command rule 1 names."""
     sources_path, local_root, manifest_path = _archived_national_corpus(tmp_path, NATIONAL_CSV)
     party_map_path = tmp_path / "party_map.yaml"
-    party_map_path.write_text(yaml.safe_dump({"parties": []}), encoding="utf-8")
+    party_map_path.write_text(
+        yaml.safe_dump({"canonical_parties": [], "mappings": []}), encoding="utf-8"
+    )
 
     exit_code = main(
         _main_args(sources_path, local_root, manifest_path)
@@ -3498,7 +3558,215 @@ def test_collect_functions_read_a_real_zipped_archive_entry(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
+class _RecordingCuratedCursor:
+    rowcount = 0
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def __enter__(self) -> _RecordingCuratedCursor:
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+        return None
+
+    def execute(self, query: object, params: object | None = None) -> None:
+        self.calls.append((str(query).lower(), params))
+        self.rowcount = 0
+
+
+class _RecordingCuratedConnection:
+    def __init__(self) -> None:
+        self.recording_cursor = _RecordingCuratedCursor()
+        self.commits = 0
+        self.rollbacks = 0
+        self.closes = 0
+
+    def cursor(self) -> _RecordingCuratedCursor:
+        return self.recording_cursor
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
+    def close(self) -> None:
+        self.closes += 1
+
+
+def _empty_crosswalk_replacement_summary() -> CrosswalkReplacementSummary:
+    return CrosswalkReplacementSummary(
+        jurisdiction_crosswalk=TableReplacementCount(loaded=0, deleted=0),
+        mesa_crosswalk=TableReplacementCount(loaded=0, deleted=0),
+    )
+
+
+def _curated_cli_args(tmp_path: Path, party_map_document: object) -> list[str]:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text("national: []\n", encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]\n", encoding="utf-8")
+    party_map_path = tmp_path / "party-map.yaml"
+    party_map_path.write_text(yaml.safe_dump(party_map_document, sort_keys=False), encoding="utf-8")
+    crosswalk_path = tmp_path / "crosswalk.yaml"
+    crosswalk_path.write_text("jurisdictions: []\n", encoding="utf-8")
+    return [
+        "--sources-path",
+        str(sources_path),
+        "--local-root",
+        str(tmp_path / "archive"),
+        "--manifest-path",
+        str(manifest_path),
+        "load-curated",
+        "--database-url",
+        "postgresql://user:secret@example.test/votus",
+        "--party-map-path",
+        str(party_map_path),
+        "--crosswalk-path",
+        str(crosswalk_path),
+    ]
+
+
+def test_load_curated_cli_projects_declared_display_and_exact_source_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    connection = _RecordingCuratedConnection()
+    monkeypatch.setattr(
+        "etl.__main__._require_complete_national_corpus", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _url: connection)
+    monkeypatch.setattr(
+        "etl.__main__.load_crosswalk_rows",
+        lambda *_args, **_kwargs: _empty_crosswalk_replacement_summary(),
+    )
+    args = _curated_cli_args(
+        tmp_path,
+        {
+            "canonical_parties": [
+                {"id": "PARENT", "display_name": "Public Canonical Label"},
+            ],
+            "mappings": [
+                {
+                    "year": 2025,
+                    "jurisdiction": "national",
+                    "category": "DIPUTADO NACIONAL",
+                    "list_id": "100",
+                    "canonical_party": "PARENT",
+                    "party_name": "Exact Source Spelling",
+                }
+            ],
+        },
+    )
+
+    exit_code = main(args)
+
+    reported = capsys.readouterr()
+    assert exit_code == 0
+    assert reported.err == ""
+    canonical_inserts = [
+        params
+        for statement, params in connection.recording_cursor.calls
+        if "insert into party_canonical" in statement
+    ]
+    identity_inserts = [
+        params
+        for statement, params in connection.recording_cursor.calls
+        if "insert into list_identity" in statement
+    ]
+    assert canonical_inserts == [("PARENT", "Public Canonical Label")]
+    assert identity_inserts == [
+        (2025, "national", "DIPUTADO NACIONAL", "100", "Exact Source Spelling")
+    ]
+    assert connection.commits == 1
+    assert connection.rollbacks == 0
+    assert connection.closes == 1
+
+
+def test_load_curated_cli_rejects_malformed_declaration_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    connect_calls: list[str] = []
+
+    def refuse_database_access(database_url: str) -> _RecordingCuratedConnection:
+        connect_calls.append(database_url)
+        raise AssertionError("psycopg.connect must not run for malformed canonical declarations")
+
+    monkeypatch.setattr(
+        "etl.__main__._require_complete_national_corpus", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr("etl.__main__.psycopg.connect", refuse_database_access)
+    args = _curated_cli_args(
+        tmp_path,
+        {
+            "canonical_parties": [
+                {"id": "PARENT", "display_name": " Public Canonical Label"},
+            ],
+            "mappings": [
+                {
+                    "year": 2025,
+                    "jurisdiction": "national",
+                    "category": "DIPUTADO NACIONAL",
+                    "list_id": "100",
+                    "canonical_party": "PARENT",
+                    "party_name": "Exact Source Spelling",
+                }
+            ],
+        },
+    )
+
+    exit_code = main(args)
+
+    reported = capsys.readouterr()
+    assert exit_code == 1
+    assert reported.out == ""
+    assert reported.err == (
+        "error: party_map.yaml canonical_parties entry 0 display_name "
+        "must not have surrounding whitespace\n"
+    )
+    assert "Traceback" not in reported.err
+    assert connect_calls == []
+
+
+def test_load_curated_reports_per_table_replacement_counts_through_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text("national: []\n", encoding="utf-8")
+    summary = SimpleNamespace(
+        party_map=SimpleNamespace(
+            party_canonical=SimpleNamespace(loaded=3, deleted=2),
+            list_identity=SimpleNamespace(loaded=4, deleted=1),
+            party_mapping=SimpleNamespace(loaded=4, deleted=3),
+        ),
+        crosswalk=SimpleNamespace(
+            jurisdiction_crosswalk=SimpleNamespace(loaded=5, deleted=4),
+            mesa_crosswalk=SimpleNamespace(loaded=6, deleted=5),
+        ),
+    )
+    monkeypatch.setattr("etl.__main__.load_curated", lambda **_kwargs: summary)
+
+    exit_code = main(
+        [
+            "--sources-path",
+            str(sources_path),
+            "load-curated",
+            "--database-url",
+            "postgresql://user:secret@example.test/votus",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "party_canonical: loaded=3 deleted=2",
+        "list_identity: loaded=4 deleted=1",
+        "party_mapping: loaded=4 deleted=3",
+        "jurisdiction_crosswalk: loaded=5 deleted=4",
+        "mesa_crosswalk: loaded=6 deleted=5",
+    ]
+
+
+def test_load_curated_populates_every_curated_table(tmp_path: Path, capsys) -> None:
     """This project has shipped correct, tested, unreachable code seven
     times (Phase 15's own charter). This test drives `load-curated` through
     `main()` -- the real argv-parsing CLI entrypoint -- never by importing
@@ -3578,6 +3846,7 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
     party_map_path.write_text(
         yaml.safe_dump(
             {
+                "canonical_parties": [{"id": canonical_id, "display_name": "TEST CLI PARTY"}],
                 "mappings": [
                     {
                         "year": 2025,
@@ -3588,7 +3857,7 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
                         "party_name": "TEST CLI PARTY",
                         "source": "fixture",
                     }
-                ]
+                ],
             }
         ),
         encoding="utf-8",
@@ -3611,6 +3880,7 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    capsys.readouterr()
     exit_code = main(
         [
             "--sources-path",
@@ -3630,6 +3900,19 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
+    reported = capsys.readouterr().out.splitlines()
+    expected_loaded = [
+        ("party_canonical", 1),
+        ("list_identity", 1),
+        ("party_mapping", 1),
+        ("jurisdiction_crosswalk", 1),
+        ("mesa_crosswalk", 1),
+    ]
+    assert len(reported) == len(expected_loaded)
+    for line, (table_name, loaded) in zip(reported, expected_loaded, strict=True):
+        prefix = f"{table_name}: loaded={loaded} deleted="
+        assert line.startswith(prefix)
+        assert line.removeprefix(prefix).isdigit()
 
     conn = psycopg.connect(TEST_DSN)
     try:
@@ -4482,7 +4765,9 @@ def test_validate_fiscalizacion_refuses_a_circuito_blind_baseline_before_review_
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
-                        "source_url": None,
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
+                        "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
@@ -4493,6 +4778,8 @@ def test_validate_fiscalizacion_refuses_a_circuito_blind_baseline_before_review_
                     {
                         "id": national_id,
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/nat.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -4595,7 +4882,9 @@ def test_validate_fiscalizacion_refuses_an_invalid_official_vector_before_any_wr
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
-                        "source_url": None,
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
+                        "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
@@ -4606,6 +4895,8 @@ def test_validate_fiscalizacion_refuses_an_invalid_official_vector_before_any_wr
                     {
                         "id": national_id,
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/nat.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -4808,6 +5099,70 @@ def test_a_pba_fetch_goes_through_the_etiquette_layer(tmp_path: Path) -> None:
     assert refused and refused[0]["status"] != "ok"
     assert isinstance(notes := refused[0]["notes"], str)
     assert UnregisteredPathError.__name__ in notes or "allowlist" in notes
+
+
+def test_pba_fetch_rejects_missing_policed_fetcher_before_archive_or_manifest_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.http_client as http_client
+    import etl.ingest.pba as pba
+
+    source_id = "pba/missing-policed-fetcher"
+    source_url = f"https://{pba.PBA_HOST_POLICY.host}{pba.PBA_ALLOWED_PATHS[0]}"
+    sources = {
+        "pba": [
+            {
+                "id": source_id,
+                "source": pba.PBA_HOST_POLICY.host,
+                "source_url": source_url,
+                "mime": "text/html",
+                "notes": "policed fetcher invariant fixture",
+                "filename": "missing-policed-fetcher.html",
+                "election_year": 2025,
+                "election_round": "provinciales",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    original_manifest = b"[]"
+    manifest_path.write_bytes(original_manifest)
+    local_root = tmp_path / "archive"
+    transport_calls: list[str] = []
+
+    class _RobotsAbsentFetcher:
+        def get(self, url: str, *, timeout: float = 30.0, headers=None):
+            transport_calls.append(url)
+            return FetchResponse(status_code=404, headers={}, content=b"")
+
+    transport = _RobotsAbsentFetcher()
+    constructor_calls: list[tuple[object, object]] = []
+
+    def missing_policed_fetcher(fetcher: object, policy: object) -> None:
+        constructor_calls.append((fetcher, policy))
+
+    archive_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def record_archive_call(*args: object, **kwargs: object) -> None:
+        archive_calls.append((args, kwargs))
+        raise AssertionError("archive_pba_source must not receive a missing policed fetcher")
+
+    monkeypatch.setattr(http_client, "PolicedHostFetcher", missing_policed_fetcher)
+    monkeypatch.setattr(pba, "archive_pba_source", record_archive_call)
+
+    with pytest.raises(RuntimeError, match="^PBA fetcher initialization failed$"):
+        fetch_source(
+            source_id,
+            sources=sources,
+            fetcher=transport,
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
+
+    assert constructor_calls == [(transport, pba.PBA_HOST_POLICY)]
+    assert transport_calls == [f"https://{pba.PBA_HOST_POLICY.host}/robots.txt"]
+    assert archive_calls == []
+    assert manifest_path.read_bytes() == original_manifest
+    assert not local_root.exists()
 
 
 def test_pba_fetch_halts_before_source_or_archive_mutation_when_robots_appears(
@@ -5014,6 +5369,8 @@ def test_a_manifest_record_missing_status_exits_nonzero(tmp_path: Path, capsys) 
                     {
                         "id": "national/2025",
                         "source": "x",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/2025.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -5045,7 +5402,9 @@ def test_validate_fiscalizacion_uses_registered_baseline_metadata_and_refuses_mi
                     {
                         "id": "fiscalizacion/current",
                         "source": "internal",
-                        "source_url": None,
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
+                        "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
                     }
@@ -5054,6 +5413,8 @@ def test_validate_fiscalizacion_uses_registered_baseline_metadata_and_refuses_mi
                     {
                         "id": "national/current-baseline",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/current.csv",
                         "election_year": 2023,
                         "election_round": "generales",
@@ -5107,7 +5468,9 @@ def test_validate_fiscalizacion_refuses_fiscal_source_election_mismatch_before_a
                     {
                         "id": "fiscalizacion/current",
                         "source": "internal",
-                        "source_url": None,
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
+                        "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": fiscal_year,
                         "election_round": fiscal_round,
                     }
@@ -5116,6 +5479,8 @@ def test_validate_fiscalizacion_refuses_fiscal_source_election_mismatch_before_a
                     {
                         "id": "national/current-baseline",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/current.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -5189,6 +5554,155 @@ def test_validate_fiscalizacion_refuses_a_scope_the_name_table_was_not_curated_f
     reported = capsys.readouterr().err
     assert "curated for 02/027/DIPUTADO NACIONAL" in reported
     assert "not real" in reported
+
+
+_MISSING_SOURCE_FIELD = object()
+
+
+def _synthetic_registry_entry(capability: str) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "id": f"{capability}/2025-registry-contract",
+        "source": "registry.example",
+        "source_url": "https://registry.example/results.csv",
+        "mime": "text/csv",
+        "notes": "synthetic registry contract fixture",
+        "filename": "registry-contract.csv",
+        "election_year": 2025,
+        "election_round": "legislativas",
+    }
+    if capability == "pba":
+        entry.update(
+            {
+                "source": "www.juntaelectoral.gba.gov.ar",
+                "source_url": (
+                    "https://www.juntaelectoral.gba.gov.ar/"
+                    "escrutinio-definitivo-2025/concejales_distri/2025027.pdf"
+                ),
+                "mime": "application/pdf",
+                "filename": "registry-contract.pdf",
+                "election_round": "provinciales",
+            }
+        )
+    elif capability == "fiscalizacion":
+        entry.update(
+            {
+                "source": "local-file",
+                "source_url": "local://fiscalizacion/registry-contract.csv",
+                "source_kind": "fiscalizacion",
+                "upload": "never",
+            }
+        )
+    return entry
+
+
+def _filesystem_snapshot(root: Path) -> dict[str, bytes | None]:
+    return {
+        path.relative_to(root).as_posix(): None if path.is_dir() else path.read_bytes()
+        for path in root.rglob("*")
+    }
+
+
+@pytest.mark.parametrize("capability", ["national", "pba", "fiscalizacion"])
+@pytest.mark.parametrize(
+    ("field", "invalid_value", "diagnosis"),
+    [
+        pytest.param(
+            "source_url", None, "source_url must be a non-empty string", id="source-url-null"
+        ),
+        pytest.param(
+            "source_url", "   ", "source_url must be a non-empty string", id="source-url-blank"
+        ),
+        pytest.param(
+            "mime", _MISSING_SOURCE_FIELD, "mime must be a non-empty string", id="mime-missing"
+        ),
+        pytest.param("mime", None, "mime must be a non-empty string", id="mime-null"),
+        pytest.param("mime", "   ", "mime must be a non-empty string", id="mime-blank"),
+        pytest.param("notes", _MISSING_SOURCE_FIELD, "notes must be a string", id="notes-missing"),
+        pytest.param("notes", None, "notes must be a string", id="notes-null"),
+    ],
+)
+def test_source_registry_required_metadata_is_rejected_at_the_common_cli_boundary(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    capability: str,
+    field: str,
+    invalid_value: object,
+    diagnosis: str,
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = f"{capability}/2025-registry-contract"
+    entry = _synthetic_registry_entry(capability)
+    private_registry_values = tuple(
+        value
+        for key in ("source", "source_url")
+        if isinstance((value := entry[key]), str) and value.strip()
+    )
+    if invalid_value is _MISSING_SOURCE_FIELD:
+        del entry[field]
+    else:
+        entry[field] = invalid_value
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({capability: [entry]}), encoding="utf-8")
+    local_file = tmp_path / "registry-contract.csv"
+    local_file.write_bytes(b"synthetic,registry\n1,fixture\n")
+    local_root = tmp_path / "archive"
+    local_root.mkdir()
+    (local_root / "preserved.txt").write_text("preserve me", encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]\n", encoding="utf-8")
+    before = _filesystem_snapshot(tmp_path)
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+    command = _main_args(sources_path, local_root, manifest_path) + [
+        "fetch",
+        "--source",
+        source_id,
+    ]
+    if capability == "fiscalizacion":
+        command.extend(["--local-file", str(local_file)])
+
+    exit_code = main(command)
+
+    reported = capsys.readouterr()
+    assert exit_code == 1
+    assert reported.out == ""
+    assert reported.err == (f"error: sources.yaml capability {capability!r} entry 0 {diagnosis}\n")
+    assert all(value not in reported.err for value in private_registry_values)
+    assert fetcher.calls == []
+    assert _filesystem_snapshot(tmp_path) == before
+
+
+def test_source_registry_allows_explicit_empty_notes_through_cli_archive(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+
+    entry = _synthetic_registry_entry("national")
+    entry["notes"] = ""
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({"national": [entry]}), encoding="utf-8")
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    fetcher = FakeFetcher(payload=b"synthetic archive bytes")
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["fetch", "--source", "national/2025-registry-contract"]
+    )
+
+    reported = capsys.readouterr()
+    assert exit_code == 0
+    assert reported.err == ""
+    assert fetcher.calls == ["https://registry.example/results.csv"]
+    record = load_manifest(manifest_path)[0]
+    assert record["notes"] == ""
+    archived_path = record["archived_path"]
+    assert isinstance(archived_path, str)
+    assert (tmp_path / archived_path).read_bytes() == b"synthetic archive bytes"
 
 
 @pytest.mark.parametrize(
@@ -5282,6 +5796,8 @@ def test_sources_boundary_validates_election_metadata_when_present(
     entry: dict[str, object] = {
         "id": "national/test",
         "source": "example.test",
+        "mime": "text/csv",
+        "notes": "canonical source fixture",
         "source_url": "https://example.test/results.csv",
         "election_year": 2025,
         "election_round": "legislativas",
@@ -5335,6 +5851,8 @@ def test_sources_boundary_rejects_disagreement_between_id_and_election_metadata(
                     {
                         "id": "national/2023-mislabeled",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/results.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -5358,6 +5876,8 @@ def test_curated_collection_uses_metadata_for_a_non_year_shaped_source_id(
             {
                 "id": source_id,
                 "source": "example.test",
+                "mime": "text/csv",
+                "notes": "canonical source fixture",
                 "source_url": "https://example.test/current.csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
@@ -5385,26 +5905,28 @@ def test_curated_collection_uses_metadata_for_a_non_year_shaped_source_id(
     assert {year for year, *_rest in keys} == {2025}
 
 
-def test_sources_boundary_accepts_required_election_metadata_and_nullable_url(
+def test_sources_boundary_accepts_canonical_local_source_metadata(
     tmp_path: Path,
 ) -> None:
     from etl.__main__ import load_sources
 
     path = tmp_path / "sources.yaml"
-    minimal = {
+    canonical = {
         "fiscalizacion": [
             {
                 "id": "fiscalizacion/upload-forbidden",
                 "source": "local",
-                "source_url": None,
+                "mime": "text/csv",
+                "notes": "canonical source fixture",
+                "source_url": "local://fiscalizacion/fixture.csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
             }
         ]
     }
-    path.write_text(yaml.safe_dump(minimal), encoding="utf-8")
+    path.write_text(yaml.safe_dump(canonical), encoding="utf-8")
 
-    assert load_sources(path) == minimal
+    assert load_sources(path) == canonical
 
 
 @pytest.mark.parametrize(
@@ -5424,6 +5946,8 @@ def test_sources_boundary_requires_complete_election_identity(
                     {
                         "id": "fiscalizacion/missing-election",
                         "source": "local",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "local://fiscalizacion/test.csv",
                         **election_fields,
                     }
@@ -5451,6 +5975,7 @@ def test_loaded_fiscalizacion_identity_reaches_reexport_classification(tmp_path:
                     {
                         "id": source_id,
                         "source": "local",
+                        "notes": "canonical source fixture",
                         "source_url": source_url,
                         "mime": "text/csv",
                         "filename": "fiscal.csv",
@@ -5487,6 +6012,8 @@ def test_numeric_archived_path_is_a_clean_cli_validation_failure(tmp_path: Path,
                     {
                         "id": "national/2025-numeric-path",
                         "source": "example.test",
+                        "mime": "text/csv",
+                        "notes": "canonical source fixture",
                         "source_url": "https://example.test/x.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
@@ -5533,6 +6060,7 @@ def test_party_map_string_boolean_is_a_clean_cli_validation_failure(
     party_map_path.write_text(
         yaml.safe_dump(
             {
+                "canonical_parties": [{"id": "LLA", "display_name": "LA LIBERTAD AVANZA"}],
                 "mappings": [
                     {
                         "year": 2025,
@@ -5543,7 +6071,7 @@ def test_party_map_string_boolean_is_a_clean_cli_validation_failure(
                         "party_name": "LA LIBERTAD AVANZA",
                         "verified": "false",
                     }
-                ]
+                ],
             }
         ),
         encoding="utf-8",

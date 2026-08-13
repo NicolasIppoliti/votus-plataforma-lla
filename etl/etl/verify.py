@@ -11,15 +11,16 @@ import sys
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from types import FrameType
-from typing import LiteralString, Protocol, cast
+from types import FrameType, TracebackType
+from typing import Protocol, Self, TypeVar
 
 import psycopg
 from psycopg import sql
+from psycopg.abc import Params, QueryNoTemplate
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 NAME_PREFIX = "votus_etl_verify_"
@@ -33,8 +34,48 @@ class UnsafeDatabaseError(RuntimeError):
     """The requested operation does not satisfy the disposable identity contract."""
 
 
+_DatabaseRow = tuple[object, ...]
+_SignalHandler = Callable[[int, FrameType | None], object] | signal.Handlers | int | None
+_RowT_co = TypeVar("_RowT_co", covariant=True)
+
+
+class _Cursor(Protocol[_RowT_co]):
+    def fetchone(self) -> _RowT_co | None: ...
+
+
+class _Connection(Protocol[_RowT_co]):
+    def execute(
+        self, query: QueryNoTemplate, params: Params | None = None
+    ) -> _Cursor[_RowT_co]: ...
+
+    def close(self) -> None: ...
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None: ...
+
+
 class _ConnectionFactory(Protocol):
-    def __call__(self, dsn: str, *, autocommit: bool = False): ...
+    def __call__(self, conninfo: str, *, autocommit: bool = False) -> _Connection[_DatabaseRow]: ...
+
+
+def _require_admin(
+    admin: _Connection[_DatabaseRow] | None,
+) -> _Connection[_DatabaseRow]:
+    if admin is None:
+        raise UnsafeDatabaseError("administrative connection is unavailable")
+    return admin
+
+
+def _require_dsn(dsn: str | None, label: str) -> str:
+    if dsn is None:
+        raise UnsafeDatabaseError(f"{label} database URL is unavailable")
+    return dsn
 
 
 @dataclass(frozen=True)
@@ -116,7 +157,7 @@ class DisposablePostgres:
         self.identity = identity or DatabaseIdentity.generate()
         self.connect = connect
         self.role_secret = secret_factory()
-        self.admin = None
+        self.admin: _Connection[_DatabaseRow] | None = None
         self.created_by_this_run = False
         self.role_created_by_this_run = False
         self.marker_table_created = False
@@ -136,24 +177,24 @@ class DisposablePostgres:
         return message
 
     def _database_exists(self) -> bool:
-        assert self.admin is not None
-        row = self.admin.execute(
+        admin = _require_admin(self.admin)
+        row = admin.execute(
             "select 1 from pg_database where datname = %s",
             (self.identity.name,),
         ).fetchone()
         return row == (1,)
 
     def _role_exists(self) -> bool:
-        assert self.admin is not None
-        row = self.admin.execute(
+        admin = _require_admin(self.admin)
+        row = admin.execute(
             "select 1 from pg_roles where rolname = %s",
             (self.identity.role_name,),
         ).fetchone()
         return row == (1,)
 
     def _verify_global_roles_are_already_final(self) -> None:
-        assert self.admin is not None
-        row = self.admin.execute(
+        admin = _require_admin(self.admin)
+        row = admin.execute(
             """
             select
               (select count(*) = 3
@@ -186,8 +227,8 @@ class DisposablePostgres:
             )
 
     def _verify_target(self) -> None:
-        assert self.migration_dsn is not None
-        with self.connect(self.migration_dsn) as connection:
+        migration_dsn = _require_dsn(self.migration_dsn, "migration")
+        with self.connect(migration_dsn) as connection:
             row = connection.execute(
                 """
                 select current_database(), marker
@@ -198,8 +239,8 @@ class DisposablePostgres:
             raise UnsafeDatabaseError("connected database failed its disposable identity check")
 
     def _verify_role(self) -> None:
-        assert self.admin is not None
-        row = self.admin.execute(
+        admin = _require_admin(self.admin)
+        row = admin.execute(
             """
             select rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
                    rolreplication, rolbypassrls,
@@ -279,7 +320,10 @@ class DisposablePostgres:
             self.admin = None
             return self.target_dsn
         except BaseException as original:
-            if self.created_by_this_run or self.role_created_by_this_run:
+            cleanup_required = self.created_by_this_run
+            if self.role_created_by_this_run:
+                cleanup_required = True
+            if cleanup_required:
                 try:
                     self.close()
                 except BaseException as cleanup_error:
@@ -292,11 +336,15 @@ class DisposablePostgres:
             raise
 
     def grant_test_privileges(self) -> None:
-        assert self.migration_dsn is not None
-        assert self.admin is None
-        self.admin = self.connect(self.admin_dsn, autocommit=True)
+        migration_dsn = _require_dsn(self.migration_dsn, "migration")
+        if self.admin is not None:
+            raise UnsafeDatabaseError(
+                "administrative connection must be closed before granting test privileges"
+            )
+        admin = self.connect(self.admin_dsn, autocommit=True)
+        self.admin = admin
         try:
-            self.admin.execute(
+            admin.execute(
                 sql.SQL("grant connect, create, temporary on database {} to {}").format(
                     sql.Identifier(self.identity.name),
                     sql.Identifier(self.identity.role_name),
@@ -304,19 +352,19 @@ class DisposablePostgres:
             )
             self._verify_role()
         finally:
-            self.admin.close()
+            admin.close()
             self.admin = None
 
-        with self.connect(self.migration_dsn) as connection:
+        with self.connect(migration_dsn) as connection:
             role = sql.Identifier(self.identity.role_name)
             connection.execute(sql.SQL("grant usage, create on schema public to {}").format(role))
             connection.execute(
                 sql.SQL("grant usage on schema votus_verification to {}").format(role)
             )
             connection.execute(
-                sql.SQL(
-                    "grant select on table votus_verification.ownership_marker to {}"
-                ).format(role)
+                sql.SQL("grant select on table votus_verification.ownership_marker to {}").format(
+                    role
+                )
             )
             connection.execute(
                 sql.SQL("grant all privileges on all tables in schema public to {}").format(role)
@@ -352,8 +400,8 @@ class DisposablePostgres:
                 ).format(sql.Literal(self.identity.role_name))
             )
 
-        assert self.target_dsn is not None
-        with self.connect(self.target_dsn) as connection:
+        target_dsn = _require_dsn(self.target_dsn, "test")
+        with self.connect(target_dsn) as connection:
             row = connection.execute(
                 "select current_database(), current_user, marker "
                 "from votus_verification.ownership_marker"
@@ -435,13 +483,26 @@ class DisposablePostgres:
     def __enter__(self) -> str:
         return self.open()
 
-    def __exit__(self, *_args: object) -> None:
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
 def _migration_files(migrations: Path) -> list[Path]:
+    if not migrations.is_dir():
+        raise RuntimeError("migration path must be an existing directory")
     files = sorted(migrations.glob("[0-9][0-9][0-9][0-9]_*.sql"))
-    numbers = [int(path.name.split("_", 1)[0]) for path in files]
+    non_file = next((path for path in files if not path.is_file()), None)
+    if non_file is not None:
+        raise RuntimeError(f"migration entry must be a regular file: {non_file.name}")
+    try:
+        numbers = [int(path.name.split("_", 1)[0]) for path in files]
+    except ValueError as exc:
+        raise RuntimeError("migration filenames must begin with four decimal digits") from exc
     if not numbers or numbers != list(range(1, numbers[-1] + 1)):
         raise RuntimeError("migration numbers must form a complete contiguous sequence from 0001")
     if len(numbers) != len(set(numbers)):
@@ -457,10 +518,20 @@ def apply_migrations(
 ) -> int:
     files = _migration_files(migrations)
     for migration in files:
-        migration_sql = cast(LiteralString, migration.read_text(encoding="utf-8"))
+        try:
+            migration_sql = migration.read_text(encoding="utf-8").encode("utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"failed to read migration file: {migration.name}") from exc
         with connect(database_dsn) as connection:
-            connection.execute(sql.SQL(migration_sql))
+            connection.execute(migration_sql)
     return len(files)
+
+
+def _junit_count(suite: ET.Element, attribute: str) -> int:
+    try:
+        return int(suite.attrib.get(attribute, "0"))
+    except ValueError as exc:
+        raise RuntimeError(f"pytest produced a non-numeric JUnit {attribute!r} count") from exc
 
 
 def _junit_counts(report_path: Path) -> tuple[int, int, int]:
@@ -470,11 +541,10 @@ def _junit_counts(report_path: Path) -> tuple[int, int, int]:
         if root.tag == "testsuite" or (root.tag == "testsuites" and "tests" in root.attrib)
         else list(root.findall("testsuite"))
     )
-    tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
-    skipped = sum(int(suite.attrib.get("skipped", "0")) for suite in suites)
+    tests = sum(_junit_count(suite, "tests") for suite in suites)
+    skipped = sum(_junit_count(suite, "skipped") for suite in suites)
     failed = sum(
-        int(suite.attrib.get("failures", "0")) + int(suite.attrib.get("errors", "0"))
-        for suite in suites
+        _junit_count(suite, "failures") + _junit_count(suite, "errors") for suite in suites
     )
     return tests, skipped, failed
 
@@ -490,7 +560,7 @@ def run_pytest(
         report_path = Path(temp_dir) / "pytest.xml"
         command = [sys.executable, "-m", "pytest", "-rs", f"--junitxml={report_path}"]
         completed = run(command, cwd=etl_root, env=env, check=False, text=True)
-        if not report_path.exists():
+        if not report_path.is_file():
             raise RuntimeError("pytest did not produce its verification report")
         tests, skipped, failed = _junit_counts(report_path)
     if skipped:
@@ -503,7 +573,7 @@ def run_pytest(
 
 
 @contextmanager
-def _defer_signals_during_cleanup():
+def _defer_signals_during_cleanup() -> Iterator[None]:
     global _cleanup_depth
     _cleanup_depth += 1
     try:
@@ -551,7 +621,7 @@ def main() -> int:
     etl_root = repo_root / "etl"
     migrations = repo_root / "supabase" / "migrations"
     database = DisposablePostgres(admin_dsn)
-    previous_handlers: dict[signal.Signals, object] = {}
+    previous_handlers: dict[signal.Signals, _SignalHandler] = {}
     handled_signals = [signal.SIGTERM]
     if hasattr(signal, "SIGHUP"):
         handled_signals.append(signal.SIGHUP)
@@ -560,8 +630,8 @@ def main() -> int:
 
     try:
         with database as database_dsn:
-            assert database.migration_dsn is not None
-            migration_count = apply_migrations(database.migration_dsn, migrations)
+            migration_dsn = _require_dsn(database.migration_dsn, "migration")
+            migration_count = apply_migrations(migration_dsn, migrations)
             database.grant_test_privileges()
             result = run_pytest(database_dsn, etl_root)
         print(

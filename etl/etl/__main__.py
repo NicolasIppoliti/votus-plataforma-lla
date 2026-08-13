@@ -58,6 +58,7 @@ from .crosswalk import (
     load_crosswalk,
 )
 from .db import (
+    CuratedReplacementSummary,
     archive_entry_from_evidence,
     insert_review_items,
     load_crosswalk_rows,
@@ -231,10 +232,21 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                     f"sources.yaml capability {capability!r} entry {index} source "
                     "must be a non-empty string"
                 )
-            if "source_url" not in entry or not isinstance(entry["source_url"], str | None):
+            source_url = entry.get("source_url")
+            if not isinstance(source_url, str) or not source_url.strip():
                 raise SourcesValidationError(
                     f"sources.yaml capability {capability!r} entry {index} source_url "
-                    "must be a string or null"
+                    "must be a non-empty string"
+                )
+            mime = entry.get("mime")
+            if not isinstance(mime, str) or not mime.strip():
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} mime "
+                    "must be a non-empty string"
+                )
+            if not isinstance(entry.get("notes"), str):
+                raise SourcesValidationError(
+                    f"sources.yaml capability {capability!r} entry {index} notes must be a string"
                 )
             try:
                 registered_source_election(entry)
@@ -418,7 +430,8 @@ def fetch_source(
     if entry.get("capability") == "pba":
         from .ingest.pba import archive_pba_source
 
-        assert pba_fetcher is not None
+        if pba_fetcher is None:
+            raise RuntimeError("PBA fetcher initialization failed")
         # The POLICED fetcher, not the bare one: `archive_pba_source` wraps it
         # in bounded backoff, and `PolicedHostFetcher` is what enforces the path
         # allowlist, the serial cap and the minimum delay. Passing the raw
@@ -2039,7 +2052,7 @@ def load_curated(
     manifest_path: Path,
     party_map_path: Path,
     crosswalk_path: Path,
-) -> dict[str, int]:
+) -> CuratedReplacementSummary:
     """Load every curated table (task 15.10): `party_canonical`,
     `list_identity`, `party_mapping` from `party_map_path`, and
     `jurisdiction_crosswalk`/`mesa_crosswalk` from `crosswalk_path`.
@@ -2169,8 +2182,8 @@ def load_curated(
 
     conn = psycopg.connect(database_url)
     try:
-        counts = load_party_map_rows(conn, party_map)
-        counts.update(load_crosswalk_rows(conn, crosswalk, mesa_stabilities=mesa_stabilities))
+        party_map_summary = load_party_map_rows(conn, party_map)
+        crosswalk_summary = load_crosswalk_rows(conn, crosswalk, mesa_stabilities=mesa_stabilities)
 
         # THE DISCONTINUITIES, SURFACED. `MesaStability.discontinuous` had no
         # production reader and `review_item`'s `mesa_discontinuity` kind had
@@ -2213,7 +2226,6 @@ def load_curated(
         if drafts:
             fresh = fresh_review_items(conn, drafts)
             insert_review_items(conn, fresh)
-            counts["mesa_discontinuity_review_items"] = len(fresh)
             print(
                 f"  {len(drafts)} discontinuous mesa(s) recorded for review "
                 f"({len(fresh)} new, {len(drafts) - len(fresh)} already present)",
@@ -2226,7 +2238,10 @@ def load_curated(
         raise
     finally:
         conn.close()
-    return counts
+    return CuratedReplacementSummary(
+        party_map=party_map_summary,
+        crosswalk=crosswalk_summary,
+    )
 
 
 def cmd_load_curated(args: argparse.Namespace) -> int:
@@ -2261,8 +2276,14 @@ def cmd_load_curated(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    for table_name, count in counts.items():
-        print(f"loaded {count} row(s) into {table_name}")
+    for table_name, count in (
+        ("party_canonical", counts.party_map.party_canonical),
+        ("list_identity", counts.party_map.list_identity),
+        ("party_mapping", counts.party_map.party_mapping),
+        ("jurisdiction_crosswalk", counts.crosswalk.jurisdiction_crosswalk),
+        ("mesa_crosswalk", counts.crosswalk.mesa_crosswalk),
+    ):
+        print(f"{table_name}: loaded={count.loaded} deleted={count.deleted}")
     return 0
 
 

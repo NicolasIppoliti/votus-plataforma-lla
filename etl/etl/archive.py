@@ -129,7 +129,7 @@ def _empty_record(entry: dict, fetched_at: str, note: str) -> dict:
         "source_url": entry["source_url"],
         "archived_path": None,
         "sha256": None,
-        "mime": entry.get("mime", "application/octet-stream"),
+        "mime": entry["mime"],
         "bytes": None,
         "fetched_at": fetched_at,
         "status": "error",
@@ -154,7 +154,7 @@ def archive_source(
     fetched_at = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     capability = entry["capability"]
     source_url = entry["source_url"]
-    notes = entry.get("notes", "")
+    notes = entry["notes"]
     timeout = entry.get("timeout", 60)
     configured_filename = _safe_archive_basename(
         entry["filename"] if "filename" in entry else entry["id"].split("/")[-1]
@@ -201,7 +201,7 @@ def archive_source(
         "source_url": source_url,
         "archived_path": archived_path,
         "sha256": digest,
-        "mime": entry.get("mime", "application/octet-stream"),
+        "mime": entry["mime"],
         "bytes": len(data),
         "fetched_at": fetched_at,
         "status": "ok",

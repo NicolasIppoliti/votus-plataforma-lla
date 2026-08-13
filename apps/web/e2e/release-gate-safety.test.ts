@@ -143,6 +143,63 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
+	it("hands the full scale and rollback/reapply proofs to production execution", async () => {
+		const executedPlans: ReleaseGatePlan[] = [];
+		await runReleaseGateCli([], {
+			execute: async (plan) => {
+				executedPlans.push(plan);
+			},
+			writeOutput: () => {
+				throw new Error("execution mode must not emit an inspection plan");
+			},
+		});
+		expect(executedPlans).toEqual([
+			expect.objectContaining({
+				mode: RELEASE_GATE_MODE.FULL,
+				pgTapProofs: expect.arrayContaining([
+					expect.objectContaining({
+						path: "tests/results_exploration_scale.sql",
+					}),
+				]),
+				rollbackReapplyProofs: expect.arrayContaining([
+					expect.objectContaining({
+						path: "tests/results_exploration_release.sql",
+					}),
+				]),
+			}),
+		]);
+	});
+	it.each([
+		{
+			phase: "execution",
+			argv: ["--release-proof-only", "--rollback-proofs-only"],
+		},
+		{
+			phase: "inspection",
+			argv: [
+				"--release-proof-only",
+				"--rollback-proofs-only",
+				"--inspect-plan",
+			],
+		},
+	])("rejects conflicting reduced modes before $phase", async ({ argv }) => {
+		let executed = false;
+		let output = "";
+		await expect(
+			runReleaseGateCli(argv, {
+				execute: async () => {
+					executed = true;
+				},
+				writeOutput: (chunk) => {
+					output += chunk;
+				},
+			}),
+		).rejects.toThrow(
+			"--release-proof-only and --rollback-proofs-only cannot be combined",
+		);
+		expect(executed).toBe(false);
+		expect(output).toBe("");
+	});
 	it("passes the same production plan from parsing to execution", async () => {
 		const executedPlans: ReleaseGatePlan[] = [];
 		await runReleaseGateCli(["--rollback-proofs-only"], {

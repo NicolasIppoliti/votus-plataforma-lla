@@ -21,10 +21,16 @@ from pathlib import Path
 
 import psycopg
 import pytest
+import yaml
 
 from etl.crosswalk import CrosswalkTable, MesaStability, load_crosswalk
 from etl.db import load_crosswalk_rows, load_party_map_rows
-from etl.party_map import PartyMappingEntry, PartyMappingTable, load_party_map
+from etl.party_map import (
+    CanonicalPartyDeclaration,
+    PartyMappingEntry,
+    PartyMappingTable,
+    load_party_map,
+)
 
 TEST_DSN = os.environ.get(
     "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -74,6 +80,278 @@ def _fake_entry(
     )
 
 
+_PartyKey = tuple[int, str, str, str]
+
+
+class _PartyProjectionCursor:
+    rowcount = 0
+
+    def __init__(self) -> None:
+        self.canonical: dict[str, str] = {}
+        self.list_identity: dict[_PartyKey, str] = {}
+        self.party_mapping: dict[_PartyKey, str] = {}
+
+    def __enter__(self) -> _PartyProjectionCursor:
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+        return None
+
+    def execute(self, query: object, params: object | None = None) -> None:
+        statement = str(query).lower()
+        assert isinstance(params, tuple)
+        if "insert into party_canonical" in statement:
+            canonical_id, display_name = params
+            assert isinstance(canonical_id, str)
+            assert isinstance(display_name, str)
+            self.canonical[canonical_id] = display_name
+            self.rowcount = 1
+            return
+        if "insert into list_identity" in statement:
+            year, jurisdiction, category, list_id, source_name = params
+            assert isinstance(year, int)
+            assert isinstance(jurisdiction, str)
+            assert isinstance(category, str)
+            assert isinstance(list_id, str)
+            assert isinstance(source_name, str)
+            self.list_identity[(year, jurisdiction, category, list_id)] = source_name
+            self.rowcount = 1
+            return
+        if "insert into party_mapping" in statement:
+            year, jurisdiction, category, list_id, canonical_id, _verified, _source = params
+            assert isinstance(year, int)
+            assert isinstance(jurisdiction, str)
+            assert isinstance(category, str)
+            assert isinstance(list_id, str)
+            assert isinstance(canonical_id, str)
+            self.party_mapping[(year, jurisdiction, category, list_id)] = canonical_id
+            self.rowcount = 1
+            return
+        if "delete from party_mapping" in statement:
+            desired = self._desired_mapping_keys(params)
+            self.rowcount = self._delete_stale(self.party_mapping, desired)
+            return
+        if "delete from list_identity" in statement:
+            desired = self._desired_mapping_keys(params)
+            self.rowcount = self._delete_stale(self.list_identity, desired)
+            return
+        if "delete from party_canonical" in statement:
+            desired_ids = params[0]
+            assert isinstance(desired_ids, list)
+            desired = set()
+            for canonical_id in desired_ids:
+                assert isinstance(canonical_id, str)
+                desired.add(canonical_id)
+            stale = set(self.canonical) - desired
+            for canonical_id in stale:
+                del self.canonical[canonical_id]
+            self.rowcount = len(stale)
+            return
+        raise AssertionError(f"unexpected SQL in party projection fake: {statement}")
+
+    @staticmethod
+    def _desired_mapping_keys(params: tuple[object, ...]) -> set[_PartyKey]:
+        years, jurisdictions, categories, list_ids = params
+        assert isinstance(years, list)
+        assert isinstance(jurisdictions, list)
+        assert isinstance(categories, list)
+        assert isinstance(list_ids, list)
+        desired: set[_PartyKey] = set()
+        for year, jurisdiction, category, list_id in zip(
+            years, jurisdictions, categories, list_ids, strict=True
+        ):
+            assert isinstance(year, int)
+            assert isinstance(jurisdiction, str)
+            assert isinstance(category, str)
+            assert isinstance(list_id, str)
+            desired.add((year, jurisdiction, category, list_id))
+        return desired
+
+    @staticmethod
+    def _delete_stale(rows: dict[_PartyKey, str], desired: set[_PartyKey]) -> int:
+        stale = set(rows) - desired
+        for key in stale:
+            del rows[key]
+        return len(stale)
+
+
+class _PartyProjectionConnection:
+    def __init__(self) -> None:
+        self.projection = _PartyProjectionCursor()
+
+    def cursor(self) -> _PartyProjectionCursor:
+        return self.projection
+
+
+def _load_synthetic_party_map(
+    tmp_path: Path,
+    *,
+    filename: str,
+    canonical_parties: list[dict[str, object]],
+    mappings: list[dict[str, object]],
+) -> PartyMappingTable:
+    path = tmp_path / filename
+    path.write_text(
+        yaml.safe_dump(
+            {"canonical_parties": canonical_parties, "mappings": mappings},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return load_party_map(path)
+
+
+def test_declared_canonical_display_and_source_spelling_project_to_distinct_tables(
+    tmp_path: Path,
+) -> None:
+    table = _load_synthetic_party_map(
+        tmp_path,
+        filename="party-map.yaml",
+        canonical_parties=[
+            {"id": "PARENT", "display_name": "Public Canonical Label"},
+        ],
+        mappings=[
+            {
+                "year": 2025,
+                "jurisdiction": "national",
+                "category": "DIPUTADO NACIONAL",
+                "list_id": "100",
+                "canonical_party": "PARENT",
+                "party_name": "Exact Source Spelling",
+            }
+        ],
+    )
+    conn = _PartyProjectionConnection()
+
+    summary = load_party_map_rows(conn, table)
+
+    assert conn.projection.canonical == {"PARENT": "Public Canonical Label"}
+    assert conn.projection.list_identity == {
+        (2025, "national", "DIPUTADO NACIONAL", "100"): "Exact Source Spelling"
+    }
+    assert conn.projection.party_mapping == {
+        (2025, "national", "DIPUTADO NACIONAL", "100"): "PARENT"
+    }
+    assert summary.party_canonical.loaded == 1
+    assert summary.list_identity.loaded == 1
+    assert summary.party_mapping.loaded == 1
+
+
+def test_party_projection_is_order_independent_and_declaration_updates_idempotently(
+    tmp_path: Path, capsys
+) -> None:
+    declarations: list[dict[str, object]] = [
+        {"id": "PARENT", "display_name": "Public Canonical Label"},
+        {"id": "OTHER", "display_name": "Other Canonical Label"},
+    ]
+    mappings: list[dict[str, object]] = [
+        {
+            "year": 2023,
+            "jurisdiction": "national",
+            "category": "DIPUTADO NACIONAL",
+            "list_id": "100",
+            "canonical_party": "PARENT",
+            "party_name": "Older Source Spelling",
+        },
+        {
+            "year": 2025,
+            "jurisdiction": "national",
+            "category": "DIPUTADO NACIONAL",
+            "list_id": "101",
+            "canonical_party": "PARENT",
+            "party_name": "Newer Source Spelling",
+        },
+        {
+            "year": 2025,
+            "jurisdiction": "national",
+            "category": "DIPUTADO NACIONAL",
+            "list_id": "102",
+            "canonical_party": "OTHER",
+            "party_name": "Other Source Spelling",
+        },
+    ]
+    first = _load_synthetic_party_map(
+        tmp_path,
+        filename="first.yaml",
+        canonical_parties=declarations,
+        mappings=mappings,
+    )
+    reordered = _load_synthetic_party_map(
+        tmp_path,
+        filename="reordered.yaml",
+        canonical_parties=list(reversed(declarations)),
+        mappings=list(reversed(mappings)),
+    )
+    updated_declarations: list[dict[str, object]] = [
+        {"id": "OTHER", "display_name": "Other Canonical Label"},
+        {"id": "PARENT", "display_name": "Updated Canonical Label"},
+    ]
+    updated = _load_synthetic_party_map(
+        tmp_path,
+        filename="updated.yaml",
+        canonical_parties=updated_declarations,
+        mappings=list(reversed(mappings)),
+    )
+    conn = _PartyProjectionConnection()
+
+    load_party_map_rows(conn, first)
+    assert conn.projection.canonical == {
+        "PARENT": "Public Canonical Label",
+        "OTHER": "Other Canonical Label",
+    }
+
+    load_party_map_rows(conn, reordered)
+    assert conn.projection.canonical == {
+        "PARENT": "Public Canonical Label",
+        "OTHER": "Other Canonical Label",
+    }
+    assert (
+        conn.projection.list_identity[(2023, "national", "DIPUTADO NACIONAL", "100")]
+        == "Older Source Spelling"
+    )
+    assert (
+        conn.projection.list_identity[(2025, "national", "DIPUTADO NACIONAL", "101")]
+        == "Newer Source Spelling"
+    )
+
+    first_update = load_party_map_rows(conn, updated)
+    second_update = load_party_map_rows(conn, updated)
+
+    assert conn.projection.canonical == {
+        "PARENT": "Updated Canonical Label",
+        "OTHER": "Other Canonical Label",
+    }
+    assert first_update.party_canonical.loaded == 2
+    assert second_update.party_canonical.loaded == 2
+    assert capsys.readouterr().err == ""
+
+
+def test_explicit_empty_party_projection_deletes_the_replacement_snapshot(tmp_path: Path) -> None:
+    conn = _PartyProjectionConnection()
+    key = (2025, "national", "DIPUTADO NACIONAL", "100")
+    conn.projection.canonical["STALE"] = "Stale Canonical Label"
+    conn.projection.list_identity[key] = "Stale Source Spelling"
+    conn.projection.party_mapping[key] = "STALE"
+    empty = _load_synthetic_party_map(
+        tmp_path,
+        filename="empty.yaml",
+        canonical_parties=[],
+        mappings=[],
+    )
+
+    summary = load_party_map_rows(conn, empty)
+
+    assert conn.projection.canonical == {}
+    assert conn.projection.list_identity == {}
+    assert conn.projection.party_mapping == {}
+    assert summary.party_canonical.loaded == 0
+    assert summary.party_canonical.deleted == 1
+    assert summary.list_identity.loaded == 0
+    assert summary.list_identity.deleted == 1
+    assert summary.party_mapping.loaded == 0
+    assert summary.party_mapping.deleted == 1
+
+
 # ---------------------------------------------------------------------------
 # 15.1 -- party_canonical rows created once per canonical party
 # ---------------------------------------------------------------------------
@@ -82,6 +360,9 @@ def _fake_entry(
 def test_party_canonical_rows_created_once_per_canonical_party(pg_conn: psycopg.Connection) -> None:
     canonical_id = f"TEST_PARTY_{uuid.uuid4().hex[:8]}"
     table = PartyMappingTable(
+        canonical_parties=(
+            CanonicalPartyDeclaration(id=canonical_id, display_name="TEST PARTY NAME"),
+        ),
         entries=(
             _fake_entry(
                 year=2023,
@@ -99,7 +380,7 @@ def test_party_canonical_rows_created_once_per_canonical_party(pg_conn: psycopg.
                 canonical_party=canonical_id,
                 party_name="TEST PARTY NAME",
             ),
-        )
+        ),
     )
 
     load_party_map_rows(pg_conn, table)
@@ -107,7 +388,9 @@ def test_party_canonical_rows_created_once_per_canonical_party(pg_conn: psycopg.
 
     with pg_conn.cursor() as cur:
         cur.execute("select count(*) from party_canonical where id = %s", (canonical_id,))
-        (count,) = cur.fetchone()
+        row = cur.fetchone()
+        assert row is not None
+        (count,) = row
 
     assert count == 1
 
@@ -127,6 +410,10 @@ def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
     canonical_a = f"TEST_A_{marker}"
     canonical_b = f"TEST_B_{marker}"
     table = PartyMappingTable(
+        canonical_parties=(
+            CanonicalPartyDeclaration(id=canonical_a, display_name="PARTY A"),
+            CanonicalPartyDeclaration(id=canonical_b, display_name="PARTY B"),
+        ),
         entries=(
             _fake_entry(
                 year=2023,
@@ -144,7 +431,7 @@ def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
                 canonical_party=canonical_b,
                 party_name="PARTY B",
             ),
-        )
+        ),
     )
 
     load_party_map_rows(pg_conn, table)
@@ -200,6 +487,9 @@ def test_same_party_across_three_id_spaces_resolves_to_one_canonical(
 def test_unverified_mapping_is_loaded_but_flagged(pg_conn: psycopg.Connection) -> None:
     canonical_id = f"TEST_UNVERIFIED_{uuid.uuid4().hex[:8]}"
     table = PartyMappingTable(
+        canonical_parties=(
+            CanonicalPartyDeclaration(id=canonical_id, display_name="UNCONFIRMED PARTY"),
+        ),
         entries=(
             _fake_entry(
                 year=2025,
@@ -210,7 +500,7 @@ def test_unverified_mapping_is_loaded_but_flagged(pg_conn: psycopg.Connection) -
                 party_name="UNCONFIRMED PARTY",
                 verified=False,
             ),
-        )
+        ),
     )
 
     load_party_map_rows(pg_conn, table)
@@ -219,7 +509,9 @@ def test_unverified_mapping_is_loaded_but_flagged(pg_conn: psycopg.Connection) -
         cur.execute(
             "select verified from party_mapping where canonical_party_id = %s", (canonical_id,)
         )
-        (verified,) = cur.fetchone()
+        row = cur.fetchone()
+        assert row is not None
+        (verified,) = row
 
     assert verified is False
 

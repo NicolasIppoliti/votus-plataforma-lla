@@ -29,6 +29,51 @@
 # (year, jurisdiction, category) keys -- not evidence that list_id alone is
 # safe to resolve on.
 
+# Canonical parents are declared explicitly. Their display labels are public
+# presentation data and never inferred from the source-observed spellings in
+# `mappings[].party_name` below.
+canonical_parties:
+  - id: JXC
+    display_name: JUNTOS POR EL CAMBIO
+  - id: HXNP
+    display_name: HACEMOS POR NUESTRO PAIS
+  - id: UP
+    display_name: UNION POR LA PATRIA
+  - id: LLA
+    display_name: LA LIBERTAD AVANZA
+  - id: FIT
+    display_name: FRENTE DE IZQUIERDA
+  - id: PRIMERO_ROSALES
+    display_name: AGRUPACION MUNICIPAL PRIMERO ROSALES
+  - id: FRENTE_PATRIOTA_FEDERAL
+    display_name: FRENTE PATRIOTA FEDERAL
+  - id: FUERZA_PATRIA
+    display_name: ALIANZA FUERZA PATRIA
+  - id: NUEVO_BUENOS_AIRES
+    display_name: PARTIDO NUEVO BUENOS AIRES
+  - id: LIBER_AR
+    display_name: LIBER.AR
+  - id: PROPUESTA_FEDERAL
+    display_name: PROPUESTA FEDERAL PARA EL CAMBIO
+  - id: PROVINCIAS_UNIDAS
+    display_name: ALIANZA PROVINCIAS UNIDAS
+  - id: POTENCIA
+    display_name: ALIANZA POTENCIA
+  - id: NUEVOS_AIRES
+    display_name: ALIANZA NUEVOS AIRES
+  - id: MOVIMIENTO_SOCIALISTA
+    display_name: MOVIMIENTO AVANZADA SOCIALISTA
+  - id: PROYECTO_SUR
+    display_name: MOVIMIENTO POLITICO SOCIAL Y CULTURAL PROYECTO SUR
+  - id: UNION_LIBERAL
+    display_name: UNION LIBERAL
+  - id: COALICION_CIVICA
+    display_name: COALICION CIVICA - A.R.I.
+  - id: UNION_FEDERAL
+    display_name: ALIANZA UNION FEDERAL
+  - id: LLA_PRO_ALLIANCE
+    display_name: ALIANZA LA LIBERTAD AVANZA
+
 mappings:
   # --- 2023 PASO, national (agrupacion_id) --------------------------------
   - year: 2023

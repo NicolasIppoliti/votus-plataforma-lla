@@ -6,10 +6,13 @@ import signal
 import subprocess
 import tomllib
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+from types import TracebackType
 
 import pytest
 from psycopg import sql
+from psycopg.abc import Params, QueryNoTemplate
 
 from etl.verify import (
     DatabaseIdentity,
@@ -19,6 +22,14 @@ from etl.verify import (
     run_pytest,
     termination_as_interrupt,
 )
+
+
+def _query_text(query: QueryNoTemplate) -> str:
+    if isinstance(query, bytes):
+        return query.decode("utf-8")
+    if isinstance(query, sql.Composable):
+        return query.as_string()
+    return str(query)
 
 
 class _Result:
@@ -34,19 +45,19 @@ class _AdminConnection:
         self.databases: dict[str, str] = {}
         self.database_owners: dict[str, str] = {}
         self.roles: dict[str, str] = {}
-        self.statements: list[tuple[str, object]] = []
+        self.statements: list[tuple[str, Params | None]] = []
         self.closed = False
         self.global_roles_safe = True
         self.elevated_role_attribute: str | None = None
         self.fail_comment = False
         self.fail_create_database = False
-        self.signal_on_drop = None
+        self.signal_on_drop: Callable[[], None] | None = None
         self.interrupt_drop_once = False
         self.fail_drop = False
         self.fail_drop_role = False
 
-    def execute(self, query: object, params: object = None) -> _Result:
-        statement = query.as_string() if isinstance(query, sql.Composable) else str(query)
+    def execute(self, query: QueryNoTemplate, params: Params | None = None) -> _Result:
+        statement = _query_text(query)
         self.statements.append((statement, params))
         lowered = statement.lower()
         if "from pg_authid" in lowered and params is not None:
@@ -129,6 +140,17 @@ class _AdminConnection:
     def close(self) -> None:
         self.closed = True
 
+    def __enter__(self) -> _AdminConnection:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
 
 class _TargetConnection:
     def __init__(
@@ -144,15 +166,21 @@ class _TargetConnection:
         self.user = user
         self.fail_marker_install = fail_marker_install
         self.executed: list[str] = []
+        self.closed = False
 
     def __enter__(self) -> _TargetConnection:
         return self
 
-    def __exit__(self, *_args: object) -> None:
-        return None
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.close()
 
-    def execute(self, query: object, params: object = None) -> _Result:
-        statement = query.as_string() if isinstance(query, sql.Composable) else str(query)
+    def execute(self, query: QueryNoTemplate, params: Params | None = None) -> _Result:
+        statement = _query_text(query)
         if self.fail_marker_install and statement == "create schema votus_verification":
             raise RuntimeError("marker install failed")
         if "current_database()" in statement:
@@ -162,6 +190,9 @@ class _TargetConnection:
         self.executed.append(statement)
         return _Result()
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class _Connections:
     def __init__(self) -> None:
@@ -170,19 +201,30 @@ class _Connections:
         self.fail_marker_install = False
         self.dsns: list[str] = []
 
-    def __call__(self, dsn: str, *, autocommit: bool = False):
-        self.dsns.append(dsn)
+    def __call__(
+        self, conninfo: str, *, autocommit: bool = False
+    ) -> _AdminConnection | _TargetConnection:
+        self.dsns.append(conninfo)
         if autocommit:
             return self.admin
         from psycopg.conninfo import conninfo_to_dict
 
-        params = conninfo_to_dict(dsn)
-        name = params["dbname"]
+        params = conninfo_to_dict(conninfo)
+        name = params.get("dbname")
+        if not isinstance(name, str):
+            raise AssertionError("test connection requires a string dbname")
         marker = self.admin.databases[name]
+        user_param = params.get("user")
+        if user_param is None:
+            user = "admin"
+        elif isinstance(user_param, str):
+            user = user_param
+        else:
+            raise AssertionError("test connection requires a string user")
         target = _TargetConnection(
             name,
             marker,
-            user=params.get("user", "admin"),
+            user=user,
             fail_marker_install=self.fail_marker_install,
         )
         self.targets.append(target)
@@ -210,6 +252,56 @@ def test_identity_is_unique_and_rejects_names_or_markers_outside_the_contract() 
         DatabaseIdentity(name="postgres", marker=first.marker, token=first.token).validate()
     with pytest.raises(UnsafeDatabaseError):
         DatabaseIdentity(name=first.name, marker="shared-project", token=first.token).validate()
+
+
+def test_missing_admin_state_fails_closed_with_an_explicit_error() -> None:
+    database = DisposablePostgres(
+        "postgresql://user:secret@localhost/template1",
+        connect=_Connections(),
+    )
+
+    with pytest.raises(UnsafeDatabaseError, match="administrative connection"):
+        database._database_exists()
+
+
+def test_missing_migration_dsn_fails_closed_with_an_explicit_error() -> None:
+    database = DisposablePostgres(
+        "postgresql://user:secret@localhost/template1",
+        connect=_Connections(),
+    )
+
+    with pytest.raises(UnsafeDatabaseError, match="migration database URL"):
+        database._verify_target()
+
+
+def test_grants_refuse_an_open_admin_connection_with_an_explicit_error() -> None:
+    connections = _Connections()
+    database = DisposablePostgres(
+        "postgresql://user:secret@localhost/template1",
+        connect=connections,
+    )
+    database.migration_dsn = "dbname=votus_etl_verify_test"
+    database.admin = connections.admin
+
+    with pytest.raises(UnsafeDatabaseError, match="must be closed"):
+        database.grant_test_privileges()
+
+
+def test_missing_target_dsn_fails_closed_with_an_explicit_error() -> None:
+    connections = _Connections()
+    database = DisposablePostgres(
+        "postgresql://user:secret@localhost/template1",
+        identity=_identity(),
+        connect=connections,
+    )
+    database.open()
+    database.target_dsn = None
+
+    try:
+        with pytest.raises(UnsafeDatabaseError, match="test database URL"):
+            database.grant_test_privileges()
+    finally:
+        database.close()
 
 
 def test_provision_refuses_a_non_maintenance_database_before_connecting() -> None:
@@ -354,12 +446,10 @@ def test_post_migration_grants_are_complete_and_role_remains_cluster_unprivilege
         if statement.lower().startswith("grant")
     ]
     assert grants == [
-        f'grant connect, create, temporary on database "{identity.name}" '
-        f'to "{identity.role_name}"',
+        f'grant connect, create, temporary on database "{identity.name}" to "{identity.role_name}"',
         f'grant usage, create on schema public to "{identity.role_name}"',
         f'grant usage on schema votus_verification to "{identity.role_name}"',
-        "grant select on table votus_verification.ownership_marker "
-        f'to "{identity.role_name}"',
+        f'grant select on table votus_verification.ownership_marker to "{identity.role_name}"',
         f'grant all privileges on all tables in schema public to "{identity.role_name}"',
         f'grant all privileges on all sequences in schema public to "{identity.role_name}"',
         f'grant all privileges on all functions in schema public to "{identity.role_name}"',
@@ -392,8 +482,7 @@ def test_preexisting_role_is_never_deleted_when_create_refuses_it() -> None:
 
     assert connections.admin.roles[identity.role_name] == "preexisting"
     assert not any(
-        statement.lower().startswith("drop role")
-        for statement, _ in connections.admin.statements
+        statement.lower().startswith("drop role") for statement, _ in connections.admin.statements
     )
 
 
@@ -562,6 +651,18 @@ def test_apply_migrations_requires_a_complete_sequence_and_executes_every_file(
         apply_migrations("dbname=" + identity.name, migrations, connect=connections)
 
 
+def test_apply_migrations_rejects_non_file_entries_before_connecting(tmp_path: Path) -> None:
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    (migrations / "0001_not_a_file.sql").mkdir()
+    connections = _Connections()
+
+    with pytest.raises(RuntimeError, match="regular file"):
+        apply_migrations("dbname=votus_etl_verify_test", migrations, connect=connections)
+
+    assert connections.dsns == []
+
+
 def test_pytest_rejects_skips_even_when_pytest_exits_zero(tmp_path: Path) -> None:
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         report_arg = next(value for value in command if value.startswith("--junitxml="))
@@ -574,6 +675,19 @@ def test_pytest_rejects_skips_even_when_pytest_exits_zero(tmp_path: Path) -> Non
         return subprocess.CompletedProcess(command, 0)
 
     with pytest.raises(RuntimeError, match="1 skipped"):
+        run_pytest("dbname=votus_etl_verify_test", tmp_path, run=fake_run)
+
+
+def test_pytest_rejects_non_numeric_junit_counts(tmp_path: Path) -> None:
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        report_arg = next(value for value in command if value.startswith("--junitxml="))
+        Path(report_arg.split("=", 1)[1]).write_text(
+            '<testsuites tests="invalid" failures="0" errors="0" skipped="0"/>',
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(RuntimeError, match="non-numeric JUnit 'tests' count"):
         run_pytest("dbname=votus_etl_verify_test", tmp_path, run=fake_run)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import TracebackType
 
 import pytest
 
@@ -44,6 +45,154 @@ def _manifest(source: dict, payload: bytes = b"verified") -> dict:
         "status": "ok",
         "notes": source["notes"],
     }
+
+
+class _ArchiveProjectionCursor:
+    def __init__(self, selected_row: tuple[bool, ...] | None) -> None:
+        self.selected_row = selected_row
+        self.executions: list[tuple[str, tuple[object, ...]]] = []
+
+    def __enter__(self) -> _ArchiveProjectionCursor:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        return None
+
+    def execute(self, statement: str, parameters: tuple[object, ...]) -> None:
+        self.executions.append((statement, parameters))
+
+    def fetchone(self) -> tuple[bool, ...] | None:
+        return self.selected_row
+
+
+class _ArchiveProjectionConnection:
+    def __init__(self, selected_row: tuple[bool, ...] | None) -> None:
+        self.projection_cursor = _ArchiveProjectionCursor(selected_row)
+        self.commits = 0
+
+    def cursor(self) -> _ArchiveProjectionCursor:
+        return self.projection_cursor
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+def _archive_entry_record(*, notes: str = "current manifest notes") -> db.ArchiveEntryRecord:
+    return db.ArchiveEntryRecord(
+        id="national/archive-projection",
+        capability="national",
+        source="example.test",
+        source_url="https://example.test/archive-projection.csv",
+        archived_path="archive/national/archive-projection.csv",
+        sha256="a" * 64,
+        mime="text/csv",
+        byte_count=42,
+        fetched_at="2026-08-09T12:00:00Z",
+        status="ok",
+        source_kind="official",
+        notes=notes,
+    )
+
+
+def _normalized_sql(statement: str) -> str:
+    return " ".join(statement.split())
+
+
+def test_project_archive_entry_leaves_matching_projection_unchanged() -> None:
+    record = _archive_entry_record()
+    connection = _ArchiveProjectionConnection((True,) * 11)
+
+    inserted = db.project_archive_entry(connection, record)
+
+    assert inserted is False
+    assert len(connection.projection_cursor.executions) == 1
+    select_statement, select_parameters = connection.projection_cursor.executions[0]
+    assert "notes is not distinct from %s" in _normalized_sql(select_statement)
+    assert select_parameters == (
+        record.capability,
+        record.source,
+        record.source_url,
+        record.archived_path,
+        record.sha256,
+        record.mime,
+        record.byte_count,
+        record.fetched_at,
+        record.status,
+        record.source_kind,
+        record.notes,
+        record.id,
+    )
+    assert connection.commits == 0
+
+
+@pytest.mark.parametrize("stored_notes", ["stale database notes", None], ids=["string", "db-null"])
+def test_project_archive_entry_synchronizes_changed_notes(stored_notes: str | None) -> None:
+    record = _archive_entry_record()
+    notes_match = stored_notes == record.notes
+    connection = _ArchiveProjectionConnection((True,) * 10 + (notes_match,))
+
+    inserted = db.project_archive_entry(connection, record)
+
+    assert inserted is False
+    assert len(connection.projection_cursor.executions) == 2
+    update_statement, update_parameters = connection.projection_cursor.executions[1]
+    assert _normalized_sql(update_statement) == "update archive_entry set notes = %s where id = %s"
+    assert update_parameters == (record.notes, record.id)
+    assert connection.commits == 0
+
+
+def test_project_archive_entry_refuses_immutable_conflict_before_notes_update() -> None:
+    record = _archive_entry_record()
+    connection = _ArchiveProjectionConnection(
+        (True, True, False, True, True, True, False, True, True, True, False)
+    )
+
+    with pytest.raises(
+        db.ArchiveEntryConflictError,
+        match=r"conflicts on source_url, bytes; refusing to overwrite immutable provenance",
+    ):
+        db.project_archive_entry(connection, record)
+
+    assert len(connection.projection_cursor.executions) == 1
+    assert not any(
+        _normalized_sql(statement).startswith("update ")
+        for statement, _parameters in connection.projection_cursor.executions
+    )
+    assert connection.commits == 0
+
+
+def test_project_archive_entry_inserts_missing_projection_with_notes() -> None:
+    record = _archive_entry_record()
+    connection = _ArchiveProjectionConnection(None)
+
+    inserted = db.project_archive_entry(connection, record)
+
+    assert inserted is True
+    assert len(connection.projection_cursor.executions) == 2
+    insert_statement, insert_parameters = connection.projection_cursor.executions[1]
+    normalized_insert = _normalized_sql(insert_statement)
+    assert normalized_insert.startswith("insert into archive_entry (")
+    assert "status, source_kind, notes" in normalized_insert
+    assert insert_parameters == (
+        record.id,
+        record.capability,
+        record.source,
+        record.source_url,
+        record.archived_path,
+        record.sha256,
+        record.mime,
+        record.byte_count,
+        record.fetched_at,
+        record.status,
+        record.source_kind,
+        record.notes,
+    )
+    assert connection.commits == 0
 
 
 @pytest.mark.parametrize(

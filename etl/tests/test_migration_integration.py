@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
-from typing import LiteralString, cast
 
 import psycopg
 import pytest
@@ -19,8 +18,8 @@ MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 def _apply_migration(database_dsn: str, number: int) -> None:
     migration = next(MIGRATIONS.glob(f"{number:04d}_*.sql"))
     with psycopg.connect(database_dsn) as connection:
-        migration_sql = cast(LiteralString, migration.read_text(encoding="utf-8"))
-        connection.execute(sql.SQL(migration_sql))
+        migration_sql = migration.read_text(encoding="utf-8").encode("utf-8")
+        connection.execute(migration_sql)
 
 
 def _available_migration_numbers(*, maximum: int) -> list[int]:
@@ -221,16 +220,14 @@ def _seed_pre_0018_fiscalizacion_case(
 def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
-        pytest.skip(
-            "ETL_TEST_DATABASE_URL is required for isolated migration-history coverage"
-        )
+        pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
 
     schema_name = f"votus_migration_history_{uuid.uuid4().hex}"
     with psycopg.connect(database_dsn) as connection:
         connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
     params = conninfo_to_dict(database_dsn)
     params["options"] = f"-csearch_path={schema_name}"
-    history_dsn = make_conninfo(**params)
+    history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
     try:
         available_numbers = _available_migration_numbers(maximum=19)
         assert available_numbers == list(range(1, 20))

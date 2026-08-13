@@ -420,7 +420,11 @@ def test_0021_coverage_derives_denominator_and_reports_every_exclusion() -> None
 def test_0021_school_identity_includes_circuit_in_conflicts_groups_and_output() -> None:
     sql = " ".join(_sql("0021_results_coverage.sql").split())
 
-    assert "group by j.circuito_code, j.establecimiento_code having count(distinct j.establecimiento_name) > 1" in sql
+    expected_group = (
+        "group by j.circuito_code, j.establecimiento_code "
+        "having count(distinct j.establecimiento_name) > 1"
+    )
+    assert expected_group in sql
     assert "group by circuito_code, establecimiento_code" in sql
     assert "'circuito_code', circuito_code" in sql
     assert "order by circuito_code, code" in sql
@@ -438,80 +442,169 @@ def test_0021_coverage_down_drops_only_coverage_objects() -> None:
 
 def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> None:
     sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
-    for required in ("explain (analyze, buffers, format json)", "representative_result_rows",
-                     "execution time", "shared hit blocks", "shared read blocks",
-                     "results_exploration_facets", "results_exploration_official",
-                     "results_exploration_coverage", "results_exploration_schools", "->>'status',",
-                     "500, 'scale payload retains exactly 500 complete schools'", "12000::bigint", "rollback;"):
+    for required in (
+        "explain (analyze, buffers, format json)",
+        "representative_result_rows",
+        "execution time",
+        "shared hit blocks",
+        "shared read blocks",
+        "results_exploration_facets",
+        "results_exploration_official",
+        "results_exploration_coverage",
+        "results_exploration_schools",
+        "->>'status',",
+        "500, 'scale payload retains exactly 500 complete schools'",
+        "12000::bigint",
+        "rollback;",
+    ):
         assert required in sql
+
+
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
-    sequence = ("\\ir ../migrations/down/0022_results_exploration_scale.down.sql",
-        "\\ir ../migrations/down/0021_results_coverage.down.sql", "\\ir ../migrations/down/0020_results_exploration.down.sql",
-        "\\ir ../migrations/0020_results_exploration.sql", "\\ir ../migrations/0021_results_coverage.sql",
-        "\\ir ../migrations/0022_results_exploration_scale.sql")
+    sequence = (
+        "\\ir ../migrations/down/0022_results_exploration_scale.down.sql",
+        "\\ir ../migrations/down/0021_results_coverage.down.sql",
+        "\\ir ../migrations/down/0020_results_exploration.down.sql",
+        "\\ir ../migrations/0020_results_exploration.sql",
+        "\\ir ../migrations/0021_results_coverage.sql",
+        "\\ir ../migrations/0022_results_exploration_scale.sql",
+    )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
-    for required in ("has_function_privilege('authenticated'", "has_function_privilege('anon'",
-                     "set local role authenticated", "set local role anon",
-                      "permission denied for function results_exploration_coverage",
-                      "permission denied for function results_exploration_official_0020",
-                     "permission denied for function results_exploration_schools",
-                     "result_row_exploration_scope_idx"):
+    for required in (
+        "has_function_privilege('authenticated'",
+        "has_function_privilege('anon'",
+        "set local role authenticated",
+        "set local role anon",
+        "permission denied for function results_exploration_coverage",
+        "permission denied for function results_exploration_official_0020",
+        "permission denied for function results_exploration_schools",
+        "result_row_exploration_scope_idx",
+    ):
         assert required in sql
+
+
 def test_0022_adds_a_separately_droppable_lineage_index_for_scale() -> None:
     sql = _sql("0022_results_exploration_scale.sql")
     down = MIGRATIONS / "down" / "0022_results_exploration_scale.down.sql"
     coverage = sql.split("create or replace function results_exploration_coverage", 1)[1]
     coverage = coverage.split("revoke all on function results_exploration_coverage", 1)[0]
     assert "jurisdiction_exploration_lineage_idx" in sql
-    assert "distrito_code, seccion_code, circuito_code, establecimiento_code, id" in " ".join(sql.split())
+    assert "distrito_code, seccion_code, circuito_code, establecimiento_code, id" in " ".join(
+        sql.split()
+    )
     assert all(required in sql for required in ("school_sources", "join school_sources"))
-    assert all(forbidden not in sql for forbidden in ("left join school_sources", "from official_rows row_source"))
+    assert all(
+        forbidden not in sql
+        for forbidden in ("left join school_sources", "from official_rows row_source")
+    )
     assert "where circuito_code is not null and establecimiento_code is not null" in coverage
     classified = coverage.split("), fiscalizacion_classified as materialized (", 1)[1]
     classified = classified.split("), fiscalizacion_rows as materialized (", 1)[0]
-    for required in ("rr.granularity <> 'mesa'", "j.circuito_code is null",
-                     "j.establecimiento_code is null", "j.mesa_code is null",
-                     "mesa.jurisdiction_id is null"):
+    for required in (
+        "rr.granularity <> 'mesa'",
+        "j.circuito_code is null",
+        "j.establecimiento_code is null",
+        "j.mesa_code is null",
+        "mesa.jurisdiction_id is null",
+    ):
         assert required in classified
     assert "where exclusion_reason is null" in coverage
     assert "is not distinct from" not in coverage
-    assert all(reason in coverage for reason in ("official_rows_without_circuito_code",
-        "official_rows_without_establecimiento_code", "official_rows_without_circuito_and_establecimiento_code"))
+    assert all(
+        reason in coverage
+        for reason in (
+            "official_rows_without_circuito_code",
+            "official_rows_without_establecimiento_code",
+            "official_rows_without_circuito_and_establecimiento_code",
+        )
+    )
     rollback = down.read_text(encoding="utf-8").lower()
     assert "drop index if exists jurisdiction_exploration_lineage_idx" in rollback
     assert "\\ir ../0021_results_coverage.sql" in rollback
+
+
 def test_0022_adds_bounded_official_section_school_breakdown_and_safe_rollback() -> None:
     sql = " ".join(_sql("0022_results_exploration_scale.sql").split())
-    rollback = (MIGRATIONS / "down" / "0022_results_exploration_scale.down.sql").read_text(encoding="utf-8").lower()
-    for required in ("results_exploration_schools", "rr.source_kind = 'official'", "group by 1",
-        "order by source_kind", "source_exclusions", "group by circuito_code, establecimiento_code",
-        "ambiguous_establecimiento_name", "exclusion_groups", "official_rows_without_circuito_code",
-        "official_rows_without_establecimiento_code", "official_rows_without_circuito_and_establecimiento_code",
-        "official_rows_without_mesa_code", "j.mesa_code", "payload_school_limit",
-        "grant execute on function results_exploration_schools"):
+    rollback = (
+        (MIGRATIONS / "down" / "0022_results_exploration_scale.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    for required in (
+        "results_exploration_schools",
+        "rr.source_kind = 'official'",
+        "group by 1",
+        "order by source_kind",
+        "source_exclusions",
+        "group by circuito_code, establecimiento_code",
+        "ambiguous_establecimiento_name",
+        "exclusion_groups",
+        "official_rows_without_circuito_code",
+        "official_rows_without_establecimiento_code",
+        "official_rows_without_circuito_and_establecimiento_code",
+        "official_rows_without_mesa_code",
+        "j.mesa_code",
+        "payload_school_limit",
+        "grant execute on function results_exploration_schools",
+    ):
         assert required in sql
     assert "rr.source_kind" in sql.split("with scoped as materialized", 1)[1].split(")", 1)[0]
     assert "from scoped where source_kind = 'official'" in sql
-    assert all(required in rollback for required in ("drop function if exists results_exploration_schools",
-                                                      "alter function results_exploration_official_0020"))
+    assert all(
+        required in rollback
+        for required in (
+            "drop function if exists results_exploration_schools",
+            "alter function results_exploration_official_0020",
+        )
+    )
+
+
 def test_0022_official_wrapper_audits_excluded_source_kinds() -> None:
     sql = " ".join(_sql("0022_results_exploration_scale.sql").split())
-    assert all(required in sql for required in ("alter function results_exploration_official",
-        "results_exploration_official_0020", "'source_exclusions'", "rr.source_kind is distinct from 'official'",
-        "when source_kind = 'fiscalizacion' then source_kind else 'unknown'", "group by 1", "order by source_kind"))
+    assert all(
+        required in sql
+        for required in (
+            "alter function results_exploration_official",
+            "results_exploration_official_0020",
+            "'source_exclusions'",
+            "rr.source_kind is distinct from 'official'",
+            "when source_kind = 'fiscalizacion' then source_kind else 'unknown'",
+            "group by 1",
+            "order by source_kind",
+        )
+    )
     assert "source_kind <> 'official'" not in sql
     assert "if payload->>'status' <> 'ok' then return payload; end if" not in sql
-    assert all(required in sql for required in ("security definer", "nologin", "nobypassrls",
-        "grant authenticated to results_exploration_executor",
-        "revoke all on function results_exploration_official_0020", "to results_exploration_executor"))
+    assert all(
+        required in sql
+        for required in (
+            "security definer",
+            "nologin",
+            "nobypassrls",
+            "grant authenticated to results_exploration_executor",
+            "revoke all on function results_exploration_official_0020",
+            "to results_exploration_executor",
+        )
+    )
+
+
 def test_0022_coverage_and_schools_report_every_filtered_source_row() -> None:
     sql = _sql("0022_results_exploration_scale.sql")
-    assert all(reason in sql for reason in ("official_rows_without_mesa_granularity",
-        "official_rows_without_mesa_identity", "fiscalizacion_rows_without_mesa_granularity",
-        "fiscalizacion_rows_without_mesa_identity", "fiscalizacion_rows_without_official_mesa_mapping"))
+    assert all(
+        reason in sql
+        for reason in (
+            "official_rows_without_mesa_granularity",
+            "official_rows_without_mesa_identity",
+            "fiscalizacion_rows_without_mesa_granularity",
+            "fiscalizacion_rows_without_mesa_identity",
+            "fiscalizacion_rows_without_official_mesa_mapping",
+        )
+    )
     schools = sql.split("create or replace function results_exploration_schools", 1)[1]
-    broad_scope = schools.split("with scoped as materialized", 1)[1].split("), official_scoped", 1)[0]
+    broad_scope = schools.split("with scoped as materialized", 1)[1].split("), official_scoped", 1)[
+        0
+    ]
     assert "rr.source_kind = 'official'" not in broad_scope
     assert "rr.granularity = 'mesa'" not in broad_scope
     for refusal in ("complete_school_count > payload_school_limit", "conflicting_names > 0"):
@@ -521,10 +614,19 @@ def test_0022_coverage_and_schools_report_every_filtered_source_row() -> None:
     no_denominator = sql.split("if official_mesa_count = 0 then", 1)[1].split("end if", 1)[0]
     assert "'exclusions'" in no_denominator
     refusal_classification = sql.split("if official_mesa_count = 0 then", 1)[0]
-    assert all(reason in refusal_classification for reason in ("official_rows_without_mesa_granularity",
-                                                               "official_rows_without_mesa_identity"))
-    assert all(reason in sql.split("create or replace function results_exploration_coverage", 1)[1]
-               for reason in ("fiscalizacion_rows_without_mesa_granularity",
-                               "fiscalizacion_rows_without_mesa_identity",
-                               "fiscalizacion_rows_without_official_mesa_mapping"))
+    assert all(
+        reason in refusal_classification
+        for reason in (
+            "official_rows_without_mesa_granularity",
+            "official_rows_without_mesa_identity",
+        )
+    )
+    assert all(
+        reason in sql.split("create or replace function results_exploration_coverage", 1)[1]
+        for reason in (
+            "fiscalizacion_rows_without_mesa_granularity",
+            "fiscalizacion_rows_without_mesa_identity",
+            "fiscalizacion_rows_without_official_mesa_mapping",
+        )
+    )
     assert "'source_exclusions'" in schools

@@ -21,6 +21,7 @@ from etl.db import load_party_map_rows
 from etl.ingest.national import ingest_national
 from etl.jurisdiction import make_result_row
 from etl.party_map import (
+    CanonicalPartyDeclaration,
     DuplicatePartyMappingKeyError,
     PartyMappingEntry,
     PartyMappingTable,
@@ -42,6 +43,382 @@ CURATED = Path(__file__).parent.parent.parent / "curated"
 
 def _load_party_map_table() -> PartyMappingTable:
     return load_party_map(CURATED / "party_map.yaml")
+
+
+def _canonical_party(
+    canonical_id: str = "LLA", display_name: str = "LA LIBERTAD AVANZA"
+) -> dict[str, object]:
+    return {"id": canonical_id, "display_name": display_name}
+
+
+def _party_mapping(
+    *,
+    year: int = 2025,
+    list_id: str = "110",
+    canonical_party: object = "LLA",
+    party_name: object = "ALIANZA LA LIBERTAD AVANZA",
+) -> dict[str, object]:
+    return {
+        "year": year,
+        "jurisdiction": "national",
+        "category": "DIPUTADO NACIONAL",
+        "list_id": list_id,
+        "canonical_party": canonical_party,
+        "party_name": party_name,
+    }
+
+
+def _write_party_map(path: Path, document: object) -> Path:
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _valid_party_map_document() -> dict[str, object]:
+    return {
+        "canonical_parties": [_canonical_party()],
+        "mappings": [_party_mapping()],
+    }
+
+
+@pytest.mark.parametrize(
+    ("document", "missing_field"),
+    [
+        ({}, "canonical_parties"),
+        ({"mappings": []}, "canonical_parties"),
+        ({"canonical_parties": []}, "mappings"),
+    ],
+)
+def test_party_map_requires_both_top_level_sections(
+    tmp_path: Path, document: dict[str, object], missing_field: str
+) -> None:
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert missing_field in message
+    assert "missing" in message
+
+
+@pytest.mark.parametrize(
+    ("document", "diagnosis"),
+    [
+        (
+            {"canonical_parties": "not-a-list", "mappings": []},
+            "canonical_parties must be a list",
+        ),
+        (
+            {"canonical_parties": [], "mappings": "not-a-list"},
+            "mappings must be a list",
+        ),
+        (
+            {"canonical_parties": ["not-a-mapping"], "mappings": []},
+            "canonical_parties entry 0 must be a mapping",
+        ),
+        (
+            {"canonical_parties": [], "mappings": ["not-a-mapping"]},
+            "mappings entry 0 must be a mapping",
+        ),
+    ],
+)
+def test_party_map_sections_are_lists_of_mappings(
+    tmp_path: Path, document: dict[str, object], diagnosis: str
+) -> None:
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    assert diagnosis in str(excinfo.value)
+
+
+@pytest.mark.parametrize("location", ["top-level", "canonical-party", "mapping"])
+def test_party_map_rejects_unknown_fields(tmp_path: Path, location: str) -> None:
+    document = _valid_party_map_document()
+    if location == "top-level":
+        document["unexpected"] = True
+    elif location == "canonical-party":
+        declarations = document["canonical_parties"]
+        assert isinstance(declarations, list)
+        declaration = declarations[0]
+        assert isinstance(declaration, dict)
+        declaration["unexpected"] = True
+    else:
+        mappings = document["mappings"]
+        assert isinstance(mappings, list)
+        mapping = mappings[0]
+        assert isinstance(mapping, dict)
+        mapping["unexpected"] = True
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert "unknown" in message
+    assert "unexpected" in message
+
+
+@pytest.mark.parametrize("field", ["id", "display_name"])
+def test_canonical_party_declaration_requires_both_fields(tmp_path: Path, field: str) -> None:
+    document = _valid_party_map_document()
+    declarations = document["canonical_parties"]
+    assert isinstance(declarations, list)
+    declaration = declarations[0]
+    assert isinstance(declaration, dict)
+    del declaration[field]
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert "canonical_parties entry 0" in message
+    assert field in message
+    assert "missing" in message
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "diagnosis"),
+    [
+        ("id", None, "must be a non-empty string"),
+        ("id", 7, "must be a non-empty string"),
+        ("id", "", "must be a non-empty string"),
+        ("id", "   ", "must be a non-empty string"),
+        ("id", " LLA", "must not have surrounding whitespace"),
+        ("id", "LLA ", "must not have surrounding whitespace"),
+        ("display_name", None, "must be a non-empty string"),
+        ("display_name", 7, "must be a non-empty string"),
+        ("display_name", "", "must be a non-empty string"),
+        ("display_name", "   ", "must be a non-empty string"),
+        ("display_name", " LA LIBERTAD AVANZA", "must not have surrounding whitespace"),
+        ("display_name", "LA LIBERTAD AVANZA ", "must not have surrounding whitespace"),
+    ],
+)
+def test_canonical_party_declaration_rejects_invalid_text(
+    tmp_path: Path, field: str, value: object, diagnosis: str
+) -> None:
+    document = _valid_party_map_document()
+    declarations = document["canonical_parties"]
+    assert isinstance(declarations, list)
+    declaration = declarations[0]
+    assert isinstance(declaration, dict)
+    declaration[field] = value
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert f"canonical_parties entry 0 {field}" in message
+    assert diagnosis in message
+
+
+@pytest.mark.parametrize(
+    ("second_display_name", "diagnosis"),
+    [
+        ("LA LIBERTAD AVANZA", "duplicate canonical party id"),
+        ("A DIFFERENT LABEL", "conflicting canonical party declaration"),
+    ],
+)
+def test_canonical_party_declaration_rejects_duplicate_ids(
+    tmp_path: Path, second_display_name: str, diagnosis: str
+) -> None:
+    document = _valid_party_map_document()
+    document["canonical_parties"] = [
+        _canonical_party(),
+        _canonical_party(display_name=second_display_name),
+    ]
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert diagnosis in message
+    assert "LLA" in message
+
+
+def test_party_mapping_must_reference_a_declared_canonical_party(tmp_path: Path) -> None:
+    document = _valid_party_map_document()
+    document["mappings"] = [_party_mapping(canonical_party="UNDECLARED")]
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert "mappings entry 0 canonical_party" in message
+    assert "UNDECLARED" in message
+    assert "not declared" in message
+
+
+def test_every_canonical_party_declaration_must_be_used(tmp_path: Path) -> None:
+    document = _valid_party_map_document()
+    document["canonical_parties"] = [
+        _canonical_party(),
+        _canonical_party("UNUSED", "UNUSED PARTY"),
+    ]
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    message = str(excinfo.value)
+    assert "canonical party declaration" in message
+    assert "UNUSED" in message
+    assert "not used" in message
+
+
+_MISSING_PARTY_MAPPING_FIELD = object()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "diagnosis"),
+    [
+        ("jurisdiction", " national", "jurisdiction must not have surrounding whitespace"),
+        ("jurisdiction", "national ", "jurisdiction must not have surrounding whitespace"),
+        ("category", " DIPUTADO NACIONAL", "category must not have surrounding whitespace"),
+        ("category", "DIPUTADO NACIONAL ", "category must not have surrounding whitespace"),
+        ("list_id", " 110", "list_id must not have surrounding whitespace"),
+        ("list_id", "110 ", "list_id must not have surrounding whitespace"),
+        ("canonical_party", _MISSING_PARTY_MAPPING_FIELD, "missing canonical_party"),
+        ("canonical_party", None, "canonical_party must be a non-empty string"),
+        ("canonical_party", "", "canonical_party must be a non-empty string"),
+        ("canonical_party", "   ", "canonical_party must be a non-empty string"),
+        ("canonical_party", " LLA", "canonical_party must not have surrounding whitespace"),
+        ("canonical_party", "LLA ", "canonical_party must not have surrounding whitespace"),
+        ("party_name", _MISSING_PARTY_MAPPING_FIELD, "missing party_name"),
+        ("party_name", None, "party_name must be a non-empty string"),
+        ("party_name", "", "party_name must be a non-empty string"),
+        ("party_name", "   ", "party_name must be a non-empty string"),
+        ("party_name", " SOURCE", "party_name must not have surrounding whitespace"),
+        ("party_name", "SOURCE ", "party_name must not have surrounding whitespace"),
+    ],
+)
+def test_party_mapping_rejects_invalid_identity_text(
+    tmp_path: Path, field: str, value: object, diagnosis: str
+) -> None:
+    mapping = _party_mapping()
+    if value is _MISSING_PARTY_MAPPING_FIELD:
+        del mapping[field]
+    else:
+        mapping[field] = value
+    document = {
+        "canonical_parties": [_canonical_party()],
+        "mappings": [mapping],
+    }
+    path = _write_party_map(tmp_path / "party_map.yaml", document)
+
+    with pytest.raises(PartyMapValidationError) as excinfo:
+        load_party_map(path)
+
+    assert diagnosis in str(excinfo.value)
+
+
+def test_explicit_empty_party_map_is_an_intentional_replacement_snapshot(tmp_path: Path) -> None:
+    path = _write_party_map(
+        tmp_path / "party_map.yaml",
+        {"canonical_parties": [], "mappings": []},
+    )
+
+    table = load_party_map(path)
+
+    assert table.canonical_parties == ()
+    assert table.entries == ()
+
+
+def test_mapping_reorder_cannot_choose_the_canonical_display_name(tmp_path: Path) -> None:
+    declarations = [_canonical_party()]
+    mappings = [
+        _party_mapping(year=2023, list_id="135", party_name="LA LIBERTAD AVANZA"),
+        _party_mapping(year=2025, list_id="110", party_name="ALIANZA LA LIBERTAD AVANZA"),
+    ]
+    first_path = _write_party_map(
+        tmp_path / "first.yaml",
+        {"canonical_parties": declarations, "mappings": mappings},
+    )
+    reversed_path = _write_party_map(
+        tmp_path / "reversed.yaml",
+        {"canonical_parties": declarations, "mappings": list(reversed(mappings))},
+    )
+
+    first = load_party_map(first_path)
+    reversed_table = load_party_map(reversed_path)
+
+    assert first.canonical_parties == reversed_table.canonical_parties
+    assert tuple(entry.party_name for entry in first.entries) == (
+        "LA LIBERTAD AVANZA",
+        "ALIANZA LA LIBERTAD AVANZA",
+    )
+    assert tuple(entry.party_name for entry in reversed_table.entries) == (
+        "ALIANZA LA LIBERTAD AVANZA",
+        "LA LIBERTAD AVANZA",
+    )
+
+
+def test_party_map_loader_reports_database_deletion_counts_for_replacement_snapshots() -> None:
+    class Cursor:
+        rowcount = -1
+
+        def __init__(self, deletion_counts: dict[str, int]) -> None:
+            self.deletion_counts = deletion_counts
+
+        def __enter__(self) -> Cursor:
+            return self
+
+        def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+            return None
+
+        def execute(self, query: object, _params: object | None = None) -> None:
+            statement = str(query)
+            self.rowcount = 1
+            for table_name, deleted in self.deletion_counts.items():
+                if f"delete from {table_name}" in statement:
+                    self.rowcount = deleted
+                    return
+
+    class Connection:
+        def __init__(self, deletion_counts: dict[str, int]) -> None:
+            self._cursor = Cursor(deletion_counts)
+
+        def cursor(self) -> Cursor:
+            return self._cursor
+
+    entry = PartyMappingEntry(
+        year=2025,
+        jurisdiction="replacement-test",
+        category="TEST",
+        list_id="1",
+        canonical_party="replacement-party",
+        party_name="Replacement Party",
+    )
+    declaration = CanonicalPartyDeclaration(
+        id=entry.canonical_party, display_name="Replacement Party"
+    )
+    cases = (
+        (
+            PartyMappingTable(canonical_parties=(declaration,), entries=(entry,)),
+            {"party_canonical": 7, "list_identity": 5, "party_mapping": 3},
+            1,
+        ),
+        (
+            PartyMappingTable(canonical_parties=(), entries=()),
+            {"party_canonical": 17, "list_identity": 13, "party_mapping": 11},
+            0,
+        ),
+    )
+
+    for table, deletion_counts, loaded in cases:
+        result = load_party_map_rows(Connection(deletion_counts), table)
+
+        assert result.party_canonical.loaded == loaded
+        assert result.party_canonical.deleted == deletion_counts["party_canonical"]
+        assert result.list_identity.loaded == loaded
+        assert result.list_identity.deleted == deletion_counts["list_identity"]
+        assert result.party_mapping.loaded == loaded
+        assert result.party_mapping.deleted == deletion_counts["party_mapping"]
 
 
 def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears_it() -> None:
@@ -70,9 +447,21 @@ def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears
         canonical_party=f"stale-party-{token}",
         party_name="Stale Party",
     )
+    desired_declaration = CanonicalPartyDeclaration(
+        id=desired.canonical_party, display_name="Desired Party"
+    )
+    stale_declaration = CanonicalPartyDeclaration(
+        id=stale.canonical_party, display_name="Stale Party"
+    )
 
     try:
-        load_party_map_rows(conn, PartyMappingTable(entries=(desired, stale)))
+        load_party_map_rows(
+            conn,
+            PartyMappingTable(
+                canonical_parties=(desired_declaration, stale_declaration),
+                entries=(desired, stale),
+            ),
+        )
         with conn.cursor() as cur:
             cur.execute("select count(*) from archive_entry")
             archive_count = cur.fetchone()
@@ -81,7 +470,16 @@ def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears
             cur.execute("select count(*) from result_row")
             result_count = cur.fetchone()
 
-        load_party_map_rows(conn, PartyMappingTable(entries=(desired,)))
+        replacement = load_party_map_rows(
+            conn,
+            PartyMappingTable(canonical_parties=(desired_declaration,), entries=(desired,)),
+        )
+        assert replacement.party_canonical.loaded == 1
+        assert replacement.party_canonical.deleted == 1
+        assert replacement.list_identity.loaded == 1
+        assert replacement.list_identity.deleted == 1
+        assert replacement.party_mapping.loaded == 1
+        assert replacement.party_mapping.deleted == 1
         with conn.cursor() as cur:
             cur.execute(
                 "select jurisdiction, list_id from party_mapping order by jurisdiction, list_id"
@@ -94,7 +492,13 @@ def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears
             cur.execute("select id from party_canonical order by id")
             assert cur.fetchall() == [(desired.canonical_party,)]
 
-        load_party_map_rows(conn, PartyMappingTable(entries=()))
+        empty = load_party_map_rows(conn, PartyMappingTable(canonical_parties=(), entries=()))
+        assert empty.party_canonical.loaded == 0
+        assert empty.party_canonical.deleted == 1
+        assert empty.list_identity.loaded == 0
+        assert empty.list_identity.deleted == 1
+        assert empty.party_mapping.loaded == 0
+        assert empty.party_mapping.deleted == 1
         with conn.cursor() as cur:
             for table_name in ("party_mapping", "list_identity", "party_canonical"):
                 cur.execute(f"select count(*) from {table_name}")
@@ -114,8 +518,8 @@ def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears
     "content",
     [
         "- not-a-mapping\n",
-        "mappings: not-a-list\n",
-        "mappings:\n  - not-a-mapping\n",
+        "canonical_parties: []\nmappings: not-a-list\n",
+        "canonical_parties: []\nmappings:\n  - not-a-mapping\n",
     ],
 )
 def test_party_map_loader_rejects_invalid_yaml_shapes(tmp_path: Path, content: str) -> None:
@@ -153,7 +557,10 @@ def test_party_map_loader_rejects_wrong_field_types(
         field: value,
     }
     path = tmp_path / "party_map.yaml"
-    path.write_text(yaml.safe_dump({"mappings": [entry]}), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump({"canonical_parties": [_canonical_party()], "mappings": [entry]}),
+        encoding="utf-8",
+    )
 
     with pytest.raises(PartyMapValidationError, match=message):
         load_party_map(path)
@@ -171,7 +578,10 @@ def test_party_map_loader_preserves_explicit_false_and_nullable_source(tmp_path:
         "verified": False,
     }
     path = tmp_path / "party_map.yaml"
-    path.write_text(yaml.safe_dump({"mappings": [entry]}), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump({"canonical_parties": [_canonical_party()], "mappings": [entry]}),
+        encoding="utf-8",
+    )
 
     loaded = load_party_map(path).entries[0]
 
@@ -190,7 +600,15 @@ def test_party_map_loader_rejects_duplicate_natural_key(tmp_path: Path) -> None:
     }
     path = tmp_path / "party_map.yaml"
     path.write_text(
-        yaml.safe_dump({"mappings": [entry, {**entry, "canonical_party": "OTHER"}]}),
+        yaml.safe_dump(
+            {
+                "canonical_parties": [
+                    _canonical_party(),
+                    _canonical_party("OTHER", "OTHER PARTY"),
+                ],
+                "mappings": [entry, {**entry, "canonical_party": "OTHER"}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -434,6 +852,35 @@ def test_pba_municipal_scheme_never_resolved_against_national_ids() -> None:
 
 
 # --- regression: the real curated file loads and resolves ------------------
+
+
+def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
+    table = _load_party_map_table()
+
+    assert len(table.entries) == 28
+    labels = {declaration.id: declaration.display_name for declaration in table.canonical_parties}
+    assert labels == {
+        "JXC": "JUNTOS POR EL CAMBIO",
+        "HXNP": "HACEMOS POR NUESTRO PAIS",
+        "UP": "UNION POR LA PATRIA",
+        "LLA": "LA LIBERTAD AVANZA",
+        "FIT": "FRENTE DE IZQUIERDA",
+        "PRIMERO_ROSALES": "AGRUPACION MUNICIPAL PRIMERO ROSALES",
+        "FRENTE_PATRIOTA_FEDERAL": "FRENTE PATRIOTA FEDERAL",
+        "FUERZA_PATRIA": "ALIANZA FUERZA PATRIA",
+        "NUEVO_BUENOS_AIRES": "PARTIDO NUEVO BUENOS AIRES",
+        "LIBER_AR": "LIBER.AR",
+        "PROPUESTA_FEDERAL": "PROPUESTA FEDERAL PARA EL CAMBIO",
+        "PROVINCIAS_UNIDAS": "ALIANZA PROVINCIAS UNIDAS",
+        "POTENCIA": "ALIANZA POTENCIA",
+        "NUEVOS_AIRES": "ALIANZA NUEVOS AIRES",
+        "MOVIMIENTO_SOCIALISTA": "MOVIMIENTO AVANZADA SOCIALISTA",
+        "PROYECTO_SUR": "MOVIMIENTO POLITICO SOCIAL Y CULTURAL PROYECTO SUR",
+        "UNION_LIBERAL": "UNION LIBERAL",
+        "COALICION_CIVICA": "COALICION CIVICA - A.R.I.",
+        "UNION_FEDERAL": "ALIANZA UNION FEDERAL",
+        "LLA_PRO_ALLIANCE": "ALIANZA LA LIBERTAD AVANZA",
+    }
 
 
 @pytest.mark.parametrize(

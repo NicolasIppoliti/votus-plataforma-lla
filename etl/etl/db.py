@@ -15,7 +15,6 @@ isolation between runs).
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
@@ -35,6 +34,35 @@ from etl.review_item import ReviewItemRecord
 
 class ArchiveEntryConflictError(ValueError):
     """Persisted provenance disagrees with verified archive/source evidence."""
+
+
+@dataclass(frozen=True)
+class TableReplacementCount:
+    loaded: int
+    deleted: int
+
+    def __post_init__(self) -> None:
+        if self.loaded < 0 or self.deleted < 0:
+            raise ValueError("replacement counts must be non-negative")
+
+
+@dataclass(frozen=True)
+class PartyMapReplacementSummary:
+    party_canonical: TableReplacementCount
+    list_identity: TableReplacementCount
+    party_mapping: TableReplacementCount
+
+
+@dataclass(frozen=True)
+class CrosswalkReplacementSummary:
+    jurisdiction_crosswalk: TableReplacementCount
+    mesa_crosswalk: TableReplacementCount
+
+
+@dataclass(frozen=True)
+class CuratedReplacementSummary:
+    party_map: PartyMapReplacementSummary
+    crosswalk: CrosswalkReplacementSummary
 
 
 @dataclass(frozen=True)
@@ -85,7 +113,7 @@ def archive_entry_from_evidence(
         )
 
     status = manifest_record.get("status")
-    if status != "ok":
+    if not isinstance(status, str) or status != "ok":
         raise ArchiveEntryConflictError(
             f"archive entry {values['id']!r} has status {status!r}; only verified ok entries ingest"
         )
@@ -138,8 +166,8 @@ def archive_entry_from_evidence(
 
 
 def project_archive_entry(conn, record: ArchiveEntryRecord) -> bool:
-    """Insert immutable provenance once, or refuse every conflicting field."""
-    fields = (
+    """Insert immutable provenance once, reject conflicts, and synchronize mutable notes."""
+    immutable_fields = (
         "capability",
         "source",
         "source_url",
@@ -151,7 +179,7 @@ def project_archive_entry(conn, record: ArchiveEntryRecord) -> bool:
         "status",
         "source_kind",
     )
-    values = (
+    immutable_values = (
         record.capability,
         record.source,
         record.source_url,
@@ -176,21 +204,35 @@ def project_archive_entry(conn, record: ArchiveEntryRecord) -> bool:
               bytes is not distinct from %s,
               fetched_at is not distinct from %s::timestamptz,
               status is not distinct from %s,
-              source_kind is not distinct from %s
+              source_kind is not distinct from %s,
+              notes is not distinct from %s
             from archive_entry
             where id = %s
             """,
-            (*values, record.id),
+            (*immutable_values, record.notes, record.id),
         )
         matches = cur.fetchone()
         if matches is not None:
+            immutable_matches = matches[:-1]
+            notes_match = matches[-1]
             conflicting_fields = [
-                field for field, matches_field in zip(fields, matches) if not matches_field
+                field
+                for field, matches_field in zip(immutable_fields, immutable_matches)
+                if not matches_field
             ]
             if conflicting_fields:
                 raise ArchiveEntryConflictError(
                     f"archive_entry {record.id!r} conflicts on "
                     f"{', '.join(conflicting_fields)}; refusing to overwrite immutable provenance"
+                )
+            if not notes_match:
+                cur.execute(
+                    """
+                    update archive_entry
+                    set notes = %s
+                    where id = %s
+                    """,
+                    (record.notes, record.id),
                 )
             return False
 
@@ -201,7 +243,7 @@ def project_archive_entry(conn, record: ArchiveEntryRecord) -> bool:
               mime, bytes, fetched_at, status, source_kind, notes
             ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (record.id, *values, record.notes),
+            (record.id, *immutable_values, record.notes),
         )
     return True
 
@@ -769,7 +811,7 @@ def load_result_rows(
     return len(records)
 
 
-def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
+def load_party_map_rows(conn, table: PartyMappingTable) -> PartyMapReplacementSummary:
     """Load `curated/party_map.yaml` (already parsed into `table` by
     `etl.party_map.load_party_map`) into `party_canonical`, `list_identity`
     and `party_mapping` (Phase 15, tasks 15.1-15.5).
@@ -781,48 +823,20 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
     all `not null`), so Postgres's `NULL <> NULL` upsert pitfall documented
     on `upsert_jurisdiction` does not apply here.
 
-    `party_canonical.display_name` is populated from the FIRST entry (in
-    `table.entries` order) that carries each `canonical_party` id -- a
-    canonical party is a single concept, but the curated file legitimately
-    repeats the same canonical id under several `(year, jurisdiction,
-    category, list_id)` keys with source-observed `party_name` spellings
-    that can differ (e.g. "LA LIBERTAD AVANZA" in 2023 vs "ALIANZA LA
-    LIBERTAD AVANZA" in 2025); one display name has to be chosen, and doing
-    it deterministically (first occurrence) beats an unordered `dict`
-    write-wins race.
-
-    Choosing deterministically is not the same as choosing SILENTLY: every
-    spelling that was NOT used is reported, so a curated typo introducing a
-    second spelling is visible instead of being absorbed by the pick.
+    `party_canonical` is projected solely from the explicit canonical parent
+    declarations. Mapping `party_name` values remain exact source spellings and
+    feed only `list_identity.source_name`; their order can never select or
+    update a canonical display label.
     """
-    display_name_by_canonical_party: dict[str, str] = {}
-    spellings_by_canonical_party: dict[str, list[str]] = {}
-    for entry in table.entries:
-        display_name_by_canonical_party.setdefault(entry.canonical_party, entry.party_name)
-        seen = spellings_by_canonical_party.setdefault(entry.canonical_party, [])
-        if entry.party_name not in seen:
-            seen.append(entry.party_name)
-
-    for canonical_party, spellings in sorted(spellings_by_canonical_party.items()):
-        if len(spellings) > 1:
-            chosen = display_name_by_canonical_party[canonical_party]
-            discarded = [name for name in spellings if name != chosen]
-            print(
-                f"  canonical party {canonical_party!r} carries {len(spellings)} "
-                f"source spellings; kept {chosen!r}, not shown: "
-                f"{', '.join(repr(name) for name in discarded)}",
-                file=sys.stderr,
-            )
-
     with conn.cursor() as cur:
-        for canonical_party, display_name in display_name_by_canonical_party.items():
+        for declaration in table.canonical_parties:
             cur.execute(
                 """
                 insert into party_canonical (id, display_name)
                 values (%s, %s)
                 on conflict (id) do update set display_name = excluded.display_name
                 """,
-                (canonical_party, display_name),
+                (declaration.id, declaration.display_name),
             )
 
         for entry in table.entries:
@@ -884,6 +898,7 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
             ),
             key_parameters,
         )
+        party_mapping_deleted = cur.rowcount
         cur.execute(
             sql.SQL(
                 """
@@ -901,6 +916,7 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
             ),
             key_parameters,
         )
+        list_identity_deleted = cur.rowcount
         cur.execute(
             """
             delete from party_canonical as current
@@ -909,21 +925,31 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> dict[str, int]:
                 where desired.id = current.id
             )
             """,
-            (list(display_name_by_canonical_party),),
+            ([declaration.id for declaration in table.canonical_parties],),
         )
+        party_canonical_deleted = cur.rowcount
 
-    return {
-        "party_canonical": len(display_name_by_canonical_party),
-        "list_identity": len(table.entries),
-        "party_mapping": len(table.entries),
-    }
+    return PartyMapReplacementSummary(
+        party_canonical=TableReplacementCount(
+            loaded=len(table.canonical_parties),
+            deleted=party_canonical_deleted,
+        ),
+        list_identity=TableReplacementCount(
+            loaded=len(table.entries),
+            deleted=list_identity_deleted,
+        ),
+        party_mapping=TableReplacementCount(
+            loaded=len(table.entries),
+            deleted=party_mapping_deleted,
+        ),
+    )
 
 
 def load_crosswalk_rows(
     conn,
     table: CrosswalkTable,
     mesa_stabilities: Sequence[tuple[str, str, MesaStability]] = (),
-) -> dict[str, int]:
+) -> CrosswalkReplacementSummary:
     """Load `curated/crosswalk.yaml` (already parsed into `table` by
     `etl.crosswalk.load_crosswalk`) into `jurisdiction_crosswalk`, plus any
     supplied per-mesa stability records into `mesa_crosswalk` (Phase 15,
@@ -1011,6 +1037,7 @@ def load_crosswalk_rows(
             """,
             ([entry.pba_distrito_code for entry in table.jurisdictions],),
         )
+        jurisdiction_crosswalk_deleted = cur.rowcount
         cur.execute(
             """
             delete from mesa_crosswalk as current
@@ -1031,11 +1058,18 @@ def load_crosswalk_rows(
                 [row[3].mesa for row in normalized_mesa_stabilities],
             ),
         )
+        mesa_crosswalk_deleted = cur.rowcount
 
-    return {
-        "jurisdiction_crosswalk": len(table.jurisdictions),
-        "mesa_crosswalk": len(mesa_stabilities),
-    }
+    return CrosswalkReplacementSummary(
+        jurisdiction_crosswalk=TableReplacementCount(
+            loaded=len(table.jurisdictions),
+            deleted=jurisdiction_crosswalk_deleted,
+        ),
+        mesa_crosswalk=TableReplacementCount(
+            loaded=len(normalized_mesa_stabilities),
+            deleted=mesa_crosswalk_deleted,
+        ),
+    )
 
 
 def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:

@@ -73,6 +73,73 @@ def _load_crosswalk_table() -> CrosswalkTable:
     return load_crosswalk(CURATED / "crosswalk.yaml")
 
 
+def test_crosswalk_loader_reports_database_deletion_counts_for_replacement_snapshots() -> None:
+    class Cursor:
+        rowcount = -1
+
+        def __init__(self, deletion_counts: dict[str, int]) -> None:
+            self.deletion_counts = deletion_counts
+
+        def __enter__(self) -> Cursor:
+            return self
+
+        def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+            return None
+
+        def execute(self, query: object, _params: object | None = None) -> None:
+            statement = str(query)
+            self.rowcount = 1
+            for table_name, deleted in self.deletion_counts.items():
+                if f"delete from {table_name}" in statement:
+                    self.rowcount = deleted
+                    return
+
+    class Connection:
+        def __init__(self, deletion_counts: dict[str, int]) -> None:
+            self._cursor = Cursor(deletion_counts)
+
+        def cursor(self) -> Cursor:
+            return self._cursor
+
+    jurisdiction = JurisdictionCrosswalkEntry(
+        pba_distrito_code="27",
+        national_distrito_code="2",
+        national_seccion_code="27",
+        name="Replacement Jurisdiction",
+    )
+    stability = MesaStability(circuito="1", mesa=1, present_2023=True, present_2025=True)
+    cases = (
+        (
+            CrosswalkTable(jurisdictions=(jurisdiction,)),
+            (("2", "27", stability),),
+            {"jurisdiction_crosswalk": 3, "mesa_crosswalk": 5},
+            (1, 1),
+        ),
+        (
+            CrosswalkTable(jurisdictions=()),
+            (),
+            {"jurisdiction_crosswalk": 7, "mesa_crosswalk": 11},
+            (0, 0),
+        ),
+        (
+            CrosswalkTable(jurisdictions=(jurisdiction,)),
+            (),
+            {"jurisdiction_crosswalk": 13, "mesa_crosswalk": 17},
+            (1, 0),
+        ),
+    )
+
+    for table, mesa_stabilities, deletion_counts, loaded in cases:
+        result = load_crosswalk_rows(
+            Connection(deletion_counts), table, mesa_stabilities=mesa_stabilities
+        )
+
+        assert result.jurisdiction_crosswalk.loaded == loaded[0]
+        assert result.jurisdiction_crosswalk.deleted == deletion_counts["jurisdiction_crosswalk"]
+        assert result.mesa_crosswalk.loaded == loaded[1]
+        assert result.mesa_crosswalk.deleted == deletion_counts["mesa_crosswalk"]
+
+
 def test_crosswalk_loader_replaces_the_curated_projection_and_empty_input_clears_it() -> None:
     dsn = os.environ.get(
         "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -112,11 +179,15 @@ def test_crosswalk_loader_replaces_the_curated_projection_and_empty_input_clears
             cur.execute("select count(*) from result_row")
             result_count = cur.fetchone()
 
-        load_crosswalk_rows(
+        replacement = load_crosswalk_rows(
             conn,
             CrosswalkTable(jurisdictions=(desired,)),
             mesa_stabilities=(("2", "27", desired_stability),),
         )
+        assert replacement.jurisdiction_crosswalk.loaded == 1
+        assert replacement.jurisdiction_crosswalk.deleted == 1
+        assert replacement.mesa_crosswalk.loaded == 1
+        assert replacement.mesa_crosswalk.deleted == 1
         with conn.cursor() as cur:
             cur.execute("select pba_distrito_code from jurisdiction_crosswalk")
             assert cur.fetchall() == [(desired.pba_distrito_code,)]
@@ -127,7 +198,11 @@ def test_crosswalk_loader_replaces_the_curated_projection_and_empty_input_clears
                 ("02", "027", desired_stability.circuito, desired_stability.mesa)
             ]
 
-        load_crosswalk_rows(conn, CrosswalkTable(jurisdictions=()), mesa_stabilities=())
+        empty = load_crosswalk_rows(conn, CrosswalkTable(jurisdictions=()), mesa_stabilities=())
+        assert empty.jurisdiction_crosswalk.loaded == 0
+        assert empty.jurisdiction_crosswalk.deleted == 1
+        assert empty.mesa_crosswalk.loaded == 0
+        assert empty.mesa_crosswalk.deleted == 1
         with conn.cursor() as cur:
             cur.execute("select count(*) from jurisdiction_crosswalk")
             assert cur.fetchone() == (0,)

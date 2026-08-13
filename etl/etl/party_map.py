@@ -44,6 +44,14 @@ class DuplicatePartyMappingKeyError(PartyMapValidationError):
 
 
 @dataclass(frozen=True)
+class CanonicalPartyDeclaration:
+    """One explicit canonical party parent persisted to `party_canonical`."""
+
+    id: str
+    display_name: str
+
+
+@dataclass(frozen=True)
 class PartyMappingEntry:
     """One curated `(year, jurisdiction, category, list_id)` -> canonical
     party entry."""
@@ -79,6 +87,7 @@ class UnmappedListId:
 
 @dataclass(frozen=True)
 class PartyMappingTable:
+    canonical_parties: tuple[CanonicalPartyDeclaration, ...]
     entries: tuple[PartyMappingEntry, ...]
 
     def resolve(
@@ -112,64 +121,154 @@ class PartyMappingTable:
         )
 
 
+_TOP_LEVEL_FIELDS = frozenset({"canonical_parties", "mappings"})
+_CANONICAL_PARTY_FIELDS = frozenset({"id", "display_name"})
+_MAPPING_REQUIRED_FIELDS = (
+    "year",
+    "jurisdiction",
+    "category",
+    "list_id",
+    "canonical_party",
+    "party_name",
+)
+_MAPPING_FIELDS = frozenset({*_MAPPING_REQUIRED_FIELDS, "source", "verified"})
+
+
+def _reject_unknown_fields(
+    raw: Mapping[object, object], *, allowed: frozenset[str], context: str
+) -> None:
+    unknown = [
+        key if isinstance(key, str) else f"<non-string {type(key).__name__}>"
+        for key in raw
+        if key not in allowed
+    ]
+    if unknown:
+        raise PartyMapValidationError(
+            f"party_map.yaml {context} has unknown field(s): {', '.join(sorted(unknown))}"
+        )
+
+
+def _required_text(
+    raw: Mapping[object, object],
+    *,
+    field: str,
+    context: str,
+    reject_surrounding_whitespace: bool,
+) -> str:
+    value = raw[field]
+    if not isinstance(value, str) or not value.strip():
+        raise PartyMapValidationError(
+            f"party_map.yaml {context} {field} must be a non-empty string"
+        )
+    if reject_surrounding_whitespace and value != value.strip():
+        raise PartyMapValidationError(
+            f"party_map.yaml {context} {field} must not have surrounding whitespace"
+        )
+    return value
+
+
 def load_party_map(path: Path) -> PartyMappingTable:
-    """Load and validate the curated party mapping at the YAML boundary."""
+    """Load and validate the closed canonical-parent/mapping-child YAML shape."""
     data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     if data is None:
         data = {}
     if not isinstance(data, Mapping):
         raise PartyMapValidationError("party_map.yaml top level must be a mapping")
 
-    raw_entries = data.get("mappings", [])
+    missing_sections = [field for field in _TOP_LEVEL_FIELDS if field not in data]
+    if missing_sections:
+        raise PartyMapValidationError(
+            "party_map.yaml is missing required top-level field(s): "
+            + ", ".join(sorted(missing_sections))
+        )
+    _reject_unknown_fields(data, allowed=_TOP_LEVEL_FIELDS, context="top level")
+
+    raw_canonical_parties = data["canonical_parties"]
+    if not isinstance(raw_canonical_parties, list):
+        raise PartyMapValidationError("party_map.yaml canonical_parties must be a list")
+    raw_entries = data["mappings"]
     if not isinstance(raw_entries, list):
         raise PartyMapValidationError("party_map.yaml mappings must be a list")
 
-    entries: list[PartyMappingEntry] = []
-    seen: set[tuple[int, str, str, str]] = set()
-    required = (
-        "year",
-        "jurisdiction",
-        "category",
-        "list_id",
-        "canonical_party",
-        "party_name",
-    )
-    for index, raw_entry in enumerate(raw_entries):
-        if not isinstance(raw_entry, Mapping):
-            raise PartyMapValidationError(
-                f"party_map.yaml mappings entry {index} must be a mapping"
-            )
-        missing = [field for field in required if field not in raw_entry]
+    canonical_parties: list[CanonicalPartyDeclaration] = []
+    display_name_by_id: dict[str, str] = {}
+    for index, raw_declaration in enumerate(raw_canonical_parties):
+        context = f"canonical_parties entry {index}"
+        if not isinstance(raw_declaration, Mapping):
+            raise PartyMapValidationError(f"party_map.yaml {context} must be a mapping")
+        _reject_unknown_fields(
+            raw_declaration,
+            allowed=_CANONICAL_PARTY_FIELDS,
+            context=context,
+        )
+        missing = [field for field in _CANONICAL_PARTY_FIELDS if field not in raw_declaration]
         if missing:
             raise PartyMapValidationError(
-                f"party_map.yaml mappings entry {index} is missing {', '.join(missing)}"
+                f"party_map.yaml {context} is missing {', '.join(sorted(missing))}"
+            )
+
+        canonical_id = _required_text(
+            raw_declaration,
+            field="id",
+            context=context,
+            reject_surrounding_whitespace=True,
+        )
+        display_name = _required_text(
+            raw_declaration,
+            field="display_name",
+            context=context,
+            reject_surrounding_whitespace=True,
+        )
+        previous_display_name = display_name_by_id.get(canonical_id)
+        if previous_display_name is not None:
+            if previous_display_name == display_name:
+                raise PartyMapValidationError(
+                    f"party_map.yaml duplicate canonical party id {canonical_id!r} at entry {index}"
+                )
+            raise PartyMapValidationError(
+                "party_map.yaml conflicting canonical party declaration for id "
+                f"{canonical_id!r} at entry {index}"
+            )
+        display_name_by_id[canonical_id] = display_name
+        canonical_parties.append(
+            CanonicalPartyDeclaration(id=canonical_id, display_name=display_name)
+        )
+
+    entries: list[PartyMappingEntry] = []
+    seen_keys: set[tuple[int, str, str, str]] = set()
+    used_canonical_parties: set[str] = set()
+    for index, raw_entry in enumerate(raw_entries):
+        context = f"mappings entry {index}"
+        if not isinstance(raw_entry, Mapping):
+            raise PartyMapValidationError(f"party_map.yaml {context} must be a mapping")
+        _reject_unknown_fields(raw_entry, allowed=_MAPPING_FIELDS, context=context)
+        missing = [field for field in _MAPPING_REQUIRED_FIELDS if field not in raw_entry]
+        if missing:
+            raise PartyMapValidationError(
+                f"party_map.yaml {context} is missing {', '.join(missing)}"
             )
 
         year = raw_entry["year"]
         if isinstance(year, bool) or not isinstance(year, int):
-            raise PartyMapValidationError(
-                f"party_map.yaml mappings entry {index} year must be an integer"
-            )
+            raise PartyMapValidationError(f"party_map.yaml {context} year must be an integer")
 
         strings: dict[str, str] = {}
-        for field in required[1:]:
-            value = raw_entry[field]
-            if not isinstance(value, str) or not value.strip():
-                raise PartyMapValidationError(
-                    f"party_map.yaml mappings entry {index} {field} must be a non-empty string"
-                )
-            strings[field] = value
+        for field in _MAPPING_REQUIRED_FIELDS[1:]:
+            strings[field] = _required_text(
+                raw_entry,
+                field=field,
+                context=context,
+                reject_surrounding_whitespace=True,
+            )
 
         source = raw_entry.get("source")
-        if not isinstance(source, str | None):
+        if source is not None and not isinstance(source, str):
             raise PartyMapValidationError(
-                f"party_map.yaml mappings entry {index} source must be a string or null"
+                f"party_map.yaml {context} source must be a string or null"
             )
         verified = raw_entry.get("verified", True)
         if not isinstance(verified, bool):
-            raise PartyMapValidationError(
-                f"party_map.yaml mappings entry {index} verified must be a boolean"
-            )
+            raise PartyMapValidationError(f"party_map.yaml {context} verified must be a boolean")
 
         entry = PartyMappingEntry(
             year=year,
@@ -181,15 +280,35 @@ def load_party_map(path: Path) -> PartyMappingTable:
             source=source,
             verified=verified,
         )
+        if entry.canonical_party not in display_name_by_id:
+            raise PartyMapValidationError(
+                f"party_map.yaml {context} canonical_party {entry.canonical_party!r} "
+                "is not declared in canonical_parties"
+            )
         key = (entry.year, entry.jurisdiction, entry.category, entry.list_id)
-        if key in seen:
+        if key in seen_keys:
             raise DuplicatePartyMappingKeyError(
                 f"party_map.yaml duplicate mapping key {key!r} at entry {index}"
             )
-        seen.add(key)
+        seen_keys.add(key)
+        used_canonical_parties.add(entry.canonical_party)
         entries.append(entry)
 
-    return PartyMappingTable(entries=tuple(entries))
+    unused = [
+        declaration.id
+        for declaration in canonical_parties
+        if declaration.id not in used_canonical_parties
+    ]
+    if unused:
+        raise PartyMapValidationError(
+            "party_map.yaml canonical party declaration(s) not used by any mapping: "
+            + ", ".join(unused)
+        )
+
+    return PartyMappingTable(
+        canonical_parties=tuple(canonical_parties),
+        entries=tuple(entries),
+    )
 
 
 # NO `_PartyResolvableRow` / `UnmappedPartyRow` / `PartyResolutionResult` /
