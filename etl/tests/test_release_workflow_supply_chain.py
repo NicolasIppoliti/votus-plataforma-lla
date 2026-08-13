@@ -11,6 +11,12 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_RELATIVE_PATH = Path(".github/workflows/release-gates.yml")
 WORKFLOW_PATH = REPOSITORY_ROOT / WORKFLOW_RELATIVE_PATH
 FULL_COMMIT_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
+APPROVED_NODE24_ACTION_REFS = {
+    "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+    "actions/setup-node": "a0853c24544627f65ddf259abe73b1d18a591444",
+    "astral-sh/setup-uv": "37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+    "supabase/setup-cli": "3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf",
+}
 _LINE = object()
 
 
@@ -30,6 +36,18 @@ _LineLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
     _construct_mapping,
 )
+
+
+def test_release_workflow_uses_approved_node24_action_refs_exactly_once() -> None:
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    action_refs = re.findall(r"^\s*- uses: (\S+)\s*$", workflow_text, re.MULTILINE)
+
+    for action, commit_sha in APPROVED_NODE24_ACTION_REFS.items():
+        expected_ref = f"{action}@{commit_sha}"
+        matching_refs = [ref for ref in action_refs if ref.partition("@")[0] == action]
+        assert matching_refs == [expected_ref], (
+            f"{WORKFLOW_RELATIVE_PATH} must use {expected_ref} exactly once; found {matching_refs}"
+        )
 
 
 def test_release_workflow_actions_are_immutable_and_checkout_drops_credentials() -> None:
