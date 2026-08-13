@@ -90,13 +90,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 23 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 24 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0024",
-	fileName: "0024_e2e_service_role_grants.sql",
+	version: "0025",
+	fileName: "0025_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
 

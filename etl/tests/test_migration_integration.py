@@ -22,12 +22,27 @@ def _apply_migration(database_dsn: str, number: int) -> None:
         connection.execute(migration_sql)
 
 
+def _apply_down_migration(database_dsn: str, number: int) -> None:
+    migration = next((MIGRATIONS / "down").glob(f"{number:04d}_*.down.sql"))
+    with psycopg.connect(database_dsn) as connection:
+        migration_sql = migration.read_text(encoding="utf-8").encode("utf-8")
+        connection.execute(migration_sql)
+
+
 def _available_migration_numbers(*, maximum: int) -> list[int]:
     return sorted(
         int(migration.name.split("_", 1)[0])
         for migration in MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql")
         if int(migration.name.split("_", 1)[0]) <= maximum
     )
+
+
+def _insert_review_item(database_dsn: str, kind: str, subject_ref: str) -> None:
+    with psycopg.connect(database_dsn) as connection:
+        connection.execute(
+            "insert into review_item (kind, severity, subject_ref) values (%s, 'warning', %s)",
+            (kind, subject_ref),
+        )
 
 
 def _seed_pre_0012_history(
@@ -215,6 +230,70 @@ def _seed_pre_0018_fiscalizacion_case(
         assert before_count is not None
 
     return official_jurisdiction_id, fiscalizacion_jurisdiction_id, before_count[0]
+
+
+def test_0024_review_kinds_reject_then_accept_and_rollback_reapply_safely() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
+
+    added_kinds = (
+        "ambiguous_official_mesa_identity",
+        "pba_conflicting_duplicate_semantic_result",
+        "pba_exact_duplicate_semantic_result",
+        "pba_unreadable_vote_cell",
+    )
+    unknown_kind = "unknown_review_kind"
+    schema_name = f"votus_review_kinds_{uuid.uuid4().hex}"
+    with psycopg.connect(database_dsn) as connection:
+        connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
+    params = conninfo_to_dict(database_dsn)
+    params["options"] = f"-csearch_path={schema_name}"
+    history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    try:
+        available_numbers = _available_migration_numbers(maximum=24)
+        assert available_numbers == list(range(1, 25))
+
+        # 0009/0010 create cluster-global etl_writer roles, and 0022 creates the
+        # cluster-global results_exploration_executor role. The disposable harness
+        # prepares 0009/0010 separately, while its schema-local role is intentionally
+        # NOCREATEROLE. Migrations 0019-0023 do not change review_item_kind_check, so
+        # this constraint test needs only the safe schema-local history through 0018.
+        for number in (*range(1, 9), *range(11, 19)):
+            _apply_migration(history_dsn, number)
+
+        for kind in added_kinds:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                _insert_review_item(history_dsn, kind, f"before-0024:{kind}")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            _insert_review_item(history_dsn, unknown_kind, "before-0024:unknown")
+
+        _apply_migration(history_dsn, 24)
+        for kind in added_kinds:
+            _insert_review_item(history_dsn, kind, f"0024-only:{kind}")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            _insert_review_item(history_dsn, unknown_kind, "after-0024:unknown")
+
+        with pytest.raises(psycopg.errors.RaiseException, match="0024-only review_item"):
+            _apply_down_migration(history_dsn, 24)
+
+        with psycopg.connect(history_dsn) as connection:
+            connection.execute("delete from review_item where subject_ref like '0024-only:%'")
+        _apply_down_migration(history_dsn, 24)
+        for kind in added_kinds:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                _insert_review_item(history_dsn, kind, f"after-down:{kind}")
+
+        _apply_migration(history_dsn, 24)
+        for kind in added_kinds:
+            _insert_review_item(history_dsn, kind, f"after-reapply:{kind}")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            _insert_review_item(history_dsn, unknown_kind, "after-reapply:unknown")
+    finally:
+        with psycopg.connect(database_dsn) as connection:
+            connection.execute(
+                sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))
+            )
 
 
 def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> None:

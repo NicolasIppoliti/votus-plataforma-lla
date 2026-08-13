@@ -238,7 +238,7 @@ async function assertSourceInventory(
 	const versions = migrationFiles.map((name) => name.slice(0, 4));
 	if (JSON.stringify(versions) !== JSON.stringify(expectedMigrations))
 		throw new Error(
-			"migration inventory must be exactly versions 0001 through 0023",
+			"migration inventory must be exactly versions 0001 through 0024",
 		);
 	const specFiles = (await readdir(path.join(WEB_ROOT, "e2e")))
 		.filter((name) => name.endsWith(".spec.ts"))
