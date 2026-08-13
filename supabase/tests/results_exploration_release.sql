@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/0023_results_coverage_scope_binding.down.sql
 \ir ../migrations/down/0022_results_exploration_scale.down.sql
 do $$ begin
   if to_regprocedure('public.results_exploration_schools(uuid,uuid,text,text)') is not null then raise exception '0022 rollback left the school breakdown RPC installed'; end if;
@@ -16,6 +17,7 @@ end $$;
 \ir ../migrations/0020_results_exploration.sql
 \ir ../migrations/0021_results_coverage.sql
 \ir ../migrations/0022_results_exploration_scale.sql
+\ir ../migrations/0023_results_coverage_scope_binding.sql
 do $$ begin
   if to_regclass('public.result_row_exploration_scope_idx') is null then raise exception 'forward apply omitted result_row_exploration_scope_idx'; end if;
   if to_regprocedure('public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)') is null then raise exception '0022 forward apply omitted the preserved 0020 official RPC'; end if;
@@ -79,5 +81,5 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
-select 'release-proof' as evidence, 22 as migration_inventory_count,
-  '0022-down,0021-down,0020-down,0020-up,0021-up,0022-up' as migration_sequence, 'authenticated-execute/anon-denied' as grant_state;
+select 'release-proof' as evidence, 23 as migration_inventory_count,
+  '0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up' as migration_sequence, 'authenticated-execute/anon-denied' as grant_state;
