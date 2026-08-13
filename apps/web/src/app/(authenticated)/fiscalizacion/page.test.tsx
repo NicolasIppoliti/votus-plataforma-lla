@@ -1008,8 +1008,12 @@ describe("fiscalizacion page — the real entry point", () => {
 					},
 				],
 				categories: [],
-				distritos: [],
-				secciones: [],
+				distritos: [
+					{ code: "02", name: null, name_status: "missing", name_variant_count: 0 },
+				],
+				secciones: [
+					{ code: "027", name: null, name_status: "conflict", name_variant_count: 2 },
+				],
 				circuitos: [],
 				establecimientos: [],
 				mesas: [],
@@ -1024,6 +1028,8 @@ describe("fiscalizacion page — the real entry point", () => {
 
     expect(markup).toContain("Fiscalización coverage");
     expect(markup).toContain("Choose an election");
+    expect(markup).toContain('<option value="02">02 — name unavailable</option>');
+    expect(markup).toContain('<option value="027">027 — conflicting names (2 variants)</option>');
     expect(markup).not.toContain("Provide <code>electionId</code>");
   });
 

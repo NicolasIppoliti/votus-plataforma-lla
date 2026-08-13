@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(74);
+select plan(83);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -22,6 +22,9 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000015', '02', '028', '00003', 'E2', 'Other fixture school', 3),
   ('20000000-0000-0000-0000-000000000016', '02', '027', '00002', 'E1', 'Other fixture school', 4),
   ('20000000-0000-0000-0000-000000000017', '02', '027', '00003', 'E1', 'Fixture school', 5),
+  ('20000000-0000-0000-0000-000000000030', '02', '027', '00004', 'E10', 'Mesa lineage A', 7),
+  ('20000000-0000-0000-0000-000000000031', '02', '027', '00004', 'E10', 'Mesa lineage A', 8),
+  ('20000000-0000-0000-0000-000000000032', '02', '027', '00004', 'E11', 'Mesa lineage B', 7),
   ('20000000-0000-0000-0000-000000000027', '02', '999', '00001', 'E9', 'Fiscal-only scope', 9);
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL');
@@ -50,6 +53,9 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000016', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 30, 'official', 'national/2025-legislativas', 12),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000017', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 20, 'official', 'national/2025-legislativas', 13),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000017', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 777, 'fiscalizacion', 'fiscalizacion/wu1-runtime', 14),
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000030', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 10, 'official', 'national/2025-mesa-lineage', 15),
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000031', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 20, 'official', 'national/2025-mesa-lineage', 16),
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000032', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 30, 'official', 'national/2025-mesa-lineage', 17),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000003', 'mesa', null, 91, 'fiscalizacion', 'fiscalizacion/only-runtime', 23);
 create function pg_temp.schools(p_election uuid default '20000000-0000-0000-0000-000000000001')
 returns jsonb language sql stable as $$ select results_exploration_schools(p_election,
@@ -61,8 +67,64 @@ create function pg_temp.coverage() returns jsonb language sql stable as $$
 select is(jsonb_array_length(results_exploration_facets()->'elections'), 4,
   'cold-start facets expose every official election shape');
 select is(jsonb_array_length(results_exploration_facets(
-  '20000000-0000-0000-0000-000000000001')->'categories'), 1,
-  'election selection exposes its source-backed category');
+  '20000000-0000-0000-0000-000000000001')->'categories'), 2,
+  'election selection exposes its source-backed categories');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'establecimientos', '[]'::jsonb,
+  'establishment facets stay empty until a circuit is selected');
+select ok(not (results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'available_levels' ? 'establecimiento'),
+  'establishment level stays unavailable until a circuit is selected');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027', '00001'
+)->'establecimientos', '[{"code":"E1","name":"Fixture school","name_status":"present","name_variant_count":1}]'::jsonb,
+  'selected circuit exposes only its establishment identity and name');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027', '00002'
+)->'establecimientos', '[{"code":"E1","name":"Other fixture school","name_status":"present","name_variant_count":1}]'::jsonb,
+  'same establishment code in another circuit keeps its own name');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000006', '02', '027', '00004'
+)->'mesas', '[]'::jsonb,
+  'mesa facets stay empty until an establishment is selected');
+select ok(not (results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000006', '02', '027', '00004'
+)->'available_levels' ? 'mesa'),
+  'mesa level stays unavailable until an establishment is selected');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000006', '02', '027', '00004', 'E10'
+)->'mesas', '[{"code":7},{"code":8}]'::jsonb,
+  'mesa facets include only the selected establishment lineage');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000006', '02', '027', '00004', 'E11'
+)->'mesas', '[{"code":7}]'::jsonb,
+  'a shared mesa code in another establishment cannot pull sibling mesas');
+savepoint conflicting_facet_name;
+update jurisdiction set establecimiento_name = case id
+  when '20000000-0000-0000-0000-000000000010' then 'Fixture school north'
+  when '20000000-0000-0000-0000-000000000011' then 'Fixture school south'
+  else establecimiento_name end
+where id in (
+  '20000000-0000-0000-0000-000000000010',
+  '20000000-0000-0000-0000-000000000011'
+);
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027', '00001'
+)->'establecimientos', '[{"code":"E1","name":null,"name_status":"conflict","name_variant_count":2}]'::jsonb,
+  'conflicting facet names expose their exact variant count without picking a label');
+rollback to savepoint conflicting_facet_name;
+
 select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'

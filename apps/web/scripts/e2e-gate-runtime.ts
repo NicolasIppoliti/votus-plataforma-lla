@@ -90,13 +90,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 24 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 26 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0025",
-	fileName: "0025_e2e_service_role_grants.sql",
+	version: "0027",
+	fileName: "0027_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
 
@@ -393,6 +393,14 @@ function parseStatusUrl(value: string, label: string): URL {
 	}
 }
 
+function isExactApiEndpoint(url: URL, expectedPort: number): boolean {
+	return (
+		url.protocol === "http:" && url.hostname === "127.0.0.1" &&
+		url.port === String(expectedPort) && url.username === "" && url.password === "" &&
+		url.pathname === "/" && url.search === "" && url.hash === ""
+	);
+}
+
 export function assertStackStatus(
 	output: string,
 	expectedApiPort: number,
@@ -415,10 +423,8 @@ export function assertStackStatus(
 		if (typeof status[key] !== "string" || !status[key])
 			throw new Error(`Supabase status omitted ${key}`);
 	const apiUrl = parseStatusUrl(status["API_URL"] as string, "API_URL");
-	if (apiUrl.hostname !== "127.0.0.1")
-		throw new Error("Supabase API URL is not exact loopback");
-	if (Number(apiUrl.port) !== expectedApiPort)
-		throw new Error("Supabase API port does not match reservation");
+	if (!isExactApiEndpoint(apiUrl, expectedApiPort))
+		throw new Error("Supabase API URL does not match the reserved loopback endpoint");
 	const dbUrl = parseStatusUrl(status["DB_URL"] as string, "DB_URL");
 	if (
 		!dbUrl.protocol.startsWith("postgres") ||
@@ -430,7 +436,10 @@ export function assertStackStatus(
 	return status as unknown as StackStatus;
 }
 
+const TS7_VERSION_PATTERN =
+	/^Version 7\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|(?:[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))(?:\.(?:(?:0|[1-9]\d*)|(?:[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 export function assertTs7Version(output: string): void {
-	if (!/^Version 7\./.test(output.trim()))
+	if (!TS7_VERSION_PATTERN.test(output.trim()))
 		throw new Error("TypeScript 7.x is required");
 }

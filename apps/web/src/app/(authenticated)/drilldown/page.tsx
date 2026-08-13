@@ -31,6 +31,7 @@ import { partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-fami
 import {
   createResultsExplorationRepository,
   EXPLORATION_LEVEL,
+  formatFacetOptionLabel,
   hasOnlyOfficialSourceAudit,
   normalizeExplorationParams,
   type ExplorationFacets,
@@ -53,10 +54,6 @@ interface ExplorerFormProps {
   };
 }
 
-function optionLabel(code: string, name: string | null): string {
-  return name ? `${code} — ${name}` : code;
-}
-
 function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
   return (
     <form action="/drilldown" method="get">
@@ -68,16 +65,16 @@ function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
         {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select>{" "}
       <label htmlFor="explorer-distrito">Distrito</label>{" "}<select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
         <option value="">Choose a distrito</option>
-        {facets.distritos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+        {facets.distritos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
       <label htmlFor="explorer-seccion">Sección</label>{" "}<select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
         <option value="">Choose a sección</option>
-        {facets.secciones.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+        {facets.secciones.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
       <label htmlFor="explorer-circuito">Circuito</label>{" "}<select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}>
         <option value="">Any circuito</option>
-        {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+        {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
       <label htmlFor="explorer-establecimiento">Establecimiento</label>{" "}<select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}>
         <option value="">Any establecimiento</option>
-        {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option.code, option.name)}</option>)}</select>{" "}
+        {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
       <label htmlFor="explorer-mesa">Mesa</label>{" "}<select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}>
         <option value="">Any mesa</option>
         {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select>{" "}
@@ -134,12 +131,6 @@ async function renderOfficialExplorer(
 
   const electionId = stringParam(params, "electionId");
   const categoryId = stringParam(params, "categoryId");
-  const selected = {
-    ...(electionId ? { electionId } : {}),
-    ...(categoryId ? { categoryId } : {}),
-    ...normalized.value,
-    ...(level ? { level } : {}),
-  };
   const client = await createSupabaseServerClient();
   const repository = createResultsExplorationRepository(client);
   let facets: ExplorationFacets;
@@ -150,28 +141,49 @@ async function renderOfficialExplorer(
       ...(normalized.value.distritoCode ? { distritoCode: normalized.value.distritoCode } : {}),
       ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
       ...(normalized.value.circuitoCode ? { circuitoCode: normalized.value.circuitoCode } : {}),
+      ...(normalized.value.establecimientoCode ? { establecimientoCode: normalized.value.establecimientoCode } : {}),
     });
   } catch (error) {
     return <main><h1>Explore official results</h1><p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
   }
 
+  const requestedCircuito = normalized.value.circuitoCode;
+  const circuitoMatches = !requestedCircuito || facets.circuitos.some((option) => option.code === requestedCircuito);
+  const requestedEstablecimiento = normalized.value.establecimientoCode;
+  const establecimientoMatches = circuitoMatches && (!requestedEstablecimiento ||
+    facets.establecimientos.some((option) => option.code === requestedEstablecimiento));
+  const requestedMesa = normalized.value.mesaCode;
+  const mesaMatches = establecimientoMatches && (requestedMesa === undefined ||
+    facets.mesas.some((option) => option.code === requestedMesa));
+  const hierarchyMatches = circuitoMatches && establecimientoMatches && mesaMatches;
+  const effectiveCodes = {
+    ...(normalized.value.distritoCode ? { distritoCode: normalized.value.distritoCode } : {}),
+    ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
+    ...(circuitoMatches && requestedCircuito ? { circuitoCode: requestedCircuito } : {}),
+    ...(establecimientoMatches && requestedEstablecimiento ? { establecimientoCode: requestedEstablecimiento } : {}),
+    ...(mesaMatches && typeof requestedMesa === "number" ? { mesaCode: requestedMesa } : {}),
+  };
+  const selected = {
+    ...(electionId ? { electionId } : {}), ...(categoryId ? { categoryId } : {}),
+    ...effectiveCodes, ...(level ? { level } : {}),
+  };
   const form = <ExplorerForm facets={facets} selected={selected} />;
-  const baseReady = Boolean(electionId && categoryId && normalized.value.distritoCode && level);
-  const scopeReady = level === EXPLORATION_LEVEL.DISTRITO || Boolean(normalized.value.seccionCode);
-  if (!baseReady || !scopeReady || !electionId || !categoryId || !normalized.value.distritoCode || !level) {
+  const distritoCode = effectiveCodes.distritoCode;
+  const seccionCode = effectiveCodes.seccionCode;
+  const baseReady = Boolean(electionId && categoryId && distritoCode && level);
+  const scopeReady = level === EXPLORATION_LEVEL.DISTRITO || Boolean(seccionCode);
+  if (!hierarchyMatches || !baseReady || !scopeReady || !electionId || !categoryId || !distritoCode || !level) {
     return <main><h1>Explore official results</h1>{form}<p role="status">Choose the available selectors, then apply the selection. The resulting URL is a reusable deep link.</p></main>;
   }
 
   let result;
   try {
     result = await repository.official({
-      electionId,
-      categoryId,
-      distritoCode: normalized.value.distritoCode,
-      ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
-      ...(normalized.value.circuitoCode ? { circuitoCode: normalized.value.circuitoCode } : {}),
-      ...(normalized.value.establecimientoCode ? { establecimientoCode: normalized.value.establecimientoCode } : {}),
-      ...(typeof normalized.value.mesaCode === "number" ? { mesaCode: normalized.value.mesaCode } : {}),
+      electionId, categoryId, distritoCode,
+      ...(seccionCode ? { seccionCode } : {}),
+      ...(effectiveCodes.circuitoCode ? { circuitoCode: effectiveCodes.circuitoCode } : {}),
+      ...(effectiveCodes.establecimientoCode ? { establecimientoCode: effectiveCodes.establecimientoCode } : {}),
+      ...(typeof effectiveCodes.mesaCode === "number" ? { mesaCode: effectiveCodes.mesaCode } : {}),
       requestedLevel: level,
     });
   } catch (error) {
@@ -187,13 +199,12 @@ async function renderOfficialExplorer(
 
   let schoolBreakdown: SchoolBreakdownResult | null = null;
   if (level === EXPLORATION_LEVEL.SECCION) {
-    const seccionCode = normalized.value.seccionCode;
     if (!seccionCode) {
       return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: school breakdown requires a complete seccion selection.</p></main>;
     }
     try {
       schoolBreakdown = await repository.schools({
-        electionId, categoryId, distritoCode: normalized.value.distritoCode,
+        electionId, categoryId, distritoCode,
         seccionCode, requestedLevel: level,
       });
     } catch (error) {

@@ -13,19 +13,49 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 27))
+
+
+def _validated_migration_path(number: int, *, down: bool = False) -> Path:
+    if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
+        raise ValueError("migration number must be an integer from 1 through 26")
+
+    directory = MIGRATIONS / "down" if down else MIGRATIONS
+    resolved_directory = directory.resolve(strict=True)
+    if resolved_directory != directory.absolute() or directory.is_symlink():
+        raise RuntimeError(f"migration directory must not contain symlinks: {directory}")
+
+    prefix = f"{number:04d}_"
+    suffix = ".down.sql" if down else ".sql"
+    matches = tuple(directory.glob(f"{prefix}*{suffix}"))
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected exactly one migration file for {number:04d}, found {len(matches)}"
+        )
+
+    migration = matches[0]
+    if (
+        migration.is_symlink()
+        or not migration.is_file()
+        or not migration.name.startswith(prefix)
+        or not migration.name.endswith(suffix)
+        or migration.resolve(strict=True).parent != resolved_directory
+    ):
+        raise RuntimeError(f"invalid migration path for {number:04d}: {migration}")
+    return migration
 
 
 def _apply_migration(database_dsn: str, number: int) -> None:
-    migration = next(MIGRATIONS.glob(f"{number:04d}_*.sql"))
+    migration = _validated_migration_path(number)
+    migration_sql = migration.read_bytes()
     with psycopg.connect(database_dsn) as connection:
-        migration_sql = migration.read_text(encoding="utf-8").encode("utf-8")
         connection.execute(migration_sql)
 
 
 def _apply_down_migration(database_dsn: str, number: int) -> None:
-    migration = next((MIGRATIONS / "down").glob(f"{number:04d}_*.down.sql"))
+    migration = _validated_migration_path(number, down=True)
+    migration_sql = migration.read_bytes()
     with psycopg.connect(database_dsn) as connection:
-        migration_sql = migration.read_text(encoding="utf-8").encode("utf-8")
         connection.execute(migration_sql)
 
 
@@ -230,6 +260,133 @@ def _seed_pre_0018_fiscalizacion_case(
         assert before_count is not None
 
     return official_jurisdiction_id, fiscalizacion_jurisdiction_id, before_count[0]
+
+
+def test_0025_facets_forward_down_and_reapply_restore_0020_behavior() -> None:
+    forward = MIGRATIONS / "0025_optimize_results_exploration_facets.sql"
+    down = MIGRATIONS / "down" / "0025_optimize_results_exploration_facets.down.sql"
+    assert forward.exists(), "0025 facets optimization migration is required"
+    assert down.exists(), "0025 facets optimization down migration is required"
+
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
+
+    schema_name = f"votus_facets_0025_{uuid.uuid4().hex}"
+    schema_created = False
+    try:
+        with psycopg.connect(database_dsn) as connection:
+            connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
+        schema_created = True
+
+        params = conninfo_to_dict(database_dsn)
+        params["options"] = f"-csearch_path={schema_name}"
+        history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+        signature = "results_exploration_facets(uuid,uuid,text,text,text)"
+        assert _available_migration_numbers(maximum=25) == list(range(1, 26))
+        # 0009/0010 establish cluster-global roles prepared by the integration harness.
+        for number in (*range(1, 9), *range(11, 21)):
+            _apply_migration(history_dsn, number)
+
+        with psycopg.connect(history_dsn) as connection:
+            baseline = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (signature,)
+            ).fetchone()
+        assert baseline is not None
+
+        _apply_migration(history_dsn, 25)
+        with psycopg.connect(history_dsn) as connection:
+            optimized = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (signature,)
+            ).fetchone()
+        assert optimized is not None and optimized != baseline
+
+        _apply_down_migration(history_dsn, 25)
+        with psycopg.connect(history_dsn) as connection:
+            restored = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (signature,)
+            ).fetchone()
+        assert restored == baseline
+
+        _apply_migration(history_dsn, 25)
+        with psycopg.connect(history_dsn) as connection:
+            reapplied = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (signature,)
+            ).fetchone()
+        assert reapplied == optimized
+    finally:
+        if schema_created:
+            with psycopg.connect(database_dsn) as connection:
+                connection.execute(
+                    sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))
+                )
+
+
+def test_0026_facets_forward_down_and_reapply_preserve_0025_and_exact_signatures() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
+
+    schema_name = f"votus_facets_0026_{uuid.uuid4().hex}"
+    schema_created = False
+    try:
+        with psycopg.connect(database_dsn) as connection:
+            connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
+        schema_created = True
+        params = conninfo_to_dict(database_dsn)
+        params["options"] = f"-csearch_path={schema_name}"
+        history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+        five_args = "results_exploration_facets(uuid,uuid,text,text,text)"
+        six_args = "results_exploration_facets(uuid,uuid,text,text,text,text)"
+        assert _available_migration_numbers(maximum=26) == list(range(1, 27))
+        for number in (*range(1, 9), *range(11, 21), 24, 25):
+            _apply_migration(history_dsn, number)
+
+        with psycopg.connect(history_dsn) as connection:
+            optimized_five = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (five_args,)
+            ).fetchone()
+        assert optimized_five is not None
+
+        _apply_migration(history_dsn, 26)
+        with psycopg.connect(history_dsn) as connection:
+            assert connection.execute("select to_regprocedure(%s)", (five_args,)).fetchone() == (
+                None,
+            )
+            six_definition = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (six_args,)
+            ).fetchone()
+        assert six_definition is not None
+        assert "p_establecimiento_code text DEFAULT NULL::text" in six_definition[0]
+
+        _apply_down_migration(history_dsn, 26)
+        with psycopg.connect(history_dsn) as connection:
+            restored_five = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (five_args,)
+            ).fetchone()
+            assert connection.execute("select to_regprocedure(%s)", (six_args,)).fetchone() == (
+                None,
+            )
+        assert restored_five == optimized_five
+
+        _apply_migration(history_dsn, 26)
+        with psycopg.connect(history_dsn) as connection:
+            reapplied_six = connection.execute(
+                "select pg_get_functiondef(%s::regprocedure)", (six_args,)
+            ).fetchone()
+            review_constraint = connection.execute(
+                "select pg_get_constraintdef(oid) from pg_constraint "
+                "where conname = 'review_item_kind_check'"
+            ).fetchone()
+        assert reapplied_six == six_definition
+        assert review_constraint is not None
+        assert "ambiguous_official_mesa_identity" in review_constraint[0]
+    finally:
+        if schema_created:
+            with psycopg.connect(database_dsn) as connection:
+                connection.execute(
+                    sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))
+                )
 
 
 def test_0024_review_kinds_reject_then_accept_and_rollback_reapply_safely() -> None:

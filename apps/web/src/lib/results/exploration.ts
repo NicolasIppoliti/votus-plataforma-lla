@@ -7,22 +7,28 @@ export const EXPLORATION_LEVEL = {
 export type ExplorationLevel = (typeof EXPLORATION_LEVEL)[keyof typeof EXPLORATION_LEVEL];
 const IDENTITY_STATUS = { CANONICAL: "canonical", UNMAPPED: "unmapped" } as const;
 type IdentityStatus = (typeof IDENTITY_STATUS)[keyof typeof IDENTITY_STATUS];
+export const FACET_NAME_STATUS = {
+  PRESENT: "present", MISSING: "missing", CONFLICT: "conflict",
+} as const;
+export type FacetNameStatus = (typeof FACET_NAME_STATUS)[keyof typeof FACET_NAME_STATUS];
 export interface ExplorationFacetSelection {
   electionId?: string; categoryId?: string; distritoCode?: string;
-  seccionCode?: string; circuitoCode?: string;
+  seccionCode?: string; circuitoCode?: string; establecimientoCode?: string;
 }
 export interface ExplorationSelection extends ExplorationFacetSelection {
   electionId: string; categoryId: string; distritoCode: string;
   establecimientoCode?: string; mesaCode?: number; requestedLevel: ExplorationLevel;
 }
 interface ElectionOption { id: string; year: number; round: string; label: string; }
-interface TextOption { code: string; name: string | null; }
+export interface FacetOption {
+  code: string; name: string | null; nameStatus: FacetNameStatus; nameVariantCount: number;
+}
 interface CategoryOption { id: string; name: string; }
 interface MesaOption { code: number; }
 export interface ExplorationFacets {
   elections: ElectionOption[]; categories: CategoryOption[];
-  distritos: TextOption[]; secciones: TextOption[]; circuitos: TextOption[];
-  establecimientos: TextOption[]; mesas: MesaOption[];
+  distritos: FacetOption[]; secciones: FacetOption[]; circuitos: FacetOption[];
+  establecimientos: FacetOption[]; mesas: MesaOption[];
   availableLevels: ExplorationLevel[];
 }
 export interface ExplorationParty {
@@ -305,12 +311,27 @@ function parseSchoolBreakdown(value: unknown): SchoolBreakdownResult {
       "malformed school breakdown payload");
   }
 }
-function parseTextOptions(value: unknown): TextOption[] {
+function parseTextOptions(value: unknown): FacetOption[] {
   if (!Array.isArray(value)) throw new Error("invalid options");
   return value.map((option) => {
     if (!isRecord(option)) throw new Error("invalid option");
-    return { code: stringField(option, "code"), name: nullableStringField(option, "name") };
+    const name = nullableStringField(option, "name");
+    const nameStatus = option["name_status"];
+    const nameVariantCount = nonnegativeInteger(option, "name_variant_count");
+    if (nameStatus !== FACET_NAME_STATUS.PRESENT && nameStatus !== FACET_NAME_STATUS.MISSING &&
+        nameStatus !== FACET_NAME_STATUS.CONFLICT) throw new Error("invalid name_status");
+    if ((nameStatus === FACET_NAME_STATUS.PRESENT && (name === null || nameVariantCount !== 1)) ||
+        (nameStatus === FACET_NAME_STATUS.MISSING && (name !== null || nameVariantCount !== 0)) ||
+        (nameStatus === FACET_NAME_STATUS.CONFLICT && (name !== null || nameVariantCount < 2))) {
+      throw new Error("inconsistent facet name metadata");
+    }
+    return { code: stringField(option, "code"), name, nameStatus, nameVariantCount };
   });
+}
+export function formatFacetOptionLabel(option: FacetOption): string {
+  if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return `${option.code} — ${option.name}`;
+  if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — name unavailable`;
+  return `${option.code} — conflicting names (${option.nameVariantCount} variants)`;
 }
 function parseFacets(value: unknown): ExplorationFacets {
   try {
@@ -409,6 +430,7 @@ export class ResultsExplorationRepository {
       p_distrito_code: selection.distritoCode ?? null,
       p_seccion_code: selection.seccionCode ?? null,
       p_circuito_code: selection.circuitoCode ?? null,
+      p_establecimiento_code: selection.establecimientoCode ?? null,
     });
     if (error) throw new Error(`results_exploration_facets failed: ${error.message}`);
     return parseFacets(data);

@@ -5,6 +5,8 @@ import hashlib
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 SQL_TESTS = REPO_ROOT / "supabase" / "tests"
@@ -12,6 +14,104 @@ SQL_TESTS = REPO_ROOT / "supabase" / "tests"
 
 def _sql(name: str) -> str:
     return (MIGRATIONS / name).read_text(encoding="utf-8").lower()
+
+
+_UUID_PATTERN = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE)
+_JURISDICTION_LIFETIME_EVENT = re.compile(
+    r"(?P<insert>insert\s+into\s+jurisdiction\s*\([^;]*?\)\s*values\s*"
+    r"(?P<values>.*?);)"
+    r"|(?P<savepoint>\bsavepoint\s+(?P<savepoint_name>[a-z_][a-z0-9_]*)\s*;)"
+    r"|(?P<rollback>\brollback\s+to(?:\s+savepoint)?\s+"
+    r"(?P<rollback_name>[a-z_][a-z0-9_]*)\s*;)",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _assert_jurisdiction_fixture_ids_are_unique(sql: str) -> None:
+    sql_without_comments = re.sub(r"--[^\n]*", "", sql)
+    events = list(_JURISDICTION_LIFETIME_EVENT.finditer(sql_without_comments))
+    expected_event_starts = sorted(
+        match.start()
+        for pattern in (
+            r"\binsert\s+into\s+jurisdiction\b",
+            r"(?m)^\s*savepoint\b",
+            r"\brollback\s+to\b",
+        )
+        for match in re.finditer(pattern, sql_without_comments, flags=re.IGNORECASE)
+    )
+    assert [event.start() for event in events] == expected_event_starts, (
+        "unsupported or ambiguous jurisdiction fixture/savepoint SQL structure"
+    )
+    assert not re.search(r"\brelease\s+savepoint\b", sql_without_comments, re.IGNORECASE), (
+        "release savepoint is unsupported by jurisdiction fixture lifetime validation"
+    )
+
+    active_ids: set[str] = set()
+    savepoints: list[tuple[str, set[str]]] = []
+    saw_fixture_row = False
+    for event in events:
+        if event.group("savepoint"):
+            name = event.group("savepoint_name").lower()
+            assert name not in {saved_name for saved_name, _ in savepoints}, (
+                f"ambiguous duplicate active savepoint: {name}"
+            )
+            savepoints.append((name, active_ids.copy()))
+            continue
+
+        if event.group("rollback"):
+            name = event.group("rollback_name").lower()
+            matching_indexes = [
+                index for index, (saved_name, _) in enumerate(savepoints) if saved_name == name
+            ]
+            assert len(matching_indexes) == 1, f"rollback targets unknown savepoint: {name}"
+            savepoint_index = matching_indexes[0]
+            active_ids = savepoints[savepoint_index][1].copy()
+            savepoints = savepoints[: savepoint_index + 1]
+            continue
+
+        values = event.group("values")
+        row_starts = re.findall(r"(?:^|,)\s*\(", values)
+        row_id_literals = re.findall(r"(?:^|,)\s*\(\s*'([^']+)'", values)
+        assert row_starts and len(row_id_literals) == len(row_starts), (
+            "every jurisdiction fixture row must start with a literal UUID"
+        )
+        invalid_ids = [
+            row_id for row_id in row_id_literals if _UUID_PATTERN.fullmatch(row_id) is None
+        ]
+        assert not invalid_ids, "every jurisdiction fixture row must start with a literal UUID"
+        saw_fixture_row = True
+        for row_id in row_id_literals:
+            fixture_id = row_id.lower()
+            assert fixture_id not in active_ids, (
+                "duplicate simultaneously-live jurisdiction fixture UUID suffix: "
+                f"{fixture_id.rsplit('-', 1)[-1]}"
+            )
+            active_ids.add(fixture_id)
+
+    assert saw_fixture_row, "jurisdiction fixture inserts are required"
+
+
+def test_results_exploration_jurisdiction_fixture_ids_are_unique() -> None:
+    sql = (SQL_TESTS / "results_exploration.sql").read_text(encoding="utf-8")
+
+    _assert_jurisdiction_fixture_ids_are_unique(sql)
+
+
+def test_jurisdiction_fixture_uniqueness_tracks_savepoint_lifetimes_and_fails_closed() -> None:
+    fixture_id = "20000000-0000-0000-0000-000000000001"
+    insert = f"insert into jurisdiction (id) values ('{fixture_id}');"
+
+    with pytest.raises(AssertionError, match="simultaneously-live"):
+        _assert_jurisdiction_fixture_ids_are_unique(f"{insert}\n{insert}")
+
+    _assert_jurisdiction_fixture_ids_are_unique(
+        f"savepoint fixture;\n{insert}\nrollback to savepoint fixture;\n{insert}"
+    )
+
+    with pytest.raises(AssertionError, match="unsupported or ambiguous"):
+        _assert_jurisdiction_fixture_ids_are_unique(
+            f"{insert}\ninsert into jurisdiction (id) select '{fixture_id}';"
+        )
 
 
 def _review_kind_allowlist(sql: str) -> set[str]:
@@ -492,6 +592,179 @@ def test_0020_indexes_match_the_exploration_predicates_and_down_is_complete() ->
     assert "drop index if exists result_row_exploration_scope_idx" in rollback
 
 
+def test_0025_replaces_facets_with_progressive_selection_aware_queries() -> None:
+    forward_path = MIGRATIONS / "0025_optimize_results_exploration_facets.sql"
+    down_path = MIGRATIONS / "down" / "0025_optimize_results_exploration_facets.down.sql"
+
+    assert forward_path.exists(), "0025 facets optimization migration is required"
+    assert down_path.exists(), "0025 facets optimization down migration is required"
+
+    forward = forward_path.read_text(encoding="utf-8").lower()
+    normalized = " ".join(forward.split())
+    signature = (
+        "create or replace function results_exploration_facets( "
+        "p_election_id uuid default null, p_category_id uuid default null, "
+        "p_distrito_code text default null, p_seccion_code text default null, "
+        "p_circuito_code text default null ) returns jsonb"
+    )
+    assert signature in normalized
+    definition = normalized.split(signature, 1)[1].split("$$;", 1)[0]
+    assert "language sql stable security invoker" in definition
+    assert "set search_path = public, pg_temp" in definition
+    assert "with official as" not in definition
+    assert not re.search(
+        r"from result_row\s+rr\s+join election\s+e\s+on\s+e\.id\s*=\s*rr\.election_id\s+"
+        r"join category\s+c\s+on\s+c\.id\s*=\s*rr\.category_id\s+"
+        r"join jurisdiction\s+j\s+on\s+j\.id\s*=\s*rr\.jurisdiction_id",
+        definition,
+    )
+
+    expected_keys = (
+        "status",
+        "elections",
+        "categories",
+        "distritos",
+        "secciones",
+        "circuitos",
+        "establecimientos",
+        "mesas",
+        "available_levels",
+    )
+    for key in expected_keys:
+        assert f"'{key}'" in definition
+    assert "'status', 'ok'" in definition
+    assert definition.count("'[]'::jsonb") >= 8
+
+    named_facets = (
+        ("distritos", "secciones", "distrito_name"),
+        ("secciones", "circuitos", "seccion_name"),
+        ("circuitos", "establecimientos", "circuito_name"),
+        ("establecimientos", "mesas", "establecimiento_name"),
+    )
+    for key, next_key, name_column in named_facets:
+        facet = definition.split(f"'{key}'", 1)[1].split(f"'{next_key}'", 1)[0]
+        assert "'name_status'" in facet
+        assert "'name_variant_count'" in facet
+        distinct_names = f"count(distinct j.{name_column})"
+        unique_name = (
+            f"case when {distinct_names} = 1 then max(j.{name_column}) else null end as name"
+        )
+        assert unique_name in facet
+        assert (
+            f"case {distinct_names} when 0 then 'missing' when 1 then 'present' "
+            "else 'conflict' end as name_status"
+        ) in facet
+        assert f"{distinct_names} as name_variant_count" in facet
+
+    establecimientos = definition.split("'establecimientos'", 1)[1].split("'mesas'", 1)[0]
+    assert "p_circuito_code is not null" in establecimientos
+    available_levels = definition.split("'available_levels'", 1)[1]
+    establecimiento_level = available_levels.split("select 'establecimiento', 4", 1)[1]
+    establecimiento_level = establecimiento_level.split("union all", 1)[0]
+    assert "p_circuito_code is not null" in establecimiento_level
+
+    rollback = down_path.read_text(encoding="utf-8").lower()
+    normalized_rollback = " ".join(rollback.split())
+    assert rollback.startswith("begin;") and rollback.rstrip().endswith("commit;")
+    assert signature in normalized_rollback
+    rollback_definition = normalized_rollback.split(signature, 1)[1].split("$$;", 1)[0]
+    assert "with official as" in rollback_definition
+    assert "join category c on c.id = rr.category_id" in rollback_definition
+    assert "join jurisdiction j on j.id = rr.jurisdiction_id" in rollback_definition
+    assert "results_exploration_official" not in rollback
+    for data_mutation in ("insert into", "update result_row", "delete from", "truncate"):
+        assert data_mutation not in rollback
+
+
+def test_0026_scopes_mesa_facets_to_the_complete_establishment_lineage() -> None:
+    forward_path = MIGRATIONS / "0026_scope_mesa_facets_to_establishment.sql"
+    down_path = MIGRATIONS / "down" / "0026_scope_mesa_facets_to_establishment.down.sql"
+
+    assert forward_path.exists(), "0026 mesa-lineage migration is required"
+    assert down_path.exists(), "0026 mesa-lineage down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    old_signature = "results_exploration_facets(uuid,uuid,text,text,text)"
+    new_signature = "results_exploration_facets(uuid,uuid,text,text,text,text)"
+    declaration = (
+        "create function results_exploration_facets( "
+        "p_election_id uuid default null, p_category_id uuid default null, "
+        "p_distrito_code text default null, p_seccion_code text default null, "
+        "p_circuito_code text default null, p_establecimiento_code text default null "
+        ") returns jsonb"
+    )
+    assert f"drop function {old_signature}" in forward
+    assert declaration in forward
+    assert "j.circuito_code = p_circuito_code" in forward
+    assert "j.establecimiento_code = p_establecimiento_code" in forward
+    mesas = forward.split("'mesas'", 1)[1].split("'available_levels'", 1)[0]
+    for parent in (
+        "p_circuito_code is not null",
+        "p_establecimiento_code is not null",
+        "j.circuito_code = p_circuito_code",
+        "j.establecimiento_code = p_establecimiento_code",
+    ):
+        assert parent in mesas
+    mesa_level = forward.split("select 'mesa', 5", 1)[1].split(") levels", 1)[0]
+    for parent in (
+        "p_circuito_code is not null",
+        "p_establecimiento_code is not null",
+        "j.circuito_code = p_circuito_code",
+        "j.establecimiento_code = p_establecimiento_code",
+    ):
+        assert parent in mesa_level
+    for role in ("public", "anon"):
+        assert f"revoke execute on function {new_signature} from {role}" in forward
+    assert f"grant execute on function {new_signature} to authenticated" in forward
+
+    rollback = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert f"drop function {new_signature}" in rollback
+    assert "create function results_exploration_facets(" in rollback
+    optimized_0025 = " ".join(
+        (MIGRATIONS / "0025_optimize_results_exploration_facets.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    optimized_body = optimized_0025.split(") returns jsonb", 1)[1].split("$$;", 1)[0]
+    restored_body = rollback.split(") returns jsonb", 1)[1].split("$$;", 1)[0]
+    assert restored_body == optimized_body
+    assert f"grant execute on function {old_signature} to authenticated" in rollback
+    for role in ("public", "anon"):
+        assert f"revoke execute on function {old_signature} from {role}" in rollback
+
+
+def test_0025_facets_only_introduces_joins_when_the_selection_needs_them() -> None:
+    forward = MIGRATIONS / "0025_optimize_results_exploration_facets.sql"
+    assert forward.exists(), "0025 facets optimization migration is required"
+    sql = _sql(forward.name)
+    facets = sql.split("create or replace function results_exploration_facets", 1)[1]
+    facets = facets.split("$$;", 1)[0]
+
+    elections = facets.split("'elections'", 1)[1].split("'categories'", 1)[0]
+    assert "from result_row rr" in elections
+    assert "join election e on e.id = rr.election_id" in elections
+    assert "rr.source_kind = 'official'" in elections
+    assert "join category" not in elections
+    assert "join jurisdiction" not in elections
+
+    categories = facets.split("'categories'", 1)[1].split("'distritos'", 1)[0]
+    assert "from result_row rr" in categories
+    assert "join category c on c.id = rr.category_id" in categories
+    assert "rr.election_id = p_election_id" in categories
+    assert "join jurisdiction" not in categories
+
+    district_and_lower = facets.split("'distritos'", 1)[1]
+    assert "join jurisdiction j on j.id = rr.jurisdiction_id" in district_and_lower
+    for selector in (
+        "p_category_id",
+        "p_distrito_code",
+        "p_seccion_code",
+        "p_circuito_code",
+    ):
+        assert selector in district_and_lower
+
+
 def test_0021_coverage_rpc_is_authenticated_and_source_isolated() -> None:
     sql = _sql("0021_results_coverage.sql")
     coverage = sql.split("create or replace function results_exploration_coverage", 1)[1]
@@ -556,6 +829,8 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "shared hit blocks",
         "shared read blocks",
         "results_exploration_facets",
+        "facets_cold_start",
+        "7000",
         "results_exploration_official",
         "results_exploration_coverage",
         "results_exploration_schools",

@@ -42,6 +42,7 @@ import {
 } from "@/lib/results/coverage";
 import {
   createResultsExplorationRepository,
+  formatFacetOptionLabel,
   normalizeExplorationParams,
   type ExplorationFacets,
 } from "@/lib/results/exploration";
@@ -492,10 +493,6 @@ interface CoverageFormSelection {
   seccionCode?: string;
 }
 
-function coverageOptionLabel(code: string, name: string | null): string {
-  return name ? `${code} — ${name}` : code;
-}
-
 function CoverageExplorerForm({
   facets,
   selected,
@@ -540,7 +537,7 @@ function CoverageExplorerForm({
         <option value="">Choose a distrito</option>
 				{facets.distritos.map((option) => (
 					<option key={option.code} value={option.code}>
-          {coverageOptionLabel(option.code, option.name)}
+          {formatFacetOptionLabel(option)}
 					</option>
 				))}
       </select>{" "}
@@ -553,7 +550,7 @@ function CoverageExplorerForm({
         <option value="">Choose a sección</option>
 				{facets.secciones.map((option) => (
 					<option key={option.code} value={option.code}>
-          {coverageOptionLabel(option.code, option.name)}
+          {formatFacetOptionLabel(option)}
 					</option>
 				))}
       </select>{" "}

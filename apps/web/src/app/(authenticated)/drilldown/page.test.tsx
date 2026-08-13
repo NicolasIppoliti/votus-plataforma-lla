@@ -34,10 +34,10 @@ const EXPLORATION_FACETS = {
   status: "ok",
   elections: [{ id: "2025-legislativas-nacional", year: 2025, round: "legislativas", label: "2025 legislativas" }],
   categories: [{ id: "c-diputados", name: "DIPUTADO NACIONAL" }],
-  distritos: [{ code: "02", name: "Buenos Aires" }],
-  secciones: [{ code: "027", name: "Coronel Rosales" }],
-  circuitos: [{ code: "0001", name: null }],
-  establecimientos: [{ code: "E1", name: "School one" }],
+  distritos: [{ code: "02", name: "Buenos Aires", name_status: "present", name_variant_count: 1 }],
+  secciones: [{ code: "027", name: "Coronel Rosales", name_status: "present", name_variant_count: 1 }],
+  circuitos: [{ code: "00001", name: null, name_status: "missing", name_variant_count: 0 }],
+  establecimientos: [{ code: "E1", name: null, name_status: "conflict", name_variant_count: 3 }],
   mesas: [{ code: 7 }],
   available_levels: ["seccion", "circuito", "establecimiento", "mesa"],
 };
@@ -236,6 +236,40 @@ describe("drilldown page", () => {
     expect(explorationRpcCalls.map((call) => call.name)).toEqual(["results_exploration_facets"]);
     for (const text of ["Explore official results", '<form action="/drilldown" method="get">',
       "2025 legislativas", "DIPUTADO NACIONAL"]) expect(markup).toContain(text);
+  });
+
+  it("distinguishes missing and conflicting facet names without changing option values", async () => {
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
+    expect(markup).toContain('<option value="00001">00001 — name unavailable</option>');
+    expect(markup).toContain('<option value="E1">E1 — conflicting names (3 variants)</option>');
+  });
+
+  it("passes the selected establishment into mesa facet discovery", async () => {
+    await DrilldownPage({ searchParams: Promise.resolve({
+      electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+      distritoCode: "2", seccionCode: "27", circuitoCode: "1",
+      establecimientoCode: "E1", mesaCode: "7", level: "mesa",
+    }) });
+    expect(explorationRpcCalls[0]).toEqual({ name: "results_exploration_facets", args: {
+      p_election_id: "2025-legislativas-nacional", p_category_id: "c-diputados",
+      p_distrito_code: "02", p_seccion_code: "027", p_circuito_code: "00001",
+      p_establecimiento_code: "E1",
+    } });
+  });
+
+  it("drops stale descendants when a changed parent no longer exposes them", async () => {
+    explorationFacetResult = { ...EXPLORATION_FACETS,
+      establecimientos: [{ code: "E2", name: "New parent", name_status: "present", name_variant_count: 1 }],
+      mesas: [],
+    };
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({
+      electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+      distritoCode: "2", seccionCode: "27", circuitoCode: "1",
+      establecimientoCode: "E1", mesaCode: "7", level: "mesa",
+    }) })) as ReactElement);
+    expect(markup).not.toContain('<option value="E1" selected="">');
+    expect(markup).not.toContain('<option value="7" selected="">');
+    expect(explorationRpcCalls.some((call) => call.name === "results_exploration_official")).toBe(false);
   });
 
   it("keeps the selector form reachable after applying only an election", async () => {

@@ -100,13 +100,13 @@ describe("migration release-gate integration", () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(
-			Array.from({ length: 24 }, (_, index) =>
+			Array.from({ length: 26 }, (_, index) =>
 				String(index + 1).padStart(4, "0"),
 			),
 		);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0025",
-			fileName: "0025_e2e_service_role_grants.sql",
+			version: "0027",
+			fileName: "0027_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(plan.pgTapProofs).toContainEqual({
@@ -142,6 +142,20 @@ describe("migration release-gate integration", () => {
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
+	});
+	it("proves the exact results-exploration rollback through migration 0026", () => {
+		const proof = readFileSync(new URL("../../../supabase/tests/results_exploration_release.sql", import.meta.url), "utf8");
+		const migrationSequence = Array.from(
+			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
+			([, down, version]) => `${version}-${down ? "down" : "up"}`,
+		);
+		expect(proof).toContain("26 as migration_inventory_count");
+		expect(migrationSequence).toEqual([
+			"0026-down", "0025-down", "0023-down", "0022-down", "0021-down", "0020-down",
+			"0020-up", "0021-up", "0022-up", "0023-up", "0025-up", "0026-up",
+		]);
+		expect(proof).toContain("0026 rollback did not restore the exact optimized five-argument facets definition");
+		expect(proof).toContain("0026 forward apply did not restore the six-argument mesa lineage definition");
 	});
 	it("hands the full scale and rollback/reapply proofs to production execution", async () => {
 		const executedPlans: ReleaseGatePlan[] = [];
@@ -536,41 +550,65 @@ it("reserves one unique set and releases duplicate reservations", async () => {
     expect(reservations.map(({ port }) => port)).toEqual([3100, 3200, 3300]);
     expect(released).toEqual([3100]);
 });
-it("requires the exact generated loopback API endpoint and all keys", () => {
-	const valid = JSON.stringify({
-		API_URL: "http://127.0.0.1:43123",
-      DB_URL: "postgresql://postgres@127.0.0.1:43124/postgres",
-		ANON_KEY: "anon",
-		SERVICE_ROLE_KEY: "service",
-	});
-	expect(assertStackStatus(valid, 43123).API_URL).toBe(
-		"http://127.0.0.1:43123",
+describe("release-gate version and endpoint validation", () => {
+	const stackStatus = (apiUrl: string) =>
+		JSON.stringify({
+			API_URL: apiUrl,
+			DB_URL: "postgresql://postgres@127.0.0.1:43124/postgres",
+			ANON_KEY: "anon",
+			SERVICE_ROLE_KEY: "service",
+		});
+	it.each(["http://127.0.0.1:43123", "http://127.0.0.1:43123/"])(
+		"accepts the exact generated API endpoint %s",
+		(apiUrl) => {
+			expect(assertStackStatus(stackStatus(apiUrl), 43123).API_URL).toBe(apiUrl);
+		},
 	);
-	expect(() =>
-		assertStackStatus(valid.replace("43123", "43124"), 43123),
-	).toThrow("API port");
-	expect(() =>
-		assertStackStatus(valid.replace("127.0.0.1", "example.test"), 43123),
-	).toThrow("loopback");
-	expect(() =>
-		assertStackStatus(
-			JSON.stringify({ API_URL: "http://127.0.0.1:43123" }),
-			43123,
-		),
-	).toThrow("ANON_KEY");
-	expect(() =>
-		assertStackStatus(
-			valid.replace(
-				"postgresql://postgres@127.0.0.1:43124/postgres",
-				"https://example.test",
+	it.each([
+		"https://127.0.0.1:43123/",
+		"ftp://127.0.0.1:43123/",
+		"http://user:password@127.0.0.1:43123/",
+		"http://127.0.0.1:43123/rest/v1",
+		"http://127.0.0.1:43123/?key=value",
+		"http://127.0.0.1:43123/#fragment",
+		"http://localhost:43123/",
+		"http://127.0.0.1:43124/",
+	])("rejects malformed API endpoint %s", (apiUrl) => {
+		expect(() => assertStackStatus(stackStatus(apiUrl), 43123)).toThrow("Supabase API URL");
+	});
+	it("still requires all keys and validates DB_URL independently", () => {
+		expect(() =>
+			assertStackStatus(JSON.stringify({ API_URL: "http://127.0.0.1:43123" }), 43123),
+		).toThrow("ANON_KEY");
+		expect(() =>
+			assertStackStatus(
+				stackStatus("http://127.0.0.1:43123").replace(
+					"postgresql://postgres@127.0.0.1:43124/postgres",
+					"https://example.test",
+				),
+				43123,
 			),
-			43123,
-		),
-	).toThrow("DB_URL");
-  });
-it("accepts only an explicit 7.x compiler version", () => {
-    expect(() => assertTs7Version("Version 7.0.2")).not.toThrow();
-    expect(() => assertTs7Version("Version 6.0.3")).toThrow("TypeScript 7.x");
+		).toThrow("DB_URL");
+	});
+	it.each([
+		"Version 7.0.2",
+		"Version 7.0.0-dev.20260813",
+		"Version 7.1.0-rc.1+build.5",
+	])("accepts TypeScript version %s", (output) => {
+		expect(() => assertTs7Version(output)).not.toThrow();
+	});
+	it.each([
+		"Version 7.invalid",
+		"Version 7.",
+		"Version 7.x",
+		"Version 7.0",
+		"Version 7.01.2",
+		"Version 7.0.2 garbage",
+		"Version 6.0.3",
+		"Version 7.0.0-dev.01",
+	])("rejects invalid TypeScript version %s", (output) => {
+		expect(() => assertTs7Version(output)).toThrow("TypeScript 7.x");
+	});
 });
 describe("ReleaseGateReporter", () => {
 	const cases = EXPECTED_E2E_SPECS.map(
