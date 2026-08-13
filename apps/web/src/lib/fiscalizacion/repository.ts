@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mixedGranularityReason } from "@/lib/results/granularity";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import type { Coverage, Granularity, SourceKind, SourceRef } from "@/lib/results/types";
+import {
+  GRANULARITY,
+  type Coverage,
+  type Granularity,
+  type SourceKind,
+  type SourceRef,
+} from "@/lib/results/types";
 
 /**
  * `ResultsRepository` — the database seam for `results-analysis` and the
@@ -31,7 +37,10 @@ export interface ResultRow {
   votes: number;
   sourceKind: SourceKind;
   granularity: Granularity;
-  /** Requested level, or null/undefined when historical request intent is unknown. */
+  /**
+   * Requested level, or null when historical request intent is unknown.
+   * Optional only for manually constructed rows; the database boundary rejects a missing value.
+   */
   requestedGranularity?: Granularity | null;
   archiveEntryId: string;
   /**
@@ -163,6 +172,33 @@ export function votesByParty(rows: ResultRow[]): { label: string; votes: number 
   // (`unmappedByListId`), and emitting `unmapped (list 4321): 700 votes` inside
   // the ranked party list put the same votes in two places, one of them where a
   // reader sums them as a party's figure.
+  const displayNamesByCanonicalId = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (!row.canonicalPartyId || !row.partyName) continue;
+    const displayNames = displayNamesByCanonicalId.get(row.canonicalPartyId) ?? new Set<string>();
+    displayNames.add(row.partyName);
+    displayNamesByCanonicalId.set(row.canonicalPartyId, displayNames);
+  }
+  const conflicts = [...displayNamesByCanonicalId.entries()]
+    .filter(([, displayNames]) => displayNames.size > 1)
+    .sort(([leftId], [rightId]) => leftId.localeCompare(rightId));
+  if (conflicts.length > 0) {
+    const details = conflicts
+      .map(
+        ([canonicalPartyId, displayNames]) =>
+          `${canonicalPartyId} -> ${[...displayNames].sort().join(", ")}`,
+      )
+      .join("; ");
+    if (conflicts.length === 1) {
+      const [canonicalPartyId, displayNames] = conflicts[0]!;
+      throw new Error(
+        `votesByParty: canonical party ${canonicalPartyId} has conflicting display names: ` +
+          [...displayNames].sort().join(", "),
+      );
+    }
+    throw new Error(`votesByParty: canonical parties have conflicting display names: ${details}`);
+  }
+
   const totals = new Map<string, { votes: number; label: string }>();
   for (const row of rows) {
     if (!row.canonicalPartyId || !row.partyName) continue;
@@ -204,9 +240,10 @@ export function unmappedByListId(rows: ResultRow[]): {
    * Rows carrying NO list id at all, PER SOURCE KIND — not parties that failed
    * to map.
    *
-   * One aggregate collapsed at least two distinct shapes (rule 2: the 2023
-   * generales file's empty `lista_numero`, and 2025's POSITIVO rows), and a
-   * large plausible total is how a destructive filter survives review.
+   * One aggregate collapsed at least two distinct shapes (rule 2: legitimately
+   * nullable historical rows, and current POSITIVO rows whose source identity
+   * comes from `agrupacion_id`), and a large plausible total is how a destructive
+   * filter survives review.
    */
   withoutListId: ExcludedByKind;
 } {
@@ -215,9 +252,9 @@ export function unmappedByListId(rows: ResultRow[]): {
   for (const row of rows) {
     if (isPartyResolved(row)) continue;
     if (row.listId === null) {
-      // NOT a list id that failed to map. Rule 2: `lista_numero` is never
-      // populated on a POSITIVO row in 2025 and is empty throughout the 2023
-      // generales file, so these are non-party rows. Bucketing them under
+      // NOT a list id that failed to map. Historical persisted rows may
+      // legitimately carry null, while current source identity comes from
+      // `agrupacion_id`; these are non-party rows. Bucketing them under
       // "resolved to no curated party" reports a shape the source never had.
       withoutListIdRows.push(row);
       continue;
@@ -547,16 +584,35 @@ export class SupabaseRowSource implements RowSource {
  * `fetchElectionYear` and `fetchCategoryName` already check with `typeof`;
  * this is the same discipline on the column every figure is built from.
  */
-function toResultRow(row: Record<string, unknown>): ResultRow {
-  const votes = row["votes"];
-  const numericVotes =
-    typeof votes === "number" ? votes : typeof votes === "string" ? Number(votes) : Number.NaN;
-  if (!Number.isFinite(numericVotes)) {
+const GRANULARITY_VALUES = Object.values(GRANULARITY);
+const GRANULARITY_ERROR_VALUES = GRANULARITY_VALUES.join(", ");
+
+function isGranularity(value: unknown): value is Granularity {
+  return typeof value === "string" && GRANULARITY_VALUES.includes(value as Granularity);
+}
+
+function parseVotes(value: unknown): number {
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^[0-9]+$/.test(value)
+        ? Number(value)
+        : Number.NaN;
+  if (
+    !Number.isSafeInteger(numericValue) ||
+    numericValue < 0 ||
+    numericValue > 2147483647
+  ) {
     throw new Error(
-      `ResultsRepository: result_row.votes is not a number (${JSON.stringify(votes)}); ` +
-        "every figure on every page is a sum of this column",
+      "ResultsRepository: result_row.votes must be a nonnegative 32-bit integer " +
+        `(number or digits-only string); received ${JSON.stringify(value)}`,
     );
   }
+  return numericValue;
+}
+
+function toResultRow(row: Record<string, unknown>): ResultRow {
+  const numericVotes = parseVotes(row["votes"]);
 
   const archiveEntryId = row["archive_entry_id"];
   if (typeof archiveEntryId !== "string") {
@@ -578,21 +634,13 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
     );
   }
   const granularity = row["granularity"];
-  if (typeof granularity !== "string") {
+  if (!isGranularity(granularity)) {
     throw new Error(
-      `ResultsRepository: result_row.granularity is not a string (${JSON.stringify(granularity)})`,
+      `ResultsRepository: result_row.granularity must be one of ${GRANULARITY_ERROR_VALUES}; ` +
+        `received ${JSON.stringify(granularity)}`,
     );
   }
   const requestedGranularity = row["requested_granularity"];
-  if (
-    requestedGranularity !== null &&
-    requestedGranularity !== undefined &&
-    typeof requestedGranularity !== "string"
-  ) {
-    throw new Error(
-      `ResultsRepository: result_row.requested_granularity is not a string or null (${JSON.stringify(requestedGranularity)})`,
-    );
-  }
 
   const jurisdictionId = row["jurisdiction_id"];
   const categoryId = row["category_id"];
@@ -607,26 +655,35 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
   }
 
   const listId = row["list_id"];
-  if (listId !== null && listId !== undefined && typeof listId !== "string") {
-    // The column the party mapping keys on. `SupabasePartyNameSource` keys its
-    // map with `String(list_id)`, so a numeric column here misses on EVERY row
-    // and `resolvePartyNames` writes `partyName: null` — the defined "no
-    // curated mapping" state. Every page would then report the curated table
-    // as empty because of a column type.
+  if (
+    listId !== null &&
+    (typeof listId !== "string" || listId.length === 0 || listId.trim() !== listId)
+  ) {
+    // The column the party mapping keys on. Missing, malformed, or normalized
+    // identities miss on EVERY row and `resolvePartyNames` writes
+    // `partyName: null` — the defined "no curated mapping" state. Every page
+    // would then report the curated table as empty because of a bad column.
     throw new Error(
-      `ResultsRepository: result_row.list_id is not a string or null (${JSON.stringify(listId)}); ` +
-        "the party mapping is keyed on it",
+      "ResultsRepository: result_row.list_id must be null or a non-empty trimmed string " +
+        `(${JSON.stringify(listId)}); the party mapping is keyed on it`,
+    );
+  }
+
+  if (requestedGranularity !== null && !isGranularity(requestedGranularity)) {
+    throw new Error(
+      "ResultsRepository: result_row.requested_granularity must be null or one of " +
+        `${GRANULARITY_ERROR_VALUES}; received ${JSON.stringify(requestedGranularity)}`,
     );
   }
 
   return {
     jurisdictionId,
     categoryId,
-    listId: listId ?? null,
+    listId,
     votes: numericVotes,
     sourceKind: sourceKind as SourceKind,
-    granularity: granularity as Granularity,
-    requestedGranularity: (requestedGranularity ?? null) as Granularity | null,
+    granularity,
+    requestedGranularity,
     archiveEntryId,
     // Resolved separately by `ResultsRepository.resolvePartyNames` —
     // never fabricated here.
@@ -641,6 +698,47 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
  * simply has no entry in the returned map — the caller (`ResultsRepository`)
  * is what turns that absence into the explicit `partyName: null` state.
  */
+function parsePartyMappingId(
+  value: unknown,
+  column: "list_id" | "canonical_party_id",
+  context: PartyMappingContext,
+): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(
+      `SupabasePartyNameSource: party_mapping.${column} must be a non-empty string in ` +
+        `(${context.year}, ${context.jurisdiction}, ${context.category}); received ` +
+        JSON.stringify(value),
+    );
+  }
+  return value;
+}
+
+function parseCanonicalDisplayName(
+  canonical: unknown,
+  listId: string,
+  context: PartyMappingContext,
+): string {
+  const relation = Array.isArray(canonical)
+    ? canonical.length === 1
+      ? canonical[0]
+      : null
+    : canonical;
+  if (
+    typeof relation !== "object" ||
+    relation === null ||
+    !("display_name" in relation) ||
+    typeof relation.display_name !== "string" ||
+    relation.display_name.length === 0
+  ) {
+    throw new Error(
+      `SupabasePartyNameSource: list id ${listId} has malformed party_canonical relation in ` +
+        `(${context.year}, ${context.jurisdiction}, ${context.category}); expected an object or ` +
+        "exactly one-element array with a non-empty string display_name",
+    );
+  }
+  return relation.display_name;
+}
+
 export class SupabasePartyNameSource implements PartyNameSource {
   constructor(private readonly client: SupabaseClient) {}
 
@@ -719,20 +817,14 @@ export class SupabasePartyNameSource implements PartyNameSource {
     // one id is an identity nobody can choose between, not a row to pick.
     const byListId = new Map<string, Set<string>>();
     for (const row of rows) {
-      const listId = String(row["list_id"]);
-      const canonical = row["canonical_party_id"];
-      if (typeof canonical !== "string") {
-        // The MIRROR of the missing-display-name refusal below. A mapping row
-        // with no canonical id cannot name its list id and cannot honestly be
-        // reported as "no curated mapping" either — the row exists.
-        throw new Error(
-          `SupabasePartyNameSource: list id ${listId} has a party_mapping row in ` +
-            `(${context.year}, ${context.jurisdiction}, ${context.category}) with no ` +
-            "canonical party id, so it can be neither named nor called unmapped",
-        );
-      }
+      const listId = parsePartyMappingId(row["list_id"], "list_id", context);
+      const canonicalPartyId = parsePartyMappingId(
+        row["canonical_party_id"],
+        "canonical_party_id",
+        context,
+      );
       const seen = byListId.get(listId) ?? new Set<string>();
-      seen.add(canonical);
+      seen.add(canonicalPartyId);
       byListId.set(listId, seen);
     }
     const ambiguous = [...byListId.entries()].filter(([, ids]) => ids.size > 1);
@@ -745,40 +837,57 @@ export class SupabasePartyNameSource implements PartyNameSource {
       );
     }
 
+    // A canonical id has ONE display name inside this exact mapping scope.
+    // Choosing whichever mapping row arrived first would make the displayed
+    // party depend on database and pagination order.
+    const displayNamesByCanonicalId = new Map<string, Set<string>>();
     for (const row of rows) {
-      const listId = row["list_id"] as string;
-      // Supabase's PostgREST client types a to-one nested relation as an
-      // array at the type level even though it is a single row at
-      // runtime (the join is on `canonical_party_id references
-      // party_canonical(id)`, a many-to-one) -- narrow defensively rather
-      // than assert a shape that does not match the generated type.
-      const canonical = row["party_canonical"] as
-        | { display_name: string }
-        | { display_name: string }[]
-        | null;
-      const displayName = Array.isArray(canonical) ? canonical[0]?.display_name : canonical?.display_name;
-      const canonicalPartyId = row["canonical_party_id"] as string | null;
-      if (canonicalPartyId && !displayName) {
-        // The mapping EXISTS and cannot be used — a broken join or a null
-        // `display_name`. Folding it into "unmapped" would state a fact about
-        // the curated data that is really a fact about this row, the same
-        // substitution this file refuses for short reads.
-        throw new Error(
-          `SupabasePartyNameSource: list id ${listId} maps to ${canonicalPartyId} in ` +
-            `(${context.year}, ${context.jurisdiction}, ${context.category}) but that ` +
-            "canonical party has no display name, so the row cannot be named or " +
-            "honestly reported as unmapped",
-        );
-      }
-      if (displayName && canonicalPartyId) {
-        // The CANONICAL ID travels with the name. A display name is not an
-        // identity: the curated file legitimately spells one canonical party
-        // "LA LIBERTAD AVANZA" in 2023 and "ALIANZA LA LIBERTAD AVANZA" in
-        // 2025, so keying a cross-year comparison on the name gives the two
-        // sides zero common keys — the fabricated-flip defect one layer up
-        // from the list ids it was moved off.
-        names.set(listId, { canonicalPartyId, displayName });
-      }
+      const canonicalPartyId = parsePartyMappingId(
+        row["canonical_party_id"],
+        "canonical_party_id",
+        context,
+      );
+      const listId = parsePartyMappingId(row["list_id"], "list_id", context);
+      const displayName = parseCanonicalDisplayName(row["party_canonical"], listId, context);
+      const seen = displayNamesByCanonicalId.get(canonicalPartyId) ?? new Set<string>();
+      seen.add(displayName);
+      displayNamesByCanonicalId.set(canonicalPartyId, seen);
+    }
+    const conflictingDisplayNames = [...displayNamesByCanonicalId.entries()]
+      .filter(([, displayNames]) => displayNames.size > 1)
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (conflictingDisplayNames.length > 0) {
+      throw new Error(
+        `SupabasePartyNameSource: in (${context.year}, ${context.jurisdiction}, ` +
+          `${context.category}) these canonical parties have conflicting display names, ` +
+          `so no name can be chosen for them: ` +
+          conflictingDisplayNames
+            .map(
+              ([canonicalPartyId, displayNames]) =>
+                `${canonicalPartyId} -> ${[...displayNames].sort().join(", ")}`,
+            )
+            .join("; "),
+      );
+    }
+
+    for (const row of rows) {
+      const listId = parsePartyMappingId(row["list_id"], "list_id", context);
+      // ONE parser owns both validation passes. Supabase may return a to-one
+      // relation as an object or a one-element array, but no other shape can be
+      // interpreted without silently choosing or dropping a relation row.
+      const displayName = parseCanonicalDisplayName(row["party_canonical"], listId, context);
+      const canonicalPartyId = parsePartyMappingId(
+        row["canonical_party_id"],
+        "canonical_party_id",
+        context,
+      );
+      // The CANONICAL ID travels with the name. A display name is not an
+      // identity: the curated file legitimately spells one canonical party
+      // "LA LIBERTAD AVANZA" in 2023 and "ALIANZA LA LIBERTAD AVANZA" in
+      // 2025, so keying a cross-year comparison on the name gives the two
+      // sides zero common keys — the fabricated-flip defect one layer up
+      // from the list ids it was moved off.
+      names.set(listId, { canonicalPartyId, displayName });
     }
 
     return names;
@@ -875,6 +984,17 @@ export async function fetchCategoryName(
   return typeof name === "string" ? { status: "ok", name } : { status: "unreadable_name" };
 }
 
+function parseSha256(value: unknown, archiveEntryId: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new Error(
+      `fetchSourceRefs: archive_entry.sha256 must be null or lowercase 64-character hex for ` +
+        `${String(archiveEntryId)}; received ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 export async function fetchSourceRefs(
   client: SupabaseClient,
   archiveEntryIds: string[],
@@ -918,6 +1038,7 @@ export async function fetchSourceRefs(
   const sources = data.map((row) => {
     const url = row["source_url"];
     const fetchedAt = row["fetched_at"];
+    const sha256 = parseSha256(row["sha256"], row["id"]);
     if (typeof url !== "string" || typeof fetchedAt !== "string") {
       // A NULL `source_url` would produce a `SourceRef` present in `sources`
       // and absent from `missing`, so the figure renders as TRACED with
@@ -935,7 +1056,7 @@ export async function fetchSourceRefs(
       // entry with no hash is an entry that cannot be verified — substituting
       // an empty string renders it through `ProvenanceLink` as provenance that
       // exists. `null` travels, and the display says "unhashed".
-      sha256: (row["sha256"] as string | null) ?? null,
+      sha256,
       url,
       fetchedAt,
     };

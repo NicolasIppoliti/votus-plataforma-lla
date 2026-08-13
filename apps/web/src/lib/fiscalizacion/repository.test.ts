@@ -364,15 +364,18 @@ describe("votesByParty folds on identity, not on the label", () => {
     partyName,
   });
 
-  it("test_one_party_under_two_spellings_is_one_line", () => {
-    // The curated file legitimately respells a party between elections. Folding
-    // on the display string rendered ONE party as two.
-    expect(
-      votesByParty([
-        row("canon-110", "LA LIBERTAD AVANZA", 40),
-        row("canon-110", "ALIANZA LA LIBERTAD AVANZA", 60),
-      ]),
-    ).toEqual([{ label: "LA LIBERTAD AVANZA", votes: 100 }]);
+  it("test_one_party_with_conflicting_names_refuses_in_every_row_order", () => {
+    const rows = [
+      row("canon-110", "LA LIBERTAD AVANZA", 40),
+      row("canon-110", "ALIANZA LA LIBERTAD AVANZA", 60),
+    ];
+    const expectedError =
+      "votesByParty: canonical party canon-110 has conflicting display names: " +
+      "ALIANZA LA LIBERTAD AVANZA, LA LIBERTAD AVANZA";
+
+    for (const orderedRows of [rows, [...rows].reverse()]) {
+      expect(() => votesByParty(orderedRows)).toThrow(expectedError);
+    }
   });
 
   it("test_two_parties_sharing_a_name_are_not_merged", () => {
@@ -539,11 +542,16 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     expect(read[0]?.requestedGranularity).toBe("mesa");
   });
 
-  it("test_requested_granularity_is_selected_and_historical_null_stays_unknown", async () => {
+  it("test_all_supported_granularities_are_accepted_and_historical_null_stays_unknown", async () => {
     const selections: string[] = [];
+    const granularities = ["mesa", "establecimiento", "circuito", "seccion", "distrito"] as const;
     const source = new SupabaseRowSource(
       fakeKeysetClient(
-        [{ ...row(1), requested_granularity: null }],
+        granularities.map((granularity, index) => ({
+          ...row(index),
+          granularity,
+          requested_granularity: index === 0 ? null : granularity,
+        })),
         1000,
         (columns) => selections.push(columns),
       ) as never,
@@ -552,7 +560,35 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     const read = await source.fetchRows(BASE_QUERY);
 
     expect(selections[0]).toContain("requested_granularity");
+    expect(read.map(({ granularity }) => granularity)).toEqual(granularities);
     expect(read[0]?.requestedGranularity).toBeNull();
+  });
+
+  it.each([
+    ["actual", { granularity: "subcircuito" }, "result_row.granularity must be one of"],
+    [
+      "requested",
+      { requested_granularity: "subcircuito" },
+      "result_row.requested_granularity must be null or one of",
+    ],
+  ])("test_unknown_%s_granularity_refuses", async (_field, override, errorPrefix) => {
+    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), ...override }]) as never);
+
+    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+      `ResultsRepository: ${errorPrefix} mesa, establecimiento, circuito, seccion, distrito`,
+    );
+  });
+
+  it("test_missing_requested_granularity_refuses", async () => {
+    const withoutRequestedGranularity = Object.fromEntries(
+      Object.entries(row(1)).filter(([key]) => key !== "requested_granularity"),
+    );
+    const source = new SupabaseRowSource(fakeKeysetClient([withoutRequestedGranularity]) as never);
+
+    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+      "ResultsRepository: result_row.requested_granularity must be null or one of " +
+        "mesa, establecimiento, circuito, seccion, distrito; received undefined",
+    );
   });
 
   it("test_a_server_cap_below_the_page_size_does_not_end_the_read", async () => {
@@ -572,17 +608,47 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     expect(read).toHaveLength(1200);
   });
 
-  it("test_a_votes_column_that_is_not_a_number_refuses_rather_than_concatenating", async () => {
-    // PostgREST serialises `int8`/`numeric` as a STRING, and `sum + row.votes`
-    // would concatenate — a total that is not a number and does not look
-    // wrong. A numeric string is read; anything else refuses.
-    const source = new SupabaseRowSource(
-      fakeKeysetClient([{ ...row(1), votes: "42" }, { ...row(2), votes: "x" }]) as never,
-    );
+  it.each([
+    ["zero number", 0, 0],
+    ["maximum number", 2147483647, 2147483647],
+    ["zero string", "0", 0],
+    ["leading-zero string", "00042", 42],
+    ["maximum string", "2147483647", 2147483647],
+  ])("test_result_row_votes_accepts_%s", async (_case, votes, expected) => {
+    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), votes }]) as never);
 
-    await expect(
-      source.fetchRows({ electionId: "e1", jurisdictionId: "j1", categoryId: "c1" }),
-    ).rejects.toThrow("result_row.votes is not a number");
+    const rows = await source.fetchRows(BASE_QUERY);
+
+    expect(rows[0]?.votes).toBe(expected);
+  });
+
+  it.each([
+    ["empty string", ""],
+    ["space", " "],
+    ["leading space", " 42"],
+    ["trailing space", "42 "],
+    ["positive sign", "+42"],
+    ["negative number", -1],
+    ["negative string", "-1"],
+    ["fraction number", 1.5],
+    ["fraction string", "1.5"],
+    ["exponent string", "1e3"],
+    ["alphabetic string", "x"],
+    ["unsafe integer", Number.MAX_SAFE_INTEGER + 1],
+    ["integer overflow number", 2147483648],
+    ["integer overflow string", "2147483648"],
+    ["null", null],
+    ["undefined", undefined],
+    ["boolean", true],
+    ["object", { value: 42 }],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ])("test_result_row_votes_refuses_%s", async (_case, votes) => {
+    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), votes }]) as never);
+
+    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+      "result_row.votes must be a nonnegative 32-bit integer",
+    );
   });
 });
 
@@ -635,6 +701,72 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
 
   const context = { year: 2025, jurisdiction: "national", category: "DIPUTADO NACIONAL" };
 
+  it("test_valid_party_mapping_identifiers_are_preserved", async () => {
+    const { client } = mappingClient(() => [
+      {
+        list_id: "list-110",
+        canonical_party_id: "canonical-lla",
+        party_canonical: { display_name: "ALIANZA LA LIBERTAD AVANZA" },
+      },
+    ]);
+
+    const names = await new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+      "list-110",
+    ]);
+
+    expect(names).toEqual(
+      new Map([
+        [
+          "list-110",
+          {
+            canonicalPartyId: "canonical-lla",
+            displayName: "ALIANZA LA LIBERTAD AVANZA",
+          },
+        ],
+      ]),
+    );
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["numeric", 110],
+    ["object", { id: "110" }],
+    ["empty", ""],
+  ])("test_party_mapping_list_id_refuses_%s", async (_case, listId) => {
+    const mapping: Record<string, unknown> = {
+      list_id: listId,
+      canonical_party_id: "canonical-lla",
+      party_canonical: { display_name: "ALIANZA LA LIBERTAD AVANZA" },
+    };
+    if (_case === "missing") delete mapping["list_id"];
+    const { client } = mappingClient(() => [mapping]);
+
+    await expect(
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-110"]),
+    ).rejects.toThrow("party_mapping.list_id must be a non-empty string");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["numeric", 110],
+    ["object", { id: "canonical-lla" }],
+    ["empty", ""],
+  ])("test_party_mapping_canonical_party_id_refuses_%s", async (_case, canonicalPartyId) => {
+    const mapping: Record<string, unknown> = {
+      list_id: "list-110",
+      canonical_party_id: canonicalPartyId,
+      party_canonical: { display_name: "ALIANZA LA LIBERTAD AVANZA" },
+    };
+    if (_case === "missing") delete mapping["canonical_party_id"];
+    const { client } = mappingClient(() => [mapping]);
+
+    await expect(
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-110"]),
+    ).rejects.toThrow("party_mapping.canonical_party_id must be a non-empty string");
+  });
+
   it("test_more_ids_than_one_batch_are_read_in_several_requests", async () => {
     // 450 ids cannot travel in one GET URL safely, and a single unbounded
     // request is what the server truncates. Every id must be asked for.
@@ -686,6 +818,64 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     await expect(
       new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["110", "999"]),
     ).rejects.toThrow("110 -> canon-a, canon-b");
+  });
+
+  it("test_one_canonical_party_with_conflicting_display_names_refuses_in_every_row_order", async () => {
+    const mappings = [
+      { list_id: "list-a", canonical_party_id: "canon-shared", party_canonical: { display_name: "A" } },
+      { list_id: "list-b", canonical_party_id: "canon-shared", party_canonical: { display_name: "B" } },
+    ];
+    const expectedError =
+      "SupabasePartyNameSource: in (2025, national, DIPUTADO NACIONAL) these canonical parties " +
+      "have conflicting display names, so no name can be chosen for them: canon-shared -> A, B";
+
+    for (const orderedMappings of [mappings, [...mappings].reverse()]) {
+      // A one-row server cap puts the two mappings on separate pages. Reassigning
+      // the keyset ids makes each iteration exercise the opposite page order.
+      const { client } = mappingClient(
+        () => orderedMappings.map((mapping, index) => ({ ...mapping, id: String(index) })),
+        1,
+      );
+
+      await expect(
+        new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-a", "list-b"]),
+      ).rejects.toThrow(expectedError);
+    }
+  });
+
+  it("test_canonical_relation_accepts_an_object_or_exactly_one_element_array", async () => {
+    const { client } = mappingClient(() => [
+      { list_id: "object", canonical_party_id: "canon-object", party_canonical: { display_name: "Object" } },
+      { list_id: "array", canonical_party_id: "canon-array", party_canonical: [{ display_name: "Array" }] },
+    ]);
+
+    const names = await new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+      "object",
+      "array",
+    ]);
+
+    expect(names.get("object")?.displayName).toBe("Object");
+    expect(names.get("array")?.displayName).toBe("Array");
+  });
+
+  it.each([
+    ["empty array", []],
+    ["multiple rows", [{ display_name: "A" }, { display_name: "A" }]],
+    ["null", null],
+    ["malformed object", { other: "A" }],
+    ["empty name", { display_name: "" }],
+  ])("test_canonical_relation_refuses_%s", async (_case, partyCanonical) => {
+    const { client } = mappingClient(() => [
+      { list_id: "list-a", canonical_party_id: "canon-a", party_canonical: partyCanonical },
+    ]);
+
+    await expect(
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-a"]),
+    ).rejects.toThrow(
+      "SupabasePartyNameSource: list id list-a has malformed party_canonical relation in " +
+        "(2025, national, DIPUTADO NACIONAL); expected an object or exactly one-element array " +
+        "with a non-empty string display_name",
+    );
   });
 });
 
@@ -749,21 +939,68 @@ describe("unmappedByListId separates the two ways a row has no party", () => {
   });
 
   it("test_a_row_with_no_list_id_is_not_a_list_id_that_failed_to_map", () => {
-    // Rule 2: `lista_numero` is never populated on a POSITIVO row in 2025 and
-    // is empty throughout the 2023 generales file. Those are non-party rows,
-    // and bucketing them under "(no list id)" reported them as ids that failed
-    // to map — a shape the source never had.
+    // Historical persisted rows may legitimately have `list_id: null`; the
+    // current source identity comes from `agrupacion_id`, not an empty
+    // `lista_numero`. These are non-party rows, and bucketing them under
+    // "(no list id)" would report them as ids that failed to map.
     const reading = unmappedByListId([row(null, 40), row("4321", 700)]);
 
     expect(reading.entries).toEqual([{ listId: "4321", rows: 1, votes: 700 }]);
-    // PER SOURCE KIND: one aggregate collapsed the 2023-generales empty
-    // `lista_numero` and 2025's POSITIVO rows into a single number.
+    // PER SOURCE KIND: one aggregate collapsed distinct historical nullable
+    // rows and current POSITIVO rows into a single number.
     expect(reading.withoutListId).toEqual({ official: { rows: 1, votes: 40 } });
     expect(reading.entries.some((entry) => entry.listId === "(no list id)")).toBe(false);
   });
 });
 
 describe("fetchSourceRefs reads every entry, not the first page", () => {
+  const sourceRefClient = (sha256: unknown, omitSha256 = false) => {
+    let after: string | null = null;
+    const row: Record<string, unknown> = {
+      id: "a1",
+      sha256,
+      source_url: "https://example.test/a1",
+      fetched_at: "2026-01-01T00:00:00Z",
+    };
+    if (omitSha256) delete row["sha256"];
+    return {
+      from() {
+        const chain: Record<string, unknown> = {};
+        for (const method of ["select", "in", "order", "limit"]) chain[method] = () => chain;
+        chain["gt"] = (_column: string, value: string) => {
+          after = value;
+          return chain;
+        };
+        chain["then"] = (resolve: (result: { data: unknown; error: null }) => unknown) =>
+          resolve({ data: after === null ? [row] : [], error: null });
+        return chain;
+      },
+    };
+  };
+
+  it.each([
+    ["explicit null", null],
+    ["lowercase 64-character hex", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
+  ])("test_source_ref_sha256_accepts_%s_unchanged", async (_case, sha256) => {
+    const refs = await fetchSourceRefs(sourceRefClient(sha256) as never, ["a1"]);
+
+    expect(refs.sources[0]?.sha256).toBe(sha256);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["undefined", undefined],
+    ["number", 42],
+    ["empty", ""],
+    ["63 characters", "a".repeat(63)],
+    ["non-hex", `${"a".repeat(63)}g`],
+    ["uppercase", "A".repeat(64)],
+  ])("test_source_ref_sha256_refuses_%s", async (_case, sha256) => {
+    await expect(
+      fetchSourceRefs(sourceRefClient(sha256, _case === "missing") as never, ["a1"]),
+    ).rejects.toThrow("archive_entry.sha256 must be null or lowercase 64-character hex");
+  });
+
   it("test_a_server_cap_below_the_batch_does_not_report_entries_as_missing", async () => {
     // A truncated response here does not lose a row quietly: it lands in
     // `missing`, which the pages render as "this figure cannot be traced" — a
@@ -802,6 +1039,50 @@ describe("fetchSourceRefs reads every entry, not the first page", () => {
 });
 
 describe("the columns identity and provenance depend on are checked", () => {
+  const resultRowRecord = (listId: unknown): Record<string, unknown> => ({
+    id: "000001",
+    jurisdiction_id: "j1",
+    category_id: "c1",
+    list_id: listId,
+    votes: 10,
+    source_kind: "official",
+    granularity: "mesa",
+    requested_granularity: "mesa",
+    archive_entry_id: "a1",
+  });
+
+  it.each([
+    ["string", "110"],
+    ["leading-zero string", "00110"],
+    ["explicit null", null],
+  ])("test_result_row_list_id_accepts_%s_unchanged", async (_case, listId) => {
+    const source = new SupabaseRowSource(fakeKeysetClient([resultRowRecord(listId)]) as never);
+
+    const rows = await source.fetchRows(BASE_QUERY);
+
+    expect(rows[0]?.listId).toBe(listId);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["undefined", undefined],
+    ["empty", ""],
+    ["whitespace-only", "   "],
+    ["leading whitespace", " 110"],
+    ["trailing whitespace", "110 "],
+    ["numeric", 110],
+    ["object", { id: "110" }],
+    ["boolean", true],
+  ])("test_result_row_list_id_refuses_%s", async (_case, listId) => {
+    const record = resultRowRecord(listId);
+    if (_case === "missing") delete record["list_id"];
+    const source = new SupabaseRowSource(fakeKeysetClient([record]) as never);
+
+    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+      "result_row.list_id must be null or a non-empty trimmed string",
+    );
+  });
+
   it("test_a_numeric_list_id_refuses_instead_of_emptying_the_mapping", async () => {
     // `SupabasePartyNameSource` keys its map with `String(list_id)`, so a
     // numeric column misses on EVERY row and `resolvePartyNames` writes
@@ -824,7 +1105,7 @@ describe("the columns identity and provenance depend on are checked", () => {
 
     await expect(
       source.fetchRows({ electionId: "e1", jurisdictionId: "j1", categoryId: "c1" }),
-    ).rejects.toThrow("result_row.list_id is not a string or null");
+    ).rejects.toThrow("result_row.list_id must be null or a non-empty trimmed string");
   });
 
   it("test_an_entry_with_no_source_url_is_not_reported_as_traced", async () => {
