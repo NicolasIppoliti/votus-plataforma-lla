@@ -18,7 +18,10 @@ import {
   describeExcluded,
   votesByParty,
 } from "@/lib/fiscalizacion/repository";
-import type { ExcludedByKind, YearLookup } from "@/lib/fiscalizacion/repository";
+import type {
+	ExcludedByKind,
+	YearLookup,
+} from "@/lib/fiscalizacion/repository";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
@@ -27,10 +30,14 @@ import {
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { pinnedCategoryId, servedJurisdictionId } from "@/lib/results/party-family";
+import {
+	pinnedCategoryId,
+	servedJurisdictionId,
+} from "@/lib/results/party-family";
 import type { Coverage, SourceRef } from "@/lib/results/types";
 import {
   createResultsCoverageRepository,
+	type CoverageExclusion,
   type CoverageResult,
 } from "@/lib/results/coverage";
 import {
@@ -49,7 +56,8 @@ import {
 export const FISCALIZACION_COVERAGE: Coverage = {
   observedUnits: 93,
   denominatorUnits: 153,
-  denominatorBasis: "distinct mesa_id, distrito_id=02 seccion_id=027 (26 Oct 2025)",
+	denominatorBasis:
+		"distinct mesa_id, distrito_id=02 seccion_id=027 (26 Oct 2025)",
   isRandomSample: false,
 };
 
@@ -75,7 +83,10 @@ export const FISCALIZACION_PARTY_CONTEXT: PartyMappingContext = {
  * names resolved against the wrong `(year, category)` mapping. The route now
  * refuses such a request rather than mislabelling it.
  */
-export function fiscalizacionElection(): { electionId?: string; electionLabel: string } {
+export function fiscalizacionElection(): {
+	electionId?: string;
+	electionLabel: string;
+} {
   // CONFIGURATION, like the jurisdiction and the category beside it. A
   // hardcoded curated slug (`2025-legislativas-nacional`) can never equal the
   // uuid `election.id` actually holds, so this route refused every real
@@ -102,7 +113,10 @@ export function fiscalizacionElection(): { electionId?: string; electionLabel: s
  * Absent configuration the route refuses: an unpinned scope is exactly the
  * mislabelling this guard exists to prevent.
  */
-export function fiscalizacionScope(): { jurisdictionId?: string; categoryId?: string } {
+export function fiscalizacionScope(): {
+	jurisdictionId?: string;
+	categoryId?: string;
+} {
   // The JURISDICTION comes from the same place every other route gets it:
   // `servedJurisdictionId`, which asks `resolvePartyFamily` and so refuses the
   // SAME collision the other three routes refuse. A separate
@@ -113,7 +127,9 @@ export function fiscalizacionScope(): { jurisdictionId?: string; categoryId?: st
   const served = servedJurisdictionId("national");
   const categoryId = pinnedCategoryId("FISCALIZACION");
   return {
-    ...(served.status === "ok" ? { jurisdictionId: served.jurisdictionId } : {}),
+		...(served.status === "ok"
+			? { jurisdictionId: served.jurisdictionId }
+			: {}),
     ...(categoryId ? { categoryId } : {}),
   };
 }
@@ -166,7 +182,6 @@ export function outOfScopeReason(request: {
 }
 
 export type FiscalizacionQuery = BaseQuery;
-
 
 export type FiscalizacionView =
   | { status: "refused"; reason: string }
@@ -342,7 +357,6 @@ export function mixedSourceKindReason(rows: ResultRow[]): string | null {
   );
 }
 
-
 /**
  * The party with the most votes among the rows, or `null` when no row
  * resolved to a party at all.
@@ -360,14 +374,18 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
   // granularity, so the unmapped tally is still computed and reported below.
   // Zeroing it hid the per-list-id breakdown entirely whenever levels were
   // mixed: a silent exclusion behind a plausible total.
-  const refusedReason = mixedSourceKindReason(rows) ?? mixedGranularityReason(rows);
+	const refusedReason =
+		mixedSourceKindReason(rows) ?? mixedGranularityReason(rows);
 
   // Keyed on the CANONICAL id, labelled by the display name. Keying on the
   // name merged nothing across a respelling and split one party in two within
   // a year if the curated file ever spelled it two ways.
   // NOT `votesByParty`: that name belongs to the imported fold, and shadowing
   // it here made the one identity boundary unreachable by name in this scope.
-  const totalsByParty = new Map<string, { votes: number; displayName: string }>();
+	const totalsByParty = new Map<
+		string,
+		{ votes: number; displayName: string }
+	>();
   for (const row of rows) {
     // An unmapped row keeps its votes in the denominator, but it can never BE
     // the answer: naming a party we could not resolve is exactly the
@@ -378,7 +396,10 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
     const name = row.partyName;
     if (!id || !name) continue;
     const entry = totalsByParty.get(id) ?? { votes: 0, displayName: name };
-    totalsByParty.set(id, { votes: entry.votes + row.votes, displayName: entry.displayName });
+		totalsByParty.set(id, {
+			votes: entry.votes + row.votes,
+			displayName: entry.displayName,
+		});
   }
 
   let top: { id: string; displayName: string } | null = null;
@@ -448,7 +469,9 @@ export function partyShare(
   // On the CANONICAL id. Matching display names across two elections gave the
   // sides zero common keys whenever the curated file respelled a party, and
   // the badge then reported "no rows for …" about a party that stood.
-  const matching = rows.filter((row) => row.canonicalPartyId === canonicalPartyId);
+	const matching = rows.filter(
+		(row) => row.canonicalPartyId === canonicalPartyId,
+	);
   if (matching.length === 0) {
     // `unavailable`, never 0 %: a party that did not stand has no share, and
     // a rendered 0 reads as a collapse it never suffered.
@@ -483,28 +506,56 @@ function CoverageExplorerForm({
   return (
     <form action="/fiscalizacion" method="get">
       <label htmlFor="coverage-election">Election</label>{" "}
-      <select id="coverage-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+			<select
+				id="coverage-election"
+				name="electionId"
+				defaultValue={selected.electionId ?? ""}
+			>
         <option value="">Choose an election</option>
-        {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+				{facets.elections.map((option) => (
+					<option key={option.id} value={option.id}>
+						{option.label}
+					</option>
+				))}
       </select>{" "}
       <label htmlFor="coverage-category">Category</label>{" "}
-      <select id="coverage-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+			<select
+				id="coverage-category"
+				name="categoryId"
+				defaultValue={selected.categoryId ?? ""}
+			>
         <option value="">Choose a category</option>
-        {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+				{facets.categories.map((option) => (
+					<option key={option.id} value={option.id}>
+						{option.name}
+					</option>
+				))}
       </select>{" "}
       <label htmlFor="coverage-distrito">Distrito</label>{" "}
-      <select id="coverage-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+			<select
+				id="coverage-distrito"
+				name="distritoCode"
+				defaultValue={selected.distritoCode ?? ""}
+			>
         <option value="">Choose a distrito</option>
-        {facets.distritos.map((option) => <option key={option.code} value={option.code}>
+				{facets.distritos.map((option) => (
+					<option key={option.code} value={option.code}>
           {coverageOptionLabel(option.code, option.name)}
-        </option>)}
+					</option>
+				))}
       </select>{" "}
       <label htmlFor="coverage-seccion">Sección</label>{" "}
-      <select id="coverage-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+			<select
+				id="coverage-seccion"
+				name="seccionCode"
+				defaultValue={selected.seccionCode ?? ""}
+			>
         <option value="">Choose a sección</option>
-        {facets.secciones.map((option) => <option key={option.code} value={option.code}>
+				{facets.secciones.map((option) => (
+					<option key={option.code} value={option.code}>
           {coverageOptionLabel(option.code, option.name)}
-        </option>)}
+					</option>
+				))}
       </select>{" "}
       <button type="submit">Show coverage</button>
     </form>
@@ -512,18 +563,38 @@ function CoverageExplorerForm({
 }
 
 function coverageCounts(counts: Record<string, number>): string {
-  return Object.entries(counts).map(([reason, count]) => `${reason}: ${count}`).join(", ");
+	return Object.entries(counts)
+		.map(([reason, count]) => `${reason}: ${count}`)
+		.join(", ");
 }
 
 function coverageExclusions(result: CoverageResult): ReactNode {
-  if (result.status !== "ok" || result.exclusions.length === 0) return null;
+	if (!result.exclusions || result.exclusions.length === 0) return null;
   return (
     <ul aria-label="Coverage exclusions">
       {result.exclusions.map((entry) => (
-        <li key={entry.reason}>{entry.reason}: {entry.rows} row(s), {entry.votes} vote(s)</li>
+				<li key={entry.reason}>
+					{entry.reason}: {entry.rows} row(s), {entry.votes} vote(s)
+				</li>
       ))}
     </ul>
   );
+}
+
+function schoolExclusions(entries: CoverageExclusion[]): ReactNode {
+	if (entries.length === 0) return null;
+	return (
+		<>
+			<h3>School exclusions</h3>
+			<ul aria-label="School exclusions">
+				{entries.map((entry) => (
+					<li key={entry.reason}>
+						{entry.reason}: {entry.rows} row(s), {entry.votes} vote(s)
+					</li>
+				))}
+			</ul>
+		</>
+	);
 }
 
 async function renderCoverageExplorer(
@@ -531,9 +602,15 @@ async function renderCoverageExplorer(
 ): Promise<ReactNode> {
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
-    return <main><h1>Fiscalización coverage</h1><p role="alert">
-      Refused: repeated query parameters cannot identify one scope ({repeated.join(", ")}).
-    </p></main>;
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				<p role="alert">
+					Refused: repeated query parameters cannot identify one scope (
+					{repeated.join(", ")}).
+				</p>
+			</main>
+		);
   }
   const electionId = stringParam(params, "electionId");
   const categoryId = stringParam(params, "categoryId");
@@ -544,14 +621,24 @@ async function renderCoverageExplorer(
     ...(rawSeccionCode ? { seccionCode: rawSeccionCode } : {}),
   });
   if (normalized.status === "invalid") {
-    return <main><h1>Fiscalización coverage</h1><p role="alert">
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				<p role="alert">
       Refused: {normalized.reason}. {coverageCounts(normalized.counts)}.
-    </p></main>;
+				</p>
+			</main>
+		);
   }
   const selected: CoverageFormSelection = {
-    ...(electionId ? { electionId } : {}), ...(categoryId ? { categoryId } : {}),
-    ...(normalized.value.distritoCode ? { distritoCode: normalized.value.distritoCode } : {}),
-    ...(normalized.value.seccionCode ? { seccionCode: normalized.value.seccionCode } : {}),
+		...(electionId ? { electionId } : {}),
+		...(categoryId ? { categoryId } : {}),
+		...(normalized.value.distritoCode
+			? { distritoCode: normalized.value.distritoCode }
+			: {}),
+		...(normalized.value.seccionCode
+			? { seccionCode: normalized.value.seccionCode }
+			: {}),
   };
   let client;
   let facets;
@@ -559,48 +646,98 @@ async function renderCoverageExplorer(
     client = await createSupabaseServerClient();
     facets = await createResultsExplorationRepository(client).facets(selected);
   } catch (error) {
-    return <main><h1>Fiscalización coverage</h1><p role="alert">
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				<p role="alert">
       Refused: {error instanceof Error ? error.message : String(error)}
-    </p></main>;
+				</p>
+			</main>
+		);
   }
   const form = <CoverageExplorerForm facets={facets} selected={selected} />;
   const distritoCode = normalized.value.distritoCode;
   const seccionCode = normalized.value.seccionCode;
   if (!electionId || !categoryId || !distritoCode || !seccionCode) {
-    return <main><h1>Fiscalización coverage</h1>{form}<p role="status">
-      Choose the available election, category, distrito and sección. The resulting URL is reusable.
-    </p></main>;
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				{form}
+				<p role="status">
+					Choose the available election, category, distrito and sección. The
+					resulting URL is reusable.
+				</p>
+			</main>
+		);
   }
   let result;
   try {
     result = await createResultsCoverageRepository(client).coverage({
-      electionId, categoryId, distritoCode, seccionCode,
+			electionId,
+			categoryId,
+			distritoCode,
+			seccionCode,
     });
   } catch (error) {
-    return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				{form}
+				<p role="alert">
       Refused: {error instanceof Error ? error.message : String(error)}
-    </p></main>;
+				</p>
+			</main>
+		);
   }
   if (result.status !== "ok") {
-    return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				{form}
+				<p role="alert">
       Refused: {result.reason}. {coverageCounts(result.counts)}.
-    </p></main>;
+				</p>
+				{coverageExclusions(result)}
+			</main>
+		);
   }
-  const archiveIds = [...result.provenance.officialArchiveEntryIds,
-    ...result.provenance.fiscalizacionArchiveEntryIds];
+	const archiveIds = [
+		...result.provenance.officialArchiveEntryIds,
+		...result.provenance.fiscalizacionArchiveEntryIds,
+	];
   let sources: SourceRef[];
   try {
     const provenance = await fetchSourceRefs(client, archiveIds);
-    if (provenance.missing.length > 0 || provenance.sources.length !== archiveIds.length) {
-      return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
-        Refused: coverage provenance is incomplete ({provenance.missing.join(", ")}).
-      </p></main>;
+		if (
+			provenance.missing.length > 0 ||
+			provenance.sources.length !== archiveIds.length
+		) {
+			return (
+				<main>
+					<h1>Fiscalización coverage</h1>
+					{form}
+					<p role="alert">
+						Refused: coverage provenance is incomplete (
+						{provenance.missing.join(", ")}).
+					</p>
+					{schoolExclusions(result.escuelas.exclusions)}
+					{coverageExclusions(result)}
+				</main>
+			);
     }
     sources = provenance.sources;
   } catch (error) {
-    return <main><h1>Fiscalización coverage</h1>{form}<p role="alert">
+		return (
+			<main>
+				<h1>Fiscalización coverage</h1>
+				{form}
+				<p role="alert">
       Refused: {error instanceof Error ? error.message : String(error)}
-    </p></main>;
+				</p>
+				{schoolExclusions(result.escuelas.exclusions)}
+				{coverageExclusions(result)}
+			</main>
+		);
   }
   const uncovered = result.mesas.filter((mesa) => !mesa.covered).length;
   return (
@@ -608,48 +745,107 @@ async function renderCoverageExplorer(
       <h1>Fiscalización coverage</h1>
       {form}
       <p role="note">
-        Uncovered means no fiscalización presence, not zero or missing official votes.
-        Official results remain separate.
+				Uncovered means no fiscalización presence, not zero or missing official
+				votes. Official results remain separate.
       </p>
       <p role="status">
-        {result.mesasCoverage.observedUnits} covered of {result.mesasCoverage.denominatorUnits} official mesas;
-        {" "}{uncovered} uncovered. This is not a random sample.
+				{result.mesasCoverage.observedUnits} covered of{" "}
+				{result.mesasCoverage.denominatorUnits} official mesas; {uncovered}{" "}
+				uncovered. This is not a random sample.
+			</p>
+			<p>
+				Scope: election {result.electionYear} {result.electionRound}, distrito{" "}
+				{result.distritoCode}, sección {result.seccionCode}. Coverage is{" "}
+				{result.isRandomSample ? "random" : "not a random sample"}.
       </p>
-      <p>Scope: election {result.electionYear} {result.electionRound}, distrito {result.distritoCode},
-        sección {result.seccionCode}. Coverage is {result.isRandomSample ? "random" : "not a random sample"}.</p>
       <h2>Mesas</h2>
       <table>
         <caption>Fiscalización presence by official mesa</caption>
-        <thead><tr><th scope="col">Mesa</th><th scope="col">Escuela</th><th scope="col">Coverage</th><th scope="col">Official result</th></tr></thead>
-        <tbody>{result.mesas.map((mesa) => <tr key={`${mesa.circuitoCode ?? "unknown"}-${mesa.code}`}>
+				<thead>
+					<tr>
+						<th scope="col">Mesa</th>
+						<th scope="col">Escuela</th>
+						<th scope="col">Coverage</th>
+						<th scope="col">Official result</th>
+					</tr>
+				</thead>
+				<tbody>
+					{result.mesas.map((mesa) => (
+						<tr
+							key={JSON.stringify([
+								mesa.circuitoCode,
+								mesa.establecimientoCode,
+								mesa.code,
+							])}
+						>
           <th scope="row">{mesa.code}</th>
-          <td>{mesa.establecimientoName ?? mesa.establecimientoCode ?? "School identity unavailable"}</td>
+							<td>
+								{mesa.establecimientoName ??
+									mesa.establecimientoCode ??
+									"School identity unavailable"}
+							</td>
           <td>{mesa.covered ? "Fiscal present" : "No fiscal present"}</td>
-          <td>{mesa.officialResultHref ? <Link href={mesa.officialResultHref}>View official votes</Link>
-            : "Official-result link unavailable: complete source identity is absent"}</td>
-        </tr>)}</tbody>
+							<td>
+								{mesa.officialResultHref ? (
+									<Link href={mesa.officialResultHref}>
+										View official votes
+									</Link>
+								) : (
+									"Official-result link unavailable: complete source identity is absent"
+								)}
+							</td>
+						</tr>
+					))}
+				</tbody>
       </table>
       <h2>Escuelas</h2>
-      {result.escuelas.status === "source_unavailable" ? <p role="alert">
-        {result.escuelas.reason}. {result.escuelas.exclusions.map((entry) =>
-          `${entry.reason}: ${entry.rows} row(s), ${entry.votes} vote(s)`).join(", ")}.
-      </p> : <ul aria-label="School coverage">{result.escuelas.items.map((school) =>
+			{result.escuelas.status === "source_unavailable" ? (
+				<>
+					<p role="alert">{result.escuelas.reason}.</p>
+					{schoolExclusions(result.escuelas.exclusions)}
+				</>
+			) : (
+				<>
+					<ul aria-label="School coverage">
+						{result.escuelas.items.map((school) => (
         <li key={`${school.circuitoCode}-${school.code}`}>
-        Circuito {school.circuitoCode} — {school.name ?? school.code}: {school.observedUnits} of
-        {" "}{school.denominatorUnits} mesas covered; not a random sample. {" "}
-        <Link href={school.officialResultHref}>View school official votes</Link>
-      </li>)}</ul>}
+								Circuito {school.circuitoCode} — {school.name ?? school.code}:{" "}
+								{school.observedUnits} of {school.denominatorUnits} mesas
+								covered; not a random sample.{" "}
+								<Link href={school.officialResultHref}>
+									View school official votes
+								</Link>
+							</li>
+						))}
+					</ul>
+					{schoolExclusions(result.escuelas.exclusions)}
+				</>
+			)}
       {coverageExclusions(result)}
-      <p role="note">Source audit: {result.sourceAudit.map((entry) =>
-        `${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`).join(", ")}.</p>
-      <p role="note">Denominator audit: {result.denominatorAudit.map((entry) =>
-        `${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`).join(", ")}.</p>
+			<p role="note">
+				Source audit:{" "}
+				{result.sourceAudit
+					.map(
+						(entry) =>
+							`${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`,
+					)
+					.join(", ")}
+				.
+			</p>
+			<p role="note">
+				Denominator audit:{" "}
+				{result.denominatorAudit
+					.map(
+						(entry) =>
+							`${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`,
+					)
+					.join(", ")}
+				.
+			</p>
       <ProvenanceLink sources={sources} />
     </main>
   );
 }
-
-
 
 /**
  * Pure render function, testable via `renderToStaticMarkup` without
@@ -700,13 +896,13 @@ function renderExcludedNote(excluded: ExcludedByKind | undefined): ReactNode {
  * Three copies drifted: the leakage refusal never rendered it at all, so a
  * drop this read counted vanished behind a refusal about a different one.
  */
-function renderComparisonExcludedNote(excluded: ExcludedByKind | undefined): ReactNode {
+function renderComparisonExcludedNote(
+	excluded: ExcludedByKind | undefined,
+): ReactNode {
   const tally = describeExcluded(excluded ?? {});
   if (tally === null) return null;
   return (
-    <p role="note">
-      The comparison election&apos;s own read excluded {tally}.
-    </p>
+		<p role="note">The comparison election&apos;s own read excluded {tally}.</p>
   );
 }
 
@@ -740,7 +936,9 @@ export function renderFiscalizacionView(
             none has an entry-id list, because the read that would have produced
             one refused or failed. Unlike the path-3 guards, there is no seam to
             regress, so a test could only fabricate the state. */}
-        {view.status === "read_failed" ? renderExcludedNote(view.excluded) : null}
+				{view.status === "read_failed"
+					? renderExcludedNote(view.excluded)
+					: null}
         {view.status === "read_failed" && view.unmapped ? (
           <UnmappedListIds
             entries={view.unmapped}
@@ -854,15 +1052,15 @@ export function renderFiscalizacionView(
           <p role="alert">
             {officialMissingProvenance.length} archive entry/entries backing the
             official comparison figure have no source record (
-            {officialMissingProvenance.join(", ")}); that figure cannot be traced
-            and must not be quoted.
+						{officialMissingProvenance.join(", ")}); that figure cannot be
+						traced and must not be quoted.
           </p>
         ) : null}
         {missingProvenance.length > 0 ? (
           <p role="alert">
             {missingProvenance.length} archive entry/entries backing these
-            figures have no source record ({missingProvenance.join(", ")}); those
-            figures cannot be traced and must not be quoted.
+						figures have no source record ({missingProvenance.join(", ")});
+						those figures cannot be traced and must not be quoted.
           </p>
         ) : null}
       </main>
@@ -886,14 +1084,14 @@ export function renderFiscalizacionView(
     <main>
       <h1>Fiscalización (unofficial)</h1>
       <p role="status">
-        Unofficial source — party-internal fiscalización, not an official
-        Junta Electoral result.
+				Unofficial source — party-internal fiscalización, not an official Junta
+				Electoral result.
       </p>
       {missingProvenance.length > 0 ? (
         <p role="alert">
-          {missingProvenance.length} archive entry/entries backing these
-          figures have no source record ({missingProvenance.join(", ")}); those
-          figures cannot be traced and must not be quoted.
+					{missingProvenance.length} archive entry/entries backing these figures
+					have no source record ({missingProvenance.join(", ")}); those figures
+					cannot be traced and must not be quoted.
         </p>
       ) : null}
       {excludedNote}
@@ -917,13 +1115,15 @@ export function renderFiscalizacionView(
         // "93 of 153 mesas" sat beside "no rows found" — a coverage claim
         // about nothing.
         <p role="note">
-          Coverage: {coverage.observedUnits} of {coverage.denominatorUnits} mesas
-          — not a random sample; these are exactly the mesas where the party
-          had a fiscal present.
+					Coverage: {coverage.observedUnits} of {coverage.denominatorUnits}{" "}
+					mesas — not a random sample; these are exactly the mesas where the
+					party had a fiscal present.
         </p>
       )}
       {rows.length === 0 ? (
-        <p>No fiscalización rows found for this jurisdiction/category/election.</p>
+				<p>
+					No fiscalización rows found for this jurisdiction/category/election.
+				</p>
       ) : (
         <>
           {/* Computed HERE: the empty-rows branch above renders no badge, so
@@ -986,9 +1186,7 @@ export function renderFiscalizacionView(
         // The FISCALIZACIÓN side failing was the half of this path that was
         // never wired: the official side resolved, the badge did not render,
         // and nothing said why.
-        <p role="note">
-          No comparison figure: {fiscalizacionShare.reason}
-        </p>
+				<p role="note">No comparison figure: {fiscalizacionShare.reason}</p>
       ) : null}
       {comparisonUnavailable ? (
         // A requested comparison that could not be built says so. Rendering
@@ -1169,7 +1367,10 @@ export function comparisonFromParams(
 
   const year = Number(rawYear);
   if (!Number.isInteger(year)) {
-    return { status: "refused", reason: `compareYear is not a year: ${rawYear}` };
+		return {
+			status: "refused",
+			reason: `compareYear is not a year: ${rawYear}`,
+		};
   }
 
   // A juxtaposition is ONE party, in ONE place, for ONE office, across two
@@ -1296,7 +1497,9 @@ export async function loadOfficialComparison(
   // clean and renders under the official-source badge.
   const foreign = [
     ...new Set(
-      response.rows.filter((row) => row.sourceKind !== "official").map((row) => row.sourceKind),
+			response.rows
+				.filter((row) => row.sourceKind !== "official")
+				.map((row) => row.sourceKind),
     ),
   ].sort();
   if (foreign.length > 0) {
@@ -1309,7 +1512,11 @@ export async function loadOfficialComparison(
 
   // The SAME party, never this election's own winner. Reporting each side's
   // top list compared two different parties and presented it as one trend.
-  const share = partyShare(response.rows, request.canonicalPartyId, request.partyName);
+	const share = partyShare(
+		response.rows,
+		request.canonicalPartyId,
+		request.partyName,
+	);
   if (share.status !== "ok") {
     return {
       status: "unavailable",
@@ -1334,12 +1541,12 @@ export async function loadOfficialComparison(
       sourceKind: "official",
       sharePercent: share.sharePercent,
       partyName: request.partyName,
-      archiveEntryIds: [...new Set(response.rows.map((row) => row.archiveEntryId))],
+			archiveEntryIds: [
+				...new Set(response.rows.map((row) => row.archiveEntryId)),
+			],
     },
   };
 }
-
-
 
 /**
  * Authenticated operator route for the fiscalización capability
@@ -1350,7 +1557,6 @@ export async function loadOfficialComparison(
 async function renderLegacyFiscalizacionPage(
   params: Record<string, string | string[] | undefined>,
 ): Promise<ReactNode> {
-
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
     return renderFiscalizacionView({
@@ -1387,8 +1593,12 @@ async function renderLegacyFiscalizacionPage(
   try {
     const pinnedElectionId = fiscalizacionElection().electionId;
     [pinnedYear, compareYear] = await Promise.all([
-      pinnedElectionId ? fetchElectionYear(supabaseForYear, pinnedElectionId) : null,
-      compareElectionId ? fetchElectionYear(supabaseForYear, compareElectionId) : null,
+			pinnedElectionId
+				? fetchElectionYear(supabaseForYear, pinnedElectionId)
+				: null,
+			compareElectionId
+				? fetchElectionYear(supabaseForYear, compareElectionId)
+				: null,
     ]);
   } catch (error) {
     return renderFiscalizacionView({
@@ -1407,7 +1617,8 @@ async function renderLegacyFiscalizacionPage(
   const pinnedElectionId = fiscalizacionElection().electionId;
   if (
     pinnedElectionId &&
-    (pinnedYear?.status !== "ok" || pinnedYear.year !== FISCALIZACION_PARTY_CONTEXT.year)
+		(pinnedYear?.status !== "ok" ||
+			pinnedYear.year !== FISCALIZACION_PARTY_CONTEXT.year)
   ) {
     return renderFiscalizacionView({
       status: "refused",
@@ -1423,13 +1634,20 @@ async function renderLegacyFiscalizacionPage(
     });
   }
 
-  const outOfScope = outOfScopeReason({ electionId, jurisdictionId, categoryId });
+	const outOfScope = outOfScopeReason({
+		electionId,
+		jurisdictionId,
+		categoryId,
+	});
   if (outOfScope) {
     // Refused, not relabelled. See `outOfScopeReason`. A comparison requested
     // in the same URL is still reported: returning here without it left the
     // operator unable to tell "no comparison asked for" from "asked for and
     // never attempted".
-    const requested = comparisonFromParams(params, compareYear?.status === "ok" ? compareYear.year : null);
+		const requested = comparisonFromParams(
+			params,
+			compareYear?.status === "ok" ? compareYear.year : null,
+		);
     return renderFiscalizacionView(
       { status: "refused", reason: outOfScope },
       {
@@ -1534,10 +1752,14 @@ async function renderLegacyFiscalizacionPage(
   // the framework error boundary, so two of three reads bypassed the refusal
   // this page states. `drilldown` fixed exactly this shape.
   const fiscalizacionEntryIds = [
-    ...new Set(view.status === "ok" ? view.rows.map((row) => row.archiveEntryId) : []),
+		...new Set(
+			view.status === "ok" ? view.rows.map((row) => row.archiveEntryId) : [],
+		),
   ];
   const officialEntryIds = comparison?.archiveEntryIds ?? [];
-  const allEntryIds = [...new Set([...fiscalizacionEntryIds, ...officialEntryIds])];
+	const allEntryIds = [
+		...new Set([...fiscalizacionEntryIds, ...officialEntryIds]),
+	];
 
   let fetched: SourceRef[] = [];
   let reportedMissing: string[] = [];

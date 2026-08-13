@@ -1,11 +1,15 @@
-import type { ReactElement } from "react";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readGranularity, unrecognizedLevels } from "@/lib/results/granularity";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResultsRepository } from "@/lib/fiscalizacion/repository";
 import type { ResultRow, RowSource } from "@/lib/fiscalizacion/repository";
 import type { SourceRef } from "@/lib/results/types";
-import FiscalizacionPage, { FISCALIZACION_COVERAGE, FISCALIZACION_PARTY_CONTEXT, loadFiscalizacionView, renderFiscalizacionView,
+import FiscalizacionPage, {
+	FISCALIZACION_COVERAGE,
+	FISCALIZACION_PARTY_CONTEXT,
+	loadFiscalizacionView,
+	renderFiscalizacionView,
   comparisonFromParams,
   loadOfficialComparison,
   topParty,
@@ -45,13 +49,16 @@ afterEach(() => {
 });
 
 vi.mock("@/lib/supabase/server-client", () => ({
-  createSupabaseServerClient: () => Promise.resolve({
-    rpc: (name: string) => Promise.resolve({ data: coverageRpcResults[name], error: null }),
+	createSupabaseServerClient: () =>
+		Promise.resolve({
+			rpc: (name: string) =>
+				Promise.resolve({ data: coverageRpcResults[name], error: null }),
   }),
 }));
 
 vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
+	const actual =
+		await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
   return {
     ...actual,
     createResultsRepository: () => {
@@ -72,8 +79,20 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
                 ? Promise.resolve(new Map())
                 : Promise.resolve(
               new Map([
-                ["110", { canonicalPartyId: "canon-110", displayName: "LA LIBERTAD AVANZA" }],
-                ["999", { canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" }],
+											[
+												"110",
+												{
+													canonicalPartyId: "canon-110",
+													displayName: "LA LIBERTAD AVANZA",
+												},
+											],
+											[
+												"999",
+												{
+													canonicalPartyId: "canon-999",
+													displayName: "FUERZA PATRIA",
+												},
+											],
               ]),
             ),
         },
@@ -84,7 +103,8 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
         // A denied read THROWS from `fetchRows`. Overriding
         // `queryFiscalizacion` to return the opt-in status asserted a shape
         // production cannot produce, and left the real path untested.
-        repository.queryFiscalizacion = () => Promise.reject(new Error(refuseQueryWith as string));
+				repository.queryFiscalizacion = () =>
+					Promise.reject(new Error(refuseQueryWith as string));
       }
       return Promise.resolve(repository);
     },
@@ -96,11 +116,15 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
     fetchElectionYear: (_client: unknown, electionId: string) => {
       // Two uuids mapped the way the `election` table does it: one held in
       // 2025 (the race these constants were verified for) and one in 2023.
-      if (electionId === "6dae81f9-c862-4cc5-b3f3-b640e4ea7319") return Promise.resolve({ status: "ok" as const, year: 2025 });
-      if (electionId === "b5b6a452-836d-40ea-a570-1cbc87fb84f6") return Promise.resolve({ status: "ok" as const, year: 2023 });
+			if (electionId === "6dae81f9-c862-4cc5-b3f3-b640e4ea7319")
+				return Promise.resolve({ status: "ok" as const, year: 2025 });
+			if (electionId === "b5b6a452-836d-40ea-a570-1cbc87fb84f6")
+				return Promise.resolve({ status: "ok" as const, year: 2023 });
       const match = /^(\d{4})/.exec(electionId);
       return Promise.resolve(
-        match ? { status: "ok" as const, year: Number(match[1]) } : { status: "no_row" as const },
+				match
+					? { status: "ok" as const, year: Number(match[1]) }
+					: { status: "no_row" as const },
       );
     },
     fetchSourceRefs: (_client: unknown, ids: string[]) =>
@@ -108,7 +132,9 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
         ? Promise.reject(new Error(refuseSourceReadWith))
         : Promise.resolve({
         sources: sourceRefs,
-            missing: ids.filter((id) => !sourceRefs.some((ref) => ref.archiveEntryId === id)),
+						missing: ids.filter(
+							(id) => !sourceRefs.some((ref) => ref.archiveEntryId === id),
+						),
           }),
   };
 });
@@ -117,7 +143,11 @@ function fakeRowSource(rows: ResultRow[]): RowSource {
   return { fetchRows: () => Promise.resolve(rows) };
 }
 
-const QUERY = { electionId: "2025-legislativas-nacional", jurisdictionId: "j-027", categoryId: "c-diputados" };
+const QUERY = {
+	electionId: "2025-legislativas-nacional",
+	jurisdictionId: "j-027",
+	categoryId: "c-diputados",
+};
 
 const FISCALIZACION_ROWS: ResultRow[] = [
   {
@@ -170,7 +200,9 @@ const OFFICIAL_ROWS: ResultRow[] = [
 
 describe("fiscalizacion page — loadFiscalizacionView", () => {
   it("test_route_requests_fiscalizacion_through_the_opt_in_path", async () => {
-    const repository = new ResultsRepository(fakeRowSource([...FISCALIZACION_ROWS, ...OFFICIAL_ROWS]));
+		const repository = new ResultsRepository(
+			fakeRowSource([...FISCALIZACION_ROWS, ...OFFICIAL_ROWS]),
+		);
     const queryFiscalizacionSpy = vi.spyOn(repository, "queryFiscalizacion");
     const queryOfficialSpy = vi.spyOn(repository, "queryOfficial");
 
@@ -184,9 +216,10 @@ describe("fiscalizacion page — loadFiscalizacionView", () => {
     expect(queryOfficialSpy).not.toHaveBeenCalled();
     expect(view.status).toBe("ok");
     if (view.status !== "ok") throw new Error("expected ok status");
-    expect(view.rows.every((row) => row.sourceKind === "fiscalizacion")).toBe(true);
+		expect(view.rows.every((row) => row.sourceKind === "fiscalizacion")).toBe(
+			true,
+		);
   });
-
 });
 
 describe("fiscalizacion page — renderFiscalizacionView", () => {
@@ -238,7 +271,11 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
           // when both sides describe the same one, so an unmapped row yields
           // no badge at all rather than an unmatched pair of numbers.
           rows: [
-            { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" },
+						{
+							...FISCALIZACION_ROW,
+							partyName: "LA LIBERTAD AVANZA",
+							canonicalPartyId: "canon-110",
+						},
           ],
           coverage: FISCALIZACION_COVERAGE,
           partyMappingConfigured: true,
@@ -261,14 +298,18 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
     // Both source kinds must be visually distinguishable — the two labels
     // must be different strings, never the same badge text reused.
     const unofficialText = html.toLowerCase().match(/unofficial source/g) ?? [];
-    const officialText = html.toLowerCase().match(/(?<!un)official source/g) ?? [];
+		const officialText =
+			html.toLowerCase().match(/(?<!un)official source/g) ?? [];
     expect(unofficialText.length).toBeGreaterThan(0);
     expect(officialText.length).toBeGreaterThan(0);
   });
 
   it("renders the refusal state, not an unlabelled figure, when refused", () => {
     const html = renderToStaticMarkup(
-      renderFiscalizacionView({ status: "refused", reason: "no coverage supplied" }),
+			renderFiscalizacionView({
+				status: "refused",
+				reason: "no coverage supplied",
+			}),
     );
 
     expect(html.toLowerCase()).toContain("refus");
@@ -288,7 +329,8 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
-    const comparison = comparisonFromParams({
+		const comparison = comparisonFromParams(
+			{
       compareElectionId: "2023-municipal",
       compareElectionLabel: "2023 municipal (official)",
       compareYear: "2023",
@@ -298,7 +340,9 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
       compareCategoryId: "c-diputados",
       // Ignored on purpose: a share supplied by the request is not evidence.
       compareSharePercent: "29.31",
-    }, 2023);
+			},
+			2023,
+		);
 
     expect(comparison).toEqual({
       status: "ok",
@@ -308,18 +352,24 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
         // The comparison election's OWN ids, not this one's.
         jurisdictionId: "j-027",
         categoryId: "c-diputados",
-        partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+				partyContext: {
+					year: 2023,
+					jurisdiction: "national",
+					category: "DIPUTADO NACIONAL",
+				},
       },
     });
   });
-
 
   it("test_incomplete_comparison_params_are_refused_with_the_missing_names", () => {
     // A half-specified comparison must not render a figure with a missing label.
     expect(comparisonFromParams({}, null)).toEqual({ status: "none" });
     // Half-specified is REFUSED, and names what is missing -- distinct from
     // "no comparison was asked for".
-    const refused = comparisonFromParams({ compareElectionId: "2023-municipal" }, null);
+		const refused = comparisonFromParams(
+			{ compareElectionId: "2023-municipal" },
+			null,
+		);
 
     expect(refused.status).toBe("refused");
     if (refused.status !== "refused") throw new Error("expected refused");
@@ -423,7 +473,9 @@ describe("fiscalizacion page — the real entry point", () => {
     expect(markup).toContain("Refused");
     // The refusal SENTENCE. A bare "93" also matches a vote count, a
     // percentage, or a slice of a sha256 digest, so it could not fail.
-    expect(markup).toContain("93-of-153 coverage denominator describes one jurisdiction");
+		expect(markup).toContain(
+			"93-of-153 coverage denominator describes one jurisdiction",
+		);
   });
 
   it("test_the_page_refuses_when_the_scope_is_not_configured", async () => {
@@ -485,7 +537,8 @@ describe("fiscalizacion page — the real entry point", () => {
     sourceRefs = [
       {
         archiveEntryId: "fiscalizacion/2025-lla",
-        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				sha256:
+					"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         url: "https://example.test/fiscalizacion-2025.csv",
         fetchedAt: "2026-01-01T00:00:00Z",
       },
@@ -514,13 +567,24 @@ describe("fiscalizacion page — the real entry point", () => {
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
-      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
-      { ...OFFICIAL_ROW, listId: "999", votes: 75, archiveEntryId: "national/2023-generales" },
+			{
+				...OFFICIAL_ROW,
+				listId: "110",
+				votes: 25,
+				archiveEntryId: "national/2023-generales",
+			},
+			{
+				...OFFICIAL_ROW,
+				listId: "999",
+				votes: 75,
+				archiveEntryId: "national/2023-generales",
+			},
     ];
     sourceRefs = [
       {
         archiveEntryId: "national/2023-generales",
-        sha256: "aaaabbbbccccdddd0000111122223333444455556666777788889999aaaabbbb",
+				sha256:
+					"aaaabbbbccccdddd0000111122223333444455556666777788889999aaaabbbb",
         url: "https://example.test/2023-generales.zip",
         fetchedAt: "2026-01-01T00:00:00Z",
       },
@@ -547,10 +611,19 @@ describe("fiscalizacion page — the real entry point", () => {
     // Inside the OFFICIAL figure's own section. Asserting the url appears
     // anywhere in the markup passed while the official ZIP's digest rendered
     // under the unofficial figure.
-    const officialSection = markup.slice(markup.indexOf('aria-label="official figure"'));
-    expect(officialSection).toContain("https://example.test/2023-generales.zip");
-    const fiscalizacionBlock = markup.slice(0, markup.indexOf("cross-election juxtaposition"));
-    expect(fiscalizacionBlock).not.toContain("https://example.test/2023-generales.zip");
+		const officialSection = markup.slice(
+			markup.indexOf('aria-label="official figure"'),
+		);
+		expect(officialSection).toContain(
+			"https://example.test/2023-generales.zip",
+		);
+		const fiscalizacionBlock = markup.slice(
+			0,
+			markup.indexOf("cross-election juxtaposition"),
+		);
+		expect(fiscalizacionBlock).not.toContain(
+			"https://example.test/2023-generales.zip",
+		);
   });
 
   it("test_the_page_reports_a_tie_as_a_tie", async () => {
@@ -596,7 +669,12 @@ describe("fiscalizacion page — the real entry point", () => {
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", granularity: "mesa", votes: 60 },
-      { ...FISCALIZACION_ROW, listId: "110", granularity: "seccion", votes: 40 },
+			{
+				...FISCALIZACION_ROW,
+				listId: "110",
+				granularity: "seccion",
+				votes: 40,
+			},
     ];
 
     const markup = renderToStaticMarkup(
@@ -620,7 +698,6 @@ describe("fiscalizacion page — the real entry point", () => {
     expect(markup).not.toContain("no row resolved to a curated party");
   });
 
-
   it("test_an_unorderable_level_reports_how_many_rows_carry_it", async () => {
     // A LIST OF NAMES was rendered as a row count, so many rows on one
     // unknown level read as "1 row(s)". The fixture needs at least two rows
@@ -629,9 +706,24 @@ describe("fiscalizacion page — the real entry point", () => {
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
-      { ...FISCALIZACION_ROW, listId: "110", granularity: "subcircuito" as never, votes: 30 },
-      { ...FISCALIZACION_ROW, listId: "110", granularity: "subcircuito" as never, votes: 20 },
-      { ...FISCALIZACION_ROW, listId: "999", granularity: "subcircuito" as never, votes: 50 },
+			{
+				...FISCALIZACION_ROW,
+				listId: "110",
+				granularity: "subcircuito" as never,
+				votes: 30,
+			},
+			{
+				...FISCALIZACION_ROW,
+				listId: "110",
+				granularity: "subcircuito" as never,
+				votes: 20,
+			},
+			{
+				...FISCALIZACION_ROW,
+				listId: "999",
+				granularity: "subcircuito" as never,
+				votes: 50,
+			},
     ];
 
     const markup = renderToStaticMarkup(
@@ -685,7 +777,12 @@ describe("fiscalizacion page — the real entry point", () => {
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", granularity: "mesa", votes: 40 },
-      { ...FISCALIZACION_ROW, listId: "999", granularity: "seccion", votes: 40 },
+			{
+				...FISCALIZACION_ROW,
+				listId: "999",
+				granularity: "seccion",
+				votes: 40,
+			},
     ];
 
     const markup = renderToStaticMarkup(
@@ -740,14 +837,25 @@ describe("fiscalizacion page — the real entry point", () => {
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
-      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
-      { ...OFFICIAL_ROW, listId: "999", votes: 75, archiveEntryId: "national/2023-generales" },
+			{
+				...OFFICIAL_ROW,
+				listId: "110",
+				votes: 25,
+				archiveEntryId: "national/2023-generales",
+			},
+			{
+				...OFFICIAL_ROW,
+				listId: "999",
+				votes: 75,
+				archiveEntryId: "national/2023-generales",
+			},
     ];
     // Only the fiscalización entry has a source record; the official one has none.
     sourceRefs = [
       {
         archiveEntryId: "fiscalizacion/2025-lla",
-        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				sha256:
+					"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         url: "https://example.test/fiscalizacion-2025.csv",
         fetchedAt: "2026-01-01T00:00:00Z",
       },
@@ -774,7 +882,9 @@ describe("fiscalizacion page — the real entry point", () => {
     // Attributed to the OFFICIAL side, never to the fiscalización one. Both
     // alerts share the phrase "have no source record", so the assertion names
     // the SUBJECT each one claims — a bare phrase match would pass on either.
-    expect(markup).toContain("backing the official comparison figure have no source record");
+		expect(markup).toContain(
+			"backing the official comparison figure have no source record",
+		);
     expect(markup).not.toContain("backing these figures have no source record");
   });
 
@@ -814,7 +924,8 @@ describe("fiscalizacion page — the real entry point", () => {
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
-    const result = comparisonFromParams({
+		const result = comparisonFromParams(
+			{
       compareElectionId: "2025-legislativas-nacional",
       compareElectionLabel: "26 Oct 2025 national legislative",
       compareYear: "2025",
@@ -822,7 +933,9 @@ describe("fiscalizacion page — the real entry point", () => {
       compareJurisdiction: "national",
       compareJurisdictionId: "j-027",
       compareCategoryId: "c-diputados",
-    }, 2025);
+			},
+			2025,
+		);
 
     // One election drawn as two, labelled a trend over time.
     expect(result.status).toBe("refused");
@@ -883,13 +996,30 @@ describe("fiscalizacion page — the real entry point", () => {
   });
 
   it("test_the_page_offers_source_backed_coverage_selectors_from_a_cold_start", async () => {
-    coverageRpcResults = { results_exploration_facets: {
-      status: "ok", elections: [{ id: "e-2025", year: 2025, round: "legislativas",
-        label: "2025 legislativas" }], categories: [], distritos: [], secciones: [],
-      circuitos: [], establecimientos: [], mesas: [], available_levels: [],
-    } };
+		coverageRpcResults = {
+			results_exploration_facets: {
+				status: "ok",
+				elections: [
+					{
+						id: "e-2025",
+						year: 2025,
+						round: "legislativas",
+						label: "2025 legislativas",
+					},
+				],
+				categories: [],
+				distritos: [],
+				secciones: [],
+				circuitos: [],
+				establecimientos: [],
+				mesas: [],
+				available_levels: [],
+			},
+		};
     const markup = renderToStaticMarkup(
-      (await FiscalizacionPage({ searchParams: Promise.resolve({}) })) as ReactElement,
+			(await FiscalizacionPage({
+				searchParams: Promise.resolve({}),
+			})) as ReactElement,
     );
 
     expect(markup).toContain("Fiscalización coverage");
@@ -897,58 +1027,479 @@ describe("fiscalizacion page — the real entry point", () => {
     expect(markup).not.toContain("Provide <code>electionId</code>");
   });
 
+	function auditableCoveragePayload() {
+		return {
+			status: "ok",
+			source_kind: "fiscalizacion",
+			is_random_sample: false,
+			election_year: 2025,
+			election_round: "legislativas",
+			distrito_code: "02",
+			seccion_code: "027",
+			mesas_coverage: {
+				observed_units: 1,
+				denominator_units: 2,
+				is_random_sample: false,
+			},
+			mesas: [
+				{
+					code: 1,
+					circuito_code: "00001",
+					establecimiento_code: "E1",
+					establecimiento_name: "Fixture school",
+					covered: true,
+				},
+				{
+					code: 2,
+					circuito_code: "00001",
+					establecimiento_code: null,
+					establecimiento_name: null,
+					covered: false,
+				},
+			],
+			escuelas: {
+				status: "available",
+				exclusions: [
+					{
+						reason: "official_rows_without_establecimiento_code",
+						rows: 1,
+						votes: 100,
+					},
+				],
+				items: [
+					{
+						circuito_code: "00001",
+						code: "E1",
+						name: "Fixture school",
+						observed_units: 1,
+						denominator_units: 1,
+						is_random_sample: false,
+						official_archive_entry_ids: ["national/2025-legislativas"],
+					},
+				],
+			},
+			source_audit: [{ kind: "fiscalizacion", rows: 1, votes: 999, mesas: 1 }],
+			denominator_audit: [{ kind: "official", rows: 2, votes: 300, mesas: 2 }],
+			exclusions: [
+				{
+					reason: "fiscalizacion_rows_without_official_mesa_mapping",
+					rows: 1,
+					votes: 50,
+				},
+			],
+			provenance: {
+				official_archive_entry_ids: ["national/2025-legislativas"],
+				fiscalizacion_archive_entry_ids: ["fiscalizacion/runtime"],
+			},
+		};
+	}
+
+	async function renderAuditableCoverage(
+		payload = auditableCoveragePayload(),
+	) {
+		coverageRpcResults = {
+			results_exploration_facets: {
+				status: "ok",
+				elections: [],
+				categories: [],
+				distritos: [],
+				secciones: [],
+				circuitos: [],
+				establecimientos: [],
+				mesas: [],
+				available_levels: [],
+			},
+			results_exploration_coverage: payload,
+		};
+		return renderToStaticMarkup(
+			(await FiscalizacionPage({
+				searchParams: Promise.resolve({
+					electionId: "20000000-0000-0000-0000-000000000001",
+					categoryId: "20000000-0000-0000-0000-000000000003",
+					distritoCode: "02",
+					seccionCode: "027",
+				}),
+			})) as ReactElement,
+		);
+	}
+
+	it("renders mesas with the same circuit and code at distinct schools without duplicate keys", async () => {
+		sourceRefs = [
+			{
+				archiveEntryId: "national/2025-legislativas",
+				sha256: "a".repeat(64),
+				url: "https://example.test/official",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
+			{
+				archiveEntryId: "fiscalizacion/runtime",
+				sha256: "b".repeat(64),
+				url: "https://example.test/internal",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
+		];
+		const payload = auditableCoveragePayload();
+		payload.mesas = [
+			{
+				code: 1,
+				circuito_code: "00001",
+				establecimiento_code: "E1",
+				establecimiento_name: "North school",
+				covered: true,
+			},
+			{
+				code: 1,
+				circuito_code: "00001",
+				establecimiento_code: "E2",
+				establecimiento_name: "South school",
+				covered: false,
+			},
+		];
+		payload.escuelas = {
+			status: "available",
+			exclusions: [],
+			items: [
+				{
+					circuito_code: "00001",
+					code: "E1",
+					name: "North school",
+					observed_units: 1,
+					denominator_units: 1,
+					is_random_sample: false,
+					official_archive_entry_ids: ["national/2025-legislativas"],
+				},
+				{
+					circuito_code: "00001",
+					code: "E2",
+					name: "South school",
+					observed_units: 0,
+					denominator_units: 1,
+					is_random_sample: false,
+					official_archive_entry_ids: ["national/2025-legislativas"],
+				},
+			],
+		};
+
+		coverageRpcResults = {
+			results_exploration_facets: {
+				status: "ok",
+				elections: [],
+				categories: [],
+				distritos: [],
+				secciones: [],
+				circuitos: [],
+				establecimientos: [],
+				mesas: [],
+				available_levels: [],
+			},
+			results_exploration_coverage: payload,
+		};
+		const page = (await FiscalizacionPage({
+			searchParams: Promise.resolve({
+				electionId: "20000000-0000-0000-0000-000000000001",
+				categoryId: "20000000-0000-0000-0000-000000000003",
+				distritoCode: "02",
+				seccionCode: "027",
+			}),
+		})) as ReactElement;
+		const rowKeys: string[] = [];
+		const collectRowKeys = (node: ReactNode): void => {
+			if (Array.isArray(node)) {
+				for (const child of node) collectRowKeys(child);
+				return;
+			}
+			if (!isValidElement<{ children?: ReactNode }>(node)) return;
+			if (node.type === "tr" && node.key !== null) rowKeys.push(String(node.key));
+			collectRowKeys(node.props.children);
+		};
+		collectRowKeys(page);
+
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+		let markup: string;
+		let errors: string;
+		try {
+			markup = renderToStaticMarkup(page);
+			errors = consoleError.mock.calls.flat().map(String).join("\n");
+		} finally {
+			consoleError.mockRestore();
+		}
+
+		expect(markup).toContain("North school");
+		expect(markup).toContain("South school");
+		expect(rowKeys).toHaveLength(2);
+		expect(new Set(rowKeys).size).toBe(rowKeys.length);
+		expect(errors).not.toContain("Encountered two children with the same key");
+	});
+
+	it("test_incomplete_provenance_refusal_retains_all_exclusion_breakdowns", async () => {
+		sourceRefs = [
+			{
+				archiveEntryId: "national/2025-legislativas",
+				sha256: "a".repeat(64),
+				url: "https://example.test/official",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
+		];
+		const markup = await renderAuditableCoverage();
+
+		expect(markup).toContain("coverage provenance is incomplete");
+		expect(markup).toContain(
+			"official_rows_without_establecimiento_code: 1 row(s), 100 vote(s)",
+		);
+		expect(markup).toContain(
+			"fiscalizacion_rows_without_official_mesa_mapping: 1 row(s), 50 vote(s)",
+		);
+	});
+
+	it("test_source_reference_failure_retains_all_exclusion_breakdowns", async () => {
+		refuseSourceReadWith = "source reference read failed";
+		const markup = await renderAuditableCoverage();
+
+		expect(markup).toContain("Refused: source reference read failed");
+		expect(markup).toContain(
+			"official_rows_without_establecimiento_code: 1 row(s), 100 vote(s)",
+		);
+		expect(markup).toContain(
+			"fiscalizacion_rows_without_official_mesa_mapping: 1 row(s), 50 vote(s)",
+		);
+	});
+
+	it("renders source_unavailable school exclusion evidence", async () => {
+		sourceRefs = [
+			{
+				archiveEntryId: "national/2025-legislativas",
+				sha256: "a".repeat(64),
+				url: "https://example.test/official",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
+			{
+				archiveEntryId: "fiscalizacion/runtime",
+				sha256: "b".repeat(64),
+				url: "https://example.test/internal",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
+		];
+		const payload = auditableCoveragePayload();
+		payload.mesas[0]!.circuito_code = null as never;
+		payload.mesas[0]!.establecimiento_code = null as never;
+		payload.mesas[1]!.establecimiento_code = null as never;
+		payload.escuelas = {
+			status: "source_unavailable",
+			reason: "the registered source publishes no complete establecimiento data",
+			exclusions: [
+				{
+					reason: "official_rows_without_circuito_and_establecimiento_code",
+					rows: 1,
+					votes: 100,
+				},
+				{
+					reason: "official_rows_without_establecimiento_code",
+					rows: 1,
+					votes: 200,
+				},
+			],
+			items: [],
+		} as never;
+
+		const markup = await renderAuditableCoverage(payload);
+
+		expect(markup).toContain(
+			"the registered source publishes no complete establecimiento data",
+		);
+		expect(markup).toContain("School exclusions");
+		expect(markup).toContain(
+			"official_rows_without_circuito_and_establecimiento_code: 1 row(s), 100 vote(s)",
+		);
+		expect(markup).toContain(
+			"official_rows_without_establecimiento_code: 1 row(s), 200 vote(s)",
+		);
+	});
+
+	it("test_the_production_entry_renders_every_refusal_exclusion", async () => {
+		coverageRpcResults = {
+			results_exploration_facets: {
+				status: "ok",
+				elections: [],
+				categories: [],
+				distritos: [],
+				secciones: [],
+				circuitos: [],
+				establecimientos: [],
+				mesas: [],
+				available_levels: [],
+			},
+			results_exploration_coverage: {
+				status: "denominator_unavailable",
+				reason: "no official mesas",
+				counts: {},
+				exclusions: [
+					{ reason: "missing_identity", rows: 2, votes: 300 },
+					{ reason: "unmapped", rows: 3, votes: 999 },
+				],
+			},
+		};
+		const markup = renderToStaticMarkup(
+			(await FiscalizacionPage({
+				searchParams: Promise.resolve({
+					electionId: "20000000-0000-0000-0000-000000000001",
+					categoryId: "20000000-0000-0000-0000-000000000003",
+					distritoCode: "02",
+					seccionCode: "027",
+				}),
+			})) as ReactElement,
+		);
+		expect(markup).toContain("missing_identity: 2 row(s), 300 vote(s)");
+		expect(markup).toContain("unmapped: 3 row(s), 999 vote(s)");
+	});
+
   it("test_the_production_entry_renders_coverage_and_official_result_links", async () => {
     sourceRefs = [
-      { archiveEntryId: "national/2025-legislativas", sha256: "a".repeat(64),
-        url: "https://example.test/official", fetchedAt: "2026-08-10T00:00:00Z" },
-      { archiveEntryId: "fiscalizacion/runtime", sha256: "b".repeat(64),
-        url: "https://example.test/internal", fetchedAt: "2026-08-10T00:00:00Z" },
+			{
+				archiveEntryId: "national/2025-legislativas",
+				sha256: "a".repeat(64),
+				url: "https://example.test/official",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
+			{
+				archiveEntryId: "fiscalizacion/runtime",
+				sha256: "b".repeat(64),
+				url: "https://example.test/internal",
+				fetchedAt: "2026-08-10T00:00:00Z",
+			},
     ];
     coverageRpcResults = {
-      results_exploration_facets: { status: "ok", elections: [], categories: [], distritos: [],
-        secciones: [], circuitos: [], establecimientos: [], mesas: [], available_levels: [] },
+			results_exploration_facets: {
+				status: "ok",
+				elections: [],
+				categories: [],
+				distritos: [],
+				secciones: [],
+				circuitos: [],
+				establecimientos: [],
+				mesas: [],
+				available_levels: [],
+			},
       results_exploration_coverage: {
-        status: "ok", source_kind: "fiscalizacion", is_random_sample: false,
-        election_year: 2025, election_round: "legislativas", distrito_code: "02", seccion_code: "027",
-        mesas_coverage: { observed_units: 1, denominator_units: 2, is_random_sample: false },
-        mesas: [
-          { code: 1, circuito_code: "00001", establecimiento_code: "E1",
-            establecimiento_name: "Fixture school", covered: true,
-            official_result_href: "/drilldown?mesaCode=1" },
-          { code: 2, circuito_code: "00002", establecimiento_code: "E1",
-            establecimiento_name: "Other fixture school", covered: false,
-            official_result_href: "/drilldown?mesaCode=2" },
-        ],
-        escuelas: { status: "available", exclusions: [], items: [
-          { circuito_code: "00001", code: "E1", name: "Fixture school",
-            observed_units: 1, denominator_units: 1, is_random_sample: false,
-            official_archive_entry_ids: ["national/2025-legislativas"] },
-          { circuito_code: "00002", code: "E1", name: "Other fixture school",
-            observed_units: 0, denominator_units: 1, is_random_sample: false,
-            official_archive_entry_ids: ["national/2025-legislativas"] },
-        ] },
-        source_audit: [{ kind: "fiscalizacion", rows: 1, votes: 999, mesas: 1 }],
-        denominator_audit: [{ kind: "official", rows: 2, votes: 260, mesas: 2 }], exclusions: [],
-        provenance: { official_archive_entry_ids: ["national/2025-legislativas"],
-          fiscalizacion_archive_entry_ids: ["fiscalizacion/runtime"] },
+				status: "ok",
+				source_kind: "fiscalizacion",
+				is_random_sample: false,
+				election_year: 2025,
+				election_round: "legislativas",
+				distrito_code: "02",
+				seccion_code: "027",
+				mesas_coverage: {
+					observed_units: 1,
+					denominator_units: 3,
+					is_random_sample: false,
+				},
+            mesas: [
+					{
+						code: 1,
+						circuito_code: "00001",
+						establecimiento_code: "E1",
+						establecimiento_name: "Fixture school",
+						covered: true,
+						official_result_href: "/drilldown?mesaCode=1",
+					},
+					{
+						code: 2,
+						circuito_code: "00002",
+						establecimiento_code: "E1",
+						establecimiento_name: "Other fixture school",
+						covered: false,
+						official_result_href: "/drilldown?mesaCode=2",
+					},
+					{
+						code: 3,
+						circuito_code: "00003",
+						establecimiento_code: null,
+						establecimiento_name: null,
+						covered: false,
+						official_result_href: null,
+					},
+            ],
+
+				escuelas: {
+					status: "available",
+					exclusions: [
+						{
+							reason: "official_rows_without_establecimiento_code",
+							rows: 1,
+							votes: 60,
+						},
+					],
+					items: [
+						{
+							circuito_code: "00001",
+							code: "E1",
+							name: "Fixture school",
+							observed_units: 1,
+							denominator_units: 1,
+							is_random_sample: false,
+							official_archive_entry_ids: ["national/2025-legislativas"],
+						},
+						{
+							circuito_code: "00002",
+							code: "E1",
+							name: "Other fixture school",
+							observed_units: 0,
+							denominator_units: 1,
+							is_random_sample: false,
+							official_archive_entry_ids: ["national/2025-legislativas"],
+						},
+					],
+				},
+				source_audit: [
+					{ kind: "fiscalizacion", rows: 1, votes: 999, mesas: 1 },
+				],
+				denominator_audit: [
+					{ kind: "official", rows: 3, votes: 320, mesas: 3 },
+				],
+				exclusions: [],
+				provenance: {
+					official_archive_entry_ids: ["national/2025-legislativas"],
+					fiscalizacion_archive_entry_ids: ["fiscalizacion/runtime"],
+				},
       },
     };
-    const markup = renderToStaticMarkup((await FiscalizacionPage({ searchParams: Promise.resolve({
+		const markup = renderToStaticMarkup(
+			(await FiscalizacionPage({
+				searchParams: Promise.resolve({
       electionId: "20000000-0000-0000-0000-000000000001",
       categoryId: "20000000-0000-0000-0000-000000000003",
-      distritoCode: "02", seccionCode: "027",
-    }) })) as ReactElement);
+					distritoCode: "02",
+					seccionCode: "027",
+				}),
+			})) as ReactElement,
+		);
 
-    expect(markup).toContain("1 covered of 2 official mesas");
-    expect(markup).toContain("1 uncovered");
+      expect(markup).toContain("1 covered of 3 official mesas");
+      expect(markup).toContain("2 uncovered");
+
     expect(markup).toContain("not a random sample");
-    expect(markup).toContain("Circuito 00001 — Fixture school: 1 of 1 mesas covered");
-    expect(markup).toContain("Circuito 00002 — Other fixture school: 0 of 1 mesas covered");
-    expect(markup).toContain("circuitoCode=00001&amp;establecimientoCode=E1&amp;level=establecimiento");
-    expect(markup).toContain("circuitoCode=00002&amp;establecimientoCode=E1&amp;level=establecimiento");
-    expect(markup).toContain("href=\"/drilldown?electionId=");
+		expect(markup).toContain(
+			"Circuito 00001 — Fixture school: 1 of 1 mesas covered",
+		);
+		expect(markup).toContain(
+			"Circuito 00002 — Other fixture school: 0 of 1 mesas covered",
+		);
+		expect(markup).toContain("School exclusions");
+		expect(markup).toContain(
+			"official_rows_without_establecimiento_code: 1 row(s), 60 vote(s)",
+		);
+		expect(markup).toContain(
+			"circuitoCode=00001&amp;establecimientoCode=E1&amp;level=establecimiento",
+		);
+		expect(markup).toContain(
+			"circuitoCode=00002&amp;establecimientoCode=E1&amp;level=establecimiento",
+		);
+		expect(markup).toContain('href="/drilldown?electionId=');
     expect(markup).toContain("mesaCode=2");
-    expect(markup).toContain("Uncovered means no fiscalización presence, not zero or missing official votes");
+		expect(markup).toContain(
+			"Uncovered means no fiscalización presence, not zero or missing official votes",
+		);
   });
 });
 
@@ -963,18 +1514,41 @@ describe("fiscalizacion page — the figures it displays", () => {
   it("test_share_percent_aggregates_every_row_of_the_party", () => {
     const rows: ResultRow[] = [
       // One party, split across two mesas: 80 of 140.
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 40 },
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 40 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				votes: 40,
+			},
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				votes: 40,
+			},
       // A single row that outranks either of the rows above.
-      { ...FISCALIZACION_ROW, partyName: "FUERZA PATRIA", canonicalPartyId: "canon-999", votes: 60 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "FUERZA PATRIA",
+				canonicalPartyId: "canon-999",
+				votes: 60,
+			},
     ];
 
-    expect(partyShare(rows, "canon-110")).toEqual({ status: "ok", sharePercent: 57.14 });
+		expect(partyShare(rows, "canon-110")).toEqual({
+			status: "ok",
+			sharePercent: 57.14,
+		});
   });
 
   it("test_unmapped_rows_stay_in_the_denominator_without_becoming_a_party", () => {
     const rows: ResultRow[] = [
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 50 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				votes: 50,
+			},
       // Three unmapped rows. They are votes that were cast, so they belong in
       // the denominator — but they are not a party and can never be reported
       // as one.
@@ -983,11 +1557,16 @@ describe("fiscalizacion page — the figures it displays", () => {
       { ...FISCALIZACION_ROW, partyName: null, votes: 20 },
     ];
 
-    expect(partyShare(rows, "canon-110")).toEqual({ status: "ok", sharePercent: 45.45 });
+		expect(partyShare(rows, "canon-110")).toEqual({
+			status: "ok",
+			sharePercent: 45.45,
+		});
     expect(topParty(rows).partyName).toBe("LA LIBERTAD AVANZA");
     // Per list id, which is the shape the render consumes — a bare total is
     // what `unmappedByListId` replaced.
-    expect(topParty(rows).unmappedByListId).toEqual([{ listId: "110", rows: 3, votes: 60 }]);
+		expect(topParty(rows).unmappedByListId).toEqual([
+			{ listId: "110", rows: 3, votes: 60 },
+		]);
   });
 
   it("test_granularity_reports_the_coarsest_level_present", () => {
@@ -1008,7 +1587,8 @@ describe("fiscalizacion page — the figures it displays", () => {
   // coverage of behaviour no entry point reaches.
 
   it("test_a_comparison_figure_is_never_built_from_a_supplied_share", () => {
-    const request = comparisonFromParams({
+		const request = comparisonFromParams(
+			{
       compareElectionId: "2023-generales",
       compareElectionLabel: "22 Oct 2023 generales",
       compareYear: "2023",
@@ -1017,7 +1597,9 @@ describe("fiscalizacion page — the figures it displays", () => {
       compareJurisdictionId: "j-027",
       compareCategoryId: "c-diputados",
       compareSharePercent: "99.99",
-    }, 2023);
+			},
+			2023,
+		);
 
     // The share must come from archived rows, never from the request. An
     // operator-supplied number stamped `sourceKind: "official"` renders with
@@ -1038,8 +1620,17 @@ describe("fiscalizacion page — the figures it displays", () => {
         fetchPartyNames: () =>
           Promise.resolve(
             new Map([
-              ["110", { canonicalPartyId: "canon-110", displayName: "LA LIBERTAD AVANZA" }],
-              ["999", { canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" }],
+							[
+								"110",
+								{
+									canonicalPartyId: "canon-110",
+									displayName: "LA LIBERTAD AVANZA",
+								},
+							],
+							[
+								"999",
+								{ canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" },
+							],
             ]),
           ),
       },
@@ -1050,7 +1641,11 @@ describe("fiscalizacion page — the figures it displays", () => {
       electionLabel: "22 Oct 2023 generales",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       partyName: "LA LIBERTAD AVANZA",
     });
@@ -1098,8 +1693,17 @@ describe("fiscalizacion page — the figures it displays", () => {
         fetchPartyNames: () =>
           Promise.resolve(
             new Map([
-              ["110", { canonicalPartyId: "canon-110", displayName: "LA LIBERTAD AVANZA" }],
-              ["999", { canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" }],
+							[
+								"110",
+								{
+									canonicalPartyId: "canon-110",
+									displayName: "LA LIBERTAD AVANZA",
+								},
+							],
+							[
+								"999",
+								{ canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" },
+							],
             ]),
           ),
       },
@@ -1110,7 +1714,11 @@ describe("fiscalizacion page — the figures it displays", () => {
       electionLabel: "2023 municipal",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       partyName: "LA LIBERTAD AVANZA",
     }).then((comparison) => {
@@ -1136,7 +1744,11 @@ describe("fiscalizacion page — the figures it displays", () => {
       electionLabel: "22 Oct 2023 generales",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       partyName: "LA LIBERTAD AVANZA",
     });
@@ -1162,11 +1774,16 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     "ALIANZA LA LIBERTAD AVANZA": "canon-110",
     "FUERZA PATRIA": "canon-999",
   };
-  const NAMED = (partyName: string | null, votes: number, listId: string | null = "x"): ResultRow => ({
+	const NAMED = (
+		partyName: string | null,
+		votes: number,
+		listId: string | null = "x",
+	): ResultRow => ({
     ...FISCALIZACION_ROW,
     listId,
     partyName,
-    canonicalPartyId: partyName === null ? null : (CANON[partyName] ?? `canon-${partyName}`),
+		canonicalPartyId:
+			partyName === null ? null : (CANON[partyName] ?? `canon-${partyName}`),
     votes,
   });
 
@@ -1198,14 +1815,20 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       // Counted and broken down, not silently skipped.
       unmappedByListId: [{ listId: "x", rows: 1, votes: 90 }],
     });
-    expect(partyShare(rows, "canon-999")).toEqual({ status: "ok", sharePercent: 10 });
+		expect(partyShare(rows, "canon-999")).toEqual({
+			status: "ok",
+			sharePercent: 10,
+		});
   });
 
   it("test_a_tie_at_the_top_selects_no_party", () => {
     // `votes > topVotes` kept whichever party the Map saw first — row order —
     // and that name then selected which party the whole juxtaposition
     // reported.
-    const result = topParty([NAMED("LA LIBERTAD AVANZA", 5000), NAMED("FUERZA PATRIA", 5000)]);
+		const result = topParty([
+			NAMED("LA LIBERTAD AVANZA", 5000),
+			NAMED("FUERZA PATRIA", 5000),
+		]);
 
     expect(result.tied).toBe(true);
     expect(result.partyName).toBeNull();
@@ -1230,8 +1853,18 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // Their OWN guard, not the caller's: `loadOfficialComparison` calls
     // `partyShare` on a row set `renderFiscalizacionView` never sees.
     const rows: ResultRow[] = [
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 60 },
-      { ...OFFICIAL_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 25 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				votes: 60,
+			},
+			{
+				...OFFICIAL_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				votes: 25,
+			},
     ];
 
     const share = partyShare(rows, "canon-110");
@@ -1246,7 +1879,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
-    const result = comparisonFromParams({
+		const result = comparisonFromParams(
+			{
       compareElectionId: "2023-generales",
       compareElectionLabel: "22 Oct 2023 generales",
       compareYear: "2023",
@@ -1254,7 +1888,9 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       compareJurisdiction: "national",
       compareJurisdictionId: "j-999",
       compareCategoryId: "c-diputados",
-    }, 2023);
+			},
+			2023,
+		);
 
     // One party over time in ONE place. A different place renders two
     // unrelated figures as a trend.
@@ -1269,12 +1905,33 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // render a fiscalización figure under the official-source badge.
     const repository = new ResultsRepository(
       fakeRowSource([{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }]),
-      { fetchPartyNames: () => Promise.resolve(new Map([["110", { canonicalPartyId: "canon-110", displayName: "LA LIBERTAD AVANZA" }]])) },
+			{
+				fetchPartyNames: () =>
+					Promise.resolve(
+						new Map([
+							[
+								"110",
+								{
+									canonicalPartyId: "canon-110",
+									displayName: "LA LIBERTAD AVANZA",
+								},
+							],
+						]),
+					),
+			},
     );
     // Bypasses the repository's own filter the way a regression would.
     vi.spyOn(repository, "queryOfficial").mockResolvedValue({
       status: "ok",
-      rows: [{ ...FISCALIZACION_ROW, listId: "110", partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 60 }],
+			rows: [
+				{
+					...FISCALIZACION_ROW,
+					listId: "110",
+					partyName: "LA LIBERTAD AVANZA",
+					canonicalPartyId: "canon-110",
+					votes: 60,
+				},
+			],
       excluded: {},
       partyMappingConfigured: true,
     });
@@ -1284,12 +1941,17 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       electionLabel: "22 Oct 2023 generales",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       partyName: "LA LIBERTAD AVANZA",
     }).then((result) => {
       expect(result.status).toBe("unavailable");
-      if (result.status !== "unavailable") throw new Error("expected unavailable");
+			if (result.status !== "unavailable")
+				throw new Error("expected unavailable");
       expect(result.reason).toContain("non-official");
     });
   });
@@ -1298,8 +1960,20 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // Size-1 is not safety: this module cannot say what a level it does not
     // know contains, so it cannot say the rows do not overlap.
     const rows: ResultRow[] = [
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "subcircuito" as never, votes: 40 },
-      { ...FISCALIZACION_ROW, partyName: "FUERZA PATRIA", canonicalPartyId: "canon-999", granularity: "subcircuito" as never, votes: 60 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				granularity: "subcircuito" as never,
+				votes: 40,
+			},
+			{
+				...FISCALIZACION_ROW,
+				partyName: "FUERZA PATRIA",
+				canonicalPartyId: "canon-999",
+				granularity: "subcircuito" as never,
+				votes: 60,
+			},
     ];
 
     const share = partyShare(rows, "canon-110");
@@ -1314,9 +1988,27 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // branch existed but nothing drove it, so `topParty` and the rendered
     // per-party list summed the very same rows the share refused.
     const rows: ResultRow[] = [
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "mesa", votes: 40 },
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "seccion", votes: 40 },
-      { ...FISCALIZACION_ROW, partyName: "FUERZA PATRIA", canonicalPartyId: "canon-999", granularity: "mesa", votes: 50 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				granularity: "mesa",
+				votes: 40,
+			},
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				granularity: "seccion",
+				votes: 40,
+			},
+			{
+				...FISCALIZACION_ROW,
+				partyName: "FUERZA PATRIA",
+				canonicalPartyId: "canon-999",
+				granularity: "mesa",
+				votes: 50,
+			},
     ];
 
     const share = partyShare(rows, "canon-110");
@@ -1356,7 +2048,10 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
           coverage: FISCALIZACION_COVERAGE,
           partyMappingConfigured: true,
         },
-        { comparisonUnavailable: "no row resolved to a curated party to compare" },
+				{
+					comparisonUnavailable:
+						"no row resolved to a curated party to compare",
+				},
       ),
     );
 
@@ -1371,7 +2066,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // it — and nothing drove that branch, so the suite was green whether it
     // worked or not.
     const html = renderToStaticMarkup(
-      renderFiscalizacionView({
+			renderFiscalizacionView(
+				{
         status: "ok",
         // NON-EMPTY on purpose: the repository's drops and the render filter's
         // are two different counts, and one must not stand in for the other.
@@ -1379,10 +2075,12 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
         rows: [FISCALIZACION_ROW, OFFICIAL_ROW],
         coverage: FISCALIZACION_COVERAGE,
         partyMappingConfigured: true,
-      }, {
+				},
+				{
         // The comparison read's OWN tally, counted before this refusal fired.
         officialExcluded: { fiscalizacion: { rows: 2, votes: 640 } },
-      }),
+				},
+			),
     );
 
     expect(html).toContain("3 unknown");
@@ -1404,13 +2102,27 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // Refusing to RANK mixed levels is right; reporting zero unmapped votes
     // while 400 failed to resolve is a silent exclusion behind a total.
     const result = topParty([
-      { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "mesa", votes: 10 },
-      { ...FISCALIZACION_ROW, partyName: null, listId: "777", granularity: "seccion", votes: 400 },
+			{
+				...FISCALIZACION_ROW,
+				partyName: "LA LIBERTAD AVANZA",
+				canonicalPartyId: "canon-110",
+				granularity: "mesa",
+				votes: 10,
+			},
+			{
+				...FISCALIZACION_ROW,
+				partyName: null,
+				listId: "777",
+				granularity: "seccion",
+				votes: 400,
+			},
     ]);
 
     expect(result.partyName).toBeNull();
     expect(result.refusedReason).toContain("double-count");
-    expect(result.unmappedByListId).toEqual([{ listId: "777", rows: 1, votes: 400 }]);
+		expect(result.unmappedByListId).toEqual([
+			{ listId: "777", rows: 1, votes: 400 },
+		]);
   });
 
   it("test_mixed_granularity_renders_no_per_party_list", () => {
@@ -1419,8 +2131,20 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
         status: "ok",
         excluded: {},
         rows: [
-          { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "mesa", votes: 40 },
-          { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", granularity: "seccion", votes: 40 },
+					{
+						...FISCALIZACION_ROW,
+						partyName: "LA LIBERTAD AVANZA",
+						canonicalPartyId: "canon-110",
+						granularity: "mesa",
+						votes: 40,
+					},
+					{
+						...FISCALIZACION_ROW,
+						partyName: "LA LIBERTAD AVANZA",
+						canonicalPartyId: "canon-110",
+						granularity: "seccion",
+						votes: 40,
+					},
         ],
         coverage: FISCALIZACION_COVERAGE,
         partyMappingConfigured: true,
@@ -1431,7 +2155,6 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     expect(html).toContain("No per-party figures");
     expect(html).not.toContain("80 votes");
   });
-
 
   it("test_an_unorderable_granularity_is_reported_not_absorbed", () => {
     const rows: ResultRow[] = [
@@ -1450,7 +2173,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
-    const result = comparisonFromParams({
+		const result = comparisonFromParams(
+			{
       compareElectionId: "2023-generales",
       compareElectionLabel: "22 Oct 2023 generales",
       // 2023 rows resolved through the 2025 mapping: LLA is `20135` in one and
@@ -1461,7 +2185,9 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       compareJurisdictionId: "j-027",
       compareCategoryId: "c-diputados",
       // The election row says 2023 — the TRUTH the request contradicts.
-    }, 2023);
+			},
+			2023,
+		);
 
     expect(result.status).toBe("refused");
     if (result.status !== "refused") throw new Error("expected refused");
@@ -1480,7 +2206,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // Coronel Rosales. Resolving a municipal comparison through the national
     // mapping is that scheme collision on the comparison side.
     expect(
-      comparisonFromParams({
+			comparisonFromParams(
+				{
         compareElectionId: "2023-municipal",
         compareElectionLabel: "2023 municipal",
         compareYear: "2023",
@@ -1490,7 +2217,9 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
         compareJurisdiction: "pba",
         compareJurisdictionId: "j-027",
         compareCategoryId: "c-diputados",
-      }, 2023),
+				},
+				2023,
+			),
     ).toEqual({
       status: "refused",
       // REFUSED, with a reason. `undefined` is what "nothing was asked for"
@@ -1513,7 +2242,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     );
 
     expect(result.status).toBe("unavailable");
-    if (result.status !== "unavailable") throw new Error("expected unavailable");
+		if (result.status !== "unavailable")
+			throw new Error("expected unavailable");
     // The REASON names the party a human recognises, not the internal id.
     expect(result.reason).toContain("LA LIBERTAD AVANZA");
   });
@@ -1534,8 +2264,17 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
               // makes this the driver for a cross-year match: keyed on the
               // name, the two sides share no key and the badge reports "no
               // rows for …" about a party that stood.
-              ["20135", { canonicalPartyId: "canon-110", displayName: "LA LIBERTAD AVANZA" }],
-              ["999", { canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" }],
+							[
+								"20135",
+								{
+									canonicalPartyId: "canon-110",
+									displayName: "LA LIBERTAD AVANZA",
+								},
+							],
+							[
+								"999",
+								{ canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" },
+							],
             ]),
           ),
       },
@@ -1546,7 +2285,11 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       electionLabel: "22 Oct 2023 generales",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       partyName: "LA LIBERTAD AVANZA",
     });
@@ -1563,7 +2306,17 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
   it("test_a_party_missing_from_the_comparison_election_yields_no_badge", async () => {
     const repository = new ResultsRepository(
       fakeRowSource([{ ...OFFICIAL_ROW, listId: "999", votes: 75 }]),
-      { fetchPartyNames: () => Promise.resolve(new Map([["999", { canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" }]])) },
+			{
+				fetchPartyNames: () =>
+					Promise.resolve(
+						new Map([
+							[
+								"999",
+								{ canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" },
+							],
+						]),
+					),
+			},
     );
 
     const figure = await loadOfficialComparison(repository, {
@@ -1571,7 +2324,11 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       electionLabel: "22 Oct 2023 generales",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       partyName: "LA LIBERTAD AVANZA",
     });
@@ -1580,7 +2337,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     // Rendering 0 % would read as a collapse it never suffered -- and the
     // REASON travels with the refusal so the page can say why.
     expect(figure.status).toBe("unavailable");
-    if (figure.status !== "unavailable") throw new Error("expected unavailable");
+		if (figure.status !== "unavailable")
+			throw new Error("expected unavailable");
     expect(figure.reason).toContain("LA LIBERTAD AVANZA");
   });
 });
@@ -1668,7 +2426,11 @@ describe("fiscalizacion page — an unlabelled source kind is never borrowed", (
           // The row must RESOLVE to the compared party, or no badge renders
           // at all and the assertion could not fail.
           rows: [
-            { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" },
+						{
+							...FISCALIZACION_ROW,
+							partyName: "LA LIBERTAD AVANZA",
+							canonicalPartyId: "canon-110",
+						},
           ],
           coverage: FISCALIZACION_COVERAGE,
           partyMappingConfigured: true,
@@ -1696,7 +2458,6 @@ describe("fiscalizacion page — an unlabelled source kind is never borrowed", (
     expect(html).not.toContain("— official source");
   });
 });
-
 
 describe("fiscalizacion page — a read failure keeps what was already known", () => {
   it("test_a_read_failed_view_still_reports_the_comparison_it_could_not_build", () => {
@@ -1729,7 +2490,11 @@ describe("fiscalizacion page — an unhashed comparison source is flagged", () =
         {
           status: "ok",
           rows: [
-            { ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" },
+						{
+							...FISCALIZACION_ROW,
+							partyName: "LA LIBERTAD AVANZA",
+							canonicalPartyId: "canon-110",
+						},
           ],
           coverage: FISCALIZACION_COVERAGE,
           partyMappingConfigured: true,
@@ -1770,13 +2535,25 @@ describe("fiscalizacion page — one party across two spellings", () => {
     // stood. Every other fixture spells it identically on both sides, so this
     // is the one that can fail.
     const repository = new ResultsRepository(
-      fakeRowSource([{ ...OFFICIAL_ROW, listId: "20135", votes: 40 }, { ...OFFICIAL_ROW, listId: "999", votes: 60 }]),
+			fakeRowSource([
+				{ ...OFFICIAL_ROW, listId: "20135", votes: 40 },
+				{ ...OFFICIAL_ROW, listId: "999", votes: 60 },
+			]),
       {
         fetchPartyNames: () =>
           Promise.resolve(
             new Map([
-              ["20135", { canonicalPartyId: "canon-110", displayName: "LA LIBERTAD AVANZA" }],
-              ["999", { canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" }],
+							[
+								"20135",
+								{
+									canonicalPartyId: "canon-110",
+									displayName: "LA LIBERTAD AVANZA",
+								},
+							],
+							[
+								"999",
+								{ canonicalPartyId: "canon-999", displayName: "FUERZA PATRIA" },
+							],
             ]),
           ),
       },
@@ -1787,7 +2564,11 @@ describe("fiscalizacion page — one party across two spellings", () => {
       electionLabel: "22 Oct 2023 generales",
       jurisdictionId: QUERY.jurisdictionId,
       categoryId: QUERY.categoryId,
-      partyContext: { year: 2023, jurisdiction: "national", category: "DIPUTADO NACIONAL" },
+			partyContext: {
+				year: 2023,
+				jurisdiction: "national",
+				category: "DIPUTADO NACIONAL",
+			},
       canonicalPartyId: "canon-110",
       // The 2025 SPELLING, which appears in no 2023 row.
       partyName: "ALIANZA LA LIBERTAD AVANZA",
@@ -1809,8 +2590,18 @@ describe("fiscalizacion page — the badge's own branches, through the page", ()
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
-      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
-      { ...OFFICIAL_ROW, listId: "999", votes: 75, archiveEntryId: "national/2023-generales" },
+			{
+				...OFFICIAL_ROW,
+				listId: "110",
+				votes: 25,
+				archiveEntryId: "national/2023-generales",
+			},
+			{
+				...OFFICIAL_ROW,
+				listId: "999",
+				votes: 75,
+				archiveEntryId: "national/2023-generales",
+			},
     ];
   };
 
@@ -1862,7 +2653,8 @@ describe("fiscalizacion page — the badge's own branches, through the page", ()
     sourceRefs = [
       {
         archiveEntryId: "fiscalizacion/2025-lla",
-        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				sha256:
+					"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         url: "https://example.test/fiscalizacion-2025.csv",
         fetchedAt: "2026-01-01T00:00:00Z",
       },
@@ -1901,7 +2693,8 @@ describe("fiscalizacion page — the pinned election is configuration", () => {
   it("test_a_configured_uuid_election_is_served", async () => {
     // The whole point: a uuid reaches the rows instead of failing a string
     // comparison against a slug.
-    process.env["FISCALIZACION_ELECTION_ID"] = "6dae81f9-c862-4cc5-b3f3-b640e4ea7319";
+		process.env["FISCALIZACION_ELECTION_ID"] =
+			"6dae81f9-c862-4cc5-b3f3-b640e4ea7319";
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
@@ -1930,7 +2723,8 @@ describe("fiscalizacion page — the pinned election's year is read, not assumed
     // a hardcoded string that cannot disagree with it. Pointed at a 2023
     // election, every LLA row (`20135` in 2023, `110` in 2025) would drop out
     // as unmapped under a denominator naming a different race.
-    process.env["FISCALIZACION_ELECTION_ID"] = "b5b6a452-836d-40ea-a570-1cbc87fb84f6";
+		process.env["FISCALIZACION_ELECTION_ID"] =
+			"b5b6a452-836d-40ea-a570-1cbc87fb84f6";
     process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
 
@@ -1961,7 +2755,13 @@ describe("fiscalizacion page — the comparison read reports its own drops", () 
       renderFiscalizacionView(
         {
           status: "ok",
-          rows: [{ ...FISCALIZACION_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110" }],
+					rows: [
+						{
+							...FISCALIZACION_ROW,
+							partyName: "LA LIBERTAD AVANZA",
+							canonicalPartyId: "canon-110",
+						},
+					],
           coverage: FISCALIZACION_COVERAGE,
           partyMappingConfigured: true,
           excluded: { unknown: { rows: 1, votes: 9 } },
@@ -1996,7 +2796,12 @@ describe("fiscalizacion page — the comparison tally reaches the rendered page"
       // Rows the COMPARISON election's official filter removes: one
       // fiscalización, one carrying a value outside the enum that BOTH
       // filters drop and that would otherwise appear nowhere.
-      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
+			{
+				...OFFICIAL_ROW,
+				listId: "110",
+				votes: 25,
+				archiveEntryId: "national/2023-generales",
+			},
       {
         ...OFFICIAL_ROW,
         listId: "110",
@@ -2062,7 +2867,12 @@ describe("fiscalizacion page — a failed source read keeps what the other reads
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
-      { ...OFFICIAL_ROW, listId: "110", votes: 25, archiveEntryId: "national/2023-generales" },
+			{
+				...OFFICIAL_ROW,
+				listId: "110",
+				votes: 25,
+				archiveEntryId: "national/2023-generales",
+			},
     ];
 
     const markup = renderToStaticMarkup(
@@ -2102,8 +2912,18 @@ describe("fiscalizacion page — unmapped rows on containing levels are not adde
       renderFiscalizacionView({
         status: "ok",
         rows: [
-          { ...FISCALIZACION_ROW, listId: "777", votes: 400, granularity: "seccion" },
-          { ...FISCALIZACION_ROW, listId: "777", votes: 100, granularity: "mesa" },
+					{
+						...FISCALIZACION_ROW,
+						listId: "777",
+						votes: 400,
+						granularity: "seccion",
+					},
+					{
+						...FISCALIZACION_ROW,
+						listId: "777",
+						votes: 100,
+						granularity: "mesa",
+					},
         ],
         coverage: FISCALIZACION_COVERAGE,
         partyMappingConfigured: true,
@@ -2132,7 +2952,12 @@ describe("fiscalizacion page — a source-read failure keeps every earlier count
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
       // Unmapped, and on a level this app cannot order.
-      { ...FISCALIZACION_ROW, listId: "4321", votes: 700, granularity: "subcircuito" as never },
+			{
+				...FISCALIZACION_ROW,
+				listId: "4321",
+				votes: 700,
+				granularity: "subcircuito" as never,
+			},
     ];
 
     const markup = renderToStaticMarkup(

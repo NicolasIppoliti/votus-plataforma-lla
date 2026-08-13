@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "pnpm typecheck && next build",
+    "build": "pnpm typecheck && node --experimental-strip-types ./scripts/production-build.ts",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "node -e \"const v=require('@typescript/native').version;if(!/^7\\./.test(v))throw new Error('TypeScript 7.x required')\" && tsc --version && tsc --noEmit",
