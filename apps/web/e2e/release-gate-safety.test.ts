@@ -24,13 +24,18 @@ import {
 	type GateTestResult,
 } from "./gate-contract";
 import {
+	RELEASE_GATE_MODE,
 	assertStackStatus,
 	assertTs7Version,
+	cleanupReleaseGate,
 	establishOwnership,
 	reserveUniquePorts,
 	runOwnedCleanup,
+	runReleaseGateCli,
 	SUPABASE_START_TIMEOUT_MS,
 	type PortReservation,
+	type ReleaseGateCleanupDependencies,
+	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 const OWNERSHIP: GateOwnership = {
 	workdir: "/private/tmp/votus-e2e-owned",
@@ -74,57 +79,83 @@ const STALE_EVIDENCE = {
 	ownerProcessActive: false,
 	projectResourcesActive: false,
 } as const;
-const RELEASE_GATE_SOURCE = readFileSync(
-	new URL("../scripts/e2e-release-gate.ts", import.meta.url),
-	"utf8",
-);
+async function inspectReleaseGatePlan(
+	options: readonly string[] = [],
+): Promise<ReleaseGatePlan> {
+	let output = "";
+	let executed = false;
+	await runReleaseGateCli(["--inspect-plan", ...options], {
+		execute: async () => {
+			executed = true;
+		},
+		writeOutput: (chunk) => {
+			output += chunk;
+		},
+	});
+	expect(executed).toBe(false);
+	return JSON.parse(output) as ReleaseGatePlan;
+}
 describe("migration release-gate integration", () => {
-	it("owns the exact production migration inventory through 0023", () => {
-		expect(RELEASE_GATE_SOURCE).toContain("Array.from({ length: 23 }");
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"migration inventory must be exactly versions 0001 through 0023",
+	it("inspects the exact production migration and proof plan", async () => {
+		const plan = await inspectReleaseGatePlan();
+		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
+		expect(plan.migrationVersions).toEqual(
+			Array.from({ length: 23 }, (_, index) =>
+				String(index + 1).padStart(4, "0"),
+			),
 		);
+		expect(plan.syntheticMigration).toEqual({
+			version: "0024",
+			fileName: "0024_e2e_service_role_grants.sql",
+			sourcePath: "e2e/service-role-grants.sql",
+		});
+		expect(plan.pgTapProofs).toContainEqual({
+			path: "tests/results_coverage_scope_binding.sql",
+			label: "disposable coverage-scope-binding pgTAP",
+			timeoutMs: 120_000,
+		});
+		expect(plan.rollbackReapplyProofs).toEqual([
+			{
+				path: "tests/results_exploration_release.sql",
+				label: "disposable rollback/reapply proof",
+			},
+			{
+				path: "tests/results_coverage_scope_binding_release.sql",
+				label: "disposable coverage-scope-binding rollback/reapply proof",
+			},
+		]);
+		expect(plan.requireBrowserCapability).toBe(true);
+		expect(plan.runBrowser).toBe(true);
 	});
-	it("executes the 0023 coverage scope binding pgTAP proof", () => {
-		expect(RELEASE_GATE_SOURCE).toContain(
-			'"tests", "results_coverage_scope_binding.sql"',
-		);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			'"disposable coverage-scope-binding pgTAP"',
-		);
+	it("inspects release proofs without planning browser execution", async () => {
+		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
+		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
+		expect(plan.pgTapProofs).toHaveLength(3);
+		expect(plan.rollbackReapplyProofs).toHaveLength(2);
+		expect(plan.requireBrowserCapability).toBe(true);
+		expect(plan.runBrowser).toBe(false);
 	});
-	it("executes the 0023 coverage scope binding rollback/reapply proof", () => {
-		expect(RELEASE_GATE_SOURCE).toContain(
-			'"tests", "results_coverage_scope_binding_release.sql"',
-		);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			'"disposable coverage-scope-binding rollback/reapply proof"',
-		);
+	it("inspects rollback proofs without browser or pgTAP work", async () => {
+		const plan = await inspectReleaseGatePlan(["--rollback-proofs-only"]);
+		expect(plan.mode).toBe(RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY);
+		expect(plan.pgTapProofs).toEqual([]);
+		expect(plan.rollbackReapplyProofs).toHaveLength(2);
+		expect(plan.requireBrowserCapability).toBe(false);
+		expect(plan.runBrowser).toBe(false);
 	});
-	it("supports a focused rollback-proof sequence without running pgTAP or browser checks", () => {
-		expect(RELEASE_GATE_SOURCE).toContain(
-			'process.argv.includes("--rollback-proofs-only")',
-		);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"Rollback proofs passed: 2 SQL processes, cleanup complete",
-		);
-	});
-	it("keeps the disposable service-role grant migration owned at non-colliding 0024", () => {
-		expect(RELEASE_GATE_SOURCE).toContain(
-			'const EPHEMERAL_SERVICE_ROLE_MIGRATION = "0024_e2e_service_role_grants.sql";',
-		);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"path.join(targetMigrations, EPHEMERAL_SERVICE_ROLE_MIGRATION)",
-		);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"[...sourceNames, EPHEMERAL_SERVICE_ROLE_MIGRATION].sort()",
-		);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"path.join(target, EPHEMERAL_SERVICE_ROLE_MIGRATION)",
-		);
-		expect(RELEASE_GATE_SOURCE).not.toContain(
-			"0023_e2e_service_role_grants.sql",
-		);
+	it("passes the same production plan from parsing to execution", async () => {
+		const executedPlans: ReleaseGatePlan[] = [];
+		await runReleaseGateCli(["--rollback-proofs-only"], {
+			execute: async (plan) => {
+				executedPlans.push(plan);
+			},
+			writeOutput: () => {
+				throw new Error("execution mode must not emit an inspection plan");
+			},
+		});
+		expect(executedPlans).toEqual([
+			await inspectReleaseGatePlan(["--rollback-proofs-only"]),
+		]);
 	});
 });
 describe("base contracts", () => {
@@ -198,22 +229,132 @@ describe("base contracts", () => {
 			}),
 		).toThrow("marker mismatch");
 	});
-	it("removes only exact-owned containers after stopping the stack", () => {
-		expect(ACTIONS.map(({ kind }) => kind)).toEqual([
+	it("runs production cleanup in exact-owned order and verifies residuals", async () => {
+		const events: string[] = [];
+		let containers = [`supabase_db_${OWNERSHIP.projectId}`];
+		let volumes = [`supabase_db_${OWNERSHIP.projectId}`];
+		let workdirExists = true;
+		const dependencies: ReleaseGateCleanupDependencies<never> = {
+			tempRoot: () => "/private/tmp",
+			readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
+			stopServer: async () => undefined,
+			verifyServerStopped: async () => undefined,
+			stopStack: async () => {
+				events.push("stop-stack");
+			},
+			listOwnedContainers: () => {
+				events.push("list-containers");
+				return containers;
+			},
+			removeContainers: async (names) => {
+				events.push(`remove-containers:${names.join(",")}`);
+				containers = [];
+			},
+			listOwnedVolumes: () => {
+				events.push("list-volumes");
+				return volumes;
+			},
+			removeVolumes: async (names) => {
+				events.push(`remove-volumes:${names.join(",")}`);
+				volumes = [];
+			},
+			removeWorkdir: async () => {
+				events.push("remove-workdir");
+				workdirExists = false;
+			},
+			workdirExists: () => {
+				events.push("verify-workdir");
+				return workdirExists;
+			},
+		};
+		await cleanupReleaseGate(
+			{ ownership: OWNERSHIP, stackMutationAttempted: true },
+			dependencies,
+		);
+		expect(events).toEqual([
 			"stop-stack",
-			"remove-owned-containers",
-			"remove-owned-volumes",
+			"list-containers",
+			`remove-containers:supabase_db_${OWNERSHIP.projectId}`,
+			"list-volumes",
+			`remove-volumes:supabase_db_${OWNERSHIP.projectId}`,
 			"remove-workdir",
+			"list-containers",
+			"list-volumes",
+			"verify-workdir",
 		]);
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"function removeOwnedContainers(projectId: string)",
+	});
+	it("reaches container cleanup through production cleanup and refuses foreign names", async () => {
+		const events: string[] = [];
+		const dependencies: ReleaseGateCleanupDependencies<never> = {
+			tempRoot: () => "/private/tmp",
+			readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
+			stopServer: async () => undefined,
+			verifyServerStopped: async () => undefined,
+			stopStack: async () => {
+				events.push("stop-stack");
+			},
+			listOwnedContainers: () => {
+				events.push("list-containers");
+				return ["foreign-container"];
+			},
+			removeContainers: async () => {
+				events.push("remove-containers");
+			},
+			listOwnedVolumes: () => [],
+			removeVolumes: async () => undefined,
+			removeWorkdir: async () => {
+				events.push("remove-workdir");
+			},
+			workdirExists: () => false,
+		};
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies,
+			),
+		).rejects.toSatisfy((error: AggregateError) =>
+			error.errors.some(
+				(item) =>
+					item instanceof Error &&
+					item.message.includes(
+						"refusing to remove a container without the exact owned project suffix",
+					),
+			),
 		);
-		expect(RELEASE_GATE_SOURCE).toContain("!name.endsWith(`_${projectId}`)");
-		expect(RELEASE_GATE_SOURCE).toContain(
-			"refusing to remove a container without the exact owned project suffix",
+		expect(events).toContain("stop-stack");
+		expect(events).toContain("list-containers");
+		expect(events).not.toContain("remove-containers");
+		expect(events).toContain("remove-workdir");
+	});
+	it("fails cleanup when residual verification still finds owned state", async () => {
+		const ownedContainer = `supabase_db_${OWNERSHIP.projectId}`;
+		const dependencies: ReleaseGateCleanupDependencies<never> = {
+			tempRoot: () => "/private/tmp",
+			readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
+			stopServer: async () => undefined,
+			verifyServerStopped: async () => undefined,
+			stopStack: async () => undefined,
+			listOwnedContainers: () => [ownedContainer],
+			removeContainers: async () => undefined,
+			listOwnedVolumes: () => [],
+			removeVolumes: async () => undefined,
+			removeWorkdir: async () => undefined,
+			workdirExists: () => false,
+		};
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies,
+			),
+		).rejects.toSatisfy((error: AggregateError) =>
+			error.errors.some(
+				(item) =>
+					item instanceof Error &&
+					item.message ===
+						"disposable Supabase cleanup left owned Docker state",
+			),
 		);
-		expect(RELEASE_GATE_SOURCE).toContain('["rm", "-f", ...containers]');
-  });
+	});
   it("assigns authenticated state to every spec except the auth boundary test", () => {
     const path = "/owned/auth-state.json";
     for (const spec of EXPECTED_E2E_SPECS)
