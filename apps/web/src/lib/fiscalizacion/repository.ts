@@ -124,13 +124,22 @@ export type ExcludedByKind = Record<string, { rows: number; votes: number }>;
  * ONE phrasing of a drop, so the four surfaces cannot drift apart again.
  * `null` when nothing was dropped — callers render no note at all.
  */
-export function describeExcluded(excluded: ExcludedByKind): string | null {
-  const entries = Object.entries(excluded).filter(([, tally]) => tally.rows > 0);
-  if (entries.length === 0) return null;
-  return entries
-    .map(([kind, tally]) => `${tally.rows} ${kind} row(s) / ${tally.votes} vote(s)`)
-    .join(", ");
-}
+    export function describeExcluded(excluded: ExcludedByKind): string | null {
+      const entries = Object.entries(excluded).filter(([, tally]) => tally.rows > 0);
+      if (entries.length === 0) return null;
+      return entries
+        .map(([kind, tally]) => {
+          const sourceLabel = kind === "official"
+            ? "oficial"
+            : kind === "fiscalizacion"
+              ? "fiscalización"
+              : kind === "unknown"
+                ? "desconocida"
+                : kind;
+          return `${tally.rows} ${tally.rows === 1 ? "fila" : "filas"} ${sourceLabel} / ${tally.votes} ${tally.votes === 1 ? "voto" : "votos"}`;
+        })
+        .join(", ");
+    }
 
 /**
  * Foreign rows tallied the same way an exclusion is, so the ONE phrasing in

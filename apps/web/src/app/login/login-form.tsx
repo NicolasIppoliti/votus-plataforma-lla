@@ -30,7 +30,7 @@ export function LoginForm(): ReactNode {
     setSubmitting(false);
 
     if (signInError) {
-      setError("Invalid credentials.");
+      setError("Las credenciales no son válidas.");
       return;
     }
 
@@ -40,7 +40,7 @@ export function LoginForm(): ReactNode {
 
   return (
     <form onSubmit={handleSubmit}>
-      <label htmlFor="email">Email</label>
+      <label htmlFor="email">Correo electrónico</label>
       <input
         id="email"
         name="email"
@@ -50,7 +50,7 @@ export function LoginForm(): ReactNode {
         value={email}
         onChange={(event) => setEmail(event.target.value)}
       />
-      <label htmlFor="password">Password</label>
+      <label htmlFor="password">Contraseña</label>
       <input
         id="password"
         name="password"
@@ -61,7 +61,7 @@ export function LoginForm(): ReactNode {
         onChange={(event) => setPassword(event.target.value)}
       />
       <button type="submit" disabled={submitting}>
-        Sign in
+        Iniciar sesión
       </button>
       {error !== null && <p role="alert">{error}</p>}
     </form>

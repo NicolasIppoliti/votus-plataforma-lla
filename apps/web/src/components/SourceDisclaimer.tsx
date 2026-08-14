@@ -13,10 +13,10 @@ import type { ReactNode } from "react";
 export function SourceDisclaimer(): ReactNode {
   return (
     <p role="note">
-      This tool is not an official electoral source. Figures are derived
-      from archived third-party data and internal fiscalización records;
-      always verify against the official Junta Electoral results before
-      acting on them.
+      Esta herramienta no es una fuente electoral oficial. Las cifras se
+      obtienen de datos de terceros archivados y de registros internos de
+      fiscalización. Verifíquelas siempre con los resultados oficiales de la
+      Junta Electoral antes de tomar decisiones.
     </p>
   );
 }

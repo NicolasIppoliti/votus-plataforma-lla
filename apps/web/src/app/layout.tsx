@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata = {
-  title: "Votus | Internal electoral analysis",
+  title: "Votus | Análisis electoral interno",
   description:
-    "Internal electoral analysis using official and public evidence with explicit source status.",
+    "Análisis electoral interno basado en evidencia oficial y pública, con el estado explícito de cada fuente.",
 };
 
 export default function RootLayout({
@@ -13,10 +13,10 @@ export default function RootLayout({
   children: ReactNode;
 }): ReactNode {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>
         <a className="skip-link" href="#main-content">
-          Skip to main content
+          Ir al contenido principal
         </a>
         {children}
       </body>

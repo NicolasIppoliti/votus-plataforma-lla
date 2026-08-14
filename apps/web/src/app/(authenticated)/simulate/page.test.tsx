@@ -65,25 +65,25 @@ describe("simulate page — complete statutory evidence", () => {
   it("renders a published PBA vote scenario without relabelling it D’Hondt", async () => {
     const markup = await renderSimulation(OFFICIAL_PBA_2025_INPUT);
 
-    expect(markup).toContain("Hare quota with largest remainder");
-    expect(markup).toContain("Ley 5109 Arts. 109–110");
+    expect(markup).toContain("Cociente Hare con mayor residuo");
+    expect(markup).toContain("Ley 5109, arts. 109–110");
     expect(markup).not.toContain("D’Hondt");
-    expect(markup).toContain("Valid-vote basis");
+    expect(markup).toContain("Base de votos válidos");
     expect(markup).toContain(
-      "32,291 valid votes; total, blank, and annulled values were not reported",
+      "32.291 votos válidos; no se informaron los valores totales, en blanco y anulados",
     );
-    expect(markup).toContain("5,901 explicitly unmodeled");
-    expect(markup).toContain("Omitted non-qualifying lists: 5,901 votes");
-    expect(markup).toContain("Seats being allocated");
-    expect(markup).toContain("Hare cuociente");
-    expect(markup).toMatch(/3,?587\.888888/);
-    expect(markup).toContain("4.055309528970921");
-    expect(markup).toContain("Initial quotient seats");
-    expect(markup).toContain("Exact remainder");
-    expect(markup).toContain("Seats by remainder");
-    expect(markup).toMatch(/<caption>Hare allocation by list<\/caption>/);
-    expect(markup).toMatch(/<caption>Per-seat award evidence<\/caption>/);
-    expect(markup).toContain("largest_remainder");
+    expect(markup).toContain("5.901 explícitamente fuera del modelo");
+    expect(markup).toContain("Listas no clasificadas omitidas: 5.901 votos");
+    expect(markup).toContain("Bancas por asignar");
+    expect(markup).toContain("Cociente Hare");
+    expect(markup).toMatch(/3587,888888/);
+    expect(markup).toContain("4,055309528970921");
+    expect(markup).toContain("Bancas iniciales por cociente");
+    expect(markup).toContain("Residuo exacto");
+    expect(markup).toContain("Bancas por residuo");
+    expect(markup).toMatch(/<caption>Asignación Hare por lista<\/caption>/);
+    expect(markup).toMatch(/<caption>Evidencia de asignación por banca<\/caption>/);
+    expect(markup).toContain("mayor residuo");
     expect(markup).toContain("table-scroll");
   });
 
@@ -103,14 +103,14 @@ describe("simulate page — complete statutory evidence", () => {
         expect(markup).toContain(
           'class="allocation-column allocation-column--identity"',
         );
-        expect(markup).toContain('class="table-cell--number">14,550</td>');
+        expect(markup).toContain('class="table-cell--number">14.550</td>');
         expect(markup.match(/class="table-scroll"/g)).toHaveLength(2);
     expect(markup.match(/scope="col"/g)).toHaveLength(13);
     expect(markup).toMatch(
-      /<div class="table-scroll" role="region" aria-label="Hare allocation by list" tabindex="0">/,
+      /<div class="table-scroll" role="region" aria-label="Asignación Hare por lista" tabindex="0">/,
     );
     expect(markup).toMatch(
-      /<div class="table-scroll" role="region" aria-label="Per-seat award evidence" tabindex="0">/,
+      /<div class="table-scroll" role="region" aria-label="Evidencia de asignación por banca" tabindex="0">/,
     );
     expect(markup).not.toContain("overflow-x-auto");
     expect(markup).not.toContain("min-w-full");
@@ -133,9 +133,9 @@ describe("simulate page — complete statutory evidence", () => {
       lists: [{ listId: "A", listName: "Lista A", votes: 35_359 }],
     });
 
-    expect(markup).toContain("3,914 combined blank and annulled");
-    expect(markup).not.toContain("3,914 blank");
-    expect(markup).not.toContain("3,914 annulled");
+    expect(markup).toContain("3.914 en blanco y anulados combinados");
+    expect(markup).not.toContain("3.914 exclusivamente en blanco");
+    expect(markup).not.toContain("3.914 exclusivamente anulados");
   });
 
   it("renders halving iterations and statutory tie evidence", async () => {
@@ -155,10 +155,10 @@ describe("simulate page — complete statutory evidence", () => {
         { listId: "C", listName: "Lista C", votes: 20 },
       ],
     });
-    expect(halving).toMatch(/<caption>Hare halving trace<\/caption>/);
-    expect(halving).toContain("Initial cuociente");
-    expect(halving).toContain("Iteration 1");
-    expect(halving).toContain("Iteration 2");
+    expect(halving).toMatch(/<caption>Rastreo de reducciones del cociente Hare<\/caption>/);
+    expect(halving).toContain("Cociente inicial");
+    expect(halving).toContain("Iteración 1");
+    expect(halving).toContain("Iteración 2");
 
     const tied = await renderSimulation({
       level: "pba_provincial",
@@ -177,8 +177,8 @@ describe("simulate page — complete statutory evidence", () => {
         { listId: "Q", listName: "Lista Q", votes: 14 },
       ],
     });
-    expect(tied).toContain("Equal remainder resolved by higher raw vote total");
-    expect(tied).toContain("statutory");
+    expect(tied).toContain("El residuo igual se resolvió por el mayor total de votos sin procesar");
+    expect(tied).toContain("criterio legal");
     expect(tied).toContain("Ley 5109 Art. 109(c)");
   });
 
@@ -201,13 +201,13 @@ describe("simulate page — complete statutory evidence", () => {
     });
 
     expect(markup).toContain("D’Hondt");
-    expect(markup).toContain("Ley 19.945 Arts. 160–161");
+    expect(markup).toContain("Ley 19.945, arts. 160–161");
     expect(markup).not.toContain("Ley 5109");
-    expect(markup).toContain("Scenario policy threshold basis");
-    expect(markup).toContain("3% of padrón 100,000 = 3,000 votes");
+    expect(markup).toContain("Base del umbral definida por el escenario");
+    expect(markup).toContain("3% del padrón 100.000 = 3.000 votos");
     expect(markup).toContain("Lista C");
-    expect(markup).toContain("excluded: 2,000 votes are below 3,000");
-        expect(markup).toMatch(/<caption>D’Hondt quotient table<\/caption>/);
+    expect(markup).toContain("excluida: 2.000 votos están por debajo de 3.000");
+        expect(markup).toMatch(/<caption>Tabla de cocientes D’Hondt<\/caption>/);
         expect(markup).toMatch(
           /<table class="data-table data-table--allocation-standard">/,
         );
@@ -216,9 +216,9 @@ describe("simulate page — complete statutory evidence", () => {
         );
         expect(markup).toContain("Divisor 1");
     expect(markup).toContain("Divisor 2");
-    expect(markup).toMatch(/<caption>Ordered winning quotients<\/caption>/);
-    expect(markup).toContain("Seat 1");
-    expect(markup).toContain("Seat 2");
+    expect(markup).toMatch(/<caption>Cocientes ganadores ordenados<\/caption>/);
+    expect(markup).toContain("Banca 1");
+    expect(markup).toContain("Banca 2");
 
     const tied = await renderSimulation({
       level: "national",
@@ -236,21 +236,21 @@ describe("simulate page — complete statutory evidence", () => {
       ],
     });
     expect(tied).toContain(
-      "Equal quotient and equal vote total resolved by lower list id",
+      "El cociente y el total de votos iguales se resolvieron por el menor ID de lista",
     );
-    expect(tied).toContain("simulation_convention");
+    expect(tied).toContain("convención de simulación");
     expect(tied).toContain("sorteo");
   });
 
   it("renders explicit diagnostics for absent, invalid, and insufficient scenarios", async () => {
     const absent = await renderSimulation();
-    expect(absent).toContain("No simulation run");
+    expect(absent).toContain("No se ejecutó ninguna simulación");
 
     const invalid = await renderSimulation({
       ...OFFICIAL_PBA_2025_INPUT,
       lists: [],
     });
-    expect(invalid).toContain("not a valid projection input");
+    expect(invalid).toContain("no contiene una proyección válida");
     expect(invalid).not.toContain("Hare allocation by list");
 
     const insufficient = await renderSimulation({
@@ -265,8 +265,8 @@ describe("simulate page — complete statutory evidence", () => {
       granularity: "distrito",
       lists: [{ listId: "A", listName: "Lista A", votes: 1_000 }],
     });
-    expect(insufficient).toContain("no positive-vote list clears");
-    expect(insufficient).not.toContain("Ordered winning quotients");
+    expect(insufficient).toContain("ninguna lista con votos supera");
+    expect(insufficient).not.toContain("Cocientes ganadores ordenados");
   });
 
   it("renders projection coverage gaps and refuses incomplete historical output", async () => {
@@ -282,9 +282,9 @@ describe("simulate page — complete statutory evidence", () => {
       granularity: "seccion",
       lists: [{ listId: "A", listName: "Lista A", votes: 90 }],
     });
-    expect(projection).toContain("Incomplete vote coverage: 10");
+    expect(projection).toContain("Cobertura de votos incompleta: 10");
     expect(projection).toContain(
-      "scenario input, not official historical evidence",
+      "datos de un escenario, no evidencia histórica oficial",
     );
 
     const historical = await renderSimulation({
@@ -299,7 +299,7 @@ describe("simulate page — complete statutory evidence", () => {
       granularity: "seccion",
       lists: [{ listId: "A", listName: "Lista A", votes: 90 }],
     });
-    expect(historical).toContain("Historical simulation is unavailable at this route");
+    expect(historical).toContain("La simulación histórica no está disponible en esta ruta");
     expect(historical).not.toContain("Hare allocation by list");
   });
 });
@@ -323,8 +323,8 @@ describe("simulate page — the council roster is reachable", () => {
     // The RENDERED HEADING. `toContain("9")` matches any digit 9 anywhere —
     // a vote total, list `999` — so it could not fail, on the very assertion
     // that is supposed to keep the two statutory quantities apart.
-    expect(markup).toContain("18 seats, 9 renewed this election");
-    expect(markup).toContain("held over, caller-supplied projection input");
+    expect(markup).toContain("18 bancas, 9 renovadas en esta elección");
+    expect(markup).toContain("banca no renovada, dato de proyección aportado");
   });
 
   it("test_a_wrong_held_over_count_is_refused_not_padded", async () => {
@@ -338,7 +338,7 @@ describe("simulate page — the council roster is reachable", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("expected councilTotal - seatsUpForRenewal");
+    expect(markup).toContain("heldOver` no contiene una nómina válida");
     expect(markup).not.toContain("council-composition");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
@@ -395,7 +395,7 @@ describe("simulate page — the roster belongs to one statute", () => {
 
     // The message now names the PARTIDO too: the seat counts are Coronel
     // Rosales's, not every PBA municipality's.
-    expect(markup).toContain("available only for pba_municipal projections");
+    expect(markup).toContain("solo está disponible para proyecciones pba_municipal");
     expect(markup).not.toContain("council-composition");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
@@ -411,7 +411,7 @@ describe("simulate page — the roster belongs to one statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("unsupported council");
+    expect(markup).toContain("concejo no compatible");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
   });
@@ -426,7 +426,7 @@ describe("simulate page — the roster belongs to one statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("heldOver requires a supported council");
+    expect(markup).toContain("heldOver requiere un concejo compatible");
     expect(markup.match(/role="alert"/g)).toHaveLength(1);
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
@@ -449,7 +449,7 @@ describe("simulate page — the request cannot move the statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("renews 9 of the 18 council seats");
+    expect(markup).toContain("renueva 9 de las 18 bancas del concejo");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
     expect(markup).not.toContain("Projection (hypothetical");
@@ -469,7 +469,7 @@ describe("simulate page — the request cannot move the statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("renews 9 of the 18 council seats");
+    expect(markup).toContain("renueva 9 de las 18 bancas del concejo");
     expect(markup).not.toContain("council-composition");
   });
 
@@ -485,7 +485,7 @@ describe("simulate page — the request cannot move the statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("not a valid projection input");
+    expect(markup).toContain("no contiene una proyección válida");
     expect(markup).not.toContain("council-composition");
   });
 
@@ -499,7 +499,7 @@ describe("simulate page — the request cannot move the statute", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("invalid JSON");
+    expect(markup).toContain("JSON no válido");
   });
 });
 
@@ -520,8 +520,8 @@ describe("simulate page — a repeated query param reaches the guard", () => {
 
     // "input" alone appears in prose all over this page; the assertion has to
     // name the guard's own sentence or it cannot fail.
-    expect(markup).toContain("supplied more than once");
-    expect(markup).toMatch(/cannot be resolved to one value: [^<]*input/);
+    expect(markup).toContain("se proporcionaron más de una vez");
+    expect(markup).toMatch(/no se pueden resolver a un único valor: [^<]*input/);
   });
 });
 
@@ -555,7 +555,7 @@ describe("simulate page — the statutory gate's own boundary", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toMatch(/MAYORIA.*not implemented.*Ley 5109/i);
+    expect(markup).toMatch(/MAYORIA.*no está implementada.*Ley 5109/i);
     expect(markup).not.toContain("allocation-result");
   });
 });
@@ -581,7 +581,7 @@ describe("simulate page — projection provenance boundary", () => {
 
   function traceFrom(markup: string): string | undefined {
     return markup.match(
-      /Supplied-input trace \(not archive provenance\): sha256 ([a-f0-9]{64})/,
+      /Huella de los datos proporcionados \(no es procedencia de archivo\): sha256 ([a-f0-9]{64})/,
     )?.[1];
   }
 
@@ -595,7 +595,7 @@ describe("simulate page — projection provenance boundary", () => {
       fetchedAt: "2026-01-01T00:00:00Z",
     });
 
-    expect(markup).toContain("Historical simulation is unavailable at this route");
+    expect(markup).toContain("La simulación histórica no está disponible en esta ruta");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("<p>Historical run</p>");
     expect(markup).not.toContain("forged-archive-entry");
@@ -610,7 +610,7 @@ describe("simulate page — projection provenance boundary", () => {
       sha256: "a".repeat(64),
     });
 
-    expect(markup).toContain("not a valid projection input");
+    expect(markup).toContain("no contiene una proyección válida");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("projection-cannot-cite-this");
     expect(markup).not.toContain("a".repeat(64));
@@ -621,20 +621,20 @@ describe("simulate page — projection provenance boundary", () => {
     const missingGranularity = { ...ALLOCATION_INPUT };
     Reflect.deleteProperty(missingGranularity, "granularity");
     const missing = await renderSimulation(missingGranularity);
-    expect(missing).toContain("not a valid projection input");
+    expect(missing).toContain("no contiene una proyección válida");
     expect(missing).not.toContain("allocation-result");
 
     const unnormalized = await renderSimulation({
       ...projection,
       granularity: "precinct",
     });
-    expect(unnormalized).toContain("not a valid projection input");
+    expect(unnormalized).toContain("no contiene una proyección válida");
     expect(unnormalized).not.toContain("allocation-result");
 
     const markup = await renderSimulation(projection);
-    expect(markup).toContain("Projection (hypothetical, caller supplied)");
-    expect(markup).toContain("Input granularity");
-    expect(markup).toContain('aria-label="granularity: mesa"');
+    expect(markup).toContain("Proyección hipotética aportada");
+    expect(markup).toContain("Granularidad de entrada");
+    expect(markup).toContain('aria-label="granularidad: mesa"');
   });
 
   it("renders a canonical supplied-input trace that is stable only for equivalent input", async () => {
@@ -669,7 +669,7 @@ describe("simulate page — projection provenance boundary", () => {
       { ...HELD_OVER[0], listId: "changed-held-over" },
       ...HELD_OVER.slice(1),
     ]);
-    const trace = /Supplied-input trace \(not archive provenance\): sha256 ([a-f0-9]{64})/;
+    const trace = /Huella de los datos proporcionados \(no es procedencia de archivo\): sha256 ([a-f0-9]{64})/;
     const firstDigest = firstMarkup.match(trace)?.[1];
     const reorderedDigest = reorderedMarkup.match(trace)?.[1];
     const changedDigest = changedMarkup.match(trace)?.[1];
@@ -688,7 +688,7 @@ describe("simulate page — projection provenance boundary", () => {
       ...HELD_OVER.slice(1),
     ]);
 
-    expect(markup).toContain("not a valid heldOver roster");
+    expect(markup).toContain("heldOver` no contiene una nómina válida");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
   });
@@ -699,7 +699,7 @@ describe("simulate page — projection provenance boundary", () => {
       ...HELD_OVER.slice(1),
     ]);
 
-    expect(markup).toContain("not a valid heldOver roster");
+    expect(markup).toContain("heldOver` no contiene una nómina válida");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");
   });

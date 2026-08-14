@@ -6,81 +6,83 @@ export default function DashboardPage(): ReactNode {
     <main className="page-shell">
       <div className="shell-container">
         <header className="page-header">
-          <p className="eyebrow">Evidence room / workspace index</p>
-          <h1>Votus dashboard</h1>
+          <p className="eyebrow">Espacio de evidencia / índice de trabajo</p>
+          <h1>Panel de Votus</h1>
           <p className="page-header__lede">
-            Move from official and public evidence to review, analysis, and
-            bounded simulation with the source status of each workflow in view.
+            Pase de la evidencia oficial y pública a la revisión, el análisis y
+            la simulación acotada sin perder de vista el estado de las fuentes de
+            cada flujo de trabajo.
           </p>
         </header>
 
         <section className="workflow-section" aria-labelledby="evidence-workflows">
           <div className="workflow-section__heading">
-            <h2 id="evidence-workflows">Evidence and review</h2>
+            <h2 id="evidence-workflows">Evidencia y revisión</h2>
             <p>
-              Start with workflows that inspect results, record source status, or
-              surface unresolved material before an interpretation is shared.
+              Comience por los flujos que examinan resultados, registran el estado
+              de las fuentes o muestran material pendiente antes de compartir una
+              interpretación.
             </p>
           </div>
           <ul className="workflow-grid">
             <li className="workflow-card">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Official results</p>
-                <h3>Explore the result record</h3>
+                <p className="workflow-card__status">Resultados oficiales</p>
+                <h3>Explorar el registro de resultados</h3>
                 <p>
-                  Inspect official result rows with their granularity and
-                  provenance rather than collapsing the evidence into a single
-                  headline number.
+                  Examine las filas de resultados oficiales con su granularidad y
+                  procedencia, sin reducir la evidencia a una sola cifra destacada.
                 </p>
               </div>
               <div className="workflow-card__footer">
                 <Link className="text-link" href="/drilldown">
-                  Explore results
+                  Explorar resultados
                 </Link>
               </div>
             </li>
             <li className="workflow-card">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Opt-in source</p>
-                <h3>Inspect fiscalización records</h3>
+                <p className="workflow-card__status">Fuente de acceso voluntario</p>
+                <h3>Examinar registros de fiscalización</h3>
                 <p>
-                  Review unofficial fiscalización material separately from
-                  official figures, with its source status kept visible.
+                  Revise el material de fiscalización no oficial por separado de
+                  las cifras oficiales y mantenga visible el estado de su fuente.
                 </p>
               </div>
               <div className="workflow-card__footer">
                 <Link className="text-link" href="/fiscalizacion">
-                  Fiscalización (unofficial)
+                  Fiscalización (no oficial)
                 </Link>
               </div>
             </li>
             <li className="workflow-card">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Needs attention</p>
-                <h3>Resolve review items</h3>
+                <p className="workflow-card__status">Requiere atención</p>
+                <h3>Resolver elementos de revisión</h3>
                 <p>
-                  See unresolved questions and evidence gaps before relying on
-                  a result or carrying an interpretation forward.
+                  Consulte las preguntas pendientes y los vacíos de evidencia antes
+                  de confiar en un resultado o avanzar con una interpretación.
                 </p>
               </div>
               <div className="workflow-card__footer">
-                <Link className="text-link" href="/review">
-                  Review
+<Link className="text-link" href="/review">
+                  Revisión
                 </Link>
               </div>
             </li>
             <li className="workflow-card">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Model assumptions</p>
-                <h3>Test seat projections</h3>
+                <p className="workflow-card__status">Supuestos del modelo</p>
+                <h3>Probar proyecciones de bancas</h3>
                 <p>
-                  Run a bounded seat simulation while keeping assumptions and
-                  non-official projections distinct from observed results.
+                  Ejecute una simulación acotada de bancas y mantenga los supuestos
+                  y las proyecciones no oficiales separados de los resultados
+                  observados.
                 </p>
               </div>
               <div className="workflow-card__footer">
                 <Link className="text-link" href="/simulate">
-                  Seat simulation
+                  Simulación de bancas
                 </Link>
               </div>
             </li>
@@ -89,42 +91,42 @@ export default function DashboardPage(): ReactNode {
 
         <section className="workflow-section" aria-labelledby="prepared-workflows">
           <div className="workflow-section__heading">
-            <h2 id="prepared-workflows">Prepared analysis paths</h2>
+            <h2 id="prepared-workflows">Rutas de análisis preparadas</h2>
             <p>
-              These routes are discoverable here, but they require a prepared
-              or deep-linked context to be meaningful.
+              Estas rutas se pueden encontrar aquí, pero se requiere un contexto
+              preparado o un enlace directo para que resulten útiles.
             </p>
           </div>
           <ul className="workflow-grid">
             <li className="workflow-card workflow-card--prepared">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Prepared context required</p>
-                <h3>Compare election outcomes</h3>
+                <p className="workflow-card__status">Se requiere un contexto preparado</p>
+                <h3>Comparar resultados electorales</h3>
                 <p>
-                  Compare two prepared elections when their jurisdiction,
-                  category, and party mapping context is known. This card does
-                  not start a data-selection workflow from a cold click.
+                  Compare dos elecciones preparadas cuando conozca el contexto de
+                  jurisdicción, categoría y mapeo de partidos. Esta tarjeta no
+                  inicia un flujo de selección de datos sin contexto previo.
                 </p>
               </div>
               <div className="workflow-card__footer">
-                <Link className="text-link" href="/compare">
-                  Compare election outcomes
+<Link className="text-link" href="/compare">
+                  Comparar resultados electorales
                 </Link>
               </div>
             </li>
             <li className="workflow-card workflow-card--prepared">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Prepared context required</p>
-                <h3>Analyze municipal councils</h3>
+                <p className="workflow-card__status">Se requiere un contexto preparado</p>
+                <h3>Analizar concejos municipales</h3>
                 <p>
-                  Open municipal analysis from a prepared or deep-linked
-                  jurisdiction context. This card does not start a
-                  data-selection workflow from a cold click.
+                  Abra el análisis municipal desde un contexto jurisdiccional
+                  preparado o mediante un enlace directo. Esta tarjeta no inicia
+                  un flujo de selección de datos sin contexto previo.
                 </p>
               </div>
               <div className="workflow-card__footer">
                 <Link className="text-link" href="/municipal">
-                  Municipal council analysis
+                  Análisis de concejos municipales
                 </Link>
               </div>
             </li>

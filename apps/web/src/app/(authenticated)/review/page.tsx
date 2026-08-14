@@ -25,20 +25,20 @@ export default async function ReviewPage(): Promise<ReactNode> {
     .order("detected_at", { ascending: false });
 
   if (error) {
-    throw new Error(`ReviewPage: failed to read review_item: ${error.message}`);
+    throw new Error(`ReviewPage: no se pudo leer review_item: ${error.message}`);
   }
 
   const items = (data ?? []) as ReviewItemRow[];
 
   return (
     <main>
-      <h1>Review queue</h1>
+      <h1>Cola de revisión</h1>
       {items.length === 0 ? (
-        <p>No unresolved review items.</p>
+        <p>No hay elementos de revisión pendientes.</p>
       ) : (
-        <TableScroll label="Unresolved review items">
+        <TableScroll label="Elementos de revisión pendientes">
           <table className="data-table data-table--review">
-            <caption>Unresolved review items</caption>
+            <caption>Elementos de revisión pendientes</caption>
             <colgroup>
               <col className="review-column review-column--kind" />
               <col className="review-column review-column--severity" />
@@ -48,11 +48,11 @@ export default async function ReviewPage(): Promise<ReactNode> {
             </colgroup>
             <thead>
               <tr>
-                <th scope="col">Kind</th>
-                <th scope="col">Severity</th>
-                <th scope="col">Subject</th>
-                <th scope="col">Detected</th>
-                <th scope="col">Note</th>
+                <th scope="col">Tipo</th>
+                <th scope="col">Severidad</th>
+                <th scope="col">Asunto</th>
+                <th scope="col">Detectado</th>
+                <th scope="col">Nota</th>
               </tr>
             </thead>
             <tbody>

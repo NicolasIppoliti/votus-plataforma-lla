@@ -63,7 +63,7 @@ describe("official results exploration repository", () => {
         { code: "04", name: null, nameStatus: "conflict", nameVariantCount: 2 },
       ]);
       expect(result.distritos.map(formatFacetOptionLabel)).toEqual([
-        "02 — Buenos Aires", "03 — name unavailable", "04 — conflicting names (2 variants)",
+        "02 — Buenos Aires", "03 — nombre no disponible", "04 — nombres contradictorios (2 variantes)",
       ]);
     });
     it.each([
@@ -80,7 +80,7 @@ describe("official results exploration repository", () => {
         circuitos: [], establecimientos: [], mesas: [], available_levels: [],
       } });
       await expect(new ResultsExplorationRepository(fake.client).facets({})).rejects.toEqual(
-        new ResultsExplorationContractError("results_exploration_facets_contract", "malformed facets payload"));
+        new ResultsExplorationContractError("results_exploration_facets_contract", "respuesta de facetas malformada"));
     });
     it.each(["", "   "])("treats a blank form selector (%j) as absent", (blank) => {
     expect(normalizeExplorationParams({ distritoCode: blank, seccionCode: blank,
@@ -121,7 +121,7 @@ describe("official results exploration repository", () => {
     await expect(new ResultsExplorationRepository(fake.client).official({
       ...SELECTION, mesaCode: 7, requestedLevel: "mesa",
     })).rejects.toEqual(new ResultsExplorationContractError(
-      "results_exploration_official_contract", "mesa requires circuito and establecimiento parents"));
+      "results_exploration_official_contract", "mesa requiere los niveles superiores circuito y establecimiento"));
     expect(fake.calls).toEqual([]);
   });
   it("parses a bounded official section-wide school breakdown without merging circuit identities", async () => {
@@ -279,7 +279,7 @@ describe("query-string administrative code normalization", () => {
   });
   it("refuses malformed codes instead of comparing pass-through values", () => {
     expect(normalizeExplorationParams({ distritoCode: "O2", seccionCode: "2_7" })).toEqual({
-      status: "invalid", reason: "administrative selectors are malformed",
+      status: "invalid", reason: "los selectores administrativos están malformados",
       counts: { distritoCode: 1, seccionCode: 1 },
     });
   });

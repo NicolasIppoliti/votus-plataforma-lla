@@ -59,9 +59,9 @@ describe("JuxtapositionBadge", () => {
       />,
     );
 
-    expect(html).toContain("UNVERIFIED source kind");
+    expect(html).toContain("tipo de fuente SIN VERIFICAR");
     // It must not borrow the official label it failed to earn.
-    expect(html.match(/(?<!un)official source/g) ?? []).toHaveLength(0);
+    expect(html.match(/fuente oficial/g) ?? []).toHaveLength(0);
   });
 
   it("test_an_official_figure_with_no_sources_announces_it", () => {
@@ -73,7 +73,7 @@ describe("JuxtapositionBadge", () => {
       />,
     );
 
-    expect(html).toContain("No archived source for this figure");
+    expect(html).toContain("No hay una fuente archivada para esta cifra");
   });
 
   it("test_cross_election_juxtaposition_shows_both_election_identities_and_source_kinds", () => {
@@ -91,8 +91,8 @@ describe("JuxtapositionBadge", () => {
     // used to pass off the fiscalización span alone: `sourceLabel` could
     // return "unofficial" unconditionally and this test stayed green, which is
     // the exact mislabel it exists to catch.
-    expect(html.toLowerCase()).toContain("unofficial source");
-    expect(html.toLowerCase().match(/(?<!un)official source/g) ?? []).toHaveLength(1);
+    expect(html.toLowerCase()).toContain("fuente no oficial");
+    expect(html.toLowerCase().match(/fuente oficial/g) ?? []).toHaveLength(1);
   });
 
   it("test_non_random_coverage_is_stated_adjacent_not_only_in_a_footnote", () => {
@@ -104,7 +104,7 @@ describe("JuxtapositionBadge", () => {
       />,
     );
 
-    expect(html.toLowerCase()).toContain("not a random sample");
+    expect(html.toLowerCase()).toContain("no es una muestra aleatoria");
     expect(html).toContain("93");
     expect(html).toContain("153");
 
@@ -112,12 +112,12 @@ describe("JuxtapositionBadge", () => {
     // BEFORE the official figure's own section closes, i.e. scoped to the
     // fiscalización figure's own markup rather than trailing the whole
     // component in one shared closing note.
-    const coverageIndex = html.toLowerCase().indexOf("not a random sample");
+    const coverageIndex = html.toLowerCase().indexOf("no es una muestra aleatoria");
     const officialSectionIndex = html.indexOf(OFFICIAL_FIGURE.electionLabel);
     expect(coverageIndex).toBeGreaterThan(-1);
     expect(coverageIndex).toBeLessThan(officialSectionIndex);
 
     // Never presented as a like-for-like comparison without disclosure.
-    expect(html.toLowerCase()).toContain("not directly comparable");
+    expect(html.toLowerCase()).toContain("no son directamente comparables");
   });
 });

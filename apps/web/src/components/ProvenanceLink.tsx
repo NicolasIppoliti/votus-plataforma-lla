@@ -14,7 +14,7 @@ export interface ProvenanceLinkProps {
  */
 export function ProvenanceLink({ sources }: ProvenanceLinkProps): ReactNode {
   return (
-    <ul aria-label="provenance">
+    <ul aria-label="procedencia">
       {sources.map((source) => (
         <li key={source.archiveEntryId}>
           <span>{source.archiveEntryId}</span>
@@ -25,11 +25,11 @@ export function ProvenanceLink({ sources }: ProvenanceLinkProps): ReactNode {
             // Named, not blank. An entry with no hash cannot be verified, and
             // rendering an empty code block reads as a digest that is simply
             // hard to see.
-            <strong role="alert">unhashed — this entry cannot be verified</strong>
+            <strong role="alert">sin hash — esta entrada no puede verificarse</strong>
           )}
           {" — "}
           <a href={source.url}>{source.url}</a>
-          {" — fetched "}
+          {" — descargada el "}
           <time dateTime={source.fetchedAt}>{source.fetchedAt}</time>
         </li>
       ))}

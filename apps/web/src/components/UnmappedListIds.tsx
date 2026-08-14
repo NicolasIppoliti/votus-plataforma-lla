@@ -60,7 +60,7 @@ export function UnmappedListIds({
       ? describeExcluded(noListId)
       : Object.entries(noListId)
           .filter(([, tally]) => tally.rows > 0)
-          .map(([kind, tally]) => `${tally.rows} ${kind} row(s)`)
+          .map(([kind, tally]) => `${tally.rows} fila(s) ${kind}`)
           .join(", ") || null;
   const noListIdRows = Object.values(noListId).reduce((sum, tally) => sum + tally.rows, 0);
   if (rows === 0 && noListIdRows === 0) return null;
@@ -73,20 +73,20 @@ export function UnmappedListIds({
       {rows === 0 ? null : (
       <p role="alert">
         {label ? `${label}: ` : ""}
-        {rows} of {totalRows} rows{unsummable === null ? ` (${votes} votes)` : ""}{" "}
+        {rows} de {totalRows} filas{unsummable === null ? ` (${votes} votos)` : ""}{" "}
         {mappingConfigured
-          ? "resolved to no curated party"
-          : "could not be resolved because no curated mapping source is configured for this read"}
-        . They remain in every denominator as votes that were cast, but no party
-        can be named for them. By list id:
+          ? "se resolvieron sin un partido curado"
+          : "no se pudieron resolver porque no hay una fuente de mapeo curado configurada para esta lectura"}
+        . Se mantienen en todos los denominadores como votos emitidos, pero no se
+        puede nombrar un partido para ellos. Por id de lista:
       </p>
       )}
       {rows === 0 ? null : (
       <ul>
         {entries.map((entry) => (
           <li key={entry.listId}>
-            {entry.listId}: {entry.rows} rows
-            {unsummable === null ? `, ${entry.votes} votes` : ""}
+            {entry.listId}: {entry.rows} filas
+            {unsummable === null ? `, ${entry.votes} votos` : ""}
           </li>
         ))}
       </ul>
@@ -96,14 +96,15 @@ export function UnmappedListIds({
         // shapes, and a large plausible total is how a destructive filter
         // survives review.
         <p role="note">
-          {noListIdRows} row(s) carry no list id at all — they are not list ids
-          that failed to map. By source kind: {noListIdSummary}.
+          {noListIdRows} fila(s) no tienen id de lista: no son identificadores de
+          lista que no se hayan podido mapear. Por tipo de fuente: {noListIdSummary}.
         </p>
       )}
       {unsummable === null ? null : (
         <p role="note">
-          Vote totals are omitted here for the same reason the per-party figures are:
-          these rows cannot be combined, so their votes cannot be added: {unsummable}.
+          Aquí se omiten los totales de votos por la misma razón que las cifras por
+          partido: estas filas no se pueden combinar, por lo que sus votos no se
+          pueden sumar: {unsummable}.
         </p>
       )}
     </>

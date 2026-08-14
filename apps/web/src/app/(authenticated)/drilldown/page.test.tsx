@@ -255,14 +255,14 @@ describe("drilldown page", () => {
     expect(explorationRpcCalls.map((call) => call.name)).toEqual(["results_exploration_facets"]);
     expect(markup).toContain('<main class="page-shell">');
     expect(markup).not.toContain('id="main-content"');
-    for (const text of ["Explore official results", '<form action="/drilldown" method="get">',
+    for (const text of ["Explorar resultados oficiales", '<form action="/drilldown" method="get">',
       "2025 legislativas", "DIPUTADO NACIONAL"]) expect(markup).toContain(text);
   });
 
   it("distinguishes missing and conflicting facet names without changing option values", async () => {
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
-    expect(markup).toContain('<option value="00001">00001 — name unavailable</option>');
-    expect(markup).toContain('<option value="E1">E1 — conflicting names (3 variants)</option>');
+    expect(markup).toContain('<option value="00001">00001 — nombre no disponible</option>');
+    expect(markup).toContain('<option value="E1">E1 — nombres contradictorios (3 variantes)</option>');
   });
 
   it("renders the selected establishment and reaches mesa facet discovery with its complete lineage", async () => {
@@ -306,7 +306,7 @@ describe("drilldown page", () => {
       electionId: "2025-legislativas-nacional", categoryId: "", distritoCode: "",
       seccionCode: "", circuitoCode: "", establecimientoCode: "", mesaCode: "", level: "",
     }) })) as ReactElement);
-    expect(markup).toContain('<label for="explorer-category">Category</label>');
+    expect(markup).toContain('<label for="explorer-category">Categoría</label>');
     expect(explorationRpcCalls[0]?.args).toMatchObject({
       p_election_id: "2025-legislativas-nacional", p_category_id: null,
     });
@@ -333,8 +333,8 @@ describe("drilldown page", () => {
       electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
       distritoCode: "2", seccionCode: "27", mesaCode: "7", level: "mesa",
     }) })) as ReactElement);
-    expect(markup).toContain("Refused:");
-    expect(markup).toContain("mesa requires circuito and establecimiento parents");
+    expect(markup).toContain("Se rechazó la solicitud:");
+    expect(markup).toContain("mesa requiere los niveles superiores circuito y establecimiento");
     expect(explorationRpcCalls.some((call) => call.name === "results_exploration_official")).toBe(false);
   });
 
@@ -357,9 +357,9 @@ describe("drilldown page", () => {
        establecimientoCode: "E1", mesaCode: "7", level: "mesa",
     }) })) as ReactElement);
 
-    for (const text of ["LA LIBERTAD AVANZA", "200 votes", "66.67%", "Unmapped list 999",
+    for (const text of ["LA LIBERTAD AVANZA", "200 votos", "66.67%", "Lista sin mapear 999",
       "https://example.test/2025.zip"]) expect(markup).toContain(text);
-    expect(markup).not.toContain("Provide <code>jurisdictionId</code>");
+    expect(markup).not.toContain("Proporcione los parámetros de consulta <code>jurisdictionId</code>");
   });
 
   it("renders every official school in a section with composite identity, parties, mesas, and provenance", async () => {
@@ -377,8 +377,8 @@ describe("drilldown page", () => {
     sourceRefs = [{ archiveEntryId: "national/2025-legislativas", sha256: "e3b0c442",
       url: "https://example.test/2025.zip", fetchedAt: "2026-01-01T00:00:00Z" }];
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    for (const text of ["Official school breakdown", "Circuito 00001 — E1 — School one",
-      "Circuito 00002 — E1 — School two", "2 mesas", "Unmapped list 999", "50 votes"])
+    for (const text of ["Desglose oficial por establecimiento", "Circuito 00001 — E1 — School one",
+      "Circuito 00002 — E1 — School two", "2 mesas", "Lista sin mapear 999", "50 votos"])
       expect(markup).toContain(text);
   });
 
@@ -386,11 +386,11 @@ describe("drilldown page", () => {
     explorationRpcResult = officialRpc();
     const params = EXPLORER_PARAMS;
     const ok = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
-    expect(ok).toContain("300 votes at seccion level from mesa source rows across 2 mesas");
+    expect(ok).toContain("300 votos a nivel seccion, obtenidos de filas de fuente mesa en 2 mesas");
 
     explorationRpcError = "row-level security denied exploration";
     const refused = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
-    expect(refused).toContain("Refused: results_exploration_official failed: row-level security denied exploration");
+    expect(refused).toContain("Se rechazó la solicitud: results_exploration_official failed: row-level security denied exploration");
   });
 
   it("renders every source kind excluded by the official RPC", async () => {
@@ -398,9 +398,9 @@ describe("drilldown page", () => {
       { kind: "fiscalizacion", rows: 2, votes: 1776 }, { kind: "unknown", rows: 1, votes: 9 }] };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams:
       Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    expect(markup).toContain("Excluded 2 fiscalizacion rows / 1776 votes from the official aggregate");
-    expect(markup).toContain("Excluded 1 unknown rows / 9 votes from the official aggregate");
-    expect(markup).toContain("300 votes at seccion level");
+    expect(markup).toContain("Se excluyeron 2 filas de fuente fiscalización / 1776 votos del agregado oficial");
+    expect(markup).toContain("Se excluyeron 1 fila de fuente desconocida / 9 votos del agregado oficial");
+    expect(markup).toContain("300 votos a nivel seccion");
   });
 
   it("renders source exclusions when an official-only scope refuses for no rows", async () => {
@@ -409,8 +409,8 @@ describe("drilldown page", () => {
       source_exclusions: [{ kind: "fiscalizacion", rows: 2, votes: 1776 }] };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams:
       Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    expect(markup).toContain("Refused: no official rows exist");
-    expect(markup).toContain("Excluded 2 fiscalizacion rows / 1776 votes from the official aggregate");
+    expect(markup).toContain("Se rechazó la solicitud: no official rows exist");
+    expect(markup).toContain("Se excluyeron 2 filas de fuente fiscalización / 1776 votos del agregado oficial");
   });
 
       it("retains aggregate exclusions when the rendered aggregate audit refuses", async () => {
@@ -434,12 +434,12 @@ describe("drilldown page", () => {
         })) as ReactElement);
 
         expect(markup).toContain('<form action="/drilldown" method="get">');
-        expect(markup).toContain("Refused: the aggregate source audit includes non-official rows.");
-        expect(markup).toContain("Excluded 3 fiscalizacion rows / 88 votes from the official aggregate");
-        expect(markup).toContain("Excluded 2 unknown rows / 11 votes from the official aggregate");
-        expect(markup).not.toContain("999 votes at seccion level");
+        expect(markup).toContain("Se rechazó la solicitud: la auditoría de fuentes del agregado incluye filas no oficiales.");
+        expect(markup).toContain("Se excluyeron 3 filas de fuente fiscalización / 88 votos del agregado oficial");
+        expect(markup).toContain("Se excluyeron 2 filas de fuente desconocida / 11 votos del agregado oficial");
+        expect(markup).not.toContain("999 votos a nivel seccion");
         expect(markup).not.toContain("LEAKED PARTY");
-        expect(markup).not.toContain("Official votes and share by party");
+        expect(markup).not.toContain("Votos oficiales y porcentaje por partido");
         expect(markup).not.toContain("https://example.test");
       });
 
@@ -460,11 +460,11 @@ describe("drilldown page", () => {
 
             expect(markup).toContain('<form action="/drilldown" method="get">');
             expect(markup).toContain("row-level security denied the school read");
-            expect(markup).toContain("Excluded 3 fiscalizacion rows / 88 votes from the official aggregate");
-            expect(markup).not.toContain("Official breakdown");
-            expect(markup).not.toContain("Official school breakdown");
+            expect(markup).toContain("Se excluyeron 3 filas de fuente fiscalización / 88 votos del agregado oficial");
+            expect(markup).not.toContain("Desglose oficial");
+            expect(markup).not.toContain("Desglose oficial por establecimiento");
             expect(markup).not.toContain("LEAKED PARTY");
-            expect(markup).not.toContain("999 votes at seccion level");
+            expect(markup).not.toContain("999 votos a nivel seccion");
             expect(markup).not.toContain("https://example.test");
           });
 
@@ -497,12 +497,12 @@ describe("drilldown page", () => {
         })) as ReactElement);
 
         expect(markup).toContain('<form action="/drilldown" method="get">');
-        expect(markup).toContain("Refused: the school breakdown source audit includes non-official rows.");
-        expect(markup).toContain("Excluded 2 unknown rows / 19 votes from the official aggregate");
-        expect(markup).toContain("Excluded 4 fiscalizacion rows / 73 votes from the school aggregate");
-        expect(markup).toContain("Excluded 5 rows / 41 votes: official_rows_without_mesa_code");
-        expect(markup).not.toContain("Official votes and share by party");
-        expect(markup).not.toContain("Official votes by circuit and establishment");
+        expect(markup).toContain("Se rechazó la solicitud: la auditoría de fuentes del desglose por establecimiento incluye filas no oficiales.");
+        expect(markup).toContain("Se excluyeron 2 filas de fuente desconocida / 19 votos del agregado oficial");
+        expect(markup).toContain("Se excluyeron 4 filas de fuente fiscalización / 73 votos del agregado establecimiento");
+        expect(markup).toContain("Se excluyeron 5 fila(s) / 41 voto(s): official_rows_without_mesa_code");
+        expect(markup).not.toContain("Votos oficiales y porcentaje por partido");
+        expect(markup).not.toContain("Votos oficiales por circuito y establecimiento");
         expect(markup).not.toContain("Leaked school");
         expect(markup).not.toContain("https://example.test");
       });
@@ -534,13 +534,13 @@ describe("drilldown page", () => {
 
         expect(markup).toContain('<form action="/drilldown" method="get">');
         expect(markup).toContain("row-level security denied the source read");
-        expect(markup).toContain("Excluded 4 fiscalizacion rows / 88 votes from the official aggregate");
-        expect(markup).toContain("Excluded 2 unknown rows / 9 votes from the official aggregate");
-        expect(markup).toContain("Excluded 3 fiscalizacion rows / 77 votes from the school aggregate");
-        expect(markup).toContain("Excluded 5 rows / 44 votes: official_rows_without_mesa_code");
-        expect(markup).not.toContain("Official breakdown");
-        expect(markup).not.toContain("Official votes and share by party");
-        expect(markup).not.toContain("Official school breakdown");
+        expect(markup).toContain("Se excluyeron 4 filas de fuente fiscalización / 88 votos del agregado oficial");
+        expect(markup).toContain("Se excluyeron 2 filas de fuente desconocida / 9 votos del agregado oficial");
+        expect(markup).toContain("Se excluyeron 3 filas de fuente fiscalización / 77 votos del agregado establecimiento");
+        expect(markup).toContain("Se excluyeron 5 fila(s) / 44 voto(s): official_rows_without_mesa_code");
+        expect(markup).not.toContain("Desglose oficial");
+        expect(markup).not.toContain("Votos oficiales y porcentaje por partido");
+        expect(markup).not.toContain("Desglose oficial por establecimiento");
         expect(markup).not.toContain("Unusable school");
       });
 
@@ -556,8 +556,8 @@ describe("drilldown page", () => {
           display_name: null, list_id: "110", votes: 10, vote_share: "1" }] }] };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams:
       Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    expect(markup).toContain("Excluded 1 fiscalizacion rows / 70 votes from the school aggregate");
-    expect(markup).toContain("Excluded 1 rows / 20 votes: official_rows_without_mesa_granularity");
+    expect(markup).toContain("Se excluyeron 1 fila de fuente fiscalización / 70 votos del agregado establecimiento");
+    expect(markup).toContain("Se excluyeron 1 fila(s) / 20 voto(s): official_rows_without_mesa_granularity");
   });
 
   it.each([
@@ -570,9 +570,9 @@ describe("drilldown page", () => {
       source_exclusions: [{ kind: "fiscalizacion", rows: 3, votes: 90 }] };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams:
       Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    expect(markup).toContain(`Refused: ${reason}`);
-    expect(markup).toContain("Excluded 2 rows / 40 votes: official_rows_without_mesa_code");
-    expect(markup).toContain("Excluded 3 fiscalizacion rows / 90 votes from the school aggregate");
+    expect(markup).toContain(`Se rechazó la solicitud: ${reason}`);
+    expect(markup).toContain("Se excluyeron 2 fila(s) / 40 voto(s): official_rows_without_mesa_code");
+    expect(markup).toContain("Se excluyeron 3 filas de fuente fiscalización / 90 votos del agregado establecimiento");
   });
 
   it("refuses a widened aggregate at the render even if parser protection regresses", async () => {
@@ -585,8 +585,8 @@ describe("drilldown page", () => {
       archiveEntryIds: ["national/2025-legislativas", "fiscalizacion/leaked"],
     };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    expect(markup).toContain("Refused:");
-    expect(markup).not.toContain("999 votes");
+    expect(markup).toContain("Se rechazó la solicitud:");
+    expect(markup).not.toContain("999 votos");
     expect(markup).not.toContain("LEAKED PARTY");
   });
 
@@ -598,7 +598,7 @@ describe("drilldown page", () => {
       identity_status: "canonical", canonical_party_id: "invalid", display_name: "INVALID FIGURE",
       list_id: null, ...inconsistency }] };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(EXPLORER_PARAMS) })) as ReactElement);
-    expect(markup).toContain("Refused:"); expect(markup).not.toContain("INVALID FIGURE");
+    expect(markup).toContain("Se rechazó la solicitud:"); expect(markup).not.toContain("INVALID FIGURE");
   });
 
   it("test_a_refused_query_is_reported_not_rendered_as_no_results", async () => {
@@ -621,7 +621,7 @@ describe("drilldown page", () => {
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("No official results found");
+    expect(markup).toContain("No se encontraron resultados oficiales");
   });
 });
 
@@ -647,14 +647,14 @@ describe("drilldown page — mixed levels are not summed", () => {
     // A `seccion` row already CONTAINS the mesa row beneath it, so adding them
     // reports 20 votes for a party that got 10. Disclosing the mix and then
     // summing it anyway was the defect: disclosure is not permission.
-    expect(markup).toContain("summing them would double-count");
-    expect(markup).toContain("No per-party figures");
+    expect(markup).toContain("sumarlas duplicaría el conteo");
+    expect(markup).toContain("No hay cifras por partido");
     // And NO badge: `readGranularity` folds to the coarsest level, so a badge
     // beside the refusal names one of the mixed levels as if it were the set's.
-    expect(markup).not.toContain('aria-label="granularity:');
-    expect(markup).not.toContain("20 votes");
+    expect(markup).not.toContain('aria-label="granularidad:');
+    expect(markup).not.toContain("20 votos");
     // The independent read's total is built the same way, so it goes too.
-    expect(markup).not.toContain("Official total:");
+    expect(markup).not.toContain("Total oficial:");
   });
 });
 
@@ -700,10 +700,10 @@ describe("drilldown page — the source-kind filter reports what it dropped", ()
     // The AGGREGATE path: the total must count official rows only. 100, never
     // 165 — that is what makes this one of the three independent guards
     // rather than a number that trusts the query above it.
-    expect(markup).toContain("Official total: 100 votes");
-    expect(markup).toContain("1 fiscalizacion");
+    expect(markup).toContain("Total oficial: 100 votos");
+    expect(markup).toContain("1 fila fiscalización");
     // The value outside the enum is named, not folded into silence.
-    expect(markup).toContain("1 unknown");
+    expect(markup).toContain("1 fila desconocida");
   });
 });
 
@@ -727,12 +727,12 @@ describe("drilldown page — path 3 fires when the repository filter regresses",
     );
 
     // The FULL phrase: `"are not"` carries no refusal semantics on its own.
-    expect(markup).toContain("are not official");
+    expect(markup).toContain("no son oficiales");
     // And the BREAKDOWN, in both units: a bare "1 of 1 rows" cannot tell a
     // leaked fiscalización row from a leaked unknown-kind one, and hides how
     // many votes came with it.
-    expect(markup).toContain("1 fiscalizacion row(s) / 100 vote(s)");
-    expect(markup).not.toContain("Official total:");
+    expect(markup).toContain("1 fila fiscalización / 100 votos");
+    expect(markup).not.toContain("Total oficial:");
   });
 });
 
@@ -783,7 +783,7 @@ describe("drilldown page — a repeated query param reaches the guard", () => {
     );
 
     expect(markup).toContain("jurisdictionId");
-    expect(markup).toContain("more than once");
+    expect(markup).toContain("más de una vez");
   });
 });
 
@@ -802,8 +802,8 @@ describe("drilldown page — an omitted param is named as omitted", () => {
     );
 
     expect(markup).toContain("partyJurisdiction");
-    expect(markup).not.toContain("not undefined");
-    expect(markup).not.toContain("is mapped by the");
+    expect(markup).not.toContain("no undefined");
+    expect(markup).not.toContain("mapea la jurisdicción");
   });
 });
 
@@ -830,8 +830,8 @@ describe("drilldown page — the figure's level is disclosed", () => {
     );
 
     // NOT `distrito` (the province) and NOT `mesa` (a detail the sum dropped).
-    expect(markup).toContain('aria-label="granularity: seccion"');
-    expect(markup).toContain("summed from mesa");
+    expect(markup).toContain('aria-label="granularidad: seccion"');
+    expect(markup).toContain("sumado a partir de filas de nivel mesa");
   });
 });
 
@@ -865,7 +865,7 @@ describe("drilldown page — an unhashed source is not silently quotable", () =>
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("unhashed — this entry cannot be verified");
+    expect(markup).toContain("sin hash — esta entrada no puede verificarse");
   });
 });
 
@@ -902,16 +902,16 @@ describe("drilldown page — path 3 covers the aggregate too", () => {
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("summed from rows that are not official");
-    expect(markup).toContain("1 fiscalizacion row(s) / 60 vote(s)");
+    expect(markup).toContain("se calculó con filas que no son oficiales");
+    expect(markup).toContain("1 fila fiscalización / 60 votos");
     // Path 2's OWN drop, which path 1 never saw. Counted moments before this
     // refusal and then discarded behind it.
     // No apostrophe in the needle: `renderToStaticMarkup` escapes it to
     // `&#x27;`, so the literal sentence never appears verbatim.
-    expect(markup).toContain("own read excluded");
-    expect(markup).toContain("4 unknown row(s) / 777 vote(s)");
+    expect(markup).toContain("lectura propia del total oficial excluyó");
+    expect(markup).toContain("4 filas desconocida / 777 votos");
     // The inflated number must not reach the page at all.
-    expect(markup).not.toContain("Official total:");
+    expect(markup).not.toContain("Total oficial:");
   });
 });
 
@@ -943,9 +943,9 @@ describe("drilldown page — the year comes from the election row", () => {
     );
 
     // SERVED: the figure renders, and no year-shaped refusal appears.
-    expect(markup).not.toContain("carries its year");
-    expect(markup).not.toContain("no election row carries the id");
-    expect(markup).toContain("LA LIBERTAD AVANZA: 100 votes");
+    expect(markup).not.toContain("contiene su año");
+    expect(markup).not.toContain("ninguna fila de elección tiene el ID");
+    expect(markup).toContain("LA LIBERTAD AVANZA: 100 votos");
   });
 });
 
@@ -980,8 +980,8 @@ describe("drilldown page — unmapped list ids are counted, not just labelled", 
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("4321: 1 rows, 700 votes");
-    expect(markup).toContain("resolved to no curated party");
+    expect(markup).toContain("4321: 1 filas, 700 votos");
+    expect(markup).toContain("se resolvieron sin un partido curado");
   });
 });
 
@@ -996,7 +996,7 @@ describe("drilldown page — the guards that bound each axis", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("not SENADOR NACIONAL");
+    expect(markup).toContain("no SENADOR NACIONAL");
   });
 
   it("test_a_category_id_no_row_carries_is_refused_as_such", async () => {
@@ -1007,7 +1007,7 @@ describe("drilldown page — the guards that bound each axis", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("carried by no category row");
+    expect(markup).toContain("no aparece en ninguna fila de categoría");
   });
 
   it("test_a_jurisdiction_outside_the_configured_family_is_refused", async () => {
@@ -1020,7 +1020,7 @@ describe("drilldown page — the guards that bound each axis", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("mapped by no configured party table");
+    expect(markup).toContain("ninguna tabla de partidos configurada mapea la jurisdicción");
   });
 
   it("test_an_election_id_no_row_carries_is_refused_not_defaulted", async () => {
@@ -1032,7 +1032,7 @@ describe("drilldown page — the guards that bound each axis", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("no election row carries the id");
+    expect(markup).toContain("ninguna fila de elección tiene el ID");
   });
 
   it("test_a_failed_lookup_is_reported_not_swallowed", async () => {
@@ -1062,10 +1062,10 @@ describe("drilldown page — the two reads disagree about whether there is data"
     );
 
     // NOT "no official results found": an independent read holds votes.
-    expect(markup).not.toContain("No official results found");
-    expect(markup).toContain("returned no rows while the official total");
+    expect(markup).not.toContain("No se encontraron resultados oficiales");
+    expect(markup).toContain("no devolvió filas, mientras que la lectura propia del total oficial");
     // ONCE. Both alerts firing printed one disagreement as two.
-    expect(markup).not.toContain("come from separate reads and do not agree");
+    expect(markup).not.toContain("provienen de lecturas separadas y no coinciden");
   });
 });
 
@@ -1111,14 +1111,14 @@ describe("drilldown page — the unmapped breakdown survives every refusal", () 
           (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
         );
 
-        expect(markup).toContain("are not official");
-        expect(markup).toContain("4321: 1 rows");
-        expect(markup).toContain("9876: 1 rows");
-        expect(markup).not.toContain("4321: 1 rows, 700 votes");
-        expect(markup).not.toContain("9876: 1 rows, 60 votes");
-        expect(markup).toContain("official and fiscalización figures are never combined in one number");
-        expect(markup).not.toContain("Official total:");
-        expect(markup).not.toContain("Official breakdown");
+        expect(markup).toContain("no son oficiales");
+        expect(markup).toContain("4321: 1 filas");
+        expect(markup).toContain("9876: 1 filas");
+        expect(markup).not.toContain("4321: 1 filas, 700 votos");
+        expect(markup).not.toContain("9876: 1 filas, 60 votos");
+        expect(markup).toContain("las cifras oficiales y de fiscalización nunca se combinan en un mismo número");
+        expect(markup).not.toContain("Total oficial:");
+        expect(markup).not.toContain("Desglose oficial");
       });
 
       it("test_it_survives_the_path_three_leakage_refusal", async () => {
@@ -1140,11 +1140,11 @@ describe("drilldown page — the unmapped breakdown survives every refusal", () 
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("are not official");
-    expect(markup).toContain("4321: 1 rows");
+    expect(markup).toContain("no son oficiales");
+    expect(markup).toContain("4321: 1 filas");
     // And the unorderable level, wired into the same refusal and driven by
     // nothing: five branches carried it, one test reached the success path.
-    expect(markup).toContain("subcircuito: 1 rows");
+    expect(markup).toContain("subcircuito: 1 filas");
   });
 
   it("test_it_survives_a_failed_source_read", async () => {
@@ -1156,7 +1156,7 @@ describe("drilldown page — the unmapped breakdown survives every refusal", () 
     );
 
     expect(markup).toContain("row-level security denied the source read");
-    expect(markup).toContain("4321: 1 rows");
+    expect(markup).toContain("4321: 1 filas");
   });
 });
 
@@ -1190,10 +1190,10 @@ describe("drilldown page — a level this app cannot order is named", () => {
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("cannot order");
+    expect(markup).toContain("no puede ordenar");
     // ROWS, never a summed vote total: containment is unknown for this level.
-    expect(markup).toContain("subcircuito: 2 rows");
-    expect(markup).not.toContain("140 votes");
+    expect(markup).toContain("subcircuito: 2 filas");
+    expect(markup).not.toContain("140 votos");
   });
 });
 
@@ -1211,11 +1211,11 @@ describe("drilldown page — an unsummable aggregate is never printed", () => {
 
     // Sanity: this fixture DOES reach the empty-rows alert when path 2 is
     // summable, which is what the sibling test pins.
-    expect(markup).toContain("returned no rows while the official total");
+    expect(markup).toContain("no devolvió filas, mientras que la lectura propia del total oficial");
   });
 
   it("test_an_unsummable_aggregate_states_why_instead_of_a_total", async () => {
-    aggregateUnsummable = "rows mix 2 granularity levels (mesa, seccion); summing them would double-count";
+    aggregateUnsummable = "las filas mezclan 2 niveles de granularidad (mesa, seccion); sumarlas duplicaría el conteo";
     aggregateHoldsVotes = 250;
     repositoryRows = [];
 
@@ -1223,13 +1223,13 @@ describe("drilldown page — an unsummable aggregate is never printed", () => {
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("No official total");
+    expect(markup).toContain("No hay total oficial");
     // The number itself reaches no site on the page.
     expect(markup).not.toContain("250");
     // And NOT an absence claim: `mixedGranularityReason` needs two levels, so
     // path 2 cannot be unsummable without having READ rows. Withholding the
     // total is not the same as there being no data.
-    expect(markup).not.toContain("No official results found");
+    expect(markup).not.toContain("No se encontraron resultados oficiales");
   });
 });
 
@@ -1271,7 +1271,7 @@ describe("drilldown page — the official total traces to its own sources", () =
     // The aggregate's OWN entry has no source record, and the page says so
     // instead of quietly tracing only the rows below the total.
     expect(markup).toContain("national/2023-generales");
-    expect(markup).toContain("cannot be traced");
+    expect(markup).toContain("no se pueden rastrear");
   });
 });
 
@@ -1298,8 +1298,8 @@ describe("drilldown page — no mapping source is not a claim about the data", (
       (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("no curated mapping source is configured");
-    expect(markup).not.toContain("resolved to no curated party");
+    expect(markup).toContain("no hay una fuente de mapeo curado configurada");
+    expect(markup).not.toContain("se resolvieron sin un partido curado");
   });
 });
 
@@ -1316,7 +1316,7 @@ describe("drilldown page — responsive selector and evidence presentation", () 
         expect(markup).toContain('<form action="/drilldown" method="get">');
         expect(markup).toContain('<fieldset class="form-grid selector-form">');
         expect(markup).toContain(
-          '<legend class="selector-form__legend">Result selectors</legend>',
+          '<legend class="selector-form__legend">Selectores de resultados</legend>',
         );
         expect(markup.match(/class="field"/g) ?? []).toHaveLength(8);
       });
@@ -1360,14 +1360,14 @@ describe("drilldown page — responsive selector and evidence presentation", () 
         expect(markup.match(/<table class="data-table">/g) ?? []).toHaveLength(2);
         expect(markup.match(/class="table-scroll"/g) ?? []).toHaveLength(2);
         expect(markup).toContain(
-          'aria-label="Official votes and share by party" tabindex="0"',
+          'aria-label="Votos oficiales y porcentaje por partido" tabindex="0"',
         );
         expect(markup).toContain(
-          'aria-label="Official votes by circuit and establishment" tabindex="0"',
+          'aria-label="Votos oficiales por circuito y establecimiento" tabindex="0"',
         );
-        expect(markup).toContain("<caption>Official votes and share by party</caption>");
+        expect(markup).toContain("<caption>Votos oficiales y porcentaje por partido</caption>");
         expect(markup).toContain(
-          "<caption>Official votes by circuit and establishment</caption>",
+          "<caption>Votos oficiales por circuito y establecimiento</caption>",
         );
         expect(markup.match(/scope="col"/g) ?? []).toHaveLength(8);
         expect(markup).toContain(

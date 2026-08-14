@@ -24,6 +24,7 @@ describe("GranularityBadge", () => {
     expect(degradedHtml).toContain("distrito");
     // The degradation itself MUST be visible, not merely encoded in a prop
     // the markup ignores.
+    expect(degradedHtml).toContain('aria-label="granularidad: distrito"');
     expect(degradedHtml.toLowerCase()).toContain("degrad");
     expect(degradedHtml).toContain("mesa");
   });

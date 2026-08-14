@@ -4,12 +4,12 @@ import { expect, it } from "vitest";
 import DashboardPage from "./page";
 
 const WORKFLOW_LINKS = [
-  ["/drilldown", "Explore results"],
-  ["/fiscalizacion", "Fiscalización (unofficial)"],
-  ["/review", "Review"],
-  ["/simulate", "Seat simulation"],
-  ["/compare", "Compare election outcomes"],
-  ["/municipal", "Municipal council analysis"],
+  ["/drilldown", "Explorar resultados"],
+  ["/fiscalizacion", "Fiscalización (no oficial)"],
+  ["/review", "Revisión"],
+  ["/simulate", "Simulación de bancas"],
+  ["/compare", "Comparar resultados electorales"],
+  ["/municipal", "Análisis de concejos municipales"],
 ] as const;
 
 it("renders the dashboard as the grouped workflow entry point", () => {
@@ -17,8 +17,8 @@ it("renders the dashboard as the grouped workflow entry point", () => {
 
   expect(markup).toContain('<main class="page-shell">');
   expect(markup).not.toContain('id="main-content"');
-  expect(markup).toContain("<h1>Votus dashboard</h1>");
-  expect(markup).toContain("official and public evidence");
+  expect(markup).toContain("<h1>Panel de Votus</h1>");
+  expect(markup).toContain("evidencia oficial y pública");
   expect(markup).toContain('aria-labelledby="evidence-workflows"');
   expect(markup).toContain('aria-labelledby="prepared-workflows"');
 
@@ -31,7 +31,7 @@ it("renders the dashboard as the grouped workflow entry point", () => {
 it("sets an honest expectation for context-dependent workflows", () => {
   const markup = renderToStaticMarkup(<DashboardPage /> as ReactElement);
 
-  expect(markup).toContain("Prepared context required");
-  expect(markup).toContain("deep-linked context");
-  expect(markup).toContain("does not start a data-selection workflow");
+  expect(markup).toContain("Se requiere un contexto preparado");
+  expect(markup).toContain("enlace directo");
+  expect(markup).toContain("no inicia un flujo de selección de datos");
 });

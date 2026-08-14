@@ -6,31 +6,32 @@ export default function HomePage(): ReactNode {
     <main id="main-content" className="public-shell" tabIndex={-1}>
       <div className="shell-container">
         <header className="page-header">
-          <p className="eyebrow">Internal electoral analysis</p>
+          <p className="eyebrow">Análisis electoral interno</p>
           <h1>Votus</h1>
           <p className="page-header__lede">
-            A civic evidence room for examining electoral results, review items,
-            and declared assumptions without turning uncertainty into a claim.
+            Un espacio de evidencia cívica para examinar resultados electorales,
+            elementos pendientes de revisión y supuestos declarados sin convertir
+            la incertidumbre en una afirmación.
           </p>
           <p className="page-header__supporting">
-            Votus helps operators work from official and public evidence, keep
-            provenance visible, and distinguish a prepared analysis from an
-            unresolved one through explicit source status.
+            Votus permite trabajar con evidencia oficial y pública, mantener
+            visible la procedencia y distinguir un análisis preparado de uno
+            pendiente mediante el estado explícito de la fuente.
           </p>
         </header>
 
         <section className="panel panel--quiet" aria-labelledby="workspace-heading">
           <div className="panel__heading">
-            <p className="eyebrow">Operator workspace</p>
-            <h2 id="workspace-heading">Start with the analysis dashboard</h2>
+            <p className="eyebrow">Espacio de trabajo</p>
+            <h2 id="workspace-heading">Comience por el panel de análisis</h2>
             <p>
-              Review the available workflows from one place. Context-dependent
-              analysis stays explicit instead of being presented as a cold-start
-              selector.
+              Revise todos los flujos disponibles en un solo lugar. Los análisis
+              que dependen del contexto se presentan de forma explícita, en lugar
+              de ofrecerse como selectores sin información previa.
             </p>
           </div>
           <Link className="button button--primary" href="/dashboard">
-            Open dashboard
+            Abrir el panel
           </Link>
         </section>
       </div>

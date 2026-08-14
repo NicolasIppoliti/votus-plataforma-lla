@@ -145,7 +145,7 @@ export function renderMunicipalView(
     return (
       <main>
         <h1>Municipal (Concejales)</h1>
-        <p role="alert">Refused: {view.reason}</p>
+        <p role="alert">Se rechazó la lectura: {view.reason}</p>
         {view.status === "read_failed" && view.unmapped ? (
           <UnmappedListIds
             entries={view.unmapped}
@@ -160,8 +160,8 @@ export function renderMunicipalView(
         ) : null}
         {carried !== null ? (
           <p role="note">
-            {carried} were excluded by the official-source filter before this
-            failure.
+            {carried} se excluyeron por el filtro de fuente oficial antes de esta
+            falla.
           </p>
         ) : null}
       </main>
@@ -176,8 +176,8 @@ export function renderMunicipalView(
   const excludedNote =
     excludedSummary !== null ? (
       <p role="note">
-        {excludedSummary} were excluded by the official-source filter and are
-        not in any figure on this page.
+        {excludedSummary} se excluyeron por el filtro de fuente oficial y no
+        forman parte de ninguna cifra de esta página.
       </p>
     ) : null;
 
@@ -215,9 +215,9 @@ export function renderMunicipalView(
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused: {describeExcluded(tallyByKind(foreignRows))} of {rows.length}{" "}
-          rows are not official. Official and fiscalización figures are never
-          combined in one number.
+          Se rechazó la solicitud: {describeExcluded(tallyByKind(foreignRows))} de{" "}
+          {rows.length} filas no son oficiales. Las cifras oficiales y de
+          fiscalización nunca se combinan en un mismo número.
         </p>
         {excludedNote}
         {/* Both counted before this refusal and about facts it does not touch:
@@ -233,9 +233,9 @@ export function renderMunicipalView(
         <UnorderableLevels entries={unrecognized} />
       {missingProvenance.length > 0 ? (
         <p role="alert">
-          {missingProvenance.length} archive entry/entries backing these figures
-          resolved to no source record ({missingProvenance.join(", ")}); those
-          figures cannot be traced.
+          {missingProvenance.length} entrada(s) de archivo que respaldan estas
+          cifras no se resolvieron a un registro de fuente (
+          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
         </p>
       ) : null}
       </main>
@@ -251,7 +251,7 @@ export function renderMunicipalView(
 
   return (
     <main>
-      <h1>Municipal (Concejales)</h1>
+      <h1>Resultados municipales (Concejales)</h1>
       {excludedNote}
       <UnmappedListIds
         entries={unmapped.entries}
@@ -262,15 +262,15 @@ export function renderMunicipalView(
       />
       {missingProvenance.length > 0 ? (
         <p role="alert">
-          {missingProvenance.length} archive entry/entries backing these figures
-          resolved to no source record ({missingProvenance.join(", ")}); those
-          figures cannot be traced.
+          {missingProvenance.length} entrada(s) de archivo que respaldan estas
+          cifras no se resolvieron a un registro de fuente (
+          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
         </p>
       ) : null}
       {unsummable !== null ? (
         <p role="alert">
-          No per-party figures: {unsummable}. A total that double-counts is
-          worse than no total.
+          No hay cifras por partido: {unsummable}. Un total que duplica el
+          conteo es peor que no tener total.
         </p>
       ) : null}
       <UnorderableLevels entries={unrecognized} />
@@ -292,14 +292,14 @@ export function renderMunicipalView(
         />
       )}
       {rows.length === 0 ? (
-        <p>No municipal results found for this jurisdiction/category/election.</p>
+        <p>No se encontraron resultados municipales para esta jurisdicción, categoría y elección.</p>
       ) : (
         <>
           {unsummable !== null ? null : (
           <ul>
             {partyTotals.map((entry) => (
               <li key={entry.label}>
-                {entry.label}: {entry.votes} votes
+                {entry.label}: {entry.votes} voto(s)
               </li>
             ))}
           </ul>
@@ -336,8 +336,8 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused: these query parameters were supplied more than once and
-          cannot be resolved to one value: {repeated.join(", ")}.
+          Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
+          más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.
         </p>
       </main>
     );
@@ -370,8 +370,8 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p>
-          Provide <code>electionId</code>, <code>jurisdictionId</code> and{" "}
-          <code>categoryId</code> query parameters.
+          Proporcione los parámetros de consulta <code>electionId</code>,{" "}
+          <code>jurisdictionId</code> y <code>categoryId</code>.
         </p>
       </main>
     );
@@ -384,9 +384,8 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused:{" "}
-          {partyFamilyRefusal(family, "coronel_rosales_municipal")}
-          .
+          Se rechazó la solicitud:{" "}
+          {partyFamilyRefusal(family, "coronel_rosales_municipal")}.
         </p>
       </main>
     );
@@ -396,8 +395,9 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused: MUNICIPAL_CATEGORY_ID is not configured, so a request cannot be shown to describe the race this
-          route&apos;s party mapping covers.
+          Se rechazó la solicitud: MUNICIPAL_CATEGORY_ID no está configurado, por
+          lo que no se puede mostrar una solicitud que describa la elección
+          cubierta por el mapeo de partidos de esta ruta.
         </p>
       </main>
     );
@@ -407,9 +407,9 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused: this route resolves list ids through the{" "}
-          {MUNICIPAL_PARTY_CONTEXT.category} mapping for one jurisdiction; got
-          jurisdiction {jurisdictionId} category {categoryId}.
+          Se rechazó la solicitud: esta ruta resuelve los ID de lista mediante el
+          mapeo {MUNICIPAL_PARTY_CONTEXT.category} de una jurisdicción; se
+          recibieron jurisdicción {jurisdictionId} y categoría {categoryId}.
         </p>
       </main>
     );
@@ -427,7 +427,7 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -437,15 +437,15 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Refused: this route resolves list ids through the{" "}
-          {MUNICIPAL_PARTY_CONTEXT.year} {MUNICIPAL_PARTY_CONTEXT.category} mapping,
-          and {electionId} is not that election{" "}
+          Se rechazó la solicitud: esta ruta resuelve los ID de lista mediante el
+          mapeo {MUNICIPAL_PARTY_CONTEXT.year} {MUNICIPAL_PARTY_CONTEXT.category},
+          y {electionId} no corresponde a esa elección{" "}
           {year.status === "no_row"
-            ? "(no election row carries that id)"
+            ? "(ninguna fila de elección tiene ese ID)"
             : year.status === "unreadable_year"
-              ? "(its election row carries no usable year)"
-              : `(it is ${year.year})`}
-          . A list id means nothing outside its own election&apos;s mapping.
+              ? "(su fila de elección no contiene un año válido)"
+              : `(es de ${year.year})`}
+          . Un ID de lista no significa nada fuera del mapeo de su propia elección.
         </p>
       </main>
     );

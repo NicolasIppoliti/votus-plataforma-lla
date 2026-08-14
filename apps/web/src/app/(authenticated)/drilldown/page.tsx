@@ -59,71 +59,71 @@ interface ExplorerFormProps {
       return (
         <section className="panel" aria-labelledby="explorer-form-heading">
           <div className="panel__heading">
-            <h2 id="explorer-form-heading">Choose result scope</h2>
-            <p>Use the selectors to build a reusable official-results deep link.</p>
+            <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>
+            <p>Use los selectores para crear un enlace directo reutilizable a resultados oficiales.</p>
           </div>
           <form action="/drilldown" method="get">
             <fieldset className="form-grid selector-form">
-              <legend className="selector-form__legend">Result selectors</legend>
+              <legend className="selector-form__legend">Selectores de resultados</legend>
               <div className="field">
-                <label htmlFor="explorer-election">Election</label>
+                <label htmlFor="explorer-election">Elección</label>
                 <select id="explorer-election" name="electionId" defaultValue={selected.electionId ?? ""}>
-                  <option value="">Choose an election</option>
+                  <option value="">Elegir una elección</option>
                   {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                 </select>
               </div>
               <div className="field">
-                <label htmlFor="explorer-category">Category</label>
+                <label htmlFor="explorer-category">Categoría</label>
                 <select id="explorer-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
-                  <option value="">Choose a category</option>
+                  <option value="">Elegir una categoría</option>
                   {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-distrito">Distrito</label>
                 <select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
-                  <option value="">Choose a distrito</option>
+                  <option value="">Elegir un distrito</option>
                   {facets.distritos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-seccion">Sección</label>
                 <select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
-                  <option value="">Choose a sección</option>
+                  <option value="">Elegir una sección</option>
                   {facets.secciones.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-circuito">Circuito</label>
                 <select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}>
-                  <option value="">Any circuito</option>
+                  <option value="">Cualquier circuito</option>
                   {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-establecimiento">Establecimiento</label>
                 <select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}>
-                  <option value="">Any establecimiento</option>
+                  <option value="">Cualquier establecimiento</option>
                   {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-mesa">Mesa</label>
                 <select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}>
-                  <option value="">Any mesa</option>
+                  <option value="">Cualquier mesa</option>
                   {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}
                 </select>
               </div>
               <div className="field">
-                <label htmlFor="explorer-level">Report level</label>
+                <label htmlFor="explorer-level">Nivel del informe</label>
                 <select id="explorer-level" name="level" defaultValue={selected.level ?? ""}>
-                  <option value="">Choose a level</option>
+                  <option value="">Elegir un nivel</option>
                   {facets.availableLevels.map((level) => <option key={level} value={level}>{level}</option>)}
                 </select>
               </div>
             </fieldset>
             <div className="form-actions">
-              <button className="button button--primary" type="submit">Apply selection</button>
+              <button className="button button--primary" type="submit">Aplicar selección</button>
             </div>
           </form>
         </section>
@@ -131,24 +131,31 @@ interface ExplorerFormProps {
     }
 
 function formatShare(share: string | null): string {
-  return share === null ? "share unavailable" : `${(Number(share) * 100).toFixed(2)}%`;
+  return share === null ? "porcentaje no disponible" : `${(Number(share) * 100).toFixed(2)}%`;
 }
 
 function formatCounts(counts: Record<string, number>): string {
   return Object.entries(counts).map(([reason, count]) => `${reason}: ${count}`).join(", ");
 }
 
+function displaySourceKind(kind: string): string {
+  if (kind === "official") return "oficial";
+  if (kind === "fiscalizacion") return "fiscalización";
+  if (kind === "unknown") return "desconocida";
+  return kind;
+}
+
 function sourceExclusionNotes(exclusions: ExplorationSourceAudit[], aggregate: string): ReactNode {
   return exclusions.map((exclusion) => <p role="note" key={`${aggregate}-${exclusion.kind}`}>
-    Excluded {exclusion.rows} {exclusion.kind} rows / {exclusion.votes} votes from the {aggregate} aggregate.
+    Se excluyeron {exclusion.rows} {exclusion.rows === 1 ? "fila" : "filas"} de fuente {displaySourceKind(exclusion.kind)} / {exclusion.votes} {exclusion.votes === 1 ? "voto" : "votos"} del agregado {displaySourceKind(aggregate)}.
   </p>);
 }
 
 function schoolExclusionNotes(
   exclusions: SchoolBreakdownExclusion[], sourceExclusions: ExplorationSourceAudit[],
 ): ReactNode {
-  return <>{sourceExclusionNotes(sourceExclusions, "school")}{exclusions.map((exclusion) =>
-    <p role="note" key={exclusion.reason}>Excluded {exclusion.rows} rows / {exclusion.votes} votes: {exclusion.reason}.</p>)}</>;
+return <>{sourceExclusionNotes(sourceExclusions, "establecimiento")}{exclusions.map((exclusion) =>
+    <p role="note" key={exclusion.reason}>Se excluyeron {exclusion.rows} fila(s) / {exclusion.votes} voto(s): {exclusion.reason}.</p>)}</>;
 }
 
 async function renderOfficialExplorer(
@@ -157,7 +164,7 @@ async function renderOfficialExplorer(
   const rawLevel = stringParam(params, "level");
   const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel);
   if (rawLevel && !level) {
-    return <main><h1>Explore official results</h1><p role="alert">Refused: unsupported report level {rawLevel}.</p></main>;
+    return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: nivel de informe no compatible {rawLevel}.</p></main>;
   }
   const rawCodes = {
     distritoCode: stringParam(params, "distritoCode"),
@@ -170,7 +177,7 @@ async function renderOfficialExplorer(
     Object.entries(rawCodes).filter((entry): entry is [string, string] => entry[1] !== undefined),
   ));
   if (normalized.status === "invalid") {
-    return <main><h1>Explore official results</h1><p role="alert">Refused: {normalized.reason}. {formatCounts(normalized.counts)}.</p></main>;
+    return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: {normalized.reason}. {formatCounts(normalized.counts)}.</p></main>;
   }
 
   const electionId = stringParam(params, "electionId");
@@ -188,7 +195,7 @@ async function renderOfficialExplorer(
       ...(normalized.value.establecimientoCode ? { establecimientoCode: normalized.value.establecimientoCode } : {}),
     });
   } catch (error) {
-    return <main><h1>Explore official results</h1><p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+    return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}</p></main>;
   }
 
   const requestedCircuito = normalized.value.circuitoCode;
@@ -221,14 +228,14 @@ async function renderOfficialExplorer(
           <main className="page-shell">
             <div className="shell-container">
               <header className="page-header">
-                <p className="eyebrow">Official results / drilldown</p>
-                <h1>Explore official results</h1>
+                <p className="eyebrow">Resultados oficiales / detalle</p>
+                <h1>Explorar resultados oficiales</h1>
                 <p className="page-header__lede">
-                  Select a published scope and keep the resulting URL as a reusable deep link.
+                  Seleccione un alcance publicado y conserve la URL resultante como enlace directo reutilizable.
                 </p>
               </header>
               {form}
-              <p role="status">Choose the available selectors, then apply the selection. The resulting URL is a reusable deep link.</p>
+              <p role="status">Elija los selectores disponibles y aplique la selección. La URL resultante es un enlace directo reutilizable.</p>
             </div>
           </main>
         );
@@ -245,21 +252,21 @@ async function renderOfficialExplorer(
       requestedLevel: level,
     });
   } catch (error) {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+    return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}</p></main>;
   }
   if (result.status !== "ok") {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {result.reason}. {formatCounts(result.counts)}.</p>
+    return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: {result.reason}. {formatCounts(result.counts)}.</p>
       {sourceExclusionNotes(result.sourceExclusions ?? [], "official")}</main>;
   }
   if (!hasOnlyOfficialSourceAudit(result.sourceAudit)) {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the aggregate source audit includes non-official rows.</p>
+    return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: la auditoría de fuentes del agregado incluye filas no oficiales.</p>
       {sourceExclusionNotes(result.sourceExclusions, "official")}</main>;
   }
 
   let schoolBreakdown: SchoolBreakdownResult | null = null;
   if (level === EXPLORATION_LEVEL.SECCION) {
     if (!seccionCode) {
-      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: school breakdown requires a complete seccion selection.</p></main>;
+      return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: el desglose por establecimiento requiere seleccionar una sección completa.</p></main>;
     }
     try {
       schoolBreakdown = await repository.schools({
@@ -267,12 +274,12 @@ async function renderOfficialExplorer(
         seccionCode, requestedLevel: level,
       });
       } catch (error) {
-        return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p>
-          {sourceExclusionNotes(result.sourceExclusions, "official")}</main>;
+return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}</p>
+          {sourceExclusionNotes(result.sourceExclusions, "oficial")}</main>;
       }
       if (schoolBreakdown.status === "ok" && !hasOnlyOfficialSourceAudit(schoolBreakdown.sourceAudit)) {
 
-      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the school breakdown source audit includes non-official rows.</p>
+      return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: la auditoría de fuentes del desglose por establecimiento incluye filas no oficiales.</p>
         {sourceExclusionNotes(result.sourceExclusions, "official")}
         {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}</main>;
     }
@@ -287,8 +294,8 @@ async function renderOfficialExplorer(
     sources = sourceResult.sources;
     missing = sourceResult.missing;
   } catch (error) {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p>
-      {sourceExclusionNotes(result.sourceExclusions, "official")}
+    return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}</p>
+      {sourceExclusionNotes(result.sourceExclusions, "oficial")}
       {schoolBreakdown ? schoolExclusionNotes(
         schoolBreakdown.exclusions ?? [], schoolBreakdown.sourceExclusions ?? [],
       ) : null}</main>;
@@ -298,29 +305,29 @@ async function renderOfficialExplorer(
             <main className="page-shell">
           <div className="shell-container">
             <header className="page-header">
-              <p className="eyebrow">Official results / drilldown</p>
-              <h1>Explore official results</h1>
+              <p className="eyebrow">Resultados oficiales / detalle</p>
+              <h1>Explorar resultados oficiales</h1>
               <p className="page-header__lede">
-                Select a published scope and inspect the official result evidence without losing its source context.
+                Seleccione un alcance publicado y examine la evidencia de resultados oficiales sin perder el contexto de su fuente.
               </p>
             </header>
             {form}
-            <h2>Official breakdown</h2>
+            <h2>Desglose oficial</h2>
             <p role="status">
-              {result.totalVotes} votes at {result.level} level from {result.sourceGranularity} source rows
-              {result.mesaCount === null ? ". Mesa count is unavailable at the published source granularity." : ` across ${result.mesaCount} mesas.`}
+              {result.totalVotes} votos a nivel {result.level}, obtenidos de filas de fuente {result.sourceGranularity}
+              {result.mesaCount === null ? ". La cantidad de mesas no está disponible con la granularidad publicada por la fuente." : ` en ${result.mesaCount} mesas.`}
             </p>
-            <p>Election shape: {result.electionYear} {result.electionRound}.</p>
+            <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
             {sourceExclusionNotes(result.sourceExclusions, "official")}
-            <TableScroll label="Official votes and share by party">
+            <TableScroll label="Votos oficiales y porcentaje por partido">
               <table className="data-table">
-                <caption>Official votes and share by party</caption>
-                <thead><tr><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
+                <caption>Votos oficiales y porcentaje por partido</caption>
+                <thead><tr><th scope="col">Identidad del partido</th><th scope="col">Votos</th><th scope="col">Porcentaje</th></tr></thead>
                 <tbody>
                   {result.parties.map((party, index) => (
                     <tr key={party.canonicalPartyId ?? `${party.listId ?? "missing-list"}-${index}`}>
-                      <th className="evidence-text" scope="row">{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</th>
-                      <td>{party.votes} votes</td>
+<th className="evidence-text" scope="row">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</th>
+                      <td>{party.votes} votos</td>
                       <td>{formatShare(party.voteShare)}</td>
                     </tr>
                   ))}
@@ -329,29 +336,29 @@ async function renderOfficialExplorer(
             </TableScroll>
             {schoolBreakdown?.status === "ok" ? (
               <section aria-labelledby="school-breakdown-heading">
-                <h2 id="school-breakdown-heading">Official school breakdown</h2>
+                <h2 id="school-breakdown-heading">Desglose oficial por establecimiento</h2>
                 {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}
-                <TableScroll label="Official votes by circuit and establishment">
+                <TableScroll label="Votos oficiales por circuito y establecimiento">
                   <table className="data-table">
-                    <caption>Official votes by circuit and establishment</caption>
-                    <thead><tr><th scope="col">Establishment</th><th scope="col">Mesas</th><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
+                    <caption>Votos oficiales por circuito y establecimiento</caption>
+                    <thead><tr><th scope="col">Establecimiento</th><th scope="col">Mesas</th><th scope="col">Identidad del partido</th><th scope="col">Votos</th><th scope="col">Porcentaje</th></tr></thead>
                     <tbody>{schoolBreakdown.schools.flatMap((school) => school.parties.map((party, index) => (
                       <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
                         <th className="evidence-text" scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
                         <td>{school.mesaCount} mesas</td>
-                        <td className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</td>
-                        <td>{party.votes} votes</td><td>{formatShare(party.voteShare)}</td>
+                        <td className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</td>
+                        <td>{party.votes} votos</td><td>{formatShare(party.voteShare)}</td>
                       </tr>
                     )))}</tbody>
                   </table>
                 </TableScroll>
               </section>
             ) : schoolBreakdown ? (
-              <section aria-labelledby="school-breakdown-heading"><h2 id="school-breakdown-heading">Official school breakdown</h2>
-                <p role="alert">Refused: {schoolBreakdown.reason}. {formatCounts(schoolBreakdown.counts)}.</p>
+<section aria-labelledby="school-breakdown-heading"><h2 id="school-breakdown-heading">Desglose oficial por establecimiento</h2>
+                <p role="alert">Se rechazó la solicitud: {schoolBreakdown.reason}. {formatCounts(schoolBreakdown.counts)}.</p>
                 {schoolExclusionNotes(schoolBreakdown.exclusions ?? [], schoolBreakdown.sourceExclusions ?? [])}</section>
             ) : null}
-            {missing.length > 0 ? <p role="alert">{missing.length} archive entry/entries resolved to no source record ({missing.join(", ")}); these figures cannot be traced.</p> : null}
+            {missing.length > 0 ? <p role="alert">{missing.length} entrada(s) de archivo no se resolvieron a un registro de fuente ({missing.join(", ")}); estas cifras no se pueden rastrear.</p> : null}
             <div className="evidence-container">
               <ProvenanceLink sources={sources} />
             </div>
@@ -376,10 +383,10 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (repeated.length > 0) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: these query parameters were supplied more than once and
-          cannot be resolved to one value: {repeated.join(", ")}.
+          Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
+          más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.
         </p>
       </main>
     );
@@ -399,10 +406,10 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (!electionId || !jurisdictionId || !categoryId) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p>
-          Provide <code>electionId</code>, <code>jurisdictionId</code> and{" "}
-          <code>categoryId</code> query parameters.
+          Proporcione los parámetros de consulta <code>electionId</code>,{" "}
+          <code>jurisdictionId</code> y <code>categoryId</code>.
         </p>
       </main>
     );
@@ -417,11 +424,11 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (!partyCategory || !partyJurisdiction) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: provide <code>partyCategory</code> and{" "}
-          <code>partyJurisdiction</code> — list ids are only meaningful through
-          their own election&apos;s party mapping.
+          Se rechazó la solicitud: proporcione <code>partyCategory</code> y{" "}
+          <code>partyJurisdiction</code>. Los ID de lista solo tienen sentido mediante
+          el mapeo de partidos de su propia elección.
         </p>
       </main>
     );
@@ -432,11 +439,11 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (family.status !== "ok" || partyJurisdiction !== family.family) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused:{" "}
-          {partyFamilyRefusal(family, partyJurisdiction)}
-          . A list id resolved through the wrong family names the wrong party.
+          Se rechazó la solicitud: {partyFamilyRefusal(family, partyJurisdiction)}.
+          Un ID de lista resuelto mediante la familia incorrecta nombra al partido
+          equivocado.
         </p>
       </main>
     );
@@ -452,9 +459,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   } catch (error) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -465,9 +472,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   } catch (error) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -479,16 +486,16 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     // under the wrong one, with no refusal and no note.
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: category {categoryId} is{" "}
+          Se rechazó la solicitud: la categoría {categoryId}{" "}
           {categoryName.status === "no_row"
-            ? "carried by no category row"
+            ? "no aparece en ninguna fila de categoría"
             : categoryName.status === "unreadable_name"
-              ? "carried by a row whose name is unusable"
-              : categoryName.name}
-          , not {partyCategory}. A list id resolved through another
-          category&apos;s mapping names the wrong party.
+              ? "aparece en una fila cuyo nombre no es válido"
+              : `se llama ${categoryName.name}`}
+          , no {partyCategory}. Resolver un ID de lista mediante el mapeo de otra
+          categoría nombra al partido equivocado.
         </p>
       </main>
     );
@@ -498,13 +505,13 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     // resolves `110` and `20135` as two parties.
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused:{" "}
+          Se rechazó la solicitud:{" "}
           {year.status === "no_row"
-            ? `no election row carries the id ${electionId}`
-            : `the election row for ${electionId} carries no usable year`}
-          , so the year its party mapping must be read through is unknown.
+            ? `ninguna fila de elección tiene el ID ${electionId}`
+            : `la fila de elección de ${electionId} no contiene un año válido`}
+          , por lo que se desconoce el año del mapeo de partidos que corresponde usar.
         </p>
       </main>
     );
@@ -538,9 +545,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   } catch (error) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -558,9 +565,8 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   const excludedNote =
     excludedSummary !== null ? (
       <p role="note">
-        {excludedSummary} were excluded by the official-source filter and are
-        not in any figure
-        on this page.
+        {excludedSummary} se excluyeron por el filtro de fuente oficial y no
+        forman parte de ninguna cifra de esta página.
       </p>
     ) : null;
 
@@ -583,17 +589,17 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
 
       const foreign = response.rows.filter((row) => row.sourceKind !== "official");
       const foreignSourceReason = foreign.length > 0
-        ? "rows are not exclusively official source rows; official and fiscalización figures are never combined in one number"
+        ? "las filas no son exclusivamente de fuente oficial; las cifras oficiales y de fiscalización nunca se combinan en un mismo número"
         : null;
       if (foreign.length > 0) {
 
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: {describeExcluded(tallyByKind(foreign))} of{" "}
-          {response.rows.length} rows are not official. Official and
-          fiscalización figures are never combined in one number.
+          Se rechazó la solicitud: {describeExcluded(tallyByKind(foreign))} de{" "}
+          {response.rows.length} filas no son oficiales. Las cifras oficiales y de
+          fiscalización nunca se combinan en un mismo número.
         </p>
         {excludedNote}
         {/* Counted before this refusal, and about a different fact entirely:
@@ -646,22 +652,22 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   } catch (error) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
         {excludedSummary !== null ? (
           // The drop was already counted before this failure; hiding it behind
           // a refusal about something else is the silent drop with extra steps.
           <p role="note">
-            {excludedSummary} were excluded by the official-source filter.
+            {excludedSummary} se excluyeron por el filtro de fuente oficial.
           </p>
         ) : null}
         {aggregate && describeExcluded(aggregate.excluded) !== null ? (
           // Path 2's own tally, when path 2 got far enough to produce one. It
           // is a DIFFERENT read, so the note above cannot stand in for it.
           <p role="note">
-            The official total&apos;s own read excluded{" "}
+            La lectura propia del total oficial excluyó{" "}
             {describeExcluded(aggregate.excluded)}.
           </p>
         ) : null}
@@ -690,11 +696,11 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (aggregateForeign !== null) {
     return (
       <main>
-        <h1>Drilldown</h1>
+        <h1>Detalle de resultados</h1>
         <p role="alert">
-          Refused: the official total was summed from rows that are not
-          official ({aggregateForeign}). Official and fiscalización figures are
-          never combined in one number.
+          Se rechazó la solicitud: el total oficial se calculó con filas que no son
+          oficiales ({aggregateForeign}). Las cifras oficiales y de fiscalización
+          nunca se combinan en un mismo número.
         </p>
         {excludedNote}
         {/* Counted before this refusal, and about a different fact entirely:
@@ -712,7 +718,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           // cannot stand in for it — least of all here, where a foreign row
           // reaching path 2's sum guarantees its tally is non-empty.
           <p role="note">
-            The official total&apos;s own read excluded{" "}
+            La lectura propia del total oficial excluyó{" "}
             {describeExcluded(aggregate.excluded)}.
           </p>
         ) : null}
@@ -721,9 +727,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           // different fact is the silent drop with extra steps. The three
           // sibling pages carry theirs through their own refusals.
           <p role="alert">
-            {missingProvenance.length} archive entry/entries backing these
-            figures resolved to no source record ({missingProvenance.join(", ")}
-            ); those figures cannot be traced.
+            {missingProvenance.length} entrada(s) de archivo que respaldan estas
+            cifras no se resolvieron a un registro de fuente (
+            {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
           </p>
         ) : null}
       </main>
@@ -732,7 +738,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
 
   return (
     <main>
-      <h1>Drilldown</h1>
+      <h1>Detalle de resultados</h1>
       {rows.length > 0 &&
       unsummable === null &&
       // Path 2's total is not a figure to compare against when ITS rows cannot
@@ -748,17 +754,17 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
         // without reconciliation presented one consistent view of two
         // different reads.
         <p role="alert">
-          The total below and the rows beneath it come from separate reads and
-          do not agree: {aggregate.totalVotes} versus{" "}
-          {rows.reduce((sum, row) => sum + row.votes, 0)}. Treat neither as the
-          figure until the difference is explained.
+          El total y las filas siguientes provienen de lecturas separadas y no
+          coinciden: {aggregate.totalVotes} frente a{" "}
+          {rows.reduce((sum, row) => sum + row.votes, 0)}. No considere ninguna
+          cifra válida hasta explicar la diferencia.
         </p>
       ) : null}
       {missingProvenance.length > 0 ? (
         <p role="alert">
-          {missingProvenance.length} archive entry/entries backing these figures
-          resolved to no source record ({missingProvenance.join(", ")}); those
-          figures cannot be traced.
+          {missingProvenance.length} entrada(s) de archivo que respaldan estas
+          cifras no se resolvieron a un registro de fuente (
+          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
         </p>
       ) : null}
       {describeExcluded(aggregate.excluded) !== null ? (
@@ -766,18 +772,17 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
         // when path 1 returned nothing — path 1's note describes a different
         // read and cannot stand in for this one.
         <p role="note">
-          The official total&apos;s own read excluded{" "}
+          La lectura propia del total oficial excluyó{" "}
           {describeExcluded(aggregate.excluded)}
           {unsummable !== null
-            ? " — that total is not shown here because its rows cannot be summed, but the drop happened and is reported rather than discarded"
+            ? " — ese total no se muestra porque sus filas no se pueden sumar, pero la exclusión ocurrió y se informa en lugar de descartarse"
             : ""}
           .
         </p>
       ) : null}
       {rows.length === 0 || unsummable !== null || aggregate.unsummableReason !== null ? null : (
       <p role="note">
-        Official total: {aggregate.totalVotes} votes ({aggregate.sourceKind} source
-        only)
+        Total oficial: {aggregate.totalVotes} votos (solo fuente {displaySourceKind(aggregate.sourceKind)})
         {/* NOT repeated here: the same tally already has its own note above,
             and one drop printed twice reads as two. */}
         .
@@ -788,8 +793,8 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
         // path 2 fetches independently, so a mixed set reaching only it made
         // `Official total` a double count rendered as the official figure.
         <p role="alert">
-          No official total: the rows that read summed {aggregate.unsummableReason}.
-          A total that double-counts is worse than no total.
+          No hay total oficial: las filas leídas {aggregate.unsummableReason}. Un
+          total que duplica el conteo es peor que no tener total.
         </p>
       ) : null}
       {excludedNote}
@@ -799,8 +804,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
         />
       {unsummable !== null ? (
         <p role="alert">
-          No per-party figures: {unsummable}. The rows are shown by nothing
-          here; a total that double-counts is worse than no total.
+          No hay cifras por partido: {unsummable}. Aquí no se muestra ninguna
+          cifra para las filas; un total que duplica el conteo es peor que no
+          tener total.
         </p>
       ) : null}
       <UnorderableLevels entries={unrecognized} />
@@ -811,21 +817,21 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           // rows — the total is withheld, but the data is not absent, and
           // saying it is states a fact nobody established.
           <p role="alert">
-            This read returned no rows. The official total&apos;s own read did
-            return rows, and they cannot be summed, so neither a figure nor an
-            absence can be reported for this jurisdiction/category/election.
+            Esta lectura no devolvió filas. La lectura propia del total oficial
+            sí devolvió filas, pero no se pueden sumar; no es posible informar
+            una cifra ni una ausencia para esta jurisdicción, categoría y elección.
           </p>
         ) : aggregate.totalVotes > 0 ? (
           // NOT "no results". An independent read holds votes, so the honest
           // statement is that the two disagree — the case the alert above
           // exists for, and the one where suppressing it hid the most.
           <p role="alert">
-            This read returned no rows while the official total&apos;s own read
-            holds {aggregate.totalVotes} votes. Neither figure can be trusted
-            until the difference is explained.
+            Esta lectura no devolvió filas, mientras que la lectura propia del
+            total oficial contiene {aggregate.totalVotes} votos. No se puede
+            confiar en ninguna cifra hasta explicar la diferencia.
           </p>
         ) : (
-          <p>No official results found for this jurisdiction/category/election.</p>
+          <p>No se encontraron resultados oficiales para esta jurisdicción, categoría y elección.</p>
         )
       ) : (
         <>
@@ -843,7 +849,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
             <ul>
               {partyTotals.map((entry) => (
                 <li key={entry.label}>
-                  {entry.label}: {entry.votes} votes
+                  {entry.label}: {entry.votes} votos
                 </li>
               ))}
             </ul>
