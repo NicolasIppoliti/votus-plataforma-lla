@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { TableScroll } from "@/components/TableScroll";
 import { UNMODELED_VOTE_REASON } from "@/domain/seat-allocation/source-coverage";
 import {
   THRESHOLD_POLICY,
@@ -18,27 +19,77 @@ const UNMODELED_VOTE_REASON_LABEL: Record<
   [UNMODELED_VOTE_REASON.OTHER_SOURCE_ROWS]: "Other source rows",
 };
 
+const ALLOCATION_TABLE_VARIANT = {
+  COMPACT: "compact",
+  STANDARD: "standard",
+  WIDE: "wide",
+} as const;
+
+type AllocationTableVariant =
+  (typeof ALLOCATION_TABLE_VARIANT)[keyof typeof ALLOCATION_TABLE_VARIANT];
+
+const TABLE_COLUMN_KIND = {
+  EVIDENCE: "evidence",
+  IDENTITY: "identity",
+  NUMBER: "number",
+  SHORT: "short",
+} as const;
+
+type TableColumnKind =
+  (typeof TABLE_COLUMN_KIND)[keyof typeof TABLE_COLUMN_KIND];
+
+interface EvidenceTableProps {
+  caption: string;
+  headers: string;
+  rows: ReactNode[][];
+  variant: AllocationTableVariant;
+  columnKinds: readonly TableColumnKind[];
+}
+
 function formatNumber(value: number): string {
   if (Number.isInteger(value)) return value.toLocaleString("en-US");
   return value.toString();
+}
+
+function tableCellClass(kind: TableColumnKind): string {
+  return kind === TABLE_COLUMN_KIND.EVIDENCE
+    ? "evidence-text"
+    : `table-cell--${kind}`;
+}
+
+function tableRowHeaderClass(kind: TableColumnKind): string | undefined {
+  return kind === TABLE_COLUMN_KIND.EVIDENCE
+    ? undefined
+    : tableCellClass(kind);
 }
 
 function EvidenceTable({
   caption,
   headers,
   rows,
-}: {
-  caption: string;
-  headers: string;
-  rows: ReactNode[][];
-}) {
+  variant,
+  columnKinds,
+}: EvidenceTableProps) {
+  const headerLabels = headers.split("|");
+
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full">
+    <TableScroll label={caption}>
+      <table className={`data-table data-table--allocation-${variant}`}>
         <caption>{caption}</caption>
+        <colgroup>
+          {headerLabels.map((header, index) => {
+            const kind = columnKinds[index] ?? TABLE_COLUMN_KIND.EVIDENCE;
+            return (
+              <col
+                className={`allocation-column allocation-column--${kind}`}
+                key={`${header}-${index}`}
+              />
+            );
+          })}
+        </colgroup>
         <thead>
           <tr>
-            {headers.split("|").map((header) => (
+            {headerLabels.map((header) => (
               <th key={header} scope="col">
                 {header}
               </th>
@@ -48,15 +99,29 @@ function EvidenceTable({
         <tbody>
           {rows.map(([key, label, ...cells]) => (
             <tr key={String(key)}>
-              <th scope="row">{label}</th>
+              <th
+                className={tableRowHeaderClass(
+                  columnKinds[0] ?? TABLE_COLUMN_KIND.EVIDENCE,
+                )}
+                scope="row"
+              >
+                {label}
+              </th>
               {cells.map((cell, index) => (
-                <td key={index}>{cell}</td>
+                <td
+                  className={tableCellClass(
+                    columnKinds[index + 1] ?? TABLE_COLUMN_KIND.EVIDENCE,
+                  )}
+                  key={index}
+                >
+                  {cell}
+                </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScroll>
   );
 }
 
@@ -75,6 +140,14 @@ function AwardTable({ awards, caption, names }: AwardTableProps) {
     <EvidenceTable
       caption={caption}
       headers="Seat|List|Award rule|Numeric evidence|Tie-break evidence"
+      variant={ALLOCATION_TABLE_VARIANT.WIDE}
+      columnKinds={[
+        TABLE_COLUMN_KIND.SHORT,
+        TABLE_COLUMN_KIND.IDENTITY,
+        TABLE_COLUMN_KIND.EVIDENCE,
+        TABLE_COLUMN_KIND.EVIDENCE,
+        TABLE_COLUMN_KIND.EVIDENCE,
+      ]}
       rows={awards.map((award, index) => [
         `${award.listId}-${index}`,
         `Seat ${index + 1}`,
@@ -141,6 +214,17 @@ function HareEvidence({ result }: { result: HareAllocationResult }) {
       <EvidenceTable
         caption="Hare allocation by list"
         headers="List|Votes|Raw quotient|Initial quotient seats|Seats after cap|Exact remainder|Seats by remainder|Total seats"
+        variant={ALLOCATION_TABLE_VARIANT.WIDE}
+        columnKinds={[
+          TABLE_COLUMN_KIND.IDENTITY,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+        ]}
         rows={result.results.map((entry) => [
           entry.listId,
           entry.listName,
@@ -158,6 +242,12 @@ function HareEvidence({ result }: { result: HareAllocationResult }) {
         <EvidenceTable
           caption="Hare halving trace"
           headers="Step|Cuociente|Lists reaching the cuociente"
+          variant={ALLOCATION_TABLE_VARIANT.COMPACT}
+          columnKinds={[
+            TABLE_COLUMN_KIND.SHORT,
+            TABLE_COLUMN_KIND.NUMBER,
+            TABLE_COLUMN_KIND.EVIDENCE,
+          ]}
           rows={result.halvingSteps.map((step) => [
             String(step.iteration),
             `Iteration ${step.iteration}`,
@@ -245,6 +335,14 @@ function DhondtEvidence({ result }: { result: DhondtAllocationResult }) {
       <EvidenceTable
         caption="National threshold outcome by list"
         headers="List|Votes|Padrón share|Threshold outcome|Seats"
+        variant={ALLOCATION_TABLE_VARIANT.STANDARD}
+        columnKinds={[
+          TABLE_COLUMN_KIND.IDENTITY,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.EVIDENCE,
+          TABLE_COLUMN_KIND.NUMBER,
+        ]}
         rows={result.results.map((entry) => [
           entry.listId,
           entry.listName,
@@ -260,6 +358,13 @@ function DhondtEvidence({ result }: { result: DhondtAllocationResult }) {
       <EvidenceTable
         caption="D’Hondt quotient table"
         headers="List|Votes|Divisor|Quotient"
+        variant={ALLOCATION_TABLE_VARIANT.COMPACT}
+        columnKinds={[
+          TABLE_COLUMN_KIND.IDENTITY,
+          TABLE_COLUMN_KIND.NUMBER,
+          TABLE_COLUMN_KIND.SHORT,
+          TABLE_COLUMN_KIND.NUMBER,
+        ]}
         rows={result.quotientTable.map((entry) => [
           `${entry.listId}-${entry.divisor}`,
           names.get(entry.listId) ?? `unmapped (list ${entry.listId})`,

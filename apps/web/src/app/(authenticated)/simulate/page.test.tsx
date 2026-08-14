@@ -84,7 +84,36 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toMatch(/<caption>Hare allocation by list<\/caption>/);
     expect(markup).toMatch(/<caption>Per-seat award evidence<\/caption>/);
     expect(markup).toContain("largest_remainder");
-    expect(markup).toContain("overflow-x-auto");
+    expect(markup).toContain("table-scroll");
+  });
+
+  it("keeps every evidence table in a labelled, focusable scroll region", async () => {
+    const markup = await renderSimulation(OFFICIAL_PBA_2025_INPUT);
+
+        expect(
+          markup.match(
+            /<table class="data-table data-table--allocation-[^"]+"/g,
+          ),
+        ).toHaveLength(2);
+        expect(
+          markup.match(
+            /<table class="data-table data-table--allocation-wide"/g,
+          ),
+        ).toHaveLength(2);
+        expect(markup).toContain(
+          'class="allocation-column allocation-column--identity"',
+        );
+        expect(markup).toContain('class="table-cell--number">14,550</td>');
+        expect(markup.match(/class="table-scroll"/g)).toHaveLength(2);
+    expect(markup.match(/scope="col"/g)).toHaveLength(13);
+    expect(markup).toMatch(
+      /<div class="table-scroll" role="region" aria-label="Hare allocation by list" tabindex="0">/,
+    );
+    expect(markup).toMatch(
+      /<div class="table-scroll" role="region" aria-label="Per-seat award evidence" tabindex="0">/,
+    );
+    expect(markup).not.toContain("overflow-x-auto");
+    expect(markup).not.toContain("min-w-full");
   });
 
   it("renders combined blank-and-annulled evidence without inventing either category", async () => {
@@ -178,8 +207,14 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toContain("3% of padrón 100,000 = 3,000 votes");
     expect(markup).toContain("Lista C");
     expect(markup).toContain("excluded: 2,000 votes are below 3,000");
-    expect(markup).toMatch(/<caption>D’Hondt quotient table<\/caption>/);
-    expect(markup).toContain("Divisor 1");
+        expect(markup).toMatch(/<caption>D’Hondt quotient table<\/caption>/);
+        expect(markup).toMatch(
+          /<table class="data-table data-table--allocation-standard">/,
+        );
+        expect(markup).toMatch(
+          /<table class="data-table data-table--allocation-compact">/,
+        );
+        expect(markup).toContain("Divisor 1");
     expect(markup).toContain("Divisor 2");
     expect(markup).toMatch(/<caption>Ordered winning quotients<\/caption>/);
     expect(markup).toContain("Seat 1");

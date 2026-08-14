@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { TableScroll } from "@/components/TableScroll";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 
 interface ReviewItemRow {
@@ -35,28 +36,40 @@ export default async function ReviewPage(): Promise<ReactNode> {
       {items.length === 0 ? (
         <p>No unresolved review items.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Kind</th>
-              <th>Severity</th>
-              <th>Subject</th>
-              <th>Detected</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td>{item.kind}</td>
-                <td>{item.severity}</td>
-                <td>{item.subject_ref}</td>
-                <td>{item.detected_at}</td>
-                <td>{item.note ?? ""}</td>
+        <TableScroll label="Unresolved review items">
+          <table className="data-table data-table--review">
+            <caption>Unresolved review items</caption>
+            <colgroup>
+              <col className="review-column review-column--kind" />
+              <col className="review-column review-column--severity" />
+              <col className="review-column review-column--subject" />
+              <col className="review-column review-column--detected" />
+              <col className="review-column review-column--note" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">Kind</th>
+                <th scope="col">Severity</th>
+                <th scope="col">Subject</th>
+                <th scope="col">Detected</th>
+                <th scope="col">Note</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td className="table-cell--short">{item.kind}</td>
+                  <td className="table-cell--short">{item.severity}</td>
+                  <td className="evidence-token table-cell--identity">
+                    {item.subject_ref}
+                  </td>
+                  <td className="table-cell--timestamp">{item.detected_at}</td>
+                  <td className="evidence-text">{item.note ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
     </main>
   );
