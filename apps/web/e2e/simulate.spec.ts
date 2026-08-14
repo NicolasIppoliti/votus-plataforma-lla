@@ -21,7 +21,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
 
-    await page.getByRole("link", { name: "Seat simulation" }).click();
+    await page.getByRole("navigation", { name: "main" }).getByRole("link", { name: "Seat simulation", exact: true }).click();
     await expect(page).toHaveURL(/\/simulate/);
     await page.goto(`/simulate?input=${encodeURIComponent(JSON.stringify(PROJECTION))}`);
 

@@ -55,29 +55,53 @@ export default async function AuthenticatedLayout({
   const unresolvedCount = unresolvedRow?.["unresolved_count"] as number | undefined;
 
   return (
-    <>
-      <SourceDisclaimer />
-      <nav aria-label="main">
-        <Link href="/dashboard">Dashboard</Link>
-        {" | "}
-        <Link href="/compare">Compare</Link>
-        {" | "}
-        <Link href="/drilldown">Explore results</Link>
-        {" | "}
-        <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
-        {" | "}
-        <Link href="/municipal">Municipal (Concejales)</Link>
-        {" | "}
-        <Link href="/simulate">Seat simulation</Link>
-        {" | "}
-        <Link href="/review">Review</Link>
-      </nav>
-      {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
-        <p role="alert">
-          <Link href="/review">{unresolvedCount} unresolved review item(s)</Link>
-        </p>
-      ) : null}
-      {children}
-    </>
+    <div className="app-shell">
+      <header className="site-header">
+        <div className="shell-container site-header__inner">
+          <Link className="site-brand" href="/dashboard" aria-label="Votus dashboard">
+            <span className="site-brand__name">Votus</span>
+            <span className="site-brand__descriptor">evidence room</span>
+          </Link>
+          <p className="site-context">Internal electoral analysis</p>
+        </div>
+        <nav aria-label="main" className="main-navigation">
+          <ul className="shell-container navigation-list">
+            <li>
+              <Link href="/dashboard">Dashboard</Link>
+            </li>
+            <li>
+              <Link href="/compare">Compare</Link>
+            </li>
+            <li>
+              <Link href="/drilldown">Explore results</Link>
+            </li>
+            <li>
+              <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
+            </li>
+            <li>
+              <Link href="/municipal">Municipal (Concejales)</Link>
+            </li>
+            <li>
+              <Link href="/simulate">Seat simulation</Link>
+            </li>
+            <li>
+              <Link href="/review">Review</Link>
+            </li>
+          </ul>
+        </nav>
+      </header>
+      <div className="shell-container app-content" id="main-content" tabIndex={-1}>
+        <div className="source-disclaimer">
+          <SourceDisclaimer />
+        </div>
+        {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
+          <p className="review-alert" role="alert">
+            <span className="status-label">Needs review</span>
+            <Link href="/review">{unresolvedCount} unresolved review item(s)</Link>
+          </p>
+        ) : null}
+        {children}
+      </div>
+    </div>
   );
 }

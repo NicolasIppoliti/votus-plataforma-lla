@@ -30,7 +30,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
 
       // Reachable from the authenticated layout (task 13.10), not merely
       // addressable by URL.
-      await page.getByRole("link", { name: /Fiscalización/ }).click();
+      await page.getByRole("navigation", { name: "main" }).getByRole("link", { name: "Fiscalización (unofficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
       await page.goto(new URL(
         `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +

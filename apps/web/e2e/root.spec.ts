@@ -3,7 +3,7 @@ import { expect, request, test } from "@playwright/test";
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 
 const environment = assertE2eEnvironment(process.env);
-const ROOT_CONTENT = "Votus scaffold — content added starting in Phase 9–11.";
+const ROOT_CONTENT = "A civic evidence room for examining electoral results";
 
 test.describe("the production root preserves its authentication boundary", () => {
   test("test_root_redirects_anonymous_and_renders_landing_when_authenticated", async ({ page }) => {
@@ -18,8 +18,27 @@ test.describe("the production root preserves its authentication boundary", () =>
       await anonymousContext.dispose();
     }
 
-    await page.goto("/");
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("main")).toHaveText(ROOT_CONTENT);
-  });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto("/");
+        await expect(page).toHaveURL(/\/$/);
+        await expect(page.getByRole("main")).toContainText(ROOT_CONTENT);
+        await page.getByRole("link", { name: "Skip to main content" }).press("Enter");
+        await expect(page.locator("#main-content")).toBeFocused();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ),
+        ).toBe(true);
+
+        await page.goto("/dashboard");
+        await expect(page.getByRole("heading", { level: 1, name: "Votus dashboard" })).toBeVisible();
+        await expect(page.getByRole("navigation", { name: "main" })).toBeVisible();
+        await page.getByRole("link", { name: "Skip to main content" }).press("Enter");
+        await expect(page.locator("#main-content")).toBeFocused();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ),
+        ).toBe(true);
+      });
 });
