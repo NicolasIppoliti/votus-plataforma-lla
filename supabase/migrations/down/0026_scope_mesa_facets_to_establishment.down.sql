@@ -155,10 +155,12 @@ as $$
         where p_election_id is not null and p_category_id is not null
           and p_distrito_code is not null
           and exists (
-            select 1 from result_row rr
+            select 1
+            from result_row rr
             join jurisdiction j on j.id = rr.jurisdiction_id
             where rr.source_kind = 'official'
-              and rr.election_id = p_election_id and rr.category_id = p_category_id
+              and rr.election_id = p_election_id
+              and rr.category_id = p_category_id
               and j.distrito_code = p_distrito_code
           )
         union all
@@ -166,11 +168,14 @@ as $$
         where p_election_id is not null and p_category_id is not null
           and p_distrito_code is not null and p_seccion_code is not null
           and exists (
-            select 1 from result_row rr
+            select 1
+            from result_row rr
             join jurisdiction j on j.id = rr.jurisdiction_id
             where rr.source_kind = 'official'
-              and rr.election_id = p_election_id and rr.category_id = p_category_id
-              and j.distrito_code = p_distrito_code and j.seccion_code = p_seccion_code
+              and rr.election_id = p_election_id
+              and rr.category_id = p_category_id
+              and j.distrito_code = p_distrito_code
+              and j.seccion_code = p_seccion_code
           )
         union all
         select 'circuito', 3
@@ -178,11 +183,14 @@ as $$
           and p_distrito_code is not null and p_seccion_code is not null
           and p_circuito_code is not null
           and exists (
-            select 1 from result_row rr
+            select 1
+            from result_row rr
             join jurisdiction j on j.id = rr.jurisdiction_id
             where rr.source_kind = 'official'
-              and rr.election_id = p_election_id and rr.category_id = p_category_id
-              and j.distrito_code = p_distrito_code and j.seccion_code = p_seccion_code
+              and rr.election_id = p_election_id
+              and rr.category_id = p_category_id
+              and j.distrito_code = p_distrito_code
+              and j.seccion_code = p_seccion_code
               and j.circuito_code = p_circuito_code
           )
         union all
@@ -191,23 +199,30 @@ as $$
           and p_distrito_code is not null and p_seccion_code is not null
           and p_circuito_code is not null
           and exists (
-            select 1 from result_row rr
+            select 1
+            from result_row rr
             join jurisdiction j on j.id = rr.jurisdiction_id
             where rr.source_kind = 'official'
-              and rr.election_id = p_election_id and rr.category_id = p_category_id
-              and j.distrito_code = p_distrito_code and j.seccion_code = p_seccion_code
-              and j.circuito_code = p_circuito_code and j.establecimiento_code is not null
+              and rr.election_id = p_election_id
+              and rr.category_id = p_category_id
+              and j.distrito_code = p_distrito_code
+              and j.seccion_code = p_seccion_code
+              and j.circuito_code = p_circuito_code
+              and j.establecimiento_code is not null
           )
         union all
         select 'mesa', 5
         where p_election_id is not null and p_category_id is not null
           and p_distrito_code is not null and p_seccion_code is not null
           and exists (
-            select 1 from result_row rr
+            select 1
+            from result_row rr
             join jurisdiction j on j.id = rr.jurisdiction_id
             where rr.source_kind = 'official'
-              and rr.election_id = p_election_id and rr.category_id = p_category_id
-              and j.distrito_code = p_distrito_code and j.seccion_code = p_seccion_code
+              and rr.election_id = p_election_id
+              and rr.category_id = p_category_id
+              and j.distrito_code = p_distrito_code
+              and j.seccion_code = p_seccion_code
               and (p_circuito_code is null or j.circuito_code = p_circuito_code)
               and j.mesa_code is not null
           )
@@ -222,8 +237,12 @@ grant execute on function results_exploration_facets(uuid,uuid,text,text,text) t
 
 do $$
 begin
-  if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is not null
-     or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text)') is null then
+  if to_regprocedure(format(
+       '%I.results_exploration_facets(uuid,uuid,text,text,text,text)', current_schema()
+     )) is not null
+     or to_regprocedure(format(
+       '%I.results_exploration_facets(uuid,uuid,text,text,text)', current_schema()
+     )) is null then
     raise exception '0026 rollback did not restore the exact five-argument facets signature';
   end if;
 end $$;

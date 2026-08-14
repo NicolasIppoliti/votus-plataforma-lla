@@ -228,8 +228,12 @@ grant execute on function results_exploration_facets(uuid,uuid,text,text,text,te
 
 do $$
 begin
-  if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text)') is not null
-     or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null then
+  if to_regprocedure(format(
+       '%I.results_exploration_facets(uuid,uuid,text,text,text)', current_schema()
+     )) is not null
+     or to_regprocedure(format(
+       '%I.results_exploration_facets(uuid,uuid,text,text,text,text)', current_schema()
+     )) is null then
     raise exception '0026 did not install the exact six-argument facets signature';
   end if;
 end $$;

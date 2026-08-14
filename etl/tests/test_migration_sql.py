@@ -676,6 +676,32 @@ def test_0025_replaces_facets_with_progressive_selection_aware_queries() -> None
         assert data_mutation not in rollback
 
 
+def _assert_0026_signature_guard(
+    migration_sql: str, *, absent_signature: str, present_signature: str
+) -> None:
+    guard_blocks = re.findall(
+        r"do\s+\$\$\s*begin(?P<body>.*?)end\s+\$\$;",
+        migration_sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert len(guard_blocks) == 1, "0026 must contain exactly one signature assertion block"
+    guard = guard_blocks[0]
+    assert "public.results_exploration_facets" not in guard.lower()
+
+    checks = re.findall(
+        r"to_regprocedure\(\s*format\(\s*'%I\.(?P<signature>"
+        r"results_exploration_facets\([^']+\))'\s*,\s*current_schema\(\)\s*\)\s*\)"
+        r"\s+is\s+(?P<state>not\s+)?null",
+        guard,
+        flags=re.IGNORECASE,
+    )
+    assert guard.lower().count("to_regprocedure(") == 2
+    assert [(signature.lower(), bool(state)) for signature, state in checks] == [
+        (absent_signature, True),
+        (present_signature, False),
+    ]
+
+
 def test_0026_scopes_mesa_facets_to_the_complete_establishment_lineage() -> None:
     forward_path = MIGRATIONS / "0026_scope_mesa_facets_to_establishment.sql"
     down_path = MIGRATIONS / "down" / "0026_scope_mesa_facets_to_establishment.down.sql"
@@ -716,6 +742,11 @@ def test_0026_scopes_mesa_facets_to_the_complete_establishment_lineage() -> None
     for role in ("public", "anon"):
         assert f"revoke execute on function {new_signature} from {role}" in forward
     assert f"grant execute on function {new_signature} to authenticated" in forward
+    _assert_0026_signature_guard(
+        forward,
+        absent_signature=old_signature,
+        present_signature=new_signature,
+    )
 
     rollback = " ".join(down_path.read_text(encoding="utf-8").lower().split())
     assert f"drop function {new_signature}" in rollback
@@ -732,6 +763,11 @@ def test_0026_scopes_mesa_facets_to_the_complete_establishment_lineage() -> None
     assert f"grant execute on function {old_signature} to authenticated" in rollback
     for role in ("public", "anon"):
         assert f"revoke execute on function {old_signature} from {role}" in rollback
+    _assert_0026_signature_guard(
+        rollback,
+        absent_signature=new_signature,
+        present_signature=old_signature,
+    )
 
 
 def test_0025_facets_only_introduces_joins_when_the_selection_needs_them() -> None:

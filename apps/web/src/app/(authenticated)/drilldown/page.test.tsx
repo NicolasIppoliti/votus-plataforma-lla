@@ -244,17 +244,25 @@ describe("drilldown page", () => {
     expect(markup).toContain('<option value="E1">E1 — conflicting names (3 variants)</option>');
   });
 
-  it("passes the selected establishment into mesa facet discovery", async () => {
-    await DrilldownPage({ searchParams: Promise.resolve({
+  it("renders the selected establishment and reaches mesa facet discovery with its complete lineage", async () => {
+    const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({
       electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
       distritoCode: "2", seccionCode: "27", circuitoCode: "1",
       establecimientoCode: "E1", mesaCode: "7", level: "mesa",
-    }) });
-    expect(explorationRpcCalls[0]).toEqual({ name: "results_exploration_facets", args: {
-      p_election_id: "2025-legislativas-nacional", p_category_id: "c-diputados",
-      p_distrito_code: "02", p_seccion_code: "027", p_circuito_code: "00001",
-      p_establecimiento_code: "E1",
-    } });
+    }) })) as ReactElement);
+    expect(markup).toContain('<option value="E1" selected="">');
+        expect(explorationRpcCalls).toEqual([
+          { name: "results_exploration_facets", args: {
+            p_election_id: "2025-legislativas-nacional", p_category_id: "c-diputados",
+            p_distrito_code: "02", p_seccion_code: "027", p_circuito_code: "00001",
+            p_establecimiento_code: "E1",
+          } },
+          { name: "results_exploration_official", args: {
+            p_election_id: "2025-legislativas-nacional", p_category_id: "c-diputados",
+            p_distrito_code: "02", p_seccion_code: "027", p_circuito_code: "00001",
+            p_establecimiento_code: "E1", p_mesa_code: 7, p_requested_level: "mesa",
+          } },
+        ]);
   });
 
   it("drops stale descendants when a changed parent no longer exposes them", async () => {

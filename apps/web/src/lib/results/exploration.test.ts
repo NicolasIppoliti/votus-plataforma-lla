@@ -31,7 +31,7 @@ describe("official results exploration repository", () => {
         p_seccion_code: null, p_circuito_code: null, p_establecimiento_code: null,
       } }]);
     });
-    it("scopes mesa facets through the selected establishment", async () => {
+    it("reaches the production facets RPC with the complete establishment-scoped lineage", async () => {
       const fake = rpcClient({ results_exploration_facets: {
         status: "ok", elections: [], categories: [], distritos: [], secciones: [], circuitos: [],
         establecimientos: [], mesas: [{ code: 7 }], available_levels: ["mesa"],
@@ -41,9 +41,11 @@ describe("official results exploration repository", () => {
         distritoCode: "02", seccionCode: "027", circuitoCode: "00001",
         establecimientoCode: "E1",
       });
-      expect(fake.calls[0]?.args).toMatchObject({
-        p_circuito_code: "00001", p_establecimiento_code: "E1",
-      });
+      expect(fake.calls).toEqual([{ name: "results_exploration_facets", args: {
+        p_election_id: SELECTION.electionId, p_category_id: SELECTION.categoryId,
+        p_distrito_code: "02", p_seccion_code: "027", p_circuito_code: "00001",
+        p_establecimiento_code: "E1",
+      } }]);
     });
     it("parses and formats explicit facet name states", async () => {
       const fake = rpcClient({ results_exploration_facets: {
