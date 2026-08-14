@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { SourceRef } from "@/lib/results/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PartyMappingContext, ResultRow } from "@/lib/fiscalizacion/repository";
-import type { ExplorationResult } from "@/lib/results/exploration";
+import type {
+  ExplorationResult,
+  SchoolBreakdownResult,
+} from "@/lib/results/exploration";
 
 /**
  * A refused query and an empty result are different answers. This page turned
@@ -44,6 +47,8 @@ const EXPLORATION_FACETS = {
 let explorationFacetResult: unknown = EXPLORATION_FACETS;
 let explorationRpcError: string | null = null;
 let explorationRepositoryBypass: ExplorationResult | null = null;
+let explorationSchoolRepositoryBypass: SchoolBreakdownResult | null = null;
+let explorationSchoolsError: string | null = null;
 
 vi.mock("@/lib/supabase/server-client", () => ({
   createSupabaseServerClient: () => Promise.resolve({
@@ -178,9 +183,20 @@ vi.mock("@/lib/results/exploration", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/results/exploration")>();
   return { ...actual, createResultsExplorationRepository: (client: Parameters<typeof actual.createResultsExplorationRepository>[0]) => {
     const repository = actual.createResultsExplorationRepository(client);
-    if (!explorationRepositoryBypass) return repository;
-    return { facets: repository.facets.bind(repository), official: () => Promise.resolve(explorationRepositoryBypass!) };
-  } };
+        if (!explorationRepositoryBypass && !explorationSchoolRepositoryBypass) return repository;
+        return {
+          facets: repository.facets.bind(repository),
+          official: explorationRepositoryBypass
+            ? () => Promise.resolve(explorationRepositoryBypass!)
+            : repository.official.bind(repository),
+              schools: explorationSchoolsError
+                ? () => Promise.reject(new Error(explorationSchoolsError!))
+                : explorationSchoolRepositoryBypass
+                  ? () => Promise.resolve(explorationSchoolRepositoryBypass!)
+                  : repository.schools.bind(repository),
+
+        };
+      } };
 });
 
 const { default: DrilldownPage } = await import("./page");
@@ -210,7 +226,10 @@ afterEach(() => {
     counts: { establecimiento_identity_available_rows: 0 }, exclusions: [], source_exclusions: [] };
   explorationFacetResult = EXPLORATION_FACETS;
   explorationRpcError = null;
-  explorationRepositoryBypass = null;
+      explorationRepositoryBypass = null;
+      explorationSchoolRepositoryBypass = null;
+      explorationSchoolsError = null;
+
 });
 
 const PARAMS = {
@@ -234,6 +253,8 @@ describe("drilldown page", () => {
   it("renders authenticated selectors from a cold start", async () => {
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
     expect(explorationRpcCalls.map((call) => call.name)).toEqual(["results_exploration_facets"]);
+    expect(markup).toContain('<main class="page-shell">');
+    expect(markup).not.toContain('id="main-content"');
     for (const text of ["Explore official results", '<form action="/drilldown" method="get">',
       "2025 legislativas", "DIPUTADO NACIONAL"]) expect(markup).toContain(text);
   });
@@ -392,7 +413,138 @@ describe("drilldown page", () => {
     expect(markup).toContain("Excluded 2 fiscalizacion rows / 1776 votes from the official aggregate");
   });
 
-  it("renders official and fiscalizacion non-mesa school exclusions independently", async () => {
+      it("retains aggregate exclusions when the rendered aggregate audit refuses", async () => {
+        explorationRepositoryBypass = {
+          status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
+          electionYear: 2025, electionRound: "legislativas", totalVotes: 999, mesaCount: 1,
+          sourceAudit: [
+            { kind: "official", rows: 2, votes: 999 },
+            { kind: "fiscalizacion", rows: 1, votes: 77 },
+          ],
+          sourceExclusions: [
+            { kind: "fiscalizacion", rows: 3, votes: 88 },
+            { kind: "unknown", rows: 2, votes: 11 },
+          ],
+          parties: [{ identityStatus: "canonical", canonicalPartyId: "leaked", displayName: "LEAKED PARTY", listId: null, votes: 999, voteShare: "1" }],
+          archiveEntryIds: ["national/2025-legislativas"],
+        };
+
+        const markup = renderToStaticMarkup((await DrilldownPage({
+          searchParams: Promise.resolve(EXPLORER_PARAMS),
+        })) as ReactElement);
+
+        expect(markup).toContain('<form action="/drilldown" method="get">');
+        expect(markup).toContain("Refused: the aggregate source audit includes non-official rows.");
+        expect(markup).toContain("Excluded 3 fiscalizacion rows / 88 votes from the official aggregate");
+        expect(markup).toContain("Excluded 2 unknown rows / 11 votes from the official aggregate");
+        expect(markup).not.toContain("999 votes at seccion level");
+        expect(markup).not.toContain("LEAKED PARTY");
+        expect(markup).not.toContain("Official votes and share by party");
+        expect(markup).not.toContain("https://example.test");
+      });
+
+      it("retains aggregate source exclusions when the school read throws", async () => {
+            explorationRepositoryBypass = {
+              status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
+              electionYear: 2025, electionRound: "legislativas", totalVotes: 999, mesaCount: 1,
+              sourceAudit: [{ kind: "official", rows: 2, votes: 999 }],
+              sourceExclusions: [{ kind: "fiscalizacion", rows: 3, votes: 88 }],
+              parties: [{ identityStatus: "canonical", canonicalPartyId: "leaked", displayName: "LEAKED PARTY", listId: null, votes: 999, voteShare: "1" }],
+              archiveEntryIds: ["national/2025-legislativas"],
+            };
+            explorationSchoolsError = "row-level security denied the school read";
+
+            const markup = renderToStaticMarkup((await DrilldownPage({
+              searchParams: Promise.resolve(EXPLORER_PARAMS),
+            })) as ReactElement);
+
+            expect(markup).toContain('<form action="/drilldown" method="get">');
+            expect(markup).toContain("row-level security denied the school read");
+            expect(markup).toContain("Excluded 3 fiscalizacion rows / 88 votes from the official aggregate");
+            expect(markup).not.toContain("Official breakdown");
+            expect(markup).not.toContain("Official school breakdown");
+            expect(markup).not.toContain("LEAKED PARTY");
+            expect(markup).not.toContain("999 votes at seccion level");
+            expect(markup).not.toContain("https://example.test");
+          });
+
+          it("retains aggregate and school exclusions when the rendered school audit refuses", async () => {
+        explorationRepositoryBypass = {
+          status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
+          electionYear: 2025, electionRound: "legislativas", totalVotes: 300, mesaCount: 2,
+          sourceAudit: [{ kind: "official", rows: 4, votes: 300 }],
+          sourceExclusions: [{ kind: "unknown", rows: 2, votes: 19 }],
+          parties: [{ identityStatus: "canonical", canonicalPartyId: "lla", displayName: "LA LIBERTAD AVANZA", listId: null, votes: 300, voteShare: "1" }],
+          archiveEntryIds: ["national/2025-legislativas"],
+        };
+        explorationSchoolRepositoryBypass = {
+          status: "ok", sourceKind: "official", level: "seccion",
+          sourceAudit: [
+            { kind: "official", rows: 3, votes: 260 },
+            { kind: "fiscalizacion", rows: 1, votes: 40 },
+          ],
+          sourceExclusions: [{ kind: "fiscalizacion", rows: 4, votes: 73 }],
+          exclusions: [{ reason: "official_rows_without_mesa_code", rows: 5, votes: 41 }],
+          schools: [{
+            circuitoCode: "00001", code: "E1", name: "Leaked school", mesaCount: 1,
+            totalVotes: 260, archiveEntryIds: ["national/2025-legislativas"],
+            parties: [{ identityStatus: "canonical", canonicalPartyId: "lla", displayName: "LA LIBERTAD AVANZA", listId: null, votes: 260, voteShare: "1" }],
+          }],
+        };
+
+        const markup = renderToStaticMarkup((await DrilldownPage({
+          searchParams: Promise.resolve(EXPLORER_PARAMS),
+        })) as ReactElement);
+
+        expect(markup).toContain('<form action="/drilldown" method="get">');
+        expect(markup).toContain("Refused: the school breakdown source audit includes non-official rows.");
+        expect(markup).toContain("Excluded 2 unknown rows / 19 votes from the official aggregate");
+        expect(markup).toContain("Excluded 4 fiscalizacion rows / 73 votes from the school aggregate");
+        expect(markup).toContain("Excluded 5 rows / 41 votes: official_rows_without_mesa_code");
+        expect(markup).not.toContain("Official votes and share by party");
+        expect(markup).not.toContain("Official votes by circuit and establishment");
+        expect(markup).not.toContain("Leaked school");
+        expect(markup).not.toContain("https://example.test");
+      });
+
+      it("retains every known exclusion when the source-reference read refuses", async () => {
+        explorationRpcResult = {
+          ...officialRpc("seccion"),
+          source_exclusions: [
+            { kind: "fiscalizacion", rows: 4, votes: 88 },
+            { kind: "unknown", rows: 2, votes: 9 },
+          ],
+        };
+        explorationSchoolsResult = {
+          status: "ok", source_kind: "official", level: "seccion",
+          source_audit: [{ kind: "official", rows: 3, votes: 300 }],
+          source_exclusions: [{ kind: "fiscalizacion", rows: 3, votes: 77 }],
+          exclusions: [{ reason: "official_rows_without_mesa_code", rows: 5, votes: 44 }],
+          schools: [{
+            circuito_code: "00001", code: "E1", name: "Unusable school", mesa_count: 1,
+            total_votes: 300, archive_entry_ids: ["national/2025-legislativas"],
+            parties: [{ identity_status: "canonical", canonical_party_id: "lla", display_name: "LA LIBERTAD AVANZA", list_id: null, votes: 300, vote_share: "1" }],
+          }],
+        };
+        refuseSourceReadWith = "row-level security denied the source read";
+
+        const markup = renderToStaticMarkup((await DrilldownPage({
+          searchParams: Promise.resolve(EXPLORER_PARAMS),
+        })) as ReactElement);
+
+        expect(markup).toContain('<form action="/drilldown" method="get">');
+        expect(markup).toContain("row-level security denied the source read");
+        expect(markup).toContain("Excluded 4 fiscalizacion rows / 88 votes from the official aggregate");
+        expect(markup).toContain("Excluded 2 unknown rows / 9 votes from the official aggregate");
+        expect(markup).toContain("Excluded 3 fiscalizacion rows / 77 votes from the school aggregate");
+        expect(markup).toContain("Excluded 5 rows / 44 votes: official_rows_without_mesa_code");
+        expect(markup).not.toContain("Official breakdown");
+        expect(markup).not.toContain("Official votes and share by party");
+        expect(markup).not.toContain("Official school breakdown");
+        expect(markup).not.toContain("Unusable school");
+      });
+
+      it("renders official and fiscalizacion non-mesa school exclusions independently", async () => {
     explorationRpcResult = officialRpc();
     explorationSchoolsResult = { status: "ok", source_kind: "official", level: "seccion",
       source_audit: [{ kind: "official", rows: 1, votes: 10 }],
@@ -932,7 +1084,44 @@ describe("drilldown page — the unmapped breakdown survives every refusal", () 
     ];
   };
 
-  it("test_it_survives_the_path_three_leakage_refusal", async () => {
+  it("test_a_mixed_source_refusal_withholds_unmapped_vote_totals", async () => {
+        leakFiscalizacion = true;
+        repositoryRows = [
+          {
+            jurisdictionId: "j-027",
+            categoryId: "c-diputados",
+            listId: "4321",
+            votes: 700,
+            sourceKind: "official",
+            granularity: "mesa",
+            archiveEntryId: "national/2025-legislativas",
+          },
+          {
+            jurisdictionId: "j-027",
+            categoryId: "c-diputados",
+            listId: "9876",
+            votes: 60,
+            sourceKind: "fiscalizacion",
+            granularity: "mesa",
+            archiveEntryId: "fiscalizacion/2025-lla",
+          },
+        ];
+
+        const markup = renderToStaticMarkup(
+          (await DrilldownPage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+        );
+
+        expect(markup).toContain("are not official");
+        expect(markup).toContain("4321: 1 rows");
+        expect(markup).toContain("9876: 1 rows");
+        expect(markup).not.toContain("4321: 1 rows, 700 votes");
+        expect(markup).not.toContain("9876: 1 rows, 60 votes");
+        expect(markup).toContain("official and fiscalización figures are never combined in one number");
+        expect(markup).not.toContain("Official total:");
+        expect(markup).not.toContain("Official breakdown");
+      });
+
+      it("test_it_survives_the_path_three_leakage_refusal", async () => {
     // Which ids failed to map does not depend on source kinds. Counted before
     // the guard and then dropped behind a refusal about something else.
     seedUnmapped();
@@ -1113,3 +1302,76 @@ describe("drilldown page — no mapping source is not a claim about the data", (
     expect(markup).not.toContain("resolved to no curated party");
   });
 });
+
+describe("drilldown page — responsive selector and evidence presentation", () => {
+      it("groups the selector controls without changing the GET contract", async () => {
+        const markup = renderToStaticMarkup(
+          (await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement,
+        );
+
+        expect(markup).toMatch(/<header class="page-header">/);
+        expect(markup).toContain(
+          '<section class="panel" aria-labelledby="explorer-form-heading">',
+        );
+        expect(markup).toContain('<form action="/drilldown" method="get">');
+        expect(markup).toContain('<fieldset class="form-grid selector-form">');
+        expect(markup).toContain(
+          '<legend class="selector-form__legend">Result selectors</legend>',
+        );
+        expect(markup.match(/class="field"/g) ?? []).toHaveLength(8);
+      });
+
+      it("keeps every result table in a labelled focusable evidence region", async () => {
+        const schoolName = `Escuela-${"n".repeat(72)}`;
+        explorationRpcResult = officialRpc("seccion");
+        explorationSchoolsResult = {
+          status: "ok",
+          source_kind: "official",
+          level: "seccion",
+          source_audit: [{ kind: "official", rows: 1, votes: 300 }],
+          source_exclusions: [],
+          exclusions: [],
+          schools: [
+            {
+              circuito_code: "00001",
+              code: "E1",
+              name: schoolName,
+              mesa_count: 2,
+              total_votes: 300,
+              archive_entry_ids: ["national/2025-legislativas"],
+              parties: [
+                {
+                  identity_status: "canonical",
+                  canonical_party_id: "lla",
+                  display_name: "LA LIBERTAD AVANZA",
+                  list_id: null,
+                  votes: 300,
+                  vote_share: "1",
+                },
+              ],
+            },
+          ],
+        };
+
+        const markup = renderToStaticMarkup(
+          (await DrilldownPage({ searchParams: Promise.resolve(EXPLORER_PARAMS) })) as ReactElement,
+        );
+
+        expect(markup.match(/<table class="data-table">/g) ?? []).toHaveLength(2);
+        expect(markup.match(/class="table-scroll"/g) ?? []).toHaveLength(2);
+        expect(markup).toContain(
+          'aria-label="Official votes and share by party" tabindex="0"',
+        );
+        expect(markup).toContain(
+          'aria-label="Official votes by circuit and establishment" tabindex="0"',
+        );
+        expect(markup).toContain("<caption>Official votes and share by party</caption>");
+        expect(markup).toContain(
+          "<caption>Official votes by circuit and establishment</caption>",
+        );
+        expect(markup.match(/scope="col"/g) ?? []).toHaveLength(8);
+        expect(markup).toContain(
+          `class="evidence-text" scope="row">Circuito 00001 — E1 — ${schoolName}</th>`,
+        );
+      });
+    });

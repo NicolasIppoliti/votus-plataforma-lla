@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { GranularityBadge } from "@/components/GranularityBadge";
+import { TableScroll } from "@/components/TableScroll";
 import { JuxtapositionBadge } from "@/components/JuxtapositionBadge";
 import type { ElectionFigure } from "@/components/JuxtapositionBadge";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
@@ -16,6 +17,7 @@ import {
   type ResultRow,
   type ResultsRepository,
   describeExcluded,
+  tallyByKind,
   votesByParty,
 } from "@/lib/fiscalizacion/repository";
 import type {
@@ -487,17 +489,31 @@ export function partyShare(
     return { status: "unavailable", reason: mixed };
   }
 
-  const totalVotes = rows.reduce((sum, row) => sum + row.votes, 0);
-  if (totalVotes === 0) {
-    return { status: "unavailable", reason: "no votes in the returned rows" };
-  }
-
   // On the CANONICAL id. Matching display names across two elections gave the
   // sides zero common keys whenever the curated file respelled a party, and
   // the badge then reported "no rows for …" about a party that stood.
 	const matching = rows.filter(
 		(row) => row.canonicalPartyId === canonicalPartyId,
 	);
+
+  const matchingNames = new Set(
+    matching
+      .map((row) => row.partyName)
+      .filter((name): name is string => Boolean(name)),
+  );
+  if (matchingNames.size > 1) {
+    return {
+      status: "unavailable",
+      reason:
+        `canonical party IDs have conflicting nonempty party names (${canonicalPartyId}: ` +
+        `${[...matchingNames].sort().join(" | ")})`,
+    };
+  }
+
+  const totalVotes = rows.reduce((sum, row) => sum + row.votes, 0);
+  if (totalVotes === 0) {
+    return { status: "unavailable", reason: "no votes in the returned rows" };
+  }
   if (matching.length === 0) {
     // `unavailable`, never 0 %: a party that did not stand has no share, and
     // a rendered 0 reads as a collapse it never suffered.
@@ -518,71 +534,74 @@ interface CoverageFormSelection {
   seccionCode?: string;
 }
 
-function CoverageExplorerForm({
-  facets,
-  selected,
-}: {
-  facets: ExplorationFacets;
-  selected: CoverageFormSelection;
-}): ReactNode {
-  return (
-    <form action="/fiscalizacion" method="get">
-      <label htmlFor="coverage-election">Election</label>{" "}
-			<select
-				id="coverage-election"
-				name="electionId"
-				defaultValue={selected.electionId ?? ""}
-			>
-        <option value="">Choose an election</option>
-				{facets.elections.map((option) => (
-					<option key={option.id} value={option.id}>
-						{option.label}
-					</option>
-				))}
-      </select>{" "}
-      <label htmlFor="coverage-category">Category</label>{" "}
-			<select
-				id="coverage-category"
-				name="categoryId"
-				defaultValue={selected.categoryId ?? ""}
-			>
-        <option value="">Choose a category</option>
-				{facets.categories.map((option) => (
-					<option key={option.id} value={option.id}>
-						{option.name}
-					</option>
-				))}
-      </select>{" "}
-      <label htmlFor="coverage-distrito">Distrito</label>{" "}
-			<select
-				id="coverage-distrito"
-				name="distritoCode"
-				defaultValue={selected.distritoCode ?? ""}
-			>
-        <option value="">Choose a distrito</option>
-				{facets.distritos.map((option) => (
-					<option key={option.code} value={option.code}>
-          {formatFacetOptionLabel(option)}
-					</option>
-				))}
-      </select>{" "}
-      <label htmlFor="coverage-seccion">Sección</label>{" "}
-			<select
-				id="coverage-seccion"
-				name="seccionCode"
-				defaultValue={selected.seccionCode ?? ""}
-			>
-        <option value="">Choose a sección</option>
-				{facets.secciones.map((option) => (
-					<option key={option.code} value={option.code}>
-          {formatFacetOptionLabel(option)}
-					</option>
-				))}
-      </select>{" "}
-      <button type="submit">Show coverage</button>
-    </form>
-  );
-}
+    function CoverageExplorerForm({
+      facets,
+      selected,
+    }: {
+      facets: ExplorationFacets;
+      selected: CoverageFormSelection;
+    }): ReactNode {
+      return (
+        <section className="panel" aria-labelledby="coverage-form-heading">
+          <div className="panel__heading">
+            <h2 id="coverage-form-heading">Choose coverage scope</h2>
+            <p>Keep unofficial presence separate from the official result denominator.</p>
+          </div>
+          <form action="/fiscalizacion" method="get">
+            <fieldset className="form-grid selector-form">
+              <legend className="selector-form__legend">Coverage selectors</legend>
+              <div className="field">
+                <label htmlFor="coverage-election">Election</label>
+                <select id="coverage-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+                  <option value="">Choose an election</option>
+                  {facets.elections.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="coverage-category">Category</label>
+                <select id="coverage-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+                  <option value="">Choose a category</option>
+                  {facets.categories.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="coverage-distrito">Distrito</label>
+                <select id="coverage-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+                  <option value="">Choose a distrito</option>
+                  {facets.distritos.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {formatFacetOptionLabel(option)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="coverage-seccion">Sección</label>
+                <select id="coverage-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+                  <option value="">Choose a sección</option>
+                  {facets.secciones.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {formatFacetOptionLabel(option)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </fieldset>
+            <div className="form-actions">
+              <button className="button button--primary" type="submit">Show coverage</button>
+            </div>
+          </form>
+        </section>
+      );
+    }
 
 function coverageCounts(counts: Record<string, number>): string {
 	return Object.entries(counts)
@@ -630,7 +649,11 @@ function passesRenderedCoverageSourceIsolation(result: CoverageOk): boolean {
 		result.denominatorAudit.every((entry) => entry.kind === "official") &&
 		result.isRandomSample === false &&
 		result.mesasCoverage.isRandomSample === false &&
-		result.escuelas.items.every((school) => school.isRandomSample === false)
+		result.escuelas.items.every((school) => school.isRandomSample === false) &&
+		result.mesas.length === result.mesasCoverage.denominatorUnits &&
+		result.mesas.filter((mesa) => mesa.covered).length ===
+			result.mesasCoverage.observedUnits &&
+		result.mesasCoverage.observedUnits <= result.mesasCoverage.denominatorUnits
 	);
 }
 
@@ -696,18 +719,26 @@ export async function renderCoverageExplorer(
   const form = <CoverageExplorerForm facets={facets} selected={selected} />;
   const distritoCode = normalized.value.distritoCode;
   const seccionCode = normalized.value.seccionCode;
-  if (!electionId || !categoryId || !distritoCode || !seccionCode) {
-		return (
-			<main>
-				<h1>Fiscalización coverage</h1>
-				{form}
-				<p role="status">
-					Choose the available election, category, distrito and sección. The
-					resulting URL is reusable.
-				</p>
-			</main>
-		);
-  }
+      if (!electionId || !categoryId || !distritoCode || !seccionCode) {
+        return (
+          <main className="page-shell">
+            <div className="shell-container">
+              <header className="page-header">
+                <p className="eyebrow">Fiscalización / coverage evidence</p>
+                <h1>Fiscalización coverage</h1>
+                <p className="page-header__lede">
+                  Inspect unofficial presence while keeping the official denominator visible.
+                </p>
+              </header>
+              {form}
+              <p role="status">
+                Choose the available election, category, distrito and sección. The
+                resulting URL is reusable.
+              </p>
+            </div>
+          </main>
+        );
+      }
   let result;
   try {
 		const selection = {
@@ -749,16 +780,21 @@ export async function renderCoverageExplorer(
 		return (
 			<main>
 				<h1>Fiscalización coverage</h1>
+				{form}
 				<p role="alert">
 					Refused: coverage evidence failed the rendered-page source isolation
 					guard.
 				</p>
+				{schoolExclusions(result.escuelas.exclusions)}
+				{coverageExclusions(result)}
 			</main>
 		);
 	}
 	const archiveIds = [
-		...result.provenance.officialArchiveEntryIds,
-		...result.provenance.fiscalizacionArchiveEntryIds,
+		...new Set([
+			...result.provenance.officialArchiveEntryIds,
+			...result.provenance.fiscalizacionArchiveEntryIds,
+		]),
 	];
   let sources: SourceRef[];
   try {
@@ -794,112 +830,124 @@ export async function renderCoverageExplorer(
 			</main>
 		);
   }
-  const uncovered = result.mesas.filter((mesa) => !mesa.covered).length;
-  return (
-    <main>
-      <h1>Fiscalización coverage</h1>
-      {form}
-      <p role="note">
-				Uncovered means no fiscalización presence, not zero or missing official
-				votes. Official results remain separate.
-      </p>
-      <p role="status">
-				{result.mesasCoverage.observedUnits} covered of{" "}
-				{result.mesasCoverage.denominatorUnits} official mesas; {uncovered}{" "}
-				uncovered. This is not a random sample.
-			</p>
-			<p>
-				Scope: election {result.electionYear} {result.electionRound}, distrito{" "}
-				{result.distritoCode}, sección {result.seccionCode}. Coverage is{" "}
-				{result.isRandomSample ? "random" : "not a random sample"}.
-      </p>
-      <h2>Mesas</h2>
-      <table>
-        <caption>Fiscalización presence by official mesa</caption>
-				<thead>
-					<tr>
-						<th scope="col">Mesa</th>
-						<th scope="col">Escuela</th>
-						<th scope="col">Coverage</th>
-						<th scope="col">Official result</th>
-					</tr>
-				</thead>
-				<tbody>
-					{result.mesas.map((mesa) => (
-						<tr
-							key={JSON.stringify([
-								mesa.circuitoCode,
-								mesa.establecimientoCode,
-								mesa.code,
-							])}
-						>
-          <th scope="row">{mesa.code}</th>
-							<td>
-								{mesa.establecimientoName ??
-									mesa.establecimientoCode ??
-									"School identity unavailable"}
-							</td>
-          <td>{mesa.covered ? "Fiscal present" : "No fiscal present"}</td>
-							<td>
-								{mesa.officialResultHref ? (
-									<Link href={mesa.officialResultHref}>
-										View official votes
-									</Link>
-								) : (
-									"Official-result link unavailable: complete source identity is absent"
-								)}
-							</td>
-						</tr>
-					))}
-				</tbody>
-      </table>
-      <h2>Escuelas</h2>
-			{result.escuelas.status === "source_unavailable" ? (
-				<>
-					<p role="alert">{result.escuelas.reason}.</p>
-					{schoolExclusions(result.escuelas.exclusions)}
-				</>
-			) : (
-				<>
-					<ul aria-label="School coverage">
-						{result.escuelas.items.map((school) => (
-        <li key={`${school.circuitoCode}-${school.code}`}>
-								Circuito {school.circuitoCode} — {school.name ?? school.code}:{" "}
-								{school.observedUnits} of {school.denominatorUnits} mesas
-								covered; not a random sample.{" "}
-								<Link href={school.officialResultHref}>
-									View school official votes
-								</Link>
-							</li>
-						))}
-					</ul>
-					{schoolExclusions(result.escuelas.exclusions)}
-				</>
-			)}
-      {coverageExclusions(result)}
-			<p role="note">
-				Source audit:{" "}
-				{result.sourceAudit
-					.map(
-						(entry) =>
-							`${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`,
-					)
-					.join(", ")}
-				.
-			</p>
-			<p role="note">
-				Denominator audit:{" "}
-				{result.denominatorAudit
-					.map(
-						(entry) =>
-							`${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`,
-					)
-					.join(", ")}
-				.
-			</p>
-      <ProvenanceLink sources={sources} />
-    </main>
-  );
+      const uncovered = result.mesas.filter((mesa) => !mesa.covered).length;
+      return (
+        <main className="page-shell">
+          <div className="shell-container">
+            <header className="page-header">
+              <p className="eyebrow">Fiscalización / coverage evidence</p>
+              <h1>Fiscalización coverage</h1>
+              <p className="page-header__lede">
+                Inspect unofficial presence while keeping the official denominator visible.
+              </p>
+            </header>
+            {form}
+            <p role="note">
+              Uncovered means no fiscalización presence, not zero or missing official
+              votes. Official results remain separate.
+            </p>
+            <p role="status">
+              {result.mesasCoverage.observedUnits} covered of{" "}
+              {result.mesasCoverage.denominatorUnits} official mesas; {uncovered}{" "}
+              uncovered. This is not a random sample.
+            </p>
+            <p>
+              Scope: election {result.electionYear} {result.electionRound}, distrito{" "}
+              {result.distritoCode}, sección {result.seccionCode}. Coverage is{" "}
+              {result.isRandomSample ? "random" : "not a random sample"}.
+            </p>
+            <h2>Mesas</h2>
+            <TableScroll label="Fiscalización presence by official mesa">
+              <table className="data-table">
+                <caption>Fiscalización presence by official mesa</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Mesa</th>
+                    <th scope="col">Escuela</th>
+                    <th scope="col">Coverage</th>
+                    <th scope="col">Official result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.mesas.map((mesa) => (
+                    <tr
+                      key={JSON.stringify([
+                        mesa.circuitoCode,
+                        mesa.establecimientoCode,
+                        mesa.code,
+                      ])}
+                    >
+                      <th scope="row">{mesa.code}</th>
+                      <td className="evidence-text">
+                        {mesa.establecimientoName ??
+                          mesa.establecimientoCode ??
+                          "School identity unavailable"}
+                      </td>
+                      <td>{mesa.covered ? "Fiscal present" : "No fiscal present"}</td>
+                      <td className="evidence-text">
+                        {mesa.officialResultHref ? (
+                          <Link href={mesa.officialResultHref}>
+                            View official votes
+                          </Link>
+                        ) : (
+                          "Official-result link unavailable: complete source identity is absent"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
+            <h2>Escuelas</h2>
+            {result.escuelas.status === "source_unavailable" ? (
+              <>
+                <p role="alert">{result.escuelas.reason}.</p>
+                {schoolExclusions(result.escuelas.exclusions)}
+              </>
+            ) : (
+              <>
+                <ul aria-label="School coverage">
+                  {result.escuelas.items.map((school) => (
+                    <li className="evidence-text" key={`${school.circuitoCode}-${school.code}`}>
+                      Circuito {school.circuitoCode} — {school.name ?? school.code}:{" "}
+                      {school.observedUnits} of {school.denominatorUnits} mesas
+                      covered; not a random sample.{" "}
+                      <Link href={school.officialResultHref}>
+                        View school official votes
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                {schoolExclusions(result.escuelas.exclusions)}
+              </>
+            )}
+            {coverageExclusions(result)}
+            <p role="note">
+              {"Source audit: "}
+              {result.sourceAudit
+                .map(
+                  (entry) =>
+                    `${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`,
+                )
+                .join(", ")}
+              .
+            </p>
+            <p role="note">
+              Denominator audit: {" "}
+              {result.denominatorAudit
+                .map(
+                  (entry) =>
+                    `${entry.kind}: ${entry.rows} rows / ${entry.votes} votes / ${entry.mesas} mesas`,
+                )
+                .join(", ")}
+              .
+            </p>
+            <div className="evidence-container">
+              <ProvenanceLink sources={sources} />
+            </div>
+          </div>
+        </main>
+      );
 }
 
 /**
@@ -1045,17 +1093,12 @@ export function renderFiscalizacionView(
   const mixedLevels = mixedGranularityReason(rows);
   const unorderable = unrecognizedLevels(rows);
   const official = rows.filter((row) => row.sourceKind !== "fiscalizacion");
-  // PER KIND. Every other exclusion in this file breaks down; a bare total is
-  // how a destructive filter survives review.
-  const foreignTotals = new Map<string, { rows: number; votes: number }>();
-  for (const row of official) {
-    const entry = foreignTotals.get(row.sourceKind) ?? { rows: 0, votes: 0 };
-    foreignTotals.set(row.sourceKind, {
-      rows: entry.rows + 1,
-      votes: entry.votes + row.votes,
-    });
-  }
-  const foreignByKind = [...foreignTotals.entries()]
+  const foreignSourceReason = official.length > 0
+    ? "rows are not exclusively fiscalización; official and fiscalización figures are never combined in one number"
+    : null;
+  // Normalize every foreign source kind through the repository's shared
+  // disclosure helper, including invalid values in the `unknown` bucket.
+  const foreignByKind = Object.entries(tallyByKind(official))
     .map(([sourceKind, totals]) => ({ sourceKind, ...totals }))
     .sort((a, b) => b.votes - a.votes);
 
@@ -1093,7 +1136,7 @@ export function renderFiscalizacionView(
           entries={unmappedByListId(rows).entries}
           withoutListId={unmappedByListId(rows).withoutListId}
           totalRows={rows.length}
-          unsummable={mixedLevels}
+          unsummable={foreignSourceReason ?? mixedLevels}
           mappingConfigured={view.partyMappingConfigured}
         />
         {/* And the levels this page cannot order — rows it excludes from every
@@ -1205,10 +1248,12 @@ export function renderFiscalizacionView(
               ))}
             </ul>
           )}
-          <ProvenanceLink sources={sources} />
-        </>
-      )}
-      <UnmappedListIds
+              <div className="evidence-container">
+                <ProvenanceLink sources={sources} />
+              </div>
+            </>
+          )}
+          <UnmappedListIds
         entries={unmapped.unmappedByListId}
         withoutListId={unmappedByListId(rows).withoutListId}
         totalRows={rows.length}

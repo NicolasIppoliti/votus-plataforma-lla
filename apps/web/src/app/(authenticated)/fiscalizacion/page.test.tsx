@@ -36,6 +36,7 @@ let sourceRefs: SourceRef[] = [];
 let refuseQueryWith: string | null = null;
 let refuseSourceReadWith: string | null = null;
 let sourceRefReadCount = 0;
+let sourceRefRequestedIds: string[] = [];
 interface PartyNameFixture {
 	canonicalPartyId: string;
 	displayName: string;
@@ -54,6 +55,7 @@ afterEach(() => {
   refuseQueryWith = null;
   refuseSourceReadWith = null;
   sourceRefReadCount = 0;
+  sourceRefRequestedIds = [];
 	partyNameOverrides = null;
   coverageRpcResults = {};
 });
@@ -140,6 +142,7 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
     },
     fetchSourceRefs: (_client: unknown, ids: string[]) => {
       sourceRefReadCount += 1;
+      sourceRefRequestedIds = [...ids];
       return refuseSourceReadWith
         ? Promise.reject(new Error(refuseSourceReadWith))
         : Promise.resolve({
@@ -317,18 +320,63 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
     expect(officialText.length).toBeGreaterThan(0);
   });
 
-  it("renders the refusal state, not an unlabelled figure, when refused", () => {
-    const html = renderToStaticMarkup(
-			renderFiscalizacionView({
-				status: "refused",
-				reason: "no coverage supplied",
-			}),
-    );
+      it("renders the refusal state, not an unlabelled figure, when refused", () => {
+        const html = renderToStaticMarkup(
+          renderFiscalizacionView({
+            status: "refused",
+            reason: "no coverage supplied",
+          }),
+        );
 
-    expect(html.toLowerCase()).toContain("refus");
-    expect(html).not.toContain("12578");
-  });
-});
+        expect(html.toLowerCase()).toContain("refus");
+        expect(html).not.toContain("12578");
+      });
+
+      it("withholds unmapped vote totals on a foreign-source refusal", () => {
+            const html = renderToStaticMarkup(
+              renderFiscalizacionView({
+                status: "ok",
+                rows: [
+                  { ...FISCALIZACION_ROW, listId: "4321", votes: 700 },
+                  { ...OFFICIAL_ROW, listId: "9876", votes: 60 },
+                ],
+                excluded: {},
+                coverage: FISCALIZACION_COVERAGE,
+                partyMappingConfigured: true,
+              }),
+            );
+
+            expect(html).toContain("Refused");
+            expect(html).toContain("4321: 1 rows");
+            expect(html).toContain("9876: 1 rows");
+            expect(html).not.toContain("4321: 1 rows, 700 votes");
+            expect(html).not.toContain("9876: 1 rows, 60 votes");
+            expect(html).toContain("official and fiscalización figures are never combined in one number");
+            expect(html).not.toContain("Coverage:");
+            expect(html).not.toContain("LA LIBERTAD AVANZA");
+          });
+
+          it("normalizes every foreign source kind without dropping rows or votes", () => {
+        const html = renderToStaticMarkup(
+          renderFiscalizacionView({
+            status: "ok",
+            rows: [
+              { ...OFFICIAL_ROW, votes: 100 },
+              { ...FISCALIZACION_ROW, votes: 20, sourceKind: "provisional" as never },
+              { ...FISCALIZACION_ROW, votes: 30, sourceKind: null as never },
+            ],
+            excluded: {},
+            coverage: FISCALIZACION_COVERAGE,
+            partyMappingConfigured: true,
+          }),
+        );
+
+        expect(html).toContain("official: 1 rows, 100 votes");
+        expect(html).toContain("unknown: 2 rows, 50 votes");
+        expect(html).not.toContain("provisional");
+        expect(html).not.toContain("<li>:");
+      });
+    });
 
 describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachable)", () => {
   it("test_comparison_absent_when_no_query_params_supplied", () => {
@@ -1105,6 +1153,8 @@ describe("fiscalizacion page — the real entry point", () => {
 			})) as ReactElement,
     );
 
+    expect(markup).toContain('<main class="page-shell">');
+    expect(markup).not.toContain('id="main-content"');
     expect(markup).toContain("Fiscalización coverage");
     expect(markup).toContain("Choose an election");
     expect(markup).toContain('<option value="02">02 — name unavailable</option>');
@@ -1384,6 +1434,24 @@ describe("fiscalizacion page — the real entry point", () => {
 			name: "denominator audit is empty",
 			widen: (valid) => ({ ...valid, denominatorAudit: [] }),
 		},
+		{
+			name: "mesa payload omits a denominator unit",
+			widen: (valid) => ({ ...valid, mesas: valid.mesas.slice(0, 1) }),
+		},
+		{
+			name: "covered mesa count exceeds observed units",
+			widen: (valid) => ({
+				...valid,
+				mesas: valid.mesas.map((mesa) => ({ ...mesa, covered: true })),
+			}),
+		},
+		{
+			name: "observed units exceed the denominator",
+			widen: (valid) => ({
+				...valid,
+				mesasCoverage: { ...valid.mesasCoverage, observedUnits: 3 },
+			}),
+		},
 	];
 
 	it.each(renderedGuardViolations)(
@@ -1396,22 +1464,91 @@ describe("fiscalizacion page — the real entry point", () => {
 			);
 			expect(markup).not.toContain("1 covered of 2 official mesas");
 			expect(markup).not.toContain("Source audit:");
+			expect(markup).not.toContain("Denominator audit:");
 			expect(markup).not.toContain("Guard fixture school");
 			expect(markup).not.toContain("View official votes");
 			expect(markup).not.toContain("not a random sample");
 			expect(markup).not.toContain("official-guard-source");
+			expect(markup).not.toContain("fiscalizacion-guard-source");
 			expect(sourceRefReadCount).toBe(0);
 		},
 	);
 
-	it("renders valid injected coverage after the rendered-page guard", async () => {
+      it("retains the form and exclusion breakdowns when the rendered guard refuses", async () => {
+        const valid = renderedCoverageResult();
+        valid.escuelas.exclusions = [
+          { reason: "official_rows_without_establecimiento_code", rows: 3, votes: 44 },
+        ];
+        valid.exclusions = [
+          { reason: "fiscalizacion_rows_without_official_mesa_mapping", rows: 2, votes: 17 },
+        ];
+        const markup = await renderInjectedCoverage({ ...valid, sourceKind: "official" });
+
+        expect(markup).toContain('<form action="/fiscalizacion" method="get">');
+        expect(markup).toContain(
+          "Refused: coverage evidence failed the rendered-page source isolation guard.",
+        );
+        expect(markup).toContain(
+          "official_rows_without_establecimiento_code: 3 row(s), 44 vote(s)",
+        );
+        expect(markup).toContain(
+          "fiscalizacion_rows_without_official_mesa_mapping: 2 row(s), 17 vote(s)",
+        );
+        expect(markup).not.toContain("1 covered of 2 official mesas");
+        expect(markup).not.toContain("Source audit:");
+        expect(markup).not.toContain("Denominator audit:");
+        expect(markup).not.toContain("Guard fixture school");
+        expect(markup).not.toContain("View official votes");
+        expect(markup).not.toContain("official-guard-source");
+        expect(sourceRefReadCount).toBe(0);
+      });
+
+      it("renders valid injected coverage after the rendered-page guard", async () => {
+        const markup = await renderInjectedCoverage(renderedCoverageResult());
+
+        expect(markup).toContain("1 covered of 2 official mesas");
+        expect(markup).toContain("Guard fixture school");
+        expect(markup).toContain("Source audit: fiscalizacion");
+        expect(markup).toContain("official-guard-source");
+        expect(sourceRefReadCount).toBe(1);
+      });
+
+      it("deduplicates shared official and fiscalizacion provenance before fetching", async () => {
+        sourceRefs = [
+          {
+            archiveEntryId: "shared/archive",
+            sha256: "c".repeat(64),
+            url: "https://example.test/shared-source",
+            fetchedAt: "2026-08-10T00:00:00Z",
+          },
+        ];
+        const payload = auditableCoveragePayload();
+        payload.provenance = {
+          official_archive_entry_ids: ["shared/archive"],
+          fiscalizacion_archive_entry_ids: ["shared/archive"],
+        };
+
+        const markup = await renderAuditableCoverage(payload);
+
+        expect(markup).toContain("1 covered of 2 official mesas");
+        expect(markup).toContain("https://example.test/shared-source");
+        expect(markup).not.toContain("coverage provenance is incomplete");
+        expect(sourceRefReadCount).toBe(1);
+        expect(sourceRefRequestedIds).toEqual(["shared/archive"]);
+      });
+
+    it("keeps the mesa evidence table labelled, scoped, and focusable", async () => {
 		const markup = await renderInjectedCoverage(renderedCoverageResult());
 
-		expect(markup).toContain("1 covered of 2 official mesas");
-		expect(markup).toContain("Guard fixture school");
-		expect(markup).toContain("Source audit: fiscalizacion");
-		expect(markup).toContain("official-guard-source");
-		expect(sourceRefReadCount).toBe(1);
+		expect(markup).toContain(
+			'<div class="table-scroll" role="region" aria-label="Fiscalización presence by official mesa" tabindex="0">',
+		);
+		expect(markup).toContain('<table class="data-table">');
+		expect(markup).toContain(
+			"<caption>Fiscalización presence by official mesa</caption>",
+		);
+		expect(markup.match(/scope="col"/g) ?? []).toHaveLength(4);
+		expect(markup).toContain('class="evidence-text">Guard fixture school</td>');
 	});
 
 	it("renders mesas with the same circuit and code at distinct schools without duplicate keys", async () => {
@@ -2110,6 +2247,28 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 					"canonical party IDs have conflicting nonempty party names (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
 				tied: false,
 				unmappedByListId: [],
+			});
+		},
+	);
+
+	it.each(["forward", "reverse"] as const)(
+		"test_party_share_refuses_conflicting_names_for_one_canonical_id_in_%s_order",
+		(order) => {
+			const rows = [
+				NAMED("LA LIBERTAD AVANZA", 30, "110"),
+				NAMED("ALIANZA LA LIBERTAD AVANZA", 20, "20135"),
+			];
+
+			expect(
+				partyShare(
+					order === "forward" ? rows : [...rows].reverse(),
+					"canon-110",
+					"CALLER DISPLAY NAME",
+				),
+			).toEqual({
+				status: "unavailable",
+				reason:
+					"canonical party IDs have conflicting nonempty party names (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
 			});
 		},
 	);
@@ -3306,5 +3465,41 @@ describe("fiscalizacion page — no mapping source is not a claim about the data
 
     expect(html).toContain("no curated mapping source is configured");
     expect(html).not.toContain("resolved to no curated party");
+  });
+});
+
+describe("fiscalizacion page — responsive selectors and evidence presentation", () => {
+  it("groups the coverage filters without changing their GET names", async () => {
+    coverageRpcResults = {
+      results_exploration_facets: {
+        status: "ok",
+        elections: [{ id: "e-2025", year: 2025, round: "legislativas", label: "2025 legislativas" }],
+        categories: [{ id: "c-diputados", name: "DIPUTADO NACIONAL" }],
+        distritos: [{ code: "02", name: "Buenos Aires", name_status: "present", name_variant_count: 1 }],
+        secciones: [{ code: "027", name: "Coronel Rosales", name_status: "present", name_variant_count: 1 }],
+        circuitos: [],
+        establecimientos: [],
+        mesas: [],
+        available_levels: [],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      (await FiscalizacionPage({ searchParams: Promise.resolve({}) })) as ReactElement,
+    );
+
+    expect(markup).toMatch(/<header class="page-header">/);
+    expect(markup).toContain(
+      '<section class="panel" aria-labelledby="coverage-form-heading">',
+    );
+    expect(markup).toContain('<form action="/fiscalizacion" method="get">');
+    expect(markup).toContain('<fieldset class="form-grid selector-form">');
+    expect(markup).toContain(
+      '<legend class="selector-form__legend">Coverage selectors</legend>',
+    );
+    expect(markup).toContain('name="electionId"');
+    expect(markup).toContain('name="categoryId"');
+    expect(markup).toContain('name="distritoCode"');
+    expect(markup).toContain('name="seccionCode"');
   });
 });

@@ -54,8 +54,15 @@ export function UnmappedListIds({
 }: UnmappedListIdsProps): ReactNode {
   const rows = entries.reduce((sum, entry) => sum + entry.rows, 0);
   const votes = entries.reduce((sum, entry) => sum + entry.votes, 0);
-  const noListIdSummary = describeExcluded(withoutListId ?? {});
-  const noListIdRows = Object.values(withoutListId ?? {}).reduce((sum, tally) => sum + tally.rows, 0);
+  const noListId = withoutListId ?? {};
+  const noListIdSummary =
+    unsummable === null
+      ? describeExcluded(noListId)
+      : Object.entries(noListId)
+          .filter(([, tally]) => tally.rows > 0)
+          .map(([kind, tally]) => `${tally.rows} ${kind} row(s)`)
+          .join(", ") || null;
+  const noListIdRows = Object.values(noListId).reduce((sum, tally) => sum + tally.rows, 0);
   if (rows === 0 && noListIdRows === 0) return null;
   return (
     <>
@@ -95,8 +102,8 @@ export function UnmappedListIds({
       )}
       {unsummable === null ? null : (
         <p role="note">
-          Vote totals are omitted here for the same reason the per-party figures
-          are: these rows mix granularity levels and cannot be added.
+          Vote totals are omitted here for the same reason the per-party figures are:
+          these rows cannot be combined, so their votes cannot be added: {unsummable}.
         </p>
       )}
     </>

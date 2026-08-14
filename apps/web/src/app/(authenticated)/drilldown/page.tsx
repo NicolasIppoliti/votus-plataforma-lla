@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
+import { TableScroll } from "@/components/TableScroll";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
@@ -54,37 +55,80 @@ interface ExplorerFormProps {
   };
 }
 
-function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
-  return (
-    <form action="/drilldown" method="get">
-      <label htmlFor="explorer-election">Election</label>{" "}<select id="explorer-election" name="electionId" defaultValue={selected.electionId ?? ""}>
-        <option value="">Choose an election</option>
-        {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>{" "}
-      <label htmlFor="explorer-category">Category</label>{" "}<select id="explorer-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
-        <option value="">Choose a category</option>
-        {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select>{" "}
-      <label htmlFor="explorer-distrito">Distrito</label>{" "}<select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
-        <option value="">Choose a distrito</option>
-        {facets.distritos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
-      <label htmlFor="explorer-seccion">Sección</label>{" "}<select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
-        <option value="">Choose a sección</option>
-        {facets.secciones.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
-      <label htmlFor="explorer-circuito">Circuito</label>{" "}<select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}>
-        <option value="">Any circuito</option>
-        {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
-      <label htmlFor="explorer-establecimiento">Establecimiento</label>{" "}<select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}>
-        <option value="">Any establecimiento</option>
-        {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}</select>{" "}
-      <label htmlFor="explorer-mesa">Mesa</label>{" "}<select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}>
-        <option value="">Any mesa</option>
-        {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select>{" "}
-      <label htmlFor="explorer-level">Report level</label>{" "}<select id="explorer-level" name="level" defaultValue={selected.level ?? ""}>
-        <option value="">Choose a level</option>
-        {facets.availableLevels.map((level) => <option key={level} value={level}>{level}</option>)}</select>{" "}
-      <button type="submit">Apply selection</button>
-    </form>
-  );
-}
+    function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
+      return (
+        <section className="panel" aria-labelledby="explorer-form-heading">
+          <div className="panel__heading">
+            <h2 id="explorer-form-heading">Choose result scope</h2>
+            <p>Use the selectors to build a reusable official-results deep link.</p>
+          </div>
+          <form action="/drilldown" method="get">
+            <fieldset className="form-grid selector-form">
+              <legend className="selector-form__legend">Result selectors</legend>
+              <div className="field">
+                <label htmlFor="explorer-election">Election</label>
+                <select id="explorer-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+                  <option value="">Choose an election</option>
+                  {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-category">Category</label>
+                <select id="explorer-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+                  <option value="">Choose a category</option>
+                  {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-distrito">Distrito</label>
+                <select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+                  <option value="">Choose a distrito</option>
+                  {facets.distritos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-seccion">Sección</label>
+                <select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+                  <option value="">Choose a sección</option>
+                  {facets.secciones.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-circuito">Circuito</label>
+                <select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}>
+                  <option value="">Any circuito</option>
+                  {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-establecimiento">Establecimiento</label>
+                <select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}>
+                  <option value="">Any establecimiento</option>
+                  {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-mesa">Mesa</label>
+                <select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}>
+                  <option value="">Any mesa</option>
+                  {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="explorer-level">Report level</label>
+                <select id="explorer-level" name="level" defaultValue={selected.level ?? ""}>
+                  <option value="">Choose a level</option>
+                  {facets.availableLevels.map((level) => <option key={level} value={level}>{level}</option>)}
+                </select>
+              </div>
+            </fieldset>
+            <div className="form-actions">
+              <button className="button button--primary" type="submit">Apply selection</button>
+            </div>
+          </form>
+        </section>
+      );
+    }
 
 function formatShare(share: string | null): string {
   return share === null ? "share unavailable" : `${(Number(share) * 100).toFixed(2)}%`;
@@ -172,9 +216,23 @@ async function renderOfficialExplorer(
   const seccionCode = effectiveCodes.seccionCode;
   const baseReady = Boolean(electionId && categoryId && distritoCode && level);
   const scopeReady = level === EXPLORATION_LEVEL.DISTRITO || Boolean(seccionCode);
-  if (!hierarchyMatches || !baseReady || !scopeReady || !electionId || !categoryId || !distritoCode || !level) {
-    return <main><h1>Explore official results</h1>{form}<p role="status">Choose the available selectors, then apply the selection. The resulting URL is a reusable deep link.</p></main>;
-  }
+      if (!hierarchyMatches || !baseReady || !scopeReady || !electionId || !categoryId || !distritoCode || !level) {
+        return (
+          <main className="page-shell">
+            <div className="shell-container">
+              <header className="page-header">
+                <p className="eyebrow">Official results / drilldown</p>
+                <h1>Explore official results</h1>
+                <p className="page-header__lede">
+                  Select a published scope and keep the resulting URL as a reusable deep link.
+                </p>
+              </header>
+              {form}
+              <p role="status">Choose the available selectors, then apply the selection. The resulting URL is a reusable deep link.</p>
+            </div>
+          </main>
+        );
+      }
 
   let result;
   try {
@@ -194,7 +252,8 @@ async function renderOfficialExplorer(
       {sourceExclusionNotes(result.sourceExclusions ?? [], "official")}</main>;
   }
   if (!hasOnlyOfficialSourceAudit(result.sourceAudit)) {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the aggregate source audit includes non-official rows.</p></main>;
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the aggregate source audit includes non-official rows.</p>
+      {sourceExclusionNotes(result.sourceExclusions, "official")}</main>;
   }
 
   let schoolBreakdown: SchoolBreakdownResult | null = null;
@@ -207,11 +266,15 @@ async function renderOfficialExplorer(
         electionId, categoryId, distritoCode,
         seccionCode, requestedLevel: level,
       });
-    } catch (error) {
-      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
-    }
-    if (schoolBreakdown.status === "ok" && !hasOnlyOfficialSourceAudit(schoolBreakdown.sourceAudit)) {
-      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the school breakdown source audit includes non-official rows.</p></main>;
+      } catch (error) {
+        return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p>
+          {sourceExclusionNotes(result.sourceExclusions, "official")}</main>;
+      }
+      if (schoolBreakdown.status === "ok" && !hasOnlyOfficialSourceAudit(schoolBreakdown.sourceAudit)) {
+
+      return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: the school breakdown source audit includes non-official rows.</p>
+        {sourceExclusionNotes(result.sourceExclusions, "official")}
+        {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}</main>;
     }
   }
 
@@ -224,59 +287,77 @@ async function renderOfficialExplorer(
     sources = sourceResult.sources;
     missing = sourceResult.missing;
   } catch (error) {
-    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p></main>;
+    return <main><h1>Explore official results</h1>{form}<p role="alert">Refused: {error instanceof Error ? error.message : String(error)}</p>
+      {sourceExclusionNotes(result.sourceExclusions, "official")}
+      {schoolBreakdown ? schoolExclusionNotes(
+        schoolBreakdown.exclusions ?? [], schoolBreakdown.sourceExclusions ?? [],
+      ) : null}</main>;
   }
 
-  return (
-    <main>
-      <h1>Explore official results</h1>
-      {form}
-      <h2>Official breakdown</h2>
-      <p role="status">
-        {result.totalVotes} votes at {result.level} level from {result.sourceGranularity} source rows
-        {result.mesaCount === null ? ". Mesa count is unavailable at the published source granularity." : ` across ${result.mesaCount} mesas.`}
-      </p>
-      <p>Election shape: {result.electionYear} {result.electionRound}.</p>
-      {sourceExclusionNotes(result.sourceExclusions, "official")}
-      <table>
-        <caption>Official votes and share by party</caption>
-        <thead><tr><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
-        <tbody>
-          {result.parties.map((party, index) => (
-            <tr key={party.canonicalPartyId ?? `${party.listId ?? "missing-list"}-${index}`}>
-              <th scope="row">{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</th>
-              <td>{party.votes} votes</td>
-              <td>{formatShare(party.voteShare)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {schoolBreakdown?.status === "ok" ? (
-        <section aria-labelledby="school-breakdown-heading">
-          <h2 id="school-breakdown-heading">Official school breakdown</h2>
-          {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}
-          <table>
-            <caption>Official votes by circuit and establishment</caption>
-            <thead><tr><th scope="col">Establishment</th><th scope="col">Mesas</th><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
-            <tbody>{schoolBreakdown.schools.flatMap((school) => school.parties.map((party, index) => (
-              <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
-                <th scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
-                <td>{school.mesaCount} mesas</td>
-                <td>{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</td>
-                <td>{party.votes} votes</td><td>{formatShare(party.voteShare)}</td>
-              </tr>
-            )))}</tbody>
-          </table>
-        </section>
-      ) : schoolBreakdown ? (
-        <section aria-labelledby="school-breakdown-heading"><h2 id="school-breakdown-heading">Official school breakdown</h2>
-          <p role="alert">Refused: {schoolBreakdown.reason}. {formatCounts(schoolBreakdown.counts)}.</p>
-          {schoolExclusionNotes(schoolBreakdown.exclusions ?? [], schoolBreakdown.sourceExclusions ?? [])}</section>
-      ) : null}
-      {missing.length > 0 ? <p role="alert">{missing.length} archive entry/entries resolved to no source record ({missing.join(", ")}); these figures cannot be traced.</p> : null}
-      <ProvenanceLink sources={sources} />
-    </main>
-  );
+      return (
+            <main className="page-shell">
+          <div className="shell-container">
+            <header className="page-header">
+              <p className="eyebrow">Official results / drilldown</p>
+              <h1>Explore official results</h1>
+              <p className="page-header__lede">
+                Select a published scope and inspect the official result evidence without losing its source context.
+              </p>
+            </header>
+            {form}
+            <h2>Official breakdown</h2>
+            <p role="status">
+              {result.totalVotes} votes at {result.level} level from {result.sourceGranularity} source rows
+              {result.mesaCount === null ? ". Mesa count is unavailable at the published source granularity." : ` across ${result.mesaCount} mesas.`}
+            </p>
+            <p>Election shape: {result.electionYear} {result.electionRound}.</p>
+            {sourceExclusionNotes(result.sourceExclusions, "official")}
+            <TableScroll label="Official votes and share by party">
+              <table className="data-table">
+                <caption>Official votes and share by party</caption>
+                <thead><tr><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
+                <tbody>
+                  {result.parties.map((party, index) => (
+                    <tr key={party.canonicalPartyId ?? `${party.listId ?? "missing-list"}-${index}`}>
+                      <th className="evidence-text" scope="row">{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</th>
+                      <td>{party.votes} votes</td>
+                      <td>{formatShare(party.voteShare)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
+            {schoolBreakdown?.status === "ok" ? (
+              <section aria-labelledby="school-breakdown-heading">
+                <h2 id="school-breakdown-heading">Official school breakdown</h2>
+                {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}
+                <TableScroll label="Official votes by circuit and establishment">
+                  <table className="data-table">
+                    <caption>Official votes by circuit and establishment</caption>
+                    <thead><tr><th scope="col">Establishment</th><th scope="col">Mesas</th><th scope="col">Party identity</th><th scope="col">Votes</th><th scope="col">Share</th></tr></thead>
+                    <tbody>{schoolBreakdown.schools.flatMap((school) => school.parties.map((party, index) => (
+                      <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
+                        <th className="evidence-text" scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
+                        <td>{school.mesaCount} mesas</td>
+                        <td className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Unmapped list ${party.listId ?? "(list id unavailable)"}`}</td>
+                        <td>{party.votes} votes</td><td>{formatShare(party.voteShare)}</td>
+                      </tr>
+                    )))}</tbody>
+                  </table>
+                </TableScroll>
+              </section>
+            ) : schoolBreakdown ? (
+              <section aria-labelledby="school-breakdown-heading"><h2 id="school-breakdown-heading">Official school breakdown</h2>
+                <p role="alert">Refused: {schoolBreakdown.reason}. {formatCounts(schoolBreakdown.counts)}.</p>
+                {schoolExclusionNotes(schoolBreakdown.exclusions ?? [], schoolBreakdown.sourceExclusions ?? [])}</section>
+            ) : null}
+            {missing.length > 0 ? <p role="alert">{missing.length} archive entry/entries resolved to no source record ({missing.join(", ")}); these figures cannot be traced.</p> : null}
+            <div className="evidence-container">
+              <ProvenanceLink sources={sources} />
+            </div>
+          </div>
+        </main>
+      );
 }
 
 
@@ -500,8 +581,12 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   // unknown level read as "1 row(s)" when only the names are printed.
   const unrecognized = unrecognizedLevels(rows);
 
-  const foreign = response.rows.filter((row) => row.sourceKind !== "official");
-  if (foreign.length > 0) {
+      const foreign = response.rows.filter((row) => row.sourceKind !== "official");
+      const foreignSourceReason = foreign.length > 0
+        ? "rows are not exclusively official source rows; official and fiscalización figures are never combined in one number"
+        : null;
+      if (foreign.length > 0) {
+
     return (
       <main>
         <h1>Drilldown</h1>
@@ -515,7 +600,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
             WHICH list ids failed to map does not depend on source kinds, on
             the aggregate, or on whether a later read succeeded. */}
         <UnmappedListIds entries={unmapped.entries}
-        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={unsummable}
+        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={foreignSourceReason ?? unsummable}
           mappingConfigured={response.partyMappingConfigured}
         />
         {/* And the levels this page cannot order, counted with it and just as
@@ -763,7 +848,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
               ))}
             </ul>
           )}
-          <ProvenanceLink sources={sources} />
+          <div className="evidence-container">
+        <ProvenanceLink sources={sources} />
+          </div>
         </>
       )}
     </main>
