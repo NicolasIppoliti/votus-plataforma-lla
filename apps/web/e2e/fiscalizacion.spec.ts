@@ -79,7 +79,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
       const coverageMain = page.getByRole("main");
       await coverageMain.getByRole("link", { name: "Ver votos oficiales" }).last().click();
       await expect(page).toHaveURL(/\/drilldown\?/);
-      await expect(page.getByRole("main")).toContainText("33333 votos a nivel mesa");
+      await expect(page.getByRole("main")).toContainText("33333 votos a nivel establecimiento");
       await expect(page.getByRole("main")).not.toContainText(String(FISCALIZACION_VOTES));
 
       await page.goto(new URL(
