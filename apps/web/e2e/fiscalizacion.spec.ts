@@ -30,7 +30,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
 
       // Reachable from the authenticated layout (task 13.10), not merely
       // addressable by URL.
-      await page.getByRole("navigation", { name: "main" }).getByRole("link", { name: "Fiscalización (unofficial)", exact: true }).click();
+      await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
       await page.goto(new URL(
         `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
@@ -40,36 +40,36 @@ test.describe("the fiscalizacion route explores coverage", () => {
       ).toString());
 
       const main = page.getByRole("main");
-      await expect(main).toContainText("1 covered of 2 official mesas");
-      await expect(main).toContainText("1 uncovered");
-      await expect(main).toContainText("not a random sample");
+      await expect(main).toContainText("1 mesas cubiertas de 2 mesas oficiales");
+      await expect(main).toContainText("1 sin cobertura");
+      await expect(main).toContainText("No es una muestra aleatoria");
       await expect(main).toContainText(
-        "Uncovered means no fiscalización presence, not zero or missing official votes",
+        "Sin cobertura significa que no hay presencia de fiscalización, no que los votos oficiales sean cero o falten",
       );
-      await expect(main).toContainText(`fiscalizacion: 1 rows / ${FISCALIZACION_VOTES} votes / 1 mesas`);
-      await expect(main.getByRole("list", { name: "provenance" }).getByRole("listitem")).toHaveCount(3);
+      await expect(main).toContainText(`fiscalización: 1 filas / ${FISCALIZACION_VOTES} votos / 1 mesas`);
+      await expect(main.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(3);
       const reusableUrl = page.url();
       await page.reload();
       await expect(page).toHaveURL(reusableUrl);
-      await expect(page.getByRole("main")).toContainText("1 covered of 2 official mesas");
-      const schools = main.getByRole("list", { name: "School coverage" });
+      await expect(page.getByRole("main")).toContainText("1 mesas cubiertas de 2 mesas oficiales");
+      const schools = main.getByRole("list", { name: "Cobertura por establecimiento" });
       await expect(schools.getByRole("listitem")).toHaveCount(2);
-      await expect(schools).toContainText("Circuito 00001 — Synthetic school: 1 of 1 mesas covered");
-      await expect(schools).toContainText("Circuito 00002 — Synthetic school: 0 of 1 mesas covered");
-      await expect(schools.getByRole("link", { name: "View school official votes" }).nth(0))
+      await expect(schools).toContainText("Circuito 00001 — Synthetic school: 1 de 1 mesas cubiertas");
+      await expect(schools).toContainText("Circuito 00002 — Synthetic school: 0 de 1 mesas cubiertas");
+      await expect(schools.getByRole("link", { name: "Ver votos oficiales del establecimiento" }).nth(0))
         .toHaveAttribute("href", /circuitoCode=00001.*establecimientoCode=E1.*level=establecimiento/);
-      await expect(schools.getByRole("link", { name: "View school official votes" }).nth(1))
+      await expect(schools.getByRole("link", { name: "Ver votos oficiales del establecimiento" }).nth(1))
         .toHaveAttribute("href", /circuitoCode=00002.*establecimientoCode=E1.*level=establecimiento/);
       await page.goto(new URL(
         `/drilldown?electionId=${COVERAGE_SCOPE.electionId}` +
           `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
           `&seccionCode=${COVERAGE_SCOPE.seccionCode}&level=seccion`, baseURL,
       ).toString());
-      const schoolBreakdown = page.getByRole("table", { name: "Official votes by circuit and establishment" });
+      const schoolBreakdown = page.getByRole("table", { name: "Votos oficiales por circuito y establecimiento" });
       await expect(schoolBreakdown).toContainText("Circuito 00001 — E1 — Synthetic school");
       await expect(schoolBreakdown).toContainText("Circuito 00002 — E1 — Synthetic school");
       await expect(schoolBreakdown.getByRole("row")).toHaveCount(3);
-      await expect(schoolBreakdown).toContainText(`${33_333} votes`);
+      await expect(schoolBreakdown).toContainText(`${33_333} votos`);
 
       await page.goto(new URL(
         `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
@@ -77,9 +77,9 @@ test.describe("the fiscalizacion route explores coverage", () => {
           `&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL,
       ).toString());
       const coverageMain = page.getByRole("main");
-      await coverageMain.getByRole("link", { name: "View official votes" }).last().click();
+      await coverageMain.getByRole("link", { name: "Ver votos oficiales" }).last().click();
       await expect(page).toHaveURL(/\/drilldown\?/);
-      await expect(page.getByRole("main")).toContainText("33333 votes at mesa level");
+      await expect(page.getByRole("main")).toContainText("33333 votos a nivel mesa");
       await expect(page.getByRole("main")).not.toContainText(String(FISCALIZACION_VOTES));
 
       await page.goto(new URL(
@@ -89,7 +89,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
         baseURL,
       ).toString());
       await expect(page.getByRole("main").getByRole("alert")).toContainText(
-        "no official mesa rows exist for the selected scope",
+        "Se rechazó la solicitud: no official mesa rows exist for the selected scope",
       );
     });
   });

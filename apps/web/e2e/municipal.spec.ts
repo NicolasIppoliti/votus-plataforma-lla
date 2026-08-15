@@ -30,13 +30,13 @@ test.describe("the municipal route defaults to official results", () => {
       ).toString());
 
       const main = page.getByRole("main");
-      await expect(main.getByRole("heading", { name: "Municipal (Concejales)" })).toBeVisible();
+      await expect(main.getByRole("heading", { name: "Resultados municipales (Concejales)" })).toBeVisible();
       await expect(main).toContainText(
-        `By source kind: 1 official row(s) / ${OFFICIAL_VOTES} vote(s).`,
+        `Por tipo de fuente: 1 fila oficial / ${OFFICIAL_VOTES} votos.`,
       );
-      await expect(main.getByRole("status", { name: "granularity: seccion" })).toBeVisible();
+      await expect(main.getByRole("status", { name: "granularidad: seccion" })).toBeVisible();
       await expect(main).toContainText(
-        `1 fiscalizacion row(s) / ${FISCALIZACION_VOTES} vote(s) were excluded by the official-source filter`,
+        `1 fila fiscalización / ${FISCALIZACION_VOTES} votos se excluyeron por el filtro de fuente oficial`,
       );
       await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText("party-internal, unofficial");

@@ -22,21 +22,21 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
 
-    await page.getByRole("navigation", { name: "main" }).getByRole("link", { name: "Seat simulation", exact: true }).click();
+    await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Simulación de bancas", exact: true }).click();
     await expect(page).toHaveURL(/\/simulate/);
     await page.goto(`/simulate?input=${encodeURIComponent(JSON.stringify(PROJECTION))}`);
 
-    const result = page.getByRole("region", { name: "allocation-result" });
-    await expect(result.getByRole("heading", { name: "Result (pba_municipal)" })).toBeVisible();
-    await expect(result).toContainText("Projection (hypothetical, caller supplied)");
-    await expect(result.getByRole("status", { name: "granularity: seccion" })).toBeVisible();
-    await expect(result).toContainText(/Supplied-input trace \(not archive provenance\): sha256 [a-f0-9]{64}/);
+    const result = page.getByRole("region", { name: "Resultado de la asignación" });
+    await expect(result.getByRole("heading", { name: "Resultado (municipal de PBA)" })).toBeVisible();
+    await expect(result).toContainText("Proyección hipotética aportada por quien realiza la consulta");
+    await expect(result.getByRole("status", { name: "granularidad: seccion" })).toBeVisible();
+    await expect(result).toContainText(/Huella de los datos proporcionados \(no es procedencia de archivo\): sha256 [a-f0-9]{64}/);
     await expect(
-      result.getByRole("heading", { name: "Hare quota with largest remainder" }),
+      result.getByRole("heading", { name: "Cociente Hare con mayor residuo" }),
     ).toBeVisible();
-    await expect(result).toContainText("Statutory method: Ley 5109 Arts. 109–110");
-    await expect(result.getByRole("link", { name: /archive|source/i })).toHaveCount(0);
-    await expect(result).not.toContainText("Official historical result");
+    await expect(result).toContainText("Método legal: Ley 5109, arts. 109–110");
+    await expect(result.getByRole("link", { name: /archivo|fuente/i })).toHaveCount(0);
+    await expect(result).not.toContainText("Resultado histórico oficial");
     await expect
       .poll(() =>
         page.evaluate(
@@ -48,7 +48,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       .toBe(true);
 
     const evidenceScroll = page.getByRole("region", {
-      name: "Hare allocation by list",
+      name: "Asignación Hare por lista",
     });
     await expect(evidenceScroll).toBeVisible();
     await expect(evidenceScroll).toHaveAttribute("tabindex", "0");

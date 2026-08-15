@@ -43,26 +43,26 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       ).toString());
 
       const main = page.getByRole("main");
-      const officialTotal = main.getByRole("note").filter({ hasText: "Official total:" });
-      await expect(officialTotal).toContainText(`Official total: ${OFFICIAL_VOTES} votes`);
+      const officialTotal = main.getByRole("note").filter({ hasText: "Total oficial:" });
+      await expect(officialTotal).toContainText(`Total oficial: ${OFFICIAL_VOTES} votos`);
       await expect(officialTotal).not.toContainText(String(FISCALIZACION_VOTES));
       await expect(main).toContainText(
-        `1 fiscalizacion row(s) / ${FISCALIZACION_VOTES} vote(s) were excluded by the official-source filter`,
+        `1 fila fiscalización / ${FISCALIZACION_VOTES} votos se excluyeron por el filtro de fuente oficial`,
       );
       await expect(main).not.toContainText(FISCALIZACION_MARKER);
-      await expect(main).not.toContainText(`Official total: ${OFFICIAL_VOTES + FISCALIZACION_VOTES}`);
+      await expect(main).not.toContainText(`Total oficial: ${OFFICIAL_VOTES + FISCALIZACION_VOTES}`);
 
-      await page.getByRole("link", { name: "Explore results" }).click();
+      await page.getByRole("link", { name: "Explorar resultados" }).click();
       await expect(page).toHaveURL(/\/drilldown/);
-      for (const [label, value] of [["Election", SOURCE_SCOPE.electionId],
-        ["Category", SOURCE_SCOPE.categoryId], ["Distrito", identity.distritoCode],
+      for (const [label, value] of [["Elección", SOURCE_SCOPE.electionId],
+        ["Categoría", SOURCE_SCOPE.categoryId], ["Distrito", identity.distritoCode],
         ["Sección", identity.seccionCode], ["Circuito", "00001"], ["Establecimiento", "E1"]] as const) {
         await page.getByLabel(label).selectOption(value);
-        await page.getByRole("button", { name: "Apply selection" }).click();
+        await page.getByRole("button", { name: "Aplicar selección" }).click();
       }
       await page.getByLabel("Mesa").selectOption("1");
-      await page.getByLabel("Report level").selectOption("mesa");
-      await page.getByRole("button", { name: "Apply selection" }).click();
+      await page.getByLabel("Nivel del informe").selectOption("mesa");
+      await page.getByRole("button", { name: "Aplicar selección" }).click();
       const explorerUrl = new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
           `&distritoCode=${encodeURIComponent(identity.distritoCode)}` +
@@ -72,11 +72,11 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       ).toString();
       await expect(page).toHaveURL(explorerUrl);
       const explorer = page.getByRole("main");
-      await expect(explorer).toContainText(`${OFFICIAL_VOTES} votes at mesa level from mesa source rows`);
+      await expect(explorer).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa, obtenidos de filas de fuente mesa`);
       await expect(explorer).toContainText(
-        `Excluded 1 fiscalizacion rows / ${FISCALIZACION_VOTES} votes from the official aggregate`);
-      await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votes at mesa level`);
-      await expect(page.getByRole("list", { name: "provenance" }).getByRole("listitem")).toHaveCount(1);
+        `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);
+      await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votos a nivel mesa`);
+      await expect(page.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(1);
       await page.reload();
       await expect(page).toHaveURL(explorerUrl);
 
@@ -85,7 +85,7 @@ test.describe("no fiscalización leakage into the rendered page", () => {
           `&distritoCode=${identity.distritoCode}&distritoCode=84&level=distrito`,
         baseURL,
       ).toString());
-      await expect(page.getByRole("main").getByRole("alert")).toContainText("Refused");
+      await expect(page.getByRole("main").getByRole("alert")).toContainText("Se rechazó");
     });
   });
 });

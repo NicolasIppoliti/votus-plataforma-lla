@@ -59,9 +59,9 @@ export default async function globalSetup(): Promise<void> {
     const context = await browser.newContext({ baseURL: environment.VOTUS_E2E_BASE_URL });
     const page = await context.newPage();
     await page.goto("/login");
-    await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password").fill(password);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByLabel("Correo electrónico").fill(email);
+    await page.getByLabel("Contraseña").fill(password);
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     try {
       await page.waitForURL(/\/dashboard/, { timeout: 10_000 });
     } catch {
