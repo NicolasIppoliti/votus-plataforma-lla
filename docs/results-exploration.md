@@ -2,7 +2,7 @@
 
 ## Publication and deployment boundary
 
-Migration `0027_optimize_non_official_source_audit.sql` is published in the repository by this change. It adds one partial index and does not change an explorer function, grant, result, timeout, or web application behavior. Publishing the migration is not the same as applying it to a hosted database.
+Migration `0027_optimize_non_official_source_audit.sql` is published by the issue #53 base change. This issue #54 follow-up adds no migration: it independently proves the existing partial index for the coverage RPC and does not change an explorer function, grant, result, timeout, or web application behavior. Repository publication is not the same as applying 0027 to a hosted database.
 
 This change does not run a hosted migration or deploy the web application. The existing release record says migrations 0020-0022 and their Vercel release were deployed on 2026-08-12; it is not evidence that migrations 0023-0027 are hosted. Apply 0027 only through the approved hosted release process after the preflight below.
 
@@ -139,15 +139,16 @@ To recover, reapply only `0027_optimize_non_official_source_audit.sql`, run `ANA
 
 The broader disposable release proof intentionally rolls 0027 and the explorer migration chain backward and forward to prove integration. That test sequence is not an instruction to remove hosted explorer functions when only this performance index needs rollback.
 
-## Shared-index boundary
+## Independent coverage proof (#54)
 
-The partial index is shared infrastructure and may improve another query with the same election/category/jurisdiction and non-official predicate. That possible impact does not close issue #54. Issue #54 remains out of scope until its own symptom, plan, and named regression test pass.
+The partial index is shared infrastructure: coverage's unsupported-source audit uses the same election/category/jurisdiction and non-official predicate as the issue #53 source-exclusion audit. Issue #54 now has its own production-shaped `2025 legislativas / DIPUTADO NACIONAL / 02/027` scale proof, public coverage RPC plan, and direct unsupported-source audit plan. The proof adds no second migration and does not claim that a hosted database is fixed. Applying migration 0027 through the approved hosted release process remains the runtime fix.
 
 ## Release status
 
 | Boundary | Current state |
 |---|---|
-| 0027 repository publication | Included in this change |
+| 0027 repository publication | Included in the issue #53 base; no new migration in #54 |
+| Independent #54 coverage scale and plan proof | Included in this follow-up |
 | Disposable migration, scale, rollback/reapply, grants, auth/RLS proof | Required before merge |
 | Hosted 0027 migration | Not performed by this change |
 | Hosted web deployment | Not required; application behavior is unchanged |

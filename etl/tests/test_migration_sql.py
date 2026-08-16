@@ -880,6 +880,44 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         assert required in sql
 
 
+def test_results_exploration_coverage_scale_proof_matches_production_shape() -> None:
+    sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    marker = "-- issue #54 production-shaped coverage proof"
+    assert marker in sql
+    coverage_proof = " ".join(sql.split(marker, 1)[1].split())
+
+    for required in (
+        "2025, 'legislativas'",
+        "'diputado nacional'",
+        "'02', '027'",
+        "generate_series(1, 153) official_mesa",
+        "generate_series(1, 93) covered_mesa",
+        "generate_series(1, 15) result_position",
+        "2295::bigint",
+        "1395::bigint",
+        "results_exploration_coverage(",
+        "'status', payload->'status'",
+        "'is_random_sample', payload->'is_random_sample'",
+        "'observed_units', payload->'mesas_coverage'->'observed_units'",
+        "'denominator_units', payload->'mesas_coverage'->'denominator_units'",
+        "'source_rows', payload->'source_audit'->0->'rows'",
+        "'source_mesas', payload->'source_audit'->0->'mesas'",
+        "'denominator_rows', payload->'denominator_audit'->0->'rows'",
+        "'denominator_mesas', payload->'denominator_audit'->0->'mesas'",
+        "'coverage_production_rpc'",
+        "'coverage_unsupported_source_audit'",
+        "result_row_non_official_scope_idx",
+        "shared hit blocks",
+        "shared read blocks",
+    ):
+        assert required in coverage_proof
+
+    assert "'is_random_sample', false" in coverage_proof
+    assert re.search(r"coverage_production_rpc[^;]+<=\s*15000", coverage_proof)
+    assert re.search(r"coverage_production_rpc[^;]+shared[^;]+<=\s*30000", coverage_proof)
+    assert re.search(r"coverage_unsupported_source_audit[^;]+shared[^;]+<=\s*2500", coverage_proof)
+
+
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
