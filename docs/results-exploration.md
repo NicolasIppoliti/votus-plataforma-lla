@@ -1,6 +1,10 @@
 # Operate the results explorers safely
 
-The official-results and fiscalizacion-coverage explorers are deployed after migrations 0020-0022. The disposable release proof, hosted migration apply, and Vercel deployment completed on 2026-08-12. Production plan capture remains a separate read-only operator check.
+## Publication and deployment boundary
+
+Migration `0027_optimize_non_official_source_audit.sql` is published in the repository by this change. It adds one partial index and does not change an explorer function, grant, result, timeout, or web application behavior. Publishing the migration is not the same as applying it to a hosted database.
+
+This change does not run a hosted migration or deploy the web application. The existing release record says migrations 0020-0022 and their Vercel release were deployed on 2026-08-12; it is not evidence that migrations 0023-0027 are hosted. Apply 0027 only through the approved hosted release process after the preflight below.
 
 ## Reproduce the local proof
 
@@ -14,82 +18,137 @@ node --experimental-strip-types apps/web/scripts/e2e-release-gate.ts --release-p
 
 The disposable proof MUST report:
 
-- migration inventory `0001` through `0022` exactly;
-- pgTAP success for authenticated execution, anonymous denial, RLS-visible reads, normalized `02/027` identity, source isolation, and literal `is_random_sample = false`;
-- representative scale evidence for 120,000 official result rows across 12,000 mesas and schools, including actual planning time, execution time, shared hit blocks, and shared read blocks;
-- rollback sequence `0022 down -> 0021 down -> 0020 down`, followed by `0020 up -> 0021 up -> 0022 up`;
-- restored authenticated grants, anonymous denial, and zero owned Docker/workdir residue.
+- canonical migration inventory `0001` through `0027` exactly; the isolated E2E-only service-role migration is synthetic `0028`;
+- pgTAP success for authenticated execution, anonymous denial, internal-function denial, RLS-visible reads, normalized identities, source isolation, and literal `is_random_sample = false`;
+- a scale contract with many out-of-scope official rows, a tiny selected `02/001` scope, non-official rows elsewhere, unchanged official totals, and null/unsupported source kinds audited as `unknown`;
+- an `EXPLAIN (ANALYZE, BUFFERS)` plan that names `result_row_non_official_scope_idx` for the selected source-exclusion audit;
+- rollback/reapply sequence `0027 down -> 0026 down -> 0025 down -> 0023 down -> 0022 down -> 0021 down -> 0020 down`, then the corresponding forward sequence through `0027`;
+- restored authenticated grants, anonymous/internal denial, and zero owned Docker/workdir residue.
 
-These timings describe the disposable fixture and current machine only. They MUST NOT be presented as production latency.
+Disposable timings describe only the fixture and current machine. They are not production latency guarantees.
 
-## Verify the hosted release
+## Hosted preflight
 
-1. Confirm the target is the linked `votus-prod` project and that hosted migrations 0020-0022 are applied.
-2. Confirm Vercel production serves the `main` deployment from `apps/web`.
-3. Sign in through the hosted login and verify `/drilldown` and `/fiscalizacion` from the authenticated navigation, a copied deep link, a refusal, provenance, and coverage-to-official navigation.
-4. If migrations or query plans change, rerun the read-only production plans below and record the unedited output with timestamp, project ref, row counts, planning/execution time, buffers, and index names.
+Use the approved direct, non-pooling Postgres connection. Never print or commit it. Before applying 0027, capture the following read-only evidence:
 
-## Read-only production plan capture
+```sql
+select version
+from supabase_migrations.schema_migrations
+order by version;
 
-Obtain the direct non-pooling Postgres URL through the approved secret channel; never commit or print it. Then run:
+select
+  to_regprocedure('public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)')
+    as official_wrapper,
+  to_regprocedure('public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)')
+    as official_internal,
+  to_regclass('public.result_row_non_official_scope_idx') as existing_0027_index;
 
-```bash
-psql "$POSTGRES_URL_NON_POOLING" -X -v ON_ERROR_STOP=1 <<'SQL'
-select count(*) as result_rows from result_row;
-select count(*) as jurisdictions from jurisdiction;
+select c.reltuples::bigint as estimated_result_rows,
+       s.n_live_tup,
+       s.last_analyze,
+       s.last_autoanalyze
+from pg_class c
+left join pg_stat_user_tables s on s.relid = c.oid
+where c.oid = 'public.result_row'::regclass;
 
-explain (analyze, buffers, format text)
-select results_exploration_facets(
-  '9dd2c13b-e026-47b5-9db5-191cfd368164'::uuid,
-  '16d238ae-794f-4a8b-a062-6816d427a8bf'::uuid,
-  '02', '027', null
-);
-
-explain (analyze, buffers, format text)
-select results_exploration_official(
-  '9dd2c13b-e026-47b5-9db5-191cfd368164'::uuid,
-  '16d238ae-794f-4a8b-a062-6816d427a8bf'::uuid,
-  '02', '027'
-);
-
-explain (analyze, buffers, format text)
-select results_exploration_coverage(
-  '9dd2c13b-e026-47b5-9db5-191cfd368164'::uuid,
-  '16d238ae-794f-4a8b-a062-6816d427a8bf'::uuid,
-  '02', '027'
-);
-SQL
+select source_kind, count(*)
+from result_row
+group by source_kind
+order by source_kind nulls first;
 ```
 
-Do not generalize a captured production plan into a latency guarantee. It is evidence for the observed corpus, indexes, and timestamp only.
+Stop if the inventory is not the expected deployed prefix, either function identity is missing, the 0027 index already exists without matching migration history, statistics are unavailable/stale enough to invalidate the rollout estimate, or the source distribution differs materially from the corpus used to approve the change. Resolve drift before applying anything.
 
-## Rollback and forward recovery
+## Coordinate ETL writes
 
-Stop web rollout first. Against the approved target, execute the down artifacts in this order:
+The canonical migration uses ordinary `CREATE INDEX`, not `CREATE INDEX CONCURRENTLY`. It allows reads but can wait on in-flight transactions and blocks writes to `result_row` while the index is built.
+
+1. Pause every ETL writer that can insert, update, or delete `result_row`.
+2. Confirm in-flight ETL transactions have committed or rolled back.
+3. Apply only the expected canonical migration through the approved hosted migration mechanism.
+4. Keep writers paused through `ANALYZE` and the post-apply checks.
+5. Resume ETL only after the index definition, exact `02/001` plan, function identities, and access boundaries pass.
+
+If the hosted table cannot tolerate this write pause, stop. Do not rewrite the canonical migration ad hoc; prepare a separately reviewed concurrent-index runbook.
+
+## Post-apply verification
+
+Refresh planner statistics before evaluating the plan:
+
+```sql
+analyze public.result_row;
+analyze public.jurisdiction;
+```
+
+Verify the exact index contract and function identities:
+
+```sql
+select pg_get_indexdef('public.result_row_non_official_scope_idx'::regclass);
+
+select
+  to_regprocedure('public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)')
+    as official_wrapper,
+  to_regprocedure('public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)')
+    as official_internal;
+```
+
+`pg_get_indexdef` must show columns `(election_id, category_id, jurisdiction_id)` and predicate `source_kind IS DISTINCT FROM 'official'`. The predicate is intentional: it keeps null source kinds inside the exclusion audit rather than silently omitting them.
+
+Capture the exact selected audit plan with approved election/category UUIDs substituted locally:
+
+```sql
+explain (analyze, buffers, format text)
+select count(*)::bigint, coalesce(sum(rr.votes), 0)::bigint
+from public.result_row rr
+join public.jurisdiction j on j.id = rr.jurisdiction_id
+where rr.election_id = '<approved-election-id>'::uuid
+  and rr.category_id = '<approved-category-id>'::uuid
+  and rr.source_kind is distinct from 'official'
+  and j.distrito_code = '02'
+  and j.seccion_code = '001';
+
+explain (analyze, buffers, format text)
+select public.results_exploration_official(
+  '<approved-election-id>'::uuid,
+  '<approved-category-id>'::uuid,
+  '02', '001'
+);
+```
+
+The direct audit plan must name `result_row_non_official_scope_idx`. Record unedited output with timestamp, project reference, row counts, planning/execution time, buffers, and index names. Confirm the wrapper's official totals match the pre-apply result and its `source_exclusions` still includes every fiscalizacion, unsupported, and null source row in the selected scope. Do not generalize the captured plan into a latency guarantee.
+
+Finally verify:
+
+- `authenticated` can execute the public explorer RPCs;
+- `anon` cannot execute them;
+- the preserved `results_exploration_official_0020` function remains inaccessible to `authenticated`, `anon`, and `public`;
+- official totals contain only `source_kind = 'official'`;
+- provenance and operational evidence contain no personal data.
+
+## Rollback and reapply
+
+Coordinate the same ETL write pause before changing the index. The 0027 rollback is exactly:
 
 ```text
-supabase/migrations/down/0022_results_exploration_scale.down.sql
-supabase/migrations/down/0021_results_coverage.down.sql
-supabase/migrations/down/0020_results_exploration.down.sql
+supabase/migrations/down/0027_optimize_non_official_source_audit.down.sql
 ```
 
-This drops only the PR3 scale index/coverage replacement, then coverage, then official explorer objects. It does not rewrite electoral rows. Re-apply 0020, 0021, and 0022 in ascending order before restoring the web deployment.
+It drops only `result_row_non_official_scope_idx`. It does not rewrite electoral rows, alter explorer functions, change grants, or roll back migrations 0020-0026. After rollback, verify `to_regclass('public.result_row_non_official_scope_idx')` is null and both official function identities and their access boundaries are unchanged.
 
-After either direction, verify:
+To recover, reapply only `0027_optimize_non_official_source_audit.sql`, run `ANALYZE` on `result_row` and `jurisdiction`, repeat the exact `02/001` plan and access checks, then resume ETL writes.
 
-- `authenticated` can execute every installed explorer RPC and `anon` cannot;
-- official totals contain only `source_kind = 'official'`;
-- fiscalizacion appears only as presence/coverage, always with `isRandomSample: false`;
-- administrative codes remain normalized at the ingestion/database boundary;
-- provenance and operational evidence contain no personal data.
+The broader disposable release proof intentionally rolls 0027 and the explorer migration chain backward and forward to prove integration. That test sequence is not an instruction to remove hosted explorer functions when only this performance index needs rollback.
+
+## Shared-index boundary
+
+The partial index is shared infrastructure and may improve another query with the same election/category/jurisdiction and non-official predicate. That possible impact does not close issue #54. Issue #54 remains out of scope until its own symptom, plan, and named regression test pass.
 
 ## Release status
 
 | Boundary | Current state |
 |---|---|
-| Disposable migrations, rollback/reapply, grants, auth/RLS | Passed |
-| Representative high-cardinality plans | Passed locally; not a production benchmark |
-| CI/disposable browser gate | Passed before merge |
-| Hosted migrations 0020-0022 | Applied to `votus-prod` |
-| Hosted Vercel release | Deployed from `main` |
-| Production EXPLAIN/timing evidence | Pending read-only operator capture |
+| 0027 repository publication | Included in this change |
+| Disposable migration, scale, rollback/reapply, grants, auth/RLS proof | Required before merge |
+| Hosted 0027 migration | Not performed by this change |
+| Hosted web deployment | Not required; application behavior is unchanged |
+| Production `02/001` plan capture | Required from an approved operator after hosted apply |

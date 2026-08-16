@@ -1,4 +1,14 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/0027_optimize_non_official_source_audit.down.sql
+do $$ begin
+  if to_regclass('public.result_row_non_official_scope_idx') is not null then
+    raise exception '0027 rollback left result_row_non_official_scope_idx installed';
+  end if;
+  if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null
+     or to_regprocedure('public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)') is null then
+    raise exception '0027 rollback changed explorer functions instead of dropping only its index';
+  end if;
+end $$;
 \ir ../migrations/down/0026_scope_mesa_facets_to_establishment.down.sql
 do $$
 declare
@@ -50,9 +60,11 @@ end $$;
 \ir ../migrations/0023_results_coverage_scope_binding.sql
 \ir ../migrations/0025_optimize_results_exploration_facets.sql
 \ir ../migrations/0026_scope_mesa_facets_to_establishment.sql
+\ir ../migrations/0027_optimize_non_official_source_audit.sql
 do $$
 declare
   facets_definition text;
+  index_definition text;
 begin
   if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text)') is not null
      or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null then
@@ -67,6 +79,15 @@ begin
     raise exception '0026 forward apply did not restore the six-argument mesa lineage definition';
   end if;
   if to_regclass('public.result_row_exploration_scope_idx') is null then raise exception 'forward apply omitted result_row_exploration_scope_idx'; end if;
+  if to_regclass('public.result_row_non_official_scope_idx') is null then
+    raise exception '0027 forward apply omitted result_row_non_official_scope_idx';
+  end if;
+  select lower(pg_get_indexdef('public.result_row_non_official_scope_idx'::regclass))
+    into index_definition;
+  if position('(election_id, category_id, jurisdiction_id)' in index_definition) = 0
+     or position('source_kind is distinct from ''official''::text' in index_definition) = 0 then
+    raise exception '0027 forward apply installed the wrong non-official partial-index contract';
+  end if;
   if to_regprocedure('public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)') is null then raise exception '0022 forward apply omitted the preserved 0020 official RPC'; end if;
   if has_function_privilege('authenticated', 'public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or exists (select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl where p.oid = 'public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)'::regprocedure and acl.grantee = 0 and acl.privilege_type = 'EXECUTE') then raise exception 'internal 0020 RPC remained directly executable'; end if;
   if not has_function_privilege('authenticated', 'public.results_exploration_facets(uuid,uuid,text,text,text,text)', 'EXECUTE')
@@ -142,5 +163,5 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
-select 'release-proof' as evidence, 26 as migration_inventory_count,
-  '0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up' as migration_sequence, 'authenticated-execute/anon-denied' as grant_state;
+select 'release-proof' as evidence, 27 as migration_inventory_count,
+  '0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;

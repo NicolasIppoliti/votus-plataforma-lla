@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 -- Disposable high-cardinality proof; timings are local, not production claims.
 begin;
-select plan(10);
+select plan(14);
 create temporary table scale_plan_evidence (label text primary key,
   representative_result_rows bigint not null, plan jsonb not null) on commit drop;
 insert into election (id, year, round) values
@@ -38,6 +38,28 @@ select '30000000-0000-0000-0000-000000000001'::uuid,
   '30000000-0000-0000-0000-000000000002'::uuid, 'mesa', null,
   1, 'fiscalizacion', 'fiscalizacion/scale-fixture', unit::bigint
 from generate_series(2, 12000, 2) unit;
+-- The reported timeout occurs when the official wrapper audits a tiny geography
+-- surrounded by a much larger election/category corpus. The 120k official rows
+-- and 6k fiscalizacion rows above are outside 02/001; only the three rows below
+-- are in scope. Temporarily admit legacy/null source kinds so the scale contract
+-- also proves the IS DISTINCT FROM predicate keeps unknown-source auditing.
+insert into jurisdiction (id, distrito_code, seccion_code, circuito_code,
+  establecimiento_code, establecimiento_name, mesa_code) values
+  ('30000000-0000-0000-0003-000000000001', '02', '001', '00001',
+    'SCOPE-001', 'Selected audit scope', 1);
+alter table result_row drop constraint result_row_source_kind_check;
+alter table result_row alter column source_kind drop not null;
+insert into result_row (election_id, jurisdiction_id, category_id, granularity, list_id, votes,
+  source_kind, archive_entry_id, source_row_index) values
+  ('30000000-0000-0000-0000-000000000001', '30000000-0000-0000-0003-000000000001',
+    '30000000-0000-0000-0000-000000000002', 'mesa', 'selected-official', 41,
+    'official', 'national/scale-selected-scope', 1),
+  ('30000000-0000-0000-0000-000000000001', '30000000-0000-0000-0003-000000000001',
+    '30000000-0000-0000-0000-000000000002', 'mesa', 'selected-legacy', 9,
+    'legacy', 'legacy/scale-selected-scope', 1),
+  ('30000000-0000-0000-0000-000000000001', '30000000-0000-0000-0003-000000000001',
+    '30000000-0000-0000-0000-000000000002', 'mesa', 'selected-null', 10,
+    null, 'unknown/scale-selected-scope', 1);
 -- Keep the selected-scope 120k-row proof intact while making cold start discover
 -- four elections and making every selected election expose fifteen categories.
 -- One row per supplemental scope prevents a single-scope toy without materially
@@ -62,6 +84,15 @@ where (election_id, category_id) <> (
 );
 analyze jurisdiction;
 analyze result_row;
+select is((results_exploration_official(
+    '30000000-0000-0000-0000-000000000001'::uuid,
+    '30000000-0000-0000-0000-000000000002'::uuid, '02', '001')->>'total_votes')::bigint,
+  41::bigint, 'tiny selected scope keeps official totals unchanged');
+select is(results_exploration_official(
+    '30000000-0000-0000-0000-000000000001'::uuid,
+    '30000000-0000-0000-0000-000000000002'::uuid, '02', '001')->'source_exclusions',
+  '[{"kind":"unknown","rows":2,"votes":19}]'::jsonb,
+  'tiny selected scope audits legacy and null sources as unknown exclusions');
 select ok((select payload->>'status' = 'ok'
     and payload ?& array['elections', 'categories', 'distritos', 'secciones', 'circuitos',
       'establecimientos', 'mesas', 'available_levels']
@@ -102,13 +133,23 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1200
   execute $plan$explain (analyze, buffers, format json)
     select results_exploration_facets(null, null, null, null, null)$plan$
     into evidence;
-  insert into scale_plan_evidence values ('facets_cold_start', 120061, evidence);
+  insert into scale_plan_evidence values ('facets_cold_start', 120062, evidence);
   execute $plan$explain (analyze, buffers, format json)
     select results_exploration_official(
       '30000000-0000-0000-0000-000000000001'::uuid,
       '30000000-0000-0000-0000-000000000002'::uuid, '02', '027')$plan$
     into evidence;
   insert into scale_plan_evidence values ('official', representative_result_rows, evidence);
+  execute $plan$explain (analyze, buffers, format json)
+    select count(*)::bigint, coalesce(sum(rr.votes), 0)::bigint
+    from result_row rr
+    join jurisdiction j on j.id = rr.jurisdiction_id
+    where rr.election_id = '30000000-0000-0000-0000-000000000001'::uuid
+      and rr.category_id = '30000000-0000-0000-0000-000000000002'::uuid
+      and rr.source_kind is distinct from 'official'
+      and j.distrito_code = '02' and j.seccion_code = '001'$plan$
+    into evidence;
+  insert into scale_plan_evidence values ('official_source_exclusions', 126064, evidence);
   execute $plan$explain (analyze, buffers, format json)
     select results_exploration_coverage(
       '30000000-0000-0000-0000-000000000001'::uuid,
@@ -125,6 +166,9 @@ end $$;
 -- Hosted authenticated requests are cancelled at 8s. A 7s cold-start ceiling
 -- leaves one second for transport and executor variance while remaining realistic
 -- for shared CI; the existing selected-scope budgets remain unchanged.
+select ok((select plan::text like '%result_row_non_official_scope_idx%'
+    from scale_plan_evidence where label = 'official_source_exclusions'),
+  'source exclusion audit uses the geography-selective non-official partial index');
 select ok((plan->0->>'Execution Time')::numeric <= case
       when label = 'coverage' then 15000
       when label = 'facets_cold_start' then 7000
