@@ -1,48 +1,25 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser-client";
+import { useActionState, type ReactNode } from "react";
+import { signIn } from "@/app/actions/sign-in";
+import { INITIAL_SIGN_IN_STATE } from "@/app/actions/sign-in-state";
 
 /**
  * Password sign-in form for the single authenticated role this change
- * supports (specs/access-control/spec.md). No role/tier selection is
- * offered — there is nothing to select.
+ * supports (specs/access-control/spec.md). Authentication is owned by the
+ * server action so the browser never receives a Supabase auth client.
  */
 export function LoginForm(): ReactNode {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-
-    const supabase = createSupabaseBrowserClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    setSubmitting(false);
-
-    if (signInError) {
-      setError("Las credenciales no son válidas.");
-      return;
-    }
-
-    router.push("/dashboard");
-    router.refresh();
-  }
+  const [state, formAction, isPending] = useActionState(
+    signIn,
+    INITIAL_SIGN_IN_STATE,
+  );
 
   return (
     <form
       aria-labelledby="login-heading"
       className="login-form"
-      onSubmit={handleSubmit}
+      aria-busy={isPending || undefined}
     >
       <div className="field">
         <label htmlFor="email">Correo electrónico</label>
@@ -52,10 +29,8 @@ export function LoginForm(): ReactNode {
           type="email"
           autoComplete="email"
           aria-describedby="login-error"
-          aria-invalid={error !== null}
+          aria-invalid={state.error !== null}
           required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
         />
       </div>
       <div className="field">
@@ -66,21 +41,25 @@ export function LoginForm(): ReactNode {
           type="password"
           autoComplete="current-password"
           aria-describedby="login-error"
-          aria-invalid={error !== null}
+          aria-invalid={state.error !== null}
           required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
         />
       </div>
       <button
         className="button button--primary login-form__submit"
         type="submit"
-        disabled={submitting}
+        formAction={formAction}
+        disabled={isPending}
       >
-        Iniciar sesión
+        {isPending ? "Iniciando sesión…" : "Iniciar sesión"}
       </button>
-      <p id="login-error" className="login-form__feedback" role="alert">
-        {error}
+      <p
+        id="login-error"
+        className="login-form__feedback"
+        role="alert"
+        aria-live="assertive"
+      >
+        {state.error}
       </p>
     </form>
   );

@@ -13,11 +13,12 @@ import {
 	EXPECTED_E2E_SPECS,
 	assertE2eEnvironment,
 	assertGateReport,
-	assertLoopbackStorageState,
+	assertLoopbackSessionCookieDelta,
 	classifyStaleOwnership,
 	emptyStorageState,
 	planOwnedCleanup,
 	planStaleWorkdirReap,
+	sameCookieIdentity,
 	storageStateForSpec,
 	type CleanupAction,
 	type GateOwnership,
@@ -438,29 +439,70 @@ describe("base contracts", () => {
 			"unknown e2e spec",
 		);
   });
-  it("accepts only loopback auth cookies whose domain is independent of port", () => {
-		const state = {
-			cookies: [
-				{
-					name: "sb-local-auth-token",
-					value: "token",
-					domain: "127.0.0.1",
-					path: "/",
-					expires: -1,
-					httpOnly: false,
-					secure: false,
-					sameSite: "Lax" as const,
-				},
-			],
-			origins: [],
-		};
-    expect(() => assertLoopbackStorageState(state)).not.toThrow();
-		expect(() =>
-			assertLoopbackStorageState({
-				...state,
-				cookies: [{ ...state.cookies[0]!, domain: "127.0.0.1:54321" }],
-			}),
-		).toThrow("loopback host");
+  it("accepts only policy-compliant server-created cookie deltas on the loopback app host", () => {
+    const baseUrl = "http://127.0.0.1:4100";
+    const preExistingCookie = {
+      name: "unrelated-pre-existing",
+      domain: "127.0.0.1",
+      path: "/",
+      httpOnly: false,
+      secure: false,
+      sameSite: "Lax" as const,
+    };
+    const sessionCookies = [
+      {
+        name: "opaque-session-chunk.0",
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        secure: false,
+        sameSite: "Lax" as const,
+      },
+      {
+        name: "opaque-session-chunk.1",
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        secure: false,
+        sameSite: "Lax" as const,
+      },
+    ];
+    expect(
+      assertLoopbackSessionCookieDelta(
+        [preExistingCookie],
+        [preExistingCookie, ...sessionCookies],
+        baseUrl,
+      ),
+    ).toEqual(sessionCookies);
+    expect(
+      sameCookieIdentity(sessionCookies[0]!, {
+        ...sessionCookies[0]!,
+        path: "/other",
+      }),
+    ).toBe(false);
+    expect(
+      sameCookieIdentity(sessionCookies[0]!, {
+        ...sessionCookies[0]!,
+        domain: "localhost",
+      }),
+    ).toBe(false);
+    expect(() =>
+      assertLoopbackSessionCookieDelta(
+        [preExistingCookie],
+        [preExistingCookie],
+        baseUrl,
+      ),
+    ).toThrow("new session cookie");
+    for (const invalidCookie of [
+      { ...sessionCookies[0]!, httpOnly: false },
+      { ...sessionCookies[0]!, secure: true },
+      { ...sessionCookies[0]!, sameSite: "Strict" as const },
+      { ...sessionCookies[0]!, path: "/dashboard" },
+      { ...sessionCookies[0]!, domain: "localhost" },
+    ])
+      expect(() =>
+        assertLoopbackSessionCookieDelta([], [invalidCookie], baseUrl),
+      ).toThrow("session cookie");
   });
   it("classifies and plans only proven stale owned workdirs", () => {
     expect(classifyStaleOwnership(STALE_EVIDENCE)).toBe("reap");

@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabaseCookieOptionsForServerRuntime } from "./cookie-options";
 
 /**
  * Supabase client for React Server Components / Server Actions, using the
@@ -28,6 +29,7 @@ export async function createSupabaseServerClient(): Promise<SupabaseClient> {
   const cookieStore = await cookies();
 
   return createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: supabaseCookieOptionsForServerRuntime(),
     cookies: {
       getAll() {
         return cookieStore.getAll();
