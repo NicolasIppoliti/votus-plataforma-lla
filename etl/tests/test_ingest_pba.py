@@ -74,6 +74,8 @@ def test_distrito_level_totals_ingested_without_fabricating_lower_levels() -> No
     for row in rows:
         assert row.granularity == "distrito"
         assert row.result.distrito == "027"
+        assert row.jurisdiction_names.distrito == "CORONEL ROSALES"
+        assert row.jurisdiction_names.seccion is None
         # jurisdiction.make_result_row structurally forbids these; assert the
         # PBA parser never even attempts to pass a lower-level value.
         assert row.result.seccion is None
@@ -498,6 +500,48 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
     assert f"no curated crosswalk entry for PBA distrito '027': {len(rows)}" in reported
 
 
+def test_load_pba_rows_passes_the_translated_partido_name_to_the_db_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parse_result = ingest_pba(
+        _read("pba_distrito_027_2025_sample.html"),
+        archive_entry_id="pba/name-boundary",
+        requested_granularity="distrito",
+    )
+    captured: list[tuple[str, str | None, object]] = []
+
+    monkeypatch.setattr("etl.ingest.pba.db.upsert_election", lambda *_args, **_kwargs: "election")
+    monkeypatch.setattr(
+        "etl.ingest.pba.db.upsert_category", lambda _conn, *, name: f"category:{name}"
+    )
+
+    def capture_jurisdiction(_conn, *, distrito, seccion=None, names=None, **_kwargs):
+        captured.append((distrito, seccion, names))
+        return "jurisdiction"
+
+    monkeypatch.setattr("etl.ingest.pba.db.upsert_jurisdiction", capture_jurisdiction)
+    monkeypatch.setattr(
+        "etl.ingest.pba.db.load_result_rows",
+        lambda _conn, **kwargs: len(kwargs["records"]),
+    )
+
+    inserted = load_pba_rows(
+        object(),
+        list(parse_result.rows),
+        year=2025,
+        round_="legislativas",
+        crosswalk=_CROSSWALK,
+        archive_entry_id="pba/name-boundary",
+    )
+
+    assert inserted == len(parse_result.rows)
+    assert len(captured) == 1, "all rows share one translated jurisdiction lineage"
+    distrito, seccion, names = captured[0]
+    assert (distrito, seccion) == ("02", "027")
+    assert names.distrito is None
+    assert names.seccion == "CORONEL ROSALES"
+
+
 def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
     """The WRITE path, not the resolver, is what can corrupt the database.
 
@@ -530,7 +574,8 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                select distinct j.distrito_code, j.seccion_code
+                select distinct j.distrito_code, j.seccion_code,
+                           j.distrito_name, j.seccion_name
                   from result_row r join jurisdiction j on j.id = r.jurisdiction_id
                  where r.archive_entry_id = %s
                 """,
@@ -552,10 +597,10 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
         conn.commit()
         conn.close()
 
-    assert lineages == [("02", "027")], (
-        "the write must carry the NATIONAL pair: `027` alone is PBA's partido "
-        "code, and normalizing it as a national distrito yields `27`, a code in "
-        f"neither scheme; got {lineages}"
+    assert lineages == [("02", "027", None, "CORONEL ROSALES")], (
+        "the write must carry the NATIONAL pair and assign the PBA partido label "
+        "to canonical seccion_name, never to national distrito 02; "
+        f"got {lineages}"
     )
     assert granularities == [("seccion", "seccion")], (
         "a fulfilled PBA distrito request becomes the same normalized seccion "
@@ -589,6 +634,10 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
         "the partido must survive as the national seccion; a distrito-only "
         "lineage is the province, not Coronel Rosales"
     )
+    assert all(row.jurisdiction_names.distrito is None for row in result.resolved)
+    assert all(
+        row.jurisdiction_names.seccion == "CORONEL ROSALES" for row in result.resolved
+    ), "the source-native partido label becomes canonical seccion_name only after translation"
     assert all(row.result.granularity == "seccion" for row in result.resolved), (
         "a PBA partido total is a seccion-level figure once translated"
     )

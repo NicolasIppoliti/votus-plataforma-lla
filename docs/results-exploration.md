@@ -22,6 +22,20 @@ The disposable proof MUST report:
 
 These timings describe the disposable fixture and current machine only. They MUST NOT be presented as production latency.
 
+## Backfill authoritative jurisdiction names
+
+Deploy the ETL name-persistence code before scheduling any backfill. Existing hosted rows gain
+`distrito_name`, `seccion_name`, and `circuito_name` only by replaying verified source archives
+through that deployed ETL path. The replay preserves source spelling (including code-like circuit
+names), normalized administrative codes, establishment names, and source isolation.
+
+The hosted replay is a separate operational change and requires explicit authorization for the
+target project and archive set. This code change does not mutate a hosted database, and operators
+MUST NOT replace the replay with a hardcoded SQL name migration or a source-name lookup table.
+If the ETL deployment is rolled back, stop the replay and retain the verified archives for a later
+forward recovery; the explorer remains safe because absent or conflicting names render explicit
+status labels rather than fabricated names.
+
 ## Verify the hosted release
 
 1. Confirm the target is the linked `votus-prod` project and that hosted migrations 0020-0022 are applied.

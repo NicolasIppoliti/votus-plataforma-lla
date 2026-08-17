@@ -55,9 +55,22 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       await page.getByRole("link", { name: "Explorar resultados" }).click();
       await expect(page).toHaveURL(/\/drilldown/);
       for (const [label, value] of [["Elección", SOURCE_SCOPE.electionId],
-        ["Categoría", SOURCE_SCOPE.categoryId], ["Distrito", identity.distritoCode],
-        ["Sección", identity.seccionCode], ["Circuito", "00001"], ["Establecimiento", "E1"]] as const) {
+        ["Categoría", SOURCE_SCOPE.categoryId]] as const) {
         await page.getByLabel(label).selectOption(value);
+        await page.getByRole("button", { name: "Aplicar selección" }).click();
+      }
+      for (const [label, value, optionText] of [
+        ["Distrito", identity.distritoCode, `${identity.distritoCode} — Buenos Aires`],
+        ["Sección", identity.seccionCode,
+          `${identity.seccionCode} — Coronel de Marina L. Rosales`],
+        ["Circuito", "00001", "00001 — 00001"],
+        ["Establecimiento", "E1", "E1 — Synthetic school"],
+      ] as const) {
+        const selector = page.getByLabel(label);
+        await expect(selector.getByRole("option", { name: optionText, exact: true }))
+          .toHaveAttribute("value", value);
+        await selector.selectOption(value);
+        await expect(selector).toHaveValue(value);
         await page.getByRole("button", { name: "Aplicar selección" }).click();
       }
       await page.getByLabel("Mesa").selectOption("1");
