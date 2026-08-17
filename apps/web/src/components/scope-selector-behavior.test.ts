@@ -1,12 +1,71 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SCOPE_CONTROL_NAMES,
   SCOPE_FORM_KIND,
+  enhanceScopeForm,
   omitBlankSingletonControls,
   synchronizeScopeControls,
   type ScopeControlName,
   type ScopeControls,
+  type ScopeFormKind,
 } from "./scope-selector-behavior";
+
+class FakeSelect {
+  disabled = false;
+  required = false;
+
+  constructor(
+    readonly name: ScopeControlName,
+    public value: string,
+  ) {}
+}
+
+function enhancedFormHarness(kind: ScopeFormKind) {
+  vi.stubGlobal("HTMLSelectElement", FakeSelect);
+  const selectedValues: Record<ScopeControlName, string> = {
+    electionId: "e-2025",
+    categoryId: "c-diputados",
+    distritoCode: "02",
+    seccionCode: "027",
+    circuitoCode: "00001",
+    establecimientoCode: "E1",
+    mesaCode: "7",
+    level: "mesa",
+  };
+  const controls = Object.fromEntries(
+    SCOPE_CONTROL_NAMES.map((name) => [name, new FakeSelect(name, selectedValues[name])]),
+  ) as Record<ScopeControlName, FakeSelect>;
+  const listeners = new Map<string, Set<EventListener>>();
+  const refreshSubmitter = { formNoValidate: true };
+  const requestSubmit = vi.fn();
+  const form = {
+    elements: { namedItem: (name: string) => controls[name as ScopeControlName] ?? null },
+    querySelector: (selector: string) =>
+      selector === 'button[type="submit"][formnovalidate]' ? refreshSubmitter : null,
+    requestSubmit,
+    addEventListener: (name: string, listener: EventListener) => {
+      const registered = listeners.get(name) ?? new Set<EventListener>();
+      registered.add(listener);
+      listeners.set(name, registered);
+    },
+    removeEventListener: (name: string, listener: EventListener) => {
+      listeners.get(name)?.delete(listener);
+    },
+  } as unknown as HTMLFormElement;
+  const cleanup = enhanceScopeForm(form, kind);
+
+  return {
+    cleanup,
+    refreshSubmitter,
+    requestSubmit,
+    dispatchChange(name: ScopeControlName): void {
+      const event = { target: controls[name] } as unknown as Event;
+      for (const listener of listeners.get("change") ?? []) listener(event);
+    },
+  };
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 function controlSet(values: Partial<Record<ScopeControlName, string>> = {}): ScopeControls {
   return Object.fromEntries(
@@ -124,6 +183,43 @@ describe("scope selector behavior", () => {
     for (const name of ["electionId", "categoryId", "distritoCode", "seccionCode"] as const) {
       expect(control(controls, name).required).toBe(true);
     }
+  });
+
+  it.each([
+    [SCOPE_FORM_KIND.DRILLDOWN, "electionId"],
+    [SCOPE_FORM_KIND.DRILLDOWN, "categoryId"],
+    [SCOPE_FORM_KIND.DRILLDOWN, "distritoCode"],
+    [SCOPE_FORM_KIND.DRILLDOWN, "seccionCode"],
+    [SCOPE_FORM_KIND.DRILLDOWN, "circuitoCode"],
+    [SCOPE_FORM_KIND.DRILLDOWN, "establecimientoCode"],
+    [SCOPE_FORM_KIND.COVERAGE, "electionId"],
+    [SCOPE_FORM_KIND.COVERAGE, "categoryId"],
+    [SCOPE_FORM_KIND.COVERAGE, "distritoCode"],
+  ] as const)(
+    "submits %s option refreshes through the no-validation submitter when %s changes",
+    (kind, changedName) => {
+      const harness = enhancedFormHarness(kind);
+
+      harness.dispatchChange(changedName);
+
+      expect(harness.refreshSubmitter.formNoValidate).toBe(true);
+      expect(harness.requestSubmit).toHaveBeenCalledTimes(1);
+      expect(harness.requestSubmit).toHaveBeenCalledWith(harness.refreshSubmitter);
+      harness.cleanup();
+    },
+  );
+
+  it.each([
+    [SCOPE_FORM_KIND.DRILLDOWN, "mesaCode"],
+    [SCOPE_FORM_KIND.DRILLDOWN, "level"],
+    [SCOPE_FORM_KIND.COVERAGE, "seccionCode"],
+  ] as const)("leaves final %s control %s for validated submission", (kind, changedName) => {
+    const harness = enhancedFormHarness(kind);
+
+    harness.dispatchChange(changedName);
+
+    expect(harness.requestSubmit).not.toHaveBeenCalled();
+    harness.cleanup();
   });
 
   it("omits blank singleton controls without rewriting repeated or nonblank entries", () => {
