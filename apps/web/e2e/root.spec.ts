@@ -22,6 +22,9 @@ test.describe("the production root preserves its authentication boundary", () =>
         await page.goto("/");
         await expect(page).toHaveURL(/\/$/);
         await expect(page.getByRole("main")).toContainText(ROOT_CONTENT);
+        await expect(
+          page.getByRole("navigation", { name: "principal" }),
+        ).toHaveCount(0);
         await page.getByRole("link", { name: "Ir al contenido principal" }).press("Enter");
         await expect(page.locator("#main-content")).toBeFocused();
         expect(
@@ -34,6 +37,10 @@ test.describe("the production root preserves its authentication boundary", () =>
         await expect(page.getByRole("heading", { level: 1, name: "Panel de Votus" })).toBeVisible();
         const primaryNavigation = page.getByRole("navigation", { name: "principal" });
         await expect(primaryNavigation).toBeVisible();
+        await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
+        await expect(
+          primaryNavigation.getByRole("link", { name: "Panel", exact: true }),
+        ).toHaveAttribute("aria-current", "page");
         await expect(
           primaryNavigation.getByRole("link", { name: "Comparar", exact: true }),
         ).toHaveCount(0);

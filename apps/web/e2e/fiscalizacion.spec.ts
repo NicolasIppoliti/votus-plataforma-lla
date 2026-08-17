@@ -70,6 +70,15 @@ test.describe("the fiscalizacion route explores coverage", () => {
         baseURL,
       ).toString());
 
+      const primaryNavigation = page.getByRole("navigation", { name: "principal" });
+      await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
+      await expect(
+        primaryNavigation.getByRole("link", {
+          name: "Fiscalización (no oficial)",
+          exact: true,
+        }),
+      ).toHaveAttribute("aria-current", "page");
+
       const main = page.getByRole("main");
       for (const [label, value, optionText] of [
         ["Distrito", COVERAGE_SCOPE.distritoCode,
