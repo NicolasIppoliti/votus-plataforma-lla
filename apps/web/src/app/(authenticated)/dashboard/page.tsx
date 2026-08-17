@@ -57,11 +57,11 @@ export default function DashboardPage(): ReactNode {
             </li>
             <li className="workflow-card">
               <div className="workflow-card__body">
-                <p className="workflow-card__status">Requiere atención</p>
-                <h3>Resolver elementos de revisión</h3>
+                <p className="workflow-card__status">Pendientes para consulta</p>
+                <h3>Consultar elementos de revisión</h3>
                 <p>
-                  Consulte las preguntas pendientes y los vacíos de evidencia antes
-                  de confiar en un resultado o avanzar con una interpretación.
+                  Inspeccione los elementos pendientes y la evidencia registrada
+                  antes de confiar en un resultado o avanzar con una interpretación.
                 </p>
               </div>
               <div className="workflow-card__footer">
