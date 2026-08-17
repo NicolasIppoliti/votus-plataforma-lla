@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  allocationInputSchema,
   nationalInputSchema,
   pbaMunicipalInputSchema,
   pbaProvincialInputSchema,
@@ -31,6 +32,7 @@ export type ProjectionInput = z.infer<typeof projectionInputSchema>;
 export function projectionToAllocationInput(
   projection: ProjectionInput,
 ): AllocationInput {
-  const { granularity: _granularity, ...input } = projection;
-  return input;
+  const input: Record<string, unknown> = { ...projection };
+  delete input["granularity"];
+  return allocationInputSchema.parse(input);
 }
