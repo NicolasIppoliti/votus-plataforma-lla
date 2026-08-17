@@ -115,6 +115,41 @@ def test_real_national_fixture_preserves_authoritative_jurisdiction_names() -> N
     }
 
 
+def test_code_equivalent_circuito_names_collapse_across_categories_without_quarantine(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    csv_bytes = (
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,lista_numero,votos_tipo,"
+        b"votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,00001,1,9001,PRESIDENTE Y VICE,"
+        b"110,,POSITIVO,7\n"
+        b"02,Buenos Aires,027,Coronel Rosales,00001,00001,9001,DIPUTADO NACIONAL,"
+        b"110,,POSITIVO,5\n"
+    )
+
+    rows = ingest_national(
+        csv_bytes,
+        archive_entry_id="national/2023-generales",
+        election_year=2023,
+        election_round="generales",
+    )
+
+    assert len(rows) == 2
+    assert {row.category for row in rows} == {"PRESIDENTE Y VICE", "DIPUTADO NACIONAL"}
+    assert {
+        (
+            row.result.distrito,
+            row.result.seccion,
+            row.result.circuito,
+            row.result.mesa,
+        )
+        for row in rows
+    } == {("02", "027", "00001", 9001)}
+    assert {row.jurisdiction_names.circuito for row in rows} == {"00001"}
+    assert capsys.readouterr().err == ""
+
+
 def test_load_national_rows_passes_all_names_to_the_batch_db_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

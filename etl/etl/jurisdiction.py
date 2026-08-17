@@ -75,6 +75,26 @@ def normalize_jurisdiction_name(raw: str | None) -> str | None:
     return normalized or None
 
 
+def normalize_circuito_name(
+    raw_name: str | None,
+    authoritative_code: str | None,
+) -> str | None:
+    """Canonicalize a circuito name only when the source proves it is the code.
+
+    Human or malformed names remain authoritative display evidence. A code-like
+    name is canonicalized only when it identifies the exact authoritative
+    circuito, including any alpha suffix.
+    """
+    normalized_name = normalize_jurisdiction_name(raw_name)
+    if normalized_name is None or not is_canonicalizable_circuito_code(normalized_name):
+        return normalized_name
+
+    canonical_name = normalize_circuito_code(normalized_name)
+    if canonical_name == normalize_circuito_code(authoritative_code):
+        return canonical_name
+    return normalized_name
+
+
 @dataclass(frozen=True)
 class JurisdictionNames:
     """Typed display-name metadata carried beside one jurisdiction lineage."""
