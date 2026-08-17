@@ -23,6 +23,7 @@ from etl.jurisdiction import (
     is_canonicalizable_code,
     make_result_row,
     normalize_circuito_code,
+    normalize_circuito_name,
     normalize_distrito_code,
     normalize_pba_distrito_code,
     normalize_seccion_code,
@@ -97,6 +98,55 @@ def test_jurisdiction_names_normalize_only_outer_whitespace_and_blank_values() -
     assert names.seccion == "Coronel de Marina L. Rosales"
     assert names.circuito is None
     assert names.establecimiento == "Escuela N° 1"
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "authoritative_code", "expected"),
+    [
+        ("1", "00001", "00001"),
+        (" 00001 ", "1", "00001"),
+        ("249a", "0249A", "0249A"),
+    ],
+)
+def test_circuito_name_canonicalizes_only_code_equivalent_evidence(
+    raw_name: str,
+    authoritative_code: str,
+    expected: str,
+) -> None:
+    assert normalize_circuito_name(raw_name, authoritative_code) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "authoritative_code"),
+    [
+        ("1", "00002"),
+        ("249A", "0249B"),
+    ],
+)
+def test_circuito_name_preserves_a_different_code_or_suffix(
+    raw_name: str,
+    authoritative_code: str,
+) -> None:
+    assert normalize_circuito_name(raw_name, authoritative_code) == raw_name
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "expected"),
+    [
+        ("  Circuito 1  ", "Circuito 1"),
+        (" 24_9A ", "24_9A"),
+    ],
+)
+def test_circuito_name_preserves_human_and_malformed_names(
+    raw_name: str,
+    expected: str,
+) -> None:
+    assert normalize_circuito_name(raw_name, "00001") == expected
+
+
+@pytest.mark.parametrize("raw_name", [None, "", "   "])
+def test_circuito_name_preserves_existing_blank_behavior(raw_name: str | None) -> None:
+    assert normalize_circuito_name(raw_name, "00001") is None
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +298,7 @@ class _ExistingJurisdictionCursor:
 
     def execute(self, query, params=None) -> None:
         if not isinstance(query, str):
+            assert params is not None
             self.queries.append("batch lineage select")
             keys = list(zip(*params[:5]))
             self.fetchall_result = [
@@ -267,6 +318,7 @@ class _ExistingJurisdictionCursor:
         if "select id, distrito_name" in normalized_query:
             self.fetchone_result = ("jurisdiction-id", *self.state)
         elif "update jurisdiction" in normalized_query:
+            assert params is not None
             self.state[:] = params[:4]
             self.name_updates += 1
         else:  # pragma: no cover - this fake only models an already-existing row
@@ -288,6 +340,7 @@ class _ExistingJurisdictionCursor:
 
 class _ExistingJurisdictionConnection:
     def __init__(self) -> None:
+        self.autocommit = False
         self.cursor_instance = _ExistingJurisdictionCursor([None, None, None, None])
 
     def cursor(self):

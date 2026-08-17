@@ -34,6 +34,7 @@ from etl.jurisdiction import (
     is_canonicalizable_code,
     make_result_row,
     normalize_circuito_code,
+    normalize_circuito_name,
 )
 from etl.numeric import parse_source_int
 
@@ -410,7 +411,10 @@ def ingest_national(
         jurisdiction_names = JurisdictionNames(
             distrito=raw["distrito_nombre"],
             seccion=raw["seccion_nombre"],
-            circuito=raw["circuito_nombre"],
+            circuito=normalize_circuito_name(
+                raw["circuito_nombre"],
+                raw["circuito_id"],
+            ),
             establecimiento=establecimiento_name,
         )
         rows.append(
