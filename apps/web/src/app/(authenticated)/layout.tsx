@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
+import { PrimaryNavigation } from "./PrimaryNavigation";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -65,25 +66,7 @@ export default async function AuthenticatedLayout({
           </Link>
           <p className="site-context">Análisis electoral interno</p>
         </div>
-        <nav aria-label="principal" className="main-navigation">
-          <ul className="shell-container navigation-list">
-            <li>
-              <Link href="/dashboard">Panel</Link>
-            </li>
-            <li>
-              <Link href="/drilldown">Explorar resultados</Link>
-            </li>
-            <li>
-              <Link href="/fiscalizacion">Fiscalización (no oficial)</Link>
-            </li>
-            <li>
-              <Link href="/simulate">Simulación de bancas</Link>
-            </li>
-            <li>
-              <Link href="/review">Revisión</Link>
-            </li>
-          </ul>
-        </nav>
+        <PrimaryNavigation />
       </header>
       <div className="shell-container app-content" id="main-content" tabIndex={-1}>
         <div className="source-disclaimer">
