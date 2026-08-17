@@ -44,6 +44,30 @@ interface PartyNameFixture {
 let partyNameOverrides: Map<string, PartyNameFixture> | null = null;
 let coverageRpcResults: Record<string, unknown> = {};
 
+const COVERAGE_CONTROL_NAMES = [
+  "electionId",
+  "categoryId",
+  "distritoCode",
+  "seccionCode",
+] as const;
+type CoverageControlName = (typeof COVERAGE_CONTROL_NAMES)[number];
+
+function coverageSelectOpeningTag(markup: string, name: CoverageControlName): string {
+  const match = markup.match(new RegExp(`<select[^>]*name="${name}"[^>]*>`));
+  if (!match) throw new Error(`select ${name} was not rendered`);
+  return match[0];
+}
+
+function expectCoverageControlState(
+  markup: string,
+  name: CoverageControlName,
+  state: { required: boolean; disabled: boolean },
+): void {
+  const tag = coverageSelectOpeningTag(markup, name);
+  expect(/\srequired(?:=""|(?=[\s>]))/.test(tag)).toBe(state.required);
+  expect(/\sdisabled(?:=""|(?=[\s>]))/.test(tag)).toBe(state.disabled);
+}
+
 // Restored after EVERY test: `process.env` and `repositoryRows` are shared
 // module state, so leaving them set makes results depend on execution order.
 afterEach(() => {
@@ -1121,45 +1145,135 @@ describe("fiscalizacion page — the real entry point", () => {
     expect(markup).not.toContain("ninguna fila se resolvió a un partido curado");
   });
 
-  it("test_the_page_offers_source_backed_coverage_selectors_from_a_cold_start", async () => {
-		coverageRpcResults = {
-			results_exploration_facets: {
-				status: "ok",
-				elections: [
-					{
-						id: "e-2025",
-						year: 2025,
-						round: "legislativas",
-						label: "2025 legislativas",
-					},
-				],
-				categories: [],
-				distritos: [
-					{ code: "02", name: null, name_status: "missing", name_variant_count: 0 },
-				],
-				secciones: [
-					{ code: "027", name: null, name_status: "conflict", name_variant_count: 2 },
-				],
-				circuitos: [],
-				establecimientos: [],
-				mesas: [],
-				available_levels: [],
-			},
-		};
-    const markup = renderToStaticMarkup(
-			(await FiscalizacionPage({
-				searchParams: Promise.resolve({}),
-			})) as ReactElement,
-    );
+      it("test_the_page_offers_source_backed_coverage_selectors_from_a_cold_start", async () => {
+        coverageRpcResults = {
+          results_exploration_facets: {
+            status: "ok",
+            elections: [
+              {
+                id: "e-2025",
+                year: 2025,
+                round: "legislativas",
+                label: "2025 legislativas",
+              },
+            ],
+            categories: [],
+            distritos: [
+              { code: "02", name: null, name_status: "missing", name_variant_count: 0 },
+            ],
+            secciones: [
+              { code: "027", name: null, name_status: "conflict", name_variant_count: 2 },
+            ],
+            circuitos: [],
+            establecimientos: [],
+            mesas: [],
+            available_levels: [],
+          },
+        };
+        const markup = renderToStaticMarkup(
+          (await FiscalizacionPage({
+            searchParams: Promise.resolve({}),
+          })) as ReactElement,
+        );
 
-    expect(markup).toContain('<main class="page-shell">');
-    expect(markup).not.toContain('id="main-content"');
-    expect(markup).toContain("Cobertura de fiscalización");
-    expect(markup).toContain("Elegir una elección");
-    expect(markup).toContain('<option value="02">02 — nombre no disponible</option>');
-    expect(markup).toContain('<option value="027">027 — nombres contradictorios (2 variantes)</option>');
-    expect(markup).not.toContain("Proporcione los parámetros de consulta <code>electionId</code>");
-  });
+        expect(markup).toContain('<main class="page-shell">');
+        expect(markup).not.toContain('id="main-content"');
+        expect(markup).toContain("Cobertura de fiscalización");
+        expect(markup).toContain("Elegir una elección");
+        expect(markup).toContain('<option value="02">02 — nombre no disponible</option>');
+        expect(markup).toContain('<option value="027">027 — nombres contradictorios (2 variantes)</option>');
+        expect(markup).not.toContain("Proporcione los parámetros de consulta <code>electionId</code>");
+      });
+
+      it("renders the native coverage validation matrix and dependent prefixes", async () => {
+        coverageRpcResults = {
+          results_exploration_facets: {
+            status: "ok",
+            elections: [{ id: "e-2025", year: 2025, round: "legislativas", label: "2025 legislativas" }],
+            categories: [{ id: "c-diputados", name: "DIPUTADO NACIONAL" }],
+            distritos: [{ code: "02", name: "Buenos Aires", name_status: "present", name_variant_count: 1 }],
+            secciones: [{ code: "027", name: "Coronel Rosales", name_status: "present", name_variant_count: 1 }],
+            circuitos: [],
+            establecimientos: [],
+            mesas: [],
+            available_levels: [],
+          },
+        };
+        const cases = [
+          { label: "cold", params: {}, enabled: ["electionId"] },
+          {
+            label: "election",
+            params: { electionId: "e-2025" },
+            enabled: ["electionId", "categoryId"],
+          },
+          {
+            label: "category",
+            params: { electionId: "e-2025", categoryId: "c-diputados" },
+            enabled: ["electionId", "categoryId", "distritoCode"],
+          },
+          {
+            label: "district",
+            params: { electionId: "e-2025", categoryId: "c-diputados", distritoCode: "02" },
+            enabled: [...COVERAGE_CONTROL_NAMES],
+          },
+        ] satisfies Array<{
+          label: string;
+          params: Record<string, string>;
+          enabled: CoverageControlName[];
+        }>;
+
+        for (const testCase of cases) {
+          const markup = renderToStaticMarkup(
+            (await FiscalizacionPage({ searchParams: Promise.resolve(testCase.params) })) as ReactElement,
+          );
+          for (const name of COVERAGE_CONTROL_NAMES) {
+            expectCoverageControlState(markup, name, {
+              required: true,
+              disabled: !new Set<string>(testCase.enabled).has(name),
+            });
+          }
+          expect(markup).toContain("Actualizar opciones");
+          expect(markup).toMatch(/<button[^>]*formNoValidate=""[^>]*>Actualizar opciones<\/button>/);
+          expect(markup).toContain(">Mostrar cobertura</button>");
+        }
+      });
+
+      it("keeps coverage pending and the section natively required until selected", async () => {
+        coverageRpcResults = {
+          results_exploration_facets: {
+            status: "ok",
+            elections: [{ id: "e-2025", year: 2025, round: "legislativas", label: "2025 legislativas" }],
+            categories: [{ id: "c-diputados", name: "DIPUTADO NACIONAL" }],
+            distritos: [{ code: "02", name: "Buenos Aires", name_status: "present", name_variant_count: 1 }],
+            secciones: [{ code: "027", name: "Coronel Rosales", name_status: "present", name_variant_count: 1 }],
+            circuitos: [], establecimientos: [], mesas: [], available_levels: [],
+          },
+        };
+
+        const markup = renderToStaticMarkup(
+          (await FiscalizacionPage({ searchParams: Promise.resolve({
+            electionId: "e-2025",
+            categoryId: "c-diputados",
+            distritoCode: "02",
+          }) })) as ReactElement,
+        );
+
+        expectCoverageControlState(markup, "seccionCode", { required: true, disabled: false });
+        expect(markup).toContain("Elija la elección, la categoría, el distrito y la sección disponibles");
+        expect(markup).not.toContain("Auditoría de la fuente: fiscalización");
+      });
+
+      it("keeps repeated coverage parameters on the existing server refusal path", async () => {
+        const markup = renderToStaticMarkup(
+          (await FiscalizacionPage({ searchParams: Promise.resolve({
+            electionId: ["e-2025", "e-2023"],
+          }) })) as ReactElement,
+        );
+
+        expect(markup).toContain("parámetros de consulta repetidos");
+        expect(markup).toContain("electionId");
+        expect(markup).not.toContain("Actualizar opciones");
+      });
 
 	function auditableCoveragePayload() {
 		return {

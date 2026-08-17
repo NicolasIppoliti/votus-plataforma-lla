@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import {
@@ -29,6 +29,13 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 // explicit unofficial opt-in may ever contain it.
 const FISCALIZACION_MARKER = "party-internal, unofficial";
 
+async function expectNoBlankSearchParams(page: Page): Promise<void> {
+  const url = new URL(page.url());
+  for (const [name, value] of url.searchParams) {
+    expect(value, `${name} must be omitted instead of serialized blank`).not.toBe("");
+  }
+}
+
 test.describe("no fiscalización leakage into the rendered page", () => {
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => {
@@ -53,29 +60,72 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       await expect(main).not.toContainText(`Total oficial: ${OFFICIAL_VOTES + FISCALIZACION_VOTES}`);
 
       await page.getByRole("link", { name: "Explorar resultados" }).click();
-      await expect(page).toHaveURL(/\/drilldown/);
-      for (const [label, value] of [["Elección", SOURCE_SCOPE.electionId],
-        ["Categoría", SOURCE_SCOPE.categoryId]] as const) {
-        await page.getByLabel(label).selectOption(value);
-        await page.getByRole("button", { name: "Aplicar selección" }).click();
-      }
-      for (const [label, value, optionText] of [
-        ["Distrito", identity.distritoCode, `${identity.distritoCode} — Buenos Aires`],
-        ["Sección", identity.seccionCode,
-          `${identity.seccionCode} — Coronel de Marina L. Rosales`],
-        ["Circuito", "00001", "00001 — 00001"],
-        ["Establecimiento", "E1", "E1 — Synthetic school"],
-      ] as const) {
-        const selector = page.getByLabel(label);
-        await expect(selector.getByRole("option", { name: optionText, exact: true }))
-          .toHaveAttribute("value", value);
-        await selector.selectOption(value);
-        await expect(selector).toHaveValue(value);
-        await page.getByRole("button", { name: "Aplicar selección" }).click();
-      }
-      await page.getByLabel("Mesa").selectOption("1");
-      await page.getByLabel("Nivel del informe").selectOption("mesa");
+      await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
+      const coldUrl = page.url();
       await page.getByRole("button", { name: "Aplicar selección" }).click();
+      await expect(page).toHaveURL(coldUrl);
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
+      for (const label of [
+        "Categoría", "Distrito", "Sección", "Circuito", "Establecimiento", "Mesa",
+        "Nivel del informe",
+      ]) {
+        const descendant = page.getByRole("combobox", { name: label, exact: true });
+        await expect(descendant).toBeDisabled();
+        expect(await descendant.evaluate((element) => {
+          (element as HTMLSelectElement).focus();
+          return document.activeElement === element;
+        })).toBe(false);
+      }
+
+      const refresh = async (
+        label: string,
+        value: string,
+        optionText?: string,
+      ): Promise<void> => {
+        const selector = page.getByRole("combobox", { name: label, exact: true });
+        if (optionText) {
+          await expect(
+            selector.getByRole("option", { name: optionText, exact: true }),
+          ).toHaveAttribute("value", value);
+        }
+        await selector.selectOption(value);
+        await page.getByRole("button", { name: "Actualizar opciones" }).click();
+        await expectNoBlankSearchParams(page);
+      };
+      await refresh("Elección", SOURCE_SCOPE.electionId);
+      await refresh("Categoría", SOURCE_SCOPE.categoryId);
+      await refresh(
+        "Distrito",
+        identity.distritoCode,
+        `${identity.distritoCode} — Buenos Aires`,
+      );
+
+      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("distrito");
+      await page.getByRole("button", { name: "Aplicar selección" }).click();
+      await expectNoBlankSearchParams(page);
+      await expect(page.getByRole("main")).toContainText("votos a nivel distrito");
+
+      await refresh(
+        "Sección",
+        identity.seccionCode,
+        `${identity.seccionCode} — Coronel de Marina L. Rosales`,
+      );
+      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("seccion");
+      await page.getByRole("button", { name: "Aplicar selección" }).click();
+      await expectNoBlankSearchParams(page);
+      await expect(page.getByRole("main")).toContainText("votos a nivel seccion");
+
+      await refresh("Circuito", "00001", "00001 — 00001");
+      await refresh("Establecimiento", "E1", "E1 — Synthetic school");
+      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("establecimiento");
+      await page.getByRole("button", { name: "Aplicar selección" }).click();
+      await expectNoBlankSearchParams(page);
+      await expect(page.getByRole("main")).toContainText("votos a nivel establecimiento");
+
+      await page.getByRole("combobox", { name: "Mesa", exact: true }).selectOption("1");
+      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("mesa");
+      await page.getByRole("button", { name: "Aplicar selección" }).click();
+      await expectNoBlankSearchParams(page);
       const explorerUrl = new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
           `&distritoCode=${encodeURIComponent(identity.distritoCode)}` +
@@ -92,6 +142,14 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       await expect(page.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(1);
       await page.reload();
       await expect(page).toHaveURL(explorerUrl);
+
+      await page.goto(new URL(
+        `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
+          `&distritoCode=${identity.distritoCode}&seccionCode=${identity.seccionCode}` +
+          "&circuitoCode=00001&establecimientoCode=E1&mesaCode=invalid&level=mesa",
+        baseURL,
+      ).toString());
+      await expect(page.getByRole("main").getByRole("alert")).toContainText("Se rechazó");
 
       await page.goto(new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
