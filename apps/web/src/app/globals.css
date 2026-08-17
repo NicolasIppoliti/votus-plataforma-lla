@@ -464,6 +464,73 @@ select option {
   font-weight: 700;
 }
 
+.login-page {
+  display: grid;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  place-items: center;
+  padding: 1rem;
+}
+
+.login-card {
+  width: min(100%, 32rem);
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+}
+
+.login-card__header {
+  display: grid;
+  gap: 0.75rem;
+  margin-block-end: 2rem;
+}
+
+.login-card h1 {
+  font-size: clamp(2rem, 10vw, 2.75rem);
+}
+
+.login-card .panel__copy {
+  max-width: none;
+}
+
+.login-form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.login-form input,
+.login-form__submit {
+  width: 100%;
+  min-width: 0;
+  min-height: 3rem;
+}
+
+.login-form input[aria-invalid="true"] {
+  border-color: var(--color-focus);
+}
+
+.login-form__submit:active:not(:disabled) {
+  background: var(--color-accent-dark);
+}
+
+.login-form__submit:disabled {
+  border-color: var(--color-line-strong);
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
+  cursor: not-allowed;
+}
+
+.login-form__feedback {
+  min-height: 1.55em;
+  color: var(--color-focus);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.login-form__feedback:not(:empty) {
+  padding-inline-start: 0.75rem;
+  border-inline-start: 3px solid var(--color-focus);
+}
+
 .table-scroll {
   min-width: 0;
   max-width: 100%;
