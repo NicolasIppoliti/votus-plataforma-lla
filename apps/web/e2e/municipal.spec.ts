@@ -18,11 +18,6 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 test.describe("the municipal route defaults to official results", () => {
   test("test_route_renders_official_figure_without_fiscalizacion_leakage", async ({ page }) => {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
-      await page.goto(new URL("/dashboard", baseURL).toString());
-      await expect(page).toHaveURL(/\/dashboard/);
-
-      await page.getByRole("link", { name: "Municipal (Concejales)" }).click();
-      await expect(page).toHaveURL(/\/municipal/);
       await page.goto(new URL(
         `/municipal?electionId=${MUNICIPAL_SCOPE.electionId}` +
           `&jurisdictionId=${MUNICIPAL_SCOPE.jurisdictionId}&categoryId=${MUNICIPAL_SCOPE.categoryId}`,

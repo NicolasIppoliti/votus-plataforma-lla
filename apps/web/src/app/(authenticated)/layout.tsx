@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { SignOutForm } from "@/components/SignOutForm";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { PrimaryNavigation } from "./PrimaryNavigation";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -26,11 +27,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server-client";
  * closing the reachability gap `sdd-verify` found (fiscalizacion-analysis
  * spec, "An operator route reaches fiscalización through the opt-in path").
  *
- * Phase 16c: `/municipal` is linked here for the same reason — the
- * `coronel_rosales_municipal` party mappings (Phase 15) had no reachable
- * route, this project's 8th instance of shipped-correct-but-unreachable code.
- * `/simulate` follows the same production reachability contract: an operator
- * can enter the projection workflow from this authenticated navigation.
+ * Phase 16c: `/municipal` made the `coronel_rosales_municipal` party
+ * mappings reachable. Because useful municipal and comparison requests require
+ * prepared context, both routes remain discoverable from the dashboard's
+ * prepared-route cards rather than the primary navigation. `/simulate` follows
+ * the production reachability contract: an operator can enter the projection
+ * workflow from this authenticated navigation.
  */
 export default async function AuthenticatedLayout({
   children,
@@ -66,31 +68,7 @@ export default async function AuthenticatedLayout({
           <p className="site-context">Análisis electoral interno</p>
           <SignOutForm />
         </div>
-        <nav aria-label="principal" className="main-navigation">
-          <ul className="shell-container navigation-list">
-            <li>
-              <Link href="/dashboard">Panel</Link>
-            </li>
-            <li>
-              <Link href="/compare">Comparar</Link>
-            </li>
-            <li>
-              <Link href="/drilldown">Explorar resultados</Link>
-            </li>
-            <li>
-              <Link href="/fiscalizacion">Fiscalización (no oficial)</Link>
-            </li>
-            <li>
-              <Link href="/municipal">Municipal (Concejales)</Link>
-            </li>
-            <li>
-              <Link href="/simulate">Simulación de bancas</Link>
-            </li>
-            <li>
-              <Link href="/review">Revisión</Link>
-            </li>
-          </ul>
-        </nav>
+        <PrimaryNavigation />
       </header>
       <div className="shell-container app-content" id="main-content" tabIndex={-1}>
         <div className="source-disclaimer">

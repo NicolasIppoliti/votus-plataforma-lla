@@ -39,31 +39,49 @@ export function LoginForm(): ReactNode {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <label htmlFor="email">Correo electrónico</label>
-      <input
-        id="email"
-        name="email"
-        type="email"
-        autoComplete="email"
-        required
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-      />
-      <label htmlFor="password">Contraseña</label>
-      <input
-        id="password"
-        name="password"
-        type="password"
-        autoComplete="current-password"
-        required
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-      />
-      <button type="submit" disabled={submitting}>
+    <form
+      aria-labelledby="login-heading"
+      className="login-form"
+      onSubmit={handleSubmit}
+    >
+      <div className="field">
+        <label htmlFor="email">Correo electrónico</label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          aria-describedby="login-error"
+          aria-invalid={error !== null}
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="password">Contraseña</label>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          aria-describedby="login-error"
+          aria-invalid={error !== null}
+          required
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </div>
+      <button
+        className="button button--primary login-form__submit"
+        type="submit"
+        disabled={submitting}
+      >
         Iniciar sesión
       </button>
-      {error !== null && <p role="alert">{error}</p>}
+      <p id="login-error" className="login-form__feedback" role="alert">
+        {error}
+      </p>
     </form>
   );
 }

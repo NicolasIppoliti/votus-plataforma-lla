@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import ReviewPage from "./page";
 
+const READ_ONLY_NOTICE =
+  "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
+
 const reviewState = vi.hoisted(() => ({
   items: [] as Array<{
     id: string;
@@ -45,6 +48,7 @@ describe("review page — responsive review evidence", () => {
       (await ReviewPage()) as ReactElement,
     );
 
+    expect(markup).toContain(READ_ONLY_NOTICE);
     expect(markup).toMatch(
       /<div class="table-scroll" role="region" aria-label="Elementos de revisión pendientes" tabindex="0">/,
     );
@@ -81,6 +85,7 @@ describe("review page — responsive review evidence", () => {
       (await ReviewPage()) as ReactElement,
     );
 
+    expect(markup).toContain(READ_ONLY_NOTICE);
     expect(markup).toContain("No hay elementos de revisión pendientes.");
     expect(markup).not.toContain("<table");
   });

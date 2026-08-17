@@ -52,7 +52,113 @@ test.describe("no anonymous read path", () => {
     const anonymousBody = await anonymousResponse.text();
     expect(anonymousBody).not.toContain(IN_SCOPE_MARKER);
 
-    // 3. Authenticate as the seeded fixture user and confirm the in-scope
+    // 3. The real login form remains centered, stacked, touch-sized, and
+    //    overflow-free at the two release viewports. Its persistent feedback
+    //    row keeps an invalid sign-in from shifting or overlapping controls.
+    const viewports = [
+      { width: 1440, height: 1000 },
+      { width: 390, height: 844 },
+    ] as const;
+
+    for (const viewport of viewports) {
+      await page.setViewportSize(viewport);
+      await page.goto("/login");
+
+      const loginCard = page.getByRole("region", { name: "Iniciar sesión" });
+      const loginForm = page.getByRole("form", { name: "Iniciar sesión" });
+      const emailInput = page.getByLabel("Correo electrónico");
+      const passwordInput = page.getByLabel("Contraseña");
+      const submitButton = page.getByRole("button", {
+        name: "Iniciar sesión",
+      });
+
+      await expect(loginCard).toBeVisible();
+      await expect(loginForm).toBeVisible();
+
+      const [cardBox, formBox, emailBox, passwordBox, submitBox] =
+        await Promise.all([
+          loginCard.boundingBox(),
+          loginForm.boundingBox(),
+          emailInput.boundingBox(),
+          passwordInput.boundingBox(),
+          submitButton.boundingBox(),
+        ]);
+
+      expect(cardBox).not.toBeNull();
+      expect(formBox).not.toBeNull();
+      expect(emailBox).not.toBeNull();
+      expect(passwordBox).not.toBeNull();
+      expect(submitBox).not.toBeNull();
+
+      const card = cardBox!;
+      const form = formBox!;
+      const email = emailBox!;
+      const password = passwordBox!;
+      const submit = submitBox!;
+      const cardRightGap = viewport.width - card.x - card.width;
+      const cardBottomGap = viewport.height - card.y - card.height;
+
+      expect(Math.abs(card.x - cardRightGap)).toBeLessThanOrEqual(2);
+      expect(Math.abs(card.y - cardBottomGap)).toBeLessThanOrEqual(2);
+      expect(card.y).toBeGreaterThanOrEqual(0);
+      expect(card.width).toBeLessThanOrEqual(
+        Math.min(512, viewport.width - 32) + 1,
+      );
+      expect(email.height).toBeGreaterThanOrEqual(48);
+      expect(password.height).toBeGreaterThanOrEqual(48);
+      expect(submit.height).toBeGreaterThanOrEqual(48);
+      expect(Math.abs(email.x - form.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(email.width - form.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(email.x - password.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(email.x - submit.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(email.width - password.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(email.width - submit.width)).toBeLessThanOrEqual(1);
+      expect(email.y + email.height).toBeLessThan(password.y);
+      expect(password.y + password.height).toBeLessThan(submit.y);
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+      ).toBe(true);
+
+      if (viewport.width === 390) {
+        expect(
+          Math.abs(card.width - (viewport.width - 32)),
+        ).toBeLessThanOrEqual(2);
+
+        await emailInput.fill("invalid@example.com");
+        await passwordInput.fill("invalid-password");
+        await submitButton.click();
+
+        const errorMessage = page.locator("#login-error");
+        await expect(errorMessage).toHaveText("Las credenciales no son válidas.");
+        await expect(emailInput).toHaveAttribute("aria-invalid", "true");
+        await expect(passwordInput).toHaveAttribute("aria-invalid", "true");
+        await expect(emailInput).toHaveAttribute(
+          "aria-describedby",
+          "login-error",
+        );
+        await expect(passwordInput).toHaveAttribute(
+          "aria-describedby",
+          "login-error",
+        );
+
+        const [formAfterErrorBox, errorBox] = await Promise.all([
+          loginForm.boundingBox(),
+          errorMessage.boundingBox(),
+        ]);
+        expect(formAfterErrorBox).not.toBeNull();
+        expect(errorBox).not.toBeNull();
+        expect(
+          Math.abs(formAfterErrorBox!.height - form.height),
+        ).toBeLessThanOrEqual(1);
+        expect(errorBox!.y).toBeGreaterThanOrEqual(submit.y + submit.height);
+      }
+    }
+
+    // 4. Authenticate as the seeded fixture user and confirm the in-scope
     //    route now genuinely serves data — proves step 1/2 were a real
     //    gate, not a route that is simply broken for everyone.
     await page.goto("/login");
@@ -62,7 +168,7 @@ test.describe("no anonymous read path", () => {
     await expect(page).toHaveURL(/\/dashboard/);
     expect(await page.content()).toContain(IN_SCOPE_MARKER);
 
-    // 4. Every protected page exposes the same native submit control. Root
+    // 5. Every protected page exposes the same native submit control. Root
     //    lives outside the authenticated route-group layout, so it is checked
     //    explicitly alongside every grouped route.
     for (const route of PROTECTED_ROUTES) {
@@ -76,7 +182,7 @@ test.describe("no anonymous read path", () => {
       await expect(signOutControl).toHaveAttribute("type", "submit");
     }
 
-    // 5. Keyboard submission performs the real local server-side sign-out and
+    // 6. Keyboard submission performs the real local server-side sign-out and
     //    redirects only after Supabase confirms success.
     const signOutControl = page.getByRole("button", {
       name: "Cerrar sesión",
@@ -87,13 +193,13 @@ test.describe("no anonymous read path", () => {
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/login/);
 
-    // 6. A hard navigation to protected content stays anonymous after logout:
+    // 7. A hard navigation to protected content stays anonymous after logout:
     //    no cached authenticated render may be served.
     await page.goto("/dashboard", { waitUntil: "networkidle" });
     await expect(page).toHaveURL(/\/login/);
     expect(await page.content()).not.toContain(IN_SCOPE_MARKER);
 
-    // 7. And the raw HTTP layer again, now with no session cookie at all —
+    // 8. And the raw HTTP layer again, now with no session cookie at all —
     //    covers any cache keyed purely on the URL rather than on identity.
     const postLogoutResponse = await context.request.get("/dashboard", {
       maxRedirects: 0,
