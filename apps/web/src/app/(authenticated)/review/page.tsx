@@ -33,6 +33,10 @@ export default async function ReviewPage(): Promise<ReactNode> {
   return (
     <main>
       <h1>Cola de revisión</h1>
+      <p>
+        Esta pantalla es solo de consulta. Puede inspeccionar los elementos
+        pendientes, pero no modificarlos ni resolverlos aquí.
+      </p>
       {items.length === 0 ? (
         <p>No hay elementos de revisión pendientes.</p>
       ) : (

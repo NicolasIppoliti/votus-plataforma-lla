@@ -28,6 +28,17 @@ it("renders the dashboard as the grouped workflow entry point", () => {
   }
 });
 
+it("presents review as a read-only consultation workflow", () => {
+  const markup = renderToStaticMarkup(<DashboardPage /> as ReactElement);
+
+  expect(markup).toContain("Pendientes para consulta");
+  expect(markup).toContain("<h3>Consultar elementos de revisión</h3>");
+  expect(markup).toContain(
+    "Inspeccione los elementos pendientes y la evidencia registrada",
+  );
+  expect(markup).not.toContain("Resolver elementos de revisión");
+});
+
 it("sets an honest expectation for context-dependent workflows", () => {
   const markup = renderToStaticMarkup(<DashboardPage /> as ReactElement);
 
