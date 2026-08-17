@@ -667,9 +667,7 @@ def batch_upsert_jurisdictions(
     resolution and insertion remain bulk operations.
     """
     original_keys = list(keys)
-    incoming_names = (
-        [JurisdictionNames() for _ in original_keys] if names is None else list(names)
-    )
+    incoming_names = [JurisdictionNames() for _ in original_keys] if names is None else list(names)
     if len(incoming_names) != len(original_keys):
         raise ValueError("batch jurisdiction names must align one-for-one with lineage keys")
 

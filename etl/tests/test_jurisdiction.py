@@ -377,14 +377,17 @@ def test_name_reconciliation_contract_runs_through_both_database_entrypoints(mod
     assert conn.cursor_instance.name_updates == 1
 
     assert write(JurisdictionNames()) == "jurisdiction-id"
-    assert write(
-        JurisdictionNames(
-            distrito=" Buenos Aires ",
-            seccion="Coronel de Marina L. Rosales",
-            circuito="Circuito 248",
-            establecimiento="Escuela N° 1",
+    assert (
+        write(
+            JurisdictionNames(
+                distrito=" Buenos Aires ",
+                seccion="Coronel de Marina L. Rosales",
+                circuito="Circuito 248",
+                establecimiento="Escuela N° 1",
+            )
         )
-    ) == "jurisdiction-id"
+        == "jurisdiction-id"
+    )
     assert conn.cursor_instance.name_updates == 1, "NULL and identical re-ingest are no-ops"
 
     private_sentinel = "PRIVATE_PERSON_SENTINEL"
@@ -454,14 +457,17 @@ def test_jurisdiction_name_upserts_are_conflict_safe_and_idempotent(mode: str) -
 
         # Re-ingest with identical normalized values is a no-op, while NULL
         # input deliberately preserves every existing name.
-        assert write(
-            JurisdictionNames(
-                distrito=" Buenos Aires ",
-                seccion="Coronel de Marina L. Rosales",
-                circuito="00248",
-                establecimiento="Escuela N° 1",
+        assert (
+            write(
+                JurisdictionNames(
+                    distrito=" Buenos Aires ",
+                    seccion="Coronel de Marina L. Rosales",
+                    circuito="00248",
+                    establecimiento="Escuela N° 1",
+                )
             )
-        ) == jurisdiction_id
+            == jurisdiction_id
+        )
         assert write(JurisdictionNames()) == jurisdiction_id
 
         with conn.cursor() as cur:

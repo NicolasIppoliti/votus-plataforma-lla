@@ -635,9 +635,9 @@ def test_resolve_pba_jurisdictions_translates_to_the_national_distrito_code() ->
         "lineage is the province, not Coronel Rosales"
     )
     assert all(row.jurisdiction_names.distrito is None for row in result.resolved)
-    assert all(
-        row.jurisdiction_names.seccion == "CORONEL ROSALES" for row in result.resolved
-    ), "the source-native partido label becomes canonical seccion_name only after translation"
+    assert all(row.jurisdiction_names.seccion == "CORONEL ROSALES" for row in result.resolved), (
+        "the source-native partido label becomes canonical seccion_name only after translation"
+    )
     assert all(row.result.granularity == "seccion" for row in result.resolved), (
         "a PBA partido total is a seccion-level figure once translated"
     )
