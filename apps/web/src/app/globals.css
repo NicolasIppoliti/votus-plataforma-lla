@@ -230,7 +230,7 @@ select option {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 0.45rem;
-  margin: 0;
+  margin-block: 0;
   padding-block: 0.5rem;
   padding-inline: var(--content-gutter);
   list-style: none;

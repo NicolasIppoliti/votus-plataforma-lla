@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import AuthenticatedLayout from "./layout";
 
 const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
+const globalStyles = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
@@ -31,6 +33,18 @@ async function renderLayout(pathname: string): Promise<string> {
     })) as ReactElement,
   );
 }
+
+it("keeps authenticated header, navigation, and content on the shared centered container", async () => {
+  const markup = await renderLayout("/dashboard");
+  const navigationRule = globalStyles.match(/\.navigation-list\s*\{([^}]*)\}/)?.[1];
+
+  expect(markup).toContain('class="shell-container site-header__inner"');
+  expect(primaryNavigation(markup)).toContain('<ul class="shell-container navigation-list">');
+  expect(markup).toContain('class="shell-container app-content"');
+  expect(navigationRule).toBeDefined();
+  expect(navigationRule).toMatch(/margin-block:\s*0;/);
+  expect(navigationRule).not.toMatch(/(?:^|;)\s*margin\s*:/);
+});
 
 it("renders exactly one keyboard-accessible sign-out form action", async () => {
   const markup = await renderLayout("/dashboard");

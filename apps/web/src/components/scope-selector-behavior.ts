@@ -90,15 +90,21 @@ function setRequired(controls: ScopeControls, name: ScopeControlName, required: 
   if (current) current.required = required;
 }
 
+function scopeDescendants(
+  kind: ScopeFormKind,
+  changedName: ScopeControlName,
+): readonly ScopeControlName[] {
+  return (kind === SCOPE_FORM_KIND.DRILLDOWN
+    ? DRILLDOWN_DESCENDANTS[changedName]
+    : COVERAGE_DESCENDANTS[changedName]) ?? [];
+}
+
 function clearDescendants(
   controls: ScopeControls,
   kind: ScopeFormKind,
   changedName: ScopeControlName,
 ): void {
-  const descendants = kind === SCOPE_FORM_KIND.DRILLDOWN
-    ? DRILLDOWN_DESCENDANTS[changedName]
-    : COVERAGE_DESCENDANTS[changedName];
-  for (const name of descendants ?? []) {
+  for (const name of scopeDescendants(kind, changedName)) {
     const current = controls[name];
     if (current) current.value = "";
   }
@@ -183,12 +189,18 @@ export function enhanceScopeForm(form: HTMLFormElement, kind: ScopeFormKind): ()
     const element = form.elements.namedItem(name);
     if (element instanceof HTMLSelectElement) controls[name] = element;
   }
+  const refreshSubmitter = form.querySelector<HTMLButtonElement>(
+    'button[type="submit"][formnovalidate]',
+  );
   synchronizeScopeControls(controls, kind);
 
   const handleChange = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof HTMLSelectElement) || !isScopeControlName(target.name)) return;
     synchronizeScopeControls(controls, kind, target.name);
+    if (refreshSubmitter && scopeDescendants(kind, target.name).length > 0) {
+      form.requestSubmit(refreshSubmitter);
+    }
   };
   const handleFormData = (event: Event): void => {
     omitBlankSingletonControls((event as FormDataEvent).formData);

@@ -79,6 +79,7 @@ test.describe("no fiscalización leakage into the rendered page", () => {
 
       const refresh = async (
         label: string,
+        name: string,
         value: string,
         optionText?: string,
       ): Promise<void> => {
@@ -89,13 +90,14 @@ test.describe("no fiscalización leakage into the rendered page", () => {
           ).toHaveAttribute("value", value);
         }
         await selector.selectOption(value);
-        await page.getByRole("button", { name: "Actualizar opciones" }).click();
+        await expect.poll(() => new URL(page.url()).searchParams.get(name)).toBe(value);
         await expectNoBlankSearchParams(page);
       };
-      await refresh("Elección", SOURCE_SCOPE.electionId);
-      await refresh("Categoría", SOURCE_SCOPE.categoryId);
+      await refresh("Elección", "electionId", SOURCE_SCOPE.electionId);
+      await refresh("Categoría", "categoryId", SOURCE_SCOPE.categoryId);
       await refresh(
         "Distrito",
+        "distritoCode",
         identity.distritoCode,
         `${identity.distritoCode} — Buenos Aires`,
       );
@@ -107,6 +109,7 @@ test.describe("no fiscalización leakage into the rendered page", () => {
 
       await refresh(
         "Sección",
+        "seccionCode",
         identity.seccionCode,
         `${identity.seccionCode} — Coronel de Marina L. Rosales`,
       );
@@ -115,8 +118,13 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       await expectNoBlankSearchParams(page);
       await expect(page.getByRole("main")).toContainText("votos a nivel seccion");
 
-      await refresh("Circuito", "00001", "00001 — 00001");
-      await refresh("Establecimiento", "E1", "E1 — Synthetic school");
+      await refresh("Circuito", "circuitoCode", "00001", "00001 — 00001");
+      await refresh(
+        "Establecimiento",
+        "establecimientoCode",
+        "E1",
+        "E1 — Synthetic school",
+      );
       await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("establecimiento");
       await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expectNoBlankSearchParams(page);

@@ -37,6 +37,20 @@ test.describe("the production root preserves its authentication boundary", () =>
         await expect(page.getByRole("heading", { level: 1, name: "Panel de Votus" })).toBeVisible();
         const primaryNavigation = page.getByRole("navigation", { name: "principal" });
         await expect(primaryNavigation).toBeVisible();
+
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        const [headerContainer, navigationContainer, contentContainer] = await Promise.all([
+          page.getByRole("banner").locator(".shell-container").first().boundingBox(),
+          primaryNavigation.getByRole("list").boundingBox(),
+          page.locator("#main-content").boundingBox(),
+        ]);
+        expect(headerContainer).not.toBeNull();
+        expect(navigationContainer).not.toBeNull();
+        expect(contentContainer).not.toBeNull();
+        expect(Math.abs(navigationContainer!.x - headerContainer!.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(navigationContainer!.x - contentContainer!.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(navigationContainer!.width - headerContainer!.width)).toBeLessThanOrEqual(1);
+        expect(Math.abs(navigationContainer!.width - contentContainer!.width)).toBeLessThanOrEqual(1);
         await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
         await expect(
           primaryNavigation.getByRole("link", { name: "Panel", exact: true }),

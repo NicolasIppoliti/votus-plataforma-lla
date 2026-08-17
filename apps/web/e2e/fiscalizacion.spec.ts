@@ -52,14 +52,14 @@ test.describe("the fiscalizacion route explores coverage", () => {
         })).toBe(false);
       }
 
-      const refresh = async (label: string, value: string): Promise<void> => {
+      const refresh = async (label: string, name: string, value: string): Promise<void> => {
         await page.getByLabel(label).selectOption(value);
-        await page.getByRole("button", { name: "Actualizar opciones" }).click();
+        await expect.poll(() => new URL(page.url()).searchParams.get(name)).toBe(value);
         await expectNoBlankSearchParams(page);
       };
-      await refresh("Elección", COVERAGE_SCOPE.electionId);
-      await refresh("Categoría", COVERAGE_SCOPE.categoryId);
-      await refresh("Distrito", COVERAGE_SCOPE.distritoCode);
+      await refresh("Elección", "electionId", COVERAGE_SCOPE.electionId);
+      await refresh("Categoría", "categoryId", COVERAGE_SCOPE.categoryId);
+      await refresh("Distrito", "distritoCode", COVERAGE_SCOPE.distritoCode);
       await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode);
       await page.getByRole("button", { name: "Mostrar cobertura" }).click();
       await expectNoBlankSearchParams(page);
