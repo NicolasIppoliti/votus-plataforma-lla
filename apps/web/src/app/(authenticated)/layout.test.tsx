@@ -40,23 +40,26 @@ it("links authenticated operators to the official results explorer", async () =>
   expect(markup).toContain("Explorar resultados");
 });
 
-it("preserves source status and every existing workflow label", async () => {
+it("preserves source status and keeps cold routes out of primary navigation", async () => {
   const markup = renderToStaticMarkup(
     (await AuthenticatedLayout({ children: <p>Current page</p> })) as ReactElement,
   );
+  const primaryNavigation = markup.match(
+    /<nav aria-label="principal"[\s\S]*?<\/nav>/,
+  )?.[0];
 
   expect(markup).toContain("Esta herramienta no es una fuente electoral oficial.");
-  expect(markup).toContain('nav aria-label="principal"');
-  expect(markup).toContain('href="/dashboard"');
-  expect(markup).toContain("Panel");
-  expect(markup).toContain('href="/compare"');
-  expect(markup).toContain("Comparar");
-  expect(markup).toContain('href="/fiscalizacion"');
-  expect(markup).toContain("Fiscalización (no oficial)");
-  expect(markup).toContain('href="/municipal"');
-  expect(markup).toContain("Municipal (Concejales)");
-  expect(markup).toContain('href="/simulate"');
-  expect(markup).toContain("Simulación de bancas");
-  expect(markup).toContain('href="/review"');
-  expect(markup).toContain("Revisión");
+  expect(primaryNavigation).toBeDefined();
+  expect(primaryNavigation).toContain('href="/dashboard"');
+  expect(primaryNavigation).toContain("Panel");
+  expect(primaryNavigation).not.toContain('href="/compare"');
+  expect(primaryNavigation).not.toContain(">Comparar<");
+  expect(primaryNavigation).toContain('href="/fiscalizacion"');
+  expect(primaryNavigation).toContain("Fiscalización (no oficial)");
+  expect(primaryNavigation).not.toContain('href="/municipal"');
+  expect(primaryNavigation).not.toContain(">Municipal (Concejales)<");
+  expect(primaryNavigation).toContain('href="/simulate"');
+  expect(primaryNavigation).toContain("Simulación de bancas");
+  expect(primaryNavigation).toContain('href="/review"');
+  expect(primaryNavigation).toContain("Revisión");
 });
