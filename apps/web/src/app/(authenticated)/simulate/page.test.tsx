@@ -61,6 +61,20 @@ async function renderSimulation(input?: object): Promise<string> {
   );
 }
 
+describe("simulate page — normal-user entry", () => {
+  it("renders a labelled form on a cold route instead of raw JSON instructions", async () => {
+    const markup = await renderSimulation();
+
+    expect(markup).toContain(
+      '<form aria-label="Formulario de simulación de bancas"',
+    );
+    expect(markup).toContain(
+      '<label for="simulation-level">Tipo de elección</label>',
+    );
+    expect(markup).not.toContain("Proporcione un parámetro de consulta");
+  });
+});
+
 describe("simulate page — complete statutory evidence", () => {
   it("renders a published PBA vote scenario without relabelling it D’Hondt", async () => {
     const markup = await renderSimulation(OFFICIAL_PBA_2025_INPUT);
@@ -436,6 +450,45 @@ describe("simulate page — the roster belongs to one statute", () => {
 });
 
 describe("simulate page — the request cannot move the statute", () => {
+  it("refuses a caller-supplied non-statutory council total before allocation or evidence", async () => {
+    const markup = renderToStaticMarkup(
+      (await SimulatePage({
+        searchParams: Promise.resolve({
+          council: "Coronel de Marina Leonardo Rosales",
+          input: JSON.stringify({
+            ...ALLOCATION_INPUT,
+            seatsToFill: 9,
+            councilTotal: 17,
+          }),
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("el concejo requiere 18 bancas; se recibió 17");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Huella de los datos proporcionados");
+    expect(markup).not.toContain("sha256");
+    expect(markup).not.toContain("Asignación Hare por lista");
+    expect(markup).not.toContain("Evidencia de asignación por banca");
+  });
+
+  it("accepts the exact statutory council total", async () => {
+    const markup = renderToStaticMarkup(
+      (await SimulatePage({
+        searchParams: Promise.resolve({
+          council: "Coronel de Marina Leonardo Rosales",
+          input: JSON.stringify({
+            ...ALLOCATION_INPUT,
+            councilTotal: 18,
+          }),
+        }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("allocation-result");
+    expect(markup).toContain("Huella de los datos proporcionados");
+  });
+
   it("test_a_non_statutory_seat_count_is_refused_without_heldover_too", async () => {
     // The case an operator actually hits. The check sat inside the `heldOver`
     // branch, so omitting an unrelated query param rendered 17 awards for a
@@ -526,24 +579,47 @@ describe("simulate page — a repeated query param reaches the guard", () => {
 });
 
 describe("simulate page — the statutory gate's own boundary", () => {
-  it("test_without_a_named_council_the_allocation_makes_no_council_claim", async () => {
-    // The gate keys on `?council=` because this route knows the 18/9 counts for
-    // ONE partido. Absent that parameter a `pba_municipal` allocation still
-    // renders — deliberately, because nothing has claimed a council — so the
-    // contract is that no roster, no seat count and no statutory sentence
-    // appear beside it. Untested, this read as either a hole or a feature.
-    const markup = renderToStaticMarkup(
-      (await SimulatePage({
-        searchParams: Promise.resolve({
-          input: JSON.stringify({ ...ALLOCATION_INPUT, seatsToFill: 17 }),
-        }),
-      })) as ReactElement,
-    );
+  it("refuses an unnamed municipal allocation with a non-statutory renewal count", async () => {
+    const markup = await renderSimulation({
+      ...ALLOCATION_INPUT,
+      seatsToFill: 17,
+    });
+
+    expect(markup).toContain("renueva 9 de las 18 bancas del concejo");
+    expect(markup).not.toContain("allocation-result");
+    expect(markup).not.toContain("Huella de los datos proporcionados");
+    expect(markup).not.toContain("Asignación Hare por lista");
+    expect(markup).not.toContain("Evidencia de asignación por banca");
+  });
+
+  it("renders an unnamed statutory municipal allocation without a council claim", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT);
 
     expect(markup).toContain("allocation-result");
-    // No council is claimed, so neither statutory quantity is asserted.
+    expect(markup).toContain("Huella de los datos proporcionados");
     expect(markup).not.toContain("council-composition");
-    expect(markup).not.toContain("renews 9 of the 18 council seats");
+    expect(markup).not.toContain("Nómina del concejo");
+    expect(markup).not.toContain("18 bancas, 9 renovadas en esta elección");
+  });
+
+  it("enforces the municipal council total without requiring a council label", async () => {
+    const invalid = await renderSimulation({
+      ...ALLOCATION_INPUT,
+      councilTotal: 17,
+    });
+    const exact = await renderSimulation({
+      ...ALLOCATION_INPUT,
+      councilTotal: 18,
+    });
+    const omitted = await renderSimulation(ALLOCATION_INPUT);
+
+    expect(invalid).toContain("el concejo requiere 18 bancas; se recibió 17");
+    expect(invalid).not.toContain("allocation-result");
+    expect(invalid).not.toContain("Huella de los datos proporcionados");
+    expect(exact).toContain("allocation-result");
+    expect(omitted).toContain("allocation-result");
+    expect(exact).not.toContain("council-composition");
+    expect(omitted).not.toContain("council-composition");
   });
 
   it("test_positive_mayoria_is_refused_before_authoritative_seats_render", async () => {
