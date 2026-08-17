@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { SignOutForm } from "@/components/SignOutForm";
 
 export default function HomePage(): ReactNode {
   return (
     <main id="main-content" className="public-shell" tabIndex={-1}>
       <div className="shell-container">
         <header className="page-header">
+          <SignOutForm />
           <p className="eyebrow">Análisis electoral interno</p>
           <h1>Votus</h1>
           <p className="page-header__lede">

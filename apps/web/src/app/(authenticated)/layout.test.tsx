@@ -32,6 +32,17 @@ async function renderLayout(pathname: string): Promise<string> {
   );
 }
 
+it("renders exactly one keyboard-accessible sign-out form action", async () => {
+  const markup = await renderLayout("/dashboard");
+  const signOutForms =
+    markup.match(
+      /<form[^>]*>[\s\S]*?<button class="button button--secondary" type="submit">Cerrar sesión<\/button>[\s\S]*?<\/form>/g,
+    ) ?? [];
+
+  expect(signOutForms).toHaveLength(1);
+  expect(signOutForms[0]).toMatch(/<form[^>]*\saction=/);
+});
+
 function primaryNavigation(markup: string): string {
   const navigationMarkup = markup.match(
     /<nav aria-label="principal"[\s\S]*?<\/nav>/,
