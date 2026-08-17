@@ -614,10 +614,12 @@ def _require_ephemeral_postgres() -> None:
 
 
 NATIONAL_CSV = (
-    "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-    "votos_tipo,votos_cantidad,estado_final\n"
-    "02,027,01,1,DIPUTADO NACIONAL,135,POSITIVO,120,definitivo\n"
-    "02,027,01,1,DIPUTADO NACIONAL,134,POSITIVO,80,definitivo\n"
+    "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+    "mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad,estado_final\n"
+    "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+    "135,POSITIVO,120,definitivo\n"
+    "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+    "134,POSITIVO,80,definitivo\n"
 )
 
 
@@ -850,6 +852,7 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
             cur.execute(
                 """
                 select count(*), count(distinct j.id), min(j.establecimiento_code),
+                       min(j.distrito_name), min(j.seccion_name), min(j.circuito_name),
                        min(j.establecimiento_name)
                   from result_row rr
                   join jurisdiction j on j.id = rr.jurisdiction_id
@@ -862,6 +865,9 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
                 2,
                 1,
                 "37974",
+                "BUENOS AIRES",
+                "CORONEL ROSALES",
+                "Circuito 01",
                 "INSTITUTO SUPERIOR DE FORM.DOCENTE N°79",
             ), (
                 "ZIP re-ingestion must preserve two rows under one fully sourced "
@@ -6136,11 +6142,12 @@ def _national_zip_of(row_count: int, *, distinct_mesas: int | None = None) -> tu
 
     distinct = distinct_mesas if distinct_mesas is not None else row_count
     header = (
-        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,"
-        "agrupacion_id,votos_tipo,votos_cantidad\n"
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        "circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
     )
     body = "".join(
-        f"02,027,00248,{9000 + index % distinct},DIPUTADO NACIONAL,110,POSITIVO,7\n"
+        "02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,"
+        f"{9000 + index % distinct},DIPUTADO NACIONAL,110,POSITIVO,7\n"
         for index in range(row_count)
     )
     csv_text = header + body

@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { TableScroll } from "@/components/TableScroll";
+import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
+import {
+  SCOPE_FORM_KIND,
+  scopeControlStates,
+} from "@/components/scope-selector-behavior";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
@@ -56,76 +61,137 @@ interface ExplorerFormProps {
 }
 
     function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
+      const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, {
+        electionId: selected.electionId ?? "",
+        categoryId: selected.categoryId ?? "",
+        distritoCode: selected.distritoCode ?? "",
+        seccionCode: selected.seccionCode ?? "",
+        circuitoCode: selected.circuitoCode ?? "",
+        establecimientoCode: selected.establecimientoCode ?? "",
+        mesaCode: selected.mesaCode?.toString() ?? "",
+        level: selected.level ?? "",
+      });
       return (
         <section className="panel" aria-labelledby="explorer-form-heading">
           <div className="panel__heading">
             <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>
             <p>Use los selectores para crear un enlace directo reutilizable a resultados oficiales.</p>
           </div>
-          <form action="/drilldown" method="get">
+          <ScopeSelectorForm action="/drilldown" kind={SCOPE_FORM_KIND.DRILLDOWN}>
             <fieldset className="form-grid selector-form">
               <legend className="selector-form__legend">Selectores de resultados</legend>
               <div className="field">
                 <label htmlFor="explorer-election">Elección</label>
-                <select id="explorer-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+                <select
+                  id="explorer-election"
+                  name="electionId"
+                  defaultValue={selected.electionId ?? ""}
+                  required={controlStates.electionId.required}
+                  disabled={controlStates.electionId.disabled}
+                >
                   <option value="">Elegir una elección</option>
                   {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-category">Categoría</label>
-                <select id="explorer-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+                <select
+                  id="explorer-category"
+                  name="categoryId"
+                  defaultValue={selected.categoryId ?? ""}
+                  required={controlStates.categoryId.required}
+                  disabled={controlStates.categoryId.disabled}
+                >
                   <option value="">Elegir una categoría</option>
                   {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-distrito">Distrito</label>
-                <select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+                <select
+                  id="explorer-distrito"
+                  name="distritoCode"
+                  defaultValue={selected.distritoCode ?? ""}
+                  required={controlStates.distritoCode.required}
+                  disabled={controlStates.distritoCode.disabled}
+                >
                   <option value="">Elegir un distrito</option>
                   {facets.distritos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-seccion">Sección</label>
-                <select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+                <select
+                  id="explorer-seccion"
+                  name="seccionCode"
+                  defaultValue={selected.seccionCode ?? ""}
+                  required={controlStates.seccionCode.required}
+                  disabled={controlStates.seccionCode.disabled}
+                >
                   <option value="">Elegir una sección</option>
                   {facets.secciones.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-circuito">Circuito</label>
-                <select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}>
+                <select
+                  id="explorer-circuito"
+                  name="circuitoCode"
+                  defaultValue={selected.circuitoCode ?? ""}
+                  required={controlStates.circuitoCode.required}
+                  disabled={controlStates.circuitoCode.disabled}
+                >
                   <option value="">Cualquier circuito</option>
                   {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-establecimiento">Establecimiento</label>
-                <select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}>
+                <select
+                  id="explorer-establecimiento"
+                  name="establecimientoCode"
+                  defaultValue={selected.establecimientoCode ?? ""}
+                  required={controlStates.establecimientoCode.required}
+                  disabled={controlStates.establecimientoCode.disabled}
+                >
                   <option value="">Cualquier establecimiento</option>
                   {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-mesa">Mesa</label>
-                <select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}>
+                <select
+                  id="explorer-mesa"
+                  name="mesaCode"
+                  defaultValue={selected.mesaCode?.toString() ?? ""}
+                  required={controlStates.mesaCode.required}
+                  disabled={controlStates.mesaCode.disabled}
+                >
                   <option value="">Cualquier mesa</option>
                   {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}
                 </select>
               </div>
               <div className="field">
                 <label htmlFor="explorer-level">Nivel del informe</label>
-                <select id="explorer-level" name="level" defaultValue={selected.level ?? ""}>
+                <select
+                  id="explorer-level"
+                  name="level"
+                  defaultValue={selected.level ?? ""}
+                  required={controlStates.level.required}
+                  disabled={controlStates.level.disabled}
+                >
                   <option value="">Elegir un nivel</option>
                   {facets.availableLevels.map((level) => <option key={level} value={level}>{level}</option>)}
                 </select>
               </div>
             </fieldset>
             <div className="form-actions">
+              <button className="button button--secondary" type="submit" formNoValidate>
+                Actualizar opciones
+              </button>
               <button className="button button--primary" type="submit">Aplicar selección</button>
             </div>
-          </form>
+          </ScopeSelectorForm>
         </section>
       );
     }

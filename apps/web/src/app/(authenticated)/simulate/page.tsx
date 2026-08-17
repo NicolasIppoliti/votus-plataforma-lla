@@ -5,11 +5,6 @@ import { GranularityBadge } from "@/components/GranularityBadge";
 import { allocateSeats } from "@/domain/seat-allocation/allocate";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
-  nationalInputSchema,
-  pbaMunicipalInputSchema,
-  pbaProvincialInputSchema,
-} from "@/domain/seat-allocation/schemas";
-import {
   composeCouncil,
   CouncilCompositionError,
   type CouncilComposition,
@@ -18,8 +13,15 @@ import type {
   AllocationInput,
   AllocationResult,
 } from "@/domain/seat-allocation/types";
-import { GRANULARITY, type Granularity } from "@/lib/results/types";
+import type { Granularity } from "@/lib/results/types";
 import { AllocationEvidence } from "./allocation-evidence";
+import {
+  projectionInputSchema,
+  projectionToAllocationInput,
+  type ProjectionInput,
+} from "./projection-input";
+import { SimulationForm } from "./simulation-form";
+import { SIMULATION_COUNCIL } from "./simulation-configuration";
 
 interface SimulatePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -31,27 +33,6 @@ interface ParsedInput {
   granularity?: Granularity;
   parseError?: string;
 }
-
-const projectionGranularitySchema = z.enum([
-  GRANULARITY.MESA,
-  GRANULARITY.ESTABLECIMIENTO,
-  GRANULARITY.CIRCUITO,
-  GRANULARITY.SECCION,
-  GRANULARITY.DISTRITO,
-]);
-
-const projectionFields = {
-  isProjection: z.literal(true),
-  granularity: projectionGranularitySchema,
-};
-
-const projectionInputSchema = z.discriminatedUnion("level", [
-  pbaMunicipalInputSchema.safeExtend(projectionFields),
-  pbaProvincialInputSchema.safeExtend(projectionFields),
-  nationalInputSchema.safeExtend(projectionFields),
-]);
-
-type ProjectionInput = z.infer<typeof projectionInputSchema>;
 
 function allocationLevelLabel(level: AllocationResult["level"]): string {
   if (level === "pba_municipal") return "municipal de PBA";
@@ -125,11 +106,10 @@ function parseInputParam(raw: string | undefined): ParsedInput {
       };
     }
     const projection = projectionInputSchema.parse(decoded);
-    const { granularity, ...input } = projection;
     return {
-      input,
+      input: projectionToAllocationInput(projection),
       projectionInput: projection,
-      granularity,
+      granularity: projection.granularity,
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -142,44 +122,12 @@ function parseInputParam(raw: string | undefined): ParsedInput {
 }
 
 /**
- * Seat-simulation view (task 11.18) — wires Phase 10's `allocate.ts`
- * public boundary. The `AllocationInput` discriminated union (D3) and its
- * Zod 4 strict-object variants (D5) already reject an illegal level/field
- * pairing at parse time, so this page's own job is only to surface the
- * `allocateSeats` result or its rejection, never to re-implement either
- * statutory method.
- *
- * Deliberately a query-param JSON interface, not a rich form: task 11.18
- * scopes this page to wiring `allocate.ts`, and a full operator-facing
- * form is out of this phase's numbered scope.
+ * Shared form and deep-link configuration. Requests can select this exact
+ * council, but cannot change either statutory seat count.
  */
-/**
- * LOM (Decreto-Ley 6769/58) Art. 2: 18 seats for a partido in the
- * 40.000-80.000 bracket. Coronel Rosales has 67.503 inhabitants (INDEC Censo
- * 2022). This is a SOURCED quantity, distinct from the seats a single election
- * renews — `composeCouncil` never derives one from the other.
- */
-const COUNCIL_TOTAL_SEATS = 18;
-
-/**
- * The partido these seat counts were verified for.
- *
- * 18 is LOM Art. 2 for the 40.000-80.000 bracket and Coronel Rosales has
- * 67.503 inhabitants (INDEC 2022), so the pair is specific to THIS partido.
- * Gating on `level === "pba_municipal"` applied it to every PBA partido: a
- * 12-, 20- or 24-seat council was refused with "LOM Art. 3 renews 9 of the 18"
- * -- a statutory claim that is false there -- and its valid allocation was
- * discarded. The jurisdiction is configuration, like every other pinned scope
- * on this site.
- */
-const COUNCIL_JURISDICTION_LABEL = "Coronel de Marina Leonardo Rosales";
-
-/**
- * LOM Art. 3 renews the council by halves every two years, so ONE election
- * fills 9 seats. Sourced from the statute exactly like the 18 above, and
- * never read from the request — `seatsToFill` is operator input.
- */
-const COUNCIL_SEATS_PER_ELECTION = 9;
+const COUNCIL_TOTAL_SEATS = SIMULATION_COUNCIL.TOTAL_SEATS;
+const COUNCIL_JURISDICTION_LABEL = SIMULATION_COUNCIL.JURISDICTION;
+const COUNCIL_SEATS_PER_ELECTION = SIMULATION_COUNCIL.SEATS_PER_ELECTION;
 
 /** The shape `heldOver` must have before it crosses into the domain. */
 const councilSeatHoldersSchema = z.array(
@@ -212,24 +160,38 @@ function validateCouncilInput({
       `heldOver requiere un concejo compatible: use council=${COUNCIL_JURISDICTION_LABEL}`,
     );
   }
-  if (council === undefined) return {};
-  if (council !== COUNCIL_JURISDICTION_LABEL) {
+  if (
+    council !== undefined &&
+    council !== COUNCIL_JURISDICTION_LABEL
+  ) {
     throw new CouncilCompositionError(
       `concejo no compatible: esta ruta solo admite ${COUNCIL_JURISDICTION_LABEL}`,
     );
   }
+  if (input?.level === "pba_municipal") {
+    if (
+      input.councilTotal !== undefined &&
+      input.councilTotal !== SIMULATION_COUNCIL.TOTAL_SEATS
+    ) {
+      throw new CouncilCompositionError(
+        `el concejo requiere ${SIMULATION_COUNCIL.TOTAL_SEATS} bancas; ` +
+          `se recibió ${input.councilTotal}`,
+      );
+    }
+    if (input.seatsToFill !== COUNCIL_SEATS_PER_ELECTION) {
+      throw new CouncilCompositionError(
+        `La LOM, art. 3, renueva ${COUNCIL_SEATS_PER_ELECTION} de las ` +
+          `${COUNCIL_TOTAL_SEATS} bancas del concejo por elección; esta asignación ` +
+          `cubre ${input.seatsToFill}`,
+      );
+    }
+  }
+  if (council === undefined) return {};
   if (!input) return { council: COUNCIL_JURISDICTION_LABEL };
   if (input.level !== "pba_municipal") {
     throw new CouncilCompositionError(
       `${COUNCIL_JURISDICTION_LABEL} solo está disponible para proyecciones ` +
         `pba_municipal; se recibió ${input.level}`,
-    );
-  }
-  if (input.seatsToFill !== COUNCIL_SEATS_PER_ELECTION) {
-    throw new CouncilCompositionError(
-      `La LOM, art. 3, renueva ${COUNCIL_SEATS_PER_ELECTION} de las ` +
-        `${COUNCIL_TOTAL_SEATS} bancas del concejo por elección; esta asignación ` +
-        `cubre ${input.seatsToFill}`,
     );
   }
   if (rawHeldOver === undefined) {
@@ -316,8 +278,9 @@ export default async function SimulatePage({
   // requested: it sat inside the `heldOver` branch, so a pba_municipal race
   // renewing 17 of 18 seats rendered its awards with no refusal whenever the
   // operator omitted an unrelated query param. LOM Art. 3 fixes the half at 9.
-  // Gated on the PARTIDO, not on the level: `?council=` names which one, and
-  // this route only knows the seat counts for the one it was verified against.
+  // This route's `pba_municipal` input is fixed to the verified Coronel
+  // Rosales configuration. Omitting `?council=` suppresses roster claims,
+  // but it cannot change the statutory divisor or total.
   if (result && input && validatedCouncil.heldOver !== undefined) {
     try {
       if (result.seatAwards.length !== COUNCIL_SEATS_PER_ELECTION) {
@@ -374,15 +337,7 @@ export default async function SimulatePage({
   return (
     <main>
       <h1>Simulación de bancas</h1>
-      <p>
-        Proporcione un parámetro de consulta <code>input</code> con una
-        proyección codificada como JSON: <code>isProjection: true</code>,{" "}
-        <code>granularity</code> normalizada, <code>level</code>, <code>seatsToFill</code>,{" "}
-        <code>lists</code> y los campos del cociente Hare (niveles de PBA) o{" "}
-        <code>padron</code>/<code>threshold</code> (nivel nacional). Las ejecuciones
-        históricas requieren datos archivados y confiables del servidor, y no están
-        disponibles mediante JSON en la consulta.
-      </p>
+      <SimulationForm />
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}

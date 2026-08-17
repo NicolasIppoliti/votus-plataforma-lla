@@ -16,33 +16,51 @@ export function LoginForm(): ReactNode {
   );
 
   return (
-    <form action={formAction} aria-busy={isPending}>
-      <label htmlFor="email">Correo electrónico</label>
-      <input
-        id="email"
-        name="email"
-        type="email"
-        autoComplete="email"
-        required
-        aria-describedby={state.error === null ? undefined : "login-error"}
-      />
-      <label htmlFor="password">Contraseña</label>
-      <input
-        id="password"
-        name="password"
-        type="password"
-        autoComplete="current-password"
-        required
-        aria-describedby={state.error === null ? undefined : "login-error"}
-      />
-      <button type="submit" disabled={isPending}>
+    <form
+      aria-labelledby="login-heading"
+      className="login-form"
+      aria-busy={isPending || undefined}
+    >
+      <div className="field">
+        <label htmlFor="email">Correo electrónico</label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          aria-describedby="login-error"
+          aria-invalid={state.error !== null}
+          required
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="password">Contraseña</label>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          aria-describedby="login-error"
+          aria-invalid={state.error !== null}
+          required
+        />
+      </div>
+      <button
+        className="button button--primary login-form__submit"
+        type="submit"
+        formAction={formAction}
+        disabled={isPending}
+      >
         {isPending ? "Iniciando sesión…" : "Iniciar sesión"}
       </button>
-      {state.error === null ? null : (
-        <p id="login-error" role="alert" aria-live="assertive">
-          {state.error}
-        </p>
-      )}
+      <p
+        id="login-error"
+        className="login-form__feedback"
+        role="alert"
+        aria-live="assertive"
+      >
+        {state.error}
+      </p>
     </form>
   );
 }

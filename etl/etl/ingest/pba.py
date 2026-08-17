@@ -42,6 +42,7 @@ from ..archive import (
 from ..crosswalk import CrosswalkTable
 from ..http_client import DEFAULT_USER_AGENT, HostPolicy, PolicedHostFetcher
 from ..jurisdiction import (
+    JurisdictionNames,
     QuarantinedPbaDistrito,
     ResultRow,
     make_result_row,
@@ -255,6 +256,7 @@ class PbaRow:
     archive_entry_id: str
     source_row_index: int
     requested_granularity: str
+    jurisdiction_names: JurisdictionNames = JurisdictionNames()
 
     @property
     def degraded_from(self) -> str | None:
@@ -374,7 +376,14 @@ def ingest_pba(
         raise PbaSchemaError(f"expected first list-id header 'Lista', got {parser.headers[:1]!r}")
     if not parser.distrito_label:
         raise PbaSchemaError("could not locate the distrito identifier in the source page")
-    distrito_code = parser.distrito_label.split("-", 1)[0].strip()
+    distrito_code, separator, distrito_name = parser.distrito_label.partition("-")
+    distrito_code = distrito_code.strip()
+    distrito_name = distrito_name.strip()
+    if not separator or not distrito_code or not distrito_name:
+        raise PbaSchemaError(
+            "expected the source distrito identifier to contain both code and authoritative label"
+        )
+    source_names = JurisdictionNames(distrito=distrito_name)
 
     category_columns = _category_column_indices(parser.headers)
     missing_categories = _EXPECTED_CATEGORIES - category_columns.keys()
@@ -450,6 +459,7 @@ def ingest_pba(
                     archive_entry_id=archive_entry_id,
                     source_row_index=row_index,
                     requested_granularity=requested_granularity,
+                    jurisdiction_names=source_names,
                 )
             )
 
@@ -555,9 +565,6 @@ def resolve_pba_jurisdictions(
             continue
 
         national_distrito, national_seccion = translated
-        if (national_distrito, national_seccion) == (row.result.distrito, row.result.seccion):
-            resolved.append(row)
-            continue
 
         # A PBA partido total is a SECCION-level figure in the national scheme:
         # PBA's distrito `027` is the partido, while national distrito `02` is
@@ -578,11 +585,21 @@ def resolve_pba_jurisdictions(
             if row.requested_granularity == row.result.granularity
             else row.requested_granularity
         )
+        # The PBA page calls a partido "Distrito". Only the reviewed crosswalk
+        # proves that this source-native label belongs to national seccion 027;
+        # assigning it before translation would incorrectly name distrito 02.
+        translated_names = JurisdictionNames(
+            distrito=row.jurisdiction_names.distrito if national_seccion is None else None,
+            seccion=row.jurisdiction_names.distrito if national_seccion else None,
+            circuito=row.jurisdiction_names.circuito,
+            establecimiento=row.jurisdiction_names.establecimiento,
+        )
         resolved.append(
             replace(
                 row,
                 result=translated_result,
                 requested_granularity=translated_request,
+                jurisdiction_names=translated_names,
             )
         )
 
@@ -683,7 +700,10 @@ def load_pba_rows(
         jurisdiction_id = jurisdiction_cache.get(lineage)
         if jurisdiction_id is None:
             jurisdiction_id = db.upsert_jurisdiction(
-                conn, distrito=row.result.distrito, seccion=row.result.seccion
+                conn,
+                distrito=row.result.distrito,
+                seccion=row.result.seccion,
+                names=row.jurisdiction_names,
             )
             jurisdiction_cache[lineage] = jurisdiction_id
 

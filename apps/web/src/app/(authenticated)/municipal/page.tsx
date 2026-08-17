@@ -319,9 +319,9 @@ interface MunicipalPageProps {
 /**
  * Authenticated operator route for PBA municipal (Concejales) results.
  * RSC, server-only reads — reaches data ONLY through
- * `repository.queryOfficial()` via `loadMunicipalView`. Linked from
- * `(authenticated)/layout.tsx` so it is reachable by an operator
- * navigating the app, not merely addressable by URL.
+ * `repository.queryOfficial()` via `loadMunicipalView`. Its dashboard card
+ * keeps the prepared route discoverable without presenting a context-dependent
+ * request as a primary-navigation destination.
  */
 export default async function MunicipalPage({
   searchParams,

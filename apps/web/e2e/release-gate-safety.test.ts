@@ -101,13 +101,13 @@ describe("migration release-gate integration", () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(
-			Array.from({ length: 26 }, (_, index) =>
+			Array.from({ length: 27 }, (_, index) =>
 				String(index + 1).padStart(4, "0"),
 			),
 		);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0027",
-			fileName: "0027_e2e_service_role_grants.sql",
+			version: "0028",
+			fileName: "0028_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(plan.pgTapProofs).toContainEqual({
@@ -144,19 +144,21 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through migration 0026", () => {
+	it("proves the exact results-exploration rollback through migration 0027", () => {
 		const proof = readFileSync(new URL("../../../supabase/tests/results_exploration_release.sql", import.meta.url), "utf8");
 		const migrationSequence = Array.from(
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("26 as migration_inventory_count");
+		expect(proof).toContain("27 as migration_inventory_count");
 		expect(migrationSequence).toEqual([
-			"0026-down", "0025-down", "0023-down", "0022-down", "0021-down", "0020-down",
-			"0020-up", "0021-up", "0022-up", "0023-up", "0025-up", "0026-up",
+			"0027-down", "0026-down", "0025-down", "0023-down", "0022-down", "0021-down", "0020-down",
+			"0020-up", "0021-up", "0022-up", "0023-up", "0025-up", "0026-up", "0027-up",
 		]);
 		expect(proof).toContain("0026 rollback did not restore the exact optimized five-argument facets definition");
 		expect(proof).toContain("0026 forward apply did not restore the six-argument mesa lineage definition");
+		expect(proof).toContain("0027 rollback changed explorer functions instead of dropping only its index");
+		expect(proof).toContain("0027 forward apply installed the wrong non-official partial-index contract");
 	});
 	it("hands the full scale and rollback/reapply proofs to production execution", async () => {
 		const executedPlans: ReleaseGatePlan[] = [];

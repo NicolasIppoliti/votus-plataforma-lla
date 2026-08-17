@@ -24,6 +24,7 @@ from psycopg import sql
 
 from etl.crosswalk import CrosswalkTable, MesaStability
 from etl.jurisdiction import (
+    JurisdictionNames,
     normalize_circuito_code,
     normalize_distrito_code,
     normalize_seccion_code,
@@ -34,6 +35,67 @@ from etl.review_item import ReviewItemRecord
 
 class ArchiveEntryConflictError(ValueError):
     """Persisted provenance disagrees with verified archive/source evidence."""
+
+
+class JurisdictionNameConflictError(ValueError):
+    """Authoritative display metadata conflicts on one exact jurisdiction lineage."""
+
+
+_JURISDICTION_NAME_FIELDS: tuple[tuple[str, str], ...] = (
+    ("distrito", "distrito_name"),
+    ("seccion", "seccion_name"),
+    ("circuito", "circuito_name"),
+    ("establecimiento", "establecimiento_name"),
+)
+_JURISDICTION_WRITER_LOCK_SQL = "LOCK TABLE jurisdiction IN SHARE ROW EXCLUSIVE MODE"
+
+
+def _lock_jurisdiction_writer(conn, cur) -> None:
+    """Serialize jurisdiction writers until their caller commits or rolls back.
+
+    Both jurisdiction entrypoints require a transaction-capable, non-autocommit
+    connection. PostgreSQL table locks are transaction-scoped; an autocommit
+    connection cannot retain this lock across the lineage read and write.
+    """
+    if getattr(conn, "autocommit", False):
+        raise RuntimeError(
+            "jurisdiction writers require a transaction; autocommit connections are unsupported"
+        )
+    cur.execute(_JURISDICTION_WRITER_LOCK_SQL)
+
+
+def _lineage_shape(key: tuple[str, str | None, str | None, str | None, int | None]) -> str:
+    levels = ("distrito", "seccion", "circuito", "establecimiento", "mesa")
+    populated = [level for level, value in zip(levels, key) if value is not None]
+    return f"exact {'/'.join(populated)} lineage"
+
+
+def _merge_jurisdiction_names(
+    existing: JurisdictionNames,
+    incoming: JurisdictionNames,
+    *,
+    lineage_shape: str,
+) -> JurisdictionNames:
+    """Fill NULL names and reject different non-NULL evidence without leaking values."""
+    merged: dict[str, str | None] = {}
+    conflicting_columns: list[str] = []
+    for field_name, column_name in _JURISDICTION_NAME_FIELDS:
+        existing_value = getattr(existing, field_name)
+        incoming_value = getattr(incoming, field_name)
+        if (
+            existing_value is not None
+            and incoming_value is not None
+            and existing_value != incoming_value
+        ):
+            conflicting_columns.append(column_name)
+        merged[field_name] = existing_value if existing_value is not None else incoming_value
+
+    if conflicting_columns:
+        raise JurisdictionNameConflictError(
+            f"jurisdiction name conflict for {lineage_shape}; conflicting field(s): "
+            f"{', '.join(conflicting_columns)}; refusing to overwrite authoritative metadata"
+        )
+    return JurisdictionNames(**merged)
 
 
 @dataclass(frozen=True)
@@ -314,6 +376,7 @@ def upsert_jurisdiction(
     circuito: str | None = None,
     establecimiento: str | None = None,
     mesa: int | None = None,
+    names: JurisdictionNames | None = None,
 ) -> str:
     """Resolve or create the `jurisdiction` row for one lineage tuple.
 
@@ -336,6 +399,11 @@ def upsert_jurisdiction(
     still passes national ingestion's raw unpadded `"2"`/`"27"` resolves to
     the SAME row as fiscalización's already-padded `"02"`/`"027"` instead of
     creating a second, format-only duplicate.
+
+    The writer takes a transaction-scoped table lock before its lineage
+    lookup. Callers must use a non-autocommit connection and finish the
+    surrounding transaction; repeated calls in that transaction safely
+    reacquire the same lock.
     """
     distrito = normalize_distrito_code(distrito)
     seccion = normalize_seccion_code(seccion)
@@ -345,30 +413,71 @@ def upsert_jurisdiction(
     # compensate — two independent ideas of the same code, which is what
     # produced Coronel Rosales as three identities.
     circuito = normalize_circuito_code(circuito)
+    key = (distrito, seccion, circuito, establecimiento, mesa)
+    incoming_names = names or JurisdictionNames()
     with conn.cursor() as cur:
+        _lock_jurisdiction_writer(conn, cur)
         cur.execute(
             """
-            select id from jurisdiction
+            select id, distrito_name, seccion_name, circuito_name, establecimiento_name
+            from jurisdiction
             where distrito_code = %s
               and seccion_code is not distinct from %s
               and circuito_code is not distinct from %s
               and establecimiento_code is not distinct from %s
               and mesa_code is not distinct from %s
             """,
-            (distrito, seccion, circuito, establecimiento, mesa),
+            key,
         )
         found = cur.fetchone()
         if found is not None:
-            return found[0]
+            jurisdiction_id = found[0]
+            existing_names = JurisdictionNames(
+                distrito=found[1],
+                seccion=found[2],
+                circuito=found[3],
+                establecimiento=found[4],
+            )
+            merged_names = _merge_jurisdiction_names(
+                existing_names,
+                incoming_names,
+                lineage_shape=_lineage_shape(key),
+            )
+            if merged_names != existing_names:
+                cur.execute(
+                    """
+                    update jurisdiction
+                    set distrito_name = %s,
+                        seccion_name = %s,
+                        circuito_name = %s,
+                        establecimiento_name = %s
+                    where id = %s
+                    """,
+                    (
+                        merged_names.distrito,
+                        merged_names.seccion,
+                        merged_names.circuito,
+                        merged_names.establecimiento,
+                        jurisdiction_id,
+                    ),
+                )
+            return jurisdiction_id
 
         cur.execute(
             """
             insert into jurisdiction (
-                distrito_code, seccion_code, circuito_code, establecimiento_code, mesa_code
-            ) values (%s, %s, %s, %s, %s)
+                distrito_code, seccion_code, circuito_code, establecimiento_code, mesa_code,
+                distrito_name, seccion_name, circuito_name, establecimiento_name
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id
             """,
-            (distrito, seccion, circuito, establecimiento, mesa),
+            (
+                *key,
+                incoming_names.distrito,
+                incoming_names.seccion,
+                incoming_names.circuito,
+                incoming_names.establecimiento,
+            ),
         )
         return cur.fetchone()[0]
 
@@ -520,7 +629,7 @@ def batch_upsert_jurisdictions(
     conn,
     keys: Sequence[JurisdictionKey],
     *,
-    establecimiento_names: Mapping[JurisdictionKey, str] | None = None,
+    names: Sequence[JurisdictionNames] | None = None,
 ) -> dict[JurisdictionKey, str]:
     """Resolve or create every `jurisdiction` row for a batch of lineage
     tuples in a bounded number of round trips, instead of one SELECT-then-INSERT
@@ -551,9 +660,17 @@ def batch_upsert_jurisdictions(
     `("02", "027", ...)` resolve to the SAME `jurisdiction` row instead of
     two rows for what is the same real mesa. The ORIGINAL, un-normalized
     keys are what the returned mapping is keyed by.
+
+    Like the single writer, this function requires a non-autocommit
+    connection and holds one shared transaction-scoped writer lock until
+    the caller commits or rolls back. The lock adds one round trip; lineage
+    resolution and insertion remain bulk operations.
     """
     original_keys = list(keys)
-    establecimiento_names = establecimiento_names or {}
+    incoming_names = [JurisdictionNames() for _ in original_keys] if names is None else list(names)
+    if len(incoming_names) != len(original_keys):
+        raise ValueError("batch jurisdiction names must align one-for-one with lineage keys")
+
     normalized_keys = [
         (
             normalize_distrito_code(distrito),
@@ -568,6 +685,22 @@ def batch_upsert_jurisdictions(
     if not distinct_keys:
         return {}
 
+    # Merge duplicate normalized lineages field by field. Complementary NULL/
+    # non-NULL metadata combines; different non-NULL evidence refuses instead
+    # of whichever row happened to appear first or last winning silently.
+    names_by_normalized_key: dict[JurisdictionKey, JurisdictionNames] = {}
+    for normalized_key, row_names in zip(normalized_keys, incoming_names):
+        previous = names_by_normalized_key.get(normalized_key)
+        names_by_normalized_key[normalized_key] = (
+            row_names
+            if previous is None
+            else _merge_jurisdiction_names(
+                previous,
+                row_names,
+                lineage_shape=_lineage_shape(normalized_key),
+            )
+        )
+
     distritos = [key[0] for key in distinct_keys]
     seccions = [key[1] for key in distinct_keys]
     circuitos = [key[2] for key in distinct_keys]
@@ -578,6 +711,7 @@ def batch_upsert_jurisdictions(
     missing: list[JurisdictionKey] = []
 
     with conn.cursor() as cur:
+        _lock_jurisdiction_writer(conn, cur)
         # Round trip 1 -- resolve every tuple that already has a
         # `jurisdiction` row. `unnest(...) with ordinality` expands the
         # five parallel arrays back into one row per input tuple (matching
@@ -592,7 +726,8 @@ def batch_upsert_jurisdictions(
         resolve_existing = sql.SQL(
             """
             select v.distrito, v.seccion, v.circuito, v.establecimiento, v.mesa,
-                   j.id, j.establecimiento_name
+                   j.id, j.distrito_name, j.seccion_name,
+                   j.circuito_name, j.establecimiento_name
             from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[],
                         %s::text[])
                  with ordinality as v(distrito, seccion, circuito, establecimiento, mesa,
@@ -616,7 +751,7 @@ def batch_upsert_jurisdictions(
         # than one, the way `apply_mesa_tipo_mapping` refuses a mesa with two
         # tipos.
         matches: dict[JurisdictionKey, set[str]] = {}
-        existing_names: dict[JurisdictionKey, str | None] = {}
+        existing_names: dict[JurisdictionKey, JurisdictionNames] = {}
         for (
             distrito,
             seccion,
@@ -624,6 +759,9 @@ def batch_upsert_jurisdictions(
             establecimiento,
             mesa,
             jurisdiction_id,
+            distrito_name,
+            seccion_name,
+            circuito_name,
             establecimiento_name,
         ) in cur.fetchall():
             key = (distrito, seccion, circuito, establecimiento, mesa)
@@ -631,7 +769,12 @@ def batch_upsert_jurisdictions(
                 missing.append(key)
             else:
                 matches.setdefault(key, set()).add(jurisdiction_id)
-                existing_names[key] = establecimiento_name
+                existing_names[key] = JurisdictionNames(
+                    distrito=distrito_name,
+                    seccion=seccion_name,
+                    circuito=circuito_name,
+                    establecimiento=establecimiento_name,
+                )
 
         ambiguous = {key: ids for key, ids in matches.items() if len(ids) > 1}
         if ambiguous:
@@ -644,45 +787,33 @@ def batch_upsert_jurisdictions(
         for key, ids in matches.items():
             resolved[key] = next(iter(ids))
 
-        names_by_normalized_key: dict[JurisdictionKey, str] = {}
-        for original_key, normalized_key in zip(original_keys, normalized_keys):
-            if original_key not in establecimiento_names:
+        pending_name_updates: list[tuple[str, JurisdictionNames]] = []
+        for key, incoming in names_by_normalized_key.items():
+            existing = existing_names.get(key)
+            if existing is None:
                 continue
-            name = establecimiento_names[original_key]
-            previous = names_by_normalized_key.get(normalized_key)
-            if previous is not None and previous != name:
-                raise ValueError(
-                    "one normalized establecimiento lineage tuple carries conflicting "
-                    f"names {previous!r} and {name!r}; refusing to pick one"
-                )
-            names_by_normalized_key[normalized_key] = name
-        name_conflicts = {
-            key: (existing_names[key], name)
-            for key, name in names_by_normalized_key.items()
-            if key in existing_names
-            and existing_names[key] is not None
-            and existing_names[key] != name
-        }
-        if name_conflicts:
-            key, names = next(iter(sorted(name_conflicts.items())))
-            raise ValueError(
-                f"{len(name_conflicts)} establecimiento lineage tuple(s) conflict with an "
-                f"existing jurisdiction name; refusing to overwrite. First: {key} -> {names}"
+            merged = _merge_jurisdiction_names(
+                existing,
+                incoming,
+                lineage_shape=_lineage_shape(key),
             )
+            if merged != existing:
+                pending_name_updates.append((resolved[key], merged))
 
         # Round trip 2 -- bulk-insert every tuple with no existing row.
         # Safe without `ON CONFLICT`: `missing` is already de-duplicated
         # (derived from `distinct_keys` above, itself de-duplicated), and
-        # this is a single-writer batch load, never a concurrent upsert.
+        # the shared transaction-scoped lock excludes every competing
+        # jurisdiction writer until this caller commits or rolls back.
         if missing:
             cur.execute(
                 """
                 insert into jurisdiction (
                     distrito_code, seccion_code, circuito_code, establecimiento_code, mesa_code,
-                    establecimiento_name
+                    distrito_name, seccion_name, circuito_name, establecimiento_name
                 )
                 select * from unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::int[],
-                                     %s::text[])
+                                     %s::text[], %s::text[], %s::text[], %s::text[])
                 returning distrito_code, seccion_code, circuito_code, establecimiento_code,
                           mesa_code, id
                 """,
@@ -692,7 +823,10 @@ def batch_upsert_jurisdictions(
                     [key[2] for key in missing],
                     [key[3] for key in missing],
                     [key[4] for key in missing],
-                    [names_by_normalized_key.get(key) for key in missing],
+                    [names_by_normalized_key[key].distrito for key in missing],
+                    [names_by_normalized_key[key].seccion for key in missing],
+                    [names_by_normalized_key[key].circuito for key in missing],
+                    [names_by_normalized_key[key].establecimiento for key in missing],
                 ),
             )
             for (
@@ -705,15 +839,26 @@ def batch_upsert_jurisdictions(
             ) in cur.fetchall():
                 resolved[(distrito, seccion, circuito, establecimiento, mesa)] = jurisdiction_id
 
-        unnamed = [
-            (resolved[key], name)
-            for key, name in names_by_normalized_key.items()
-            if key in existing_names and existing_names[key] is None
-        ]
-        if unnamed:
+        if pending_name_updates:
             cur.executemany(
-                "update jurisdiction set establecimiento_name = %s where id = %s",
-                [(name, jurisdiction_id) for jurisdiction_id, name in unnamed],
+                """
+                update jurisdiction
+                set distrito_name = %s,
+                    seccion_name = %s,
+                    circuito_name = %s,
+                    establecimiento_name = %s
+                where id = %s
+                """,
+                [
+                    (
+                        row_names.distrito,
+                        row_names.seccion,
+                        row_names.circuito,
+                        row_names.establecimiento,
+                        jurisdiction_id,
+                    )
+                    for jurisdiction_id, row_names in pending_name_updates
+                ],
             )
 
     return {

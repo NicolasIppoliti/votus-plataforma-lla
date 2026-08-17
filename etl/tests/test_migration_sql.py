@@ -871,6 +871,8 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "results_exploration_coverage",
         "results_exploration_schools",
         "->>'status',",
+        "result_row_non_official_scope_idx",
+        "j.seccion_code = '001'",
         "500, 'scale payload retains exactly 500 complete schools'",
         "12000::bigint",
         "rollback;",
@@ -878,15 +880,55 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         assert required in sql
 
 
+def test_results_exploration_coverage_scale_proof_matches_production_shape() -> None:
+    sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    marker = "-- issue #54 production-shaped coverage proof"
+    assert marker in sql
+    coverage_proof = " ".join(sql.split(marker, 1)[1].split())
+
+    for required in (
+        "2025, 'legislativas'",
+        "'diputado nacional'",
+        "'02', '027'",
+        "generate_series(1, 153) official_mesa",
+        "generate_series(1, 93) covered_mesa",
+        "generate_series(1, 15) result_position",
+        "2295::bigint",
+        "1395::bigint",
+        "results_exploration_coverage(",
+        "'status', payload->'status'",
+        "'is_random_sample', payload->'is_random_sample'",
+        "'observed_units', payload->'mesas_coverage'->'observed_units'",
+        "'denominator_units', payload->'mesas_coverage'->'denominator_units'",
+        "'source_rows', payload->'source_audit'->0->'rows'",
+        "'source_mesas', payload->'source_audit'->0->'mesas'",
+        "'denominator_rows', payload->'denominator_audit'->0->'rows'",
+        "'denominator_mesas', payload->'denominator_audit'->0->'mesas'",
+        "'coverage_production_rpc'",
+        "'coverage_unsupported_source_audit'",
+        "result_row_non_official_scope_idx",
+        "shared hit blocks",
+        "shared read blocks",
+    ):
+        assert required in coverage_proof
+
+    assert "'is_random_sample', false" in coverage_proof
+    assert re.search(r"coverage_production_rpc[^;]+<=\s*15000", coverage_proof)
+    assert re.search(r"coverage_production_rpc[^;]+shared[^;]+<=\s*30000", coverage_proof)
+    assert re.search(r"coverage_unsupported_source_audit[^;]+shared[^;]+<=\s*2500", coverage_proof)
+
+
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0027_optimize_non_official_source_audit.down.sql",
         "\\ir ../migrations/down/0022_results_exploration_scale.down.sql",
         "\\ir ../migrations/down/0021_results_coverage.down.sql",
         "\\ir ../migrations/down/0020_results_exploration.down.sql",
         "\\ir ../migrations/0020_results_exploration.sql",
         "\\ir ../migrations/0021_results_coverage.sql",
         "\\ir ../migrations/0022_results_exploration_scale.sql",
+        "\\ir ../migrations/0027_optimize_non_official_source_audit.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -898,8 +940,29 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "permission denied for function results_exploration_official_0020",
         "permission denied for function results_exploration_schools",
         "result_row_exploration_scope_idx",
+        "result_row_non_official_scope_idx",
+        "dropping only its index",
     ):
         assert required in sql
+
+
+def test_0027_adds_only_the_reversible_unknown_preserving_partial_index() -> None:
+    forward_path = MIGRATIONS / "0027_optimize_non_official_source_audit.sql"
+    down_path = MIGRATIONS / "down" / "0027_optimize_non_official_source_audit.down.sql"
+
+    assert forward_path.exists()
+    assert down_path.exists()
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    assert "create index if not exists result_row_non_official_scope_idx" in forward
+    assert "on result_row (election_id, category_id, jurisdiction_id)" in forward
+    assert "where source_kind is distinct from 'official'" in forward
+    assert "source_kind <> 'official'" not in forward
+    assert forward.count("create index") == 1
+    for mutation in ("alter table", "update ", "delete from", "insert into"):
+        assert mutation not in forward
+
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert down == "drop index if exists result_row_non_official_scope_idx;"
 
 
 def test_0022_adds_a_separately_droppable_lineage_index_for_scale() -> None:

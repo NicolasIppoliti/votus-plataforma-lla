@@ -22,6 +22,9 @@ test.describe("the production root preserves its authentication boundary", () =>
         await page.goto("/");
         await expect(page).toHaveURL(/\/$/);
         await expect(page.getByRole("main")).toContainText(ROOT_CONTENT);
+        await expect(
+          page.getByRole("navigation", { name: "principal" }),
+        ).toHaveCount(0);
         await page.getByRole("link", { name: "Ir al contenido principal" }).press("Enter");
         await expect(page.locator("#main-content")).toBeFocused();
         expect(
@@ -32,7 +35,34 @@ test.describe("the production root preserves its authentication boundary", () =>
 
         await page.goto("/dashboard");
         await expect(page.getByRole("heading", { level: 1, name: "Panel de Votus" })).toBeVisible();
-        await expect(page.getByRole("navigation", { name: "principal" })).toBeVisible();
+        const primaryNavigation = page.getByRole("navigation", { name: "principal" });
+        await expect(primaryNavigation).toBeVisible();
+        await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
+        await expect(
+          primaryNavigation.getByRole("link", { name: "Panel", exact: true }),
+        ).toHaveAttribute("aria-current", "page");
+        await expect(
+          primaryNavigation.getByRole("link", { name: "Comparar", exact: true }),
+        ).toHaveCount(0);
+        await expect(
+          primaryNavigation.getByRole("link", {
+            name: "Municipal (Concejales)",
+            exact: true,
+          }),
+        ).toHaveCount(0);
+
+        const preparedRoutes = page.getByRole("region", {
+          name: "Rutas de análisis preparadas",
+        });
+        await expect(preparedRoutes).toContainText(
+          "se requiere un contexto preparado o un enlace directo",
+        );
+        await expect(
+          preparedRoutes.getByRole("link", { name: "Comparar resultados electorales" }),
+        ).toHaveAttribute("href", "/compare");
+        await expect(
+          preparedRoutes.getByRole("link", { name: "Análisis de concejos municipales" }),
+        ).toHaveAttribute("href", "/municipal");
         await page.getByRole("link", { name: "Ir al contenido principal" }).press("Enter");
         await expect(page.locator("#main-content")).toBeFocused();
         expect(

@@ -17,6 +17,7 @@ import pytest
 
 from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.jurisdiction import (
+    JurisdictionNames,
     QuarantinedPbaDistrito,
     is_canonicalizable_circuito_code,
     is_canonicalizable_code,
@@ -82,6 +83,20 @@ def test_distrito_row_rejects_a_fabricated_mesa_value() -> None:
             list_id="134",
             votes=1000,
         )
+
+
+def test_jurisdiction_names_normalize_only_outer_whitespace_and_blank_values() -> None:
+    names = JurisdictionNames(
+        distrito="  Buenos Aires  ",
+        seccion="\tCoronel de Marina L. Rosales\n",
+        circuito="  ",
+        establecimiento="Escuela N° 1",
+    )
+
+    assert names.distrito == "Buenos Aires"
+    assert names.seccion == "Coronel de Marina L. Rosales"
+    assert names.circuito is None
+    assert names.establecimiento == "Escuela N° 1"
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +230,510 @@ def test_normalize_circuito_code_pads_and_never_truncates() -> None:
     assert normalize_circuito_code("123456") == "123456", (
         "a wider code must survive intact, never be truncated to the padding width"
     )
+
+
+class _ExistingJurisdictionCursor:
+    def __init__(self, state: list[str | None]) -> None:
+        self.state = state
+        self.fetchone_result = None
+        self.fetchall_result = []
+        self.name_updates = 0
+        self.queries: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def execute(self, query, params=None) -> None:
+        if not isinstance(query, str):
+            self.queries.append("batch lineage select")
+            keys = list(zip(*params[:5]))
+            self.fetchall_result = [
+                (
+                    *key,
+                    "jurisdiction-id" if len(keys) == 1 else f"jurisdiction-id-{index}",
+                    *self.state,
+                )
+                for index, key in enumerate(keys)
+            ]
+            return
+
+        self.queries.append(query.strip())
+        normalized_query = " ".join(query.split()).lower()
+        if normalized_query == "lock table jurisdiction in share row exclusive mode":
+            return
+        if "select id, distrito_name" in normalized_query:
+            self.fetchone_result = ("jurisdiction-id", *self.state)
+        elif "update jurisdiction" in normalized_query:
+            self.state[:] = params[:4]
+            self.name_updates += 1
+        else:  # pragma: no cover - this fake only models an already-existing row
+            raise AssertionError(f"unexpected SQL shape: {query}")
+
+    def fetchone(self):
+        return self.fetchone_result
+
+    def fetchall(self):
+        return self.fetchall_result
+
+    def executemany(self, query, params) -> None:
+        assert "update jurisdiction" in query
+        values = list(params)
+        assert len(values) == 1
+        self.state[:] = values[0][:4]
+        self.name_updates += 1
+
+
+class _ExistingJurisdictionConnection:
+    def __init__(self) -> None:
+        self.cursor_instance = _ExistingJurisdictionCursor([None, None, None, None])
+
+    def cursor(self):
+        return self.cursor_instance
+
+
+@pytest.mark.parametrize("mode", ["single", "batch"])
+def test_jurisdiction_writers_lock_before_any_lineage_read_or_write(mode: str) -> None:
+    from etl.db import batch_upsert_jurisdictions, upsert_jurisdiction
+
+    conn = _ExistingJurisdictionConnection()
+    key = ("02", "027", "00248", "37974", 990000)
+
+    if mode == "single":
+        assert (
+            upsert_jurisdiction(
+                conn,
+                distrito=key[0],
+                seccion=key[1],
+                circuito=key[2],
+                establecimiento=key[3],
+                mesa=key[4],
+            )
+            == "jurisdiction-id"
+        )
+    else:
+        batch_keys = [(*key[:4], key[4] + offset) for offset in range(50)]
+        resolved = batch_upsert_jurisdictions(conn, batch_keys)
+        assert len(resolved) == len(batch_keys)
+
+    assert conn.cursor_instance.queries[0] == (
+        "LOCK TABLE jurisdiction IN SHARE ROW EXCLUSIVE MODE"
+    )
+    assert len(conn.cursor_instance.queries) == 2, (
+        "the shared lock adds one round trip without changing either writer's bounded query shape"
+    )
+
+
+@pytest.mark.parametrize("mode", ["single", "batch"])
+def test_jurisdiction_writers_reject_autocommit_connections(mode: str) -> None:
+    conn = _ExistingJurisdictionConnection()
+    conn.autocommit = True
+    key = ("02", "027", "00248", "37974", 990000)
+
+    with pytest.raises(RuntimeError, match="require a transaction; autocommit"):
+        _write_jurisdiction(conn, mode, key, JurisdictionNames())
+    assert conn.cursor_instance.queries == []
+
+
+@pytest.mark.parametrize("mode", ["single", "batch"])
+def test_name_reconciliation_contract_runs_through_both_database_entrypoints(mode: str) -> None:
+    from etl.db import (
+        JurisdictionNameConflictError,
+        batch_upsert_jurisdictions,
+        upsert_jurisdiction,
+    )
+
+    conn = _ExistingJurisdictionConnection()
+    key = ("02", "027", "00248", "37974", 990001)
+
+    def write(row_names: JurisdictionNames) -> str:
+        if mode == "single":
+            return upsert_jurisdiction(
+                conn,
+                distrito=key[0],
+                seccion=key[1],
+                circuito=key[2],
+                establecimiento=key[3],
+                mesa=key[4],
+                names=row_names,
+            )
+        return batch_upsert_jurisdictions(conn, [key], names=[row_names])[key]
+
+    official = JurisdictionNames(
+        distrito="Buenos Aires",
+        seccion="Coronel de Marina L. Rosales",
+        circuito="Circuito 248",
+        establecimiento="Escuela N° 1",
+    )
+    assert write(official) == "jurisdiction-id"
+    assert conn.cursor_instance.state == [
+        "Buenos Aires",
+        "Coronel de Marina L. Rosales",
+        "Circuito 248",
+        "Escuela N° 1",
+    ]
+    assert conn.cursor_instance.name_updates == 1
+
+    assert write(JurisdictionNames()) == "jurisdiction-id"
+    assert (
+        write(
+            JurisdictionNames(
+                distrito=" Buenos Aires ",
+                seccion="Coronel de Marina L. Rosales",
+                circuito="Circuito 248",
+                establecimiento="Escuela N° 1",
+            )
+        )
+        == "jurisdiction-id"
+    )
+    assert conn.cursor_instance.name_updates == 1, "NULL and identical re-ingest are no-ops"
+
+    private_sentinel = "PRIVATE_PERSON_SENTINEL"
+    for field_name, column_name in (
+        ("distrito", "distrito_name"),
+        ("seccion", "seccion_name"),
+        ("circuito", "circuito_name"),
+        ("establecimiento", "establecimiento_name"),
+    ):
+        with pytest.raises(JurisdictionNameConflictError) as excinfo:
+            write(JurisdictionNames(**{field_name: private_sentinel}))
+        message = str(excinfo.value)
+        assert "exact distrito/seccion/circuito/establecimiento/mesa lineage" in message
+        assert column_name in message
+        assert private_sentinel not in message
+    assert conn.cursor_instance.name_updates == 1
+
+
+@pytest.mark.parametrize("mode", ["single", "batch"])
+def test_jurisdiction_name_upserts_are_conflict_safe_and_idempotent(mode: str) -> None:
+    """Both write paths share the same four-column NULL/conflict contract."""
+    import os
+    import uuid
+
+    import psycopg
+
+    from etl.db import (
+        JurisdictionNameConflictError,
+        batch_upsert_jurisdictions,
+        upsert_jurisdiction,
+    )
+
+    dsn = os.environ.get(
+        "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )
+    try:
+        conn = psycopg.connect(dsn, connect_timeout=2)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {dsn!r}: {exc}")
+
+    marker = f"X{uuid.uuid4().hex[:8]}"
+    key = (marker, "027", "00248", "37974", 990001)
+    official_names = JurisdictionNames(
+        distrito="Buenos Aires",
+        seccion="Coronel de Marina L. Rosales",
+        circuito="00248",
+        establecimiento="Escuela N° 1",
+    )
+
+    def write(names: JurisdictionNames) -> str:
+        if mode == "single":
+            return upsert_jurisdiction(
+                conn,
+                distrito=key[0],
+                seccion=key[1],
+                circuito=key[2],
+                establecimiento=key[3],
+                mesa=key[4],
+                names=names,
+            )
+        return batch_upsert_jurisdictions(conn, [key], names=[names])[key]
+
+    try:
+        jurisdiction_id = write(JurisdictionNames())
+        filled_id = write(official_names)
+        assert filled_id == jurisdiction_id
+
+        # Re-ingest with identical normalized values is a no-op, while NULL
+        # input deliberately preserves every existing name.
+        assert (
+            write(
+                JurisdictionNames(
+                    distrito=" Buenos Aires ",
+                    seccion="Coronel de Marina L. Rosales",
+                    circuito="00248",
+                    establecimiento="Escuela N° 1",
+                )
+            )
+            == jurisdiction_id
+        )
+        assert write(JurisdictionNames()) == jurisdiction_id
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select distrito_name, seccion_name, circuito_name, establecimiento_name
+                from jurisdiction where id = %s
+                """,
+                (jurisdiction_id,),
+            )
+            assert cur.fetchone() == (
+                "Buenos Aires",
+                "Coronel de Marina L. Rosales",
+                "00248",
+                "Escuela N° 1",
+            )
+
+        private_sentinel = "PRIVATE_PERSON_SENTINEL"
+        with pytest.raises(JurisdictionNameConflictError) as excinfo:
+            write(JurisdictionNames(seccion=private_sentinel))
+        message = str(excinfo.value)
+        assert "exact distrito/seccion/circuito/establecimiento/mesa lineage" in message
+        assert "seccion_name" in message
+        assert private_sentinel not in message
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def _open_ephemeral_postgres_connections(count: int):
+    import os
+
+    import psycopg
+
+    dsn = os.environ.get(
+        "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    )
+    connections = []
+    try:
+        for _ in range(count):
+            connections.append(psycopg.connect(dsn, connect_timeout=2))
+    except psycopg.OperationalError:
+        for connection in connections:
+            connection.close()
+        pytest.skip("no ephemeral Postgres reachable for jurisdiction concurrency proof")
+    return connections
+
+
+def _write_jurisdiction(
+    conn,
+    mode: str,
+    key: tuple[str, str | None, str | None, str | None, int | None],
+    names: JurisdictionNames,
+) -> str:
+    from etl.db import batch_upsert_jurisdictions, upsert_jurisdiction
+
+    if mode == "single":
+        return upsert_jurisdiction(
+            conn,
+            distrito=key[0],
+            seccion=key[1],
+            circuito=key[2],
+            establecimiento=key[3],
+            mesa=key[4],
+            names=names,
+        )
+    return batch_upsert_jurisdictions(conn, [key], names=[names])[key]
+
+
+def _start_jurisdiction_writer(conn, mode: str, key, names: JurisdictionNames):
+    import threading
+
+    started = threading.Event()
+    finished = threading.Event()
+    outcome: dict[str, object] = {}
+
+    def write() -> None:
+        started.set()
+        try:
+            outcome["value"] = _write_jurisdiction(conn, mode, key, names)
+        except BaseException as exc:  # surfaced and asserted by the owning test thread
+            outcome["error"] = exc
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=write, daemon=True)
+    thread.start()
+    assert started.wait(timeout=1)
+    return thread, finished, outcome
+
+
+def _assert_writer_waits_for_first_transaction(finished) -> None:
+    assert not finished.wait(timeout=0.2), (
+        "the competing jurisdiction writer completed before the first transaction released its lock"
+    )
+
+
+def _finish_writer_after_commit(conn, thread, finished) -> None:
+    conn.commit()
+    assert finished.wait(timeout=5), (
+        "the serialized jurisdiction writer did not resume after commit"
+    )
+    thread.join(timeout=1)
+
+
+def _cleanup_concurrency_row(conn, marker: str) -> None:
+    conn.rollback()
+    with conn.cursor() as cur:
+        cur.execute("delete from jurisdiction where distrito_code = %s", (marker,))
+    conn.commit()
+
+
+def test_concurrent_single_and_batch_same_lineage_and_names_resolve_one_row() -> None:
+    import uuid
+
+    first, second, observer = _open_ephemeral_postgres_connections(3)
+    marker = f"X{uuid.uuid4().hex[:8]}"
+    key = (marker, "027", "00248", "37974", 990010)
+    names = JurisdictionNames(distrito="Buenos Aires", seccion="Coronel Rosales")
+    thread = None
+    try:
+        first_id = _write_jurisdiction(first, "single", key, names)
+        assert _write_jurisdiction(first, "single", key, names) == first_id, (
+            "one transaction must be able to re-enter the table lock through the single writer"
+        )
+        thread, finished, outcome = _start_jurisdiction_writer(second, "batch", key, names)
+        _assert_writer_waits_for_first_transaction(finished)
+        _finish_writer_after_commit(first, thread, finished)
+
+        assert "error" not in outcome
+        assert outcome["value"] == first_id
+        with observer.cursor() as cur:
+            cur.execute("select id from jurisdiction where distrito_code = %s", (marker,))
+            assert cur.fetchall() == [(first_id,)]
+    finally:
+        first.rollback()
+        second.rollback()
+        if thread is not None:
+            thread.join(timeout=1)
+        _cleanup_concurrency_row(observer, marker)
+        first.close()
+        second.close()
+        observer.close()
+
+
+def test_concurrent_conflicting_names_serialize_then_preserve_authoritative_value() -> None:
+    import uuid
+
+    from etl.db import JurisdictionNameConflictError
+
+    first, second, observer = _open_ephemeral_postgres_connections(3)
+    marker = f"X{uuid.uuid4().hex[:8]}"
+    key = (marker, "027", "00248", "37974", 990011)
+    authoritative = JurisdictionNames(seccion="Coronel Rosales")
+    private_sentinel = "PRIVATE_PERSON_SENTINEL"
+    thread = None
+    try:
+        first_id = _write_jurisdiction(first, "batch", key, authoritative)
+        thread, finished, outcome = _start_jurisdiction_writer(
+            second,
+            "single",
+            key,
+            JurisdictionNames(seccion=private_sentinel),
+        )
+        _assert_writer_waits_for_first_transaction(finished)
+        _finish_writer_after_commit(first, thread, finished)
+
+        error = outcome.get("error")
+        assert isinstance(error, JurisdictionNameConflictError)
+        assert private_sentinel not in str(error)
+        with observer.cursor() as cur:
+            cur.execute(
+                "select id, seccion_name from jurisdiction where distrito_code = %s",
+                (marker,),
+            )
+            assert cur.fetchall() == [(first_id, "Coronel Rosales")]
+    finally:
+        first.rollback()
+        second.rollback()
+        if thread is not None:
+            thread.join(timeout=1)
+        _cleanup_concurrency_row(observer, marker)
+        first.close()
+        second.close()
+        observer.close()
+
+
+def test_concurrent_nullable_lineage_does_not_duplicate() -> None:
+    import uuid
+
+    first, second, observer = _open_ephemeral_postgres_connections(3)
+    marker = f"X{uuid.uuid4().hex[:8]}"
+    key = (marker, None, None, None, None)
+    thread = None
+    try:
+        first_id = _write_jurisdiction(first, "single", key, JurisdictionNames())
+        thread, finished, outcome = _start_jurisdiction_writer(
+            second, "batch", key, JurisdictionNames()
+        )
+        _assert_writer_waits_for_first_transaction(finished)
+        _finish_writer_after_commit(first, thread, finished)
+
+        assert "error" not in outcome
+        assert outcome["value"] == first_id
+        with observer.cursor() as cur:
+            cur.execute(
+                """
+                select id
+                from jurisdiction
+                where distrito_code = %s
+                  and seccion_code is null
+                  and circuito_code is null
+                  and establecimiento_code is null
+                  and mesa_code is null
+                """,
+                (marker,),
+            )
+            assert cur.fetchall() == [(first_id,)]
+    finally:
+        first.rollback()
+        second.rollback()
+        if thread is not None:
+            thread.join(timeout=1)
+        _cleanup_concurrency_row(observer, marker)
+        first.close()
+        second.close()
+        observer.close()
+
+
+def test_batch_jurisdiction_names_merge_complementary_values_not_first_wins() -> None:
+    from etl.db import batch_upsert_jurisdictions
+
+    conn = _ExistingJurisdictionConnection()
+    raw_key = ("02", "27", "248", None, 990002)
+    padded_key = ("02", "027", "00248", None, 990002)
+
+    resolved = batch_upsert_jurisdictions(
+        conn,
+        [raw_key, padded_key],
+        names=[
+            JurisdictionNames(distrito="Buenos Aires"),
+            JurisdictionNames(seccion="Coronel de Marina L. Rosales", circuito="00248"),
+        ],
+    )
+
+    assert resolved[raw_key] == resolved[padded_key] == "jurisdiction-id"
+    assert conn.cursor_instance.state == [
+        "Buenos Aires",
+        "Coronel de Marina L. Rosales",
+        "00248",
+        None,
+    ]
+
+    from etl.db import JurisdictionNameConflictError
+
+    private_sentinel = "PRIVATE_PERSON_SENTINEL"
+    with pytest.raises(JurisdictionNameConflictError) as excinfo:
+        batch_upsert_jurisdictions(
+            conn,
+            [raw_key, padded_key],
+            names=[
+                JurisdictionNames(seccion="Coronel de Marina L. Rosales"),
+                JurisdictionNames(seccion=private_sentinel),
+            ],
+        )
+    assert private_sentinel not in str(excinfo.value)
 
 
 def test_merge_key_distinguishes_null_empty_and_present_mesa_values() -> None:

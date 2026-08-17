@@ -2,6 +2,11 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { TableScroll } from "@/components/TableScroll";
+import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
+import {
+  SCOPE_FORM_KIND,
+  scopeControlStates,
+} from "@/components/scope-selector-behavior";
 import { JuxtapositionBadge } from "@/components/JuxtapositionBadge";
 import type { ElectionFigure } from "@/components/JuxtapositionBadge";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
@@ -541,18 +546,30 @@ interface CoverageFormSelection {
       facets: ExplorationFacets;
       selected: CoverageFormSelection;
     }): ReactNode {
+      const controlStates = scopeControlStates(SCOPE_FORM_KIND.COVERAGE, {
+        electionId: selected.electionId ?? "",
+        categoryId: selected.categoryId ?? "",
+        distritoCode: selected.distritoCode ?? "",
+        seccionCode: selected.seccionCode ?? "",
+      });
       return (
         <section className="panel" aria-labelledby="coverage-form-heading">
           <div className="panel__heading">
             <h2 id="coverage-form-heading">Elegir el alcance de la cobertura</h2>
             <p>Mantenga la presencia no oficial separada del denominador de resultados oficiales.</p>
           </div>
-          <form action="/fiscalizacion" method="get">
+          <ScopeSelectorForm action="/fiscalizacion" kind={SCOPE_FORM_KIND.COVERAGE}>
             <fieldset className="form-grid selector-form">
               <legend className="selector-form__legend">Selectores de cobertura</legend>
               <div className="field">
                 <label htmlFor="coverage-election">Elección</label>
-                <select id="coverage-election" name="electionId" defaultValue={selected.electionId ?? ""}>
+                    <select
+                      id="coverage-election"
+                      name="electionId"
+                      defaultValue={selected.electionId ?? ""}
+                      required={controlStates.electionId.required}
+                      disabled={controlStates.electionId.disabled}
+                    >
                   <option value="">Elegir una elección</option>
                   {facets.elections.map((option) => (
                     <option key={option.id} value={option.id}>
@@ -563,7 +580,13 @@ interface CoverageFormSelection {
               </div>
               <div className="field">
                 <label htmlFor="coverage-category">Categoría</label>
-                <select id="coverage-category" name="categoryId" defaultValue={selected.categoryId ?? ""}>
+                    <select
+                      id="coverage-category"
+                      name="categoryId"
+                      defaultValue={selected.categoryId ?? ""}
+                      required={controlStates.categoryId.required}
+                      disabled={controlStates.categoryId.disabled}
+                    >
                   <option value="">Elegir una categoría</option>
                   {facets.categories.map((option) => (
                     <option key={option.id} value={option.id}>
@@ -574,7 +597,13 @@ interface CoverageFormSelection {
               </div>
               <div className="field">
                 <label htmlFor="coverage-distrito">Distrito</label>
-                <select id="coverage-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}>
+                    <select
+                      id="coverage-distrito"
+                      name="distritoCode"
+                      defaultValue={selected.distritoCode ?? ""}
+                      required={controlStates.distritoCode.required}
+                      disabled={controlStates.distritoCode.disabled}
+                    >
                   <option value="">Elegir un distrito</option>
                   {facets.distritos.map((option) => (
                     <option key={option.code} value={option.code}>
@@ -585,7 +614,13 @@ interface CoverageFormSelection {
               </div>
               <div className="field">
                 <label htmlFor="coverage-seccion">Sección</label>
-                <select id="coverage-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}>
+                    <select
+                      id="coverage-seccion"
+                      name="seccionCode"
+                      defaultValue={selected.seccionCode ?? ""}
+                      required={controlStates.seccionCode.required}
+                      disabled={controlStates.seccionCode.disabled}
+                    >
                   <option value="">Elegir una sección</option>
                   {facets.secciones.map((option) => (
                     <option key={option.code} value={option.code}>
@@ -595,10 +630,13 @@ interface CoverageFormSelection {
                 </select>
               </div>
             </fieldset>
-            <div className="form-actions">
-              <button className="button button--primary" type="submit">Mostrar cobertura</button>
-            </div>
-          </form>
+                <div className="form-actions">
+                  <button className="button button--secondary" type="submit" formNoValidate>
+                    Actualizar opciones
+                  </button>
+                  <button className="button button--primary" type="submit">Mostrar cobertura</button>
+                </div>
+              </ScopeSelectorForm>
         </section>
       );
     }

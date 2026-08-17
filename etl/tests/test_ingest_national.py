@@ -34,6 +34,7 @@ from etl.ingest.national import (
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
     ingest_national,
+    load_national_rows,
 )
 from etl.storage import extract_zip_safely
 
@@ -85,6 +86,113 @@ def test_2023_paso_fixture_keeps_internal_lists_one_row_per_mesa_list_combinatio
         # copied into the establecimiento fields as a surrogate.
         assert row.establecimiento is None
         assert row.establecimiento_name is None
+
+
+def test_real_national_fixture_preserves_authoritative_jurisdiction_names() -> None:
+    rows = ingest_national(
+        _read("national_2023_sample.csv"),
+        archive_entry_id="national/2023-paso",
+        election_year=2023,
+        election_round="paso",
+    )
+
+    assert rows
+    assert {
+        (
+            row.jurisdiction_names.distrito,
+            row.jurisdiction_names.seccion,
+            row.jurisdiction_names.circuito,
+            row.jurisdiction_names.establecimiento,
+        )
+        for row in rows
+    } == {
+        (
+            "Buenos Aires",
+            "Coronel de Marina L. Rosales",
+            "00248",
+            None,
+        )
+    }
+
+
+def test_load_national_rows_passes_all_names_to_the_batch_db_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = ingest_national(
+        _read("national_2023_sample.csv"),
+        archive_entry_id="national/name-boundary",
+        election_year=2023,
+        election_round="paso",
+    )
+    captured_names = []
+
+    monkeypatch.setattr(
+        "etl.ingest.national.db.upsert_election", lambda *_args, **_kwargs: "election"
+    )
+    monkeypatch.setattr(
+        "etl.ingest.national.db.upsert_category", lambda _conn, *, name: f"category:{name}"
+    )
+
+    def capture_batch(_conn, keys, *, names=None):
+        captured_names.extend(names or ())
+        return {key: f"jurisdiction:{index}" for index, key in enumerate(dict.fromkeys(keys))}
+
+    monkeypatch.setattr("etl.ingest.national.db.batch_upsert_jurisdictions", capture_batch)
+    monkeypatch.setattr(
+        "etl.ingest.national.db.load_result_rows",
+        lambda _conn, **kwargs: len(kwargs["records"]),
+    )
+
+    inserted = load_national_rows(
+        object(),
+        rows,
+        year=2023,
+        round_="paso",
+        archive_entry_id="national/name-boundary",
+    )
+
+    assert inserted == len(rows)
+    assert len(captured_names) == len(rows)
+    assert {
+        (names.distrito, names.seccion, names.circuito, names.establecimiento)
+        for names in captured_names
+    } == {("Buenos Aires", "Coronel de Marina L. Rosales", "00248", None)}
+
+
+def test_blank_outer_whitespace_jurisdiction_name_normalizes_to_none() -> None:
+    source = _read("national_2023_sample.csv").decode("utf-8")
+    source = source.replace(",Buenos Aires,6,", ",   ,6,", 1)
+
+    rows = ingest_national(
+        source.encode(),
+        archive_entry_id="national/2023-paso",
+        election_year=2023,
+        election_round="paso",
+    )
+
+    assert rows[0].jurisdiction_names.distrito is None
+    assert rows[1].jurisdiction_names.distrito == "Buenos Aires"
+
+
+def test_national_parser_requires_authoritative_jurisdiction_name_columns() -> None:
+    missing_names = (
+        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        b"votos_tipo,votos_cantidad\n"
+        b"02,027,00248,1,DIPUTADO NACIONAL,135,POSITIVO,90\n"
+    )
+
+    with pytest.raises(NationalSchemaError) as excinfo:
+        ingest_national(
+            missing_names,
+            archive_entry_id="national/missing-names",
+            election_year=2025,
+            election_round="legislativas",
+        )
+
+    message = str(excinfo.value)
+    assert "distrito_nombre" in message
+    assert "seccion_nombre" in message
+    assert "circuito_nombre" in message
 
 
 def test_2025_companion_enriches_mesas_across_source_zero_padding() -> None:
@@ -213,9 +321,10 @@ def test_2025_bup_format_parsed_or_fails_loudly() -> None:
 
 def test_2025_bup_format_fails_loudly_on_missing_required_column() -> None:
     malformed = (
-        b"distrito_id,seccion_id,circuito_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        b"02,027,00248,DIPUTADO NACIONAL,135,POSITIVO,90\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,DIPUTADO NACIONAL,"
+        b"135,POSITIVO,90\n"
     )  # missing `mesa_id` entirely — an unrecognized structure, not partial data.
 
     with pytest.raises(NationalSchemaError, match="mesa_id"):
@@ -392,10 +501,12 @@ def test_mesa_tipo_is_captured_from_the_source() -> None:
 @pytest.mark.parametrize("mesa_tipo", ["DESCONOCIDO", "nativos", " NATIVOS ", "\tEXTRANJEROS", " "])
 def test_unsupported_mesa_tipo_fails_before_any_rows_are_returned(mesa_tipo: str) -> None:
     csv_text = (
-        "distrito_id,seccion_id,circuito_id,mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,"
-        "votos_tipo,votos_cantidad\n"
-        "02,027,00248,1,NATIVOS,DIPUTADO NACIONAL,135,POSITIVO,90\n"
-        f"02,027,00248,2,{mesa_tipo},DIPUTADO NACIONAL,135,POSITIVO,12\n"
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        "02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,1,NATIVOS,"
+        "DIPUTADO NACIONAL,135,POSITIVO,90\n"
+        f"02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,2,{mesa_tipo},"
+        "DIPUTADO NACIONAL,135,POSITIVO,12\n"
     )
 
     with pytest.raises(NationalSchemaError) as excinfo:
@@ -414,9 +525,10 @@ def test_unsupported_mesa_tipo_fails_before_any_rows_are_returned(mesa_tipo: str
 @pytest.mark.parametrize("mesa_tipo", ["NATIVOS", "EXTRANJEROS"])
 def test_supported_mesa_tipo_values_pass_exactly(mesa_tipo: str) -> None:
     csv_text = (
-        "distrito_id,seccion_id,circuito_id,mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,"
-        "votos_tipo,votos_cantidad\n"
-        f"02,027,00248,1,{mesa_tipo},DIPUTADO NACIONAL,135,POSITIVO,90\n"
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        f"02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,1,{mesa_tipo},"
+        "DIPUTADO NACIONAL,135,POSITIVO,90\n"
     )
 
     rows = ingest_national(
@@ -431,14 +543,16 @@ def test_supported_mesa_tipo_values_pass_exactly(mesa_tipo: str) -> None:
 
 def test_empty_or_missing_mesa_tipo_remains_absent() -> None:
     with_column = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        b"02,027,00248,1,,DIPUTADO NACIONAL,135,POSITIVO,90\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,1,,DIPUTADO NACIONAL,"
+        b"135,POSITIVO,90\n"
     )
     without_column = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        b"02,027,00248,2,DIPUTADO NACIONAL,135,POSITIVO,12\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,00248,Circuito 248,2,DIPUTADO NACIONAL,"
+        b"135,POSITIVO,12\n"
     )
 
     rows = [
@@ -509,9 +623,10 @@ def test_measured_elections_accept_their_observed_lista_numero_shape(
     expected_list_id: str,
 ) -> None:
     csv_bytes = (
-        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        "lista_numero,votos_tipo,votos_cantidad\n"
-        f"02,027,1,9001,DIPUTADO NACIONAL,110,{lista_numero},POSITIVO,7\n"
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,cargo_nombre,agrupacion_id,lista_numero,votos_tipo,votos_cantidad\n"
+        f"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        f"110,{lista_numero},POSITIVO,7\n"
     ).encode()
 
     rows = ingest_national(
@@ -536,9 +651,10 @@ def test_measured_elections_reject_unobserved_lista_numero_shape(
     election_year: int, election_round: str, lista_numero: str
 ) -> None:
     csv_bytes = (
-        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        "lista_numero,votos_tipo,votos_cantidad\n"
-        f"02,027,1,9001,DIPUTADO NACIONAL,110,{lista_numero},POSITIVO,7\n"
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,cargo_nombre,agrupacion_id,lista_numero,votos_tipo,votos_cantidad\n"
+        f"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        f"110,{lista_numero},POSITIVO,7\n"
     ).encode()
 
     with pytest.raises(NationalSchemaError) as excinfo:
@@ -611,15 +727,20 @@ def test_each_out_of_scope_reason_is_counted_separately_in_rows_and_votes(capsys
     that always looks large and always looks expected.
     """
     csv_bytes = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
         # kept
-        b"02,027,1,9001,DIPUTADO NACIONAL,110,POSITIVO,50\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"110,POSITIVO,50\n"
         # excluded: three distinct reasons, distinct vote counts
-        b"02,027,1,9001,DIPUTADO NACIONAL,110,EN BLANCO,7\n"
-        b"02,027,1,9001,DIPUTADO NACIONAL,110,NULO,3\n"
-        b"02,027,1,9001,DIPUTADO NACIONAL,,POSITIVO,11\n"
-        b"02,027,1,9001,DIPUTADO NACIONAL,0,POSITIVO,13\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"110,EN BLANCO,7\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"110,NULO,3\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b",POSITIVO,11\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"0,POSITIVO,13\n"
     )
 
     rows = ingest_national(
@@ -643,10 +764,12 @@ def test_an_excluded_row_with_an_unreadable_vote_count_is_not_summed_as_zero(cap
     dropped row and named as unreadable, never folded into the votes total.
     """
     csv_bytes = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        b"02,027,1,9001,DIPUTADO NACIONAL,110,EN BLANCO,4\n"
-        b"02,027,1,9001,DIPUTADO NACIONAL,110,EN BLANCO,cuatro\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"110,EN BLANCO,4\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"110,EN BLANCO,cuatro\n"
     )
 
     ingest_national(
@@ -668,12 +791,16 @@ def test_an_unreadable_kept_row_is_excluded_by_reason_not_a_dead_run(capsys) -> 
     unreadable vote count is not the number zero.
     """
     csv_bytes = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        b"02,027,1,9001,DIPUTADO NACIONAL,110,POSITIVO,50\n"
-        b"02,027,1,,DIPUTADO NACIONAL,110,POSITIVO,9\n"
-        b"02,027,1,9002,DIPUTADO NACIONAL,110,POSITIVO,\n"
-        b"02,027,1,9003,DIPUTADO NACIONAL,110,EN BLANCO,4\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9001,DIPUTADO NACIONAL,"
+        b"110,POSITIVO,50\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,,DIPUTADO NACIONAL,"
+        b"110,POSITIVO,9\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9002,DIPUTADO NACIONAL,"
+        b"110,POSITIVO,\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,9003,DIPUTADO NACIONAL,"
+        b"110,EN BLANCO,4\n"
     )
 
     rows = ingest_national(
@@ -699,8 +826,11 @@ def test_malformed_administrative_codes_are_excluded_per_field_with_vote_counts(
 ) -> None:
     columns = [
         "distrito_id",
+        "distrito_nombre",
         "seccion_id",
+        "seccion_nombre",
         "circuito_id",
+        "circuito_nombre",
         "mesa_id",
         "cargo_nombre",
         "agrupacion_id",
@@ -709,8 +839,11 @@ def test_malformed_administrative_codes_are_excluded_per_field_with_vote_counts(
     ]
     values = {
         "distrito_id": "02",
+        "distrito_nombre": "Buenos Aires",
         "seccion_id": "027",
+        "seccion_nombre": "Coronel Rosales",
         "circuito_id": "00248",
+        "circuito_nombre": "Circuito 248",
         "mesa_id": "9001",
         "cargo_nombre": "DIPUTADO NACIONAL",
         "agrupacion_id": "110",
@@ -748,9 +881,10 @@ def test_padded_and_unpadded_numeric_administrative_codes_are_accepted(
 ) -> None:
     distrito, seccion, circuito = codes
     csv_bytes = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        + f"{distrito},{seccion},{circuito},9001,DIPUTADO NACIONAL,110,POSITIVO,7\n".encode()
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        + f"{distrito},Buenos Aires,{seccion},Coronel Rosales,{circuito},Circuito,"
+        "9001,DIPUTADO NACIONAL,110,POSITIVO,7\n".encode()
     )
 
     rows = ingest_national(
@@ -767,9 +901,10 @@ def test_padded_and_unpadded_numeric_administrative_codes_are_accepted(
 
 def test_alphanumeric_circuito_survives_ingest_and_raw_identity_extraction() -> None:
     csv_bytes = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        b"02,027,0249A,9001,DIPUTADO NACIONAL,110,POSITIVO,7\n"
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,0249A,Circuito 249A,9001,"
+        b"DIPUTADO NACIONAL,110,POSITIVO,7\n"
     )
 
     rows = ingest_national(
@@ -790,9 +925,10 @@ def test_alphanumeric_circuito_survives_ingest_and_raw_identity_extraction() -> 
 @pytest.mark.parametrize("bad_circuito", ["249AB", "24A9", "24_9A", "+249A", "٢49A"])
 def test_malformed_alphanumeric_circuitos_remain_reported(capsys, bad_circuito: str) -> None:
     csv_bytes = (
-        b"distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
-        b"votos_tipo,votos_cantidad\n"
-        + f"02,027,{bad_circuito},9001,DIPUTADO NACIONAL,110,POSITIVO,7\n".encode()
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        b"circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        + f"02,Buenos Aires,027,Coronel Rosales,{bad_circuito},Circuito,9001,"
+        "DIPUTADO NACIONAL,110,POSITIVO,7\n".encode()
     )
 
     assert (
@@ -878,8 +1014,11 @@ def test_signed_and_permissive_python_integer_forms_are_excluded_by_source_field
 ) -> None:
     values = {
         "distrito_id": "02",
+        "distrito_nombre": "Buenos Aires",
         "seccion_id": "027",
+        "seccion_nombre": "Coronel Rosales",
         "circuito_id": "1",
+        "circuito_nombre": "Circuito 1",
         "mesa_id": "9001",
         "cargo_nombre": "DIPUTADO NACIONAL",
         "agrupacion_id": "110",

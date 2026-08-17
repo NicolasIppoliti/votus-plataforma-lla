@@ -42,7 +42,7 @@ const EXPLORATION_FACETS = {
   circuitos: [{ code: "00001", name: null, name_status: "missing", name_variant_count: 0 }],
   establecimientos: [{ code: "E1", name: null, name_status: "conflict", name_variant_count: 3 }],
   mesas: [{ code: 7 }],
-  available_levels: ["seccion", "circuito", "establecimiento", "mesa"],
+  available_levels: ["distrito", "seccion", "circuito", "establecimiento", "mesa"],
 };
 let explorationFacetResult: unknown = EXPLORATION_FACETS;
 let explorationRpcError: string | null = null;
@@ -249,6 +249,34 @@ const officialRpc = (level = "seccion") => ({ status: "ok", source_kind: "offici
   parties: [{ identity_status: "canonical", canonical_party_id: "lla", display_name: "LA LIBERTAD AVANZA",
     list_id: null, votes: 300, vote_share: "1" }], archive_entry_ids: ["national/2025-legislativas"] });
 
+const EXPLORER_CONTROL_NAMES = [
+  "electionId",
+  "categoryId",
+  "distritoCode",
+  "seccionCode",
+  "circuitoCode",
+  "establecimientoCode",
+  "mesaCode",
+  "level",
+] as const;
+type ExplorerControlName = (typeof EXPLORER_CONTROL_NAMES)[number];
+
+function selectOpeningTag(markup: string, name: ExplorerControlName): string {
+  const match = markup.match(new RegExp(`<select[^>]*name="${name}"[^>]*>`));
+  if (!match) throw new Error(`select ${name} was not rendered`);
+  return match[0];
+}
+
+function expectNativeControlState(
+  markup: string,
+  name: ExplorerControlName,
+  state: { required: boolean; disabled: boolean },
+): void {
+  const tag = selectOpeningTag(markup, name);
+  expect(/\srequired(?:=""|(?=[\s>]))/.test(tag)).toBe(state.required);
+  expect(/\sdisabled(?:=""|(?=[\s>]))/.test(tag)).toBe(state.disabled);
+}
+
 describe("drilldown page", () => {
   it("renders authenticated selectors from a cold start", async () => {
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
@@ -259,7 +287,169 @@ describe("drilldown page", () => {
       "2025 legislativas", "DIPUTADO NACIONAL"]) expect(markup).toContain(text);
   });
 
-  it("distinguishes missing and conflicting facet names without changing option values", async () => {
+      it("renders the native cold-start validation matrix and separate refresh submitter", async () => {
+        const markup = renderToStaticMarkup(
+          (await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement,
+        );
+
+        expectNativeControlState(markup, "electionId", { required: true, disabled: false });
+        expectNativeControlState(markup, "categoryId", { required: true, disabled: true });
+        expectNativeControlState(markup, "distritoCode", { required: true, disabled: true });
+        expectNativeControlState(markup, "seccionCode", { required: false, disabled: true });
+        expectNativeControlState(markup, "circuitoCode", { required: false, disabled: true });
+        expectNativeControlState(markup, "establecimientoCode", { required: false, disabled: true });
+        expectNativeControlState(markup, "mesaCode", { required: false, disabled: true });
+        expectNativeControlState(markup, "level", { required: true, disabled: true });
+        expect(markup).toContain("Actualizar opciones");
+        expect(markup).toMatch(/<button[^>]*formNoValidate=""[^>]*>Actualizar opciones<\/button>/);
+        expect(markup).toContain(">Aplicar selección</button>");
+      });
+
+      it("enables only the next dependent selectors for each selected prefix", async () => {
+        const cases = [
+          { label: "cold", params: {}, enabled: ["electionId"] },
+          {
+            label: "election",
+            params: { electionId: "2025-legislativas-nacional" },
+            enabled: ["electionId", "categoryId"],
+          },
+          {
+            label: "category",
+            params: { electionId: "2025-legislativas-nacional", categoryId: "c-diputados" },
+            enabled: ["electionId", "categoryId", "distritoCode"],
+          },
+          {
+            label: "district",
+            params: {
+              electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+              distritoCode: "2",
+            },
+            enabled: ["electionId", "categoryId", "distritoCode", "seccionCode", "level"],
+          },
+          {
+            label: "section",
+            params: {
+              electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+              distritoCode: "2", seccionCode: "27",
+            },
+            enabled: [
+              "electionId", "categoryId", "distritoCode", "seccionCode", "circuitoCode", "level",
+            ],
+          },
+          {
+            label: "circuit",
+            params: {
+              electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+              distritoCode: "2", seccionCode: "27", circuitoCode: "1",
+            },
+            enabled: [
+              "electionId", "categoryId", "distritoCode", "seccionCode", "circuitoCode",
+              "establecimientoCode", "level",
+            ],
+          },
+          {
+            label: "establishment",
+            params: {
+              electionId: "2025-legislativas-nacional", categoryId: "c-diputados",
+              distritoCode: "2", seccionCode: "27", circuitoCode: "1",
+              establecimientoCode: "E1",
+            },
+            enabled: [...EXPLORER_CONTROL_NAMES],
+          },
+        ] satisfies Array<{
+          label: string;
+          params: Record<string, string>;
+          enabled: ExplorerControlName[];
+        }>;
+
+        for (const testCase of cases) {
+          const markup = renderToStaticMarkup(
+            (await DrilldownPage({ searchParams: Promise.resolve(testCase.params) })) as ReactElement,
+          );
+          for (const name of EXPLORER_CONTROL_NAMES) {
+            const tag = selectOpeningTag(markup, name);
+            expect(
+              /\sdisabled(?:=""|(?=[\s>]))/.test(tag),
+              `${testCase.label}: ${name}`,
+            ).toBe(!new Set<string>(testCase.enabled).has(name));
+          }
+        }
+      });
+
+      it("requires exactly the selector chain implied by the report level", async () => {
+        const cases = [
+          { level: "distrito", extra: {}, required: [] },
+          { level: "seccion", extra: { seccionCode: "27" }, required: ["seccionCode"] },
+          {
+            level: "circuito",
+            extra: { seccionCode: "27", circuitoCode: "1" },
+            required: ["seccionCode", "circuitoCode"],
+          },
+          {
+            level: "establecimiento",
+            extra: { seccionCode: "27", circuitoCode: "1", establecimientoCode: "E1" },
+            required: ["seccionCode", "circuitoCode", "establecimientoCode"],
+          },
+          {
+            level: "mesa",
+            extra: {
+              seccionCode: "27", circuitoCode: "1", establecimientoCode: "E1", mesaCode: "7",
+            },
+            required: ["seccionCode", "circuitoCode", "establecimientoCode", "mesaCode"],
+          },
+        ] satisfies Array<{
+          level: string;
+          extra: Record<string, string>;
+          required: ExplorerControlName[];
+        }>;
+
+        for (const testCase of cases) {
+          explorationRpcResult = officialRpc(testCase.level);
+          const markup = renderToStaticMarkup(
+            (await DrilldownPage({ searchParams: Promise.resolve({
+              electionId: "2025-legislativas-nacional",
+              categoryId: "c-diputados",
+              distritoCode: "2",
+              level: testCase.level,
+              ...testCase.extra,
+            }) })) as ReactElement,
+          );
+          for (const name of [
+            "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode",
+          ] as const) {
+            const tag = selectOpeningTag(markup, name);
+            expect(
+              /\srequired(?:=""|(?=[\s>]))/.test(tag),
+              `${testCase.level}: ${name}`,
+            ).toBe(new Set<string>(testCase.required).has(name));
+          }
+          for (const name of ["electionId", "categoryId", "distritoCode", "level"] as const) {
+            expectNativeControlState(markup, name, {
+              required: true,
+              disabled: false,
+            });
+          }
+        }
+      });
+
+      it("keeps a complete district-level selection unblocked without lower selectors", async () => {
+        explorationRpcResult = officialRpc("distrito");
+
+        const markup = renderToStaticMarkup(
+          (await DrilldownPage({ searchParams: Promise.resolve({
+            electionId: "2025-legislativas-nacional",
+            categoryId: "c-diputados",
+            distritoCode: "2",
+            level: "distrito",
+          }) })) as ReactElement,
+        );
+
+        expect(markup).toContain("300 votos a nivel distrito");
+        expect(markup).not.toContain("Elija los selectores disponibles y aplique la selección");
+        expect(explorationRpcCalls.some((call) => call.name === "results_exploration_official")).toBe(true);
+      });
+
+      it("distinguishes missing and conflicting facet names without changing option values", async () => {
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
     expect(markup).toContain('<option value="00001">00001 — nombre no disponible</option>');
     expect(markup).toContain('<option value="E1">E1 — nombres contradictorios (3 variantes)</option>');
