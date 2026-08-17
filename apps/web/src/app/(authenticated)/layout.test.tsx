@@ -15,6 +15,21 @@ vi.mock("@/lib/supabase/server-client", () => ({
     }),
   }),
 }));
+it("renders exactly one keyboard-accessible sign-out submit control", async () => {
+  const markup = renderToStaticMarkup(
+    (await AuthenticatedLayout({ children: <p>Current page</p> })) as ReactElement,
+  );
+
+  expect(
+    markup.match(
+      /<button class="button button--secondary" type="submit">Cerrar sesión<\/button>/g,
+    ) ?? [],
+  ).toHaveLength(1);
+  expect(markup).toMatch(
+    /<form[^>]*>.*<button class="button button--secondary" type="submit">Cerrar sesión<\/button>.*<\/form>/s,
+  );
+});
+
 it("links authenticated operators to the seat simulation route", async () => {
   const markup = renderToStaticMarkup(
     (await AuthenticatedLayout({

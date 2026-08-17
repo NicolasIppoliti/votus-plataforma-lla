@@ -20,6 +20,16 @@ test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOT
 // routes (see `src/app/(authenticated)/dashboard/page.tsx`). No anonymous
 // response, cached or otherwise, may ever contain it.
 const IN_SCOPE_MARKER = "Panel de Votus";
+const PROTECTED_ROUTES = [
+  "/",
+  "/dashboard",
+  "/compare",
+  "/drilldown",
+  "/fiscalizacion",
+  "/municipal",
+  "/review",
+  "/simulate",
+] as const;
 
 test.describe("no anonymous read path", () => {
   test("test_no_anonymous_read_path_including_cached_content", async ({
@@ -52,17 +62,38 @@ test.describe("no anonymous read path", () => {
     await expect(page).toHaveURL(/\/dashboard/);
     expect(await page.content()).toContain(IN_SCOPE_MARKER);
 
-    // 4. Drop the session (simulating logout) and reload the SAME page via
-    //    a hard navigation, which is exactly the path a stale
-    //    revalidated/prerendered/back-forward-cached copy would take. The
-    //    now-anonymous browser must be redirected again — no cached
-    //    authenticated render may be served.
-    await context.clearCookies();
+    // 4. Every protected page exposes the same native submit control. Root
+    //    lives outside the authenticated route-group layout, so it is checked
+    //    explicitly alongside every grouped route.
+    for (const route of PROTECTED_ROUTES) {
+      await page.goto(route);
+      const signOutControl = page.getByRole("button", {
+        name: "Cerrar sesión",
+        exact: true,
+      });
+      await expect(signOutControl).toHaveCount(1);
+      await expect(signOutControl).toBeVisible();
+      await expect(signOutControl).toHaveAttribute("type", "submit");
+    }
+
+    // 5. Keyboard submission performs the real local server-side sign-out and
+    //    redirects only after Supabase confirms success.
+    const signOutControl = page.getByRole("button", {
+      name: "Cerrar sesión",
+      exact: true,
+    });
+    await signOutControl.focus();
+    await expect(signOutControl).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/login/);
+
+    // 6. A hard navigation to protected content stays anonymous after logout:
+    //    no cached authenticated render may be served.
     await page.goto("/dashboard", { waitUntil: "networkidle" });
     await expect(page).toHaveURL(/\/login/);
     expect(await page.content()).not.toContain(IN_SCOPE_MARKER);
 
-    // 5. And the raw HTTP layer again, now with no session cookie at all —
+    // 7. And the raw HTTP layer again, now with no session cookie at all —
     //    covers any cache keyed purely on the URL rather than on identity.
     const postLogoutResponse = await context.request.get("/dashboard", {
       maxRedirects: 0,

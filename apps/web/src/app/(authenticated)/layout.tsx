@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { SignOutForm } from "@/components/SignOutForm";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
+import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -63,6 +64,7 @@ export default async function AuthenticatedLayout({
             <span className="site-brand__descriptor">espacio de evidencia</span>
           </Link>
           <p className="site-context">Análisis electoral interno</p>
+          <SignOutForm />
         </div>
         <nav aria-label="principal" className="main-navigation">
           <ul className="shell-container navigation-list">
