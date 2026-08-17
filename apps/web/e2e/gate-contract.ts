@@ -45,15 +45,26 @@ export interface GateOwnership {
 	projectId: string;
 	token: string;
 }
-interface StorageCookie {
+const COOKIE_SAME_SITE = {
+	STRICT: "Strict",
+	LAX: "Lax",
+	NONE: "None",
+} as const;
+type CookieSameSite =
+	(typeof COOKIE_SAME_SITE)[keyof typeof COOKIE_SAME_SITE];
+export interface CookieIdentity {
 	name: string;
-	value: string;
 	domain: string;
 	path: string;
-	expires: number;
+}
+export interface CookieMetadata extends CookieIdentity {
 	httpOnly: boolean;
 	secure: boolean;
-	sameSite: "Strict" | "Lax" | "None";
+	sameSite: CookieSameSite;
+}
+interface StorageCookie extends CookieMetadata {
+	value: string;
+	expires: number;
 }
 interface StorageOrigin {
 	origin: string;
@@ -108,16 +119,68 @@ export function storageStateForSpec(
     throw new Error(`unknown e2e spec: ${spec}`);
   return spec === "e2e/auth.spec.ts" ? emptyStorageState() : authenticatedPath;
 }
-export function assertLoopbackStorageState(state: BrowserStorageState): void {
-	const authCookies = state.cookies.filter(
-		({ name }) => name.startsWith("sb-") && name.includes("auth-token"),
+export function sameCookieIdentity(
+	left: CookieIdentity,
+	right: CookieIdentity,
+): boolean {
+	return (
+		left.name === right.name &&
+		left.domain === right.domain &&
+		left.path === right.path
 	);
-	if (authCookies.length === 0)
-		throw new Error("authenticated storage state has no Supabase auth cookie");
-  if (authCookies.some(({ domain }) => domain !== "127.0.0.1"))
-		throw new Error(
-			"authenticated cookie must target the exact loopback host without a port",
-		);
+}
+function loopbackHostname(baseUrl: string): string {
+	let url: URL;
+	try {
+		url = new URL(baseUrl);
+	} catch {
+		throw new Error("session cookie proof requires a valid loopback base URL");
+	}
+	const octets = url.hostname.split(".").map(Number);
+	const isLoopback =
+		url.hostname === "localhost" ||
+		url.hostname === "[::1]" ||
+		(octets.length === 4 &&
+			octets[0] === 127 &&
+			octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255));
+	if (url.protocol !== "http:" || !isLoopback)
+		throw new Error("session cookie proof requires an HTTP loopback base URL");
+	return url.hostname;
+}
+export function assertLoopbackSessionCookieDelta(
+	beforeLogin: readonly CookieIdentity[],
+	afterLogin: readonly CookieMetadata[],
+	baseUrl: string,
+): CookieMetadata[] {
+	const hostname = loopbackHostname(baseUrl);
+	const sessionCookies = afterLogin.filter(
+		(cookie) =>
+			!beforeLogin.some((existing) => sameCookieIdentity(existing, cookie)),
+	);
+	if (sessionCookies.length === 0)
+		throw new Error("server login created no new session cookie");
+	for (const cookie of sessionCookies) {
+		if (cookie.domain !== hostname)
+			throw new Error("session cookie must target the loopback app host");
+		if (cookie.path !== "/")
+			throw new Error("session cookie path must be /");
+		if (!cookie.httpOnly)
+			throw new Error("session cookie must be HttpOnly");
+		if (cookie.secure)
+			throw new Error("loopback session cookie must not be Secure");
+		if (cookie.sameSite !== COOKIE_SAME_SITE.LAX)
+			throw new Error("session cookie SameSite must be Lax");
+	}
+	return sessionCookies.map(
+		({ name, domain, path, httpOnly, secure, sameSite }) => ({
+			name,
+			domain,
+			path,
+			httpOnly,
+			secure,
+			sameSite,
+		}),
+	);
 }
 function parsedLegacyMarker(value: unknown): GateOwnership | undefined {
   if (!value || typeof value !== "object") return undefined;

@@ -1,11 +1,7 @@
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import LoginPage from "./page";
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
-}));
 
 it("renders the login page as the public skip destination", () => {
   const markup = renderToStaticMarkup(<LoginPage /> as ReactElement);

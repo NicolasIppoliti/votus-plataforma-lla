@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { resolveSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
 
 /**
  * Routes that MUST stay reachable without authentication. Kept to the
@@ -44,6 +45,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: resolveSupabaseCookieOptions({
+      environment: process.env["NODE_ENV"],
+      hostname: request.nextUrl.hostname,
+    }),
     cookies: {
       getAll() {
         return request.cookies.getAll();

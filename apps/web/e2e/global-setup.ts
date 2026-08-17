@@ -2,7 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 import { chromium } from "@playwright/test";
 
 import { findUserByEmail } from "../src/lib/e2e-fixture-user";
-import { assertE2eEnvironment, assertLoopbackStorageState } from "./gate-contract";
+import {
+  assertE2eEnvironment,
+  assertLoopbackSessionCookieDelta,
+} from "./gate-contract";
 
 /**
  * access-control / 14c, task 14.8: seed the e2e fixture user reproducibly
@@ -59,6 +62,7 @@ export default async function globalSetup(): Promise<void> {
     const context = await browser.newContext({ baseURL: environment.VOTUS_E2E_BASE_URL });
     const page = await context.newPage();
     await page.goto("/login");
+    const cookiesBeforeLogin = await context.cookies();
     await page.getByLabel("Correo electrónico").fill(email);
     await page.getByLabel("Contraseña").fill(password);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
@@ -68,8 +72,11 @@ export default async function globalSetup(): Promise<void> {
       const alert = await page.getByRole("alert").textContent().catch(() => null);
       throw new Error(`e2e global setup: fixture sign-in failed${alert ? `: ${alert}` : ""}`);
     }
-    const state = await context.storageState();
-    assertLoopbackStorageState(state);
+    assertLoopbackSessionCookieDelta(
+      cookiesBeforeLogin,
+      await context.cookies(),
+      environment.VOTUS_E2E_BASE_URL,
+    );
     await context.storageState({ path: environment.VOTUS_E2E_STORAGE_STATE });
   } finally {
     await browser.close();

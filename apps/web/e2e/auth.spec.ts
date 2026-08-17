@@ -9,7 +9,12 @@ import { expect, test } from "@playwright/test";
  * Missing inputs fail globally before this scenario can run.
  */
 
-import { assertE2eEnvironment, storageStateForSpec } from "./gate-contract";
+import {
+  assertE2eEnvironment,
+  assertLoopbackSessionCookieDelta,
+  sameCookieIdentity,
+  storageStateForSpec,
+} from "./gate-contract";
 
 const environment = assertE2eEnvironment(process.env);
 const TEST_USER_EMAIL = environment.VOTUS_E2E_TEST_USER_EMAIL;
@@ -56,11 +61,26 @@ test.describe("no anonymous read path", () => {
     //    route now genuinely serves data — proves step 1/2 were a real
     //    gate, not a route that is simply broken for everyone.
     await page.goto("/login");
+    const cookiesBeforeLogin = await context.cookies();
     await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
     await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/dashboard/);
     expect(await page.content()).toContain(IN_SCOPE_MARKER);
+
+    const sessionCookies = assertLoopbackSessionCookieDelta(
+      cookiesBeforeLogin,
+      await context.cookies(),
+      environment.VOTUS_E2E_BASE_URL,
+    );
+    const scriptVisibleCookieNames = await page.evaluate(() =>
+      document.cookie
+        .split(";")
+        .map((entry) => entry.trim().split("=", 1)[0])
+        .filter((name): name is string => Boolean(name)),
+    );
+    for (const sessionCookie of sessionCookies)
+      expect(scriptVisibleCookieNames).not.toContain(sessionCookie.name);
 
     // 4. Every protected page exposes the same native submit control. Root
     //    lives outside the authenticated route-group layout, so it is checked
@@ -86,6 +106,19 @@ test.describe("no anonymous read path", () => {
     await expect(signOutControl).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/login/);
+
+    const cookiesAfterSignOut = await context.cookies();
+    const cookieNamesAfterSignOut = new Set(
+      cookiesAfterSignOut.map(({ name }) => name),
+    );
+    for (const sessionCookie of sessionCookies) {
+      expect(cookieNamesAfterSignOut.has(sessionCookie.name)).toBe(false);
+      expect(
+        cookiesAfterSignOut.some((cookie) =>
+          sameCookieIdentity(cookie, sessionCookie),
+        ),
+      ).toBe(false);
+    }
 
     // 6. A hard navigation to protected content stays anonymous after logout:
     //    no cached authenticated render may be served.
