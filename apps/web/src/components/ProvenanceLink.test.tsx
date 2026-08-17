@@ -61,6 +61,6 @@ describe("ProvenanceLink — an entry with no hash", () => {
       />,
     );
 
-    expect(html).toContain("cannot be verified");
+    expect(html).toContain("no puede verificarse");
   });
 });

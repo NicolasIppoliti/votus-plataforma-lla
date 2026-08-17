@@ -81,7 +81,7 @@ test.describe("mixed-granularity comparison is flagged in the display", () => {
         // Next.js also renders its own `role="alert"` route-announcer div, so
         // `getByRole("alert")` alone is ambiguous — scope to the page's own
         // mismatch message by its text content instead.
-        const mismatchAlert = page.getByText("Mixed granularity", { exact: false });
+        const mismatchAlert = page.getByText("Granularidad mixta", { exact: false });
         await expect(mismatchAlert).toBeVisible();
         await expect(mismatchAlert).toContainText("mesa");
         await expect(mismatchAlert).toContainText("distrito");

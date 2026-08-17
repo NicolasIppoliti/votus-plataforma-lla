@@ -170,10 +170,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (repeated.length > 0) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: these query parameters were supplied more than once and
-          cannot be resolved to one value: {repeated.join(", ")}.
+          Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
+          más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.
         </p>
       </main>
     );
@@ -198,10 +198,11 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (!electionId2023 || !electionId2025 || !jurisdictionId || !categoryId) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p>
-          Provide <code>election2023</code>, <code>election2025</code>,{" "}
-          <code>jurisdictionId</code> and <code>categoryId</code> query parameters.
+          Proporcione los parámetros de consulta <code>election2023</code>,{" "}
+          <code>election2025</code>, <code>jurisdictionId</code> y{" "}
+          <code>categoryId</code>.
         </p>
       </main>
     );
@@ -210,10 +211,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (rawAggregateTo && !aggregateTo) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: <code>aggregateTo</code> must be one of{" "}
-          {GRANULARITY_ORDER.join(", ")}; got {rawAggregateTo}.
+          Se rechazó la solicitud: <code>aggregateTo</code> debe ser uno de{" "}
+          {GRANULARITY_ORDER.join(", ")}; se recibió {rawAggregateTo}.
         </p>
       </main>
     );
@@ -224,12 +225,12 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     // unresolved comparison is the fabricated-swing case.
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: provide <code>partyCategory</code> and{" "}
-          <code>partyJurisdiction</code> — each side is resolved through its own{" "}
-          <code>(year, jurisdiction, category)</code> party mapping, because the
-          same party carries a different list id in each file.
+          Se rechazó la solicitud: proporcione <code>partyCategory</code> y{" "}
+          <code>partyJurisdiction</code>. Cada lado se resuelve mediante su propio
+          mapeo de partidos <code>(año, jurisdicción, categoría)</code>, porque un
+          mismo partido tiene un ID de lista diferente en cada archivo.
         </p>
       </main>
     );
@@ -252,9 +253,9 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   } catch (error) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -265,9 +266,9 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   } catch (error) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -278,16 +279,16 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     // party here renders as a flip between two that never changed hands.
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: category {categoryId} is{" "}
+          Se rechazó la solicitud: la categoría {categoryId}{" "}
           {categoryName.status === "no_row"
-            ? "carried by no category row"
+            ? "no aparece en ninguna fila de categoría"
             : categoryName.status === "unreadable_name"
-              ? "carried by a row whose name is unusable"
-              : categoryName.name}
-          , not {partyCategory}. A list id resolved through another category&apos;s
-          mapping names the wrong party, and a wrong name is a fabricated flip.
+              ? "aparece en una fila cuyo nombre no es válido"
+              : `se llama ${categoryName.name}`}
+          , no {partyCategory}. Resolver un ID de lista mediante el mapeo de otra
+          categoría nombra al partido equivocado y fabrica un cambio inexistente.
         </p>
       </main>
     );
@@ -296,18 +297,18 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     // NAMED per side: "one of them is unknown" sends the operator to check both.
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: the year could not be read for{" "}
+          Se rechazó la solicitud: no se pudo leer el año de{" "}
           {[
             ...(year2023.status === "ok"
               ? []
-              : [`${electionId2023} (${year2023.status === "no_row" ? "no election row" : "no usable year"})`]),
+              : [`${electionId2023} (${year2023.status === "no_row" ? "sin fila de elección" : "sin año válido"})`]),
             ...(year2025.status === "ok"
               ? []
-              : [`${electionId2025} (${year2025.status === "no_row" ? "no election row" : "no usable year"})`]),
+              : [`${electionId2025} (${year2025.status === "no_row" ? "sin fila de elección" : "sin año válido"})`]),
           ].join(", ")}
-          , and a party mapping cannot be selected without it.
+          , y sin él no se puede seleccionar un mapeo de partidos.
         </p>
       </main>
     );
@@ -318,11 +319,11 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (family.status !== "ok" || partyJurisdiction !== family.family) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused:{" "}
-          {partyFamilyRefusal(family, partyJurisdiction)}
-          . A list id resolved through the wrong family names the wrong party.
+          Se rechazó la solicitud: {partyFamilyRefusal(family, partyJurisdiction)}.
+          Un ID de lista resuelto mediante la familia incorrecta nombra al partido
+          equivocado.
         </p>
       </main>
     );
@@ -358,13 +359,13 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     // about what the other side's filter dropped.
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
         <p role="note">
-          One year failed to read, so no source-kind breakdown is reported: a
-          count from the year that did resolve would describe half a comparison.
+          No se pudo leer uno de los años, por lo que no se informa un desglose por
+          tipo de fuente: contar solo el año disponible describiría media comparación.
         </p>
       </main>
     );
@@ -388,8 +389,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   const excludedNote =
     excludedByYear.length > 0 ? (
       <p role="note">
-        Excluded by the official-source filter and absent from every figure
-        on this page: {excludedByYear.join("; ")}.
+        Filas excluidas por el filtro de fuente oficial y ausentes de todas las
+        cifras de esta página: {excludedByYear.join("; ")}.
       </p>
     ) : null;
 
@@ -417,13 +418,14 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (foreign.length > 0) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
         <p role="alert">
-          Refused: {foreign.length} row(s) reaching this page are not official
-          ({electionId2023}: {describeExcluded(tallyByKind(foreign2023)) ?? "none"};{" "}
-          {electionId2025}: {describeExcluded(tallyByKind(foreign2025)) ?? "none"}).
-          Official and fiscalización figures are never combined in one number.
+          Se rechazó la solicitud: {foreign.length} fila(s) que llegaron a esta
+          página no son oficiales ({electionId2023}:{" "}
+          {describeExcluded(tallyByKind(foreign2023)) ?? "ninguna"}; {electionId2025}:{" "}
+          {describeExcluded(tallyByKind(foreign2025)) ?? "ninguna"}). Las cifras
+          oficiales y de fiscalización nunca se combinan en un mismo número.
         </p>
         {/* Both counted before this refusal and about a different axis: which
             list ids failed to map, and which levels cannot be ordered, do not
@@ -471,7 +473,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (mixed.length > 0) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
         {/* Counted by `toCompareUnits` BEFORE this refusal, and about a
             different axis entirely: which list ids resolved to no canonical
@@ -497,9 +499,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           unsummable={unsummable2025}
         />
         <p role="alert">
-          Refused: the returned rows mix granularity levels ({[...new Set(mixed)].join(", ")}),
-          so a single level cannot describe either side and the cross-year
-          mismatch check cannot see the difference.
+          Se rechazó la solicitud: las filas devueltas mezclan niveles de
+          granularidad ({[...new Set(mixed)].join(", ")}), por lo que un solo nivel
+          no puede describir ninguno de los lados y el control entre años no puede
+          detectar la diferencia.
         </p>
         {/* PER LEVEL and in both units, like the three sibling routes. Naming
             the levels alone hid how much of the comparison sits on one this
@@ -525,7 +528,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     // finding. `municipal` guards its badge the same way.
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
         {/* Counted by `toCompareUnits` BEFORE this refusal, and about a
             different axis entirely: which list ids resolved to no canonical
@@ -551,13 +554,13 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           unsummable={unsummable2025}
         />
         <p role="alert">
-          Refused: {rows2023.length === 0 && rows2025.length === 0
-            ? "neither year"
+          Se rechazó la solicitud: {rows2023.length === 0 && rows2025.length === 0
+            ? "ningún año"
             : rows2023.length === 0
               ? electionId2023
               : electionId2025}{" "}
-          returned no rows, so there is no granularity to compare and no swing
-          to compute.
+          no devolvió filas, por lo que no hay granularidad para comparar ni
+          variación para calcular.
         </p>
       </main>
     );
@@ -570,13 +573,13 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (unresolvedRows > 0) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
         <p role="alert">
-          Refused: {unresolvedRows} row(s) /{" "}
-          {compare2023.unresolvedVotes + compare2025.unresolvedVotes} vote(s)
-          resolved to no canonical party, and an unmapped id is not an identity
-          that can be compared across years.
+          Se rechazó la solicitud: {unresolvedRows} fila(s) /{" "}
+          {compare2023.unresolvedVotes + compare2025.unresolvedVotes} voto(s) no
+          se resolvieron a un partido canónico, y un ID sin mapear no es una
+          identidad que pueda compararse entre años.
         </p>
         {/* THE shared presentation. The hand-rolled list beside it was a
             second shape for one fact, and it printed vote sums the component
@@ -675,16 +678,17 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (result.status === "requires_explicit_aggregation") {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
         {/* Task 11.14: flagged in the DISPLAY, not only in the API's
             `status` field — an operator scanning this page sees the
             refusal directly, with no figures rendered alongside it. */}
         <p role="alert">
-          Mixed granularity: 2023 data is at {result.granularity2023}-level and 2025
-          data is at {result.granularity2025}-level. Re-request with an explicit{" "}
-          <code>aggregateTo</code> query parameter to combine them — this comparison
-          refuses to guess (design.md D6).
+          Granularidad mixta: los datos de 2023 están a nivel{" "}
+          {result.granularity2023} y los de 2025 a nivel {result.granularity2025}.
+          Vuelva a solicitar la comparación con un parámetro de consulta{" "}
+          <code>aggregateTo</code> explícito para combinarlos; esta comparación no
+          hace suposiciones (design.md D6).
         </p>
         {/* The FIFTH branch. Rows with no list id are counted and carried,
             and D6 was the one refusal that rendered neither block — the same
@@ -720,10 +724,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   } catch (error) {
     return (
       <main>
-        <h1>Compare 2023 vs 2025</h1>
+        <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
         <p role="alert">
-          Refused: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -731,7 +735,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
 
   return (
     <main>
-      <h1>Compare 2023 vs 2025</h1>
+      <h1>Comparación entre 2023 y 2025</h1>
       {/* The FIGURE's level, not the rows'. Every row sums into one
           jurisdiction unit, so `result.granularity` -- derived from the rows --
           claimed `mesa` over a jurisdiction total while the note below said the
@@ -772,15 +776,15 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         // unsound; this one leaves it sound and unciteable, which is a
         // different thing an operator must be able to see and weigh.
         <p role="alert">
-          {missingProvenance.length} archive entry/entries backing these figures
-          resolved to no source record ({missingProvenance.join(", ")}); those
-          figures cannot be traced.
+          {missingProvenance.length} entrada(s) de archivo que respaldan estas
+          cifras no se resolvieron a un registro de fuente (
+          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
         </p>
       ) : null}
       {summedFromRows ? (
         <p role="note">
-          These figures are jurisdiction totals: the query returns every row for
-          one jurisdiction, and rows at{" "}
+          Estas cifras son totales jurisdiccionales: la consulta devuelve todas
+          las filas de una jurisdicción, y las filas de nivel{" "}
           {[
             ...new Set(
               // Only the sides that WERE summed. Naming both regardless
@@ -791,14 +795,14 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
               ),
             ),
           ].join(", ")}{" "}
-          level were summed into it. The badge shows the level of the FIGURE,
-          not of the rows behind it.
+          se sumaron para obtenerlos. La insignia muestra el nivel de la CIFRA,
+          no el de las filas que la respaldan.
         </p>
       ) : null}
       {result.aggregatedFrom ? (
         <p>
-          Aggregated from {result.aggregatedFrom}-level data per an explicit operator
-          choice.
+          Agregado a partir de datos de nivel {result.aggregatedFrom} por decisión
+          explícita del operador.
         </p>
       ) : null}
       {/* ONE row, because the query returns one jurisdiction. Rendering it as a
@@ -806,10 +810,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <ul>
         {result.swings.map((swing) => (
           <li key={swing.unitId}>
-            {swing.unitId} (whole jurisdiction):{" "}
+            {swing.unitId} (jurisdicción completa):{" "}
             {swing.flipped
-              ? `flipped ${fromName(swing.fromParty)} → ${toName(swing.toParty)}`
-              : "no flip"}
+              ? `cambió de ${fromName(swing.fromParty)} → ${toName(swing.toParty)}`
+              : "sin cambio"}
           </li>
         ))}
       </ul>

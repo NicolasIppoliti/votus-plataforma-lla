@@ -7,20 +7,20 @@ const entries = [{ listId: "4321", rows: 2, votes: 700 }];
 describe("UnmappedListIds", () => {
   it("withholds vote totals and renders the exact source-kind reason", () => {
     const reason =
-      "rows mix source kinds (fiscalizacion, official); official and fiscalización figures are never combined in one number";
+      "las filas mezclan tipos de fuente (fiscalizacion, official); las cifras oficiales y de fiscalización nunca se combinan en un mismo número";
     const markup = renderToStaticMarkup(
       <UnmappedListIds entries={entries} totalRows={2} unsummable={reason} />,
     );
 
-    expect(markup).toContain("4321: 2 rows");
-    expect(markup).not.toContain("4321: 2 rows, 700 votes");
-    expect(markup).not.toContain("700 votes");
+    expect(markup).toContain("4321: 2 filas");
+    expect(markup).not.toContain("4321: 2 filas, 700 votos");
+    expect(markup).not.toContain("700 votos");
     expect(markup).toContain(reason);
   });
 
   it("omits every vote total from no-list-id tallies when rows cannot be combined", () => {
     const reason =
-      "rows mix source kinds (fiscalizacion, official); official and fiscalización figures are never combined in one number";
+      "las filas mezclan tipos de fuente (fiscalizacion, official); las cifras oficiales y de fiscalización nunca se combinan en un mismo número";
     const markup = renderToStaticMarkup(
       <UnmappedListIds
         entries={[{ listId: "777", rows: 1, votes: 80 }]}
@@ -34,10 +34,10 @@ describe("UnmappedListIds", () => {
       />,
     );
 
-    expect(markup).toContain("777: 1 rows");
-    expect(markup).toContain("3 row(s) carry no list id at all");
-    expect(markup).toContain("2 official row(s)");
-    expect(markup).toContain("1 fiscalizacion row(s)");
+    expect(markup).toContain("777: 1 filas");
+    expect(markup).toContain("3 fila(s) no tienen id de lista");
+    expect(markup).toContain("2 fila(s) official");
+    expect(markup).toContain("1 fila(s) fiscalizacion");
     expect(markup).toContain(reason);
     expect(markup).not.toContain("80");
     expect(markup).not.toContain("300");
@@ -56,8 +56,8 @@ describe("UnmappedListIds", () => {
       />,
     );
 
-    expect(markup).toContain("2 of 2 rows (700 votes)");
-    expect(markup).toContain("4321: 2 rows, 700 votes");
-    expect(markup).toContain("2 official row(s) / 300 vote(s)");
+    expect(markup).toContain("2 de 2 filas (700 votos)");
+    expect(markup).toContain("4321: 2 filas, 700 votos");
+    expect(markup).toContain("2 filas oficial / 300 votos");
   });
 });

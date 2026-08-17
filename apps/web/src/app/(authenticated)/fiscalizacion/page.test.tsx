@@ -250,12 +250,12 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
       }),
     );
 
-    expect(html.toLowerCase()).toContain("unofficial");
+    expect(html.toLowerCase()).toContain("no oficial");
     // Tied to the coverage note's own element: bare `93` and `153` also match
     // a vote count, a percentage, or a slice of a sha256 digest, and neither
     // says which figure the denominator belongs to.
     const coverageNote = html.slice(html.indexOf('role="note"'));
-    expect(coverageNote).toContain("93 of 153 mesas");
+    expect(coverageNote).toContain("93 de 153 mesas");
   });
 
   it("test_coverage_indicator_states_it_is_not_a_random_sample", () => {
@@ -269,12 +269,12 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
       }),
     );
 
-    expect(html.toLowerCase()).toContain("not a random sample");
+    expect(html.toLowerCase()).toContain("no es una muestra aleatoria");
     // Tied to the coverage NOTE's own element. `toContain("93")` also matches
     // a vote count, a percentage or a sha256 digest, and says nothing about
     // which figure it belongs to.
     const note = html.slice(html.indexOf('role="note"'));
-    expect(note).toContain("93 of 153 mesas");
+    expect(note).toContain("93 de 153 mesas");
   });
 
   it("test_official_figure_inside_the_view_carries_its_own_official_indicator", () => {
@@ -310,12 +310,11 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
       ),
     );
 
-    expect(html.toLowerCase()).toContain("official source");
+    expect(html.toLowerCase()).toContain("fuente oficial");
     // Both source kinds must be visually distinguishable — the two labels
     // must be different strings, never the same badge text reused.
-    const unofficialText = html.toLowerCase().match(/unofficial source/g) ?? [];
-		const officialText =
-			html.toLowerCase().match(/(?<!un)official source/g) ?? [];
+    const unofficialText = html.toLowerCase().match(/fuente no oficial/g) ?? [];
+		const officialText = html.toLowerCase().match(/fuente oficial/g) ?? [];
     expect(unofficialText.length).toBeGreaterThan(0);
     expect(officialText.length).toBeGreaterThan(0);
   });
@@ -328,7 +327,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
           }),
         );
 
-        expect(html.toLowerCase()).toContain("refus");
+        expect(html.toLowerCase()).toContain("se rechazó");
         expect(html).not.toContain("12578");
       });
 
@@ -346,13 +345,13 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
               }),
             );
 
-            expect(html).toContain("Refused");
-            expect(html).toContain("4321: 1 rows");
-            expect(html).toContain("9876: 1 rows");
-            expect(html).not.toContain("4321: 1 rows, 700 votes");
-            expect(html).not.toContain("9876: 1 rows, 60 votes");
-            expect(html).toContain("official and fiscalización figures are never combined in one number");
-            expect(html).not.toContain("Coverage:");
+            expect(html).toContain("Se rechazó");
+            expect(html).toContain("4321: 1 filas");
+            expect(html).toContain("9876: 1 filas");
+            expect(html).not.toContain("4321: 1 filas, 700 votos");
+            expect(html).not.toContain("9876: 1 filas, 60 votos");
+            expect(html).toContain("las cifras oficiales y de fiscalización nunca se combinan en un mismo número");
+            expect(html).not.toContain("Cobertura:");
             expect(html).not.toContain("LA LIBERTAD AVANZA");
           });
 
@@ -371,8 +370,8 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
           }),
         );
 
-        expect(html).toContain("official: 1 rows, 100 votes");
-        expect(html).toContain("unknown: 2 rows, 50 votes");
+        expect(html).toContain("oficial: 1 fila, 100 votos");
+        expect(html).toContain("desconocida: 2 filas, 50 votos");
         expect(html).not.toContain("provisional");
         expect(html).not.toContain("<li>:");
       });
@@ -470,7 +469,7 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("Refused");
+    expect(markup).toContain("Se rechazó");
     expect(markup).toContain("2025-legislativas-nacional");
   });
 
@@ -507,7 +506,7 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("cross-election juxtaposition");
+    expect(markup).toContain("comparación entre elecciones");
     // ONE party on both sides, and each side's own number: 60 % of the
     // fiscalización rows, 25 % of the official ones — never the official
     // side's own winner at 75 %.
@@ -531,11 +530,11 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("Refused");
+    expect(markup).toContain("Se rechazó");
     // The refusal SENTENCE. A bare "93" also matches a vote count, a
     // percentage, or a slice of a sha256 digest, so it could not fail.
 		expect(markup).toContain(
-			"93-of-153 coverage denominator describes one jurisdiction",
+			"denominador de cobertura de 93 sobre 153 describe una jurisdicción",
 		);
   });
 
@@ -554,7 +553,7 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("Refused");
+    expect(markup).toContain("Se rechazó");
     expect(markup).toContain("NATIONAL_JURISDICTION_ID");
   });
 
@@ -583,8 +582,8 @@ describe("fiscalizacion page — the real entry point", () => {
 
     // Rendering nothing left the operator unable to tell "no comparison
     // requested" from "requested and impossible".
-    expect(markup).toContain("No comparison figure");
-    expect(markup).toContain("national");
+    expect(markup).toContain("Sin cifra comparativa");
+    expect(markup).toContain("nacional");
   });
 
   it("test_every_displayed_figure_traces_to_an_archived_source", async () => {
@@ -668,19 +667,19 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("cross-election juxtaposition");
+    expect(markup).toContain("comparación entre elecciones");
     // Inside the OFFICIAL figure's own section. Asserting the url appears
     // anywhere in the markup passed while the official ZIP's digest rendered
     // under the unofficial figure.
 		const officialSection = markup.slice(
-			markup.indexOf('aria-label="official figure"'),
+			markup.indexOf('aria-label="cifra oficial"'),
 		);
 		expect(officialSection).toContain(
 			"https://example.test/2023-generales.zip",
 		);
 		const fiscalizacionBlock = markup.slice(
 			0,
-			markup.indexOf("cross-election juxtaposition"),
+			markup.indexOf("comparación entre elecciones"),
 		);
 		expect(fiscalizacionBlock).not.toContain(
 			"https://example.test/2023-generales.zip",
@@ -746,10 +745,10 @@ describe("fiscalizacion page — the real entry point", () => {
 				);
 
 				expect(markup).toContain(
-					"canonical party IDs have conflicting nonempty party names (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
+					"los identificadores canónicos de partido tienen nombres no vacíos contradictorios (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
 				);
-				expect(markup).not.toContain("cross-election juxtaposition");
-				expect(markup).not.toContain("no row resolved to a curated party");
+				expect(markup).not.toContain("comparación entre elecciones");
+				expect(markup).not.toContain("ninguna fila se resolvió a un partido curado");
 			},
 		);
 
@@ -782,12 +781,12 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("tied at the top");
-    expect(markup).not.toContain("no row resolved to a curated party");
+    expect(markup).toContain("empatan en el primer lugar");
+    expect(markup).not.toContain("ninguna fila se resolvió a un partido curado");
     // ONCE. Two emitters — the renderer's note and the page's
     // `comparisonUnavailable` — both fired, and `toContain` passes on one copy
     // or ten, so it could not catch the duplication.
-    expect(markup.match(/tied at the top/g) ?? []).toHaveLength(1);
+    expect(markup.match(/empatan en el primer lugar/g) ?? []).toHaveLength(1);
   });
 
   it("test_the_page_reports_mixed_granularity_as_such", async () => {
@@ -821,8 +820,8 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("double-count");
-    expect(markup).not.toContain("no row resolved to a curated party");
+    expect(markup).toContain("duplicaría el conteo");
+    expect(markup).not.toContain("ninguna fila se resolvió a un partido curado");
   });
 
   it("test_an_unorderable_level_reports_how_many_rows_carry_it", async () => {
@@ -863,14 +862,14 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("3 row(s) carry a granularity");
+    expect(markup).toContain("3 fila(s) tienen un nivel de granularidad");
     // ROWS, not summed votes: the level cannot be ordered, so whether its rows
     // contain one another is unknown and adding them may count votes twice.
-    expect(markup).toContain("subcircuito: 3 rows");
-    expect(markup).not.toContain("subcircuito: 3 rows, 100 votes");
+    expect(markup).toContain("subcircuito: 3 filas");
+    expect(markup).not.toContain("subcircuito: 3 filas, 100 votos");
     // And NO badge to point at: an unorderable level makes the set unsummable,
     // so the level "above" the alert was withheld. The copy used to name it.
-    expect(markup).not.toContain('aria-label="granularity:');
+    expect(markup).not.toContain('aria-label="granularidad:');
   });
 
   it("test_the_page_refuses_a_category_the_party_mapping_does_not_describe", async () => {
@@ -891,7 +890,7 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("Refused");
+    expect(markup).toContain("Se rechazó");
     expect(markup).toContain("DIPUTADO NACIONAL");
   });
 
@@ -929,8 +928,8 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("double-count");
-    expect(markup).not.toContain("tied at the top");
+    expect(markup).toContain("duplicaría el conteo");
+    expect(markup).not.toContain("empatan en el primer lugar");
   });
 
   it("test_an_archive_entry_with_no_source_record_is_announced", async () => {
@@ -952,7 +951,7 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("have no source record");
+    expect(markup).toContain("no tienen registro de fuente");
     expect(markup).toContain("fiscalizacion/2025-lla");
   });
 
@@ -1005,14 +1004,14 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("No archived source for this figure");
+    expect(markup).toContain("No hay una fuente archivada para esta cifra");
     // Attributed to the OFFICIAL side, never to the fiscalización one. Both
     // alerts share the phrase "have no source record", so the assertion names
     // the SUBJECT each one claims — a bare phrase match would pass on either.
 		expect(markup).toContain(
-			"backing the official comparison figure have no source record",
+			"respaldan la cifra comparativa oficial no tienen registro de fuente",
 		);
-    expect(markup).not.toContain("backing these figures have no source record");
+    expect(markup).not.toContain("respaldan estas cifras no tienen registro de fuente");
   });
 
   it("test_a_refused_query_is_reported_as_such_not_as_a_mapping_problem", async () => {
@@ -1042,8 +1041,8 @@ describe("fiscalizacion page — the real entry point", () => {
     );
 
     expect(markup).toContain("row-level security denied the read");
-    expect(markup).toContain("no rows were read");
-    expect(markup).not.toContain("no row resolved to a curated party");
+    expect(markup).toContain("no se leyeron filas");
+    expect(markup).not.toContain("ninguna fila se resolvió a un partido curado");
   });
 
   it("test_a_comparison_against_the_same_election_is_refused", () => {
@@ -1067,7 +1066,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // One election drawn as two, labelled a trend over time.
     expect(result.status).toBe("refused");
     if (result.status !== "refused") throw new Error("expected refused");
-    expect(result.reason).toContain("DIFFERENT election");
+    expect(result.reason).toContain("elección DISTINTA");
   });
 
   it("test_a_repeated_query_param_is_reported_not_treated_as_absent", async () => {
@@ -1089,7 +1088,7 @@ describe("fiscalizacion page — the real entry point", () => {
     );
 
     expect(markup).toContain("electionId");
-    expect(markup).toContain("more than once");
+    expect(markup).toContain("más de una vez");
   });
 
   it("test_zero_rows_is_not_reported_as_a_mapping_failure", async () => {
@@ -1118,8 +1117,8 @@ describe("fiscalizacion page — the real entry point", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("no fiscalización rows");
-    expect(markup).not.toContain("no row resolved to a curated party");
+    expect(markup).toContain("no se encontraron filas de fiscalización");
+    expect(markup).not.toContain("ninguna fila se resolvió a un partido curado");
   });
 
   it("test_the_page_offers_source_backed_coverage_selectors_from_a_cold_start", async () => {
@@ -1155,11 +1154,11 @@ describe("fiscalizacion page — the real entry point", () => {
 
     expect(markup).toContain('<main class="page-shell">');
     expect(markup).not.toContain('id="main-content"');
-    expect(markup).toContain("Fiscalización coverage");
-    expect(markup).toContain("Choose an election");
-    expect(markup).toContain('<option value="02">02 — name unavailable</option>');
-    expect(markup).toContain('<option value="027">027 — conflicting names (2 variants)</option>');
-    expect(markup).not.toContain("Provide <code>electionId</code>");
+    expect(markup).toContain("Cobertura de fiscalización");
+    expect(markup).toContain("Elegir una elección");
+    expect(markup).toContain('<option value="02">02 — nombre no disponible</option>');
+    expect(markup).toContain('<option value="027">027 — nombres contradictorios (2 variantes)</option>');
+    expect(markup).not.toContain("Proporcione los parámetros de consulta <code>electionId</code>");
   });
 
 	function auditableCoveragePayload() {
@@ -1460,14 +1459,14 @@ describe("fiscalizacion page — the real entry point", () => {
 			const markup = await renderInjectedCoverage(widen(renderedCoverageResult()));
 
 			expect(markup).toContain(
-				"Refused: coverage evidence failed the rendered-page source isolation guard.",
+				"Se rechazó la solicitud: la evidencia de cobertura no superó la verificación de aislamiento de fuentes de la página.",
 			);
-			expect(markup).not.toContain("1 covered of 2 official mesas");
-			expect(markup).not.toContain("Source audit:");
-			expect(markup).not.toContain("Denominator audit:");
+			expect(markup).not.toContain("1 mesas cubiertas de 2 mesas oficiales");
+			expect(markup).not.toContain("Auditoría de la fuente:");
+			expect(markup).not.toContain("Auditoría del denominador:");
 			expect(markup).not.toContain("Guard fixture school");
-			expect(markup).not.toContain("View official votes");
-			expect(markup).not.toContain("not a random sample");
+			expect(markup).not.toContain("Ver votos oficiales");
+			expect(markup).not.toContain("no es una muestra aleatoria");
 			expect(markup).not.toContain("official-guard-source");
 			expect(markup).not.toContain("fiscalizacion-guard-source");
 			expect(sourceRefReadCount).toBe(0);
@@ -1486,19 +1485,19 @@ describe("fiscalizacion page — the real entry point", () => {
 
         expect(markup).toContain('<form action="/fiscalizacion" method="get">');
         expect(markup).toContain(
-          "Refused: coverage evidence failed the rendered-page source isolation guard.",
+          "Se rechazó la solicitud: la evidencia de cobertura no superó la verificación de aislamiento de fuentes de la página.",
         );
         expect(markup).toContain(
-          "official_rows_without_establecimiento_code: 3 row(s), 44 vote(s)",
+          "filas oficiales sin código de establecimiento: 3 filas, 44 votos",
         );
         expect(markup).toContain(
-          "fiscalizacion_rows_without_official_mesa_mapping: 2 row(s), 17 vote(s)",
+          "filas de fiscalización sin correspondencia con una mesa oficial: 2 filas, 17 votos",
         );
-        expect(markup).not.toContain("1 covered of 2 official mesas");
-        expect(markup).not.toContain("Source audit:");
-        expect(markup).not.toContain("Denominator audit:");
+        expect(markup).not.toContain("1 mesas cubiertas de 2 mesas oficiales");
+        expect(markup).not.toContain("Auditoría de la fuente:");
+        expect(markup).not.toContain("Auditoría del denominador:");
         expect(markup).not.toContain("Guard fixture school");
-        expect(markup).not.toContain("View official votes");
+        expect(markup).not.toContain("Ver votos oficiales");
         expect(markup).not.toContain("official-guard-source");
         expect(sourceRefReadCount).toBe(0);
       });
@@ -1506,9 +1505,9 @@ describe("fiscalizacion page — the real entry point", () => {
       it("renders valid injected coverage after the rendered-page guard", async () => {
         const markup = await renderInjectedCoverage(renderedCoverageResult());
 
-        expect(markup).toContain("1 covered of 2 official mesas");
+        expect(markup).toContain("1 mesas cubiertas de 2 mesas oficiales");
         expect(markup).toContain("Guard fixture school");
-        expect(markup).toContain("Source audit: fiscalizacion");
+        expect(markup).toContain("Auditoría de la fuente: fiscalización");
         expect(markup).toContain("official-guard-source");
         expect(sourceRefReadCount).toBe(1);
       });
@@ -1530,9 +1529,9 @@ describe("fiscalizacion page — the real entry point", () => {
 
         const markup = await renderAuditableCoverage(payload);
 
-        expect(markup).toContain("1 covered of 2 official mesas");
+        expect(markup).toContain("1 mesas cubiertas de 2 mesas oficiales");
         expect(markup).toContain("https://example.test/shared-source");
-        expect(markup).not.toContain("coverage provenance is incomplete");
+        expect(markup).not.toContain("la procedencia de la cobertura está incompleta");
         expect(sourceRefReadCount).toBe(1);
         expect(sourceRefRequestedIds).toEqual(["shared/archive"]);
       });
@@ -1541,11 +1540,11 @@ describe("fiscalizacion page — the real entry point", () => {
 		const markup = await renderInjectedCoverage(renderedCoverageResult());
 
 		expect(markup).toContain(
-			'<div class="table-scroll" role="region" aria-label="Fiscalización presence by official mesa" tabindex="0">',
+			'<div class="table-scroll" role="region" aria-label="Presencia de fiscalización por mesa oficial" tabindex="0">',
 		);
 		expect(markup).toContain('<table class="data-table">');
 		expect(markup).toContain(
-			"<caption>Fiscalización presence by official mesa</caption>",
+			"<caption>Presencia de fiscalización por mesa oficial</caption>",
 		);
 		expect(markup.match(/scope="col"/g) ?? []).toHaveLength(4);
 		expect(markup).toContain('class="evidence-text">Guard fixture school</td>');
@@ -1672,12 +1671,12 @@ describe("fiscalizacion page — the real entry point", () => {
 		];
 		const markup = await renderAuditableCoverage();
 
-		expect(markup).toContain("coverage provenance is incomplete");
+		expect(markup).toContain("la procedencia de la cobertura está incompleta");
 		expect(markup).toContain(
-			"official_rows_without_establecimiento_code: 1 row(s), 100 vote(s)",
+			"filas oficiales sin código de establecimiento: 1 fila, 100 votos",
 		);
 		expect(markup).toContain(
-			"fiscalizacion_rows_without_official_mesa_mapping: 1 row(s), 50 vote(s)",
+			"filas de fiscalización sin correspondencia con una mesa oficial: 1 fila, 50 votos",
 		);
 	});
 
@@ -1685,12 +1684,12 @@ describe("fiscalizacion page — the real entry point", () => {
 		refuseSourceReadWith = "source reference read failed";
 		const markup = await renderAuditableCoverage();
 
-		expect(markup).toContain("Refused: source reference read failed");
+		expect(markup).toContain("Se rechazó la solicitud: source reference read failed");
 		expect(markup).toContain(
-			"official_rows_without_establecimiento_code: 1 row(s), 100 vote(s)",
+			"filas oficiales sin código de establecimiento: 1 fila, 100 votos",
 		);
 		expect(markup).toContain(
-			"fiscalizacion_rows_without_official_mesa_mapping: 1 row(s), 50 vote(s)",
+			"filas de fiscalización sin correspondencia con una mesa oficial: 1 fila, 50 votos",
 		);
 	});
 
@@ -1736,12 +1735,12 @@ describe("fiscalizacion page — the real entry point", () => {
 		expect(markup).toContain(
 			"the registered source publishes no complete establecimiento data",
 		);
-		expect(markup).toContain("School exclusions");
+		expect(markup).toContain("Exclusiones de establecimientos");
 		expect(markup).toContain(
-			"official_rows_without_circuito_and_establecimiento_code: 1 row(s), 100 vote(s)",
+			"filas oficiales sin código de circuito ni de establecimiento: 1 fila, 100 votos",
 		);
 		expect(markup).toContain(
-			"official_rows_without_establecimiento_code: 1 row(s), 200 vote(s)",
+			"filas oficiales sin código de establecimiento: 1 fila, 200 votos",
 		);
 	});
 
@@ -1778,8 +1777,8 @@ describe("fiscalizacion page — the real entry point", () => {
 				}),
 			})) as ReactElement,
 		);
-		expect(markup).toContain("missing_identity: 2 row(s), 300 vote(s)");
-		expect(markup).toContain("unmapped: 3 row(s), 999 vote(s)");
+		expect(markup).toContain("missing_identity: 2 filas, 300 votos");
+		expect(markup).toContain("unmapped: 3 filas, 999 votos");
 	});
 
   it("test_the_production_entry_renders_coverage_and_official_result_links", async () => {
@@ -1903,19 +1902,19 @@ describe("fiscalizacion page — the real entry point", () => {
 			})) as ReactElement,
 		);
 
-      expect(markup).toContain("1 covered of 3 official mesas");
-      expect(markup).toContain("2 uncovered");
+      expect(markup).toContain("1 mesas cubiertas de 3 mesas oficiales");
+      expect(markup).toContain("2 sin cobertura");
 
-    expect(markup).toContain("not a random sample");
+    expect(markup).toContain("no es una muestra aleatoria");
 		expect(markup).toContain(
-			"Circuito 00001 — Fixture school: 1 of 1 mesas covered",
+			"Circuito 00001 — Fixture school: 1 de 1 mesas cubiertas",
 		);
 		expect(markup).toContain(
-			"Circuito 00002 — Other fixture school: 0 of 1 mesas covered",
+			"Circuito 00002 — Other fixture school: 0 de 1 mesas cubiertas",
 		);
-		expect(markup).toContain("School exclusions");
+		expect(markup).toContain("Exclusiones de establecimientos");
 		expect(markup).toContain(
-			"official_rows_without_establecimiento_code: 1 row(s), 60 vote(s)",
+			"filas oficiales sin código de establecimiento: 1 fila, 60 votos",
 		);
 		expect(markup).toContain(
 			"circuitoCode=00001&amp;establecimientoCode=E1&amp;level=establecimiento",
@@ -1926,7 +1925,7 @@ describe("fiscalizacion page — the real entry point", () => {
 		expect(markup).toContain('href="/drilldown?electionId=');
     expect(markup).toContain("mesaCode=2");
 		expect(markup).toContain(
-			"Uncovered means no fiscalización presence, not zero or missing official votes",
+			"Sin cobertura significa que no hay presencia de fiscalización, no que los votos oficiales sean cero o falten",
 		);
   });
 });
@@ -2244,7 +2243,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 				canonicalPartyId: null,
 				partyName: null,
 				refusedReason:
-					"canonical party IDs have conflicting nonempty party names (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
+					"los identificadores canónicos de partido tienen nombres no vacíos contradictorios (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
 				tied: false,
 				unmappedByListId: [],
 			});
@@ -2268,7 +2267,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 			).toEqual({
 				status: "unavailable",
 				reason:
-					"canonical party IDs have conflicting nonempty party names (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
+					"los identificadores canónicos de partido tienen nombres no vacíos contradictorios (canon-110: ALIANZA LA LIBERTAD AVANZA | LA LIBERTAD AVANZA)",
 			});
 		},
 	);
@@ -2340,7 +2339,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     const share = partyShare(rows, "canon-110");
     expect(share.status).toBe("unavailable");
     if (share.status !== "unavailable") throw new Error("expected unavailable");
-    expect(share.reason).toContain("source kinds");
+    expect(share.reason).toContain("tipos de fuente");
     expect(topParty(rows).partyName).toBeNull();
   });
 
@@ -2422,7 +2421,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       expect(result.status).toBe("unavailable");
 			if (result.status !== "unavailable")
 				throw new Error("expected unavailable");
-      expect(result.reason).toContain("non-official");
+      expect(result.reason).toContain("filas no oficiales");
     });
   });
 
@@ -2449,7 +2448,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     const share = partyShare(rows, "canon-110");
     expect(share.status).toBe("unavailable");
     if (share.status !== "unavailable") throw new Error("expected unavailable");
-    expect(share.reason).toContain("cannot order");
+    expect(share.reason).toContain("no puede ordenar");
     expect(topParty(rows).partyName).toBeNull();
   });
 
@@ -2484,7 +2483,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     const share = partyShare(rows, "canon-110");
     expect(share.status).toBe("unavailable");
     if (share.status !== "unavailable") throw new Error("expected unavailable");
-    expect(share.reason).toContain("double-count");
+    expect(share.reason).toContain("duplicaría el conteo");
 
     // The ranking must refuse too: 40 + 40 would beat 50 and hand the whole
     // juxtaposition to the wrong party.
@@ -2505,7 +2504,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     );
 
     expect(html).toContain("out of scope");
-    expect(html).toContain("No comparison figure");
+    expect(html).toContain("Sin cifra comparativa");
   });
 
   it("test_the_leakage_refusal_still_reports_the_comparison_it_could_not_build", () => {
@@ -2526,8 +2525,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     );
 
     // The FULL phrase: "are not" carries no refusal semantics on its own.
-    expect(html).toContain("are not fiscalización");
-    expect(html).toContain("No comparison figure");
+    expect(html).toContain("no son de fiscalización");
+    expect(html).toContain("Sin cifra comparativa");
   });
 
   it("test_the_render_path_refuses_a_view_carrying_official_rows_and_keeps_the_comparison_tally", () => {
@@ -2553,19 +2552,19 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 			),
     );
 
-    expect(html).toContain("3 unknown");
+    expect(html).toContain("3 filas desconocida");
     // A THIRD read's drop, on the branch that never rendered it: it belongs to
     // neither the repository's tally above nor the render filter's below.
-    expect(html).toContain("comparison election");
-    expect(html).toContain("2 fiscalizacion row(s) / 640 vote(s)");
-    expect(html).toContain("Refused");
+    expect(html).toContain("elección comparada");
+    expect(html).toContain("2 filas fiscalización / 640 votos");
+    expect(html).toContain("Se rechazó");
     // The official votes appear ONLY inside the exclusion breakdown, labelled
     // as excluded — never as a party figure. Asserting a bare `not
     // .toContain("100")` was both weak (it matches `1005`, a hash, a
     // percentage) and wrong: rule 3 requires the excluded amount be reported.
-    expect(html).toContain("official: 1 rows, 100 votes");
+    expect(html).toContain("oficial: 1 fila, 100 votos");
     expect(html).not.toContain("LA LIBERTAD AVANZA");
-    expect(html).not.toContain("Coverage:");
+    expect(html).not.toContain("Cobertura:");
   });
 
   it("test_mixed_granularity_keeps_reporting_what_failed_to_map", () => {
@@ -2589,7 +2588,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     ]);
 
     expect(result.partyName).toBeNull();
-    expect(result.refusedReason).toContain("double-count");
+    expect(result.refusedReason).toContain("duplicaría el conteo");
 		expect(result.unmappedByListId).toEqual([
 			{ listId: "777", rows: 1, votes: 400 },
 		]);
@@ -2622,8 +2621,8 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     );
 
     // The list is a DISPLAYED figure, printed beside the coverage note.
-    expect(html).toContain("No per-party figures");
-    expect(html).not.toContain("80 votes");
+    expect(html).toContain("Sin cifras por partido");
+    expect(html).not.toContain("80 votos");
   });
 
   it("test_an_unorderable_granularity_is_reported_not_absorbed", () => {
@@ -2664,7 +2663,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     expect(result.reason).toContain("2023-generales");
     // The reason names what the election actually was, so the operator can see
     // which of the two values is wrong.
-    expect(result.reason).toContain("held in 2023");
+    expect(result.reason).toContain("realizada en 2023");
   });
 
   it("test_a_non_national_comparison_is_refused_rather_than_mapped_as_national", () => {
@@ -2695,7 +2694,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       // REFUSED, with a reason. `undefined` is what "nothing was asked for"
       // returns, so asserting it would let a silent drop pass under a name
       // that promises a refusal.
-      reason: expect.stringContaining("national"),
+      reason: expect.stringContaining("nacional"),
     });
   });
 
@@ -2837,8 +2836,8 @@ describe("fiscalizacion page — the filter's drops reach the operator", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("2 official");
-    expect(markup).toContain("excluded by the fiscalización-source filter");
+    expect(markup).toContain("2 filas oficial");
+    expect(markup).toContain("El filtro de fuente de fiscalización excluyó");
   });
 });
 
@@ -2873,8 +2872,8 @@ describe("fiscalizacion page — the figure's level is disclosed", () => {
     );
 
     // NOT `distrito` (the province) and NOT `mesa` (a detail the sum dropped).
-    expect(markup).toContain('aria-label="granularity: seccion"');
-    expect(markup).toContain("summed from mesa");
+    expect(markup).toContain('aria-label="granularidad: seccion"');
+    expect(markup).toContain("sumado a partir de filas de nivel mesa");
   });
 });
 
@@ -2920,12 +2919,12 @@ describe("fiscalizacion page — an unlabelled source kind is never borrowed", (
       ),
     );
 
-    expect(html).toContain("UNVERIFIED source kind");
+    expect(html).toContain("tipo de fuente SIN VERIFICAR");
     // It must not borrow the label it failed to earn. Scoped to the BADGE's
     // own label form ("— official source"): the page has other prose carrying
     // the words, so a bare substring here would be asserting about the wrong
     // text.
-    expect(html).not.toContain("— official source");
+    expect(html).not.toContain("— fuente oficial");
   });
 });
 
@@ -2947,7 +2946,7 @@ describe("fiscalizacion page — a read failure keeps what was already known", (
     expect(html).toContain("row-level security denied the source read");
     expect(html).toContain("the 2023 comparison row set was empty");
     // And the drop counted before the failure, in both units.
-    expect(html).toContain("2 unknown row(s) / 31 vote(s)");
+    expect(html).toContain("2 filas desconocida / 31 votos");
   });
 });
 
@@ -2992,7 +2991,7 @@ describe("fiscalizacion page — an unhashed comparison source is flagged", () =
       ),
     );
 
-    expect(html).toContain("unhashed — cannot be verified");
+    expect(html).toContain("sin hash — no puede verificarse");
   });
 });
 
@@ -3113,7 +3112,7 @@ describe("fiscalizacion page — the badge's own branches, through the page", ()
       },
     ];
 
-    expect(await renderPage()).toContain("unhashed — cannot be verified");
+    expect(await renderPage()).toContain("sin hash — no puede verificarse");
   });
 
   it("test_an_untraceable_official_entry_is_named_on_the_page", async () => {
@@ -3133,7 +3132,7 @@ describe("fiscalizacion page — the badge's own branches, through the page", ()
     const markup = await renderPage();
 
     expect(markup).toContain("national/2023-generales");
-    expect(markup).toContain("cannot be traced");
+    expect(markup).toContain("no se puede rastrear");
   });
 });
 
@@ -3157,7 +3156,7 @@ describe("fiscalizacion page — the pinned election is configuration", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("FISCALIZACION_ELECTION_ID is not configured");
+    expect(markup).toContain("FISCALIZACION_ELECTION_ID no está configurada");
   });
 
   it("test_a_configured_uuid_election_is_served", async () => {
@@ -3179,8 +3178,8 @@ describe("fiscalizacion page — the pinned election is configuration", () => {
       })) as ReactElement,
     );
 
-    expect(markup).not.toContain("this route only serves");
-    expect(markup).toContain("Coverage:");
+    expect(markup).not.toContain("esta ruta solo ofrece");
+    expect(markup).toContain("Cobertura:");
   });
 });
 
@@ -3208,10 +3207,10 @@ describe("fiscalizacion page — the pinned election's year is read, not assumed
       })) as ReactElement,
     );
 
-    expect(markup).toContain("which was held in 2023");
-    expect(markup).toContain("verified for 2025");
+    expect(markup).toContain("realizada en 2023");
+    expect(markup).toContain("verificaron para 2025");
     // No figure and no denominator reach the page.
-    expect(markup).not.toContain("Coverage:");
+    expect(markup).not.toContain("Cobertura:");
   });
 });
 
@@ -3245,12 +3244,12 @@ describe("fiscalizacion page — the comparison read reports its own drops", () 
       ),
     );
 
-    expect(html).toContain("comparison election");
-    expect(html).toContain("2 fiscalizacion row(s) / 640 vote(s)");
-    expect(html).toContain("1 unknown row(s) / 55 vote(s)");
+    expect(html).toContain("elección comparada");
+    expect(html).toContain("2 filas fiscalización / 640 votos");
+    expect(html).toContain("1 fila desconocida / 55 votos");
     // NOT merged with the fiscalización read's tally, which is a different
     // query over different rows.
-    expect(html).toContain("1 unknown row(s) / 9 vote(s)");
+    expect(html).toContain("1 fila desconocida / 9 votos");
   });
 });
 
@@ -3298,9 +3297,9 @@ describe("fiscalizacion page — the comparison tally reaches the rendered page"
       })) as ReactElement,
     );
 
-    expect(markup).toContain("comparison election");
-    expect(markup).toContain("1 fiscalizacion row(s) / 60 vote(s)");
-    expect(markup).toContain("1 unknown row(s) / 44 vote(s)");
+    expect(markup).toContain("elección comparada");
+    expect(markup).toContain("1 fila fiscalización / 60 votos");
+    expect(markup).toContain("1 fila desconocida / 44 votos");
   });
 });
 
@@ -3319,10 +3318,10 @@ describe("fiscalizacion page — a source-read failure keeps the comparison tall
     );
 
     expect(html).toContain("row-level security denied the source read");
-    expect(html).toContain("comparison election");
-    expect(html).toContain("2 fiscalizacion row(s) / 640 vote(s)");
+    expect(html).toContain("elección comparada");
+    expect(html).toContain("2 filas fiscalización / 640 votos");
     // Its own note, not merged with the fiscalización read's.
-    expect(html).toContain("1 unknown row(s) / 9 vote(s)");
+    expect(html).toContain("1 fila desconocida / 9 votos");
   });
 });
 
@@ -3363,8 +3362,8 @@ describe("fiscalizacion page — a failed source read keeps what the other reads
     );
 
     expect(markup).toContain("row-level security denied the source read");
-    expect(markup).toContain("comparison election");
-    expect(markup).toContain("1 fiscalizacion row(s) / 60 vote(s)");
+    expect(markup).toContain("elección comparada");
+    expect(markup).toContain("1 fila fiscalización / 60 votos");
   });
 });
 
@@ -3402,11 +3401,11 @@ describe("fiscalizacion page — unmapped rows on containing levels are not adde
     );
 
     // WHICH id failed to map, and how many rows: independent of granularity.
-    expect(html).toContain("777: 2 rows");
-    expect(html).toContain("cannot be added");
+    expect(html).toContain("777: 2 filas");
+    expect(html).toContain("no se pueden sumar");
     // The double-counted total must not appear anywhere.
-    expect(html).not.toContain("500 votes");
-    expect(html).not.toContain("(500 votes)");
+    expect(html).not.toContain("500 votos");
+    expect(html).not.toContain("(500 votos)");
   });
 });
 
@@ -3441,10 +3440,10 @@ describe("fiscalizacion page — a source-read failure keeps every earlier count
     );
 
     expect(markup).toContain("row-level security denied the source read");
-    expect(markup).toContain("4321: 1 rows");
+    expect(markup).toContain("4321: 1 filas");
     // The real denominator, not the unmapped count restated.
-    expect(markup).toContain("1 of 2 rows");
-    expect(markup).toContain("subcircuito: 1 rows");
+    expect(markup).toContain("1 de 2 filas");
+    expect(markup).toContain("subcircuito: 1 filas");
   });
 });
 
@@ -3463,8 +3462,8 @@ describe("fiscalizacion page — no mapping source is not a claim about the data
       }),
     );
 
-    expect(html).toContain("no curated mapping source is configured");
-    expect(html).not.toContain("resolved to no curated party");
+    expect(html).toContain("no hay una fuente de mapeo curado configurada");
+    expect(html).not.toContain("se resolvieron sin un partido curado");
   });
 });
 
@@ -3495,7 +3494,7 @@ describe("fiscalizacion page — responsive selectors and evidence presentation"
     expect(markup).toContain('<form action="/fiscalizacion" method="get">');
     expect(markup).toContain('<fieldset class="form-grid selector-form">');
     expect(markup).toContain(
-      '<legend class="selector-form__legend">Coverage selectors</legend>',
+      '<legend class="selector-form__legend">Selectores de cobertura</legend>',
     );
     expect(markup).toContain('name="electionId"');
     expect(markup).toContain('name="categoryId"');

@@ -70,15 +70,15 @@ function requireCompleteHierarchy(selection: ExplorationSelection): void {
   if (selection.requestedLevel === EXPLORATION_LEVEL.MESA &&
       (!selection.circuitoCode || !selection.establecimientoCode)) {
     throw new ResultsExplorationContractError("results_exploration_official_contract",
-      "mesa requires circuito and establecimiento parents");
+      "mesa requiere los niveles superiores circuito y establecimiento");
   }
   if (selection.requestedLevel === EXPLORATION_LEVEL.ESTABLECIMIENTO && !selection.circuitoCode) {
     throw new ResultsExplorationContractError("results_exploration_official_contract",
-      "establecimiento requires a circuito parent");
+      "establecimiento requiere un circuito superior");
   }
   if (selection.requestedLevel !== EXPLORATION_LEVEL.DISTRITO && !selection.seccionCode) {
     throw new ResultsExplorationContractError("results_exploration_official_contract",
-      `${selection.requestedLevel} requires a seccion parent`);
+      `${selection.requestedLevel} requiere una sección superior`);
   }
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -330,8 +330,8 @@ function parseTextOptions(value: unknown): FacetOption[] {
 }
 export function formatFacetOptionLabel(option: FacetOption): string {
   if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return `${option.code} — ${option.name}`;
-  if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — name unavailable`;
-  return `${option.code} — conflicting names (${option.nameVariantCount} variants)`;
+  if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — nombre no disponible`;
+  return `${option.code} — nombres contradictorios (${option.nameVariantCount} variantes)`;
 }
 function parseFacets(value: unknown): ExplorationFacets {
   try {
@@ -369,7 +369,7 @@ function parseFacets(value: unknown): ExplorationFacets {
       availableLevels,
     };
   } catch {
-    throw new ResultsExplorationContractError("results_exploration_facets_contract", "malformed facets payload");
+    throw new ResultsExplorationContractError("results_exploration_facets_contract", "respuesta de facetas malformada");
   }
 }
 interface RawAdministrativeParams {
@@ -408,7 +408,7 @@ export function normalizeExplorationParams(raw: RawAdministrativeParams): Normal
     .filter(([, value]) => value === null)
     .map(([key]) => [key, 1]));
   if (Object.keys(invalid).length > 0) {
-    return { status: "invalid", reason: "administrative selectors are malformed", counts: invalid };
+    return { status: "invalid", reason: "los selectores administrativos están malformados", counts: invalid };
   }
   return {
     status: "ok",
@@ -453,7 +453,7 @@ export class ResultsExplorationRepository {
   async schools(selection: ExplorationSelection): Promise<SchoolBreakdownResult> {
     if (selection.requestedLevel !== EXPLORATION_LEVEL.SECCION || !selection.seccionCode)
       throw new ResultsExplorationContractError("results_exploration_official_contract",
-        "school breakdown requires a complete seccion selection");
+        "el desglose por establecimiento requiere una selección completa de sección");
     const { data, error } = await this.client.rpc("results_exploration_schools", {
       p_election_id: selection.electionId, p_category_id: selection.categoryId,
       p_distrito_code: selection.distritoCode, p_seccion_code: selection.seccionCode,

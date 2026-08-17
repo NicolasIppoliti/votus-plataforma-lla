@@ -182,8 +182,8 @@ describe("compare page", () => {
     // Asserted against markup the SUCCESS path actually emits. The previous
     // assertion named an `aria-label` this page never renders, so it was
     // vacuously true and passed with the bug restored.
-    expect(markup).not.toContain("no flip");
-    expect(markup).not.toContain("flipped");
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
   });
 });
 
@@ -220,8 +220,8 @@ describe("compare page — one party across two files", () => {
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("no flip");
-    expect(markup).not.toContain("flipped");
+    expect(markup).toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
     // And never a bare list id where a party name belongs.
     expect(markup).not.toContain("20135");
   });
@@ -264,8 +264,8 @@ describe("compare page — the refusals the operator can trigger", () => {
 
     // A mix on ONE side is invisible to `compareResults`, which compares the
     // two sides' single reported levels.
-    expect(markup).toContain("mix granularity levels");
-    expect(markup).not.toContain("no flip");
+    expect(markup).toContain("mezclan niveles de granularidad");
+    expect(markup).not.toContain("sin cambio");
   });
 
   it("test_a_year_with_no_rows_is_refused_not_given_a_level", async () => {
@@ -287,8 +287,8 @@ describe("compare page — the refusals the operator can trigger", () => {
 
     // `readGranularity([])` answers `distrito`; feeding that in states a level
     // for data that does not exist.
-    expect(markup).toContain("returned no rows");
-    expect(markup).not.toContain("distrito-level");
+    expect(markup).toContain("no devolvió filas");
+    expect(markup).not.toContain("nivel distrito");
   });
 });
 
@@ -315,8 +315,8 @@ describe("compare page — an unmapped id is not an identity", () => {
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("resolved to no canonical party");
-    expect(markup).not.toContain("flipped");
+    expect(markup).toContain("no se resolvieron a un partido canónico");
+    expect(markup).not.toContain("cambió de");
   });
 });
 
@@ -350,8 +350,8 @@ describe("compare page — the D6 branches this page exists for", () => {
     // success path's aggregation note, so asserting them proved nothing about
     // which branch rendered.
     expect(markup).toContain("role=\"alert\"");
-    expect(markup).toContain("explicit");
-    expect(markup).not.toContain("no flip");
+    expect(markup).toContain("explícito");
+    expect(markup).not.toContain("sin cambio");
   });
 
   it("test_an_explicit_aggregation_is_disclosed_in_the_render", async () => {
@@ -368,7 +368,7 @@ describe("compare page — the D6 branches this page exists for", () => {
 
     // The operator asked for it, so the page must SAY it aggregated rather
     // than presenting the result as directly comparable.
-    expect(markup).toContain("Aggregated from");
+    expect(markup).toContain("Agregado a partir de");
   });
 });
 
@@ -395,7 +395,7 @@ describe("compare page — a drop stays visible through a refusal", () => {
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("1 fiscalizacion");
+    expect(markup).toContain("1 fila fiscalización");
   });
 });
 
@@ -420,13 +420,13 @@ describe("compare page — path 3 fires when the repository filter regresses", (
 
     // The BREAKDOWN, in both units: a bare "2 row(s)" cannot tell a leaked
     // fiscalización row from a leaked unknown-kind one, and hides the votes.
-    expect(markup).toContain("1 fiscalizacion row(s) / 10 vote(s)");
+    expect(markup).toContain("1 fila fiscalización / 10 votos");
     // And the unmapped ids, counted before this refusal and about a different
     // axis: `toCompareUnits` used to run AFTER the guard, so they were never
     // even computed on this path.
-    expect(markup).toContain("resolved to no curated party");
-    expect(markup).toContain("are not official");
-    expect(markup).not.toContain("no flip");
+    expect(markup).toContain("se resolvieron sin un partido curado");
+    expect(markup).toContain("no son oficiales");
+    expect(markup).not.toContain("sin cambio");
   });
 });
 
@@ -484,9 +484,9 @@ describe("compare page — a real flip", () => {
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("flipped");
+    expect(markup).toContain("cambió de");
     expect(markup).toContain("ALIANZA LA LIBERTAD AVANZA");
-    expect(markup).not.toContain("flipped lla");
+    expect(markup).not.toContain("cambió de lla");
   });
 });
 
@@ -507,11 +507,11 @@ describe("compare page — a repeated query param reaches the guard", () => {
     );
 
     expect(markup).toContain("election2023");
-    expect(markup).toContain("more than once");
+    expect(markup).toContain("más de una vez");
     // The half that separates "reported as repeated" from "reported as
     // absent": the page must not ask for a parameter the request sent twice.
-    expect(markup).not.toContain("provide <code>partyCategory</code>");
-    expect(markup).not.toContain("Provide");
+    expect(markup).not.toContain("proporcione <code>partyCategory</code>");
+    expect(markup).not.toContain("Proporcione");
   });
 });
 
@@ -550,11 +550,11 @@ describe("compare page — the figure's level is disclosed", () => {
     );
 
     // NOT `distrito`: that is the province, and these rows are one partido.
-    expect(markup).toContain('aria-label="granularity: seccion"');
-    expect(markup).toContain("summed from mesa");
-    expect(markup).toContain("were summed into it");
+    expect(markup).toContain('aria-label="granularidad: seccion"');
+    expect(markup).toContain("sumado a partir de filas de nivel mesa");
+    expect(markup).toContain("se sumaron para obtenerlos");
     // And NOT the opposite claim: nothing here was unavailable.
-    expect(markup).not.toContain("degraded from");
+    expect(markup).not.toContain("degradada desde");
   });
 
   it("test_a_category_mismatch_is_refused_before_the_mapping_is_consulted", async () => {
@@ -576,7 +576,7 @@ describe("compare page — the figure's level is disclosed", () => {
     // `c-diputados` is DIPUTADO NACIONAL, not CONCEJAL. Refused on the axis
     // itself rather than left to degrade into the unmapped path, which only
     // catches ids ABSENT from the wrong table — the easy half.
-    expect(markup).toContain("not CONCEJAL");
+    expect(markup).toContain("no CONCEJAL");
   });
 });
 
@@ -617,10 +617,10 @@ describe("compare page — a mixed pair discloses BOTH sides", () => {
     // Both facts, not whichever one the coarser side happened to carry: 2025's
     // mesa rows were summed, and 2023's distrito source never carried the
     // partido detail at all.
-    expect(markup).toContain("summed from mesa");
-    expect(markup).toContain("degraded from distrito");
-    expect(markup).toContain("source published distrito totals");
-    expect(markup).not.toContain("distrito detail was requested");
+    expect(markup).toContain("sumado a partir de filas de nivel mesa");
+    expect(markup).toContain("degradada desde distrito");
+    expect(markup).toContain("la fuente publicó totales a nivel distrito");
+    expect(markup).not.toContain("se solicitó detalle a nivel distrito");
   });
 });
 
@@ -660,8 +660,8 @@ describe("compare page — two summed sides do not report one side's level", () 
       })) as ReactElement,
     );
 
-    expect(markup).toContain("summed from circuito");
-    expect(markup).not.toContain("summed from mesa");
+    expect(markup).toContain("sumado a partir de filas de nivel circuito");
+    expect(markup).not.toContain("sumado a partir de filas de nivel mesa");
   });
 });
 
@@ -709,8 +709,8 @@ describe("compare page — an unorderable level is reported by size", () => {
     // two rows contain one another is unknown and adding them may count the
     // same votes twice — the rule the shared component states and the inline
     // copy here contradicted.
-    expect(markup).toContain("subcircuito: 2 rows");
-    expect(markup).not.toContain("6000 votes");
+    expect(markup).toContain("subcircuito: 2 filas");
+    expect(markup).not.toContain("6000 votos");
     // NAMED per year: the two reads are independent, and merging them put one
     // year's 400 rows and another's 200+200 on the same indistinguishable line.
     expect(markup).toContain("2023-generales:");
@@ -752,10 +752,10 @@ describe("compare page — a category collision is refused, not resolved", () =>
       })) as ReactElement,
     );
 
-    expect(markup).toContain("not SENADOR NACIONAL");
+    expect(markup).toContain("no SENADOR NACIONAL");
     // No figure, no swing, no party name reaches the page.
     expect(markup).not.toContain("LA LIBERTAD AVANZA");
-    expect(markup).not.toContain("flipped");
+    expect(markup).not.toContain("cambió de");
   });
 });
 
@@ -797,12 +797,12 @@ describe("compare page — uuid election ids are served", () => {
       })) as ReactElement,
     );
 
-    expect(markup).not.toContain("no election row carries");
+    expect(markup).not.toContain("ninguna fila de elección tiene");
     // SERVED: the comparison itself renders. The party name is not on this
     // line — the unit label is — so asserting it would be asserting about the
     // wrong text.
-    expect(markup).toContain("j-027 (whole jurisdiction): no flip");
-    expect(markup).toContain('aria-label="granularity: seccion"');
+    expect(markup).toContain("j-027 (jurisdicción completa): sin cambio");
+    expect(markup).toContain('aria-label="granularidad: seccion"');
   });
 });
 
@@ -847,10 +847,10 @@ describe("compare page — unmapped ids survive the refusals about other axes", 
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("mix granularity levels");
-    expect(markup).toContain("4321: 2 rows");
+    expect(markup).toContain("mezclan niveles de granularidad");
+    expect(markup).toContain("4321: 2 filas");
     // Votes withheld: the two rows are on containing levels.
-    expect(markup).toContain("cannot be added");
+    expect(markup).toContain("no se pueden sumar");
   });
 });
 
@@ -880,17 +880,17 @@ describe("compare page — a leaked row set that also mixes levels", () => {
       (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    expect(markup).toContain("are not official");
+    expect(markup).toContain("no son oficiales");
     // PER YEAR, each labelled. Merged into one line, `4321` read as a single
     // cross-year figure — two different reads over different rows — with
     // nothing naming the year.
     expect(markup).toContain("2023-generales:");
     expect(markup).toContain("2025-legislativas-nacional:");
-    expect(markup).toContain("4321: 2 rows");
-    expect(markup).toContain("4321: 1 rows");
-    expect(markup).not.toContain("4321: 3 rows");
-    expect(markup).toContain("cannot be added");
-    expect(markup).not.toContain("560 votes");
+    expect(markup).toContain("4321: 2 filas");
+    expect(markup).toContain("4321: 1 filas");
+    expect(markup).not.toContain("4321: 3 filas");
+    expect(markup).toContain("no se pueden sumar");
+    expect(markup).not.toContain("560 votos");
   });
 });
 
@@ -918,9 +918,9 @@ describe("compare page — one unorderable level in both years", () => {
     );
 
     // ONE row for 2023 and TWO for 2025 — not three on a merged line.
-    expect(markup).toContain("2023-generales: 1 row(s) carry a granularity");
-    expect(markup).toContain("2025-legislativas-nacional: 2 row(s) carry a granularity");
-    expect(markup).not.toContain("3 row(s) carry a granularity");
+    expect(markup).toContain("2023-generales: 1 fila(s) tienen un nivel de granularidad");
+    expect(markup).toContain("2025-legislativas-nacional: 2 fila(s) tienen un nivel de granularidad");
+    expect(markup).not.toContain("3 fila(s) tienen un nivel de granularidad");
   });
 });
 
@@ -951,10 +951,10 @@ describe("compare page — rows with no list id are not unmapped ids", () => {
     );
 
     // SERVED, not refused for an "unmapped id" nobody supplied.
-    expect(markup).not.toContain("resolved to no canonical party");
-    expect(markup).toContain("no flip");
+    expect(markup).not.toContain("no se resolvieron a un partido canónico");
+    expect(markup).toContain("sin cambio");
     // And the id-less rows reported in their OWN sentence.
-    expect(markup).toContain("no list id at all");
+    expect(markup).toContain("no tienen id de lista");
   });
 });
 
@@ -984,8 +984,8 @@ describe("compare page — a row with an id but no name is never dropped", () =>
     );
 
     // VISIBLE, per source kind — not silently absent from every tally.
-    expect(markup).toContain("no list id at all");
-    expect(markup).toContain("1 official row(s) / 33 vote(s)");
+    expect(markup).toContain("no tienen id de lista");
+    expect(markup).toContain("1 fila oficial / 33 votos");
   });
 });
 
@@ -1017,10 +1017,10 @@ describe("compare page — the D6 refusal keeps the no-list-id disclosure", () =
     );
 
     // The D6 refusal itself...
-    expect(markup).toContain("this comparison refuses to guess");
+    expect(markup).toContain("esta comparación no hace suposiciones");
     // ...and the disclosure it used to return without.
-    expect(markup).toContain("no list id at all");
-    expect(markup).toContain("1 official row(s) / 31 vote(s)");
-    expect(markup).toContain("1 official row(s) / 17 vote(s)");
+    expect(markup).toContain("no tienen id de lista");
+    expect(markup).toContain("1 fila oficial / 31 votos");
+    expect(markup).toContain("1 fila oficial / 17 votos");
   });
 });

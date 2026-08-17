@@ -200,7 +200,7 @@ describe("the exclusion tally (rule 3 — a drop is judged by its size)", () => 
 
     if (response.status !== "ok") throw new Error("expected ok status");
     expect(response.excluded).toEqual({ fiscalizacion: { rows: 1, votes: 9999 } });
-    expect(describeExcluded(response.excluded)).toBe("1 fiscalizacion row(s) / 9999 vote(s)");
+    expect(describeExcluded(response.excluded)).toBe("1 fila fiscalización / 9999 votos");
   });
 
   it("test_a_source_kind_outside_the_enum_lands_in_its_own_bucket", async () => {

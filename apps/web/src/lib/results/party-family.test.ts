@@ -86,23 +86,23 @@ describe("partyFamilyRefusal", () => {
     // municipal table names `2206` as a different party.
     expect(
       partyFamilyRefusal({ status: "ok", family: "national" }, "coronel_rosales_municipal"),
-    ).toBe("jurisdiction is mapped by the national party table, not coronel_rosales_municipal");
+    ).toBe("la tabla de partidos national mapea la jurisdicción, no coronel_rosales_municipal");
   });
 
   it("test_an_unrecognized_expected_family_refuses_rather_than_matching", () => {
     // Two callers take this from the query string, so it can be anything.
     expect(partyFamilyRefusal({ status: "ok", family: "national" }, "banana")).toContain(
-      "not banana",
+      "no banana",
     );
   });
 
   it("test_every_refusal_names_its_own_cause", () => {
     expect(partyFamilyRefusal({ status: "unconfigured" }, "national")).toContain(
-      "are not configured",
+      "no están configurados",
     );
     expect(
       partyFamilyRefusal({ status: "collision", jurisdictionId: "j-same" }, "national"),
-    ).toContain("j-same is configured as both");
+    ).toContain("j-same está configurada a la vez");
     // The ID travels: municipal's variant dropped it, so the operator was told
     // a jurisdiction was unmapped without being told WHICH.
     expect(

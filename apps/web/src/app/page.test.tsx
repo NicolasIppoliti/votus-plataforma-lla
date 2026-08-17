@@ -11,7 +11,7 @@ it("renders a clear Votus identity and evidence-led purpose", () => {
   );
   expect(markup.match(/id="main-content"/g) ?? []).toHaveLength(1);
   expect(markup).toContain("<h1>Votus</h1>");
-  expect(markup).toContain("Internal electoral analysis");
-  expect(markup).toContain("official and public evidence");
-  expect(markup).toContain("explicit source status");
+  expect(markup).toContain("Análisis electoral interno");
+  expect(markup).toContain("evidencia oficial y pública");
+  expect(markup).toContain("estado explícito de la fuente");
 });

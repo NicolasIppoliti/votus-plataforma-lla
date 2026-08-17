@@ -65,18 +65,18 @@ export function partyFamilyRefusal(
 ): string | null {
   switch (resolution.status) {
     case "unconfigured":
-      return "NATIONAL_JURISDICTION_ID and MUNICIPAL_JURISDICTION_ID are not configured";
+      return "NATIONAL_JURISDICTION_ID y MUNICIPAL_JURISDICTION_ID no están configurados";
     case "collision":
       return (
-        `${resolution.jurisdictionId} is configured as both the national and ` +
-        "the municipal jurisdiction"
+        `${resolution.jurisdictionId} está configurada a la vez como jurisdicción ` +
+        "nacional y municipal"
       );
     case "unknown_jurisdiction":
-      return `jurisdiction ${resolution.jurisdictionId} is mapped by no configured party table`;
+      return `ninguna tabla de partidos configurada mapea la jurisdicción ${resolution.jurisdictionId}`;
     case "ok":
       return resolution.family === expectedFamily
         ? null
-        : `jurisdiction is mapped by the ${resolution.family} party table, not ${expectedFamily}`;
+        : `la tabla de partidos ${resolution.family} mapea la jurisdicción, no ${expectedFamily}`;
   }
 }
 

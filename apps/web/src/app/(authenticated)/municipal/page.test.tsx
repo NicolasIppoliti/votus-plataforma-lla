@@ -87,9 +87,9 @@ describe("municipal page — renderMunicipalView", () => {
       }),
     );
 
-    expect(html).toContain("By source kind: 1 official row(s) / 11111 vote(s).");
-    expect(html).toContain("granularity: seccion");
-    expect(html).toContain("1 fiscalizacion row(s) / 22222 vote(s)");
+    expect(html).toContain("Por tipo de fuente: 1 fila oficial / 11111 votos.");
+    expect(html).toContain("granularidad: seccion");
+    expect(html).toContain("1 fila fiscalización / 22222 votos");
     expect(html).not.toContain("33333");
   });
 
@@ -106,13 +106,13 @@ describe("municipal page — renderMunicipalView", () => {
     // NOT `distrito`. The query filters one `jurisdiction_id`, so the figure
     // covers one partido however the source labelled its rows — announcing the
     // province is the 32.291-vote misattribution rule 8 records.
-    expect(html).toContain('granularity: seccion');
-    expect(html).not.toContain('aria-label="granularity: mesa"');
-    expect(html).not.toContain('aria-label="granularity: distrito"');
+    expect(html).toContain('granularidad: seccion');
+    expect(html).not.toContain('aria-label="granularidad: mesa"');
+    expect(html).not.toContain('aria-label="granularidad: distrito"');
     // provenance-display spec: name what the caller requested and the source
     // could not provide, not merely the coarser level the row carries.
-    expect(html.toLowerCase()).toContain("requested granularity: mesa");
-    expect(html.toLowerCase()).toContain("actual granularity: seccion");
+    expect(html.toLowerCase()).toContain("granularidad solicitada: mesa");
+    expect(html.toLowerCase()).toContain("granularidad real: seccion");
   });
 
   it("test_exact_and_historical_unknown_requests_do_not_invent_degradation", () => {
@@ -126,7 +126,7 @@ describe("municipal page — renderMunicipalView", () => {
         }),
       );
 
-      expect(html.toLowerCase()).not.toContain("degraded from");
+      expect(html.toLowerCase()).not.toContain("degradado desde");
     }
   });
 });
@@ -163,8 +163,8 @@ describe("municipal page — the badge describes the rows, not a memory of them"
     );
 
     // The ROW-DERIVED part: mesa rows were summed to reach the partido total.
-    expect(html).toContain("summed from mesa");
-    expect(html).not.toMatch(/granularity[^>]*distrito/);
+    expect(html).toContain("sumado a partir de filas de nivel mesa");
+    expect(html).not.toMatch(/granularidad[^>]*distrito/);
   });
 
   it("test_mixed_granularity_rows_withhold_the_figure_rather_than_double_count", () => {
@@ -183,11 +183,11 @@ describe("municipal page — the badge describes the rows, not a memory of them"
     // A `distrito` row already contains the `seccion` row beneath it, so the
     // two 4200-vote rows rendered 8400 for a party that got 4200. The page
     // announced the mix and summed across it anyway.
-    expect(html).toContain("summing them would double-count");
-    expect(html).toContain("No per-party figures");
+    expect(html).toContain("sumarlas duplicaría el conteo");
+    expect(html).toContain("No hay cifras por partido");
     // And NO badge: `readGranularity` folds to the coarsest level, so a badge
     // beside the refusal names one of the mixed levels as if it were the set's.
-    expect(html).not.toContain('aria-label="granularity:');
+    expect(html).not.toContain('aria-label="granularidad:');
     expect(html).not.toContain("8400");
   });
 });
@@ -330,7 +330,7 @@ describe("municipal page — the mapping is fixed to one race", () => {
 
     // The 2023 list ids are NOT the 2025 ones; resolving them through this
     // table names the wrong parties.
-    expect(markup).toContain("Refused");
+    expect(markup).toContain("Se rechazó la solicitud");
     expect(markup).toContain("2023-municipal");
   });
 });
@@ -352,7 +352,7 @@ describe("municipal page — the race is pinned, not taken from the request", ()
       })) as ReactElement,
     );
 
-    expect(markup).toContain("Refused");
+    expect(markup).toContain("Se rechazó la solicitud");
     expect(markup).toContain("c-diputados");
   });
 });
@@ -373,10 +373,10 @@ describe("municipal page — a drop stays visible through a later failure", () =
     );
 
     expect(html).toContain("row-level security denied the source read");
-    expect(html).toContain("3 fiscalizacion row(s) / 120 vote(s)");
+    expect(html).toContain("3 filas fiscalización / 120 votos");
     // The VOTES too: a 3-row drop of 120 votes and a 3-row drop of 6 read
     // identically when only the row count survives.
-    expect(html).toContain("1 unknown row(s) / 7 vote(s)");
+    expect(html).toContain("1 fila desconocida / 7 votos");
   });
 });
 
@@ -397,16 +397,16 @@ describe("municipal page — path 3 fires when the repository filter regresses",
       }),
     );
 
-    expect(html).toContain("are not official");
+    expect(html).toContain("no son oficiales");
     // The BREAKDOWN, in both units — the shape rule 3 exists to protect. Its
     // two siblings pin it; this driver asserted only that the refusal fired,
     // so the per-kind tally could regress to a bare total and stay green.
-    expect(html).toContain("1 fiscalizacion row(s) / 4200 vote(s)");
+    expect(html).toContain("1 fila fiscalización / 4200 votos");
     // No PARTY line. `not.toContain("<li>")` was too broad once the unmapped
     // breakdown started rendering its own list: the refusal legitimately emits
     // `<li>` now, and the claim was never about markup — it is that no figure
     // is attributed to a party.
-    expect(html).not.toContain(": 4200 votes");
+    expect(html).not.toContain(": 4200 votos");
     expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA:");
   });
 });
@@ -423,7 +423,7 @@ describe("municipal page — an untraceable figure says so", () => {
       ),
     );
 
-    expect(html).toContain("resolved to no source record");
+    expect(html).toContain("no se resolvieron a un registro de fuente");
     expect(html).toContain("pba/2025-municipal-coronel-rosales");
   });
 });
@@ -447,7 +447,7 @@ describe("municipal page — a repeated query param reaches the guard", () => {
     );
 
     expect(markup).toContain("categoryId");
-    expect(markup).toContain("more than once");
+    expect(markup).toContain("más de una vez");
   });
 });
 
@@ -471,7 +471,7 @@ describe("municipal page — a uuid election id is served", () => {
       })) as ReactElement,
     );
 
-    expect(markup).not.toContain("is not that election");
+    expect(markup).not.toContain("no corresponde a esa elección");
     expect(markup).toContain("LA LIBERTAD AVANZA");
   });
 });
@@ -493,10 +493,10 @@ describe("municipal page — a read failure states the real denominator", () => 
       }),
     );
 
-    expect(html).toContain("1 of 400 rows");
-    expect(html).not.toContain("1 of 1 rows");
+    expect(html).toContain("1 de 400 filas");
+    expect(html).not.toContain("1 de 1 filas");
     // And the levels this app cannot order, counted before the same failure.
-    expect(html).toContain("subcircuito: 3 rows");
+    expect(html).toContain("subcircuito: 3 filas");
   });
 });
 
@@ -517,11 +517,11 @@ describe("municipal page — a read failure names both breakdowns", () => {
     );
 
     expect(html).toContain("row-level security denied the source read");
-    expect(html).toContain("2 of 120 rows");
-    expect(html).toContain("2206: 2 rows");
-    expect(html).toContain("subcircuito: 4 rows");
+    expect(html).toContain("2 de 120 filas");
+    expect(html).toContain("2206: 2 filas");
+    expect(html).toContain("subcircuito: 4 filas");
     // ROWS only for the unorderable level: containment is unknown.
-    expect(html).not.toContain("subcircuito: 4 rows, 200 votes");
+    expect(html).not.toContain("subcircuito: 4 filas, 200 votos");
   });
 });
 
@@ -539,7 +539,7 @@ describe("municipal page — no mapping source is not a claim about the data", (
       }),
     );
 
-    expect(html).toContain("no curated mapping source is configured");
-    expect(html).not.toContain("resolved to no curated party");
+    expect(html).toContain("no hay una fuente de mapeo curado configurada");
+    expect(html).not.toContain("se resolvieron sin un partido curado");
   });
 });

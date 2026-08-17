@@ -3,7 +3,7 @@ import { expect, request, test } from "@playwright/test";
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 
 const environment = assertE2eEnvironment(process.env);
-const ROOT_CONTENT = "A civic evidence room for examining electoral results";
+const ROOT_CONTENT = "Un espacio de evidencia cívica para examinar resultados electorales";
 
 test.describe("the production root preserves its authentication boundary", () => {
   test("test_root_redirects_anonymous_and_renders_landing_when_authenticated", async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe("the production root preserves its authentication boundary", () =>
         await page.goto("/");
         await expect(page).toHaveURL(/\/$/);
         await expect(page.getByRole("main")).toContainText(ROOT_CONTENT);
-        await page.getByRole("link", { name: "Skip to main content" }).press("Enter");
+        await page.getByRole("link", { name: "Ir al contenido principal" }).press("Enter");
         await expect(page.locator("#main-content")).toBeFocused();
         expect(
           await page.evaluate(
@@ -31,9 +31,9 @@ test.describe("the production root preserves its authentication boundary", () =>
         ).toBe(true);
 
         await page.goto("/dashboard");
-        await expect(page.getByRole("heading", { level: 1, name: "Votus dashboard" })).toBeVisible();
-        await expect(page.getByRole("navigation", { name: "main" })).toBeVisible();
-        await page.getByRole("link", { name: "Skip to main content" }).press("Enter");
+        await expect(page.getByRole("heading", { level: 1, name: "Panel de Votus" })).toBeVisible();
+        await expect(page.getByRole("navigation", { name: "principal" })).toBeVisible();
+        await page.getByRole("link", { name: "Ir al contenido principal" }).press("Enter");
         await expect(page.locator("#main-content")).toBeFocused();
         expect(
           await page.evaluate(

@@ -58,34 +58,34 @@ export default async function AuthenticatedLayout({
     <div className="app-shell">
       <header className="site-header">
         <div className="shell-container site-header__inner">
-          <Link className="site-brand" href="/dashboard" aria-label="Votus dashboard">
+          <Link className="site-brand" href="/dashboard" aria-label="Panel de Votus">
             <span className="site-brand__name">Votus</span>
-            <span className="site-brand__descriptor">evidence room</span>
+            <span className="site-brand__descriptor">espacio de evidencia</span>
           </Link>
-          <p className="site-context">Internal electoral analysis</p>
+          <p className="site-context">Análisis electoral interno</p>
         </div>
-        <nav aria-label="main" className="main-navigation">
+        <nav aria-label="principal" className="main-navigation">
           <ul className="shell-container navigation-list">
             <li>
-              <Link href="/dashboard">Dashboard</Link>
+              <Link href="/dashboard">Panel</Link>
             </li>
             <li>
-              <Link href="/compare">Compare</Link>
+              <Link href="/compare">Comparar</Link>
             </li>
             <li>
-              <Link href="/drilldown">Explore results</Link>
+              <Link href="/drilldown">Explorar resultados</Link>
             </li>
             <li>
-              <Link href="/fiscalizacion">Fiscalización (unofficial)</Link>
+              <Link href="/fiscalizacion">Fiscalización (no oficial)</Link>
             </li>
             <li>
               <Link href="/municipal">Municipal (Concejales)</Link>
             </li>
             <li>
-              <Link href="/simulate">Seat simulation</Link>
+              <Link href="/simulate">Simulación de bancas</Link>
             </li>
             <li>
-              <Link href="/review">Review</Link>
+              <Link href="/review">Revisión</Link>
             </li>
           </ul>
         </nav>
@@ -96,8 +96,10 @@ export default async function AuthenticatedLayout({
         </div>
         {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
           <p className="review-alert" role="alert">
-            <span className="status-label">Needs review</span>
-            <Link href="/review">{unresolvedCount} unresolved review item(s)</Link>
+                <span className="status-label">Requiere revisión</span>
+                <Link href="/review">
+                  {unresolvedCount} elemento(s) de revisión pendiente(s)
+                </Link>
           </p>
         ) : null}
         {children}

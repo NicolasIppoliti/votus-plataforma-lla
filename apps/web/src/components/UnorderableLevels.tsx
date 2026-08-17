@@ -24,14 +24,15 @@ export function UnorderableLevels({ entries, label }: UnorderableLevelsProps): R
     <>
       <p role="alert">
         {label ? `${label}: ` : ""}
-        {entries.reduce((sum, entry) => sum + entry.rows, 0)} row(s) carry a
-        granularity this page cannot order, so their containment relationship is
-        unknown and no level is shown for them at all. By level:
+        {entries.reduce((sum, entry) => sum + entry.rows, 0)} fila(s) tienen un
+        nivel de granularidad que esta página no puede ordenar, por lo que se
+        desconoce su relación de contención y no se muestra ningún nivel para
+        ellas. Por nivel:
       </p>
       <ul>
         {entries.map((entry) => (
           <li key={entry.granularity}>
-            {entry.granularity}: {entry.rows} rows
+            {entry.granularity}: {entry.rows} filas
           </li>
         ))}
       </ul>

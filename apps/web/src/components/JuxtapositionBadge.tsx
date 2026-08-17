@@ -59,9 +59,9 @@ function sourceLabel(sourceKind: SourceKind): string {
   // number a human then reads.
   switch (sourceKind) {
     case "official":
-      return " — official source";
+      return " — fuente oficial";
     case "fiscalizacion":
-      return " — unofficial source";
+      return " — fuente no oficial";
     default: {
       // Adding a kind to `SourceKind` breaks the build on THIS assignment,
       // which is the real guard — the comment used to claim it while the
@@ -72,7 +72,7 @@ function sourceLabel(sourceKind: SourceKind): string {
       // repository row. Throwing turned a labelling problem into a 500;
       // everywhere else in this capability an unknown REFUSES and reports, so
       // the figure renders under an explicit "unverified" label instead.
-      return " — UNVERIFIED source kind, treat this figure as unlabelled";
+      return " — tipo de fuente SIN VERIFICAR; considere esta cifra como no etiquetada";
     }
   }
 }
@@ -93,8 +93,8 @@ export function JuxtapositionBadge({
   officialMissingProvenance = [],
 }: JuxtapositionBadgeProps): ReactNode {
   return (
-    <div role="group" aria-label="cross-election juxtaposition">
-      <section aria-label="fiscalizacion figure">
+    <div role="group" aria-label="comparación entre elecciones">
+      <section aria-label="cifra de fiscalización">
         <span>
           {fiscalizacion.electionLabel} ({fiscalizacion.electionId})
         </span>
@@ -104,13 +104,13 @@ export function JuxtapositionBadge({
           {fiscalizacion.partyName}: {fiscalizacion.sharePercent}%
         </span>
         <p role="note">
-          Coverage: {fiscalizacion.coverage.observedUnits} of{" "}
-          {fiscalizacion.coverage.denominatorUnits} mesas — not a random
-          sample; these are exactly the mesas where the party had a fiscal
-          present.
+          Cobertura: {fiscalizacion.coverage.observedUnits} de{" "}
+          {fiscalizacion.coverage.denominatorUnits} mesas — no es una muestra
+          aleatoria; son exactamente las mesas donde el partido tuvo un fiscal
+          presente.
         </p>
       </section>
-      <section aria-label="official figure">
+      <section aria-label="cifra oficial">
         <span>
           {official.electionLabel} ({official.electionId})
         </span>
@@ -121,30 +121,31 @@ export function JuxtapositionBadge({
         </span>
         {officialMissingProvenance.length > 0 ? (
           <p role="alert">
-            {officialMissingProvenance.length} archive entry/entries behind this
-            figure resolved to no source record (
-            {officialMissingProvenance.join(", ")}); it is only partly traced.
+            {officialMissingProvenance.length} entrada(s) de archivo que respaldan
+            esta cifra no se resolvieron a un registro de fuente (
+            {officialMissingProvenance.join(", ")}); su trazabilidad es parcial.
           </p>
         ) : null}
         {officialSources.length === 0 ? (
           <p role="alert">
-            No archived source for this figure — it cannot be traced and must
-            not be quoted.
+            No hay una fuente archivada para esta cifra: no se puede rastrear ni
+            debe citarse.
           </p>
         ) : (
-          <ul aria-label="official figure sources">
+          <ul aria-label="fuentes de la cifra oficial">
             {officialSources.map((source) => (
               <li key={source.archiveEntryId}>
                 <a href={source.url}>{source.archiveEntryId}</a> — sha256{" "}
-                {source.sha256 ? source.sha256.slice(0, 8) : "unhashed — cannot be verified"}, fetched {source.fetchedAt}
+                {source.sha256 ? source.sha256.slice(0, 8) : "sin hash — no puede verificarse"}, descargada el {source.fetchedAt}
               </li>
             ))}
           </ul>
         )}
       </section>
       <p role="alert">
-        Different elections, not directly comparable: the fiscalización
-        figure covers a partial, self-selected, non-random set of mesas.
+        Son elecciones diferentes y no son directamente comparables: la cifra de
+        fiscalización cubre un conjunto parcial, autoseleccionado y no aleatorio
+        de mesas.
       </p>
     </div>
   );

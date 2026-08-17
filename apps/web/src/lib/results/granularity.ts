@@ -193,14 +193,14 @@ export function mixedGranularityReason(rows: ResultRow[]): string | null {
   const unknown = readGranularity(rows).unrecognized;
   if (unknown.length > 0) {
     return (
-      `rows carry a granularity this page cannot order (${unknown.join(", ")}); ` +
-      "their containment relationship is unknown, so they cannot be summed"
+      `las filas tienen un nivel de granularidad que esta página no puede ordenar (${unknown.join(", ")}); ` +
+      "se desconoce su relación de contención, por lo que no se pueden sumar"
     );
   }
 
   if (levels.size <= 1) return null;
   return (
-    `rows mix ${levels.size} granularity levels (${[...levels].sort().join(", ")}); ` +
-    "summing them would double-count"
+    `las filas mezclan ${levels.size} niveles de granularidad (${[...levels].sort().join(", ")}); ` +
+    "sumarlas duplicaría el conteo"
   );
 }

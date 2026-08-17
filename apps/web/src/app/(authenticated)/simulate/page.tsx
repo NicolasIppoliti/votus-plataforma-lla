@@ -53,6 +53,12 @@ const projectionInputSchema = z.discriminatedUnion("level", [
 
 type ProjectionInput = z.infer<typeof projectionInputSchema>;
 
+function allocationLevelLabel(level: AllocationResult["level"]): string {
+  if (level === "pba_municipal") return "municipal de PBA";
+  if (level === "pba_provincial") return "provincial de PBA";
+  return "nacional";
+}
+
 function canonicalJson(value: unknown): string {
   if (
     value === null ||
@@ -76,7 +82,7 @@ function canonicalJson(value: unknown): string {
       )
       .join(",")}}`;
   }
-  throw new Error("projection input contains a non-JSON value");
+  throw new Error("la proyección contiene un valor que no es JSON");
 }
 
 function suppliedInputTrace(
@@ -91,6 +97,17 @@ function suppliedInputTrace(
     .digest("hex");
 }
 
+function allocationErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("no positive-vote list clears")) {
+    return "ninguna lista con votos supera el umbral del padrón; se rechaza una asignación vacía";
+  }
+  if (message.includes("MAYORIA is not implemented")) {
+    return "MAYORIA no está implementada según la Ley 5109; se rechazó la asignación";
+  }
+  return "No se pudo completar la asignación porque los datos proporcionados no cumplen sus reglas.";
+}
+
 function parseInputParam(raw: string | undefined): ParsedInput {
   if (!raw) return {};
   try {
@@ -103,8 +120,8 @@ function parseInputParam(raw: string | undefined): ParsedInput {
     ) {
       return {
         parseError:
-          "Historical simulation is unavailable at this route: historical figures require " +
-          "a trusted server-side loader with validated archived provenance.",
+          "La simulación histórica no está disponible en esta ruta: las cifras históricas requieren " +
+          "una carga confiable del servidor con procedencia archivada y validada.",
       };
     }
     const projection = projectionInputSchema.parse(decoded);
@@ -117,10 +134,10 @@ function parseInputParam(raw: string | undefined): ParsedInput {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return {
-        parseError: `the \`input\` query parameter is not a valid projection input: ${error.message}`,
+        parseError: "el parámetro de consulta `input` no contiene una proyección válida",
       };
     }
-    return { parseError: "invalid JSON in the `input` query parameter" };
+    return { parseError: "el parámetro de consulta `input` contiene JSON no válido" };
   }
 }
 
@@ -169,9 +186,9 @@ const councilSeatHoldersSchema = z.array(
   z.strictObject({ listId: z.string().min(1), listName: z.string().min(1) }),
 ).length(COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION, {
   error:
-    "heldOver expected councilTotal - seatsUpForRenewal " +
+    "heldOver requiere councilTotal - seatsUpForRenewal " +
     `(${COUNCIL_TOTAL_SEATS} - ${COUNCIL_SEATS_PER_ELECTION} = ` +
-    `${COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION}) seats`,
+    `${COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION}) bancas`,
 });
 
 interface CouncilInputParams {
@@ -192,27 +209,27 @@ function validateCouncilInput({
 }: CouncilInputParams): ValidatedCouncilInput {
   if (rawHeldOver !== undefined && council === undefined) {
     throw new CouncilCompositionError(
-      `heldOver requires a supported council: pass council=${COUNCIL_JURISDICTION_LABEL}`,
+      `heldOver requiere un concejo compatible: use council=${COUNCIL_JURISDICTION_LABEL}`,
     );
   }
   if (council === undefined) return {};
   if (council !== COUNCIL_JURISDICTION_LABEL) {
     throw new CouncilCompositionError(
-      `unsupported council: this route supports only ${COUNCIL_JURISDICTION_LABEL}`,
+      `concejo no compatible: esta ruta solo admite ${COUNCIL_JURISDICTION_LABEL}`,
     );
   }
   if (!input) return { council: COUNCIL_JURISDICTION_LABEL };
   if (input.level !== "pba_municipal") {
     throw new CouncilCompositionError(
-      `${COUNCIL_JURISDICTION_LABEL} is available only for pba_municipal ` +
-        `projections; got ${input.level}`,
+      `${COUNCIL_JURISDICTION_LABEL} solo está disponible para proyecciones ` +
+        `pba_municipal; se recibió ${input.level}`,
     );
   }
   if (input.seatsToFill !== COUNCIL_SEATS_PER_ELECTION) {
     throw new CouncilCompositionError(
-      `LOM Art. 3 renews ${COUNCIL_SEATS_PER_ELECTION} of the ` +
-        `${COUNCIL_TOTAL_SEATS} council seats per election; this allocation ` +
-        `fills ${input.seatsToFill}`,
+      `La LOM, art. 3, renueva ${COUNCIL_SEATS_PER_ELECTION} de las ` +
+        `${COUNCIL_TOTAL_SEATS} bancas del concejo por elección; esta asignación ` +
+        `cubre ${input.seatsToFill}`,
     );
   }
   if (rawHeldOver === undefined) {
@@ -226,8 +243,8 @@ function validateCouncilInput({
   } catch (error) {
     throw new CouncilCompositionError(
       error instanceof z.ZodError
-        ? `the \`heldOver\` query parameter is not a valid heldOver roster: ${error.message}`
-        : "invalid JSON in the `heldOver` query parameter",
+        ? "el parámetro de consulta `heldOver` no contiene una nómina válida"
+        : "el parámetro de consulta `heldOver` contiene JSON no válido",
     );
   }
 }
@@ -245,10 +262,10 @@ export default async function SimulatePage({
   if (repeated.length > 0) {
     return (
       <main>
-        <h1>Seat simulation</h1>
+        <h1>Simulación de bancas</h1>
         <p role="alert">
-          Refused: these query parameters were supplied more than once and
-          cannot be resolved to one value: {repeated.join(", ")}.
+          Se rechazó la solicitud: estos parámetros de consulta se proporcionaron más de una vez y
+          no se pueden resolver a un único valor: {repeated.join(", ")}.
         </p>
       </main>
     );
@@ -282,7 +299,7 @@ export default async function SimulatePage({
     try {
       result = allocateSeats(input);
     } catch (error) {
-      allocationError = error instanceof Error ? error.message : String(error);
+      allocationError = allocationErrorMessage(error);
     }
   }
 
@@ -305,9 +322,9 @@ export default async function SimulatePage({
     try {
       if (result.seatAwards.length !== COUNCIL_SEATS_PER_ELECTION) {
         throw new CouncilCompositionError(
-          `the allocation returned ${result.seatAwards.length} awards for ` +
-            `${input.seatsToFill} seats; a roster cannot be composed from a ` +
-            "partial allocation",
+          `la asignación devolvió ${result.seatAwards.length} adjudicaciones para ` +
+            `${input.seatsToFill} bancas; no se puede componer una nómina a partir de una ` +
+            "asignación parcial",
         );
       }
       // PARSED, not cast. `?heldOver={}` or `[{"foo":1}]` reached
@@ -331,7 +348,7 @@ export default async function SimulatePage({
           );
           return {
             listId: award.listId,
-            listName: source?.listName ?? `unmapped (list ${award.listId})`,
+            listName: source?.listName ?? `sin mapear (lista ${award.listId})`,
           };
         }),
         heldOver: validatedCouncil.heldOver,
@@ -356,22 +373,22 @@ export default async function SimulatePage({
 
   return (
     <main>
-      <h1>Seat simulation</h1>
+      <h1>Simulación de bancas</h1>
       <p>
-        Pass an <code>input</code> query parameter with a JSON-encoded
-        projection: <code>isProjection: true</code>, normalized{" "}
-        <code>granularity</code>, <code>level</code>, <code>seatsToFill</code>,{" "}
-        <code>lists</code>, and either the Hare-quota fields (PBA levels) or{" "}
-        <code>padron</code>/<code>threshold</code> (national). Historical runs
-        require trusted server-side archived data and are unavailable through
-        query JSON.
+        Proporcione un parámetro de consulta <code>input</code> con una
+        proyección codificada como JSON: <code>isProjection: true</code>,{" "}
+        <code>granularity</code> normalizada, <code>level</code>, <code>seatsToFill</code>,{" "}
+        <code>lists</code> y los campos del cociente Hare (niveles de PBA) o{" "}
+        <code>padron</code>/<code>threshold</code> (nivel nacional). Las ejecuciones
+        históricas requieren datos archivados y confiables del servidor, y no están
+        disponibles mediante JSON en la consulta.
       </p>
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}
       {!input && !parseError ? (
         <p role="status">
-          No simulation run: provide a valid input scenario to calculate seats.
+          No se ejecutó ninguna simulación: proporcione un escenario válido para calcular las bancas.
         </p>
       ) : null}
       {result &&
@@ -380,19 +397,19 @@ export default async function SimulatePage({
       !council &&
       !councilError ? (
         <p role="note">
-          No council roster: pass a <code>heldOver</code> query parameter with
-          the {COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION} seats NOT up
-          for renewal in this projection. They remain caller-supplied projection
-          input, not trusted prior-election evidence. Ley 5109 Art. 121 resolves
-          which sitting councillors leave by sorteo, which this route does not
-          model.
+          No hay nómina del concejo: proporcione un parámetro <code>heldOver</code> con
+          las {COUNCIL_TOTAL_SEATS - COUNCIL_SEATS_PER_ELECTION} bancas que NO se
+          renuevan en esta proyección. Siguen siendo datos de proyección aportados
+          por quien realiza la consulta, no evidencia confiable de la elección anterior.
+          La Ley 5109, art. 121, determina por sorteo qué concejales en funciones dejan
+          su banca; esta ruta no modela ese proceso.
         </p>
       ) : null}
       {council ? (
-        <section aria-label="council-composition">
+        <section data-testid="council-composition" aria-label="Composición del concejo">
           <h2>
-            Council roster: {council.councilTotal} seats,{" "}
-            {council.seatsUpForRenewal} renewed this election
+            Nómina del concejo: {council.councilTotal} bancas,{" "}
+            {council.seatsUpForRenewal} renovadas en esta elección
           </h2>
           <ul>
             {[
@@ -409,26 +426,26 @@ export default async function SimulatePage({
               <li key={`${seat.listId}-${index}`}>
                 {seat.listName}
                 {renewed
-                  ? " (this projection)"
-                  : " (held over, caller-supplied projection input)"}
+                  ? " (esta proyección)"
+                  : " (banca no renovada, dato de proyección aportado por quien consulta)"}
               </li>
             ))}
           </ul>
         </section>
       ) : null}
       {result ? (
-        <section aria-label="allocation-result">
-          <h2>Result ({result.level})</h2>
-          <p>Projection (hypothetical, caller supplied)</p>
+        <section data-testid="allocation-result" aria-label="Resultado de la asignación">
+          <h2>Resultado ({allocationLevelLabel(result.level)})</h2>
+          <p>Proyección hipotética aportada por quien realiza la consulta</p>
           {granularity ? (
             <p>
-              <strong>Input granularity:</strong>{" "}
+              <strong>Granularidad de entrada:</strong>{" "}
               <GranularityBadge granularity={granularity} />
             </p>
           ) : null}
           {inputTrace ? (
             <p>
-              Supplied-input trace (not archive provenance): sha256 {inputTrace}
+              Huella de los datos proporcionados (no es procedencia de archivo): sha256 {inputTrace}
             </p>
           ) : null}
           <AllocationEvidence result={result} />

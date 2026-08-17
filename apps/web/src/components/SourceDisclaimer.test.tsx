@@ -11,7 +11,7 @@ import { SourceDisclaimer } from "./SourceDisclaimer";
 describe("SourceDisclaimer", () => {
   it("test_disclaimer_present_and_not_permanently_dismissible", () => {
     const html = renderToStaticMarkup(<SourceDisclaimer />);
-    expect(html).toContain("not an official electoral source");
+    expect(html).toContain("no es una fuente electoral oficial");
 
     // "Not permanently dismissible" is verified by construction: there is
     // no dismiss affordance at all (no button, no aria-hidden toggle) that
@@ -19,6 +19,6 @@ describe("SourceDisclaimer", () => {
     // fresh page render does) always reproduces the disclaimer.
     expect(html).not.toContain("<button");
     const secondRenderHtml = renderToStaticMarkup(<SourceDisclaimer />);
-    expect(secondRenderHtml).toContain("not an official electoral source");
+    expect(secondRenderHtml).toContain("no es una fuente electoral oficial");
   });
 });

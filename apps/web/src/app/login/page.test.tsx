@@ -12,5 +12,5 @@ it("renders the login page as the public skip destination", () => {
 
   expect(markup).toContain('<main id="main-content" tabindex="-1">');
   expect(markup.match(/id="main-content"/g) ?? []).toHaveLength(1);
-  expect(markup).toContain("<h1>Sign in</h1>");
+  expect(markup).toContain("<h1>Iniciar sesión</h1>");
 });

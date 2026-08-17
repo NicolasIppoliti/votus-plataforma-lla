@@ -19,7 +19,7 @@ test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOT
 // The in-scope content marker rendered only inside `(authenticated)/`
 // routes (see `src/app/(authenticated)/dashboard/page.tsx`). No anonymous
 // response, cached or otherwise, may ever contain it.
-const IN_SCOPE_MARKER = "Votus dashboard";
+const IN_SCOPE_MARKER = "Panel de Votus";
 
 test.describe("no anonymous read path", () => {
   test("test_no_anonymous_read_path_including_cached_content", async ({
@@ -46,9 +46,9 @@ test.describe("no anonymous read path", () => {
     //    route now genuinely serves data — proves step 1/2 were a real
     //    gate, not a route that is simply broken for everyone.
     await page.goto("/login");
-    await page.getByLabel("Email").fill(TEST_USER_EMAIL);
-    await page.getByLabel("Password").fill(TEST_USER_PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
+    await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/dashboard/);
     expect(await page.content()).toContain(IN_SCOPE_MARKER);
 

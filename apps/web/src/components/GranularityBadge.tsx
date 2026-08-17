@@ -30,22 +30,22 @@ export function GranularityBadge({
   summedFrom,
 }: GranularityBadgeProps): ReactNode {
   return (
-    <span role="status" aria-label={`granularity: ${granularity}`}>
+    <span role="status" aria-label={`granularidad: ${granularity}`}>
       <span>{granularity}</span>
       {degradedFrom ? (
         <span role="alert">
-          {` — degraded from ${degradedFrom} (the source published ${degradedFrom} totals, so nothing finer is available)`}
+          {` — degradada desde ${degradedFrom} (la fuente publicó totales a nivel ${degradedFrom}, por lo que no hay datos más detallados disponibles)`}
         </span>
       ) : null}
       {requestedGranularity ? (
         <span role="alert">
-          {` — requested granularity: ${requestedGranularity}; actual granularity: ${granularity}`}
+          {` — granularidad solicitada: ${requestedGranularity}; granularidad real: ${granularity}`}
         </span>
       ) : null}
       {summedFrom ? (
         <span role="note">
           {" "}
-          — summed from {summedFrom}-level rows
+          — sumado a partir de filas de nivel {summedFrom}
         </span>
       ) : null}
     </span>

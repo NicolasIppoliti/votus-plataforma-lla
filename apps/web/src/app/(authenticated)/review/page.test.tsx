@@ -46,13 +46,13 @@ describe("review page — responsive review evidence", () => {
     );
 
     expect(markup).toMatch(
-      /<div class="table-scroll" role="region" aria-label="Unresolved review items" tabindex="0">/,
+      /<div class="table-scroll" role="region" aria-label="Elementos de revisión pendientes" tabindex="0">/,
     );
     expect(markup).toMatch(
       /<table class="data-table data-table--review">/,
     );
     expect(markup).toMatch(
-      /<caption>Unresolved review items<\/caption>/,
+      /<caption>Elementos de revisión pendientes<\/caption>/,
     );
     expect(markup).toMatch(
       /<col[^>]+class="review-column review-column--subject"/,
@@ -81,7 +81,7 @@ describe("review page — responsive review evidence", () => {
       (await ReviewPage()) as ReactElement,
     );
 
-    expect(markup).toContain("No unresolved review items.");
+    expect(markup).toContain("No hay elementos de revisión pendientes.");
     expect(markup).not.toContain("<table");
   });
 });
