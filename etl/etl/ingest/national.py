@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 from etl import db
 from etl.jurisdiction import (
+    JurisdictionNames,
     ResultRow,
     is_canonicalizable_circuito_code,
     is_canonicalizable_code,
@@ -48,8 +49,11 @@ SUPPORTED_MESA_TIPOS = frozenset({"NATIVOS", "EXTRANJEROS"})
 
 REQUIRED_COLUMNS = (
     "distrito_id",
+    "distrito_nombre",
     "seccion_id",
+    "seccion_nombre",
     "circuito_id",
+    "circuito_nombre",
     "mesa_id",
     "cargo_nombre",
     "agrupacion_id",
@@ -94,7 +98,7 @@ class NationalRow:
     mesa_tipo: str | None
     archive_entry_id: str
     source_row_index: int
-    establecimiento_name: str | None = None
+    jurisdiction_names: JurisdictionNames = JurisdictionNames()
     # NO `natural_key` field. It was `(archive_entry_id, mesa_id, agrupacion_id,
     # cargo_nombre, votos_tipo)` — a SECOND, weaker idea of the key that nothing
     # read: `mesa_id` is globally unique in 2025 and NOT in 2023, so it collides
@@ -123,6 +127,10 @@ class NationalRow:
     @property
     def establecimiento(self) -> str | None:
         return self.result.establecimiento
+
+    @property
+    def establecimiento_name(self) -> str | None:
+        return self.jurisdiction_names.establecimiento
 
 
 def _normalize_mesa_id(raw: str | None) -> int | None:
@@ -399,6 +407,12 @@ def ingest_national(
             list_id=list_id,
             votes=votes,
         )
+        jurisdiction_names = JurisdictionNames(
+            distrito=raw["distrito_nombre"],
+            seccion=raw["seccion_nombre"],
+            circuito=raw["circuito_nombre"],
+            establecimiento=establecimiento_name,
+        )
         rows.append(
             NationalRow(
                 result=result,
@@ -410,7 +424,7 @@ def ingest_national(
                 # cross-year comparisons must be able to see. `.get()`
                 # mirrors `estado_final`'s absent-column tolerance.
                 mesa_tipo=mesa_tipo,
-                establecimiento_name=establecimiento_name,
+                jurisdiction_names=jurisdiction_names,
                 archive_entry_id=archive_entry_id,
                 source_row_index=index,
             )
@@ -679,15 +693,10 @@ def load_national_rows(
         )
         for row in rows
     ]
-    jurisdiction_names = {
-        key: row.establecimiento_name
-        for key, row in zip(jurisdiction_keys, rows)
-        if row.establecimiento_name is not None
-    }
     jurisdiction_ids = db.batch_upsert_jurisdictions(
         conn,
         jurisdiction_keys,
-        establecimiento_names=jurisdiction_names,
+        names=[row.jurisdiction_names for row in rows],
     )
 
     records: list[db.ResultRowRecord] = []

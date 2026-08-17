@@ -62,6 +62,37 @@ PBA_DISTRITO_CODE_WIDTH = 3
 SECCION_CODE_WIDTH = 3
 
 
+def normalize_jurisdiction_name(raw: str | None) -> str | None:
+    """Normalize authoritative display metadata without rewriting its meaning.
+
+    Source spelling, case, and accents are evidence and remain untouched. Only
+    outer whitespace is removed; an empty result represents absent metadata as
+    ``None`` so callers cannot accidentally persist a whitespace-only name.
+    """
+    if raw is None:
+        return None
+    normalized = raw.strip()
+    return normalized or None
+
+
+@dataclass(frozen=True)
+class JurisdictionNames:
+    """Typed display-name metadata carried beside one jurisdiction lineage."""
+
+    distrito: str | None = None
+    seccion: str | None = None
+    circuito: str | None = None
+    establecimiento: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("distrito", "seccion", "circuito", "establecimiento"):
+            object.__setattr__(
+                self,
+                field_name,
+                normalize_jurisdiction_name(getattr(self, field_name)),
+            )
+
+
 def _zero_pad_numeric(raw: str | None, *, width: int) -> str | None:
     """Zero-pad a numeric administrative code to `width` digits.
 

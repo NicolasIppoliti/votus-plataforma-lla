@@ -77,28 +77,46 @@ test.describe("no fiscalización leakage into the rendered page", () => {
         })).toBe(false);
       }
 
-      const refresh = async (label: string, value: string): Promise<void> => {
-        await page.getByRole("combobox", { name: label, exact: true }).selectOption(value);
+      const refresh = async (
+        label: string,
+        value: string,
+        optionText?: string,
+      ): Promise<void> => {
+        const selector = page.getByRole("combobox", { name: label, exact: true });
+        if (optionText) {
+          await expect(
+            selector.getByRole("option", { name: optionText, exact: true }),
+          ).toHaveAttribute("value", value);
+        }
+        await selector.selectOption(value);
         await page.getByRole("button", { name: "Actualizar opciones" }).click();
         await expectNoBlankSearchParams(page);
       };
       await refresh("Elección", SOURCE_SCOPE.electionId);
       await refresh("Categoría", SOURCE_SCOPE.categoryId);
-      await refresh("Distrito", identity.distritoCode);
+      await refresh(
+        "Distrito",
+        identity.distritoCode,
+        `${identity.distritoCode} — Buenos Aires`,
+      );
 
       await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("distrito");
       await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expectNoBlankSearchParams(page);
       await expect(page.getByRole("main")).toContainText("votos a nivel distrito");
 
-      await refresh("Sección", identity.seccionCode);
+      await refresh(
+        "Sección",
+        identity.seccionCode,
+        `${identity.seccionCode} — Coronel de Marina L. Rosales`,
+      );
       await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("seccion");
       await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expectNoBlankSearchParams(page);
       await expect(page.getByRole("main")).toContainText("votos a nivel seccion");
 
-      await refresh("Circuito", "00001");
-      await page.getByRole("combobox", { name: "Establecimiento", exact: true }).selectOption("E1");
+      await refresh("Circuito", "00001", "00001 — 00001");
+      await refresh("Establecimiento", "E1", "E1 — Synthetic school");
       await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("establecimiento");
       await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expectNoBlankSearchParams(page);
