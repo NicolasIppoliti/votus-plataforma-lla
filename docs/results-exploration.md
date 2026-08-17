@@ -27,6 +27,20 @@ The disposable proof MUST report:
 
 Disposable timings describe only the fixture and current machine. They are not production latency guarantees.
 
+## Backfill authoritative jurisdiction names
+
+Deploy the ETL name-persistence code before scheduling any backfill. Existing hosted rows gain
+`distrito_name`, `seccion_name`, and `circuito_name` only by replaying verified source archives
+through that deployed ETL path. The replay preserves source spelling (including code-like circuit
+names), normalized administrative codes, establishment names, and source isolation.
+
+The hosted replay is a separate operational change and requires explicit authorization for the
+target project and archive set. This code change does not mutate a hosted database, and operators
+MUST NOT replace the replay with a hardcoded SQL name migration or a source-name lookup table.
+If the ETL deployment is rolled back, stop the replay and retain the verified archives for a later
+forward recovery; the explorer remains safe because absent or conflicting names render explicit
+status labels rather than fabricated names.
+
 ## Hosted preflight
 
 Use the approved direct, non-pooling Postgres connection. Never print or commit it. Before applying 0027, capture the following read-only evidence:

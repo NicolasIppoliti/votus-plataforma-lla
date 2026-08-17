@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(83);
+select plan(88);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -11,21 +11,21 @@ insert into category (id, name)
 values ('20000000-0000-0000-0000-000000000003', 'DIPUTADO NACIONAL'),
   ('20000000-0000-0000-0000-000000000006', 'CONCEJALES');
 insert into jurisdiction (
-  id, distrito_code, seccion_code, circuito_code,
-  establecimiento_code, establecimiento_name, mesa_code
+  id, distrito_code, distrito_name, seccion_code, seccion_name, circuito_code,
+  circuito_name, establecimiento_code, establecimiento_name, mesa_code
 ) values
-  ('20000000-0000-0000-0000-000000000010', '02', '027', '00001', 'E1', 'Fixture school', 1),
-  ('20000000-0000-0000-0000-000000000011', '02', '027', '00001', 'E1', 'Fixture school', 2),
-  ('20000000-0000-0000-0000-000000000012', '02', '027', '00002', null, null, 3),
-  ('20000000-0000-0000-0000-000000000013', '03', null, null, null, null, null),
-  ('20000000-0000-0000-0000-000000000014', '02', '027', null, null, null, null),
-  ('20000000-0000-0000-0000-000000000015', '02', '028', '00003', 'E2', 'Other fixture school', 3),
-  ('20000000-0000-0000-0000-000000000016', '02', '027', '00002', 'E1', 'Other fixture school', 4),
-  ('20000000-0000-0000-0000-000000000017', '02', '027', '00003', 'E1', 'Fixture school', 5),
-  ('20000000-0000-0000-0000-000000000030', '02', '027', '00004', 'E10', 'Mesa lineage A', 7),
-  ('20000000-0000-0000-0000-000000000031', '02', '027', '00004', 'E10', 'Mesa lineage A', 8),
-  ('20000000-0000-0000-0000-000000000032', '02', '027', '00004', 'E11', 'Mesa lineage B', 7),
-  ('20000000-0000-0000-0000-000000000027', '02', '999', '00001', 'E9', 'Fiscal-only scope', 9);
+  ('20000000-0000-0000-0000-000000000010', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00001', '00001', 'E1', 'Fixture school', 1),
+  ('20000000-0000-0000-0000-000000000011', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00001', '00001', 'E1', 'Fixture school', 2),
+  ('20000000-0000-0000-0000-000000000012', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00002', '00002', null, null, 3),
+  ('20000000-0000-0000-0000-000000000013', '03', null, null, null, null, null, null, null, null),
+  ('20000000-0000-0000-0000-000000000014', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', null, null, null, null, null),
+  ('20000000-0000-0000-0000-000000000015', '02', 'Buenos Aires', '028', 'Bahía Blanca', '00003', '00003', 'E2', 'Other fixture school', 3),
+  ('20000000-0000-0000-0000-000000000016', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00002', '00002', 'E1', 'Other fixture school', 4),
+  ('20000000-0000-0000-0000-000000000017', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00003', null, 'E1', 'Fixture school', 5),
+  ('20000000-0000-0000-0000-000000000030', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00004', '00004', 'E10', 'Mesa lineage A', 7),
+  ('20000000-0000-0000-0000-000000000031', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00004', '00004', 'E10', 'Mesa lineage A', 8),
+  ('20000000-0000-0000-0000-000000000032', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00004', '00004', 'E11', 'Mesa lineage B', 7),
+  ('20000000-0000-0000-0000-000000000027', '02', 'Buenos Aires', '999', null, '00001', '00001', 'E9', 'Fiscal-only scope', 9);
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL');
 insert into party_mapping (
@@ -71,6 +71,33 @@ select is(jsonb_array_length(results_exploration_facets(
   'election selection exposes its source-backed categories');
 select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003'
+)->'distritos',
+  '[{"code":"02","name":"Buenos Aires","name_status":"present","name_variant_count":1}]'::jsonb,
+  'district facets expose the normalized code and exact authoritative name');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02'
+)->'secciones',
+  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1}]'::jsonb,
+  'section facets expose the normalized code and exact authoritative name');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'circuitos',
+  '[{"code":"00001","name":"00001","name_status":"present","name_variant_count":1},
+    {"code":"00002","name":"00002","name_status":"present","name_variant_count":1},
+    {"code":"00003","name":null,"name_status":"missing","name_variant_count":0}]'::jsonb,
+  'circuit facets preserve code-like authoritative names and isolate a missing name');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000003'
+)->'distritos',
+  '[{"code":"02","name":"Buenos Aires","name_status":"present","name_variant_count":1},
+    {"code":"03","name":null,"name_status":"missing","name_variant_count":0}]'::jsonb,
+  'a missing district name does not contaminate the named district option');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'
 )->'establecimientos', '[]'::jsonb,
   'establishment facets stay empty until a circuit is selected');
@@ -110,14 +137,26 @@ select is(results_exploration_facets(
 )->'mesas', '[{"code":7}]'::jsonb,
   'a shared mesa code in another establishment cannot pull sibling mesas');
 savepoint conflicting_facet_name;
-update jurisdiction set establecimiento_name = case id
-  when '20000000-0000-0000-0000-000000000010' then 'Fixture school north'
-  when '20000000-0000-0000-0000-000000000011' then 'Fixture school south'
-  else establecimiento_name end
+update jurisdiction set
+  establecimiento_name = case id
+    when '20000000-0000-0000-0000-000000000010' then 'Fixture school north'
+    when '20000000-0000-0000-0000-000000000011' then 'Fixture school south'
+    else establecimiento_name end,
+  circuito_name = case id
+    when '20000000-0000-0000-0000-000000000011' then '00001 variant'
+    else circuito_name end
 where id in (
   '20000000-0000-0000-0000-000000000010',
   '20000000-0000-0000-0000-000000000011'
 );
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003', '02', '027'
+)->'circuitos',
+  '[{"code":"00001","name":null,"name_status":"conflict","name_variant_count":2},
+    {"code":"00002","name":"00002","name_status":"present","name_variant_count":1},
+    {"code":"00003","name":null,"name_status":"missing","name_variant_count":0}]'::jsonb,
+  'one conflicting circuit name does not contaminate present or missing sibling options');
 select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027', '00001'

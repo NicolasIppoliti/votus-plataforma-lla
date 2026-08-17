@@ -40,6 +40,17 @@ test.describe("the fiscalizacion route explores coverage", () => {
       ).toString());
 
       const main = page.getByRole("main");
+      for (const [label, value, optionText] of [
+        ["Distrito", COVERAGE_SCOPE.distritoCode,
+          `${COVERAGE_SCOPE.distritoCode} — Buenos Aires`],
+        ["Sección", COVERAGE_SCOPE.seccionCode,
+          `${COVERAGE_SCOPE.seccionCode} — Coronel de Marina L. Rosales`],
+      ] as const) {
+        const selector = page.getByLabel(label);
+        await expect(selector).toHaveValue(value);
+        await expect(selector.getByRole("option", { name: optionText, exact: true }))
+          .toHaveAttribute("value", value);
+      }
       await expect(main).toContainText("1 mesas cubiertas de 2 mesas oficiales");
       await expect(main).toContainText("1 sin cobertura");
       await expect(main).toContainText("No es una muestra aleatoria");
