@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import {
@@ -22,6 +22,13 @@ const SPEC = "e2e/fiscalizacion.spec.ts";
 const { scope: COVERAGE_SCOPE, seed: COVERAGE_FIXTURE } = coverageFixture(SPEC);
 const baseURL = scenarioBaseUrl(SPEC, environment);
 
+async function expectNoBlankSearchParams(page: Page): Promise<void> {
+  const url = new URL(page.url());
+  for (const [name, value] of url.searchParams) {
+    expect(value, `${name} must be omitted instead of serialized blank`).not.toBe("");
+  }
+}
+
 test.describe("the fiscalizacion route explores coverage", () => {
   test("test_route_reaches_uncovered_official_results", async ({ page }) => {
     await withResultFixture(SPEC, COVERAGE_FIXTURE, async () => {
@@ -32,7 +39,31 @@ test.describe("the fiscalizacion route explores coverage", () => {
       // addressable by URL.
       await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
-      await page.goto(new URL(
+      const coldUrl = page.url();
+      await page.getByRole("button", { name: "Mostrar cobertura" }).click();
+      await expect(page).toHaveURL(coldUrl);
+      await expect(page.getByLabel("Elección")).toBeFocused();
+      for (const label of ["Categoría", "Distrito", "Sección"]) {
+        const descendant = page.getByLabel(label);
+        await expect(descendant).toBeDisabled();
+        expect(await descendant.evaluate((element) => {
+          (element as HTMLSelectElement).focus();
+          return document.activeElement === element;
+        })).toBe(false);
+      }
+
+      const refresh = async (label: string, value: string): Promise<void> => {
+        await page.getByLabel(label).selectOption(value);
+        await page.getByRole("button", { name: "Actualizar opciones" }).click();
+        await expectNoBlankSearchParams(page);
+      };
+      await refresh("Elección", COVERAGE_SCOPE.electionId);
+      await refresh("Categoría", COVERAGE_SCOPE.categoryId);
+      await refresh("Distrito", COVERAGE_SCOPE.distritoCode);
+      await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode);
+      await page.getByRole("button", { name: "Mostrar cobertura" }).click();
+      await expectNoBlankSearchParams(page);
+      await expect(page).toHaveURL(new URL(
         `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
           `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
           `&seccionCode=${COVERAGE_SCOPE.seccionCode}`,
