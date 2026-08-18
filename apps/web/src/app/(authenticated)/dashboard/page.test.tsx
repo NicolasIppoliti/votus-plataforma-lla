@@ -13,7 +13,7 @@ const WORKFLOW_LINKS = [
 ] as const;
 
 it("renders the dashboard as the grouped workflow entry point", () => {
-  const markup = renderToStaticMarkup(<DashboardPage /> as ReactElement);
+  const markup = renderToStaticMarkup((<DashboardPage />) as ReactElement);
 
   expect(markup).toContain('<main class="page-shell">');
   expect(markup).not.toContain('id="main-content"');
@@ -29,7 +29,7 @@ it("renders the dashboard as the grouped workflow entry point", () => {
 });
 
 it("presents review as a read-only consultation workflow", () => {
-  const markup = renderToStaticMarkup(<DashboardPage /> as ReactElement);
+  const markup = renderToStaticMarkup((<DashboardPage />) as ReactElement);
 
   expect(markup).toContain("Pendientes para consulta");
   expect(markup).toContain("<h3>Consultar elementos de revisión</h3>");
@@ -39,10 +39,16 @@ it("presents review as a read-only consultation workflow", () => {
   expect(markup).not.toContain("Resolver elementos de revisión");
 });
 
-it("sets an honest expectation for context-dependent workflows", () => {
-  const markup = renderToStaticMarkup(<DashboardPage /> as ReactElement);
+it("distinguishes the reachable comparison from context-dependent workflows", () => {
+  const markup = renderToStaticMarkup((<DashboardPage />) as ReactElement);
 
+  expect(markup).toContain("Selección nacional disponible");
+  expect(markup).toContain("Elija elecciones nacionales de 2023 y 2025");
+  expect(markup).toContain("categoría publicada en ambas");
+  expect(markup).toContain(
+    "Inicie una comparación nacional desde sus selectores",
+  );
   expect(markup).toContain("Se requiere un contexto preparado");
-  expect(markup).toContain("enlace directo");
-  expect(markup).toContain("no inicia un flujo de selección de datos");
+  expect(markup).toContain("contexto jurisdiccional preparado");
+  expect(markup).not.toContain("Compare dos elecciones preparadas");
 });

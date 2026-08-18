@@ -60,4 +60,22 @@ describe("UnmappedListIds", () => {
     expect(markup).toContain("4321: 2 filas, 700 votos");
     expect(markup).toContain("2 filas oficial / 300 votos");
   });
+
+  it("uses denominator-neutral copy for every unresolved identity caller", () => {
+    const markup = renderToStaticMarkup(
+      <UnmappedListIds
+        label="2023"
+        entries={entries}
+        totalRows={4}
+        withoutListId={{ official: { rows: 2, votes: 300 } }}
+        unsummable={null}
+      />,
+    );
+
+    expect(markup).toContain("Se informan por separado");
+    expect(markup).toContain("sin un partido asignado");
+    expect(markup).toContain("no se descartan silenciosamente");
+    expect(markup).not.toContain("todos los denominadores");
+    expect(markup).toContain("2023: 2 fila(s) no tienen id de lista");
+  });
 });

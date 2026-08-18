@@ -42,6 +42,12 @@ export interface ResultRow {
    * Optional only for manually constructed rows; the database boundary rejects a missing value.
    */
   requestedGranularity?: Granularity | null;
+  /**
+   * Mesa population declared by the source (`NATIVOS`, `EXTRANJEROS`, or
+   * another non-empty source value). `null` means the persisted row is
+   * explicitly untagged; optional only for manually constructed fixtures.
+   */
+  mesaTipo?: string | null;
   archiveEntryId: string;
   /**
    * The curated `party_mapping` -> `party_canonical` display name for
@@ -124,22 +130,22 @@ export type ExcludedByKind = Record<string, { rows: number; votes: number }>;
  * ONE phrasing of a drop, so the four surfaces cannot drift apart again.
  * `null` when nothing was dropped — callers render no note at all.
  */
-    export function describeExcluded(excluded: ExcludedByKind): string | null {
-      const entries = Object.entries(excluded).filter(([, tally]) => tally.rows > 0);
-      if (entries.length === 0) return null;
-      return entries
-        .map(([kind, tally]) => {
-          const sourceLabel = kind === "official"
-            ? "oficial"
-            : kind === "fiscalizacion"
-              ? "fiscalización"
-              : kind === "unknown"
-                ? "desconocida"
-                : kind;
-          return `${tally.rows} ${tally.rows === 1 ? "fila" : "filas"} ${sourceLabel} / ${tally.votes} ${tally.votes === 1 ? "voto" : "votos"}`;
-        })
-        .join(", ");
-    }
+export function describeExcluded(excluded: ExcludedByKind): string | null {
+  const entries = Object.entries(excluded).filter(([, tally]) => tally.rows > 0);
+  if (entries.length === 0) return null;
+  return entries
+    .map(([kind, tally]) => {
+      const sourceLabel = kind === "official"
+        ? "oficial"
+        : kind === "fiscalizacion"
+          ? "fiscalización"
+          : kind === "unknown"
+            ? "desconocida"
+            : kind;
+      return `${tally.rows} ${tally.rows === 1 ? "fila" : "filas"} ${sourceLabel} / ${tally.votes} ${tally.votes === 1 ? "voto" : "votos"}`;
+    })
+    .join(", ");
+}
 
 /**
  * Foreign rows tallied the same way an exclusion is, so the ONE phrasing in
@@ -240,7 +246,12 @@ export function votesByParty(rows: ResultRow[]): { label: string; votes: number 
 export function isPartyResolved(
   row: ResultRow,
 ): row is ResultRow & { partyName: string; canonicalPartyId: string } {
-  return typeof row.partyName === "string" && typeof row.canonicalPartyId === "string";
+  return (
+    typeof row.partyName === "string" &&
+    row.partyName.trim().length > 0 &&
+    typeof row.canonicalPartyId === "string" &&
+    row.canonicalPartyId.trim().length > 0
+  );
 }
 
 export function unmappedByListId(rows: ResultRow[]): {
@@ -280,13 +291,13 @@ export function unmappedByListId(rows: ResultRow[]): {
 }
 
 export type OkResultsQueryResponse = {
-      status: "ok";
-      rows: ResultRow[];
-      /**
-       * Rows the source-kind filter removed, per kind — including `unknown`
-       * for a value outside the enum, which both filters drop and which would
-       * otherwise appear on no path at all.
-       */
+  status: "ok";
+  rows: ResultRow[];
+  /**
+   * Rows the source-kind filter removed, per kind — including `unknown`
+   * for a value outside the enum, which both filters drop and which would
+   * otherwise appear on no path at all.
+   */
   excluded: ExcludedByKind;
   /**
    * The coverage the caller opted in with, TRAVELLING with the rows.
@@ -371,7 +382,10 @@ export class ResultsRepository {
    * `queryFiscalizacion` and appears nowhere at all — the silent-drop shape
    * rule 3 exists for. Counting it here is what makes it visible.
    */
-  private static excludedByKind(rows: ResultRow[], kept: ResultRow[]): ExcludedByKind {
+  private static excludedByKind(
+    rows: ResultRow[],
+    kept: ResultRow[],
+  ): ExcludedByKind {
     // Derived from the KEPT collection, never from a second predicate over the
     // same rows. `rows.filter(r => r.sourceKind !== "official")` re-decided
     // what had been removed, so a widened keep-filter reported a row as
@@ -400,7 +414,8 @@ export class ResultsRepository {
     return {
       status: "ok",
       rows: await this.resolvePartyNames(official, partyContext),
-      partyMappingConfigured: this.partyNameSource !== undefined && partyContext !== undefined,
+      partyMappingConfigured:
+        this.partyNameSource !== undefined && partyContext !== undefined,
       excluded: ResultsRepository.excludedByKind(rows, official),
     };
   }
@@ -478,7 +493,8 @@ export class ResultsRepository {
     return {
       status: "ok",
       rows: await this.resolvePartyNames(fiscalizacion, partyContext),
-      partyMappingConfigured: this.partyNameSource !== undefined && partyContext !== undefined,
+      partyMappingConfigured:
+        this.partyNameSource !== undefined && partyContext !== undefined,
       excluded: ResultsRepository.excludedByKind(rows, fiscalizacion),
       // Carried, not assumed: the figure and the denominator it must be read
       // against come back together.
@@ -526,6 +542,21 @@ export class ResultsRepository {
   }
 }
 
+const PAGINATION_ID_KIND = { UUID: "uuid", TEXT: "text" } as const;
+type PaginationIdKind = (typeof PAGINATION_ID_KIND)[keyof typeof PAGINATION_ID_KIND];
+const CANONICAL_UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+
+function requirePaginationId(value: unknown, context: string, kind: PaginationIdKind): string {
+  const valid = typeof value === "string" && (kind === PAGINATION_ID_KIND.UUID
+    ? CANONICAL_UUID.test(value) : value.trim().length > 0);
+  if (valid) return value;
+  const shape = value === null ? "null" : value === undefined ? "undefined"
+    : typeof value !== "string" ? typeof value : value.length === 0 ? "empty string"
+      : value.trim().length === 0 ? "blank string" : "non-canonical string";
+  const required = kind === PAGINATION_ID_KIND.UUID ? "a canonical UUID string" : "non-blank text";
+  throw new Error(`${context}.id pagination cursor must be ${required}; received ${shape}`);
+}
+
 /** Production `RowSource`: reads `result_row` through the RSC server client. */
 export class SupabaseRowSource implements RowSource {
   constructor(private readonly client: SupabaseClient) {}
@@ -559,7 +590,9 @@ export class SupabaseRowSource implements RowSource {
     for (;;) {
       let request = this.client
         .from("result_row")
-        .select("id, jurisdiction_id, category_id, list_id, votes, source_kind, granularity, requested_granularity, archive_entry_id")
+        .select(
+          "id, jurisdiction_id, category_id, list_id, votes, source_kind, granularity, requested_granularity, mesa_tipo, archive_entry_id",
+        )
         .eq("election_id", query.electionId)
         .eq("jurisdiction_id", query.jurisdictionId)
         .eq("category_id", query.categoryId)
@@ -573,13 +606,14 @@ export class SupabaseRowSource implements RowSource {
       }
 
       const page = data ?? [];
-      rows.push(...page.map((row) => toResultRow(row)));
       // EMPTY, not "shorter than the page size I asked for". The server's
       // `max-rows` may be BELOW `PAGE`, and then the first response is short
       // for a reason that has nothing to do with exhaustion — the truncation
       // this loop exists to prevent, reintroduced by its own exit condition.
       if (page.length === 0) return rows;
-      after = (page[page.length - 1] as Record<string, unknown>)["id"] as string;
+      after = requirePaginationId(page[page.length - 1]?.["id"],
+        "ResultsRepository: result_row", PAGINATION_ID_KIND.UUID);
+      rows.push(...page.map((row) => toResultRow(row)));
     }
   }
 }
@@ -650,6 +684,7 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
     );
   }
   const requestedGranularity = row["requested_granularity"];
+  const mesaTipo = row["mesa_tipo"];
 
   const jurisdictionId = row["jurisdiction_id"];
   const categoryId = row["category_id"];
@@ -666,7 +701,9 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
   const listId = row["list_id"];
   if (
     listId !== null &&
-    (typeof listId !== "string" || listId.length === 0 || listId.trim() !== listId)
+    (typeof listId !== "string" ||
+      listId.length === 0 ||
+      listId.trim() !== listId)
   ) {
     // The column the party mapping keys on. Missing, malformed, or normalized
     // identities miss on EVERY row and `resolvePartyNames` writes
@@ -684,6 +721,17 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
         `${GRANULARITY_ERROR_VALUES}; received ${JSON.stringify(requestedGranularity)}`,
     );
   }
+  if (
+    mesaTipo !== null &&
+    (typeof mesaTipo !== "string" ||
+      mesaTipo.length === 0 ||
+      mesaTipo.trim() !== mesaTipo)
+  ) {
+    throw new Error(
+      "ResultsRepository: result_row.mesa_tipo must be null or a non-empty trimmed string " +
+        `(${JSON.stringify(mesaTipo)})`,
+    );
+  }
 
   return {
     jurisdictionId,
@@ -693,6 +741,7 @@ function toResultRow(row: Record<string, unknown>): ResultRow {
     sourceKind: sourceKind as SourceKind,
     granularity,
     requestedGranularity,
+    mesaTipo,
     archiveEntryId,
     // Resolved separately by `ResultsRepository.resolvePartyNames` —
     // never fabricated here.
@@ -814,11 +863,12 @@ export class SupabasePartyNameSource implements PartyNameSource {
         }
 
         const page = (data ?? []) as unknown as Record<string, unknown>[];
-        rows.push(...page);
         // EMPTY, never "shorter than I asked for": the server cap may be below
         // `PAGE`, and then a short first page means nothing about exhaustion.
         if (page.length === 0) break;
-        after = String(page[page.length - 1]?.["id"]);
+        after = requirePaginationId(page[page.length - 1]?.["id"],
+          "SupabasePartyNameSource: party_mapping", PAGINATION_ID_KIND.UUID);
+        rows.push(...page);
       }
     }
 
@@ -884,7 +934,11 @@ export class SupabasePartyNameSource implements PartyNameSource {
       // ONE parser owns both validation passes. Supabase may return a to-one
       // relation as an object or a one-element array, but no other shape can be
       // interpreted without silently choosing or dropping a relation row.
-      const displayName = parseCanonicalDisplayName(row["party_canonical"], listId, context);
+      const displayName = parseCanonicalDisplayName(
+        row["party_canonical"],
+        listId,
+        context,
+      );
       const canonicalPartyId = parsePartyMappingId(
         row["canonical_party_id"],
         "canonical_party_id",
@@ -993,12 +1047,12 @@ export async function fetchCategoryName(
   return typeof name === "string" ? { status: "ok", name } : { status: "unreadable_name" };
 }
 
-function parseSha256(value: unknown, archiveEntryId: unknown): string | null {
+function parseSha256(value: unknown, archiveEntryId: string): string | null {
   if (value === null) return null;
   if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
     throw new Error(
       `fetchSourceRefs: archive_entry.sha256 must be null or lowercase 64-character hex for ` +
-        `${String(archiveEntryId)}; received ${JSON.stringify(value)}`,
+        `${archiveEntryId}; received ${JSON.stringify(value)}`,
     );
   }
   return value;
@@ -1017,7 +1071,7 @@ export async function fetchSourceRefs(
   // read: the same substitution the party-mapping read was fixed for.
   const BATCH = 200;
   const PAGE = 1000;
-  const data: Record<string, unknown>[] = [];
+  const data: { row: Record<string, unknown>; archiveEntryId: string }[] = [];
 
   for (let start = 0; start < archiveEntryIds.length; start += BATCH) {
     const batch = archiveEntryIds.slice(start, start + BATCH);
@@ -1038,29 +1092,32 @@ export async function fetchSourceRefs(
       }
 
       const rows = (page ?? []) as unknown as Record<string, unknown>[];
-      data.push(...rows);
       if (rows.length === 0) break;
-      after = String(rows[rows.length - 1]?.["id"]);
+      const parsed = rows.map((row) => ({ row, archiveEntryId: requirePaginationId(
+        row["id"], "fetchSourceRefs: archive_entry", PAGINATION_ID_KIND.TEXT,
+      ) }));
+      data.push(...parsed);
+      after = parsed[parsed.length - 1]!.archiveEntryId;
     }
   }
 
-  const sources = data.map((row) => {
+  const sources = data.map(({ row, archiveEntryId }) => {
     const url = row["source_url"];
     const fetchedAt = row["fetched_at"];
-    const sha256 = parseSha256(row["sha256"], row["id"]);
+    const sha256 = parseSha256(row["sha256"], archiveEntryId);
     if (typeof url !== "string" || typeof fetchedAt !== "string") {
       // A NULL `source_url` would produce a `SourceRef` present in `sources`
       // and absent from `missing`, so the figure renders as TRACED with
       // nothing behind it. That is unverifiable shown as verified — worse than
       // the blank digest the `sha256: string | null` comment already rejects.
       throw new Error(
-        `fetchSourceRefs: archive_entry ${String(row["id"])} has no usable source_url/fetched_at ` +
+        `fetchSourceRefs: archive_entry ${archiveEntryId} has no usable source_url/fetched_at ` +
           `(${JSON.stringify(url)}, ${JSON.stringify(fetchedAt)}), so a figure citing it cannot ` +
           "be shown as traced",
       );
     }
     return {
-      archiveEntryId: String(row["id"]),
+      archiveEntryId,
       // NO `?? ""`. This system is built on an immutable sha256 archive, so an
       // entry with no hash is an entry that cannot be verified — substituting
       // an empty string renders it through `ProvenanceLink` as provenance that

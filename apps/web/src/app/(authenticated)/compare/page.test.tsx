@@ -18,25 +18,124 @@ const PARTY_NAMES: Record<
   number,
   Record<string, { canonicalPartyId: string; displayName: string }>
 > = {
-  // ONE canonical id, two display spellings and two list ids. This is the
-  // real curated shape, and it is what makes the comparison honest: the
-  // spelling changed between files, the party did not.
   2023: {
     "20135": { canonicalPartyId: "lla", displayName: "LA LIBERTAD AVANZA" },
+    "20135-nameless": { canonicalPartyId: "lla-nameless", displayName: "" },
+    "20136": {
+      canonicalPartyId: "lla",
+      displayName: "ALIANZA LA LIBERTAD AVANZA",
+    },
     "20999": { canonicalPartyId: "fp", displayName: "UNION POR LA PATRIA" },
   },
   2025: {
-    "110": { canonicalPartyId: "lla", displayName: "ALIANZA LA LIBERTAD AVANZA" },
+    "110": {
+      canonicalPartyId: "lla",
+      displayName: "ALIANZA LA LIBERTAD AVANZA",
+    },
     "999": { canonicalPartyId: "fp", displayName: "FUERZA PATRIA" },
   },
 };
 let refuseElection: string | null = null;
 let sourceRefs: SourceRef[] = [];
+let sourceRefsFailure: Error | null = null;
 /** When true, the repository's own filter is bypassed — a simulated regression. */
 let leakFiscalizacion = false;
+let facetsUnavailable = false;
+let resultsRepositoryCalls = 0;
+const facetCalls: Record<string, unknown>[] = [];
+
+const FACET_ELECTIONS = [
+  {
+    id: "2023-generales",
+    year: 2023,
+    round: "generales",
+    label: "2023 generales",
+  },
+  {
+    id: "7769c98d-b286-4e8c-80ce-c2f9ab4fc929",
+    year: 2023,
+    round: "generales",
+    label: "2023 generales (UUID)",
+  },
+  {
+    id: "2025-legislativas-nacional",
+    year: 2025,
+    round: "legislativas",
+    label: "2025 legislativas",
+  },
+  {
+    id: "6dae81f9-c862-4cc5-b3f3-b640e4ea7319",
+    year: 2025,
+    round: "legislativas",
+    label: "2025 legislativas (UUID)",
+  },
+  {
+    id: "2021-generales",
+    year: 2021,
+    round: "generales",
+    label: "2021 generales",
+  },
+];
+const COMMON_CATEGORY = { id: "c-diputados", name: "DIPUTADO NACIONAL" };
+interface FacetCategory {
+  id: string;
+  name: string;
+}
+let categoryFacetsByElection: Record<string, FacetCategory[]> = {};
+
+function facetCategories(electionId: unknown) {
+  if (typeof electionId === "string") {
+    const overriddenCategories = categoryFacetsByElection[electionId];
+    if (overriddenCategories) return overriddenCategories;
+  }
+  if (electionId === "2023-generales") {
+    return [
+      COMMON_CATEGORY,
+      { id: "c-senadores", name: "SENADOR NACIONAL" },
+      { id: "c-shared-name-2023", name: "CATEGORÍA HOMÓNIMA" },
+    ];
+  }
+  if (electionId === "2025-legislativas-nacional") {
+    return [
+      COMMON_CATEGORY,
+      { id: "c-parlasur", name: "PARLAMENTARIO DEL MERCOSUR" },
+      { id: "c-shared-name-2025", name: "CATEGORÍA HOMÓNIMA" },
+    ];
+  }
+  if (
+    electionId === "7769c98d-b286-4e8c-80ce-c2f9ab4fc929" ||
+    electionId === "6dae81f9-c862-4cc5-b3f3-b640e4ea7319"
+  ) {
+    return [COMMON_CATEGORY];
+  }
+  return [];
+}
 
 vi.mock("@/lib/supabase/server-client", () => ({
-  createSupabaseServerClient: () => Promise.resolve({}),
+  createSupabaseServerClient: () =>
+    Promise.resolve({
+      rpc: (_name: string, args: Record<string, unknown>) => {
+        facetCalls.push(args);
+        return Promise.resolve(
+          facetsUnavailable
+            ? { data: null, error: { message: "facets offline" } }
+            : {
+                data: {
+                  status: "ok",
+                  elections: FACET_ELECTIONS,
+                  categories: facetCategories(args["p_election_id"]),
+                  distritos: [],
+                  secciones: [],
+                  circuitos: [],
+                  establecimientos: [],
+                  mesas: [],
+                  available_levels: [],
+                },
+                error: null,
+              },
+        );
+      },
+    }),
 }));
 
 const CATEGORY_NAMES: Record<string, string | undefined> = {
@@ -45,20 +144,24 @@ const CATEGORY_NAMES: Record<string, string | undefined> = {
 };
 
 vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
+  const actual =
+    await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
   return {
     ...actual,
     createResultsRepository: () => {
+      resultsRepositoryCalls += 1;
       if (leakFiscalizacion) {
         const leaking = new actual.ResultsRepository({
-          fetchRows: (query) => Promise.resolve(rowsByElection[query.electionId] ?? []),
+          fetchRows: (query) =>
+            Promise.resolve(rowsByElection[query.electionId] ?? []),
         });
         // Path 1 REGRESSES: the filter is gone. Path 3 must still refuse.
         leaking.queryOfficial = (query) =>
           Promise.resolve({
             status: "ok",
             rows: rowsByElection[query.electionId] ?? [],
-            excluded: {}, partyMappingConfigured: true,
+            excluded: {},
+            partyMappingConfigured: true,
           });
         return Promise.resolve(leaking);
       }
@@ -71,7 +174,10 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
         new actual.ResultsRepository(
           {
             fetchRows: (query) => {
-              if (refuseElection && query.electionId === refuseElection) {
+              if (
+                refuseElection &&
+                (refuseElection === "*" || query.electionId === refuseElection)
+              ) {
                 // A denied read RAISES: `SupabaseRowSource.fetchRows` throws on
                 // a Postgres error, so this is the shape RLS denial actually
                 // takes — not a `status !== "ok"` response.
@@ -91,16 +197,23 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
                 // route refuses without, since `2206` names a different party
                 // in the municipal table than in the national one.
                 context.jurisdiction !== "national" ||
-                context.category !== "DIPUTADO NACIONAL"
+                  context.category !== "DIPUTADO NACIONAL"
                   ? new Map()
                   : new Map(
-                  listIds
-                    .map((id) => [id, PARTY_NAMES[context.year]?.[id]] as const)
-                    .filter(
-                      (pair): pair is readonly [string, { canonicalPartyId: string; displayName: string }] =>
-                        Boolean(pair[1]),
+                      listIds
+                        .map(
+                          (id) =>
+                            [id, PARTY_NAMES[context.year]?.[id]] as const,
+                        )
+                        .filter(
+                          (
+                            pair,
+                          ): pair is readonly [
+                            string,
+                            { canonicalPartyId: string; displayName: string },
+                          ] => Boolean(pair[1]),
+                        ),
                     ),
-                ),
               ),
           },
         ),
@@ -123,14 +236,22 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
         "6dae81f9-c862-4cc5-b3f3-b640e4ea7319": 2025,
       };
       if (electionId in rows) {
-        return Promise.resolve({ status: "ok" as const, year: rows[electionId]! });
+        return Promise.resolve({
+          status: "ok" as const,
+          year: rows[electionId]!,
+        });
       }
       const match = /^(\d{4})/.exec(electionId);
       return Promise.resolve(
-        match ? { status: "ok" as const, year: Number(match[1]) } : { status: "no_row" as const },
+        match
+          ? { status: "ok" as const, year: Number(match[1]) }
+          : { status: "no_row" as const },
       );
     },
-    fetchSourceRefs: () => Promise.resolve({ sources: sourceRefs, missing: [] }),
+    fetchSourceRefs: () =>
+      sourceRefsFailure
+        ? Promise.reject(sourceRefsFailure)
+        : Promise.resolve({ sources: sourceRefs, missing: [] }),
   };
 });
 
@@ -145,7 +266,12 @@ afterEach(() => {
   rowsByElection = {};
   refuseElection = null;
   leakFiscalizacion = false;
+  facetsUnavailable = false;
+  resultsRepositoryCalls = 0;
+  facetCalls.length = 0;
+  categoryFacetsByElection = {};
   sourceRefs = [];
+  sourceRefsFailure = null;
 });
 
 const PARAMS = {
@@ -153,11 +279,217 @@ const PARAMS = {
   election2025: "2025-legislativas-nacional",
   jurisdictionId: "j-027",
   categoryId: "c-diputados",
-  // Each side resolves through its own party mapping, so the category is
-  // required — without it the page refuses rather than comparing raw list ids.
   partyCategory: "DIPUTADO NACIONAL",
   partyJurisdiction: "national",
 };
+
+const CANONICAL_PARAMS = {
+  election2023: PARAMS.election2023,
+  election2025: PARAMS.election2025,
+  categoryId: PARAMS.categoryId,
+};
+
+describe("compare page — reachable national selector", () => {
+  it("test_the_bare_route_renders_an_accessible_progressive_get_selector", async () => {
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve({}) })) as ReactElement,
+    );
+    expect(markup).toContain('<form action="/compare" method="get">');
+    expect(markup).toContain('<label for="compare-election-2023">Elección de 2023</label>');
+    expect(markup).toContain('<label for="compare-election-2025">Elección de 2025</label>');
+    expect(markup).toContain('<label for="compare-category">Categoría común</label>');
+    expect(markup).toContain('name="categoryId"');
+    expect(markup).toContain("Actualizar opciones");
+    expect(markup).not.toContain("Proporcione los parámetros de consulta");
+  });
+
+  it("test_the_year_facets_and_category_intersection_are_exact", async () => {
+    const markup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({ election2023: "2023-generales", election2025: "2025-legislativas-nacional" }),
+      })) as ReactElement,
+    );
+    const left = markup.slice(
+      markup.indexOf('id="compare-election-2023"'),
+      markup.indexOf('id="compare-election-2025"'),
+    );
+    const right = markup.slice(
+      markup.indexOf('id="compare-election-2025"'),
+      markup.indexOf('id="compare-category"'),
+    );
+    expect(left).toContain("2023 generales");
+    expect(left).not.toContain("2025 legislativas");
+    expect(left).not.toContain("2021 generales");
+    expect(right).toContain("2025 legislativas");
+    expect(right).not.toContain("2023 generales");
+    expect(markup).toContain("DIPUTADO NACIONAL");
+    expect(markup).not.toContain("SENADOR NACIONAL");
+    expect(markup).not.toContain("PARLAMENTARIO DEL MERCOSUR");
+    expect(markup).not.toContain(">CATEGORÍA HOMÓNIMA</option>");
+    expect(facetCalls.map((call) => call["p_election_id"])).toEqual([
+      null, "2023-generales", "2025-legislativas-nacional",
+    ]);
+  });
+
+  for (const conflictingSide of ["2023", "2025"] as const) {
+    it(`test_duplicate_category_names_on_${conflictingSide}_refuse_identically_in_both_row_orders`, async () => {
+      const conflictingCategories = [
+        { id: "c-diputados", name: "DIPUTADO NACIONAL" },
+        { id: "c-diputados", name: "DIPUTADOS NACIONALES" },
+      ];
+      const exactCategories = [COMMON_CATEGORY];
+      const renderSelector = async (categories: FacetCategory[]) => {
+        categoryFacetsByElection = {
+          "2023-generales":
+            conflictingSide === "2023" ? categories : exactCategories,
+          "2025-legislativas-nacional":
+            conflictingSide === "2025" ? categories : exactCategories,
+        };
+        return renderToStaticMarkup(
+          (await ComparePage({
+            searchParams: Promise.resolve({
+              election2023: "2023-generales",
+              election2025: "2025-legislativas-nacional",
+              categoryId: "c-diputados",
+            }),
+          })) as ReactElement,
+        );
+      };
+      const forwardMarkup = await renderSelector(conflictingCategories);
+      const reversedMarkup = await renderSelector([...conflictingCategories].reverse());
+      expect(forwardMarkup).toBe(reversedMarkup);
+      expect(forwardMarkup).toContain('role="alert"');
+      expect(forwardMarkup).toContain("categoría c-diputados");
+      expect(forwardMarkup).toContain("2023 generales: DIPUTADO NACIONAL");
+      expect(forwardMarkup).toContain("2025 legislativas: DIPUTADO NACIONAL");
+      expect(forwardMarkup).toContain("DIPUTADOS NACIONALES");
+      expect(forwardMarkup).toContain("no se ofrece ni se acepta");
+      expect(forwardMarkup).not.toContain('<option value="c-diputados"');
+      expect(resultsRepositoryCalls).toBe(0);
+    });
+  }
+
+  for (const reverseSides of [false, true]) {
+    it(`test_same_category_name_under_different_ids_refuses_with_${reverseSides ? "reversed" : "forward"}_election_sides`, async () => {
+      const leftId = reverseSides ? "c-right-homonym" : "c-left-homonym";
+      const rightId = reverseSides ? "c-left-homonym" : "c-right-homonym";
+      categoryFacetsByElection = {
+        "2023-generales": [{ id: "c-exacta", name: "CATEGORÍA EXACTA" }, { id: leftId, name: "CATEGORÍA HOMÓNIMA" }, { id: "left-only", name: "NOMBRE 2023" }],
+        "2025-legislativas-nacional": [{ id: "c-exacta", name: "CATEGORÍA EXACTA" }, { id: rightId, name: "CATEGORÍA HOMÓNIMA" }, { id: "right-only", name: "NOMBRE 2025" }],
+      };
+      for (const categoryId of [leftId, rightId]) {
+        const markup = renderToStaticMarkup(
+          (await ComparePage({ searchParams: Promise.resolve({ election2023: "2023-generales", election2025: "2025-legislativas-nacional", categoryId }) })) as ReactElement,
+        );
+        expect(markup).toContain('<option value="c-exacta">CATEGORÍA EXACTA</option>');
+        expect(markup).toContain('role="alert"');
+        expect(markup).toContain(`2023 generales: CATEGORÍA HOMÓNIMA [ID ${leftId}]`);
+        expect(markup).toContain(`2025 legislativas: CATEGORÍA HOMÓNIMA [ID ${rightId}]`);
+        expect(markup).toContain("no se ofrece ni se acepta");
+        expect(markup).not.toContain(`<option value="${leftId}"`);
+        expect(markup).not.toContain(`<option value="${rightId}"`);
+        expect(markup).not.toContain("NOMBRE 2023");
+        expect(markup).not.toContain("NOMBRE 2025");
+      }
+      expect(resultsRepositoryCalls).toBe(0);
+    });
+  }
+
+  it("test_the_canonical_url_derives_national_context_and_legacy_tampering_refuses", async () => {
+    rowsByElection["2023-generales"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "20135",
+        votes: 100,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2023-generales",
+      },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 140,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2025-legislativas",
+      },
+    ];
+
+    const served = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve(CANONICAL_PARAMS),
+      })) as ReactElement,
+    );
+    expect(served).toContain("j-027 (jurisdicción completa): sin cambio");
+
+    for (const contradiction of [
+      { jurisdictionId: "j-other" },
+      { partyCategory: "SENADOR NACIONAL" },
+      { partyJurisdiction: "coronel_rosales_municipal" },
+    ]) {
+      const refused = renderToStaticMarkup(
+        (await ComparePage({
+          searchParams: Promise.resolve({
+            ...CANONICAL_PARAMS,
+            ...contradiction,
+          }),
+        })) as ReactElement,
+      );
+      expect(refused).toContain("contexto nacional");
+      expect(refused).not.toContain("sin cambio");
+    }
+  });
+
+  it("test_selector_tampering_and_configuration_fail_closed_with_actionable_copy", async () => {
+    const wrongYear = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({
+          election2023: "2025-legislativas-nacional",
+          election2025: "2023-generales",
+        }),
+      })) as ReactElement,
+    );
+    expect(wrongYear).toContain("elección oficial disponible del año indicado");
+
+    const wrongCategory = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({
+          election2023: "2023-generales",
+          election2025: "2025-legislativas-nacional",
+          categoryId: "c-senadores",
+        }),
+      })) as ReactElement,
+    );
+    expect(wrongCategory).toContain("no está disponible en ambas elecciones");
+    expect(wrongCategory).not.toContain("no devolvió filas");
+
+    delete process.env["NATIONAL_JURISDICTION_ID"];
+    const unconfigured = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({}),
+      })) as ReactElement,
+    );
+    expect(unconfigured).toContain("configurar la jurisdicción nacional");
+    expect(unconfigured).not.toContain("NATIONAL_JURISDICTION_ID");
+
+    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    facetsUnavailable = true;
+    const unavailable = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({}),
+      })) as ReactElement,
+    );
+    expect(unavailable).toContain(
+      "No se pudieron cargar las elecciones disponibles",
+    );
+    expect(unavailable).not.toContain("facets offline");
+    expect(unavailable).not.toContain("results_exploration_facets");
+  });
+});
 
 describe("compare page", () => {
   it("test_a_refused_year_is_reported_not_compared_as_empty", async () => {
@@ -175,7 +507,9 @@ describe("compare page", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("row-level security denied 2023-generales");
@@ -217,13 +551,67 @@ describe("compare page — one party across two files", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("sin cambio");
     expect(markup).not.toContain("cambió de");
-    // And never a bare list id where a party name belongs.
     expect(markup).not.toContain("20135");
+    expect(markup).not.toContain("0 de");
+    expect(markup).not.toContain("no tienen id de lista");
+  });
+});
+
+describe("compare page — canonical display names must be unambiguous", () => {
+  it("test_conflicting_names_refuse_identically_in_both_row_orders", async () => {
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      sourceKind: "official" as const,
+      granularity: "mesa" as const,
+      archiveEntryId: "national/2023-generales",
+    };
+    const conflictingRows = [
+      { ...base, listId: "20135", votes: 40 },
+      { ...base, listId: "20136", votes: 40 },
+      { ...base, listId: "20135", votes: 20 },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      {
+        ...base,
+        listId: "110",
+        votes: 120,
+        archiveEntryId: "national/2025-legislativas",
+      },
+    ];
+
+    rowsByElection["2023-generales"] = conflictingRows;
+    const forwardMarkup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
+    );
+    rowsByElection["2023-generales"] = [...conflictingRows].reverse();
+    const reversedMarkup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
+    );
+
+    expect(forwardMarkup).toBe(reversedMarkup);
+    expect(forwardMarkup).toContain("Se rechazó la comparación");
+    expect(forwardMarkup).toContain("2023");
+    expect(forwardMarkup).toContain("ID canónico lla");
+    expect(forwardMarkup).toContain(
+      "ID canónico lla: ALIANZA LA LIBERTAD AVANZA, LA LIBERTAD AVANZA. No se",
+    );
+    expect(forwardMarkup).not.toContain('aria-label="granularidad:');
+    expect(forwardMarkup).not.toContain("sin cambio");
+    expect(forwardMarkup).not.toContain("cambió de");
+    expect(forwardMarkup).not.toContain("puntos porcentuales");
+    expect(forwardMarkup).not.toContain("%");
   });
 });
 
@@ -241,6 +629,14 @@ describe("compare page — the refusals the operator can trigger", () => {
     expect(markup).toContain("banana");
   });
 
+  it("test_a_same_granularity_legacy_aggregate_request_is_visibly_unsupported", async () => {
+    const base = { jurisdictionId: "j-027", categoryId: "c-diputados", votes: 10, sourceKind: "official" as const, granularity: "mesa" as const, archiveEntryId: "national/x" };
+    rowsByElection["2023-generales"] = [{ ...base, listId: "20135" }]; rowsByElection["2025-legislativas-nacional"] = [{ ...base, listId: "110" }];
+    const markup = renderToStaticMarkup((await ComparePage({ searchParams: Promise.resolve({ ...PARAMS, aggregateTo: "seccion" }) })) as ReactElement);
+    expect(markup).toMatch(/role="alert".*aggregateTo<\/code> no está disponible actualmente.*jerarquía completa de descendientes/);
+    expect(markup).not.toMatch(/sin cambio|agregado a partir de datos/);
+  });
+
   it("test_mixed_levels_on_one_side_are_refused_not_compared", async () => {
     const base = {
       jurisdictionId: "j-027",
@@ -255,11 +651,17 @@ describe("compare page — the refusals the operator can trigger", () => {
       { ...base, granularity: "seccion" },
     ];
     rowsByElection["2025-legislativas-nacional"] = [
-      { ...base, granularity: "mesa", archiveEntryId: "national/2025-legislativas" },
+      {
+        ...base,
+        granularity: "mesa",
+        archiveEntryId: "national/2025-legislativas",
+      },
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // A mix on ONE side is invisible to `compareResults`, which compares the
@@ -282,7 +684,9 @@ describe("compare page — the refusals the operator can trigger", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // `readGranularity([])` answers `distrito`; feeding that in states a level
@@ -308,11 +712,17 @@ describe("compare page — an unmapped id is not an identity", () => {
       { ...base, listId: "99999", archiveEntryId: "national/2023-generales" },
     ];
     rowsByElection["2025-legislativas-nacional"] = [
-      { ...base, listId: "88888", archiveEntryId: "national/2025-legislativas" },
+      {
+        ...base,
+        listId: "88888",
+        archiveEntryId: "national/2025-legislativas",
+      },
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("no se resolvieron a un partido canónico");
@@ -325,7 +735,11 @@ describe("compare page — the D6 branches this page exists for", () => {
   // production query can return (`.eq("jurisdiction_id", ...)`). Fabricating
   // distinct ids per side made these tests drive an input the entry point
   // cannot produce.
-  const row = (electionId: string, granularity: "mesa" | "seccion", listId: string) => ({
+  const row = (
+    electionId: string,
+    granularity: ResultRow["granularity"],
+    listId: string,
+  ) => ({
     jurisdictionId: "j-027",
     categoryId: "c-diputados",
     listId,
@@ -335,40 +749,51 @@ describe("compare page — the D6 branches this page exists for", () => {
     archiveEntryId: `national/${electionId}`,
   });
 
-  it("test_a_granularity_mismatch_refuses_until_the_operator_aggregates", async () => {
+  it("test_a_granularity_mismatch_refuses_without_suggesting_an_unavailable_retry", async () => {
     // D6 is this page's stated reason to exist and had no entry-point test.
-    rowsByElection["2023-generales"] = [row("2023-generales", "seccion", "20135")];
-    rowsByElection["2025-legislativas-nacional"] = [
-      row("2025-legislativas-nacional", "mesa", "110"),
+    rowsByElection["2023-generales"] = [
+      row("2023-generales", "seccion", "20135"),
     ];
-
-    const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
-    );
-
-    // The REFUSAL, by its own text. Both level strings also appear on the
-    // success path's aggregation note, so asserting them proved nothing about
-    // which branch rendered.
-    expect(markup).toContain("role=\"alert\"");
-    expect(markup).toContain("explícito");
-    expect(markup).not.toContain("sin cambio");
-  });
-
-  it("test_an_explicit_aggregation_is_disclosed_in_the_render", async () => {
-    rowsByElection["2023-generales"] = [row("2023-generales", "seccion", "20135")];
     rowsByElection["2025-legislativas-nacional"] = [
       row("2025-legislativas-nacional", "mesa", "110"),
     ];
 
     const markup = renderToStaticMarkup(
       (await ComparePage({
-        searchParams: Promise.resolve({ ...PARAMS, aggregateTo: "seccion" }),
+        searchParams: Promise.resolve(PARAMS),
       })) as ReactElement,
     );
 
-    // The operator asked for it, so the page must SAY it aggregated rather
-    // than presenting the result as directly comparable.
-    expect(markup).toContain("Agregado a partir de");
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Esta comparación no hace suposiciones");
+    expect(markup).not.toContain("Vuelva a solicitar");
+    expect(markup).not.toContain("aggregateTo");
+    expect(markup).not.toContain("sin cambio");
+  });
+
+  it("test_a_mixed_granularity_legacy_aggregate_request_is_visibly_unsupported", async () => {
+    rowsByElection["2023-generales"] = [
+      row("2023-generales", "distrito", "20135"),
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      row("2025-legislativas-nacional", "mesa", "110"),
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve({ ...PARAMS, aggregateTo: "mesa" }),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain(
+      "<code>aggregateTo</code> no está disponible actualmente",
+    );
+    expect(markup).toContain("jerarquía completa de descendientes");
+    expect(markup).not.toContain('aria-label="granularidad:');
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("agregado a partir de datos");
+    expect(resultsRepositoryCalls).toBe(0);
   });
 });
 
@@ -387,12 +812,21 @@ describe("compare page — a drop stays visible through a refusal", () => {
     };
     rowsByElection["2023-generales"] = [
       { ...base, listId: "20135", granularity: "seccion" },
-      { ...base, listId: "20135", granularity: "seccion", sourceKind: "fiscalizacion" },
+      {
+        ...base,
+        listId: "20135",
+        granularity: "seccion",
+        sourceKind: "fiscalizacion",
+      },
     ];
-    rowsByElection["2025-legislativas-nacional"] = [{ ...base, granularity: "mesa" }];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, granularity: "mesa" },
+    ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("1 fila fiscalización");
@@ -400,31 +834,50 @@ describe("compare page — a drop stays visible through a refusal", () => {
 });
 
 describe("compare page — path 3 fires when the repository filter regresses", () => {
-  it("test_a_leaked_fiscalizacion_row_is_refused_at_the_render", async () => {
+  it("test_leaked_rows_are_audited_but_never_enter_comparable_tallies", async () => {
     leakFiscalizacion = true;
     const base = {
       jurisdictionId: "j-027",
       categoryId: "c-diputados",
       listId: "110",
-      votes: 10,
-      sourceKind: "fiscalizacion" as const,
       granularity: "mesa" as const,
-      archiveEntryId: "fiscalizacion/2025-lla",
     };
-    rowsByElection["2023-generales"] = [base];
-    rowsByElection["2025-legislativas-nacional"] = [base];
+    rowsByElection["2023-generales"] = [
+      {
+        ...base,
+        votes: 20,
+        sourceKind: "official",
+        archiveEntryId: "national/2023-generales",
+      },
+      {
+        ...base,
+        votes: 10,
+        sourceKind: "fiscalizacion",
+        archiveEntryId: "fiscalizacion/2025-lla",
+      },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      {
+        ...base,
+        votes: 30,
+        sourceKind: "official",
+        archiveEntryId: "national/2025-legislativas",
+      },
+    ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
-    // The BREAKDOWN, in both units: a bare "2 row(s)" cannot tell a leaked
-    // fiscalización row from a leaked unknown-kind one, and hides the votes.
-    expect(markup).toContain("1 fila fiscalización / 10 votos");
-    // And the unmapped ids, counted before this refusal and about a different
-    // axis: `toCompareUnits` used to run AFTER the guard, so they were never
-    // even computed on this path.
-    expect(markup).toContain("se resolvieron sin un partido curado");
+    expect(markup).toContain(
+      "2023-generales: 1 fila fiscalización / 10 votos; 2025-legislativas-nacional: ninguna",
+    );
+    expect(markup.match(/110: 1 filas/g)).toHaveLength(2);
+    expect(markup).toContain("110: 1 filas, 20 votos");
+    expect(markup).toContain("110: 1 filas, 30 votos");
+    expect(markup).not.toContain("110: 2 filas");
     expect(markup).toContain("no son oficiales");
     expect(markup).not.toContain("sin cambio");
   });
@@ -435,7 +888,8 @@ describe("compare page — provenance reaches the render", () => {
     sourceRefs = [
       {
         archiveEntryId: "national/2025-legislativas",
-        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        sha256:
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         url: "https://example.test/2025-legislativas.zip",
         fetchedAt: "2026-01-01T00:00:00Z",
       },
@@ -452,10 +906,49 @@ describe("compare page — provenance reaches the render", () => {
     rowsByElection["2025-legislativas-nacional"] = [{ ...base, listId: "110" }];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("https://example.test/2025-legislativas.zip");
+  });
+});
+
+describe("compare page — a tied leader is not a flip", () => {
+  it("test_a_tied_leader_names_the_unit_year_and_parties_without_figures", async () => {
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      sourceKind: "official" as const,
+      granularity: "mesa" as const,
+      archiveEntryId: "national/x",
+    };
+    rowsByElection["2023-generales"] = [
+      { ...base, listId: "20999", votes: 50 },
+      { ...base, listId: "20135", votes: 50 },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, listId: "110", votes: 60 },
+      { ...base, listId: "999", votes: 40 },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
+    );
+
+    expect(markup).toContain("Se rechazó la comparación");
+    expect(markup).toContain("j-027");
+    expect(markup).toContain("2023");
+    expect(markup).toContain("LA LIBERTAD AVANZA, UNION POR LA PATRIA");
+    expect(markup).not.toContain('aria-label="granularidad:');
+    expect(markup).not.toContain("<ul>");
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
+    expect(markup).not.toContain("puntos porcentuales");
+    expect(markup).not.toContain("%");
   });
 });
 
@@ -481,7 +974,9 @@ describe("compare page — a real flip", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("cambió de");
@@ -546,7 +1041,9 @@ describe("compare page — the figure's level is disclosed", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // NOT `distrito`: that is the province, and these rows are one partido.
@@ -580,88 +1077,29 @@ describe("compare page — the figure's level is disclosed", () => {
   });
 });
 
-describe("compare page — a mixed pair discloses BOTH sides", () => {
-  it("test_one_side_summed_and_one_side_coarse_report_each_fact", async () => {
-    // The disclosure was read off whichever side won the coarseness
-    // comparison, so the coarse side's `degradedFrom` hid the fine side's sum:
-    // every 2025 mesa row folded into one total with nothing saying so.
-    rowsByElection["2023-generales"] = [
-      {
-        jurisdictionId: "j-027",
-        categoryId: "c-diputados",
-        listId: "20135",
-        votes: 100,
-        sourceKind: "official",
-        granularity: "distrito",
-        archiveEntryId: "national/2023-generales",
-      },
-    ];
-    rowsByElection["2025-legislativas-nacional"] = [
-      {
-        jurisdictionId: "j-027",
-        categoryId: "c-diputados",
-        listId: "110",
-        votes: 140,
-        sourceKind: "official",
-        granularity: "mesa",
-        archiveEntryId: "national/2025-legislativas",
-      },
-    ];
+describe("compare page — row-to-figure metadata is not D6 provenance", () => {
+  it("test_distrito_rows_disclose_degraded_detail_without_claiming_aggregation", async () => {
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      votes: 100,
+      sourceKind: "official" as const,
+      granularity: "distrito" as const,
+      archiveEntryId: "national/x",
+    };
+    rowsByElection["2023-generales"] = [{ ...base, listId: "20135" }];
+    rowsByElection["2025-legislativas-nacional"] = [{ ...base, listId: "110" }];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({
-        searchParams: Promise.resolve({ ...PARAMS, aggregateTo: "distrito" }),
-      })) as ReactElement,
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
     );
 
-    // Both facts, not whichever one the coarser side happened to carry: 2025's
-    // mesa rows were summed, and 2023's distrito source never carried the
-    // partido detail at all.
-    expect(markup).toContain("sumado a partir de filas de nivel mesa");
+    expect(markup).toContain('aria-label="granularidad: seccion');
     expect(markup).toContain("degradada desde distrito");
     expect(markup).toContain("la fuente publicó totales a nivel distrito");
-    expect(markup).not.toContain("se solicitó detalle a nivel distrito");
-  });
-});
-
-describe("compare page — two summed sides do not report one side's level", () => {
-  it("test_the_badge_names_the_coarsest_of_the_two_summed_levels", async () => {
-    // `??` took the FIRST non-null side, so with 2023 at `mesa` and 2025 at
-    // `circuito` the badge announced "summed from mesa" — the finer of the two
-    // stated as the figure's level, on the line an operator reads first.
-    // (Fixture order matters: `??` and "coarsest" agree when the coarse side
-    // happens to come first, and a test seeded that way cannot fail.)
-    rowsByElection["2023-generales"] = [
-      {
-        jurisdictionId: "j-027",
-        categoryId: "c-diputados",
-        listId: "20135",
-        votes: 100,
-        sourceKind: "official",
-        granularity: "mesa",
-        archiveEntryId: "national/2023-generales",
-      },
-    ];
-    rowsByElection["2025-legislativas-nacional"] = [
-      {
-        jurisdictionId: "j-027",
-        categoryId: "c-diputados",
-        listId: "110",
-        votes: 140,
-        sourceKind: "official",
-        granularity: "circuito",
-        archiveEntryId: "national/2025-legislativas",
-      },
-    ];
-
-    const markup = renderToStaticMarkup(
-      (await ComparePage({
-        searchParams: Promise.resolve({ ...PARAMS, aggregateTo: "circuito" }),
-      })) as ReactElement,
-    );
-
-    expect(markup).toContain("sumado a partir de filas de nivel circuito");
-    expect(markup).not.toContain("sumado a partir de filas de nivel mesa");
+    expect(markup).toContain("sin cambio");
+    expect(markup).not.toContain("agregado a partir de datos");
+    expect(markup).not.toContain("decisión explícita del operador");
   });
 });
 
@@ -702,7 +1140,9 @@ describe("compare page — an unorderable level is reported by size", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // ROWS, never a vote total. The level cannot be ordered, so whether its
@@ -748,7 +1188,10 @@ describe("compare page — a category collision is refused, not resolved", () =>
 
     const markup = renderToStaticMarkup(
       (await ComparePage({
-        searchParams: Promise.resolve({ ...PARAMS, partyCategory: "SENADOR NACIONAL" }),
+        searchParams: Promise.resolve({
+          ...PARAMS,
+          partyCategory: "SENADOR NACIONAL",
+        }),
       })) as ReactElement,
     );
 
@@ -844,7 +1287,9 @@ describe("compare page — unmapped ids survive the refusals about other axes", 
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("mezclan niveles de granularidad");
@@ -865,19 +1310,28 @@ describe("compare page — a leaked row set that also mixes levels", () => {
       jurisdictionId: "j-027",
       categoryId: "c-diputados",
       listId: "4321",
-      sourceKind: "fiscalizacion" as const,
-      archiveEntryId: "fiscalizacion/2025-lla",
+      sourceKind: "official" as const,
+      archiveEntryId: "national/x",
     };
     rowsByElection["2023-generales"] = [
       { ...base, votes: 400, granularity: "seccion" as const },
       { ...base, votes: 100, granularity: "mesa" as const },
+      {
+        ...base,
+        votes: 5,
+        granularity: "mesa" as const,
+        sourceKind: "fiscalizacion" as const,
+        archiveEntryId: "fiscalizacion/2025-lla",
+      },
     ];
     rowsByElection["2025-legislativas-nacional"] = [
       { ...base, votes: 60, granularity: "mesa" as const },
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     expect(markup).toContain("no son oficiales");
@@ -914,12 +1368,18 @@ describe("compare page — one unorderable level in both years", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // ONE row for 2023 and TWO for 2025 — not three on a merged line.
-    expect(markup).toContain("2023-generales: 1 fila(s) tienen un nivel de granularidad");
-    expect(markup).toContain("2025-legislativas-nacional: 2 fila(s) tienen un nivel de granularidad");
+    expect(markup).toContain(
+      "2023-generales: 1 fila(s) tienen un nivel de granularidad",
+    );
+    expect(markup).toContain(
+      "2025-legislativas-nacional: 2 fila(s) tienen un nivel de granularidad",
+    );
     expect(markup).not.toContain("3 fila(s) tienen un nivel de granularidad");
   });
 });
@@ -947,7 +1407,9 @@ describe("compare page — rows with no list id are not unmapped ids", () => {
     ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // SERVED, not refused for an "unmapped id" nobody supplied.
@@ -960,11 +1422,6 @@ describe("compare page — rows with no list id are not unmapped ids", () => {
 
 describe("compare page — a row with an id but no name is never dropped", () => {
   it("test_it_lands_in_a_visible_bucket_instead_of_leaving_every_figure", async () => {
-    // `{canonicalPartyId: set, partyName: null, listId: null}` hit `continue`
-    // in `toCompareUnits`: out of every figure and every swing, and out of the
-    // unresolved counter too. Its only disclosure was the boundary fold
-    // agreeing by coincidence — two definitions of "resolved", either of which
-    // could have moved.
     const base = {
       jurisdictionId: "j-027",
       categoryId: "c-diputados",
@@ -974,18 +1431,22 @@ describe("compare page — a row with an id but no name is never dropped", () =>
     };
     rowsByElection["2023-generales"] = [
       { ...base, listId: "20135", votes: 100 },
-      // Resolves to a canonical id the mock has no display name for.
-      { ...base, listId: null, votes: 33 },
+      { ...base, listId: "20135-nameless", votes: 33 },
     ];
-    rowsByElection["2025-legislativas-nacional"] = [{ ...base, listId: "110", votes: 140 }];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, listId: "110", votes: 140 },
+    ];
 
     const markup = renderToStaticMarkup(
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
-    // VISIBLE, per source kind — not silently absent from every tally.
-    expect(markup).toContain("no tienen id de lista");
-    expect(markup).toContain("1 fila oficial / 33 votos");
+    expect(markup).toContain("se resolvieron sin un partido curado");
+    expect(markup).toContain("20135-nameless: 1 filas, 33 votos");
+    expect(markup).not.toContain("no tienen id de lista");
+    expect(markup).not.toContain('<th scope="row"></th>');
   });
 });
 
@@ -1011,16 +1472,301 @@ describe("compare page — the D6 refusal keeps the no-list-id disclosure", () =
     ];
 
     const markup = renderToStaticMarkup(
-      // NO `aggregateTo`: that parameter resolves the mismatch, which is how
-      // this fixture reached the success path instead of the refusal it names.
-      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+      (await ComparePage({
+        searchParams: Promise.resolve(PARAMS),
+      })) as ReactElement,
     );
 
     // The D6 refusal itself...
-    expect(markup).toContain("esta comparación no hace suposiciones");
+    expect(markup).toContain("Esta comparación no hace suposiciones");
     // ...and the disclosure it used to return without.
     expect(markup).toContain("no tienen id de lista");
     expect(markup).toContain("1 fila oficial / 31 votos");
     expect(markup).toContain("1 fila oficial / 17 votos");
+  });
+});
+
+describe("compare page — the shared unmapped audit survives independent refusals", () => {
+  type AuditRow = readonly [
+    listId: ResultRow["listId"],
+    votes: number,
+    granularity: ResultRow["granularity"],
+    mesaTipo?: ResultRow["mesaTipo"],
+  ];
+  interface AuditScenario {
+    name: string;
+    refusal: string;
+    setup: () => Record<string, string>;
+    unmappedSnippet?: string;
+  }
+
+  function auditRow(electionId: string, row: AuditRow): ResultRow {
+    const [listId, votes, granularity, mesaTipo] = row;
+    return {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      listId,
+      votes,
+      sourceKind: "official",
+      granularity,
+      archiveEntryId: `national/${electionId}`,
+      ...(mesaTipo === undefined ? {} : { mesaTipo }),
+    };
+  }
+
+  function setupAudit(
+    rows2023: readonly AuditRow[],
+    rows2025: readonly AuditRow[],
+    params: Record<string, string> = PARAMS,
+  ): Record<string, string> {
+    rowsByElection["2023-generales"] = rows2023.map((row) =>
+      auditRow("2023-generales", row),
+    );
+    rowsByElection["2025-legislativas-nacional"] = rows2025.map((row) =>
+      auditRow("2025-legislativas-nacional", row),
+    );
+    return params;
+  }
+
+  const scenarios: AuditScenario[] = [
+    {
+      name: "name_conflict",
+      refusal: "nombres de visualización en conflicto",
+      unmappedSnippet: "4321: 1 filas, 5 votos",
+      setup: () =>
+        setupAudit(
+          [["20135", 50, "mesa"], ["20136", 40, "mesa"], ["4321", 5, "mesa"], [null, 31, "mesa"]],
+          [["110", 100, "mesa"], [null, 17, "mesa"]],
+        ),
+    },
+    {
+      name: "mixed_granularity",
+      refusal: "Esta comparación no hace suposiciones",
+      setup: () => setupAudit([["20135", 100, "seccion"], [null, 31, "seccion"]], [["110", 140, "mesa"], [null, 17, "mesa"]]),
+    },
+    {
+      name: "mesa_partial_coverage",
+      refusal: "cobertura parcial de mesa_tipo",
+      setup: () => setupAudit([["20135", 100, "mesa", "NATIVOS"], [null, 31, "mesa", null]], [["110", 140, "mesa", "NATIVOS"], [null, 17, "mesa", "NATIVOS"]]),
+    },
+    {
+      name: "ambiguous_leader",
+      refusal: "no hay un líder único",
+      setup: () => setupAudit([["20135", 50, "mesa"], ["20999", 50, "mesa"], [null, 31, "mesa"]], [["110", 60, "mesa"], ["999", 40, "mesa"], [null, 17, "mesa"]]),
+    },
+    {
+      name: "invalid_comparison_input",
+      refusal: "datos de comparación inválidos",
+      setup: () => setupAudit([["20135", -1, "mesa"], [null, 31, "mesa"]], [["110", 140, "mesa"], [null, 17, "mesa"]]),
+    },
+    {
+      name: "post_fold_provenance_failure",
+      refusal: "source refs offline",
+      setup: () => {
+        sourceRefsFailure = new Error("source refs offline");
+        return setupAudit([["20135", 100, "mesa"], [null, 31, "mesa"]], [["110", 140, "mesa"], [null, 17, "mesa"]]);
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    it(`test_${scenario.name}_keeps_each_years_unmapped_audit_without_figures`, async () => {
+      const markup = renderToStaticMarkup(
+        (await ComparePage({ searchParams: Promise.resolve(scenario.setup()) })) as ReactElement,
+      );
+      expect(markup).toContain(scenario.refusal);
+      expect(markup.match(/2023-generales: 1 fila\(s\) no tienen id de lista/g)).toHaveLength(1);
+      expect(markup.match(/2025-legislativas-nacional: 1 fila\(s\) no tienen id de lista/g)).toHaveLength(1);
+      expect(markup).toContain("1 fila oficial / 31 votos");
+      expect(markup).toContain("1 fila oficial / 17 votos");
+      if (scenario.unmappedSnippet) {
+        expect(markup).toContain(scenario.unmappedSnippet);
+      }
+      expect(markup).not.toContain('aria-label="granularidad:');
+      expect(markup).not.toContain("sin cambio");
+      expect(markup).not.toContain("cambió de");
+      expect(markup).not.toContain("puntos porcentuales");
+    });
+  }
+});
+
+describe("compare page — independent official reads", () => {
+  it("test_one_failure_preserves_the_successful_sides_exact_source_exclusions", async () => {
+    refuseElection = "2023-generales";
+    rowsByElection["2025-legislativas-nacional"] = [
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 30,
+        sourceKind: "official",
+        granularity: "mesa",
+        archiveEntryId: "national/2025-legislativas",
+      },
+      {
+        jurisdictionId: "j-027",
+        categoryId: "c-diputados",
+        listId: "110",
+        votes: 7,
+        sourceKind: "fiscalizacion",
+        granularity: "mesa",
+        archiveEntryId: "fiscalizacion/2025-lla",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain("No se pudo leer 2023-generales");
+    expect(markup).toContain("2025-legislativas-nacional: 1 fila fiscalización / 7 votos");
+    expect(markup).not.toContain("2023-generales: 1 fila fiscalización");
+    expect(markup).not.toContain("sin cambio");
+  });
+
+  it("test_two_failures_name_both_without_fabricating_exclusions_or_figures", async () => {
+    refuseElection = "*";
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain("2023-generales: row-level security denied 2023-generales");
+    expect(markup).toContain("2025-legislativas-nacional: row-level security denied 2025-legislativas-nacional");
+    expect(markup).not.toContain("Filas excluidas");
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
+  });
+});
+
+describe("compare page — official rows need comparable party identities", () => {
+  const row = (listId: string | null, votes: number): ResultRow => ({
+    jurisdictionId: "j-027",
+    categoryId: "c-diputados",
+    listId,
+    votes,
+    sourceKind: "official",
+    granularity: "mesa",
+    archiveEntryId: "national/x",
+  });
+
+  it("test_both_years_with_only_null_list_ids_refuse_with_per_year_breakdowns", async () => {
+    rowsByElection["2023-generales"] = [row(null, 12)];
+    rowsByElection["2025-legislativas-nacional"] = [row(null, 8)];
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain("sin identidades partidarias comparables");
+    expect(markup).toContain("2023-generales: 1 fila(s) no tienen id de lista");
+    expect(markup).toContain(
+      "2025-legislativas-nacional: 1 fila(s) no tienen id de lista",
+    );
+    expect(markup).toContain("1 fila oficial / 12 votos");
+    expect(markup).toContain("1 fila oficial / 8 votos");
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
+  });
+
+  it("test_one_year_without_comparable_identities_refuses_the_whole_result", async () => {
+    rowsByElection["2023-generales"] = [row(null, 12)];
+    rowsByElection["2025-legislativas-nacional"] = [row("110", 140)];
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain("sin identidades partidarias comparables");
+    expect(markup).toContain("2023-generales");
+    expect(markup).toContain("1 fila oficial / 12 votos");
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
+  });
+});
+
+describe("compare page — mesa population metadata reaches the operator", () => {
+  const row = (year: 2023 | 2025, votes: number, mesaTipo: string | null) => ({
+    jurisdictionId: "j-027",
+    categoryId: "c-diputados",
+    listId: year === 2023 ? "20135" : "110",
+    votes,
+    sourceKind: "official" as const,
+    granularity: "mesa" as const,
+    archiveEntryId: `national/${year}`,
+    mesaTipo,
+  });
+
+  it("test_fully_tagged_population_mismatch_preserves_every_type_in_one_unit", async () => {
+    rowsByElection["2023-generales"] = [
+      row(2023, 60, "NATIVOS"),
+      row(2023, 5, "EXTRANJEROS"),
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [row(2025, 55, "NATIVOS")];
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain("La población de mesas no coincide");
+    expect(markup).toContain("2023: EXTRANJEROS, NATIVOS");
+    expect(markup).toContain("2025: NATIVOS");
+  });
+
+  it("test_partial_tagging_refuses_with_known_and_unknown_counts_without_figures", async () => {
+    rowsByElection["2023-generales"] = [
+      row(2023, 60, "NATIVOS"),
+      row(2023, 5, null),
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [row(2025, 55, "NATIVOS")];
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain("cobertura parcial de mesa_tipo");
+    expect(markup).toContain("2023: tipos conocidos NATIVOS");
+    expect(markup).toContain("1 fila etiquetada");
+    expect(markup).toContain("1 fila sin etiqueta");
+    expect(markup).not.toContain('aria-label="granularidad:');
+    expect(markup).not.toContain("sin cambio");
+    expect(markup).not.toContain("cambió de");
+  });
+
+  it("test_matching_complete_population_metadata_emits_no_diagnostic", async () => {
+    rowsByElection["2023-generales"] = [row(2023, 60, "NATIVOS")];
+    rowsByElection["2025-legislativas-nacional"] = [row(2025, 55, "NATIVOS")];
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).not.toContain("La población de mesas no coincide");
+    expect(markup).not.toContain("cobertura parcial de mesa_tipo");
+    expect(markup).toContain("sin cambio");
+  });
+});
+
+describe("compare page — numeric comparison reaches the display", () => {
+  it("test_each_canonical_party_renders_both_year_shares_and_percentage_point_swing", async () => {
+    const base = {
+      jurisdictionId: "j-027",
+      categoryId: "c-diputados",
+      sourceKind: "official" as const,
+      granularity: "mesa" as const,
+      archiveEntryId: "national/x",
+    };
+    rowsByElection["2023-generales"] = [
+      { ...base, listId: "20135", votes: 60 },
+      { ...base, listId: "20999", votes: 40 },
+    ];
+    rowsByElection["2025-legislativas-nacional"] = [
+      { ...base, listId: "110", votes: 55 },
+      { ...base, listId: "999", votes: 45 },
+    ];
+
+    const markup = renderToStaticMarkup(
+      (await ComparePage({ searchParams: Promise.resolve(PARAMS) })) as ReactElement,
+    );
+    expect(markup).toContain('aria-label="Participación y variación por partido en j-027"');
+    expect(markup).toContain("LA LIBERTAD AVANZA");
+    expect(markup).toContain("ALIANZA LA LIBERTAD AVANZA");
+    expect(markup).toContain("UNION POR LA PATRIA");
+    expect(markup).toContain("FUERZA PATRIA");
+    expect(markup).toContain("60,00 %");
+    expect(markup).toContain("55,00 %");
+    expect(markup).toContain("40,00 %");
+    expect(markup).toContain("45,00 %");
+    expect(markup).toContain("-5,00 puntos porcentuales");
+    expect(markup).toContain("+5,00 puntos porcentuales");
+    expect(markup).not.toContain(">lla<");
+    expect(markup).not.toContain(">fp<");
   });
 });

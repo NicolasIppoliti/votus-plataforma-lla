@@ -90,6 +90,157 @@ describe("compareResults", () => {
     expect("swings" in result).toBe(false);
   });
 
+  it("test_duplicate_units_and_parties_are_order_independent_invalid_input", () => {
+    const units2023: CompareInput["units2023"] = [
+      { unitId: "unit-b", parties: [{ party: "A", votes: 70 }] },
+      { unitId: "unit-b", parties: [{ party: "B", votes: 30 }] },
+    ];
+    const parties2025 = [
+      { party: "Z", votes: 60 },
+      { party: "A", votes: 20 },
+      { party: "Z", votes: 20 },
+    ];
+    const compare = (reverse: boolean) =>
+      compareResults({
+        granularity2023: "mesa",
+        granularity2025: "mesa",
+        units2023: (reverse ? [...units2023].reverse() : units2023).map(
+          (unit) => ({
+            ...unit,
+            parties: reverse ? [...unit.parties].reverse() : unit.parties,
+          }),
+        ),
+        units2025: [{
+          unitId: "unit-a",
+          parties: reverse ? [...parties2025].reverse() : parties2025,
+        }],
+      });
+
+    const forward = compare(false);
+    const reversed = compare(true);
+
+    expect(forward).toEqual(reversed);
+    expect(forward).toEqual({
+      status: "invalid_comparison_input",
+      issues: [
+        { code: "duplicate_unit_id", year: "2023", unitId: "unit-b" },
+        { code: "duplicate_party_id", year: "2025", unitId: "unit-a", partyId: "Z" },
+      ],
+    });
+    expect("swings" in forward).toBe(false);
+  });
+
+  it("test_unsafe_public_shapes_are_refused_while_zero_votes_remain_valid", () => {
+    const postgresIntMax = 2_147_483_647;
+    const invalidUnits: CompareInput["units2023"] = [
+      { unitId: " ", parties: [{ party: "A", votes: 1 }] },
+      { unitId: "unit-empty", parties: [] },
+      { unitId: "unit-conflicting-mesa-shapes", parties: [{ party: "A", votes: 1 }], mesaTipo: "NATIVOS", mesaPopulation: { knownTypes: ["EXTRANJEROS"], taggedRows: 1, untaggedRows: 0 } },
+      { unitId: "unit-duplicate-mesa-type", parties: [{ party: "A", votes: 1 }], mesaPopulation: { knownTypes: ["NATIVOS", "NATIVOS"], taggedRows: 1, untaggedRows: 0 } },
+      {
+        unitId: "unit-invalid",
+        parties: [
+          { party: " ", votes: -1 },
+          { party: "B", votes: Number.POSITIVE_INFINITY },
+          { party: "C", votes: 0.5 },
+          { party: "D", votes: Number.NaN },
+          { party: "E", votes: Number.MAX_SAFE_INTEGER + 1 },
+          { party: "F", votes: postgresIntMax + 1 },
+        ],
+        mesaPopulation: { knownTypes: ["NATIVOS"], taggedRows: -1, untaggedRows: 0 },
+      },
+      { unitId: "unit-overflow", parties: [{ party: "A", votes: Number.MAX_VALUE }, { party: "B", votes: Number.MAX_VALUE }] },
+    ];
+    const compareUnsafe = (reverse: boolean) => compareResults({
+      granularity2023: "mesa",
+      granularity2025: "mesa",
+      units2023: (reverse ? [...invalidUnits].reverse() : invalidUnits).map((unit) => ({
+        ...unit,
+        parties: reverse ? [...unit.parties].reverse() : unit.parties,
+      })),
+      units2025: [{ unitId: "unit-valid", parties: [{ party: "A", votes: 0 }] }],
+    });
+
+    const invalid = compareUnsafe(false);
+    expect(compareUnsafe(true)).toEqual(invalid);
+    expect(invalid).toEqual({
+      status: "invalid_comparison_input",
+      issues: [
+        { code: "empty_party_id", year: "2023", unitId: "unit-invalid", partyId: " " },
+        { code: "empty_party_set", year: "2023", unitId: "unit-empty" },
+        { code: "empty_unit_id", year: "2023", unitId: " " },
+        { code: "invalid_mesa_population", year: "2023", unitId: "unit-conflicting-mesa-shapes" },
+        { code: "invalid_mesa_population", year: "2023", unitId: "unit-duplicate-mesa-type" },
+        { code: "invalid_mesa_population", year: "2023", unitId: "unit-invalid" },
+        { code: "invalid_vote_total", year: "2023", unitId: "unit-invalid" },
+        { code: "invalid_vote_total", year: "2023", unitId: "unit-overflow" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-invalid", partyId: " " },
+        { code: "invalid_votes", year: "2023", unitId: "unit-invalid", partyId: "B" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-invalid", partyId: "C" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-invalid", partyId: "D" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-invalid", partyId: "E" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-invalid", partyId: "F" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-overflow", partyId: "A" },
+        { code: "invalid_votes", year: "2023", unitId: "unit-overflow", partyId: "B" },
+      ],
+    });
+    expect("swings" in invalid).toBe(false);
+
+    for (const votes of [0, 42, postgresIntMax]) {
+      const valid = compareResults({
+        granularity2023: "mesa",
+        granularity2025: "mesa",
+        units2023: [{ unitId: "unit-valid", parties: [{ party: "A", votes }] }],
+        units2025: [{ unitId: "unit-valid", parties: [{ party: "A", votes }] }],
+      });
+      expect(valid.status).toBe("ok");
+    }
+  });
+
+  it.each([
+    ["distrito", "mesa", "distrito", "distrito-027", "mesa-0001"], ["mesa", "circuito", "seccion", "mesa-0001", "circuito-001"],
+  ] as const)("test_mixed_granularity_refuses_legacy_aggregate_request_%s_%s", (granularity2023, granularity2025, aggregateTo, unitId2023, unitId2025) => {
+    const legacyInput = { granularity2023, granularity2025, aggregateTo, units2023: [{ unitId: unitId2023, parties: [{ party: "A", votes: 100 }] }], units2025: [{ unitId: unitId2025, parties: [{ party: "A", votes: 120 }] }] };
+    const result = compareResults(legacyInput);
+    expect(result).toEqual({ status: "requires_explicit_aggregation", granularity2023, granularity2025 });
+    expect("swings" in result).toBe(false);
+  });
+
+  it("test_tied_leader_is_an_order_independent_ambiguity_without_figures", () => {
+    const inputWith2023Parties = (
+      parties: CompareInput["units2023"][number]["parties"],
+    ): CompareInput => ({
+      granularity2023: "mesa",
+      granularity2025: "mesa",
+      units2023: [{ unitId: "mesa-tie", parties }],
+      units2025: [
+        {
+          unitId: "mesa-tie",
+          parties: [
+            { party: "A", votes: 60 },
+            { party: "B", votes: 40 },
+          ],
+        },
+      ],
+    });
+    const parties = [
+      { party: "B", votes: 50 },
+      { party: "A", votes: 50 },
+    ];
+
+    const forward = compareResults(inputWith2023Parties(parties));
+    const reversed = compareResults(
+      inputWith2023Parties([...parties].reverse()),
+    );
+
+    expect(forward).toEqual(reversed);
+    expect(forward).toEqual({
+      status: "ambiguous_leader",
+      ambiguities: [{ unitId: "mesa-tie", year: "2023", parties: ["A", "B"] }],
+    });
+    expect("swings" in forward).toBe(false);
+  });
+
   it("test_flip_detection_reports_from_to_with_both_shares", () => {
     const input: CompareInput = {
       granularity2023: "mesa",
@@ -189,10 +340,24 @@ describe("compareResults", () => {
       granularity2023: "mesa",
       granularity2025: "mesa",
       units2023: [
-        { unitId: "mesa-1", parties: [{ party: "A", votes: 60 }], mesaTipo: "NATIVOS" },
-        { unitId: "mesa-9001", parties: [{ party: "A", votes: 5 }], mesaTipo: "EXTRANJEROS" },
+        {
+          unitId: "mesa-1",
+          parties: [{ party: "A", votes: 60 }],
+          mesaTipo: "NATIVOS",
+        },
+        {
+          unitId: "mesa-9001",
+          parties: [{ party: "A", votes: 5 }],
+          mesaTipo: "EXTRANJEROS",
+        },
       ],
-      units2025: [{ unitId: "mesa-1", parties: [{ party: "A", votes: 55 }], mesaTipo: "NATIVOS" }],
+      units2025: [
+        {
+          unitId: "mesa-1",
+          parties: [{ party: "A", votes: 55 }],
+          mesaTipo: "NATIVOS",
+        },
+      ],
     };
 
     const result = compareResults(input);
@@ -209,8 +374,20 @@ describe("compareResults", () => {
     const input: CompareInput = {
       granularity2023: "mesa",
       granularity2025: "mesa",
-      units2023: [{ unitId: "mesa-1", parties: [{ party: "A", votes: 60 }], mesaTipo: "NATIVOS" }],
-      units2025: [{ unitId: "mesa-1", parties: [{ party: "A", votes: 55 }], mesaTipo: "NATIVOS" }],
+      units2023: [
+        {
+          unitId: "mesa-1",
+          parties: [{ party: "A", votes: 60 }],
+          mesaTipo: "NATIVOS",
+        },
+      ],
+      units2025: [
+        {
+          unitId: "mesa-1",
+          parties: [{ party: "A", votes: 55 }],
+          mesaTipo: "NATIVOS",
+        },
+      ],
     };
 
     const result = compareResults(input);
@@ -218,5 +395,42 @@ describe("compareResults", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("expected ok status");
     expect(result.mesaPopulationMismatch).toBeUndefined();
+  });
+
+  it("test_partial_mesa_population_metadata_is_a_typed_refusal_without_figures", () => {
+    const input: CompareInput = {
+      granularity2023: "mesa",
+      granularity2025: "mesa",
+      units2023: [
+        {
+          unitId: "mesa-1",
+          parties: [{ party: "A", votes: 60 }],
+          mesaTipo: "NATIVOS",
+        },
+        { unitId: "mesa-2", parties: [{ party: "A", votes: 5 }] },
+      ],
+      units2025: [
+        {
+          unitId: "mesa-1",
+          parties: [{ party: "A", votes: 55 }],
+          mesaTipo: "NATIVOS",
+        },
+      ],
+    };
+
+    const result = compareResults(input);
+
+    expect(result).toEqual({
+      status: "mesa_population_partial_coverage",
+      coverages: [
+        {
+          year: "2023",
+          knownTypes: ["NATIVOS"],
+          taggedRows: 1,
+          untaggedRows: 1,
+        },
+      ],
+    });
+    expect("swings" in result).toBe(false);
   });
 });

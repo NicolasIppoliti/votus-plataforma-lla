@@ -261,7 +261,10 @@ describe("aggregateOfficialVotes reports what it summed", () => {
 
     // The foreign kind is NAMED — which is what the page guard reads — and the
     // total is inflated by it, which is what the guard exists to catch.
-    expect(aggregate.summedByKind["fiscalizacion"]).toEqual({ rows: 1, votes: 9999 });
+    expect(aggregate.summedByKind["fiscalizacion"]).toEqual({
+      rows: 1,
+      votes: 9999,
+    });
     expect(aggregate.totalVotes).toBe(10099);
     // And `excluded` does NOT claim those same votes were dropped: both halves
     // come from one seam, so a row cannot be reported as summed AND removed.
@@ -438,7 +441,10 @@ describe("every path reports its drops from the rows it kept", () => {
     const aggregate = await repository.aggregateOfficialVotes(BASE_QUERY);
 
     expect(aggregate.excluded).toEqual({});
-    expect(aggregate.summedByKind["fiscalizacion"]).toEqual({ rows: 1, votes: 9999 });
+    expect(aggregate.summedByKind["fiscalizacion"]).toEqual({
+      rows: 1,
+      votes: 9999,
+    });
   });
 });
 
@@ -472,6 +478,8 @@ describe("a lookup distinguishes an absent row from an unusable value", () => {
  * order the real path does not have, and would stay green against the
  * repeat-and-skip defect offset pagination has.
  */
+const uuid = (i: number) => `aaaaaaaa-0000-4000-8000-${String(i).padStart(12, "0")}`;
+
 function fakeKeysetClient(
   rows: Record<string, unknown>[],
   maxRows = 1000,
@@ -496,10 +504,17 @@ function fakeKeysetClient(
         after = value;
         return chain;
       };
-      chain["then"] = (resolve: (r: { data: unknown; error: null }) => unknown) => {
-        const source = [...rows].sort((a, b) => String(a["id"]).localeCompare(String(b["id"])));
+      chain["then"] = (
+        resolve: (r: { data: unknown; error: null }) => unknown,
+      ) => {
+        const source = [...rows].sort((a, b) =>
+          String(a["id"]).localeCompare(String(b["id"])),
+        );
         const cursor = after;
-        const start = cursor === null ? 0 : source.findIndex((r) => String(r["id"]) > cursor);
+        const start =
+          cursor === null
+            ? 0
+            : source.findIndex((r) => String(r["id"]) > cursor);
         const page = start === -1 ? [] : source.slice(start, start + limit);
         return resolve({ data: page, error: null });
       };
@@ -512,7 +527,7 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
   const row = (i: number) => ({
     // A UNIQUE id — the only key `result_row` has that cannot tie. `list_id`
     // and `archive_entry_id` repeat across every mesa in a jurisdiction.
-    id: String(i).padStart(6, "0"),
+    id: uuid(i),
     jurisdiction_id: "j1",
     category_id: "c1",
     list_id: String(i),
@@ -520,6 +535,7 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     source_kind: "official",
     granularity: "mesa",
     requested_granularity: "mesa",
+    mesa_tipo: "NATIVOS",
     archive_entry_id: "a1",
   });
 
@@ -542,9 +558,29 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     expect(read[0]?.requestedGranularity).toBe("mesa");
   });
 
+  it.each([
+    ["missing", undefined], ["null", null], ["number", 1], ["empty", ""],
+    ["malformed", "not-a-uuid"], ["uppercase", uuid(1).toUpperCase()],
+  ])("test_result_row_%s_cursor_refuses_before_a_next_query", async (_case, id) => {
+    let requests = 0;
+    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), id }], 1000, () => {
+      if (++requests > 1) throw new Error("unexpected next result_row query");
+    }) as never);
+    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+      "ResultsRepository: result_row.id pagination cursor must be a canonical UUID string; received",
+    );
+    expect(requests).toBe(1);
+  });
+
   it("test_all_supported_granularities_are_accepted_and_historical_null_stays_unknown", async () => {
     const selections: string[] = [];
-    const granularities = ["mesa", "establecimiento", "circuito", "seccion", "distrito"] as const;
+    const granularities = [
+      "mesa",
+      "establecimiento",
+      "circuito",
+      "seccion",
+      "distrito",
+    ] as const;
     const source = new SupabaseRowSource(
       fakeKeysetClient(
         granularities.map((granularity, index) => ({
@@ -559,35 +595,86 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
 
     const read = await source.fetchRows(BASE_QUERY);
 
-    expect(selections[0]).toContain("requested_granularity");
+    expect(selections[0]).toBe(
+      "id, jurisdiction_id, category_id, list_id, votes, source_kind, granularity, " +
+        "requested_granularity, mesa_tipo, archive_entry_id",
+    );
     expect(read.map(({ granularity }) => granularity)).toEqual(granularities);
     expect(read[0]?.requestedGranularity).toBeNull();
+    expect(read[0]).toMatchObject({ mesaTipo: "NATIVOS" });
   });
 
   it.each([
-    ["actual", { granularity: "subcircuito" }, "result_row.granularity must be one of"],
+    [
+      "actual",
+      { granularity: "subcircuito" },
+      "result_row.granularity must be one of",
+    ],
     [
       "requested",
       { requested_granularity: "subcircuito" },
       "result_row.requested_granularity must be null or one of",
     ],
-  ])("test_unknown_%s_granularity_refuses", async (_field, override, errorPrefix) => {
-    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), ...override }]) as never);
+  ])(
+    "test_unknown_%s_granularity_refuses",
+    async (_field, override, errorPrefix) => {
+      const source = new SupabaseRowSource(
+        fakeKeysetClient([{ ...row(1), ...override }]) as never,
+      );
 
-    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
-      `ResultsRepository: ${errorPrefix} mesa, establecimiento, circuito, seccion, distrito`,
-    );
-  });
+      await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+        `ResultsRepository: ${errorPrefix} mesa, establecimiento, circuito, seccion, distrito`,
+      );
+    },
+  );
 
   it("test_missing_requested_granularity_refuses", async () => {
     const withoutRequestedGranularity = Object.fromEntries(
       Object.entries(row(1)).filter(([key]) => key !== "requested_granularity"),
     );
-    const source = new SupabaseRowSource(fakeKeysetClient([withoutRequestedGranularity]) as never);
+    const source = new SupabaseRowSource(
+      fakeKeysetClient([withoutRequestedGranularity]) as never,
+    );
 
     await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
       "ResultsRepository: result_row.requested_granularity must be null or one of " +
         "mesa, establecimiento, circuito, seccion, distrito; received undefined",
+    );
+  });
+
+  it("test_mesa_tipo_preserves_known_and_explicit_untagged_rows", async () => {
+    const source = new SupabaseRowSource(
+      fakeKeysetClient([
+        row(1),
+        { ...row(2), mesa_tipo: "EXTRANJEROS" },
+        { ...row(3), mesa_tipo: null },
+      ]) as never,
+    );
+
+    const read = await source.fetchRows(BASE_QUERY);
+
+    expect(read).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mesaTipo: "NATIVOS" }),
+        expect.objectContaining({ mesaTipo: "EXTRANJEROS" }),
+        expect.objectContaining({ mesaTipo: null }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["numeric", 1],
+    ["empty", ""],
+    ["leading whitespace", " NATIVOS"],
+  ])("test_result_row_mesa_tipo_refuses_%s", async (_case, mesaTipo) => {
+    const record = { ...row(1), mesa_tipo: mesaTipo };
+    if (_case === "missing")
+      delete (record as Record<string, unknown>)["mesa_tipo"];
+    const source = new SupabaseRowSource(fakeKeysetClient([record]) as never);
+
+    await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
+      "result_row.mesa_tipo must be null or a non-empty trimmed string",
     );
   });
 
@@ -615,7 +702,9 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     ["leading-zero string", "00042", 42],
     ["maximum string", "2147483647", 2147483647],
   ])("test_result_row_votes_accepts_%s", async (_case, votes, expected) => {
-    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), votes }]) as never);
+    const source = new SupabaseRowSource(
+      fakeKeysetClient([{ ...row(1), votes }]) as never,
+    );
 
     const rows = await source.fetchRows(BASE_QUERY);
 
@@ -644,7 +733,9 @@ describe("SupabaseRowSource reads every row, not the first page", () => {
     ["NaN", Number.NaN],
     ["Infinity", Number.POSITIVE_INFINITY],
   ])("test_result_row_votes_refuses_%s", async (_case, votes) => {
-    const source = new SupabaseRowSource(fakeKeysetClient([{ ...row(1), votes }]) as never);
+    const source = new SupabaseRowSource(
+      fakeKeysetClient([{ ...row(1), votes }]) as never,
+    );
 
     await expect(source.fetchRows(BASE_QUERY)).rejects.toThrow(
       "result_row.votes must be a nonnegative 32-bit integer",
@@ -686,7 +777,7 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
         };
         chain["then"] = (resolve: (r: { data: unknown; error: null }) => unknown) => {
           const all = rowsFor(batch)
-            .map((row, index) => ({ id: String(index).padStart(6, "0"), ...row }))
+            .map((row, index) => ({ id: uuid(index), ...row }))
             .sort((a, b) => String(a["id"]).localeCompare(String(b["id"])));
           const cursor = after;
           const start = cursor === null ? 0 : all.findIndex((r) => String(r["id"]) > cursor);
@@ -699,7 +790,29 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     return { client, batches };
   };
 
-  const context = { year: 2025, jurisdiction: "national", category: "DIPUTADO NACIONAL" };
+  const context = {
+    year: 2025,
+    jurisdiction: "national",
+    category: "DIPUTADO NACIONAL",
+  };
+
+  it.each([
+    ["missing", undefined], ["null", null], ["number", 1], ["empty", ""],
+    ["malformed", "not-a-uuid"], ["uppercase", uuid(1).toUpperCase()],
+  ])("test_party_mapping_%s_cursor_refuses_before_a_next_query", async (_case, id) => {
+    let requests = 0;
+    const { client } = mappingClient(() => {
+      if (++requests > 1) throw new Error("unexpected next party_mapping query");
+      return [{ id, list_id: "list-110", canonical_party_id: "canonical-lla",
+        party_canonical: { display_name: "ALIANZA LA LIBERTAD AVANZA" } }];
+    });
+    await expect(new SupabasePartyNameSource(client as never).fetchPartyNames(
+      context, ["list-110"],
+    )).rejects.toThrow(
+      "SupabasePartyNameSource: party_mapping.id pagination cursor must be a canonical UUID string; received",
+    );
+    expect(requests).toBe(1);
+  });
 
   it("test_valid_party_mapping_identifiers_are_preserved", async () => {
     const { client } = mappingClient(() => [
@@ -710,9 +823,9 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
       },
     ]);
 
-    const names = await new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
-      "list-110",
-    ]);
+    const names = await new SupabasePartyNameSource(
+      client as never,
+    ).fetchPartyNames(context, ["list-110"]);
 
     expect(names).toEqual(
       new Map([
@@ -743,7 +856,9 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     const { client } = mappingClient(() => [mapping]);
 
     await expect(
-      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-110"]),
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+        "list-110",
+      ]),
     ).rejects.toThrow("party_mapping.list_id must be a non-empty string");
   });
 
@@ -753,19 +868,26 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     ["numeric", 110],
     ["object", { id: "canonical-lla" }],
     ["empty", ""],
-  ])("test_party_mapping_canonical_party_id_refuses_%s", async (_case, canonicalPartyId) => {
-    const mapping: Record<string, unknown> = {
-      list_id: "list-110",
-      canonical_party_id: canonicalPartyId,
-      party_canonical: { display_name: "ALIANZA LA LIBERTAD AVANZA" },
-    };
-    if (_case === "missing") delete mapping["canonical_party_id"];
-    const { client } = mappingClient(() => [mapping]);
+  ])(
+    "test_party_mapping_canonical_party_id_refuses_%s",
+    async (_case, canonicalPartyId) => {
+      const mapping: Record<string, unknown> = {
+        list_id: "list-110",
+        canonical_party_id: canonicalPartyId,
+        party_canonical: { display_name: "ALIANZA LA LIBERTAD AVANZA" },
+      };
+      if (_case === "missing") delete mapping["canonical_party_id"];
+      const { client } = mappingClient(() => [mapping]);
 
-    await expect(
-      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-110"]),
-    ).rejects.toThrow("party_mapping.canonical_party_id must be a non-empty string");
-  });
+      await expect(
+        new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+          "list-110",
+        ]),
+      ).rejects.toThrow(
+        "party_mapping.canonical_party_id must be a non-empty string",
+      );
+    },
+  );
 
   it("test_more_ids_than_one_batch_are_read_in_several_requests", async () => {
     // 450 ids cannot travel in one GET URL safely, and a single unbounded
@@ -779,7 +901,9 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
       })),
     );
 
-    const names = await new SupabasePartyNameSource(client as never).fetchPartyNames(context, ids);
+    const names = await new SupabasePartyNameSource(
+      client as never,
+    ).fetchPartyNames(context, ids);
 
     expect(batches).toHaveLength(3);
     expect(batches.flat()).toHaveLength(450);
@@ -791,13 +915,23 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     // one silently is the fabrication the whole mapping layer exists to stop.
     const { client } = mappingClient((batch) =>
       batch.flatMap((id) => [
-        { list_id: id, canonical_party_id: "canon-a", party_canonical: { display_name: "A" } },
-        { list_id: id, canonical_party_id: "canon-b", party_canonical: { display_name: "B" } },
+        {
+          list_id: id,
+          canonical_party_id: "canon-a",
+          party_canonical: { display_name: "A" },
+        },
+        {
+          list_id: id,
+          canonical_party_id: "canon-b",
+          party_canonical: { display_name: "B" },
+        },
       ]),
     );
 
     await expect(
-      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["110"]),
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+        "110",
+      ]),
     ).rejects.toThrow("110 -> canon-a, canon-b");
   });
 
@@ -809,21 +943,40 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     const { client } = mappingClient((batch) =>
       batch.includes("110")
         ? [
-            { list_id: "110", canonical_party_id: "canon-a", party_canonical: { display_name: "A" } },
-            { list_id: "110", canonical_party_id: "canon-b", party_canonical: { display_name: "B" } },
+            {
+              list_id: "110",
+              canonical_party_id: "canon-a",
+              party_canonical: { display_name: "A" },
+            },
+            {
+              list_id: "110",
+              canonical_party_id: "canon-b",
+              party_canonical: { display_name: "B" },
+            },
           ]
         : [],
     );
 
     await expect(
-      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["110", "999"]),
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+        "110",
+        "999",
+      ]),
     ).rejects.toThrow("110 -> canon-a, canon-b");
   });
 
   it("test_one_canonical_party_with_conflicting_display_names_refuses_in_every_row_order", async () => {
     const mappings = [
-      { list_id: "list-a", canonical_party_id: "canon-shared", party_canonical: { display_name: "A" } },
-      { list_id: "list-b", canonical_party_id: "canon-shared", party_canonical: { display_name: "B" } },
+      {
+        list_id: "list-a",
+        canonical_party_id: "canon-shared",
+        party_canonical: { display_name: "A" },
+      },
+      {
+        list_id: "list-b",
+        canonical_party_id: "canon-shared",
+        party_canonical: { display_name: "B" },
+      },
     ];
     const expectedError =
       "SupabasePartyNameSource: in (2025, national, DIPUTADO NACIONAL) these canonical parties " +
@@ -833,26 +986,40 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
       // A one-row server cap puts the two mappings on separate pages. Reassigning
       // the keyset ids makes each iteration exercise the opposite page order.
       const { client } = mappingClient(
-        () => orderedMappings.map((mapping, index) => ({ ...mapping, id: String(index) })),
+        () =>
+          orderedMappings.map((mapping, index) => ({
+            ...mapping,
+            id: uuid(index),
+          })),
         1,
       );
 
       await expect(
-        new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-a", "list-b"]),
+        new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+          "list-a",
+          "list-b",
+        ]),
       ).rejects.toThrow(expectedError);
     }
   });
 
   it("test_canonical_relation_accepts_an_object_or_exactly_one_element_array", async () => {
     const { client } = mappingClient(() => [
-      { list_id: "object", canonical_party_id: "canon-object", party_canonical: { display_name: "Object" } },
-      { list_id: "array", canonical_party_id: "canon-array", party_canonical: [{ display_name: "Array" }] },
+      {
+        list_id: "object",
+        canonical_party_id: "canon-object",
+        party_canonical: { display_name: "Object" },
+      },
+      {
+        list_id: "array",
+        canonical_party_id: "canon-array",
+        party_canonical: [{ display_name: "Array" }],
+      },
     ]);
 
-    const names = await new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
-      "object",
-      "array",
-    ]);
+    const names = await new SupabasePartyNameSource(
+      client as never,
+    ).fetchPartyNames(context, ["object", "array"]);
 
     expect(names.get("object")?.displayName).toBe("Object");
     expect(names.get("array")?.displayName).toBe("Array");
@@ -866,11 +1033,17 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     ["empty name", { display_name: "" }],
   ])("test_canonical_relation_refuses_%s", async (_case, partyCanonical) => {
     const { client } = mappingClient(() => [
-      { list_id: "list-a", canonical_party_id: "canon-a", party_canonical: partyCanonical },
+      {
+        list_id: "list-a",
+        canonical_party_id: "canon-a",
+        party_canonical: partyCanonical,
+      },
     ]);
 
     await expect(
-      new SupabasePartyNameSource(client as never).fetchPartyNames(context, ["list-a"]),
+      new SupabasePartyNameSource(client as never).fetchPartyNames(context, [
+        "list-a",
+      ]),
     ).rejects.toThrow(
       "SupabasePartyNameSource: list id list-a has malformed party_canonical relation in " +
         "(2025, national, DIPUTADO NACIONAL); expected an object or exactly one-element array " +
@@ -880,7 +1053,11 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
 });
 
 describe("SupabasePartyNameSource pages each batch to exhaustion", () => {
-  const context = { year: 2025, jurisdiction: "national", category: "DIPUTADO NACIONAL" };
+  const context = {
+    year: 2025,
+    jurisdiction: "national",
+    category: "DIPUTADO NACIONAL",
+  };
 
   it("test_a_server_cap_below_the_batch_size_does_not_lose_mappings", async () => {
     // A row COUNT cannot detect this: fewer resolved ids than requested is
@@ -892,7 +1069,7 @@ describe("SupabasePartyNameSource pages each batch to exhaustion", () => {
     const { client } = ((): { client: unknown } => {
       let after: string | null = null;
       const all = ids.map((id, index) => ({
-        id: String(index).padStart(6, "0"),
+        id: uuid(index),
         list_id: id,
         canonical_party_id: `canon-${id}`,
         party_canonical: { display_name: `PARTY ${id}` },
@@ -901,14 +1078,18 @@ describe("SupabasePartyNameSource pages each batch to exhaustion", () => {
         client: {
           from() {
             const chain: Record<string, unknown> = {};
-            for (const method of ["select", "eq", "in", "order", "limit"]) chain[method] = () => chain;
+            for (const method of ["select", "eq", "in", "order", "limit"])
+              chain[method] = () => chain;
             chain["gt"] = (_c: string, value: string) => {
               after = value;
               return chain;
             };
-            chain["then"] = (resolve: (r: { data: unknown; error: null }) => unknown) => {
+            chain["then"] = (
+              resolve: (r: { data: unknown; error: null }) => unknown,
+            ) => {
               const cursor = after;
-              const start = cursor === null ? 0 : all.findIndex((r) => r.id > cursor);
+              const start =
+                cursor === null ? 0 : all.findIndex((r) => r.id > cursor);
               // A server cap of 40 — well below both BATCH and PAGE.
               const page = start === -1 ? [] : all.slice(start, start + 40);
               return resolve({ data: page, error: null });
@@ -919,7 +1100,9 @@ describe("SupabasePartyNameSource pages each batch to exhaustion", () => {
       };
     })();
 
-    const names = await new SupabasePartyNameSource(client as never).fetchPartyNames(context, ids);
+    const names = await new SupabasePartyNameSource(
+      client as never,
+    ).fetchPartyNames(context, ids);
 
     expect(names.size).toBe(150);
   });
@@ -954,10 +1137,10 @@ describe("unmappedByListId separates the two ways a row has no party", () => {
 });
 
 describe("fetchSourceRefs reads every entry, not the first page", () => {
-  const sourceRefClient = (sha256: unknown, omitSha256 = false) => {
+  const sourceRefClient = (sha256: unknown, omitSha256 = false, id: unknown = "a1") => {
     let after: string | null = null;
     const row: Record<string, unknown> = {
-      id: "a1",
+      id,
       sha256,
       source_url: "https://example.test/a1",
       fetched_at: "2026-01-01T00:00:00Z",
@@ -978,8 +1161,36 @@ describe("fetchSourceRefs reads every entry, not the first page", () => {
     };
   };
 
-  it.each([
-    ["explicit null", null],
+    it.each([
+      ["missing", undefined], ["null", null], ["number", 1], ["empty", ""], ["blank", "  "],
+      ["non-final null", null, true],
+    ])("test_archive_entry_%s_id_refuses_before_a_next_query", async (_case, id, nonFinal = false) => {
+      let requests = 0;
+      const row = { id, sha256: null, source_url: "https://example.test/a", fetched_at: "2026-01-01" };
+      const page = nonFinal ? [row, { ...row, id: "valid-final-id" }] : [row];
+      const client = { from() {
+        const chain: Record<string, unknown> = {};
+        for (const method of ["select", "in", "order", "limit", "gt"]) chain[method] = () => chain;
+        chain["then"] = (resolve: (result: { data: unknown; error: null }) => unknown) => {
+          if (++requests > 1) throw new Error("unexpected next archive_entry query");
+          return resolve({ data: page, error: null });
+        };
+        return chain;
+      } };
+      await expect(fetchSourceRefs(client as never, ["requested"])).rejects.toThrow(
+        "fetchSourceRefs: archive_entry.id pagination cursor must be non-blank text; received",
+      );
+      expect(requests).toBe(1);
+    });
+
+    it("test_archive_entry_id_preserves_exact_non_blank_text", async () => {
+      const id = " archive/a ";
+      const refs = await fetchSourceRefs(sourceRefClient(null, false, id) as never, [id]);
+      expect(refs.sources[0]?.archiveEntryId).toBe(id);
+    });
+
+    it.each([
+      ["explicit null", null],
     ["lowercase 64-character hex", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
   ])("test_source_ref_sha256_accepts_%s_unchanged", async (_case, sha256) => {
     const refs = await fetchSourceRefs(sourceRefClient(sha256) as never, ["a1"]);
@@ -1040,7 +1251,7 @@ describe("fetchSourceRefs reads every entry, not the first page", () => {
 
 describe("the columns identity and provenance depend on are checked", () => {
   const resultRowRecord = (listId: unknown): Record<string, unknown> => ({
-    id: "000001",
+    id: uuid(1),
     jurisdiction_id: "j1",
     category_id: "c1",
     list_id: listId,
@@ -1048,6 +1259,7 @@ describe("the columns identity and provenance depend on are checked", () => {
     source_kind: "official",
     granularity: "mesa",
     requested_granularity: "mesa",
+    mesa_tipo: "NATIVOS",
     archive_entry_id: "a1",
   });
 
@@ -1056,7 +1268,9 @@ describe("the columns identity and provenance depend on are checked", () => {
     ["leading-zero string", "00110"],
     ["explicit null", null],
   ])("test_result_row_list_id_accepts_%s_unchanged", async (_case, listId) => {
-    const source = new SupabaseRowSource(fakeKeysetClient([resultRowRecord(listId)]) as never);
+    const source = new SupabaseRowSource(
+      fakeKeysetClient([resultRowRecord(listId)]) as never,
+    );
 
     const rows = await source.fetchRows(BASE_QUERY);
 
@@ -1091,7 +1305,7 @@ describe("the columns identity and provenance depend on are checked", () => {
     const source = new SupabaseRowSource(
       fakeKeysetClient([
         {
-          id: "000001",
+          id: uuid(1),
           jurisdiction_id: "j1",
           category_id: "c1",
           list_id: 110,
@@ -1104,8 +1318,14 @@ describe("the columns identity and provenance depend on are checked", () => {
     );
 
     await expect(
-      source.fetchRows({ electionId: "e1", jurisdictionId: "j1", categoryId: "c1" }),
-    ).rejects.toThrow("result_row.list_id must be null or a non-empty trimmed string");
+      source.fetchRows({
+        electionId: "e1",
+        jurisdictionId: "j1",
+        categoryId: "c1",
+      }),
+    ).rejects.toThrow(
+      "result_row.list_id must be null or a non-empty trimmed string",
+    );
   });
 
   it("test_an_entry_with_no_source_url_is_not_reported_as_traced", async () => {
@@ -1153,15 +1373,29 @@ describe("one definition of a resolved party", () => {
     partyName,
   });
 
-  it("test_a_row_with_an_id_but_no_name_is_unresolved_and_lands_in_a_bucket", () => {
-    // `compare` re-derived this test inline, so a row shaped
-    // `{canonicalPartyId: set, partyName: null, listId: null}` was excluded
-    // from every figure there while its disclosure depended on THIS fold
-    // agreeing by coincidence. One predicate, both places.
-    expect(isPartyResolved(row("canon-1", null, null))).toBe(false);
+    it.each([
+      ["ordinary mapped row", "canon-1", "PARTY", true],
+      ["empty name", "canon-1", "", false],
+      ["whitespace name", "canon-1", " \t ", false],
+      ["null name", "canon-1", null, false],
+      ["empty canonical ID", "", "PARTY", false],
+      ["whitespace canonical ID", " \t ", "PARTY", false],
+      ["null canonical ID", null, "PARTY", false],
+    ] as const)(
+      "test_%s_has_the_expected_resolution_and_list_id_disclosure",
+      (_case, canonicalPartyId, partyName, resolved) => {
+        const candidate = row(canonicalPartyId, partyName, "list-1");
+        expect(isPartyResolved(candidate)).toBe(resolved);
+        expect(unmappedByListId([candidate]).entries).toEqual(
+          resolved ? [] : [{ listId: "list-1", rows: 1, votes: 55 }],
+        );
+      },
+    );
 
-    const reading = unmappedByListId([row("canon-1", null, null)]);
+    it("test_an_unresolved_row_with_a_null_list_id_is_disclosed_by_source", () => {
+      const reading = unmappedByListId([row("canon-1", null, null)]);
 
-    expect(reading.withoutListId).toEqual({ official: { rows: 1, votes: 55 } });
-  });
+      expect(reading.entries).toEqual([]);
+      expect(reading.withoutListId).toEqual({ official: { rows: 1, votes: 55 } });
+    });
 });

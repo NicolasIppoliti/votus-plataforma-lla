@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
-import { describeExcluded, type ExcludedByKind } from "@/lib/fiscalizacion/repository";
+import {
+  describeExcluded,
+  type ExcludedByKind,
+} from "@/lib/fiscalizacion/repository";
 
 export interface UnmappedListIdsProps {
   entries: { listId: string; rows: number; votes: number }[];
@@ -62,7 +65,10 @@ export function UnmappedListIds({
           .filter(([, tally]) => tally.rows > 0)
           .map(([kind, tally]) => `${tally.rows} fila(s) ${kind}`)
           .join(", ") || null;
-  const noListIdRows = Object.values(noListId).reduce((sum, tally) => sum + tally.rows, 0);
+  const noListIdRows = Object.values(noListId).reduce(
+    (sum, tally) => sum + tally.rows,
+    0,
+  );
   if (rows === 0 && noListIdRows === 0) return null;
   return (
     <>
@@ -71,40 +77,44 @@ export function UnmappedListIds({
           empty list — a count of zero stated as a finding, which is what
           `describeExcluded` refuses by filtering empty tallies out. */}
       {rows === 0 ? null : (
-      <p role="alert">
-        {label ? `${label}: ` : ""}
-        {rows} de {totalRows} filas{unsummable === null ? ` (${votes} votos)` : ""}{" "}
-        {mappingConfigured
-          ? "se resolvieron sin un partido curado"
-          : "no se pudieron resolver porque no hay una fuente de mapeo curado configurada para esta lectura"}
-        . Se mantienen en todos los denominadores como votos emitidos, pero no se
-        puede nombrar un partido para ellos. Por id de lista:
-      </p>
+        <p role="alert">
+          {label ? `${label}: ` : ""}
+          {rows} de {totalRows} filas
+          {unsummable === null ? ` (${votes} votos)` : ""}{" "}
+          {mappingConfigured
+            ? "se resolvieron sin un partido curado"
+            : "no se pudieron resolver porque no hay una fuente de mapeo curado configurada para esta lectura"}
+          . Se informan por separado, sin un partido asignado; no se descartan
+          silenciosamente. Por id de lista:
+        </p>
       )}
       {rows === 0 ? null : (
-      <ul>
-        {entries.map((entry) => (
-          <li key={entry.listId}>
-            {entry.listId}: {entry.rows} filas
-            {unsummable === null ? `, ${entry.votes} votos` : ""}
-          </li>
-        ))}
-      </ul>
+        <ul>
+          {entries.map((entry) => (
+            <li key={entry.listId}>
+              {entry.listId}: {entry.rows} filas
+              {unsummable === null ? `, ${entry.votes} votos` : ""}
+            </li>
+          ))}
+        </ul>
       )}
       {noListIdSummary === null ? null : (
         // PER SOURCE KIND. One aggregate collapsed at least two distinct
         // shapes, and a large plausible total is how a destructive filter
         // survives review.
         <p role="note">
-          {noListIdRows} fila(s) no tienen id de lista: no son identificadores de
-          lista que no se hayan podido mapear. Por tipo de fuente: {noListIdSummary}.
+          {label ? `${label}: ` : ""}
+          {noListIdRows} fila(s) no tienen id de lista: no son identificadores
+          de lista que no se hayan podido mapear. Se informan por separado, sin
+          un partido asignado; no se descartan silenciosamente. Por tipo de
+          fuente: {noListIdSummary}.
         </p>
       )}
       {unsummable === null ? null : (
         <p role="note">
-          Aquí se omiten los totales de votos por la misma razón que las cifras por
-          partido: estas filas no se pueden combinar, por lo que sus votos no se
-          pueden sumar: {unsummable}.
+          Aquí se omiten los totales de votos por la misma razón que las cifras
+          por partido: estas filas no se pueden combinar, por lo que sus votos
+          no se pueden sumar: {unsummable}.
         </p>
       )}
     </>

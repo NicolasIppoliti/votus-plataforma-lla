@@ -3,14 +3,13 @@ import { GranularityBadge } from "@/components/GranularityBadge";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
 import { ProvenanceLink } from "@/components/ProvenanceLink";
+import { TableScroll } from "@/components/TableScroll";
 import { compareResults } from "@/lib/results/compare";
 import type { CompareInput, UnitResult } from "@/lib/results/compare";
 import type { Granularity } from "@/lib/results/types";
 import {
   createResultsRepository,
   describeExcluded,
-  fetchCategoryName,
-  fetchElectionYear,
   fetchSourceRefs,
   isPartyResolved,
   unmappedByListId,
@@ -18,11 +17,9 @@ import {
 } from "@/lib/fiscalizacion/repository";
 import type { SourceRef } from "@/lib/results/types";
 import type {
-  CategoryLookup,
   ExcludedByKind,
   OkResultsQueryResponse,
   ResultRow,
-  YearLookup,
 } from "@/lib/fiscalizacion/repository";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
@@ -35,13 +32,339 @@ import {
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-family";
+import { servedJurisdictionId } from "@/lib/results/party-family";
+import {
+  createResultsExplorationRepository,
+  type ExplorationFacets,
+} from "@/lib/results/exploration";
 
 interface ComparePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
+interface DisplayNameConflict {
+  canonicalPartyId: string;
+  names: string[];
+}
 
+const CATEGORY_CONFLICT_KIND = {
+  ID_NAMES: "id_names",
+  NAME_IDS: "name_ids",
+} as const;
+
+type CategoryConflictKind =
+  (typeof CATEGORY_CONFLICT_KIND)[keyof typeof CATEGORY_CONFLICT_KIND];
+
+interface CategoryIdentityConflict {
+  kind: CategoryConflictKind;
+  identity: string;
+  leftIds: string[];
+  leftNames: string[];
+  rightIds: string[];
+  rightNames: string[];
+}
+
+interface CommonCategoryFacetsResult {
+  categories: ExplorationFacets["categories"];
+  conflicts: CategoryIdentityConflict[];
+}
+
+interface CompareSelectorProps {
+  elections: ExplorationFacets["elections"];
+  categories: ExplorationFacets["categories"];
+  electionId2023?: string;
+  electionId2025?: string;
+  categoryId?: string;
+  message?: string;
+  messageIsAlert?: boolean;
+}
+
+function CompareSelector({
+  elections,
+  categories,
+  electionId2023,
+  electionId2025,
+  categoryId,
+  message,
+  messageIsAlert = false,
+}: CompareSelectorProps): ReactNode {
+  const elections2023 = elections.filter((option) => option.year === 2023);
+  const elections2025 = elections.filter((option) => option.year === 2025);
+  const pairSelected = Boolean(electionId2023 && electionId2025);
+
+  return (
+    <main className="page-shell">
+      <div className="shell-container">
+        <header className="page-header">
+          <p className="eyebrow">Resultados nacionales / comparación</p>
+          <h1>Comparación entre 2023 y 2025</h1>
+          <p className="page-header__lede">
+            Seleccione dos elecciones nacionales y una categoría presente en
+            ambas. La URL resultante se puede conservar y compartir.
+          </p>
+        </header>
+        <section className="panel" aria-labelledby="compare-selector-heading">
+          <div className="panel__heading">
+            <h2 id="compare-selector-heading">
+              Elegir elecciones para comparar
+            </h2>
+            <p>
+              Las categorías se habilitan después de elegir una elección de cada
+              año.
+            </p>
+          </div>
+          <form action="/compare" method="get">
+            <fieldset className="form-grid selector-form">
+              <legend className="selector-form__legend">
+                Selectores de comparación nacional
+              </legend>
+              <div className="field">
+                <label htmlFor="compare-election-2023">Elección de 2023</label>
+                <select
+                  id="compare-election-2023"
+                  name="election2023"
+                  defaultValue={electionId2023 ?? ""}
+                  required
+                >
+                  <option value="">Elegir una elección de 2023</option>
+                  {elections2023.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="compare-election-2025">Elección de 2025</label>
+                <select
+                  id="compare-election-2025"
+                  name="election2025"
+                  defaultValue={electionId2025 ?? ""}
+                  required
+                >
+                  <option value="">Elegir una elección de 2025</option>
+                  {elections2025.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="compare-category">Categoría común</label>
+                <select
+                  id="compare-category"
+                  name="categoryId"
+                  defaultValue={categoryId ?? ""}
+                  required
+                  disabled={!pairSelected}
+                  aria-describedby="compare-category-help"
+                >
+                  <option value="">Elegir una categoría común</option>
+                  {categories.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+                <p id="compare-category-help">
+                  Solo se ofrecen categorías publicadas en las dos elecciones.
+                </p>
+              </div>
+            </fieldset>
+            <div className="form-actions">
+              <button className="button button--primary" type="submit">
+                {pairSelected ? "Comparar elecciones" : "Actualizar opciones"}
+              </button>
+            </div>
+          </form>
+        </section>
+        {message ? (
+          <p role={messageIsAlert ? "alert" : "status"}>{message}</p>
+        ) : null}
+      </div>
+    </main>
+  );
+}
+
+const comparisonNumberFormatter = new Intl.NumberFormat("es-AR", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function formatPercentage(value: number): string {
+  return `${comparisonNumberFormatter.format(value)} %`;
+}
+
+function formatPercentagePointSwing(value: number): string {
+  const normalized = Math.abs(value) < 0.005 ? 0 : value;
+  const sign = normalized > 0 ? "+" : "";
+  return `${sign}${comparisonNumberFormatter.format(normalized)} puntos porcentuales`;
+}
+
+interface CategoryIdentityMaps {
+  namesById: Map<string, Set<string>>;
+  idsByExactName: Map<string, Set<string>>;
+}
+
+function categoryIdentityMaps(
+  categories: ExplorationFacets["categories"],
+): CategoryIdentityMaps {
+  const namesById = new Map<string, Set<string>>();
+  const idsByExactName = new Map<string, Set<string>>();
+  for (const category of categories) {
+    const exactName = category.name.normalize("NFC");
+    const names = namesById.get(category.id) ?? new Set<string>();
+    names.add(exactName);
+    namesById.set(category.id, names);
+    const ids = idsByExactName.get(exactName) ?? new Set<string>();
+    ids.add(category.id);
+    idsByExactName.set(exactName, ids);
+  }
+  return { namesById, idsByExactName };
+}
+
+function sortedSet(values: Set<string> | undefined): string[] {
+  return [...(values ?? [])].sort();
+}
+
+function commonCategoryFacets(
+  left: ExplorationFacets["categories"],
+  right: ExplorationFacets["categories"],
+): CommonCategoryFacetsResult {
+  const leftMaps = categoryIdentityMaps(left);
+  const rightMaps = categoryIdentityMaps(right);
+  const conflicts: CategoryIdentityConflict[] = [];
+  const intersectingIds = [...leftMaps.namesById.keys()]
+    .filter((categoryId) => rightMaps.namesById.has(categoryId))
+    .sort();
+
+  for (const categoryId of intersectingIds) {
+    const leftNames = sortedSet(leftMaps.namesById.get(categoryId));
+    const rightNames = sortedSet(rightMaps.namesById.get(categoryId));
+    if (
+      leftNames.length !== 1 ||
+      rightNames.length !== 1 ||
+      leftNames[0] !== rightNames[0]
+    ) {
+      conflicts.push({
+        kind: CATEGORY_CONFLICT_KIND.ID_NAMES,
+        identity: categoryId,
+        leftIds: [categoryId],
+        leftNames,
+        rightIds: [categoryId],
+        rightNames,
+      });
+    }
+  }
+
+  const intersectingNames = [...leftMaps.idsByExactName.keys()]
+    .filter((name) => rightMaps.idsByExactName.has(name))
+    .sort();
+  for (const categoryName of intersectingNames) {
+    const leftIds = sortedSet(leftMaps.idsByExactName.get(categoryName));
+    const rightIds = sortedSet(rightMaps.idsByExactName.get(categoryName));
+    if (
+      leftIds.length !== 1 ||
+      rightIds.length !== 1 ||
+      leftIds[0] !== rightIds[0]
+    ) {
+      conflicts.push({
+        kind: CATEGORY_CONFLICT_KIND.NAME_IDS,
+        identity: categoryName,
+        leftIds,
+        leftNames: [categoryName],
+        rightIds,
+        rightNames: [categoryName],
+      });
+    }
+  }
+
+  conflicts.sort(
+    (leftConflict, rightConflict) =>
+      leftConflict.identity.localeCompare(rightConflict.identity) ||
+      leftConflict.kind.localeCompare(rightConflict.kind),
+  );
+  const conflictingIds = new Set(
+    conflicts.flatMap(({ leftIds, rightIds }) => [...leftIds, ...rightIds]),
+  );
+  const categories = intersectingIds.flatMap((categoryId) => {
+    const names = sortedSet(leftMaps.namesById.get(categoryId));
+    return conflictingIds.has(categoryId) || names.length !== 1
+      ? []
+      : [{ id: categoryId, name: names[0]! }];
+  });
+  return { categories, conflicts };
+}
+
+function describeCategoryNameConflicts(
+  conflicts: CategoryIdentityConflict[],
+  leftElectionLabel: string,
+  rightElectionLabel: string,
+): string {
+  const details = conflicts
+    .map((conflict) => {
+      const reason =
+        conflict.kind === CATEGORY_CONFLICT_KIND.ID_NAMES
+          ? `la categoría ${conflict.identity} tiene nombres diferentes o ambiguos`
+          : `el nombre de categoría ${conflict.identity} tiene IDs diferentes o ambiguos`;
+      return `${reason} (${leftElectionLabel}: ${conflict.leftNames.join(", ")} [${conflict.leftIds.length === 1 ? "ID" : "IDs"} ${conflict.leftIds.join(", ")}]; ${rightElectionLabel}: ${conflict.rightNames.join(", ")} [${conflict.rightIds.length === 1 ? "ID" : "IDs"} ${conflict.rightIds.join(", ")}])`;
+    })
+    .join("; ");
+  const refusal =
+    conflicts.length === 1
+      ? "Esa categoría no se ofrece ni se acepta"
+      : "Esas categorías no se ofrecen ni se aceptan";
+  return `Se detectaron conflictos de identidad: ${details}. ${refusal} para comparar.`;
+}
+
+class OfficialReadError extends Error {
+  constructor(
+    readonly excludedByYear: string[],
+    readonly failures: string[],
+  ) {
+    const failedElectionIds = failures.map(
+      (failure) => failure.split(":", 1)[0],
+    );
+    super(
+      `No se pudo leer ${failedElectionIds.join(", ")}. Fallos: ${failures.join("; ")}`,
+    );
+    this.name = "OfficialReadError";
+  }
+}
+
+function settleOfficialReads(
+  reads: [
+    PromiseSettledResult<OkResultsQueryResponse>,
+    PromiseSettledResult<OkResultsQueryResponse>,
+  ],
+  electionIds: [string, string],
+): [OkResultsQueryResponse, OkResultsQueryResponse] {
+  const excludedByYear: string[] = [];
+  const failures: string[] = [];
+
+  for (const [index, read] of reads.entries()) {
+    const electionId = electionIds[index]!;
+    if (read.status === "rejected") {
+      const reason =
+        read.reason instanceof Error
+          ? read.reason.message
+          : String(read.reason);
+      failures.push(`${electionId}: ${reason}`);
+      continue;
+    }
+    const summary = describeExcluded(read.value.excluded);
+    if (summary) excludedByYear.push(`${electionId}: ${summary}`);
+  }
+
+  if (failures.length > 0)
+    throw new OfficialReadError(excludedByYear, failures);
+  const [read2023, read2025] = reads;
+  if (read2023.status !== "fulfilled" || read2025.status !== "fulfilled") {
+    throw new Error("settleOfficialReads: fulfilled reads were not available");
+  }
+  return [read2023.value, read2025.value];
+}
 
 /**
  * Groups official rows into `compare.ts`'s per-unit shape, keyed on the
@@ -82,10 +405,14 @@ function toCompareUnits(rows: ResultRow[]): {
   unresolvedByListId: { listId: string; rows: number; votes: number }[];
   /** Rows carrying no list id at all — not ids that failed to map. */
   unresolvedWithoutListId: ExcludedByKind;
-  /** Canonical id -> the name to show for it. */
   displayNames: Map<string, string>;
+  displayNameConflicts: DisplayNameConflict[];
 } {
   const votesByUnitAndParty = new Map<string, Map<string, number>>();
+  const mesaPopulationByUnit = new Map<
+    string,
+    { knownTypes: Set<string>; taggedRows: number; untaggedRows: number }
+  >();
   const levels = readGranularity(rows);
   let unresolvedRows = 0;
   let unresolvedVotes = 0;
@@ -93,9 +420,22 @@ function toCompareUnits(rows: ResultRow[]): {
   // while the boundary sorts by votes, so the same question had two answers.
   const unresolvedReading = unmappedByListId(rows);
   const unresolvedByListId = unresolvedReading.entries;
-  const displayNames = new Map<string, string>();
+  const displayNamesByParty = new Map<string, Set<string>>();
 
   for (const row of rows) {
+    const population = mesaPopulationByUnit.get(row.jurisdictionId) ?? {
+      knownTypes: new Set<string>(),
+      taggedRows: 0,
+      untaggedRows: 0,
+    };
+    if (typeof row.mesaTipo === "string" && row.mesaTipo.length > 0) {
+      population.knownTypes.add(row.mesaTipo);
+      population.taggedRows += 1;
+    } else {
+      population.untaggedRows += 1;
+    }
+    mesaPopulationByUnit.set(row.jurisdictionId, population);
+
     // The SAME definition the boundary uses: a row with a canonical id but no
     // display name counted as mapped here, and then rendered the raw id (`lla`)
     // at the operator as if it were a party.
@@ -121,26 +461,55 @@ function toCompareUnits(rows: ResultRow[]): {
     // AVANZA" in 2025, so keying on the name gives the two sides zero common
     // keys — the same fabricated flip as keying on the list id, one layer up.
     const party = row.canonicalPartyId;
-    // The NAME travels with the key. `fromParty`/`toParty` are these keys, so
-    // rendering them printed the internal id (`lla`) to the operator on the
-    // page whose whole purpose is the swing.
-    // `row.partyName` is non-null here: the guard above sends a row without
-    // one to the unmapped tally rather than letting it name itself with an id.
-    displayNames.set(party, row.partyName);
+    const displayName = row.partyName.trim();
+    const names = displayNamesByParty.get(party) ?? new Set<string>();
+    if (displayName.length > 0) names.add(displayName);
+    displayNamesByParty.set(party, names);
     // `BaseQuery` filters `.eq("jurisdiction_id", ...)`, so EVERY row carries
     // the same id and they all sum into exactly ONE unit. The figure is
     // therefore a jurisdiction total whatever level its rows carry — and the
     // badge used to assert `mesa` over it. The aggregation is real and it is
     // now disclosed below rather than described only in this comment.
-    const parties = votesByUnitAndParty.get(row.jurisdictionId) ?? new Map<string, number>();
+    const parties =
+      votesByUnitAndParty.get(row.jurisdictionId) ?? new Map<string, number>();
     parties.set(party, (parties.get(party) ?? 0) + row.votes);
     votesByUnitAndParty.set(row.jurisdictionId, parties);
   }
 
-  const units: UnitResult[] = [...votesByUnitAndParty.entries()].map(([unitId, parties]) => ({
-    unitId,
-    parties: [...parties.entries()].map(([party, votes]) => ({ party, votes })),
-  }));
+  const units: UnitResult[] = [...votesByUnitAndParty.entries()].map(
+    ([unitId, parties]) => {
+      const population = mesaPopulationByUnit.get(unitId)!;
+      return {
+        unitId,
+        parties: [...parties.entries()].map(([party, votes]) => ({
+          party,
+          votes,
+        })),
+        mesaPopulation: {
+          knownTypes: [...population.knownTypes].sort(),
+          taggedRows: population.taggedRows,
+          untaggedRows: population.untaggedRows,
+        },
+      };
+    },
+  );
+  const namesByCanonicalId = [...displayNamesByParty.entries()]
+    .map(([canonicalPartyId, names]) => ({
+      canonicalPartyId,
+      names: [...names].sort(),
+    }))
+    .sort((left, right) =>
+      left.canonicalPartyId.localeCompare(right.canonicalPartyId),
+    );
+  const displayNames = new Map(
+    namesByCanonicalId.map(({ canonicalPartyId, names }) => [
+      canonicalPartyId,
+      names[0] ?? "",
+    ]),
+  );
+  const displayNameConflicts = namesByCanonicalId.filter(
+    ({ names }) => names.length > 1,
+  );
 
   return {
     granularity: levels.granularity,
@@ -152,6 +521,7 @@ function toCompareUnits(rows: ResultRow[]): {
     unresolvedByListId,
     unresolvedWithoutListId: unresolvedReading.withoutListId,
     displayNames,
+    displayNameConflicts,
   };
 }
 
@@ -160,8 +530,9 @@ function toCompareUnits(rows: ResultRow[]): {
  * design.md's Data Flow: "Next.js RSC (server-only reads)").
  */
 
-
-export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
+export default async function ComparePage({
+  searchParams,
+}: ComparePageProps): Promise<ReactNode> {
   const params = await searchParams;
 
   // Refused BEFORE anything is read: `stringParam` yields `undefined` for a
@@ -172,41 +543,26 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <main>
         <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
-          más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.
+          Se rechazó la solicitud: estos parámetros de consulta se
+          proporcionaron más de una vez y no se pueden resolver a un único
+          valor: {repeated.join(", ")}.
         </p>
       </main>
     );
   }
   const electionId2023 = stringParam(params, "election2023");
   const electionId2025 = stringParam(params, "election2025");
-  const jurisdictionId = stringParam(params, "jurisdictionId");
   const categoryId = stringParam(params, "categoryId");
+  const legacyJurisdictionId = stringParam(params, "jurisdictionId");
+  const legacyPartyCategory = stringParam(params, "partyCategory");
+  const legacyPartyJurisdiction = stringParam(params, "partyJurisdiction");
   const rawAggregateTo = stringParam(params, "aggregateTo");
-  // VALIDATED, not cast. `?aggregateTo=banana` reached `compareResults` typed
-  // as a valid `Granularity`, and this is the operator's channel into the D6
-  // refusal — the one input that must not be trusted blindly.
-  const aggregateTo = GRANULARITY_ORDER.find((level) => level === rawAggregateTo);
-  const partyCategory = stringParam(params, "partyCategory");
-  // The mapping FAMILY, not a hardcoded `"national"`. `municipal/page.tsx`
-  // proves a second one exists (`coronel_rosales_municipal`, list `2206`), so
-  // pinning national while accepting any `jurisdictionId` resolves a municipal
-  // category through the wrong table — every row unmapped, or worse, a
-  // national party with a colliding id.
-  const partyJurisdiction = stringParam(params, "partyJurisdiction");
-
-  if (!electionId2023 || !electionId2025 || !jurisdictionId || !categoryId) {
-    return (
-      <main>
-        <h1>Comparación entre 2023 y 2025</h1>
-        <p>
-          Proporcione los parámetros de consulta <code>election2023</code>,{" "}
-          <code>election2025</code>, <code>jurisdictionId</code> y{" "}
-          <code>categoryId</code>.
-        </p>
-      </main>
-    );
-  }
+  // Parse the legacy parameter instead of silently ignoring it, but never pass
+  // it into the domain comparison: this page does not load the descendant
+  // hierarchy required to perform a real aggregation.
+  const aggregateTo = GRANULARITY_ORDER.find(
+    (level) => level === rawAggregateTo,
+  );
 
   if (rawAggregateTo && !aggregateTo) {
     return (
@@ -220,118 +576,220 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     );
   }
 
-  if (!partyCategory || !partyJurisdiction) {
-    // Without the category there is no party mapping to resolve through, and an
-    // unresolved comparison is the fabricated-swing case.
+  if (aggregateTo) {
     return (
       <main>
         <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Se rechazó la solicitud: proporcione <code>partyCategory</code> y{" "}
-          <code>partyJurisdiction</code>. Cada lado se resuelve mediante su propio
-          mapeo de partidos <code>(año, jurisdicción, categoría)</code>, porque un
-          mismo partido tiene un ID de lista diferente en cada archivo.
+          Se rechazó la solicitud: <code>aggregateTo</code> no está disponible
+          actualmente porque esta página no carga la jerarquía completa de
+          descendientes necesaria para agrupar y recalcular las cifras. No se
+          muestran resultados.
         </p>
       </main>
     );
   }
 
-  // Each side's year from its own `election` ROW. Parsing the ids worked for
-  // curated slugs and never for the uuids the database stores, so this page
-  // refused every real comparison for want of years it had in a column.
-  const supabaseForYears = await createSupabaseServerClient();
-  // TYPED, not evolving `any` — the policy `drilldown` states and this file
-  // did not follow: an implicit `any` makes every field access typecheck
-  // whether the branch that assigns it ran or not.
-  let year2023: YearLookup;
-  let year2025: YearLookup;
-  try {
-    [year2023, year2025] = await Promise.all([
-      fetchElectionYear(supabaseForYears, electionId2023),
-      fetchElectionYear(supabaseForYears, electionId2025),
-    ]);
-  } catch (error) {
+  const served = servedJurisdictionId("national");
+  if (served.status !== "ok") {
     return (
-      <main>
-        <h1>Comparación entre 2023 y 2025</h1>
-        <p role="alert">
-          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
-        </p>
-      </main>
-    );
-  }
-  let categoryName: CategoryLookup;
-  try {
-    categoryName = await fetchCategoryName(supabaseForYears, categoryId);
-  } catch (error) {
-    return (
-      <main>
-        <h1>Comparación entre 2023 y 2025</h1>
-        <p role="alert">
-          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
-        </p>
-      </main>
-    );
-  }
-  if (categoryName.status !== "ok" || categoryName.name !== partyCategory) {
-    // The THIRD axis. `2206` names a different party in the municipal table
-    // than in the national one; the same holds ACROSS CATEGORIES, and a wrong
-    // party here renders as a flip between two that never changed hands.
-    return (
-      <main>
-        <h1>Comparación entre 2023 y 2025</h1>
-        <p role="alert">
-          Se rechazó la solicitud: la categoría {categoryId}{" "}
-          {categoryName.status === "no_row"
-            ? "no aparece en ninguna fila de categoría"
-            : categoryName.status === "unreadable_name"
-              ? "aparece en una fila cuyo nombre no es válido"
-              : `se llama ${categoryName.name}`}
-          , no {partyCategory}. Resolver un ID de lista mediante el mapeo de otra
-          categoría nombra al partido equivocado y fabrica un cambio inexistente.
-        </p>
-      </main>
-    );
-  }
-  if (year2023.status !== "ok" || year2025.status !== "ok") {
-    // NAMED per side: "one of them is unknown" sends the operator to check both.
-    return (
-      <main>
-        <h1>Comparación entre 2023 y 2025</h1>
-        <p role="alert">
-          Se rechazó la solicitud: no se pudo leer el año de{" "}
-          {[
-            ...(year2023.status === "ok"
-              ? []
-              : [`${electionId2023} (${year2023.status === "no_row" ? "sin fila de elección" : "sin año válido"})`]),
-            ...(year2025.status === "ok"
-              ? []
-              : [`${electionId2025} (${year2025.status === "no_row" ? "sin fila de elección" : "sin año válido"})`]),
-          ].join(", ")}
-          , y sin él no se puede seleccionar un mapeo de partidos.
-        </p>
+      <main className="page-shell">
+        <div className="shell-container">
+          <h1>Comparación entre 2023 y 2025</h1>
+          <p role="alert">
+            {served.status === "collision"
+              ? "La comparación nacional no está disponible porque una jurisdicción está asignada a más de un contexto. Corrija la configuración antes de continuar."
+              : "La comparación nacional no está disponible. Solicite configurar la jurisdicción nacional servida antes de continuar."}
+          </p>
+        </div>
       </main>
     );
   }
 
-  // THE boundary, not a third copy of the decision.
-  const family = resolvePartyFamily(jurisdictionId);
-  if (family.status !== "ok" || partyJurisdiction !== family.family) {
+  const facetSource = await (async () => {
+    try {
+      const repository = createResultsExplorationRepository(
+        await createSupabaseServerClient(),
+      );
+      return { repository, facets: await repository.facets({}) };
+    } catch {
+      return null;
+    }
+  })();
+  if (!facetSource) {
     return (
-      <main>
-        <h1>Comparación entre 2023 y 2025</h1>
-        <p role="alert">
-          Se rechazó la solicitud: {partyFamilyRefusal(family, partyJurisdiction)}.
-          Un ID de lista resuelto mediante la familia incorrecta nombra al partido
-          equivocado.
-        </p>
+      <main className="page-shell">
+        <div className="shell-container">
+          <h1>Comparación entre 2023 y 2025</h1>
+          <p role="alert">
+            No se pudieron cargar las elecciones disponibles. Intente nuevamente
+            o consulte el estado de las fuentes oficiales.
+          </p>
+        </div>
       </main>
     );
   }
+
+  const selectedElection2023 = facetSource.facets.elections.find(
+    (option) => option.id === electionId2023 && option.year === 2023,
+  );
+  const selectedElection2025 = facetSource.facets.elections.find(
+    (option) => option.id === electionId2025 && option.year === 2025,
+  );
+  const selectorProps = {
+    elections: facetSource.facets.elections,
+    ...(electionId2023 ? { electionId2023 } : {}),
+    ...(electionId2025 ? { electionId2025 } : {}),
+    ...(categoryId ? { categoryId } : {}),
+  };
+
+  if (
+    (electionId2023 && !selectedElection2023) ||
+    (electionId2025 && !selectedElection2025)
+  ) {
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={[]}
+        message="La selección no corresponde a una elección oficial disponible del año indicado. Elija otra opción."
+        messageIsAlert
+      />
+    );
+  }
+  if (!selectedElection2023 || !selectedElection2025) {
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={[]}
+        message="Elija una elección de cada año y actualice las opciones para ver sus categorías comunes."
+      />
+    );
+  }
+
+  const categoryFacets = await (async () => {
+    try {
+      return await Promise.all([
+        facetSource.repository.facets({ electionId: selectedElection2023.id }),
+        facetSource.repository.facets({ electionId: selectedElection2025.id }),
+      ]);
+    } catch {
+      return null;
+    }
+  })();
+  if (!categoryFacets) {
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={[]}
+        message="No se pudieron cargar las categorías comunes. Intente nuevamente o elija otro par de elecciones."
+        messageIsAlert
+      />
+    );
+  }
+
+  const commonCategoryResult = commonCategoryFacets(
+    categoryFacets[0].categories,
+    categoryFacets[1].categories,
+  );
+  const commonCategories = commonCategoryResult.categories;
+  if (!categoryId) {
+    const conflictMessage =
+      commonCategoryResult.conflicts.length > 0
+        ? describeCategoryNameConflicts(
+            commonCategoryResult.conflicts,
+            selectedElection2023.label,
+            selectedElection2025.label,
+          )
+        : undefined;
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={commonCategories}
+        message={
+          conflictMessage ??
+          (commonCategories.length > 0
+            ? "Elija una categoría publicada en ambas elecciones para generar la comparación."
+            : "Estas elecciones no comparten una categoría publicada. Elija otro par.")
+        }
+        messageIsAlert={Boolean(conflictMessage)}
+      />
+    );
+  }
+
+  const selectedCategory = commonCategories.find(
+    (option) => option.id === categoryId,
+  );
+      if (!selectedCategory) {
+        const selectedConflict = commonCategoryResult.conflicts.find(
+          ({ leftIds, rightIds }) =>
+            leftIds.includes(categoryId) || rightIds.includes(categoryId),
+        );
+        return (
+      <CompareSelector
+        {...selectorProps}
+        categories={commonCategories}
+        message={
+          selectedConflict
+            ? describeCategoryNameConflicts(
+                [selectedConflict],
+                selectedElection2023.label,
+                selectedElection2025.label,
+              )
+            : "La categoría seleccionada no está disponible en ambas elecciones. Elija una categoría común."
+        }
+        messageIsAlert
+      />
+    );
+  }
+
+  if (legacyJurisdictionId && legacyJurisdictionId !== served.jurisdictionId) {
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={commonCategories}
+        message="La jurisdicción incluida en el enlace no coincide con el contexto nacional configurado."
+        messageIsAlert
+      />
+    );
+  }
+  if (legacyPartyCategory && legacyPartyCategory !== selectedCategory.name) {
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={commonCategories}
+        message={`La categoría ${categoryId} se llama ${selectedCategory.name}, no ${legacyPartyCategory}; no coincide con el contexto nacional configurado.`}
+        messageIsAlert
+      />
+    );
+  }
+  if (legacyPartyJurisdiction && legacyPartyJurisdiction !== "national") {
+    return (
+      <CompareSelector
+        {...selectorProps}
+        categories={commonCategories}
+        message="La familia de partidos incluida en el enlace no coincide con el contexto nacional configurado."
+        messageIsAlert
+      />
+    );
+  }
+
+  const jurisdictionId = served.jurisdictionId;
+  const partyCategory = selectedCategory.name;
+  const partyJurisdiction = "national";
+  const year2023 = selectedElection2023;
+  const year2025 = selectedElection2025;
 
   const repository = await createResultsRepository();
-  const baseQuery2023 = { electionId: electionId2023, jurisdictionId, categoryId };
-  const baseQuery2025 = { electionId: electionId2025, jurisdictionId, categoryId };
+  const baseQuery2023 = {
+    electionId: selectedElection2023.id,
+    jurisdictionId,
+    categoryId,
+  };
+  const baseQuery2025 = {
+    electionId: selectedElection2025.id,
+    jurisdictionId,
+    categoryId,
+  };
   // Each year resolved through ITS OWN party mapping: the id changes between
   // files, the canonical name is what carries across.
   // A denied read THROWS. `SupabaseRowSource.fetchRows` raises on a Postgres
@@ -340,33 +798,36 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   let response2023: OkResultsQueryResponse;
   let response2025: OkResultsQueryResponse;
   try {
-    [response2023, response2025] = await Promise.all([
-    repository.queryOfficial(baseQuery2023, {
-      year: year2023.year,
-      jurisdiction: partyJurisdiction,
-      category: partyCategory,
-    }),
-    repository.queryOfficial(baseQuery2025, {
-      year: year2025.year,
-      jurisdiction: partyJurisdiction,
-      category: partyCategory,
-    }),
-    ]);
+    [response2023, response2025] = settleOfficialReads(
+      await Promise.allSettled([
+        repository.queryOfficial(baseQuery2023, {
+          year: year2023.year,
+          jurisdiction: partyJurisdiction,
+          category: partyCategory,
+        }),
+        repository.queryOfficial(baseQuery2025, {
+          year: year2025.year,
+          jurisdiction: partyJurisdiction,
+          category: partyCategory,
+        }),
+      ]),
+      [selectedElection2023.id, selectedElection2025.id],
+    );
   } catch (error) {
-    // The breakdown of whichever side DID resolve is lost here: `excludedByYear`
-    // is computed below, and both responses are needed to build it. Stated
-    // rather than left implicit — a partial read tells us nothing reliable
-    // about what the other side's filter dropped.
     return (
       <main>
         <h1>Comparación entre 2023 y 2025</h1>
         <p role="alert">
-          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud:{" "}
+          {error instanceof Error ? error.message : String(error)}
         </p>
-        <p role="note">
-          No se pudo leer uno de los años, por lo que no se informa un desglose por
-          tipo de fuente: contar solo el año disponible describiría media comparación.
-        </p>
+        {error instanceof OfficialReadError &&
+        error.excludedByYear.length > 0 ? (
+          <p role="note">
+            Filas excluidas por el filtro de fuente oficial y ausentes de todas
+            las cifras de esta página: {error.excludedByYear.join("; ")}.
+          </p>
+        ) : null}
       </main>
     );
   }
@@ -394,15 +855,19 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       </p>
     ) : null;
 
-  // No `status !== "ok"` branch: `queryOfficial` cannot refuse, and the
-  // compiler now says so. A denied read throws, and the try above catches it.
-  const rows2023 = response2023.rows;
-  const rows2025 = response2025.rows;
+  const rawRows2023 = response2023.rows;
+  const rawRows2025 = response2025.rows;
+  const rows2023 = rawRows2023.filter((row) => row.sourceKind === "official");
+  const rows2025 = rawRows2025.filter((row) => row.sourceKind === "official");
 
   // PATH 3 on this page too: rule 5 wants a rendered-page guard, and taking
   // the query's word for it made the repository filter the only live one.
-  const foreign2023 = rows2023.filter((row) => row.sourceKind !== "official");
-  const foreign2025 = rows2025.filter((row) => row.sourceKind !== "official");
+  const foreign2023 = rawRows2023.filter(
+    (row) => row.sourceKind !== "official",
+  );
+  const foreign2025 = rawRows2025.filter(
+    (row) => row.sourceKind !== "official",
+  );
   const foreign = [...foreign2023, ...foreign2025];
   const compare2023 = toCompareUnits(rows2023);
   const compare2025 = toCompareUnits(rows2025);
@@ -414,6 +879,26 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   // the merge this file argues against everywhere else.
   const unsummable2023 = mixedGranularityReason(rows2023);
   const unsummable2025 = mixedGranularityReason(rows2025);
+  const unmappedListIdDisclosure = (
+    <>
+      <UnmappedListIds
+        label={electionId2023}
+        entries={compare2023.unresolvedByListId}
+        withoutListId={compare2023.unresolvedWithoutListId}
+        mappingConfigured={response2023.partyMappingConfigured}
+        totalRows={rows2023.length}
+        unsummable={unsummable2023}
+      />
+      <UnmappedListIds
+        label={electionId2025}
+        entries={compare2025.unresolvedByListId}
+        withoutListId={compare2025.unresolvedWithoutListId}
+        mappingConfigured={response2025.partyMappingConfigured}
+        totalRows={rows2025.length}
+        unsummable={unsummable2025}
+      />
+    </>
+  );
 
   if (foreign.length > 0) {
     return (
@@ -423,38 +908,59 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         <p role="alert">
           Se rechazó la solicitud: {foreign.length} fila(s) que llegaron a esta
           página no son oficiales ({electionId2023}:{" "}
-          {describeExcluded(tallyByKind(foreign2023)) ?? "ninguna"}; {electionId2025}:{" "}
+          {describeExcluded(tallyByKind(foreign2023)) ?? "ninguna"};{" "}
+          {electionId2025}:{" "}
           {describeExcluded(tallyByKind(foreign2025)) ?? "ninguna"}). Las cifras
           oficiales y de fiscalización nunca se combinan en un mismo número.
         </p>
-        {/* Both counted before this refusal and about a different axis: which
-            list ids failed to map, and which levels cannot be ordered, do not
-            depend on source kinds. The three sibling pages carry theirs. */}
-        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
-            reads and rendered a list id present in both as a single cross-year
-            figure with nothing naming the year. */}
-        <UnmappedListIds
-          label={electionId2023}
-          entries={compare2023.unresolvedByListId}
-          withoutListId={compare2023.unresolvedWithoutListId}
-          mappingConfigured={response2023.partyMappingConfigured}
-          totalRows={rows2023.length}
-          unsummable={unsummable2023}
-        />
-        <UnmappedListIds
-          label={electionId2025}
-          entries={compare2025.unresolvedByListId}
-          withoutListId={compare2025.unresolvedWithoutListId}
-          mappingConfigured={response2025.partyMappingConfigured}
-          totalRows={rows2025.length}
-          unsummable={unsummable2025}
-        />
+        {unmappedListIdDisclosure}
         {/* PER YEAR, like the unmapped blocks beside them. Merging added rows
             across two independent reads under one line with nothing naming the
             year — and summed VOTES on a level this module cannot order, which
             is the addition both components exist to withhold. */}
-        <UnorderableLevels label={electionId2023} entries={unrecognizedLevels(rows2023)} />
-        <UnorderableLevels label={electionId2025} entries={unrecognizedLevels(rows2025)} />
+        <UnorderableLevels
+          label={electionId2023}
+          entries={unrecognizedLevels(rows2023)}
+        />
+        <UnorderableLevels
+          label={electionId2025}
+          entries={unrecognizedLevels(rows2025)}
+        />
+      </main>
+    );
+  }
+
+  const displayNameConflicts = [
+    ...compare2023.displayNameConflicts.map((conflict) => ({
+      ...conflict,
+      year: year2023.year,
+    })),
+    ...compare2025.displayNameConflicts.map((conflict) => ({
+      ...conflict,
+      year: year2025.year,
+    })),
+  ].sort(
+    (left, right) =>
+      left.year - right.year ||
+      left.canonicalPartyId.localeCompare(right.canonicalPartyId),
+  );
+  if (displayNameConflicts.length > 0) {
+    return (
+      <main>
+        <h1>Comparación entre 2023 y 2025</h1>
+        {excludedNote}
+        {unmappedListIdDisclosure}
+        <p role="alert">
+          Se rechazó la comparación: un mismo partido canónico tiene nombres de
+          visualización en conflicto dentro del mismo año:{" "}
+          {displayNameConflicts
+            .map(
+              ({ year, canonicalPartyId, names }) =>
+                `${year}, ID canónico ${canonicalPartyId}: ${names.join(", ")}`,
+            )
+            .join("; ")}
+          . No se muestran cifras de granularidad, variación ni cambios.
+        </p>
       </main>
     );
   }
@@ -475,34 +981,12 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <main>
         <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
-        {/* Counted by `toCompareUnits` BEFORE this refusal, and about a
-            different axis entirely: which list ids resolved to no canonical
-            party does not depend on granularity or on row counts. The three
-            sibling pages carry theirs through every refusal. */}
-        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
-            reads and rendered a list id present in both as a single cross-year
-            figure with nothing naming the year. */}
-        <UnmappedListIds
-          label={electionId2023}
-          entries={compare2023.unresolvedByListId}
-          withoutListId={compare2023.unresolvedWithoutListId}
-          mappingConfigured={response2023.partyMappingConfigured}
-          totalRows={rows2023.length}
-          unsummable={unsummable2023}
-        />
-        <UnmappedListIds
-          label={electionId2025}
-          entries={compare2025.unresolvedByListId}
-          withoutListId={compare2025.unresolvedWithoutListId}
-          mappingConfigured={response2025.partyMappingConfigured}
-          totalRows={rows2025.length}
-          unsummable={unsummable2025}
-        />
+        {unmappedListIdDisclosure}
         <p role="alert">
           Se rechazó la solicitud: las filas devueltas mezclan niveles de
-          granularidad ({[...new Set(mixed)].join(", ")}), por lo que un solo nivel
-          no puede describir ninguno de los lados y el control entre años no puede
-          detectar la diferencia.
+          granularidad ({[...new Set(mixed)].join(", ")}), por lo que un solo
+          nivel no puede describir ninguno de los lados y el control entre años
+          no puede detectar la diferencia.
         </p>
         {/* PER LEVEL and in both units, like the three sibling routes. Naming
             the levels alone hid how much of the comparison sits on one this
@@ -516,8 +1000,14 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             across two independent reads under one line with nothing naming the
             year — and summed VOTES on a level this module cannot order, which
             is the addition both components exist to withhold. */}
-        <UnorderableLevels label={electionId2023} entries={unrecognizedLevels(rows2023)} />
-        <UnorderableLevels label={electionId2025} entries={unrecognizedLevels(rows2025)} />
+        <UnorderableLevels
+          label={electionId2023}
+          entries={unrecognizedLevels(rows2023)}
+        />
+        <UnorderableLevels
+          label={electionId2025}
+          entries={unrecognizedLevels(rows2025)}
+        />
       </main>
     );
   }
@@ -530,31 +1020,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <main>
         <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
-        {/* Counted by `toCompareUnits` BEFORE this refusal, and about a
-            different axis entirely: which list ids resolved to no canonical
-            party does not depend on granularity or on row counts. The three
-            sibling pages carry theirs through every refusal. */}
-        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
-            reads and rendered a list id present in both as a single cross-year
-            figure with nothing naming the year. */}
-        <UnmappedListIds
-          label={electionId2023}
-          entries={compare2023.unresolvedByListId}
-          withoutListId={compare2023.unresolvedWithoutListId}
-          mappingConfigured={response2023.partyMappingConfigured}
-          totalRows={rows2023.length}
-          unsummable={unsummable2023}
-        />
-        <UnmappedListIds
-          label={electionId2025}
-          entries={compare2025.unresolvedByListId}
-          withoutListId={compare2025.unresolvedWithoutListId}
-          mappingConfigured={response2025.partyMappingConfigured}
-          totalRows={rows2025.length}
-          unsummable={unsummable2025}
-        />
+        {unmappedListIdDisclosure}
         <p role="alert">
-          Se rechazó la solicitud: {rows2023.length === 0 && rows2025.length === 0
+          Se rechazó la solicitud:{" "}
+          {rows2023.length === 0 && rows2025.length === 0
             ? "ningún año"
             : rows2023.length === 0
               ? electionId2023
@@ -566,10 +1035,32 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     );
   }
 
+  const yearsWithoutComparableIdentities = [
+    ...(compare2023.units.length === 0 ? [selectedElection2023.id] : []),
+    ...(compare2025.units.length === 0 ? [selectedElection2025.id] : []),
+  ];
+  if (yearsWithoutComparableIdentities.length > 0) {
+    return (
+      <main>
+        <h1>Comparación entre 2023 y 2025</h1>
+        {excludedNote}
+        <p role="alert">
+          Se rechazó la solicitud: hay filas oficiales pero sin identidades
+          partidarias comparables en{" "}
+          {yearsWithoutComparableIdentities.join(", ")}. Estas filas no se
+          resolvieron a un partido canónico. Sin un partido canónico resuelto en
+          cada año no se puede calcular una comparación.
+        </p>
+        {unmappedListIdDisclosure}
+      </main>
+    );
+  }
+
   // PER YEAR, and rows counted before dedup. Summing two already-deduped id
   // lists gave neither a row count nor an id count: an id unmapped in both
   // years counted twice, and 6.000 dropped rows reported as "1".
-  const unresolvedRows = compare2023.unresolvedRows + compare2025.unresolvedRows;
+  const unresolvedRows =
+    compare2023.unresolvedRows + compare2025.unresolvedRows;
   if (unresolvedRows > 0) {
     return (
       <main>
@@ -581,36 +1072,21 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           se resolvieron a un partido canónico, y un ID sin mapear no es una
           identidad que pueda compararse entre años.
         </p>
-        {/* THE shared presentation. The hand-rolled list beside it was a
-            second shape for one fact, and it printed vote sums the component
-            withholds when the rows cannot be added. */}
-        {/* ONE BLOCK PER YEAR. Merging them added votes across two different
-            reads and rendered a list id present in both as a single cross-year
-            figure with nothing naming the year. */}
-        <UnmappedListIds
-          label={electionId2023}
-          entries={compare2023.unresolvedByListId}
-          withoutListId={compare2023.unresolvedWithoutListId}
-          mappingConfigured={response2023.partyMappingConfigured}
-          totalRows={rows2023.length}
-          unsummable={unsummable2023}
-        />
-        <UnmappedListIds
-          label={electionId2025}
-          entries={compare2025.unresolvedByListId}
-          withoutListId={compare2025.unresolvedWithoutListId}
-          mappingConfigured={response2025.partyMappingConfigured}
-          totalRows={rows2025.length}
-          unsummable={unsummable2025}
-        />
+        {unmappedListIdDisclosure}
         {/* Levels this module cannot order are independent of mappability, so
             this refusal is about a different axis than that count. */}
         {/* PER YEAR, like the unmapped blocks beside them. Merging added rows
             across two independent reads under one line with nothing naming the
             year — and summed VOTES on a level this module cannot order, which
             is the addition both components exist to withhold. */}
-        <UnorderableLevels label={electionId2023} entries={unrecognizedLevels(rows2023)} />
-        <UnorderableLevels label={electionId2025} entries={unrecognizedLevels(rows2025)} />
+        <UnorderableLevels
+          label={electionId2023}
+          entries={unrecognizedLevels(rows2023)}
+        />
+        <UnorderableLevels
+          label={electionId2025}
+          entries={unrecognizedLevels(rows2025)}
+        />
       </main>
     );
   }
@@ -643,7 +1119,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   // Same rule as `summedFromRows` above, deliberately: `??` takes the first
   // non-null side, which is only harmless while `jurisdictionTotalLevel` emits
   // a constant here. Two shapes of one decision is how they drift apart.
-  const degradedFromDetail = coarsestOf(level2023.degradedFrom, level2025.degradedFrom);
+  const degradedFromDetail = coarsestOf(
+    level2023.degradedFrom,
+    level2025.degradedFrom,
+  );
 
   // EACH SIDE'S OWN SPELLING. One canonical party is written "LA LIBERTAD
   // AVANZA" in 2023 and "ALIANZA LA LIBERTAD AVANZA" in 2025; showing the 2023
@@ -671,9 +1150,22 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     granularity2025,
     units2023,
     units2025,
-    ...(aggregateTo ? { aggregateTo } : {}),
   };
   const result = compareResults(compareInput);
+
+  if (result.status === "invalid_comparison_input") {
+    return (
+      <main>
+        <h1>Comparación entre 2023 y 2025</h1>
+        {excludedNote}
+        {unmappedListIdDisclosure}
+        <p role="alert">
+          Se rechazó la comparación por datos de comparación inválidos (
+          {result.issues.length} problema(s)). No se muestran cifras.
+        </p>
+      </main>
+    );
+  }
 
   if (result.status === "requires_explicit_aggregation") {
     return (
@@ -685,35 +1177,69 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             refusal directly, with no figures rendered alongside it. */}
         <p role="alert">
           Granularidad mixta: los datos de 2023 están a nivel{" "}
-          {result.granularity2023} y los de 2025 a nivel {result.granularity2025}.
-          Vuelva a solicitar la comparación con un parámetro de consulta{" "}
-          <code>aggregateTo</code> explícito para combinarlos; esta comparación no
-          hace suposiciones (design.md D6).
+          {result.granularity2023} y los de 2025 a nivel{" "}
+          {result.granularity2025}. Esta comparación no hace suposiciones ni
+          muestra cifras con niveles incompatibles (design.md D6).
         </p>
-        {/* The FIFTH branch. Rows with no list id are counted and carried,
-            and D6 was the one refusal that rendered neither block — the same
-            shape this page fixed for `excludedNote` and stopped there. */}
-        <UnmappedListIds
-          label={electionId2023}
-          entries={compare2023.unresolvedByListId}
-          withoutListId={compare2023.unresolvedWithoutListId}
-          mappingConfigured={response2023.partyMappingConfigured}
-          totalRows={rows2023.length}
-          unsummable={unsummable2023}
-        />
-        <UnmappedListIds
-          label={electionId2025}
-          entries={compare2025.unresolvedByListId}
-          withoutListId={compare2025.unresolvedWithoutListId}
-          mappingConfigured={response2025.partyMappingConfigured}
-          totalRows={rows2025.length}
-          unsummable={unsummable2025}
-        />
+        {unmappedListIdDisclosure}
       </main>
     );
   }
 
-  const archiveEntryIds = [...new Set([...rows2023, ...rows2025].map((row) => row.archiveEntryId))];
+  if (result.status === "mesa_population_partial_coverage") {
+    return (
+      <main>
+        <h1>Comparación entre 2023 y 2025</h1>
+        {excludedNote}
+        {unmappedListIdDisclosure}
+        <p role="alert">
+          Se rechazó la comparación por cobertura parcial de mesa_tipo. Una
+          mezcla de filas etiquetadas y sin etiqueta no describe una población
+          completa.
+        </p>
+        <ul>
+          {result.coverages.map((coverage) => (
+            <li key={coverage.year}>
+              {coverage.year}: tipos conocidos{" "}
+              {coverage.knownTypes.join(", ") || "ninguno"};{" "}
+              {coverage.taggedRows}{" "}
+              {coverage.taggedRows === 1
+                ? "fila etiquetada"
+                : "filas etiquetadas"}
+              ; {coverage.untaggedRows}{" "}
+              {coverage.untaggedRows === 1
+                ? "fila sin etiqueta"
+                : "filas sin etiqueta"}
+            </li>
+          ))}
+        </ul>
+      </main>
+    );
+  }
+
+  if (result.status === "ambiguous_leader") {
+    return (
+      <main>
+        <h1>Comparación entre 2023 y 2025</h1>
+        {excludedNote}
+        {unmappedListIdDisclosure}
+        <p role="alert">
+          Se rechazó la comparación: no hay un líder único en{" "}
+          {result.ambiguities
+            .map(({ unitId, year, parties }) => {
+              const partyName = year === "2023" ? fromName : toName;
+              return `${unitId}, ${year}: ${parties.map(partyName).sort().join(", ")}`;
+            })
+            .join("; ")}
+          . No se muestran cifras de granularidad, variación ni cambios.
+        </p>
+      </main>
+    );
+  }
+
+  const archiveEntryIds = [
+    ...new Set([...rows2023, ...rows2025].map((row) => row.archiveEntryId)),
+  ];
   let sources: SourceRef[] = [];
   let missingProvenance: string[] = [];
   try {
@@ -726,8 +1252,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       <main>
         <h1>Comparación entre 2023 y 2025</h1>
         {excludedNote}
+        {unmappedListIdDisclosure}
         <p role="alert">
-          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
+          Se rechazó la solicitud:{" "}
+          {error instanceof Error ? error.message : String(error)}
         </p>
       </main>
     );
@@ -749,25 +1277,15 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         {...(degradedFromDetail ? { degradedFrom: degradedFromDetail } : {})}
       />
       {excludedNote}
-      {/* Rows with no list id are not ids that failed to map, and the SUCCESS
-          path must say so too — they are votes that were cast and are in every
-          denominator. Per year, because the two reads are independent. */}
-      <UnmappedListIds
-        label={electionId2023}
-        entries={compare2023.unresolvedByListId}
-        withoutListId={compare2023.unresolvedWithoutListId}
-        mappingConfigured={response2023.partyMappingConfigured}
-        totalRows={rows2023.length}
-        unsummable={unsummable2023}
-      />
-      <UnmappedListIds
-        label={electionId2025}
-        entries={compare2025.unresolvedByListId}
-        withoutListId={compare2025.unresolvedWithoutListId}
-        mappingConfigured={response2025.partyMappingConfigured}
-        totalRows={rows2025.length}
-        unsummable={unsummable2025}
-      />
+      {result.mesaPopulationMismatch ? (
+        <p role="alert">
+          La población de mesas no coincide entre años: 2023:{" "}
+          {result.mesaPopulationMismatch.types2023.join(", ")}; 2025:{" "}
+          {result.mesaPopulationMismatch.types2025.join(", ")}. Interprete las
+          variaciones considerando esta diferencia de cobertura.
+        </p>
+      ) : null}
+      {unmappedListIdDisclosure}
       {missingProvenance.length > 0 ? (
         // DISCLOSED, not refused, and deliberately: an untraceable archive
         // entry does not make the votes wrong, it makes them unquotable. The
@@ -799,21 +1317,68 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           no el de las filas que la respaldan.
         </p>
       ) : null}
-      {result.aggregatedFrom ? (
-        <p>
-          Agregado a partir de datos de nivel {result.aggregatedFrom} por decisión
-          explícita del operador.
-        </p>
-      ) : null}
       {/* ONE row, because the query returns one jurisdiction. Rendering it as a
           list of units suggested a breadth the figures do not have. */}
       <ul>
         {result.swings.map((swing) => (
           <li key={swing.unitId}>
-            {swing.unitId} (jurisdicción completa):{" "}
-            {swing.flipped
-              ? `cambió de ${fromName(swing.fromParty)} → ${toName(swing.toParty)}`
-              : "sin cambio"}
+            <p>
+              {swing.unitId} (jurisdicción completa):{" "}
+              {swing.flipped
+                ? `cambió de ${fromName(swing.fromParty)} → ${toName(swing.toParty)}`
+                : "sin cambio"}
+            </p>
+            <TableScroll
+              label={`Participación y variación por partido en ${swing.unitId}`}
+            >
+              <table className="data-table">
+                <caption>
+                  Participación electoral y variación en puntos porcentuales
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Partido en 2023</th>
+                    <th scope="col">Participación 2023</th>
+                    <th scope="col">Partido en 2025</th>
+                    <th scope="col">Participación 2025</th>
+                    <th scope="col">Variación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...swing.swings]
+                    .sort((left, right) =>
+                      left.party.localeCompare(right.party),
+                    )
+                    .map((partySwing) => {
+                      const share2023 =
+                        swing.shares2023.find(
+                          (share) => share.party === partySwing.party,
+                        )?.sharePercent ?? 0;
+                      const share2025 =
+                        swing.shares2025.find(
+                          (share) => share.party === partySwing.party,
+                        )?.sharePercent ?? 0;
+                      return (
+                        <tr key={partySwing.party}>
+                          <th scope="row">{fromName(partySwing.party)}</th>
+                          <td className="table-cell--number">
+                            {formatPercentage(share2023)}
+                          </td>
+                          <td>{toName(partySwing.party)}</td>
+                          <td className="table-cell--number">
+                            {formatPercentage(share2025)}
+                          </td>
+                          <td className="table-cell--number">
+                            {formatPercentagePointSwing(
+                              partySwing.swingPercentPoints,
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </TableScroll>
           </li>
         ))}
       </ul>
