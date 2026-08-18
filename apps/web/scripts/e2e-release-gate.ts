@@ -669,14 +669,12 @@ function productEnvironment(
 	const prefix = `e2e-${scenario}`;
 	return {
 		...common,
-		NATIONAL_JURISDICTION_ID:
-			identity && scenario !== "municipal"
-				? identity.jurisdictionId
-				: `${prefix}-unused-national`,
-		MUNICIPAL_JURISDICTION_ID:
+		CORONEL_ROSALES_JURISDICTION_ID:
+			identity?.jurisdictionId ?? `${prefix}-unused-jurisdiction`,
+		MUNICIPAL_ELECTION_ID:
 			identity && scenario === "municipal"
-				? identity.jurisdictionId
-				: `${prefix}-unused-municipal`,
+				? identity.electionIds[0]
+				: `${prefix}-unused-municipal-election`,
 		MUNICIPAL_CATEGORY_ID:
 			identity && scenario === "municipal"
 				? identity.categoryId

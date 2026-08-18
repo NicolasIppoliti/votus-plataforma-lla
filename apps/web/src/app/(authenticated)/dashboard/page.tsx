@@ -106,8 +106,8 @@ export default function DashboardPage(): ReactNode {
           <div className="workflow-section__heading">
             <h2 id="prepared-workflows">Rutas de análisis especializadas</h2>
             <p>
-              Inicie una comparación nacional desde sus selectores o abra los
-              análisis que requieren un contexto jurisdiccional preparado.
+              Inicie una comparación nacional o el análisis municipal desde
+              selectores que construyen enlaces reutilizables.
             </p>
           </div>
           <ul className="workflow-grid">
@@ -131,13 +131,12 @@ export default function DashboardPage(): ReactNode {
             <li className="workflow-card workflow-card--prepared">
               <div className="workflow-card__body">
                 <p className="workflow-card__status">
-                  Se requiere un contexto preparado
+                  Selección municipal disponible
                 </p>
                 <h3>Analizar concejos municipales</h3>
                 <p>
-                  Abra el análisis municipal desde un contexto jurisdiccional
-                  preparado o mediante un enlace directo. Esta tarjeta no inicia
-                  un flujo de selección de datos sin contexto previo.
+                  Elija la elección municipal configurada y consulte resultados
+                  oficiales con procedencia y exclusiones visibles.
                 </p>
               </div>
               <div className="workflow-card__footer">

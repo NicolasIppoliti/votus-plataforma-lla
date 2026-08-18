@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResultsRepository } from "@/lib/fiscalizacion/repository";
 import type { ResultRow, RowSource } from "@/lib/fiscalizacion/repository";
 import type { CoverageOk, CoverageResult } from "@/lib/results/coverage";
-import type { SourceRef } from "@/lib/results/types";
+import type { SourceKind, SourceRef } from "@/lib/results/types";
 import FiscalizacionPage, {
 	FISCALIZACION_COVERAGE,
 	FISCALIZACION_PARTY_CONTEXT,
@@ -14,8 +14,8 @@ import FiscalizacionPage, {
 	renderFiscalizacionView,
   comparisonFromParams,
   loadOfficialComparison,
-  topParty,
-  partyShare,
+  topParty as aggregateTopParty,
+  partyShare as aggregatePartyShare,
 } from "./page";
 
 /**
@@ -71,7 +71,7 @@ function expectCoverageControlState(
 // Restored after EVERY test: `process.env` and `repositoryRows` are shared
 // module state, so leaving them set makes results depend on execution order.
 afterEach(() => {
-  delete process.env["NATIONAL_JURISDICTION_ID"];
+  delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   delete process.env["FISCALIZACION_CATEGORY_ID"];
   delete process.env["FISCALIZACION_ELECTION_ID"];
   repositoryRows = [];
@@ -226,6 +226,7 @@ const OFFICIAL_ROW: ResultRow = {
   archiveEntryId: "national/2023-generales",
 };
 
+const topParty = (rows: ResultRow[]) => aggregateTopParty(rows, "fiscalizacion"), partyShare = (rows: ResultRow[], id: string, name?: string) => aggregatePartyShare(rows, id, "fiscalizacion", name);
 const OFFICIAL_ROWS: ResultRow[] = [
   {
     jurisdictionId: "j-027",
@@ -259,6 +260,13 @@ describe("fiscalizacion page — loadFiscalizacionView", () => {
 		expect(view.rows.every((row) => row.sourceKind === "fiscalizacion")).toBe(
 			true,
 		);
+  });
+
+  it("keeps the fiscal audit when party mapping fails", async () => {
+    let rowReads = 0, mappingReads = 0;
+    const repository = new ResultsRepository({ fetchRows: () => { rowReads += 1; return Promise.resolve([{ ...FISCALIZACION_ROW, listId: "4321", votes: 700 }, { ...FISCALIZACION_ROW, listId: null, votes: 40, granularity: "seccion" }, { ...FISCALIZACION_ROW, listId: "9876", votes: 30, granularity: "subcircuito" as never }, { ...OFFICIAL_ROW, votes: 100 }, { ...OFFICIAL_ROW, votes: 9, sourceKind: "provisional" as never }]); } }, { fetchPartyNames: () => { mappingReads += 1; return Promise.reject(new Error("mapping unavailable")); } });
+    const view = await loadFiscalizacionView(repository, QUERY), html = renderToStaticMarkup(renderFiscalizacionView(view)); expect([rowReads, mappingReads]).toEqual([1, 1]); expect(view).toMatchObject({ status: "read_failed", totalRows: 3, partyMappingConfigured: true }); expect(html).toContain("No se pudo resolver el mapeo de partidos de fiscalización: mapping unavailable");
+    for (const fact of ["1 fila oficial / 100 votos", "1 fila desconocida / 9 votos", "4321: 1 filas", "9876: 1 filas", "1 fila(s) no tienen id de lista", "2 de 3 filas", "subcircuito: 1 filas"]) expect(html.match(new RegExp(fact.replace(/[()]/g, "\\$&"), "g")) ?? []).toHaveLength(1); for (const hidden of ["700 votos", "Cobertura:", "LA LIBERTAD AVANZA"]) expect(html).not.toContain(hidden);
   });
 });
 
@@ -409,7 +417,7 @@ describe("comparisonFromParams (Requirement 9 — juxtaposition must be reachabl
   it("test_comparison_names_the_election_and_carries_no_figure", () => {
     // The scope must be pinned: `comparisonFromParams` refuses an unpinned
     // one on its own rather than skipping its checks.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -503,7 +511,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // directly, which is exactly how the badge shipped with a production call
     // site hardcoding `comparison: undefined` while its component tests
     // passed.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -540,7 +548,7 @@ describe("fiscalizacion page — the real entry point", () => {
   });
 
   it("test_the_page_refuses_a_jurisdiction_the_coverage_denominator_does_not_describe", async () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -578,11 +586,11 @@ describe("fiscalizacion page — the real entry point", () => {
     );
 
     expect(markup).toContain("Se rechazó");
-    expect(markup).toContain("NATIONAL_JURISDICTION_ID");
+    expect(markup).toContain("CORONEL_ROSALES_JURISDICTION_ID");
   });
 
   it("test_a_refused_comparison_says_so_instead_of_rendering_nothing", async () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
@@ -614,7 +622,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // Every entry-point test stubbed `fetchSourceRefs` to empty, so
     // `ProvenanceLink` never rendered a source in any page-level test and
     // nothing asserted the contract the module's own docstring states.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
@@ -646,7 +654,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // The official side comes from a DIFFERENT election and a different
     // archive entry. Fetching sources from the fiscalización rows alone left
     // that figure displayed with no provenance at all.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -713,7 +721,7 @@ describe("fiscalizacion page — the real entry point", () => {
 		it.each(["forward", "reverse"] as const)(
 			"test_the_page_refuses_conflicting_party_names_before_comparison_success_in_%s_order",
 			async (order) => {
-				process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+				process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
 				process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
 				process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 				partyNameOverrides = new Map([
@@ -780,7 +788,7 @@ describe("fiscalizacion page — the real entry point", () => {
         // Driven through the PAGE. `topParty` unit tests are not evidence that
         // either branch is reached, and both exist precisely to stop the page
         // saying "no row resolved to a curated party" about rows that all did.
-        process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+        process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
         process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
         process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
         repositoryRows = [
@@ -814,7 +822,7 @@ describe("fiscalizacion page — the real entry point", () => {
   });
 
   it("test_the_page_reports_mixed_granularity_as_such", async () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -852,7 +860,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // A LIST OF NAMES was rendered as a row count, so many rows on one
     // unknown level read as "1 row(s)". The fixture needs at least two rows
     // sharing a level, or the wrong count and the right one agree.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -900,7 +908,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // The third axis. `FISCALIZACION_PARTY_CONTEXT` names DIPUTADO NACIONAL,
     // so another category resolves party names through the wrong mapping --
     // and this was the one axis with no driver.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -922,7 +930,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // Both conditions at once: two parties level at 40, on levels that cannot
     // be summed. Calling that a tie states a measured fact that is really an
     // artifact of the arithmetic the refusal exists to prevent.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -959,7 +967,7 @@ describe("fiscalizacion page — the real entry point", () => {
   it("test_an_archive_entry_with_no_source_record_is_announced", async () => {
     // `fetchSourceRefs` can return fewer refs than asked for. The figure used
     // to render anyway, with no provenance and nothing saying so.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
@@ -982,7 +990,7 @@ describe("fiscalizacion page — the real entry point", () => {
   it("test_an_official_figure_without_an_archived_source_says_so", async () => {
     // The badge's own alert. `officialSources` empty used to render nothing,
     // so a percentage appeared with no provenance and no statement of it.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -1042,7 +1050,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // RLS denial or a failed query. Every page test so far mocked a repository
     // that always answers `ok`, so both this branch and the "no rows were
     // read" comparison branch were green whether they worked or not.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     refuseQueryWith = "row-level security denied the read";
@@ -1070,7 +1078,7 @@ describe("fiscalizacion page — the real entry point", () => {
   });
 
   it("test_a_comparison_against_the_same_election_is_refused", () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -1097,7 +1105,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // Next.js hands `string[]` for a repeated param. `stringParam` returned
     // `undefined` for those, so a SUPPLIED value vanished: the page then said
     // "Provide electionId" about a request that sent it twice.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -1119,7 +1127,7 @@ describe("fiscalizacion page — the real entry point", () => {
     // Zero rows resolved to nothing because there were zero rows, not because
     // the crosswalk failed. The catch-all sent the operator after a
     // `party_mapping` problem that does not exist.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [];
@@ -2532,8 +2540,13 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
     expect(topParty(rows).partyName).toBeNull();
   });
 
+  it("test_aggregate_source_guard_checks_uniform_expected_kind", () => {
+    const fiscal = [NAMED("LA LIBERTAD AVANZA", 60)], official = [{ ...OFFICIAL_ROW, partyName: "LA LIBERTAD AVANZA", canonicalPartyId: "canon-110", votes: 25 }];
+    for (const [expected, rows, breakdown] of [["fiscalizacion", official, "1 fila oficial / 25 votos"], ["official", fiscal, "1 fila fiscalización / 60 votos"]] satisfies Array<[SourceKind, ResultRow[], string]>) { const share = aggregatePartyShare(rows, "canon-110", expected), top = aggregateTopParty(rows, expected); expect(share).toEqual({ status: "unavailable", reason: expect.stringContaining(breakdown) }); expect(top).toMatchObject({ canonicalPartyId: null, partyName: null, refusedReason: expect.stringContaining(breakdown) }); }
+    expect(aggregatePartyShare(fiscal, "canon-110", "fiscalizacion")).toMatchObject({ status: "ok" }); expect(aggregateTopParty(official, "official").partyName).toBe("LA LIBERTAD AVANZA");
+  });
   it("test_a_comparison_in_another_jurisdiction_is_refused", () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -2587,10 +2600,11 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 					listId: "110",
 					partyName: "LA LIBERTAD AVANZA",
 					canonicalPartyId: "canon-110",
-					votes: 60,
+					votes: 11,
 				},
+        { ...FISCALIZACION_ROW, votes: 19 }, { ...FISCALIZACION_ROW, votes: 700, sourceKind: "provisional" as never },
 			],
-      excluded: {},
+      excluded: { official: { rows: 3, votes: 17 } },
       partyMappingConfigured: true,
     });
 
@@ -2610,7 +2624,9 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
       expect(result.status).toBe("unavailable");
 			if (result.status !== "unavailable")
 				throw new Error("expected unavailable");
-      expect(result.reason).toContain("filas no oficiales");
+      expect(result.reason).toBe("la consulta comparativa devolvió 2 filas fiscalización / 30 votos, 1 fila desconocida / 700 votos; no se construyó ninguna cifra oficial");
+      expect(result.excluded).toEqual({ official: { rows: 3, votes: 17 } });
+      expect("figure" in result).toBe(false);
     });
   });
 
@@ -2827,7 +2843,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
   });
 
   it("test_a_comparison_year_contradicting_its_election_is_refused", () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -2856,7 +2872,7 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
   });
 
   it("test_a_non_national_comparison_is_refused_rather_than_mapped_as_national", () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
 
@@ -3006,7 +3022,7 @@ describe("fiscalizacion page — the filter's drops reach the operator", () => {
     // `queryFiscalizacion` counts what it drops; the view carried the count
     // and nothing read it, so official rows removed from an unofficial figure
     // were reported nowhere.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -3035,7 +3051,7 @@ describe("fiscalizacion page — the figure's level is disclosed", () => {
     // `votesByParty` sums every row per party across one jurisdiction, so the
     // raw row level claimed `mesa` over a figure that IS every mesa added up.
     // The fourth page to derive this label its own way.
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -3243,7 +3259,7 @@ describe("fiscalizacion page — one party across two spellings", () => {
 
 describe("fiscalizacion page — the badge's own branches, through the page", () => {
   const seedJuxtaposition = () => {
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
     repositoryRows = [
@@ -3332,7 +3348,7 @@ describe("fiscalizacion page — the pinned election is configuration", () => {
     // real request before reading a row. Unset, it must SAY so rather than
     // compare against a literal nothing in the database can match.
     delete process.env["FISCALIZACION_ELECTION_ID"];
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
 
     const markup = renderToStaticMarkup(
@@ -3353,7 +3369,7 @@ describe("fiscalizacion page — the pinned election is configuration", () => {
     // comparison against a slug.
 		process.env["FISCALIZACION_ELECTION_ID"] =
 			"6dae81f9-c862-4cc5-b3f3-b640e4ea7319";
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     repositoryRows = [{ ...FISCALIZACION_ROW, listId: "110", votes: 60 }];
 
@@ -3383,7 +3399,7 @@ describe("fiscalizacion page — the pinned election's year is read, not assumed
     // as unmapped under a denominator naming a different race.
 		process.env["FISCALIZACION_ELECTION_ID"] =
 			"b5b6a452-836d-40ea-a570-1cbc87fb84f6";
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
 
     const markup = renderToStaticMarkup(
@@ -3447,7 +3463,7 @@ describe("fiscalizacion page — the comparison tally reaches the rendered page"
     // Threading it into the render had no driver: deleting the assignment left
     // every test green while the count vanished again.
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
@@ -3521,7 +3537,7 @@ describe("fiscalizacion page — a failed source read keeps what the other reads
     // floor — a drop hidden behind a refusal about a third read.
     refuseSourceReadWith = "row-level security denied the source read";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },
@@ -3605,7 +3621,7 @@ describe("fiscalizacion page — a source-read failure keeps every earlier count
     // used to vanish behind a refusal about a THIRD read.
     refuseSourceReadWith = "row-level security denied the source read";
     process.env["FISCALIZACION_ELECTION_ID"] = "2025-legislativas-nacional";
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["FISCALIZACION_CATEGORY_ID"] = "c-diputados";
     repositoryRows = [
       { ...FISCALIZACION_ROW, listId: "110", votes: 60 },

@@ -4,14 +4,16 @@ import { planResultCleanup, planResultNaturalKeys, resultNaturalKey, resultScena
   type DataScenarioSpec } from "./scenario-ownership";
 type SeedRow = Record<string, string | number | null>;
 export interface ResultFixtureSeed { category: SeedRow; jurisdictions: SeedRow[];
-  elections: SeedRow[]; archiveEntries?: SeedRow[]; rows: SeedRow[]; }
+  elections: SeedRow[]; archiveEntries?: SeedRow[]; partyCanonical?: { id: string; display_name: string };
+  partyMappings?: Array<{ id: string; year: number; jurisdiction: string; category: string; list_id: string; canonical_party_id: string; source: string }>; rows: SeedRow[]; }
 interface SupabaseOperation { error: { message: string } | null; }
 const environment = assertE2eEnvironment(process.env);
 export const OFFICIAL_VOTES = 11_111;
 export const FISCALIZACION_VOTES = 22_222;
-function archiveEntries(ids: readonly string[], fiscalizacionIndex: number): SeedRow[] {
+function archiveEntries(ids: readonly string[], fiscalizacionIndex: number,
+  officialCapability = "national"): SeedRow[] {
   return ids.map((id, index) => ({ id,
-    capability: index === fiscalizacionIndex ? "fiscalizacion" : "national",
+    capability: index === fiscalizacionIndex ? "fiscalizacion" : officialCapability,
     source: "example.test", source_url: `https://example.test/${id}`,
     sha256: String(index + 1).repeat(64), mime: "text/csv",
     fetched_at: "2026-08-10T00:00:00Z", status: "ok",
@@ -19,10 +21,13 @@ function archiveEntries(ids: readonly string[], fiscalizacionIndex: number): See
 }
 export function sourceIsolationFixture(spec: DataScenarioSpec) {
   const identity = resultScenarioIdentity(spec);
-  if (identity.electionIds.length !== 1 || identity.archiveEntryIds.length !== 2)
+  const municipal = identity.scenario === "municipal";
+  if (identity.electionIds.length !== 1 || identity.archiveEntryIds.length !== (municipal ? 3 : 2))
     throw new Error(`source-isolation scenario has invalid identity cardinality: ${spec}`);
   const scope = { electionId: identity.electionIds[0]!, jurisdictionId: identity.jurisdictionId,
     categoryId: identity.categoryId };
+  const base = { election_id: scope.electionId, jurisdiction_id: scope.jurisdictionId,
+    category_id: scope.categoryId, granularity: identity.scenario === "provenance" ? "mesa" : "seccion" };
   const seed: ResultFixtureSeed = {
     category: { id: scope.categoryId, name: identity.categoryName },
     jurisdictions: [{ id: scope.jurisdictionId, distrito_code: identity.distritoCode,
@@ -32,21 +37,29 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
         establecimiento_code: "E1", establecimiento_name: "Synthetic school", mesa_code: 1 } : {}) }],
     elections: [{ id: scope.electionId, year: identity.electionYears[0]!,
       round: identity.electionRounds[0]! }],
-    ...(identity.scenario === "provenance"
-      ? { archiveEntries: archiveEntries(identity.archiveEntryIds, 1) } : {}),
-    rows: [
-    {
-      election_id: scope.electionId, jurisdiction_id: scope.jurisdictionId,
-       category_id: scope.categoryId, granularity: identity.scenario === "provenance" ? "mesa" : "seccion", list_id: null,
-      votes: OFFICIAL_VOTES, source_kind: "official", source_row_index: 0,
-      archive_entry_id: identity.archiveEntryIds[0]!,
-    },
-    {
-      election_id: scope.electionId, jurisdiction_id: scope.jurisdictionId,
-       category_id: scope.categoryId, granularity: identity.scenario === "provenance" ? "mesa" : "seccion", list_id: null,
-      votes: FISCALIZACION_VOTES, source_kind: "fiscalizacion", source_row_index: 1,
-      archive_entry_id: identity.archiveEntryIds[1]!,
-    },
+    ...(identity.scenario === "provenance" || municipal
+      ? { archiveEntries: archiveEntries(identity.archiveEntryIds, municipal ? 2 : 1,
+          municipal ? "municipal" : "national") } : {}),
+    ...(municipal && identity.comparisonParty ? {
+      partyCanonical: { id: identity.comparisonParty.canonicalPartyId,
+        display_name: identity.comparisonParty.displayName },
+      partyMappings: [{ id: identity.comparisonParty.mappingIds[0]!, year: 2025,
+        jurisdiction: identity.comparisonParty.jurisdiction, category: identity.categoryName,
+        list_id: "2206", canonical_party_id: identity.comparisonParty.canonicalPartyId,
+        source: spec }],
+    } : {}),
+    rows: municipal ? [
+      { ...base, list_id: "2206", votes: OFFICIAL_VOTES, source_kind: "official",
+        source_row_index: 0, archive_entry_id: identity.archiveEntryIds[0]! },
+      { ...base, list_id: "110", votes: 3_333, source_kind: "official",
+        source_row_index: 1, archive_entry_id: identity.archiveEntryIds[1]! },
+      { ...base, list_id: "2206", votes: FISCALIZACION_VOTES, source_kind: "fiscalizacion",
+        source_row_index: 2, archive_entry_id: identity.archiveEntryIds[2]! },
+    ] : [
+      { ...base, list_id: null, votes: OFFICIAL_VOTES, source_kind: "official",
+        source_row_index: 0, archive_entry_id: identity.archiveEntryIds[0]! },
+      { ...base, list_id: null, votes: FISCALIZACION_VOTES, source_kind: "fiscalizacion",
+        source_row_index: 1, archive_entry_id: identity.archiveEntryIds[1]! },
     ],
   };
   return { scope, seed };
@@ -104,13 +117,18 @@ function assertSeedOwnership(spec: DataScenarioSpec, seed: ResultFixtureSeed): s
     ...exactStrings(seed.elections, "id").map((id) => `election:${id}`),
     ...exactStrings(seed.archiveEntries ?? [], "id").map((id) => `archive_entry:${id}`),
     ...archiveEntryIds.map((id) => `result_row:${id}`),
+    ...(seed.partyMappings ?? []).map(({ id }) => `party_mapping:${id}`),
+    ...(seed.partyCanonical ? [`party_canonical:${seed.partyCanonical.id}`] : []),
   ].sort();
   const actualNaturalKeys = [
     `category:${seed.category["name"]}`,
     ...seed.jurisdictions.map((row) =>
       `jurisdiction:${row["distrito_code"]}|${row["seccion_code"]}|${row["circuito_code"] ?? "null"}|${row["establecimiento_code"] ?? "null"}|${row["mesa_code"] ?? "null"}`),
-    ...seed.elections.map((row) => `election:${row["year"]}|${row["round"]}`),
-    ...seed.rows.map((row) => resultNaturalKey({
+        ...seed.elections.map((row) => `election:${row["year"]}|${row["round"]}`),
+        ...(seed.partyCanonical ? [`party_canonical:${seed.partyCanonical.id}`] : []),
+        ...(seed.partyMappings ?? []).map((row) =>
+          `party_mapping:${row.year}|${row.jurisdiction}|${row.category}|${row.list_id}`),
+        ...seed.rows.map((row) => resultNaturalKey({
       archiveEntryId: String(row["archive_entry_id"]), electionId: String(row["election_id"]),
       jurisdictionId: String(row["jurisdiction_id"]), categoryId: String(row["category_id"]),
       listId: typeof row["list_id"] === "string" ? row["list_id"] : null,
@@ -140,6 +158,12 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
     if (seed.archiveEntries && seed.archiveEntries.length > 0)
       assertOperation(await admin.from("archive_entry").insert(seed.archiveEntries),
         "failed to seed archive entries");
+    if (seed.partyCanonical)
+      assertOperation(await admin.from("party_canonical").insert(seed.partyCanonical),
+        "failed to seed canonical party");
+    if (seed.partyMappings)
+      assertOperation(await admin.from("party_mapping").insert(seed.partyMappings),
+        "failed to seed party mappings");
     assertOperation(await admin.from("result_row").insert(seed.rows), "failed to seed result rows");
     outcome = { value: await run() };
   } catch (error) { outcome = { error }; }
@@ -149,8 +173,12 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
       if (result.error) cleanupErrors.push(new Error(`${label}: ${result.error.message}`));
     } catch (error) { cleanupErrors.push(error); }
   };
-  await cleanup("result rows", admin.from("result_row").delete().in("archive_entry_id", archiveEntryIds));
-  await cleanup("elections", admin.from("election").delete().in("id", seed.elections.map(({ id }) => id)));
+      await cleanup("result rows", admin.from("result_row").delete().in("archive_entry_id", archiveEntryIds));
+      if (seed.partyMappings)
+        await cleanup("party mappings", admin.from("party_mapping").delete().in("id", seed.partyMappings.map(({ id }) => id)));
+      if (seed.partyCanonical)
+        await cleanup("canonical party", admin.from("party_canonical").delete().eq("id", seed.partyCanonical.id));
+      await cleanup("elections", admin.from("election").delete().in("id", seed.elections.map(({ id }) => id)));
   if (seed.archiveEntries && seed.archiveEntries.length > 0)
     await cleanup("archive entries", admin.from("archive_entry").delete().in("id", seed.archiveEntries.map(({ id }) => id)));
   await cleanup("jurisdiction", admin.from("jurisdiction").delete().in("id", seed.jurisdictions.map(({ id }) => id)));

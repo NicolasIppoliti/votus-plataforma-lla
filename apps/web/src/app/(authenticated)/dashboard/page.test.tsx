@@ -46,9 +46,10 @@ it("distinguishes the reachable comparison from context-dependent workflows", ()
   expect(markup).toContain("Elija elecciones nacionales de 2023 y 2025");
   expect(markup).toContain("categoría publicada en ambas");
   expect(markup).toContain(
-    "Inicie una comparación nacional desde sus selectores",
+    "Inicie una comparación nacional o el análisis municipal",
   );
-  expect(markup).toContain("Se requiere un contexto preparado");
-  expect(markup).toContain("contexto jurisdiccional preparado");
+  expect(markup).toContain("Selección municipal disponible");
+  expect(markup).toContain("Elija la elección municipal configurada");
+  expect(markup).not.toContain("contexto jurisdiccional preparado");
   expect(markup).not.toContain("Compare dos elecciones preparadas");
 });

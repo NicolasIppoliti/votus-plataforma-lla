@@ -597,9 +597,8 @@ export default async function ComparePage({
         <div className="shell-container">
           <h1>Comparación entre 2023 y 2025</h1>
           <p role="alert">
-            {served.status === "collision"
-              ? "La comparación nacional no está disponible porque una jurisdicción está asignada a más de un contexto. Corrija la configuración antes de continuar."
-              : "La comparación nacional no está disponible. Solicite configurar la jurisdicción nacional servida antes de continuar."}
+            La comparación nacional no está disponible. Solicite configurar la
+            jurisdicción física de Coronel Rosales antes de continuar.
           </p>
         </div>
       </main>

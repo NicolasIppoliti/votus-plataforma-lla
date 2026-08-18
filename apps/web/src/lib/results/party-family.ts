@@ -1,45 +1,39 @@
 /**
- * Which curated party-mapping family describes a jurisdiction.
+ * Which curated party-mapping family describes a trusted race context.
  *
  * ONE boundary. This decision was copy-pasted into `compare` and `drilldown`
- * with a third variant in `municipal`, so a fix to the collision rule in one
+ * with a third variant in `municipal`, so a fix to the context rule in one
  * left the others on the old behaviour — the shape rule 8 records as "the same
  * padding bug in two independent functions".
  *
- * The pairing is CONFIGURATION, not a request parameter: taking both the
- * jurisdiction and the family from the query string let a national jurisdiction
+ * The physical id is CONFIGURATION and the family is trusted route context:
+ * taking both the jurisdiction and the family from the query string let a national jurisdiction
  * be resolved through the municipal table, where list `2206` names a different
  * party.
  */
-export type PartyFamily = "national" | "coronel_rosales_municipal";
+export const PARTY_FAMILY = {
+  NATIONAL: "national",
+  MUNICIPAL: "coronel_rosales_municipal",
+} as const;
+export type PartyFamily = (typeof PARTY_FAMILY)[keyof typeof PARTY_FAMILY];
 
 export type PartyFamilyResolution =
   | { status: "ok"; family: PartyFamily }
   | { status: "unconfigured" }
-  | { status: "collision"; jurisdictionId: string }
   | { status: "unknown_jurisdiction"; jurisdictionId: string };
 
 export function resolvePartyFamily(
   jurisdictionId: string | undefined,
+  family: PartyFamily,
   env: Record<string, string | undefined> = process.env,
 ): PartyFamilyResolution {
-  const nationalId = env["NATIONAL_JURISDICTION_ID"];
-  const municipalId = env["MUNICIPAL_JURISDICTION_ID"];
+  const configured = env["CORONEL_ROSALES_JURISDICTION_ID"];
 
-  if (!nationalId && !municipalId) return { status: "unconfigured" };
-  // A COLLISION is a misconfiguration, not a tie to break. An object literal
-  // let the later key win silently and pick one family for a jurisdiction that
-  // claims both.
-  if (nationalId && nationalId === municipalId) {
-    return { status: "collision", jurisdictionId: nationalId };
+  if (!configured) return { status: "unconfigured" };
+  if (jurisdictionId !== configured) {
+    return { status: "unknown_jurisdiction", jurisdictionId: jurisdictionId ?? "(none)" };
   }
-  if (jurisdictionId && jurisdictionId === nationalId) {
-    return { status: "ok", family: "national" };
-  }
-  if (jurisdictionId && jurisdictionId === municipalId) {
-    return { status: "ok", family: "coronel_rosales_municipal" };
-  }
-  return { status: "unknown_jurisdiction", jurisdictionId: jurisdictionId ?? "(none)" };
+  return { status: "ok", family };
 }
 
 
@@ -48,7 +42,7 @@ export function resolvePartyFamily(
  *
  * The resolution moved behind this boundary and its REFUSAL COPY did not:
  * `compare` and `drilldown` carried a verbatim duplicate of the same
- * four-branch ternary while `municipal` carried a third variant that dropped
+ * branching refusal while `municipal` carried a third variant that dropped
  * the `unknown_jurisdiction` id and reordered the branches. One decision,
  * three renderings — a fix to one wording leaves the others on the old text.
  *
@@ -57,26 +51,19 @@ export function resolvePartyFamily(
  */
 export function partyFamilyRefusal(
   resolution: PartyFamilyResolution,
-  // A plain string: two of the three callers take this from the query string,
-  // so a cast to `PartyFamily` here would assert something the request never
-  // proved. An unrecognized value simply never equals the resolved family and
-  // refuses, which is the right answer.
+  // A plain string: legacy callers can supply anything, so a cast to
+  // `PartyFamily` here would assert something the request never proved.
   expectedFamily: string,
 ): string | null {
   switch (resolution.status) {
     case "unconfigured":
-      return "NATIONAL_JURISDICTION_ID y MUNICIPAL_JURISDICTION_ID no están configurados";
-    case "collision":
-      return (
-        `${resolution.jurisdictionId} está configurada a la vez como jurisdicción ` +
-        "nacional y municipal"
-      );
+      return "CORONEL_ROSALES_JURISDICTION_ID no está configurado";
     case "unknown_jurisdiction":
-      return `ninguna tabla de partidos configurada mapea la jurisdicción ${resolution.jurisdictionId}`;
+      return `la jurisdicción ${resolution.jurisdictionId} no es la jurisdicción física configurada`;
     case "ok":
       return resolution.family === expectedFamily
         ? null
-        : `la tabla de partidos ${resolution.family} mapea la jurisdicción, no ${expectedFamily}`;
+        : `la tabla de partidos ${resolution.family} mapea la carrera, no ${expectedFamily}`;
   }
 }
 
@@ -102,31 +89,20 @@ export function pinnedCategoryId(
 }
 
 /**
- * The configured id of a family's jurisdiction, subject to the SAME collision
- * rule the family resolution applies.
- *
- * `fiscalizacion` read `NATIONAL_JURISDICTION_ID` from the env directly, so
- * with both ids configured the same the three routes that ask
- * `resolvePartyFamily` refused the collision while this one served — a
- * fourth reader of the one fact this module was extracted to own.
+ * The one configured physical jurisdiction. The family argument is trusted race
+ * context and never changes which physical id is returned.
  */
 export type ServedJurisdiction =
   | { status: "ok"; jurisdictionId: string }
-  | { status: "unconfigured" }
-  | { status: "collision"; jurisdictionId: string };
+  | { status: "unconfigured" };
 
 export function servedJurisdictionId(
   family: PartyFamily,
   env: Record<string, string | undefined> = process.env,
 ): ServedJurisdiction {
-  const key =
-    family === "national" ? "NATIONAL_JURISDICTION_ID" : "MUNICIPAL_JURISDICTION_ID";
-  const configured = env[key];
+  const configured = env["CORONEL_ROSALES_JURISDICTION_ID"];
   if (!configured) return { status: "unconfigured" };
-  // Asked through the one boundary rather than re-implemented: a `collision`
-  // here is the same collision the other routes refuse.
-  const resolution = resolvePartyFamily(configured, env);
-  if (resolution.status === "collision") return resolution;
+  const resolution = resolvePartyFamily(configured, family, env);
   if (resolution.status !== "ok" || resolution.family !== family) {
     return { status: "unconfigured" };
   }

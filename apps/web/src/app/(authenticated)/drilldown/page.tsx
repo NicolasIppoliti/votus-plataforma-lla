@@ -33,7 +33,7 @@ import {
   readGranularity,
   unrecognizedLevels,
 } from "@/lib/results/granularity";
-import { partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-family";
+import { PARTY_FAMILY, partyFamilyRefusal, resolvePartyFamily } from "@/lib/results/party-family";
 import {
   createResultsExplorationRepository,
   EXPLORATION_LEVEL,
@@ -500,8 +500,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     );
   }
 
-  // THE boundary, not a third copy of the decision.
-  const family = resolvePartyFamily(jurisdictionId);
+  // The legacy input is checked against this route's trusted national context;
+  // it cannot select the municipal mapping for the same physical jurisdiction.
+  const family = resolvePartyFamily(jurisdictionId, PARTY_FAMILY.NATIONAL);
   if (family.status !== "ok" || partyJurisdiction !== family.family) {
     return (
       <main>
@@ -606,7 +607,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   try {
     response = await repository.queryOfficial(
       { electionId, jurisdictionId, categoryId },
-      { year: year.year, jurisdiction: partyJurisdiction, category: partyCategory },
+      { year: year.year, jurisdiction: PARTY_FAMILY.NATIONAL, category: partyCategory },
     );
   } catch (error) {
     return (

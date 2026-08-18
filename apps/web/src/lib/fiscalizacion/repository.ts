@@ -112,6 +112,11 @@ export interface RowSource {
   fetchRows(query: BaseQuery): Promise<ResultRow[]>;
 }
 
+export class PartyMappingReadError extends Error {
+  constructor(override readonly cause: unknown, readonly rows: ResultRow[], readonly excluded: ExcludedByKind) {
+    super(cause instanceof Error ? cause.message : String(cause)); this.name = "PartyMappingReadError";
+  }
+}
 export interface UnofficialOptIn {
   coverage: Coverage;
 }
@@ -411,12 +416,14 @@ export class ResultsRepository {
   ): Promise<OkResultsQueryResponse> {
     const rows = await this.rowSource.fetchRows(query);
     const official = this.keep(rows, "official");
+    const excluded = ResultsRepository.excludedByKind(rows, official);
+    const resolved = await this.resolvePartyNames(official, partyContext).catch((error: unknown) => { throw new PartyMappingReadError(error, official, excluded); });
     return {
       status: "ok",
-      rows: await this.resolvePartyNames(official, partyContext),
+      rows: resolved,
       partyMappingConfigured:
         this.partyNameSource !== undefined && partyContext !== undefined,
-      excluded: ResultsRepository.excludedByKind(rows, official),
+      excluded,
     };
   }
 
@@ -490,12 +497,14 @@ export class ResultsRepository {
   ): Promise<OkResultsQueryResponse & { coverage: Coverage }> {
     const rows = await this.rowSource.fetchRows(query);
     const fiscalizacion = this.keep(rows, "fiscalizacion");
+    const excluded = ResultsRepository.excludedByKind(rows, fiscalizacion);
+    const resolved = await this.resolvePartyNames(fiscalizacion, partyContext).catch((error: unknown) => { throw new PartyMappingReadError(error, fiscalizacion, excluded); });
     return {
       status: "ok",
-      rows: await this.resolvePartyNames(fiscalizacion, partyContext),
+      rows: resolved,
       partyMappingConfigured:
         this.partyNameSource !== undefined && partyContext !== undefined,
-      excluded: ResultsRepository.excludedByKind(rows, fiscalizacion),
+      excluded,
       // Carried, not assumed: the figure and the denominator it must be read
       // against come back together.
       coverage: optIn.coverage,
@@ -761,10 +770,10 @@ function parsePartyMappingId(
   column: "list_id" | "canonical_party_id",
   context: PartyMappingContext,
 ): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(
-      `SupabasePartyNameSource: party_mapping.${column} must be a non-empty string in ` +
-        `(${context.year}, ${context.jurisdiction}, ${context.category}); received ` +
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
+      throw new Error(
+        `SupabasePartyNameSource: party_mapping.${column} must be a non-empty string in ` +
+        `(${context.year}, ${context.jurisdiction}, ${context.category}) and already trimmed; received ` +
         JSON.stringify(value),
     );
   }
@@ -786,12 +795,12 @@ function parseCanonicalDisplayName(
     relation === null ||
     !("display_name" in relation) ||
     typeof relation.display_name !== "string" ||
-    relation.display_name.length === 0
+    relation.display_name.length === 0 || relation.display_name.trim() !== relation.display_name
   ) {
     throw new Error(
       `SupabasePartyNameSource: list id ${listId} has malformed party_canonical relation in ` +
         `(${context.year}, ${context.jurisdiction}, ${context.category}); expected an object or ` +
-        "exactly one-element array with a non-empty string display_name",
+        "exactly one-element array with a non-empty string display_name that is already trimmed",
     );
   }
   return relation.display_name;

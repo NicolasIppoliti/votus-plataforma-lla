@@ -258,11 +258,11 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
 const { default: ComparePage } = await import("./page");
 
 beforeEach(() => {
-  process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+  process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
 });
 
 afterEach(() => {
-  delete process.env["NATIONAL_JURISDICTION_ID"];
+  delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   rowsByElection = {};
   refuseElection = null;
   leakFiscalizacion = false;
@@ -467,16 +467,16 @@ describe("compare page — reachable national selector", () => {
     expect(wrongCategory).toContain("no está disponible en ambas elecciones");
     expect(wrongCategory).not.toContain("no devolvió filas");
 
-    delete process.env["NATIONAL_JURISDICTION_ID"];
+    delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
     const unconfigured = renderToStaticMarkup(
       (await ComparePage({
         searchParams: Promise.resolve({}),
       })) as ReactElement,
     );
-    expect(unconfigured).toContain("configurar la jurisdicción nacional");
-    expect(unconfigured).not.toContain("NATIONAL_JURISDICTION_ID");
+    expect(unconfigured).toContain("configurar la jurisdicción física de Coronel Rosales");
+    expect(unconfigured).not.toContain("CORONEL_ROSALES_JURISDICTION_ID");
 
-    process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     facetsUnavailable = true;
     const unavailable = renderToStaticMarkup(
       (await ComparePage({

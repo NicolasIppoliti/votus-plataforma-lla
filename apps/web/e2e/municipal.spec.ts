@@ -18,21 +18,23 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 test.describe("the municipal route defaults to official results", () => {
   test("test_route_renders_official_figure_without_fiscalizacion_leakage", async ({ page }) => {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
-      await page.goto(new URL(
-        `/municipal?electionId=${MUNICIPAL_SCOPE.electionId}` +
-          `&jurisdictionId=${MUNICIPAL_SCOPE.jurisdictionId}&categoryId=${MUNICIPAL_SCOPE.categoryId}`,
-        baseURL,
-      ).toString());
+      await page.goto(new URL("/dashboard", baseURL).toString());
+      await page.getByRole("link", { name: "Análisis de concejos municipales" }).click();
+      await expect(page).toHaveURL(/\/municipal$/);
+      await page.getByLabel("Elección municipal").selectOption(MUNICIPAL_SCOPE.electionId);
+      await page.getByRole("button", { name: "Ver resultados oficiales" }).click();
+      const url = new URL(page.url());
+      expect([[...url.searchParams.keys()], url.searchParams.get("electionId")]).toEqual([["electionId"], MUNICIPAL_SCOPE.electionId]);
 
       const main = page.getByRole("main");
       await expect(main.getByRole("heading", { name: "Resultados municipales (Concejales)" })).toBeVisible();
-      await expect(main).toContainText(
-        `Por tipo de fuente: 1 fila oficial / ${OFFICIAL_VOTES} votos.`,
-      );
+      await expect(main).toContainText(`ALIANZA LA LIBERTAD AVANZA: ${OFFICIAL_VOTES} voto(s)`);
+      await expect(main).toContainText("110: 1 filas");
       await expect(main.getByRole("status", { name: "granularidad: seccion" })).toBeVisible();
       await expect(main).toContainText(
         `1 fila fiscalización / ${FISCALIZACION_VOTES} votos se excluyeron por el filtro de fuente oficial`,
       );
+      await expect(main.getByRole("list", { name: "procedencia" }).getByRole("link")).toHaveCount(2);
       await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText("party-internal, unofficial");
     });

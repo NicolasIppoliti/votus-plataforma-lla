@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
@@ -7,6 +8,7 @@ import {
   createResultsRepository,
   fetchSourceRefs,
   type BaseQuery,
+  PartyMappingReadError,
   type PartyMappingContext,
   type OkResultsQueryResponse,
   type ResultsRepository,
@@ -27,9 +29,9 @@ import {
   unrecognizedLevels,
 } from "@/lib/results/granularity";
 import {
-  partyFamilyRefusal,
+  PARTY_FAMILY,
   pinnedCategoryId,
-  resolvePartyFamily,
+  servedJurisdictionId,
 } from "@/lib/results/party-family";
 
 /**
@@ -42,7 +44,7 @@ import {
  */
 export const MUNICIPAL_PARTY_CONTEXT: PartyMappingContext = {
   year: 2025,
-  jurisdiction: "coronel_rosales_municipal",
+  jurisdiction: PARTY_FAMILY.MUNICIPAL,
   category: "CONCEJALES",
 };
 
@@ -81,6 +83,8 @@ export type MunicipalView =
       partyMappingConfigured?: boolean;
       /** Rows carrying no list id at all, counted before the failure. */
       withoutListId?: ExcludedByKind;
+      /** Archive entries known before party mapping failed. */
+      archiveEntryIds?: string[];
     };
 
 /**
@@ -100,14 +104,22 @@ export async function loadMunicipalView(
   try {
     return await repository.queryOfficial(query, MUNICIPAL_PARTY_CONTEXT);
   } catch (error) {
-    // A DISTINCT status. `requires_explicit_unofficial_opt_in` is the
-    // source-kind leakage guard's vocabulary — it means "you asked for
-    // unofficial figures, opt in explicitly". Mapping an RLS denial onto it
-    // corrupts the one signal D9.1 depends on, and any consumer branching on
-    // it would offer an opt-in prompt for a read that simply failed.
+    if (error instanceof PartyMappingReadError) {
+      return {
+        status: "read_failed",
+        reason: `No se pudo resolver el mapeo municipal de partidos: ${error.message}`,
+        excluded: error.excluded,
+        unsummable: mixedGranularityReason(error.rows),
+        totalRows: error.rows.length,
+        unrecognized: unrecognizedLevels(error.rows),
+        partyMappingConfigured: true,
+        withoutListId: tallyByKind(error.rows.filter((row) => row.listId === null)),
+        archiveEntryIds: [...new Set(error.rows.map((row) => row.archiveEntryId))],
+      };
+    }
     return {
       status: "read_failed",
-      reason: error instanceof Error ? error.message : String(error),
+      reason: `No se pudo completar la lectura municipal: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }
@@ -146,9 +158,9 @@ export function renderMunicipalView(
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">Se rechazó la lectura: {view.reason}</p>
-        {view.status === "read_failed" && view.unmapped ? (
+        {view.status === "read_failed" && (view.unmapped || view.withoutListId) ? (
           <UnmappedListIds
-            entries={view.unmapped}
+            entries={view.unmapped ?? []}
             withoutListId={view.withoutListId}
             totalRows={view.totalRows ?? 0}
             unsummable={view.unsummable ?? null}
@@ -164,6 +176,10 @@ export function renderMunicipalView(
             falla.
           </p>
         ) : null}
+        {missingProvenance.length > 0 ? (
+          <p role="alert">No se pudo verificar la procedencia de {missingProvenance.join(", ")}.</p>
+        ) : null}
+        <ProvenanceLink sources={sources} />
       </main>
     );
   }
@@ -238,16 +254,27 @@ export function renderMunicipalView(
           {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
         </p>
       ) : null}
+      <ProvenanceLink sources={sources} />
       </main>
     );
   }
-  // AGGREGATED per party. `result_row` holds ONE ROW PER (mesa, list), so
-  // rendering rows verbatim printed the same party N times with N different
-  // numbers and no mesa label to tell them apart -- each line reading as that
-  // party's figure, and the list visibly failing to sum to the total above it.
 
-  const partyTotals = unsummable !== null ? [] : votesByParty(rows);
-
+  let partyTotals: ReturnType<typeof votesByParty> = [];
+  try {
+    partyTotals = unsummable !== null ? [] : votesByParty(rows);
+  } catch {
+    return <main>
+      <h1>Municipal (Concejales)</h1>
+      <p role="alert">Se rechazó la solicitud: un mismo partido canónico tiene nombres
+        incompatibles. No se muestran cifras hasta resolver el conflicto.</p>
+      {excludedNote}
+      <UnmappedListIds entries={unmapped.entries} withoutListId={unmapped.withoutListId}
+        totalRows={rows.length} unsummable={unsummable} mappingConfigured={view.partyMappingConfigured} />
+      <UnorderableLevels entries={unrecognized} />
+      {missingProvenance.length > 0 ? <p role="alert">No se pudo verificar la procedencia de {missingProvenance.join(", ")}.</p> : null}
+      <ProvenanceLink sources={sources} />
+    </main>;
+  }
 
   return (
     <main>
@@ -311,6 +338,11 @@ export function renderMunicipalView(
   );
 }
 
+function municipalRefusal(reason: ReactNode): ReactNode {
+  return <main><h1>Municipal (Concejales)</h1>
+<p role="alert">Se rechazó la solicitud: {reason}</p></main>;
+}
+
 interface MunicipalPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
@@ -343,77 +375,33 @@ export default async function MunicipalPage({
     );
   }
   const electionId = stringParam(params, "electionId");
-  const jurisdictionId = stringParam(params, "jurisdictionId");
-  const categoryId = stringParam(params, "categoryId");
+  const legacyJurisdictionId = stringParam(params, "jurisdictionId");
+  const legacyCategoryId = stringParam(params, "categoryId");
+  const legacyPartyFamily = stringParam(params, "partyJurisdiction");
+  const legacyPartyCategory = stringParam(params, "partyCategory");
+  const configuredElectionId = process.env["MUNICIPAL_ELECTION_ID"] || undefined;
+  const served = servedJurisdictionId(PARTY_FAMILY.MUNICIPAL);
+  const categoryId = pinnedCategoryId("MUNICIPAL");
 
-  // The mapping is fixed to ONE race; the election is not. A 2023 municipal
-  // election resolved its list ids through the 2025 table, which is the same
-  // "one party, three ids" failure the sibling pages refuse for — `135` in the
-  // 2023 PASO, `20135` in the generales, `110` in 2025.
-  // The jurisdiction and category this route's mapping describes. They are
-  // database ids, so they are CONFIGURATION -- and an unconfigured scope
-  // refuses, because accepting any id while pinning the concejales mapping
-  // reads DIPUTADO NACIONAL rows and names them through the wrong table. The
-  // sibling pages refuse for exactly this; this is the file that did it.
-  // THE boundary, like its siblings. Reading the env directly left this route
-  // on the old behaviour: with both ids configured the same, `compare` and
-  // `drilldown` refuse the collision while this page served every list id
-  // through the municipal table — `2206` naming a party for national rows.
-  // FIRST, before every scope guard. Running them first meant an omitted
-  // `jurisdictionId` reached `resolvePartyFamily(undefined)` and refused with
-  // "jurisdiction  is not the municipal one this route serves" — an empty
-  // interpolation where an id belongs, naming the wrong cause for a request
-  // that simply left the parameter out. `electionId &&` on each guard was the
-  // symptom of that ordering.
-  if (!electionId || !jurisdictionId || !categoryId) {
-    return (
-      <main>
-        <h1>Municipal (Concejales)</h1>
-        <p>
-          Proporcione los parámetros de consulta <code>electionId</code>,{" "}
-          <code>jurisdictionId</code> y <code>categoryId</code>.
-        </p>
-      </main>
-    );
-  }
-
-  const family = resolvePartyFamily(jurisdictionId);
-  const scopeCategoryId = pinnedCategoryId("MUNICIPAL");
-  if (family.status !== "ok" || family.family !== "coronel_rosales_municipal") {
+  if (served.status !== "ok" || !configuredElectionId || !categoryId) {
     return (
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Se rechazó la solicitud:{" "}
-          {partyFamilyRefusal(family, "coronel_rosales_municipal")}.
+          Se rechazó la solicitud: CORONEL_ROSALES_JURISDICTION_ID,
+          MUNICIPAL_ELECTION_ID y MUNICIPAL_CATEGORY_ID deben estar configurados.
         </p>
       </main>
     );
   }
-  if (!scopeCategoryId) {
-    return (
-      <main>
-        <h1>Municipal (Concejales)</h1>
-        <p role="alert">
-          Se rechazó la solicitud: MUNICIPAL_CATEGORY_ID no está configurado, por
-          lo que no se puede mostrar una solicitud que describa la elección
-          cubierta por el mapeo de partidos de esta ruta.
-        </p>
-      </main>
-    );
-  }
-  if (categoryId !== scopeCategoryId) {
-    return (
-      <main>
-        <h1>Municipal (Concejales)</h1>
-        <p role="alert">
-          Se rechazó la solicitud: esta ruta resuelve los ID de lista mediante el
-          mapeo {MUNICIPAL_PARTY_CONTEXT.category} de una jurisdicción; se
-          recibieron jurisdicción {jurisdictionId} y categoría {categoryId}.
-        </p>
-      </main>
-    );
-  }
+  if (electionId && electionId !== configuredElectionId)
+    return municipalRefusal(<>esta ruta solo ofrece la elección municipal configurada; se recibió {electionId}.</>);
+  if (legacyJurisdictionId && legacyJurisdictionId !== served.jurisdictionId)
+    return municipalRefusal(<>la jurisdicción heredada {legacyJurisdictionId} no coincide con la configurada.</>);
+  if (legacyCategoryId && legacyCategoryId !== categoryId)
+    return municipalRefusal(<>la categoría heredada {legacyCategoryId} no coincide con CONCEJALES.</>);
+  if (legacyPartyFamily || legacyPartyCategory)
+    return municipalRefusal("la familia y la categoría del mapeo se derivan de esta ruta y no se aceptan como parámetros.");
 
   // From the `election` ROW. Parsing the id string worked for a curated slug
   // and never for the uuid the database stores, so this route refused every
@@ -421,7 +409,7 @@ export default async function MunicipalPage({
   const supabaseForYear = await createSupabaseServerClient();
   let year: YearLookup;
   try {
-    year = await fetchElectionYear(supabaseForYear, electionId);
+    year = await fetchElectionYear(supabaseForYear, configuredElectionId);
   } catch (error) {
     return (
       <main>
@@ -437,50 +425,52 @@ export default async function MunicipalPage({
       <main>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
-          Se rechazó la solicitud: esta ruta resuelve los ID de lista mediante el
-          mapeo {MUNICIPAL_PARTY_CONTEXT.year} {MUNICIPAL_PARTY_CONTEXT.category},
-          y {electionId} no corresponde a esa elección{" "}
-          {year.status === "no_row"
-            ? "(ninguna fila de elección tiene ese ID)"
-            : year.status === "unreadable_year"
-              ? "(su fila de elección no contiene un año válido)"
-              : `(es de ${year.year})`}
-          . Un ID de lista no significa nada fuera del mapeo de su propia elección.
+          Se rechazó la solicitud: MUNICIPAL_ELECTION_ID no es de 2025 o no
+          identifica una elección legible. No se aplicará el mapeo CONCEJALES.
         </p>
       </main>
     );
   }
 
+  if (!electionId) {
+    return <main className="page-shell"><div className="shell-container">
+      <h1>Resultados municipales (Concejales)</h1>
+      <form method="get" action="/municipal">
+        <label htmlFor="municipal-election">Elección municipal</label>
+        <select id="municipal-election" name="electionId" defaultValue={configuredElectionId}>
+          <option value={configuredElectionId}>Elección municipal 2025 — Concejales</option>
+        </select>
+        <button type="submit">Ver resultados oficiales</button>
+      </form>
+    </div></main>;
+  }
+  if (legacyJurisdictionId || legacyCategoryId) {
+    redirect(`/municipal?electionId=${encodeURIComponent(configuredElectionId)}`);
+  }
+
+  const jurisdictionId = served.jurisdictionId;
   const repository = await createResultsRepository();
   const view = await loadMunicipalView(repository, { electionId, jurisdictionId, categoryId });
 
   let sources: SourceRef[];
   let missingProvenance: string[] = [];
   try {
-    const supabase = await createSupabaseServerClient();
-    if (view.status === "ok") {
-      const refs = await fetchSourceRefs(supabase, [
-        ...new Set(view.rows.map((row) => row.archiveEntryId)),
-      ]);
-      sources = refs.sources;
-      // `.missing` is why `fetchSourceRefs` returns a pair: an id resolving to
-      // no `archive_entry` row used to vanish, so provenance rendered for a
-      // SUBSET of the figures and said nothing about the rest. The three
-      // sibling routes render it; this one dropped it.
-      missingProvenance = refs.missing;
-    } else {
+    const archiveEntryIds = view.status === "ok"
+      ? [...new Set(view.rows.map((row) => row.archiveEntryId))]
+      : (view.archiveEntryIds ?? []);
+    if (archiveEntryIds.length === 0) {
       sources = [];
+    } else {
+      const supabase = await createSupabaseServerClient();
+      const refs = await fetchSourceRefs(supabase, archiveEntryIds);
+      sources = refs.sources;
+      missingProvenance = refs.missing;
     }
   } catch (error) {
     return renderMunicipalView({
-      status: "read_failed",
-      reason: error instanceof Error ? error.message : String(error),
       ...(view.status === "ok"
         ? {
             excluded: view.excluded,
-            // The same fact `drilldown` carries through the same failure.
-            // Preserving `excluded` and discarding this was one refusal with
-            // two policies.
             unmapped: unmappedByListId(view.rows).entries,
             unsummable: mixedGranularityReason(view.rows),
             totalRows: view.rows.length,
@@ -488,7 +478,9 @@ export default async function MunicipalPage({
             partyMappingConfigured: view.partyMappingConfigured,
             withoutListId: unmappedByListId(view.rows).withoutListId,
           }
-        : {}),
+        : view),
+      status: "read_failed",
+      reason: error instanceof Error ? error.message : String(error),
     });
   }
 

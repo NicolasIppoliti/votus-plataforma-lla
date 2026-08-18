@@ -16,6 +16,7 @@ import {
   createResultsRepository,
   fetchElectionYear,
   fetchSourceRefs,
+  PartyMappingReadError,
   unmappedByListId,
   type BaseQuery,
   type PartyMappingContext,
@@ -41,7 +42,7 @@ import {
 	pinnedCategoryId,
 	servedJurisdictionId,
 } from "@/lib/results/party-family";
-import type { Coverage, SourceRef } from "@/lib/results/types";
+import type { Coverage, SourceKind, SourceRef } from "@/lib/results/types";
 import {
   COVERAGE_REFUSAL_STATUS,
   createResultsCoverageRepository,
@@ -171,8 +172,8 @@ export function outOfScopeReason(request: {
   const scope = fiscalizacionScope();
   if (!scope.jurisdictionId || !scope.categoryId) {
     return (
-      "NATIONAL_JURISDICTION_ID y FISCALIZACION_CATEGORY_ID no están " +
-      "configuradas (o los identificadores de jurisdicción nacional y municipal coinciden), " +
+      "CORONEL_ROSALES_JURISDICTION_ID y FISCALIZACION_CATEGORY_ID no están " +
+      "configuradas, " +
       "por lo que no se puede afirmar que el denominador y el mapeo de partidos " +
       "describan el alcance solicitado"
     );
@@ -272,6 +273,11 @@ export async function loadFiscalizacionView(
   } catch (error) {
     // Its OWN status, never the opt-in vocabulary: that string means "you
     // asked for unofficial figures", not "the database refused".
+    if (error instanceof PartyMappingReadError) {
+      const unmapped = unmappedByListId(error.rows);
+      return { status: "read_failed", reason: `No se pudo resolver el mapeo de partidos de fiscalización: ${error.message}`, excluded: error.excluded, unmapped: unmapped.entries,
+        unsummable: mixedGranularityReason(error.rows), totalRows: error.rows.length, unrecognized: unrecognizedLevels(error.rows), partyMappingConfigured: true, withoutListId: unmapped.withoutListId };
+    }
     return {
       status: "read_failed",
       reason: error instanceof Error ? error.message : String(error),
@@ -368,6 +374,10 @@ export function mixedSourceKindReason(rows: ResultRow[]): string | null {
   );
 }
 
+function expectedSourceKindReason(rows: ResultRow[], expected: SourceKind): string | null {
+  const breakdown = describeExcluded(tallyByKind(rows.filter((row) => row.sourceKind !== expected))); return breakdown === null ? null : `se esperaban únicamente filas ${sourceKindLabel(expected)}, pero se recibieron tipos de fuente distintos: ${breakdown}; las cifras oficiales y de fiscalización nunca se combinan en un mismo número`;
+}
+
 /**
  * The party with the most votes among the rows, or `null` when no row
  * resolved to a party at all.
@@ -380,7 +390,7 @@ export function mixedSourceKindReason(rows: ResultRow[]): string | null {
  * either: a respelling between elections merges nothing, which is what
  * `test_a_party_respelled_between_elections_still_matches` exists for.
  */
-export function topParty(rows: ResultRow[]): TopPartyResult {
+export function topParty(rows: ResultRow[], expectedSourceKind: SourceKind): TopPartyResult {
 	const namesByParty = new Map<string, Set<string>>();
 	for (const row of rows) {
 		const id = row.canonicalPartyId;
@@ -408,7 +418,7 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
   // Zeroing it hid the per-list-id breakdown entirely whenever levels were
   // mixed: a silent exclusion behind a plausible total.
 	const refusedReason =
-		mixedSourceKindReason(rows) ??
+		expectedSourceKindReason(rows, expectedSourceKind) ??
 		mixedGranularityReason(rows) ??
 		nameConflictReason;
 
@@ -486,11 +496,12 @@ export function topParty(rows: ResultRow[]): TopPartyResult {
 export function partyShare(
   rows: ResultRow[],
   canonicalPartyId: string,
+  expectedSourceKind: SourceKind,
   // For the REASON only. `no rows for canon-110` names an internal id at an
   // operator; the match still keys on the id.
   displayName: string = canonicalPartyId,
 ): ShareResult {
-  const mixed = mixedSourceKindReason(rows) ?? mixedGranularityReason(rows);
+  const mixed = expectedSourceKindReason(rows, expectedSourceKind) ?? mixedGranularityReason(rows);
   if (mixed) {
     return { status: "unavailable", reason: mixed };
   }
@@ -1293,14 +1304,14 @@ export function renderFiscalizacionView(
   // page-local wrapper gave the same question a second shape, so a change to
   // what `readGranularity` reports would land in one and not the other.
   const levels = readGranularity(rows);
-  const unmapped = topParty(rows);
+  const unmapped = topParty(rows, "fiscalizacion");
 	const partyFigureRefusal = mixedLevels ?? unmapped.refusedReason;
   const partyTotals = partyFigureRefusal !== null ? [] : votesByParty(rows);
 
   // Computed for the party the comparison names, not for whichever list
   // happens to rank first here.
   const fiscalizacionShare = comparison
-    ? partyShare(rows, comparison.canonicalPartyId, comparison.partyName)
+    ? partyShare(rows, comparison.canonicalPartyId, "fiscalizacion", comparison.partyName)
     : null;
 
   return (
@@ -1559,8 +1570,8 @@ export function comparisonFromParams(
     return {
       status: "refused",
       reason:
-        "NATIONAL_JURISDICTION_ID y FISCALIZACION_CATEGORY_ID no están " +
-        "configuradas (o coinciden los identificadores de jurisdicción nacional y municipal), " +
+        "CORONEL_ROSALES_JURISDICTION_ID y FISCALIZACION_CATEGORY_ID no están " +
+        "configuradas, " +
         "por lo que no se puede afirmar que la comparación describa el mismo alcance",
     };
   }
@@ -1720,17 +1731,12 @@ export async function loadOfficialComparison(
   // checked. `partyShare` is no backstop either: `mixedSourceKindReason`
   // fires only when kinds MIX, so a uniformly fiscalización row set passes
   // clean and renders under the official-source badge.
-  const foreign = [
-    ...new Set(
-			response.rows
-				.filter((row) => row.sourceKind !== "official")
-				.map((row) => row.sourceKind),
-    ),
-  ].sort();
-  if (foreign.length > 0) {
+  const foreign = response.rows.filter((row) => row.sourceKind !== "official");
+  const foreignBreakdown = describeExcluded(tallyByKind(foreign));
+  if (foreignBreakdown) {
     return {
       status: "unavailable",
-      reason: `la consulta comparativa devolvió filas no oficiales (${foreign.join(", ")})`,
+      reason: `la consulta comparativa devolvió ${foreignBreakdown}; no se construyó ninguna cifra oficial`,
       excluded: response.excluded,
     };
   }
@@ -1740,6 +1746,7 @@ export async function loadOfficialComparison(
 	const share = partyShare(
 		response.rows,
 		request.canonicalPartyId,
+		"official",
 		request.partyName,
 	);
   if (share.status !== "ok") {
@@ -1901,7 +1908,7 @@ async function renderLegacyFiscalizacionPage(
   );
   // Which party to compare comes from THIS election's rows, resolved through
   // its own crosswalk. Absent it, there is nothing to match and no badge.
-  const top = view.status === "ok" ? topParty(view.rows) : null;
+  const top = view.status === "ok" ? topParty(view.rows, "fiscalizacion") : null;
 
   let comparison: OfficialFigure | undefined;
   let comparisonUnavailable: string | undefined;

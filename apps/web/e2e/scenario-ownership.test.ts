@@ -5,8 +5,8 @@ import {
   DATA_SCENARIO_SPECS,
   SERVER_SCENARIOS,
   assertUniqueScenarioKeys,
-  planComparisonPartyCleanup,
-  planComparisonPartyNaturalKeys,
+  planScenarioPartyCleanup,
+  planScenarioPartyNaturalKeys,
   planResultNaturalKeys,
   planResultCleanup,
   planScenarioServers,
@@ -68,14 +68,14 @@ describe("parallel scenario ownership", () => {
       true,
     );
     expect(resultScenarioIdentity(spec).comparisonParty).toEqual(party);
-    expect(planComparisonPartyNaturalKeys(spec)).toEqual([
+    expect(planScenarioPartyNaturalKeys(spec)).toEqual([
       `party_canonical:${party.canonicalPartyId}`,
       ...identity.electionYears.map(
         (year, index) =>
           `party_mapping:${year}|national|${identity.categoryName}|${party.listIds[index]}`,
       ),
     ]);
-    expect(planComparisonPartyCleanup(spec)).toEqual([
+    expect(planScenarioPartyCleanup(spec)).toEqual([
       ...party.mappingIds.map((id) => `party_mapping:${id}`),
       `party_canonical:${party.canonicalPartyId}`,
     ]);
@@ -107,10 +107,10 @@ describe("parallel scenario ownership", () => {
     );
   });
 
-  it("uses unique normalized administrative code pairs for all scenarios", () => {
+  it("uses collision-free normalized administrative code pairs and the real municipal scope", () => {
     const expected = [
       ["e2e/fiscalizacion.spec.ts", "82", "827"], ["e2e/provenance.spec.ts", "83", "837"],
-      ["e2e/comparison.spec.ts", "84", "847"], ["e2e/municipal.spec.ts", "85", "857"],
+      ["e2e/comparison.spec.ts", "84", "847"], ["e2e/municipal.spec.ts", "02", "027"],
     ] as const;
     const pairs = expected.map(([spec, distritoCode, seccionCode]) => {
       const identity = resultScenarioIdentity(spec);
@@ -121,6 +121,30 @@ describe("parallel scenario ownership", () => {
       return `${identity.distritoCode}/${identity.seccionCode}`;
     });
     expect(new Set(pairs).size).toBe(DATA_SCENARIO_SPECS.length);
+  });
+
+  it("owns the municipal mapping, archives, and dependency-ordered cleanup", () => {
+    const spec = "e2e/municipal.spec.ts";
+    const identity = resultScenarioIdentity(spec);
+    const party = identity.comparisonParty;
+    expect(identity.categoryName).toBe("CONCEJALES");
+    expect(party?.listIds).toEqual(["2206"]);
+    expect(planScenarioPartyNaturalKeys(spec)).toContain(
+      "party_mapping:2025|coronel_rosales_municipal|CONCEJALES|2206");
+    expect(planResultNaturalKeys(spec).join("|")).toContain("|110|official");
+    expect(planScenarioPartyNaturalKeys(spec).join("|")).not.toContain("|110");
+    const runtime = readFileSync(new URL("../scripts/e2e-release-gate.ts", import.meta.url), "utf8");
+    expect(runtime).toMatch(/CORONEL_ROSALES_JURISDICTION_ID[\s\S]*MUNICIPAL_ELECTION_ID[\s\S]*MUNICIPAL_CATEGORY_ID/);
+    expect(runtime).not.toMatch(/NATIONAL_JURISDICTION_ID|MUNICIPAL_JURISDICTION_ID/);
+    expect(planResultCleanup(spec)).toEqual([
+      ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
+      ...identity.comparisonParty!.mappingIds.map((id) => `party_mapping:${id}`),
+      `party_canonical:${identity.comparisonParty!.canonicalPartyId}`,
+      ...identity.electionIds.map((id) => `election:${id}`),
+      ...identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
+      ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
+      `category:${identity.categoryId}`,
+    ]);
   });
 
   it("owns provenance archive entries needed by the reachable explorer journey", () => {

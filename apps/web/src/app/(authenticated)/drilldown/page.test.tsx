@@ -202,11 +202,11 @@ vi.mock("@/lib/results/exploration", async (importOriginal) => {
 const { default: DrilldownPage } = await import("./page");
 
 beforeEach(() => {
-  process.env["NATIONAL_JURISDICTION_ID"] = "j-027";
+  process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
 });
 
 afterEach(() => {
-  delete process.env["NATIONAL_JURISDICTION_ID"];
+  delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   repositoryRows = [];
   refuseWith = null;
   leakFiscalizacion = false;
@@ -1210,7 +1210,7 @@ describe("drilldown page — the guards that bound each axis", () => {
       })) as ReactElement,
     );
 
-    expect(markup).toContain("ninguna tabla de partidos configurada mapea la jurisdicción");
+    expect(markup).toContain("j-999 no es la jurisdicción física configurada");
   });
 
   it("test_an_election_id_no_row_carries_is_refused_not_defaulted", async () => {

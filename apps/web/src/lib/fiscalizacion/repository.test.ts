@@ -10,6 +10,7 @@ import {
   fetchCategoryName,
   fetchElectionYear,
   ResultsRepository,
+  PartyMappingReadError,
 } from "./repository";
 import type {
   PartyMappingContext,
@@ -187,6 +188,16 @@ describe("ResultsRepository (party-name resolution — task 15.14)", () => {
     expect(response.rows[0]?.partyName).toBeNull();
     expect(response.rows[0]?.listId).toBe("999999");
   });
+
+      it("preserves official audit facts when party mapping fails", async () => {
+        const repository = new ResultsRepository(fakeRowSource(MIXED_ROWS), { fetchPartyNames: () => Promise.reject(new Error("mapping unavailable")) }), failure = await repository.queryOfficial(BASE_QUERY, PARTY_CONTEXT).catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(PartyMappingReadError); if (!(failure instanceof PartyMappingReadError)) throw new Error("expected PartyMappingReadError");
+        expect(failure.rows).toEqual([MIXED_ROWS[0]]); expect(failure.excluded).toEqual({ fiscalizacion: { rows: 1, votes: 9999 } });
+      });
+      it("maps fiscalización rows without changing their audit", async () => {
+        const repository = new ResultsRepository(fakeRowSource(MIXED_ROWS), fakePartyNameSource({ "135": "ALIANZA LA LIBERTAD AVANZA" })), response = await repository.queryFiscalizacion(BASE_QUERY, { coverage: { observedUnits: 1, denominatorUnits: 2, denominatorBasis: "test", isRandomSample: false } }, PARTY_CONTEXT);
+        expect(response.rows[0]).toMatchObject({ partyName: "ALIANZA LA LIBERTAD AVANZA", sourceKind: "fiscalizacion" }); expect(response.excluded).toEqual({ official: { rows: 1, votes: 100 } });
+      });
 });
 
 describe("the exclusion tally (rule 3 — a drop is judged by its size)", () => {
@@ -845,7 +856,7 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     ["null", null],
     ["numeric", 110],
     ["object", { id: "110" }],
-    ["empty", ""],
+    ["empty", ""], ["blank", " \t "], ["leading", " list-110"], ["trailing", "list-110 "],
   ])("test_party_mapping_list_id_refuses_%s", async (_case, listId) => {
     const mapping: Record<string, unknown> = {
       list_id: listId,
@@ -867,7 +878,7 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     ["null", null],
     ["numeric", 110],
     ["object", { id: "canonical-lla" }],
-    ["empty", ""],
+    ["empty", ""], ["blank", " \t "], ["leading", " canonical-lla"], ["trailing", "canonical-lla "],
   ])(
     "test_party_mapping_canonical_party_id_refuses_%s",
     async (_case, canonicalPartyId) => {
@@ -1031,6 +1042,7 @@ describe("SupabasePartyNameSource batches and checks its bound", () => {
     ["null", null],
     ["malformed object", { other: "A" }],
     ["empty name", { display_name: "" }],
+    ["blank name", { display_name: " \t " }], ["leading whitespace", { display_name: " A" }], ["trailing whitespace", [{ display_name: "A " }]],
   ])("test_canonical_relation_refuses_%s", async (_case, partyCanonical) => {
     const { client } = mappingClient(() => [
       {

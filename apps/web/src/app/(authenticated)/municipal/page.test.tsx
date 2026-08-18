@@ -2,6 +2,12 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ResultsRepository } from "@/lib/fiscalizacion/repository";
+
+const { redirectMock } = vi.hoisted(() => ({
+  redirectMock: vi.fn((url: string): never => { throw new Error(`redirect:${url}`); }),
+}));
+
+vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 import type { PartyNameSource, ResultRow, RowSource } from "@/lib/fiscalizacion/repository";
 import type { SourceRef } from "@/lib/results/types";
 import { MUNICIPAL_PARTY_CONTEXT, loadMunicipalView, renderMunicipalView } from "./page";
@@ -133,11 +139,15 @@ describe("municipal page — renderMunicipalView", () => {
 
 let entryPointRows: ResultRow[] = [];
 let entryPointSources: SourceRef[] = [];
+let entryPointMappingFailure: Error | null = null;
 
 afterEach(() => {
   entryPointRows = [];
   entryPointSources = [];
-  delete process.env["MUNICIPAL_JURISDICTION_ID"];
+  entryPointMappingFailure = null;
+  redirectMock.mockClear();
+  delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
+  delete process.env["MUNICIPAL_ELECTION_ID"];
   delete process.env["MUNICIPAL_CATEGORY_ID"];
 });
 
@@ -215,15 +225,17 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
             // context made the test pass whether `MUNICIPAL_PARTY_CONTEXT` or
             // some other context reached the source — so it proved nothing
             // about the wiring it exists to check.
-            fetchPartyNames: (context) =>
-              Promise.resolve(
-                context.jurisdiction === MUNICIPAL_PARTY_CONTEXT.jurisdiction &&
-                context.category === MUNICIPAL_PARTY_CONTEXT.category
-                  ? new Map([
-                      ["110", { canonicalPartyId: "lla", displayName: "LA LIBERTAD AVANZA" }],
-                    ])
-                  : new Map(),
-              ),
+                fetchPartyNames: (context) =>
+                  entryPointMappingFailure
+                    ? Promise.reject(entryPointMappingFailure)
+                    : Promise.resolve(
+                        context.jurisdiction === MUNICIPAL_PARTY_CONTEXT.jurisdiction &&
+                        context.category === MUNICIPAL_PARTY_CONTEXT.category
+                          ? new Map([
+                              ["2206", { canonicalPartyId: "lla", displayName: "ALIANZA LA LIBERTAD AVANZA" }],
+                            ])
+                          : new Map(),
+                      ),
           },
         ),
       ),
@@ -241,7 +253,8 @@ vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
 
 describe("municipal page — the real entry point", () => {
   beforeEach(() => {
-    process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
+    process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
   });
 
@@ -250,7 +263,7 @@ describe("municipal page — the real entry point", () => {
     // `renderMunicipalView` — the whole `createResultsRepository` ->
     // `loadMunicipalView` -> `fetchSourceRefs` chain — had no entry-point test.
     const { default: MunicipalPage } = await import("./page");
-    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
     entryPointSources = [
       {
         archiveEntryId: "pba/2025-municipal-coronel-rosales",
@@ -264,27 +277,67 @@ describe("municipal page — the real entry point", () => {
       (await MunicipalPage({
         searchParams: Promise.resolve({
           electionId: "2025-municipal",
-          jurisdictionId: "j-027",
-          categoryId: "c-concejales",
         }),
       })) as ReactElement,
     );
 
-    expect(markup).toContain("LA LIBERTAD AVANZA");
-    expect(markup).toContain("https://example.test/pba-2023.html");
-  });
+        expect(markup).toContain("ALIANZA LA LIBERTAD AVANZA");
+        expect(markup).toContain("https://example.test/pba-2023.html");
+      });
 
-  it("test_the_page_asks_for_the_parameters_it_needs", async () => {
-    const { default: MunicipalPage } = await import("./page");
+      it("test_mapping_failure_keeps_entry_point_provenance_and_audit", async () => {
+        const { default: Page } = await import("./page");
+        entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" },
+          { ...MUNICIPAL_ROWS[0]!, sourceKind: "fiscalizacion", votes: 90 }];
+        entryPointSources = [{ archiveEntryId: MUNICIPAL_ROWS[0]!.archiveEntryId,
+          sha256: "a".repeat(64), url: "https://example.test/municipal.csv",
+          fetchedAt: "2026-01-01T00:00:00Z" }];
+        entryPointMappingFailure = new Error("ambiguous mapping");
+        const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({
+          electionId: "2025-municipal" }) })) as ReactElement);
+        expect(html).toContain("No se pudo resolver el mapeo municipal");
+        expect(html).toContain("1 fila fiscalización / 90 votos");
+        expect(html).toContain("https://example.test/municipal.csv");
+      });
 
-    const markup = renderToStaticMarkup(
-      (await MunicipalPage({ searchParams: Promise.resolve({}) })) as ReactElement,
-    );
+      it("test_bare_route_renders_one_accessible_configured_election_selector", async () => {
+        const { default: Page } = await import("./page");
+        const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+        for (const fact of ['<label for="municipal-election">Elección municipal</label>',
+          'name="electionId"']) expect(html).toContain(fact);
+        expect(html.match(/<option/g)).toHaveLength(1);
+        expect(html).not.toContain("UUID");
+      });
 
-    expect(markup).toContain("electionId");
-    expect(markup).not.toContain("No municipal results found");
-  });
-});
+      it("test_matching_legacy_scope_canonicalizes_to_election_only", async () => {
+        const { default: Page } = await import("./page");
+        await expect(Page({ searchParams: Promise.resolve({ electionId: "2025-municipal",
+          jurisdictionId: "j-027", categoryId: "c-concejales" }) }))
+          .rejects.toThrow("redirect:/municipal?electionId=2025-municipal");
+      });
+
+      it("test_untrusted_or_mismatched_legacy_context_refuses", async () => {
+        const { default: Page } = await import("./page");
+        for (const params of [{ jurisdictionId: "j-999" },
+          { partyJurisdiction: "national" }, { partyCategory: "DIPUTADO NACIONAL" }]) {
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({
+            electionId: "2025-municipal", ...params }) })) as ReactElement);
+          expect(html).toContain("Se rechazó la solicitud");
+        }
+        expect(redirectMock).not.toHaveBeenCalled();
+      });
+
+      it("test_missing_or_non_2025_operational_config_refuses", async () => {
+        const { default: Page } = await import("./page");
+        delete process.env["MUNICIPAL_ELECTION_ID"];
+        let html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+        expect(html).toContain("MUNICIPAL_ELECTION_ID");
+        process.env["MUNICIPAL_ELECTION_ID"] = "2023-municipal";
+        html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+        expect(html).toContain("no es de 2025");
+      });
+
+    });
 
 describe("municipal page — a failed read is not an opt-in prompt", () => {
   it("test_a_denied_read_is_reported_with_its_own_status", async () => {
@@ -306,14 +359,30 @@ describe("municipal page — a failed read is not an opt-in prompt", () => {
     if (view.status !== "read_failed") throw new Error("expected read_failed");
     expect(view.reason).toContain("row-level security denied the read");
 
-    const html = renderToStaticMarkup(renderMunicipalView(view));
-    expect(html).toContain("row-level security denied the read");
-  });
-});
+        const html = renderToStaticMarkup(renderMunicipalView(view));
+        expect(html).toContain("row-level security denied the read");
+      });
 
-describe("municipal page — the mapping is fixed to one race", () => {
+      it("test_mapping_failure_keeps_known_audit_without_inventing_unmapped_ids", async () => {
+        const repository = new ResultsRepository(fakeRowSource([
+          { ...MUNICIPAL_ROWS[0]!, granularity: "subcircuito" as never },
+          { ...MUNICIPAL_ROWS[0]!, listId: null },
+          { ...MUNICIPAL_ROWS[0]!, sourceKind: "fiscalizacion", votes: 90 }]),
+          { fetchPartyNames: () => Promise.reject(new Error("ambiguous mapping")) });
+        const view = await loadMunicipalView(repository, QUERY);
+        if (view.status !== "read_failed") throw new Error("expected read_failed");
+        const html = renderToStaticMarkup(renderMunicipalView(view));
+        expect(view.reason).toContain("No se pudo resolver el mapeo municipal");
+        expect(view.unmapped).toBeUndefined();
+        expect(html).toMatch(/1 fila fiscalización \/ 90 votos|no tienen id de lista|subcircuito: 1 filas/);
+        expect(html).not.toContain("2206: 1 filas");
+      });
+    });
+
+    describe("municipal page — the mapping is fixed to one race", () => {
   it("test_an_election_outside_the_mapping_year_is_refused", async () => {
-    process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
+    process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
     entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
     const { default: MunicipalPage } = await import("./page");
@@ -337,7 +406,8 @@ describe("municipal page — the mapping is fixed to one race", () => {
 
 describe("municipal page — the race is pinned, not taken from the request", () => {
   it("test_another_category_is_refused_not_named_through_this_mapping", async () => {
-    process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
+    process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
     entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
     const { default: MunicipalPage } = await import("./page");
@@ -386,15 +456,19 @@ describe("municipal page — path 3 fires when the repository filter regresses",
     // of a third guard. Simulating the regression is the only way to drive it,
     // and without this test the branch is green whether it works or not.
     const html = renderToStaticMarkup(
-      renderMunicipalView({
-        status: "ok",
-        rows: [
-          { ...MUNICIPAL_ROWS[0]! },
-          { ...MUNICIPAL_ROWS[0]!, sourceKind: "fiscalizacion" },
-        ],
-        excluded: {},
-        partyMappingConfigured: true,
-      }),
+      renderMunicipalView(
+        {
+          status: "ok",
+          rows: [
+{ ...MUNICIPAL_ROWS[0]! },
+{ ...MUNICIPAL_ROWS[0]!, sourceKind: "fiscalizacion" },
+          ],
+          excluded: {},
+          partyMappingConfigured: true,
+        },
+        [{ archiveEntryId: "a", sha256: "a".repeat(64),
+          url: "https://example.test/municipal.csv", fetchedAt: "2026-01-01" }],
+      ),
     );
 
     expect(html).toContain("no son oficiales");
@@ -406,12 +480,26 @@ describe("municipal page — path 3 fires when the repository filter regresses",
     // breakdown started rendering its own list: the refusal legitimately emits
     // `<li>` now, and the claim was never about markup — it is that no figure
     // is attributed to a party.
-    expect(html).not.toContain(": 4200 votos");
-    expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA:");
-  });
-});
+        expect(html).not.toContain(": 4200 votos");
+        expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA:");
+        expect(html).toContain("https://example.test/municipal.csv");
+      });
+    });
 
-describe("municipal page — an untraceable figure says so", () => {
+    it("test_votes_by_party_name_conflict_refuses_but_keeps_audit", () => {
+      const row = { ...MUNICIPAL_ROWS[0]!, canonicalPartyId: "lla" };
+      const html = renderToStaticMarkup(renderMunicipalView({ status: "ok",
+        rows: [{ ...row, partyName: "LLA" }, { ...row, partyName: "ALIANZA LLA" }],
+        excluded: { fiscalizacion: { rows: 1, votes: 90 } }, partyMappingConfigured: true },
+        [{ archiveEntryId: "a", sha256: "b".repeat(64),
+          url: "https://example.test/conflict.csv", fetchedAt: "2026-01-01" }]));
+      for (const fact of ["Se rechazó", "nombres incompatibles",
+        "1 fila fiscalización / 90 votos", "https://example.test/conflict.csv"])
+        expect(html).toContain(fact);
+      expect(html).not.toContain("8400 voto(s)");
+    });
+
+    describe("municipal page — an untraceable figure says so", () => {
   it("test_an_archive_entry_with_no_source_record_is_named", () => {
     // `fetchSourceRefs` returns `missing` precisely so a figure whose archive
     // entry resolved to nothing is not rendered as traced.
@@ -456,17 +544,16 @@ describe("municipal page — a uuid election id is served", () => {
     // The gate this route applies is `year !== 2025`, and the year now comes
     // from the `election` row. With the id parsed instead, a uuid answered
     // `null` and the page refused every real request.
-    process.env["MUNICIPAL_JURISDICTION_ID"] = "j-027";
+    process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
+    process.env["MUNICIPAL_ELECTION_ID"] = "bfeb6235-2ac7-4f8d-aa09-a3db8bd1e2da";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
-    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "110" }];
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
     const { default: MunicipalPage } = await import("./page");
 
     const markup = renderToStaticMarkup(
       (await MunicipalPage({
         searchParams: Promise.resolve({
           electionId: "bfeb6235-2ac7-4f8d-aa09-a3db8bd1e2da",
-          jurisdictionId: "j-027",
-          categoryId: "c-concejales",
         }),
       })) as ReactElement,
     );

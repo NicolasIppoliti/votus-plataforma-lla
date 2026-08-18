@@ -97,13 +97,14 @@ test.describe("the production root preserves its authentication boundary", () =>
       name: "Rutas de análisis especializadas",
     });
     await expect(preparedRoutes).toContainText(
-      "Inicie una comparación nacional desde sus selectores",
+      "Inicie una comparación nacional o el análisis municipal",
     );
     await expect(
       preparedRoutes.getByRole("link", {
         name: "Comparar resultados electorales",
       }),
     ).toHaveAttribute("href", "/compare");
+    await expect(preparedRoutes).toContainText("Selección municipal disponible");
     await expect(
       preparedRoutes.getByRole("link", {
         name: "Análisis de concejos municipales",
