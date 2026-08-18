@@ -1858,6 +1858,65 @@ describe("fiscalizacion page — the real entry point", () => {
 		);
 	});
 
+	it("renders section-only denominator unavailability as localized evidence, not a rejected request", async () => {
+		coverageRpcResults = {
+			results_exploration_facets: {
+				status: "ok",
+				elections: [],
+				categories: [],
+				distritos: [],
+				secciones: [],
+				circuitos: [],
+				establecimientos: [],
+				mesas: [],
+				available_levels: [],
+			},
+			results_exploration_coverage: {
+				status: "denominator_unavailable",
+				reason: "no official mesa rows exist for the selected scope",
+				counts: { official_mesa_rows: 0, fiscalizacion_rows: 0 },
+				exclusions: [
+					{
+						reason: "official_rows_without_mesa_granularity",
+						rows: 8,
+						votes: 32_291,
+					},
+				],
+			},
+		};
+
+		const markup = renderToStaticMarkup(
+			(await FiscalizacionPage({
+				searchParams: Promise.resolve({
+					electionId: "20000000-0000-0000-0000-000000000001",
+					categoryId: "20000000-0000-0000-0000-000000000003",
+					distritoCode: "02",
+					seccionCode: "027",
+				}),
+			})) as ReactElement,
+		);
+
+		expect(markup).toContain("Cobertura no disponible para este alcance");
+		expect(markup).toContain(
+			"La fuente oficial seleccionada publica resultados únicamente a nivel sección, no por mesa",
+		);
+		expect(markup).toContain(
+			"No se estimó la cobertura porque no existe un denominador oficial por mesa",
+		);
+		expect(markup).toContain(
+			"Las cifras oficiales y de fiscalización permanecen separadas",
+		);
+		expect(markup).toContain(
+			"filas oficiales publicadas a nivel sección, sin detalle por mesa: 8 filas, 32.291 votos",
+		);
+		expect(markup).toContain('role="status"');
+		expect(markup).not.toContain("Se rechazó la solicitud");
+		expect(markup).not.toContain(
+			"no official mesa rows exist for the selected scope",
+		);
+		expect(markup).not.toContain("official_rows_without_mesa_granularity");
+	});
+
 	it("test_the_production_entry_renders_every_refusal_exclusion", async () => {
 		coverageRpcResults = {
 			results_exploration_facets: {
@@ -1873,11 +1932,19 @@ describe("fiscalizacion page — the real entry point", () => {
 			},
 			results_exploration_coverage: {
 				status: "denominator_unavailable",
-				reason: "no official mesas",
-				counts: {},
+				reason: "no official mesa rows exist for the selected scope",
+				counts: { official_mesa_rows: 0, fiscalizacion_rows: 3 },
 				exclusions: [
-					{ reason: "missing_identity", rows: 2, votes: 300 },
-					{ reason: "unmapped", rows: 3, votes: 999 },
+					{
+						reason: "official_rows_without_mesa_identity",
+						rows: 2,
+						votes: 300,
+					},
+					{
+						reason: "fiscalizacion_rows_without_official_mesa_mapping",
+						rows: 3,
+						votes: 999,
+					},
 				],
 			},
 		};
@@ -1891,8 +1958,16 @@ describe("fiscalizacion page — the real entry point", () => {
 				}),
 			})) as ReactElement,
 		);
-		expect(markup).toContain("missing_identity: 2 filas, 300 votos");
-		expect(markup).toContain("unmapped: 3 filas, 999 votos");
+		expect(markup).toContain(
+			"filas oficiales sin identidad completa de mesa: 2 filas, 300 votos",
+		);
+		expect(markup).toContain(
+			"filas de fiscalización sin correspondencia con una mesa oficial: 3 filas, 999 votos",
+		);
+		expect(markup).not.toContain("official_rows_without_mesa_identity");
+		expect(markup).not.toContain(
+			"fiscalizacion_rows_without_official_mesa_mapping",
+		);
 	});
 
   it("test_the_production_entry_renders_coverage_and_official_result_links", async () => {

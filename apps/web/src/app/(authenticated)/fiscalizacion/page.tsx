@@ -43,6 +43,7 @@ import {
 } from "@/lib/results/party-family";
 import type { Coverage, SourceRef } from "@/lib/results/types";
 import {
+  COVERAGE_REFUSAL_STATUS,
   createResultsCoverageRepository,
 	type CoverageExclusion,
 	type CoverageOk,
@@ -656,6 +657,10 @@ function sourceKindLabel(kind: string): string {
 
 function coverageExclusionReasonLabel(reason: string): string {
   const labels: Record<string, string> = {
+    fiscalizacion_rows_without_mesa_granularity:
+      "filas de fiscalización sin detalle por mesa",
+    fiscalizacion_rows_without_mesa_identity:
+      "filas de fiscalización sin identidad completa de mesa",
     fiscalizacion_rows_without_official_mesa_mapping:
       "filas de fiscalización sin correspondencia con una mesa oficial",
     official_rows_without_circuito_and_establecimiento_code:
@@ -664,12 +669,23 @@ function coverageExclusionReasonLabel(reason: string): string {
       "filas oficiales sin código de circuito",
     official_rows_without_establecimiento_code:
       "filas oficiales sin código de establecimiento",
+    official_rows_without_mesa_granularity:
+      "filas oficiales publicadas a nivel sección, sin detalle por mesa",
+    official_rows_without_mesa_identity:
+      "filas oficiales sin identidad completa de mesa",
+    unsupported_source_kind_rows:
+      "filas con un tipo de fuente no admitido",
   };
-  return labels[reason] ?? reason;
+  const label = labels[reason];
+  return label ?? "filas excluidas por una condición de integridad no reconocida";
 }
 
+const spanishIntegerFormat = new Intl.NumberFormat("es-AR");
+
 function rowsAndVotes(rows: number, votes: number): string {
-  return `${rows} ${rows === 1 ? "fila" : "filas"}, ${votes} ${votes === 1 ? "voto" : "votos"}`;
+  const rowLabel = rows === 1 ? "fila" : "filas";
+  const voteLabel = votes === 1 ? "voto" : "votos";
+  return `${spanishIntegerFormat.format(rows)} ${rowLabel}, ${spanishIntegerFormat.format(votes)} ${voteLabel}`;
 }
 
 function coverageExclusions(result: CoverageResult): ReactNode {
@@ -824,17 +840,62 @@ export async function renderCoverageExplorer(
 			</main>
 		);
   }
+  if (result.status === COVERAGE_REFUSAL_STATUS.DENOMINATOR_UNAVAILABLE) {
+    const officialSourceIsSectionOnly = result.exclusions.some(
+      (entry) => entry.reason === "official_rows_without_mesa_granularity",
+    );
+    return (
+      <main className="page-shell">
+        <div className="shell-container">
+          <header className="page-header">
+            <p className="eyebrow">Fiscalización / evidencia de cobertura</p>
+            <h1>Cobertura de fiscalización</h1>
+            <p className="page-header__lede">
+              Examine la presencia no oficial sin perder de vista el denominador oficial.
+            </p>
+          </header>
+          {form}
+          <section
+            className="panel"
+            aria-labelledby="coverage-unavailable-heading"
+            role="status"
+          >
+            <div className="panel__heading">
+              <h2 id="coverage-unavailable-heading">
+                Cobertura no disponible para este alcance
+              </h2>
+              <p>
+                {officialSourceIsSectionOnly
+                  ? "La fuente oficial seleccionada publica resultados únicamente a nivel sección, no por mesa."
+                  : "El alcance seleccionado no aporta filas oficiales con identidad completa de mesa."}
+              </p>
+              <p>
+                No se estimó la cobertura porque no existe un denominador oficial por mesa.
+                Las cifras oficiales y de fiscalización permanecen separadas.
+              </p>
+            </div>
+            {result.exclusions.length > 0 ? (
+              <>
+                <h3>Detalle de las filas excluidas del denominador</h3>
+                {coverageExclusions(result)}
+              </>
+            ) : null}
+          </section>
+        </div>
+      </main>
+    );
+  }
   if (result.status !== "ok") {
-		return (
-			<main>
-				<h1>Cobertura de fiscalización</h1>
-				{form}
-				<p role="alert">
-      Se rechazó la solicitud: {result.reason}. {coverageCounts(result.counts)}.
-				</p>
-				{coverageExclusions(result)}
-			</main>
-		);
+    return (
+      <main>
+        <h1>Cobertura de fiscalización</h1>
+        {form}
+        <p role="alert">
+          Se rechazó la solicitud: {result.reason}. {coverageCounts(result.counts)}.
+        </p>
+        {coverageExclusions(result)}
+      </main>
+    );
   }
 	// This is independent of the RPC parser and repository guard. A widened or
 	// regressed success payload must earn every rendered coverage claim again,

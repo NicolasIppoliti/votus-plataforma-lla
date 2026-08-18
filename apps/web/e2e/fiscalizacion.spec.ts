@@ -139,8 +139,17 @@ test.describe("the fiscalizacion route explores coverage", () => {
           "&seccionCode=999",
         baseURL,
       ).toString());
-      await expect(page.getByRole("main").getByRole("alert")).toContainText(
-        "Se rechazó la solicitud: no official mesa rows exist for the selected scope",
+      const unavailableCoverage = page
+        .getByRole("main")
+        .getByRole("status");
+      await expect(unavailableCoverage).toContainText(
+        "Cobertura no disponible para este alcance",
+      );
+      await expect(unavailableCoverage).toContainText(
+        "No se estimó la cobertura porque no existe un denominador oficial por mesa",
+      );
+      await expect(unavailableCoverage).not.toContainText(
+        "no official mesa rows exist for the selected scope",
       );
     });
   });
