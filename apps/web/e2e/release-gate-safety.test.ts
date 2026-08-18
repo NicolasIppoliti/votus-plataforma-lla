@@ -9,6 +9,7 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
+import { assertSourceInventory } from "../scripts/e2e-release-gate";
 import {
 	EXPECTED_E2E_SPECS,
 	assertE2eEnvironment,
@@ -26,6 +27,7 @@ import {
 } from "./gate-contract";
 import {
 	RELEASE_GATE_MODE,
+	assertExactMigrationInventory,
 	assertStackStatus,
 	assertTs7Version,
 	cleanupReleaseGate,
@@ -97,17 +99,16 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("migration release-gate integration", () => {
+	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 28 }, (_, index) =>
+		String(index + 1).padStart(4, "0"),
+	);
 	it("inspects the exact production migration and proof plan", async () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
-		expect(plan.migrationVersions).toEqual(
-			Array.from({ length: 27 }, (_, index) =>
-				String(index + 1).padStart(4, "0"),
-			),
-		);
+		expect(plan.migrationVersions).toEqual(EXPECTED_MIGRATION_VERSIONS);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0028",
-			fileName: "0028_e2e_service_role_grants.sql",
+			version: "0029",
+			fileName: "0029_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(plan.pgTapProofs).toContainEqual({
@@ -128,6 +129,33 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(true);
 	});
+	it("accepts the exact production migration inventory", async () => {
+		await expect(
+			assertSourceInventory(EXPECTED_MIGRATION_VERSIONS),
+		).resolves.toBeUndefined();
+	});
+	it.each([
+		{
+			defect: "missing",
+			actual: EXPECTED_MIGRATION_VERSIONS.slice(0, -1),
+		},
+		{
+			defect: "duplicate",
+			actual: [...EXPECTED_MIGRATION_VERSIONS.slice(0, -1), "0027"],
+		},
+		{
+			defect: "skipped",
+			actual: EXPECTED_MIGRATION_VERSIONS.filter((version) => version !== "0014"),
+		},
+		{
+			defect: "extra",
+			actual: [...EXPECTED_MIGRATION_VERSIONS, "0029"],
+		},
+	])("rejects a $defect migration inventory", ({ actual }) => {
+		expect(() =>
+			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
+		).toThrow("migration inventory must be exactly versions 0001 through 0028");
+	});
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
@@ -144,21 +172,23 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through migration 0027", () => {
+	it("proves the exact results-exploration rollback through migration 0028", () => {
 		const proof = readFileSync(new URL("../../../supabase/tests/results_exploration_release.sql", import.meta.url), "utf8");
 		const migrationSequence = Array.from(
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("27 as migration_inventory_count");
+		expect(proof).toContain("28 as migration_inventory_count");
 		expect(migrationSequence).toEqual([
-			"0027-down", "0026-down", "0025-down", "0023-down", "0022-down", "0021-down", "0020-down",
-			"0020-up", "0021-up", "0022-up", "0023-up", "0025-up", "0026-up", "0027-up",
+			"0028-down", "0027-down", "0026-down", "0025-down", "0023-down", "0022-down", "0021-down", "0020-down",
+			"0020-up", "0021-up", "0022-up", "0023-up", "0025-up", "0026-up", "0027-up", "0028-up",
 		]);
+		expect(proof).toContain("0028 rollback did not restore the exact 0026 facet discovery plan");
 		expect(proof).toContain("0026 rollback did not restore the exact optimized five-argument facets definition");
 		expect(proof).toContain("0026 forward apply did not restore the six-argument mesa lineage definition");
 		expect(proof).toContain("0027 rollback changed explorer functions instead of dropping only its index");
 		expect(proof).toContain("0027 forward apply installed the wrong non-official partial-index contract");
+		expect(proof).toContain("0028 forward apply did not restore bounded six-argument facet discovery");
 	});
 	it("hands the full scale and rollback/reapply proofs to production execution", async () => {
 		const executedPlans: ReleaseGatePlan[] = [];

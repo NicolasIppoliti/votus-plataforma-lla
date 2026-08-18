@@ -90,15 +90,25 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 27 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 28 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0028",
-	fileName: "0028_e2e_service_role_grants.sql",
+	version: "0029",
+	fileName: "0029_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
+
+export function assertExactMigrationInventory(
+	actualVersions: readonly string[],
+	expectedVersions: readonly string[],
+): void {
+	if (JSON.stringify(actualVersions) === JSON.stringify(expectedVersions)) return;
+	throw new Error(
+		`migration inventory must be exactly versions ${expectedVersions[0]} through ${expectedVersions.at(-1)}`,
+	);
+}
 
 const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{

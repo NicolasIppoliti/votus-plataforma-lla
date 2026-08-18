@@ -31,6 +31,7 @@ import {
 } from "../e2e/scenario-ownership.ts";
 import {
 	RELEASE_GATE_MODE,
+	assertExactMigrationInventory,
 	assertStackStatus,
 	assertTs7Version,
 	cleanupReleaseGate,
@@ -227,7 +228,7 @@ async function reservePort(): Promise<PortReservation> {
 		});
 	});
 }
-async function assertSourceInventory(
+export async function assertSourceInventory(
 	expectedMigrations: readonly string[],
 ): Promise<void> {
 	const migrationFiles = (
@@ -236,10 +237,7 @@ async function assertSourceInventory(
 		.filter((name) => /^\d{4}_.+\.sql$/.test(name))
 		.sort();
 	const versions = migrationFiles.map((name) => name.slice(0, 4));
-	if (JSON.stringify(versions) !== JSON.stringify(expectedMigrations))
-		throw new Error(
-			"migration inventory must be exactly versions 0001 through 0027",
-		);
+	assertExactMigrationInventory(versions, expectedMigrations);
 	const specFiles = (await readdir(path.join(WEB_ROOT, "e2e")))
 		.filter((name) => name.endsWith(".spec.ts"))
 		.map((name) => `e2e/${name}`)
