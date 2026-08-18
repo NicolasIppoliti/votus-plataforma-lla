@@ -71,6 +71,18 @@ describe("simulate page — normal-user entry", () => {
     expect(markup).toContain(
       '<label for="simulation-level">Tipo de elección</label>',
     );
+    expect(markup).toMatch(/<form[^>]+class="simulation-form"/);
+    expect(
+      markup.match(
+        /<fieldset class="simulation-form__section panel form-grid">/g,
+      ),
+    ).toHaveLength(3);
+    expect(markup).toMatch(
+      /<section[^>]+class="simulation-form__section simulation-form__section--context panel panel--quiet"/,
+    );
+    expect(markup).toContain(
+      '<div class="simulation-form__list panel panel--quiet">',
+    );
     expect(markup).not.toContain("Proporcione un parámetro de consulta");
   });
 });

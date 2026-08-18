@@ -759,6 +759,87 @@ select option {
   min-width: 0;
 }
 
+.simulation-builder {
+  margin-block-start: 2rem;
+}
+
+.simulation-builder__help {
+  margin-block-start: 0.75rem;
+  color: var(--color-muted);
+}
+
+.simulation-form {
+  display: grid;
+  gap: 1.5rem;
+  margin-block-start: 1.5rem;
+}
+
+.simulation-form__feedback:empty {
+  display: none;
+}
+
+.simulation-form__section {
+  min-width: 0;
+  margin: 0;
+}
+
+.simulation-form__section--context,
+.simulation-form__list {
+  display: grid;
+  gap: 1rem;
+}
+
+.simulation-form__legend,
+.simulation-form__section > p,
+.simulation-form__section > .simulation-form__list,
+.simulation-form__section > .form-actions {
+  grid-column: 1 / -1;
+}
+
+.simulation-form__legend {
+  padding: 0;
+  color: var(--color-ink);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.simulation-form__context {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.simulation-form__context dt {
+  font-weight: 700;
+}
+
+.simulation-form__context dd {
+  margin: 0;
+}
+
+.simulation-form__context dd + dt {
+  margin-block-start: 0.65rem;
+}
+
+.simulation-form__list,
+.simulation-form__list-fields,
+.simulation-form .field {
+  min-width: 0;
+}
+
+.simulation-form :where(input, select) {
+  width: 100%;
+  min-width: 0;
+}
+
+.simulation-form__list > .button {
+  justify-self: start;
+}
+
+.simulation-form .form-actions {
+  margin-block-start: 0;
+}
+
 .form-actions {
   display: flex;
   flex-wrap: wrap;

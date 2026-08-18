@@ -1,4 +1,38 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+interface ElementRectangle {
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
+}
+
+async function elementRectangle(locator: Locator): Promise<ElementRectangle> {
+  return locator.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return {
+      bottom: rectangle.bottom,
+      left: rectangle.left,
+      right: rectangle.right,
+      top: rectangle.top,
+    };
+  });
+}
+
+async function expectBoundedSection(locator: Locator): Promise<void> {
+  const bounds = await locator.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      borderWidth: Number.parseFloat(styles.borderTopWidth),
+      paddingBlock: Number.parseFloat(styles.paddingTop),
+      paddingInline: Number.parseFloat(styles.paddingLeft),
+    };
+  });
+
+  expect(bounds.borderWidth).toBeGreaterThan(0);
+  expect(bounds.paddingBlock).toBeGreaterThan(0);
+  expect(bounds.paddingInline).toBeGreaterThan(0);
+}
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   await expect
@@ -16,7 +50,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
   test("test_projection_form_reaches_the_municipal_hare_result", async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 375, height: 800 });
+    await page.setViewportSize({ width: 390, height: 800 });
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
 
@@ -43,9 +77,70 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       form.getByRole("group", { name: "Listas y votos" }),
     ).toBeVisible();
 
-    const municipalConfiguration = page.getByRole("region", {
+    const electionSection = form.getByRole("group", {
+      name: "Elección y alcance",
+    });
+    const totalsSection = form.getByRole("group", {
+      name: "Totales del escenario",
+    });
+    const listsSection = form.getByRole("group", {
+      name: "Listas y votos",
+    });
+    const municipalConfiguration = form.getByRole("region", {
       name: "Concejo configurado",
     });
+    const mobileSections = [
+      electionSection,
+      municipalConfiguration,
+      totalsSection,
+      listsSection,
+    ];
+    for (const section of mobileSections) await expectBoundedSection(section);
+
+    const mobileSectionRectangles = await Promise.all(
+      mobileSections.map(elementRectangle),
+    );
+    for (let index = 1; index < mobileSectionRectangles.length; index += 1) {
+      expect(mobileSectionRectangles[index]!.top).toBeGreaterThan(
+        mobileSectionRectangles[index - 1]!.bottom,
+      );
+    }
+
+    const firstListEditor = listsSection
+      .getByRole("heading", { name: "Lista 1" })
+      .locator("..");
+    const firstListRemove = firstListEditor.getByRole("button", {
+      name: "Quitar lista 1",
+    });
+    await expect(firstListRemove).toBeVisible();
+    const mobileListGeometry = await listsSection.evaluate((section) => {
+      const sectionStyles = getComputedStyle(section);
+      const sectionRectangle = section.getBoundingClientRect();
+      const listEditor = section.querySelector("h3")?.parentElement;
+      if (!listEditor) throw new Error("missing first list editor");
+      const listRectangle = listEditor.getBoundingClientRect();
+      return {
+        contentLeft:
+          sectionRectangle.left +
+          Number.parseFloat(sectionStyles.borderLeftWidth) +
+          Number.parseFloat(sectionStyles.paddingLeft),
+        contentRight:
+          sectionRectangle.right -
+          Number.parseFloat(sectionStyles.borderRightWidth) -
+          Number.parseFloat(sectionStyles.paddingRight),
+        listLeft: listRectangle.left,
+        listRight: listRectangle.right,
+      };
+    });
+    expect(mobileListGeometry.listLeft).toBeCloseTo(
+      mobileListGeometry.contentLeft,
+      0,
+    );
+    expect(mobileListGeometry.listRight).toBeCloseTo(
+      mobileListGeometry.contentRight,
+      0,
+    );
+
     await expect(municipalConfiguration).toContainText(
       /Municipio admitido\s*Coronel de Marina Leonardo Rosales/,
     );
@@ -82,8 +177,10 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await form.getByRole("button", { name: "Agregar lista" }).click();
     await expect(form.getByLabel("Nombre de la lista").nth(2)).toBeFocused();
     await expect(form.getByLabel("Nombre de la lista")).toHaveCount(3);
+    await expectNoHorizontalOverflow(page);
 
     await form.getByRole("button", { name: "Agregar lista" }).click();
+
     await expect(form.getByLabel("Nombre de la lista").nth(3)).toBeFocused();
     await form.getByRole("button", { name: "Quitar lista 3" }).click();
     await expect(form.getByLabel("Nombre de la lista").nth(2)).toBeFocused();
@@ -213,6 +310,63 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     });
     await expect(desktopForm).toBeVisible();
     await expect(desktopForm.getByRole("group")).toHaveCount(3);
+    const desktopSections = [
+      desktopForm.getByRole("group", { name: "Elección y alcance" }),
+      desktopForm.getByRole("region", { name: "Concejo configurado" }),
+      desktopForm.getByRole("group", { name: "Totales del escenario" }),
+      desktopForm.getByRole("group", { name: "Listas y votos" }),
+    ];
+    for (const section of desktopSections) await expectBoundedSection(section);
+
+    const desktopSectionRectangles = await Promise.all(
+      desktopSections.map(elementRectangle),
+    );
+    const firstDesktopSection = desktopSectionRectangles[0]!;
+    for (const section of desktopSectionRectangles.slice(1)) {
+      expect(section.left).toBeCloseTo(firstDesktopSection.left, 0);
+      expect(section.right).toBeCloseTo(firstDesktopSection.right, 0);
+    }
+    for (let index = 1; index < desktopSectionRectangles.length; index += 1) {
+      expect(desktopSectionRectangles[index]!.top).toBeGreaterThan(
+        desktopSectionRectangles[index - 1]!.bottom,
+      );
+    }
+
+    const desktopListsSection = desktopSections[3]!;
+    const desktopListEditor = desktopListsSection
+      .getByRole("heading", { name: "Lista 1" })
+      .locator("..");
+    await expect(
+      desktopListEditor.getByRole("button", { name: "Quitar lista 1" }),
+    ).toBeVisible();
+    const desktopListGeometry = await desktopListsSection.evaluate((section) => {
+      const sectionStyles = getComputedStyle(section);
+      const sectionRectangle = section.getBoundingClientRect();
+      const listEditor = section.querySelector("h3")?.parentElement;
+      if (!listEditor) throw new Error("missing first list editor");
+      const listRectangle = listEditor.getBoundingClientRect();
+      return {
+        contentLeft:
+          sectionRectangle.left +
+          Number.parseFloat(sectionStyles.borderLeftWidth) +
+          Number.parseFloat(sectionStyles.paddingLeft),
+        contentRight:
+          sectionRectangle.right -
+          Number.parseFloat(sectionStyles.borderRightWidth) -
+          Number.parseFloat(sectionStyles.paddingRight),
+        listLeft: listRectangle.left,
+        listRight: listRectangle.right,
+      };
+    });
+    expect(desktopListGeometry.listLeft).toBeCloseTo(
+      desktopListGeometry.contentLeft,
+      0,
+    );
+    expect(desktopListGeometry.listRight).toBeCloseTo(
+      desktopListGeometry.contentRight,
+      0,
+    );
+
     const desktopGeometry = await desktopForm.evaluate((element) => {
       const rectangle = element.getBoundingClientRect();
       return {

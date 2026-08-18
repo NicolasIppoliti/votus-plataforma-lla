@@ -174,20 +174,25 @@ export function SimulationForm() {
   const totalsHelpId = isNational ? "national-totals-help" : "pba-totals-help";
 
   return (
-    <section aria-labelledby="simulation-form-heading">
+    <section
+      aria-labelledby="simulation-form-heading"
+      className="simulation-builder"
+    >
       <h2 id="simulation-form-heading">Crear un escenario</h2>
-      <p id="simulation-form-help">
+      <p className="simulation-builder__help" id="simulation-form-help">
         Ingrese los datos del escenario. La simulación no guarda información ni
         representa un resultado histórico oficial.
       </p>
       <form
         aria-label="Formulario de simulación de bancas"
+        className="simulation-form"
         noValidate
         onSubmit={submitSimulation}
       >
         <div
           aria-atomic="true"
           aria-live="polite"
+          className="simulation-form__feedback"
           id="simulation-form-errors"
         >
           {errors.length > 0 ? (
@@ -202,8 +207,8 @@ export function SimulationForm() {
           ) : null}
         </div>
 
-        <fieldset className="selector-form form-grid">
-          <legend className="selector-form__legend">Elección y alcance</legend>
+        <fieldset className="simulation-form__section panel form-grid">
+          <legend className="simulation-form__legend">Elección y alcance</legend>
           <div className="field">
             <label htmlFor="simulation-level">Tipo de elección</label>
             <select
@@ -242,9 +247,12 @@ export function SimulationForm() {
         </fieldset>
 
         {isMunicipal ? (
-          <section aria-labelledby="municipal-configuration-heading">
+          <section
+            aria-labelledby="municipal-configuration-heading"
+            className="simulation-form__section simulation-form__section--context panel panel--quiet"
+          >
             <h3 id="municipal-configuration-heading">Concejo configurado</h3>
-            <dl>
+            <dl className="simulation-form__context">
               <dt>Municipio admitido</dt>
               <dd>{SIMULATION_COUNCIL.JURISDICTION}</dd>
               <dt>Composición total</dt>
@@ -259,8 +267,8 @@ export function SimulationForm() {
           </section>
         ) : null}
 
-        <fieldset className="selector-form form-grid">
-          <legend className="selector-form__legend">Totales del escenario</legend>
+        <fieldset className="simulation-form__section panel form-grid">
+          <legend className="simulation-form__legend">Totales del escenario</legend>
           <p id={totalsHelpId}>
             {isNational
               ? "El total de votos no puede superar el padrón."
@@ -345,8 +353,8 @@ export function SimulationForm() {
           ) : null}
         </fieldset>
 
-        <fieldset className="selector-form form-grid">
-          <legend className="selector-form__legend">Listas y votos</legend>
+        <fieldset className="simulation-form__section panel form-grid">
+          <legend className="simulation-form__legend">Listas y votos</legend>
           <p id="simulation-lists-help">
             Agregue al menos una lista. Cada lista conserva un identificador
             interno único durante la edición.
@@ -355,29 +363,32 @@ export function SimulationForm() {
             const listNameId = `simulation-list-name-${list.id}`;
             const listVotesId = `simulation-list-votes-${list.id}`;
             return (
-              <div key={list.id}>
+              <div
+                className="simulation-form__list panel panel--quiet"
+                key={list.id}
+              >
                 <h3>Lista {index + 1}</h3>
-                <div className="form-grid">
-                      <div className="field">
-                        <label htmlFor={listNameId}>Nombre de la lista</label>
-                        <input
-                          aria-describedby="simulation-lists-help simulation-form-errors"
-                          id={listNameId}
-                          onChange={(event) =>
-                            updateList(list.id, LIST_FIELD.NAME, event.target.value)
-                          }
-                          ref={(input) => {
-                            if (input === null) {
-                              listNameInputRefs.current.delete(list.id);
-                            } else {
-                              listNameInputRefs.current.set(list.id, input);
-                            }
-                          }}
-                          required
-                          type="text"
-                          value={list.name}
-                        />
-                      </div>
+                <div className="simulation-form__list-fields form-grid">
+                  <div className="field">
+                    <label htmlFor={listNameId}>Nombre de la lista</label>
+                    <input
+                      aria-describedby="simulation-lists-help simulation-form-errors"
+                      id={listNameId}
+                      onChange={(event) =>
+                        updateList(list.id, LIST_FIELD.NAME, event.target.value)
+                      }
+                      ref={(input) => {
+                        if (input === null) {
+                          listNameInputRefs.current.delete(list.id);
+                        } else {
+                          listNameInputRefs.current.set(list.id, input);
+                        }
+                      }}
+                      required
+                      type="text"
+                      value={list.name}
+                    />
+                  </div>
                   <NumberField
                     describedBy="simulation-lists-help simulation-form-errors"
                     id={listVotesId}
