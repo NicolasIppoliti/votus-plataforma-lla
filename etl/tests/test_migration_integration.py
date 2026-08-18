@@ -13,12 +13,12 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 28))
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 29))
 
 
 def _validated_migration_path(number: int, *, down: bool = False) -> Path:
     if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
-        raise ValueError("migration number must be an integer from 1 through 27")
+        raise ValueError("migration number must be an integer from 1 through 28")
 
     directory = MIGRATIONS / "down" if down else MIGRATIONS
     resolved_directory = directory.resolve(strict=True)

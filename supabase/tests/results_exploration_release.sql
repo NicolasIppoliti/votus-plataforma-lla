@@ -1,4 +1,16 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/0028_bound_results_exploration_cold_start.down.sql
+do $$
+declare facets_definition text;
+begin
+  select lower(pg_get_functiondef(
+    'public.results_exploration_facets(uuid,uuid,text,text,text,text)'::regprocedure
+  )) into facets_definition;
+  if position('select distinct rr.election_id' in facets_definition) = 0
+     or position('from election e' in facets_definition) > 0 then
+    raise exception '0028 rollback did not restore the exact 0026 facet discovery plan';
+  end if;
+end $$;
 \ir ../migrations/down/0027_optimize_non_official_source_audit.down.sql
 do $$ begin
   if to_regclass('public.result_row_non_official_scope_idx') is not null then
@@ -61,6 +73,7 @@ end $$;
 \ir ../migrations/0025_optimize_results_exploration_facets.sql
 \ir ../migrations/0026_scope_mesa_facets_to_establishment.sql
 \ir ../migrations/0027_optimize_non_official_source_audit.sql
+\ir ../migrations/0028_bound_results_exploration_cold_start.sql
 do $$
 declare
   facets_definition text;
@@ -75,8 +88,13 @@ begin
   )) into facets_definition;
   if position('with official as (' in facets_definition) > 0
      or position('case when p_election_id is not null then' in facets_definition) = 0
-     or position('j.establecimiento_code = p_establecimiento_code' in facets_definition) = 0 then
-    raise exception '0026 forward apply did not restore the six-argument mesa lineage definition';
+     or position('j.establecimiento_code = p_establecimiento_code' in facets_definition) = 0
+     or position('from election e' in facets_definition) = 0
+     or position('rr.election_id = e.id' in facets_definition) = 0
+     or position('from category c' in facets_definition) = 0
+     or position('rr.category_id = c.id' in facets_definition) = 0
+     or position('select distinct rr.election_id' in facets_definition) > 0 then
+    raise exception '0028 forward apply did not restore bounded six-argument facet discovery';
   end if;
   if to_regclass('public.result_row_exploration_scope_idx') is null then raise exception 'forward apply omitted result_row_exploration_scope_idx'; end if;
   if to_regclass('public.result_row_non_official_scope_idx') is null then
@@ -163,5 +181,5 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
-select 'release-proof' as evidence, 27 as migration_inventory_count,
-  '0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;
+select 'release-proof' as evidence, 28 as migration_inventory_count,
+  '0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;

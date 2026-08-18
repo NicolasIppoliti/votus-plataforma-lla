@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 -- Disposable high-cardinality proof; timings are local, not production claims.
 begin;
-select plan(16);
+select plan(17);
 create temporary table scale_plan_evidence (label text primary key,
   representative_result_rows bigint not null, plan jsonb not null) on commit drop;
 -- Issue #54 production-shaped coverage proof.
@@ -9,7 +9,9 @@ insert into election (id, year, round) values
   ('30000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('30000000-0000-0000-0000-000000000003', 2023, 'generales'),
   ('30000000-0000-0000-0000-000000000004', 2023, 'paso'),
-  ('30000000-0000-0000-0000-000000000005', 2021, 'generales');
+  ('30000000-0000-0000-0000-000000000005', 2021, 'generales'),
+  -- A dimension row without official facts must not become a selectable scope.
+  ('30000000-0000-0000-0000-000000000006', 2019, 'unbacked');
 insert into category (id, name)
 select case when category_number = 1
     then '30000000-0000-0000-0000-000000000002'::uuid
@@ -166,7 +168,7 @@ select ok((select payload->>'status' = 'ok'
     and jsonb_typeof(payload->'elections') = 'array'
     and jsonb_array_length(payload->'elections') = 4
     and jsonb_array_length(payload->'categories') = 0
-  from (select results_exploration_facets(null, null, null, null, null) payload) cold_start),
+  from (select results_exploration_facets(null, null, null, null, null, null) payload) cold_start),
   'cold-start facets preserve the payload contract across four election scopes');
 select is(results_exploration_schools('30000000-0000-0000-0000-000000000001'::uuid,
   '30000000-0000-0000-0000-000000000002'::uuid, '02', '028')->>'status',
@@ -198,7 +200,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
     into evidence;
   insert into scale_plan_evidence values ('facets_selected', representative_result_rows, evidence);
   execute $plan$explain (analyze, buffers, format json)
-    select results_exploration_facets(null, null, null, null, null)$plan$
+    select results_exploration_facets(null, null, null, null, null, null)$plan$
     into evidence;
   insert into scale_plan_evidence values ('facets_cold_start', 122357, evidence);
   execute $plan$explain (analyze, buffers, format json)
@@ -260,6 +262,12 @@ select ok((select label = 'coverage_unsupported_source_audit'
     and (plan->0->'Plan'->>'Actual Rows')::bigint = 1
   from scale_plan_evidence where label = 'coverage_unsupported_source_audit'),
   'coverage unsupported-source audit uses 0027 with a tighter shared-block budget');
+select ok((select label = 'facets_cold_start'
+    and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
+      + coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0)) <= 500
+    and (plan->0->'Plan'->>'Actual Rows')::bigint = 1
+  from scale_plan_evidence where label = 'facets_cold_start'),
+  'cold-start facets bound fact-table reads while preserving source-backed elections');
 select ok((plan->0->>'Execution Time')::numeric <= case
       when label = 'facets_cold_start' then 7000
       else 10000 end

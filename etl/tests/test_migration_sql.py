@@ -866,6 +866,8 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "shared read blocks",
         "results_exploration_facets",
         "facets_cold_start",
+        "results_exploration_facets(null, null, null, null, null, null)",
+        "shared read blocks')::bigint, 0)) <= 500",
         "7000",
         "results_exploration_official",
         "results_exploration_coverage",
@@ -921,6 +923,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0028_bound_results_exploration_cold_start.down.sql",
         "\\ir ../migrations/down/0027_optimize_non_official_source_audit.down.sql",
         "\\ir ../migrations/down/0022_results_exploration_scale.down.sql",
         "\\ir ../migrations/down/0021_results_coverage.down.sql",
@@ -929,6 +932,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0021_results_coverage.sql",
         "\\ir ../migrations/0022_results_exploration_scale.sql",
         "\\ir ../migrations/0027_optimize_non_official_source_audit.sql",
+        "\\ir ../migrations/0028_bound_results_exploration_cold_start.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -944,6 +948,29 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "dropping only its index",
     ):
         assert required in sql
+
+
+def test_0028_bounds_source_backed_dimension_discovery_and_restores_0026() -> None:
+    forward_path = MIGRATIONS / "0028_bound_results_exploration_cold_start.sql"
+    down_path = MIGRATIONS / "down" / "0028_bound_results_exploration_cold_start.down.sql"
+
+    assert forward_path.exists()
+    assert down_path.exists()
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    for required in (
+        "create or replace function results_exploration_facets(",
+        "from election e where exists",
+        "rr.source_kind = 'official' and rr.election_id = e.id",
+        "from category c where exists",
+        "rr.election_id = p_election_id and rr.category_id = c.id",
+    ):
+        assert required in forward
+    assert "select distinct rr.election_id" not in forward
+    assert "select distinct rr.category_id" not in forward
+    assert "create index" not in forward
+
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert down.endswith("\\ir ../0026_scope_mesa_facets_to_establishment.sql")
 
 
 def test_0027_adds_only_the_reversible_unknown_preserving_partial_index() -> None:
