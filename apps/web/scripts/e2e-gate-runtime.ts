@@ -91,13 +91,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 29 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 30 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0030",
-	fileName: "0030_e2e_service_role_grants.sql",
+	version: "0031",
+	fileName: "0031_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
 
@@ -110,6 +110,23 @@ export function assertExactMigrationInventory(
 	throw new Error(
 		`migration inventory must be exactly versions ${expectedVersions[0]} through ${expectedVersions.at(-1)}`,
 	);
+}
+
+export function assertSyntheticMigrationDoesNotCollide(
+	productionFileNames: readonly string[],
+	syntheticMigration: ReleaseGateSyntheticMigration,
+): void {
+	const collision = productionFileNames.find(
+		(name) => name.slice(0, 4) === syntheticMigration.version,
+	);
+	if (collision)
+		throw new Error(
+			`synthetic migration ${syntheticMigration.version} collides with production migration ${collision}`,
+		);
+	if (!syntheticMigration.fileName.startsWith(`${syntheticMigration.version}_`))
+		throw new Error(
+			`synthetic migration filename must start with version ${syntheticMigration.version}`,
+		);
 }
 
 const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [

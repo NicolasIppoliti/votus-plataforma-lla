@@ -33,6 +33,7 @@ import {
 	RELEASE_GATE_MODE,
 	assertExactMigrationInventory,
 	assertStackStatus,
+	assertSyntheticMigrationDoesNotCollide,
 	assertTs7Version,
 	cleanupReleaseGate,
 	formatPgTapFailure,
@@ -229,6 +230,7 @@ async function reservePort(): Promise<PortReservation> {
 }
 export async function assertSourceInventory(
 	expectedMigrations: readonly string[],
+	syntheticMigration: ReleaseGateSyntheticMigration,
 ): Promise<void> {
 	const migrationFiles = (
 		await readdir(path.join(SOURCE_SUPABASE, "migrations"))
@@ -237,6 +239,7 @@ export async function assertSourceInventory(
 		.sort();
 	const versions = migrationFiles.map((name) => name.slice(0, 4));
 	assertExactMigrationInventory(versions, expectedMigrations);
+	assertSyntheticMigrationDoesNotCollide(migrationFiles, syntheticMigration);
 	const specFiles = (await readdir(path.join(WEB_ROOT, "e2e")))
 		.filter((name) => name.endsWith(".spec.ts"))
 		.map((name) => `e2e/${name}`)
@@ -384,9 +387,14 @@ async function installSyntheticMigration(
 	workdir: string,
 	migration: ReleaseGateSyntheticMigration,
 ): Promise<void> {
+	const targetMigrations = path.join(workdir, "supabase", "migrations");
+	const productionFileNames = (await readdir(targetMigrations)).filter((name) =>
+		/^\d{4}_.+\.sql$/.test(name),
+	);
+	assertSyntheticMigrationDoesNotCollide(productionFileNames, migration);
 	await cp(
 		path.join(WEB_ROOT, migration.sourcePath),
-		path.join(workdir, "supabase", "migrations", migration.fileName),
+		path.join(targetMigrations, migration.fileName),
 	);
 }
 async function waitForServer(url: string, child: ChildProcess): Promise<void> {
@@ -564,6 +572,7 @@ async function matchesRepository(
 		const targetNames = (await readdir(target))
 			.filter((name) => /^\d{4}_.+\.sql$/.test(name))
 			.sort();
+		assertSyntheticMigrationDoesNotCollide(sourceNames, syntheticMigration);
 		const expected = [...sourceNames, syntheticMigration.fileName].sort();
 		if (JSON.stringify(targetNames) !== JSON.stringify(expected)) return false;
 		for (const name of sourceNames)
@@ -682,7 +691,7 @@ async function executeGate(
 	state: GateState,
 	plan: ReleaseGatePlan,
 ): Promise<void> {
-	await assertSourceInventory(plan.migrationVersions);
+	await assertSourceInventory(plan.migrationVersions, plan.syntheticMigration);
 	assertIsolationCapabilities(plan.requireBrowserCapability);
 	await reapStaleOwnedWorkdirs(plan.syntheticMigration);
 	const reservations = await reserveUniquePorts(
