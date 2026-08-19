@@ -13,12 +13,12 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 31))
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 32))
 
 
 def _validated_migration_path(number: int, *, down: bool = False) -> Path:
     if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
-        raise ValueError("migration number must be an integer from 1 through 30")
+        raise ValueError("migration number must be an integer from 1 through 31")
 
     directory = MIGRATIONS / "down" if down else MIGRATIONS
     resolved_directory = directory.resolve(strict=True)
@@ -65,6 +65,18 @@ def _available_migration_numbers(*, maximum: int) -> list[int]:
         for migration in MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql")
         if int(migration.name.split("_", 1)[0]) <= maximum
     )
+
+
+def test_migration_inventory_accepts_exact_history_through_0031() -> None:
+    assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 32))
+    assert _available_migration_numbers(maximum=31) == list(range(1, 32))
+    assert _validated_migration_path(31).name == "0031_replace_district_covering_index.sql"
+    assert (
+        _validated_migration_path(31, down=True).name
+        == "0031_replace_district_covering_index.down.sql"
+    )
+    with pytest.raises(ValueError, match="1 through 31"):
+        _validated_migration_path(32)
 
 
 def _insert_review_item(database_dsn: str, kind: str, subject_ref: str) -> None:
@@ -262,35 +274,69 @@ def _seed_pre_0018_fiscalizacion_case(
     return official_jurisdiction_id, fiscalizacion_jurisdiction_id, before_count[0]
 
 
-def test_0029_and_0030_forward_down_reapply_preserve_payload_and_0020() -> None:
+PUBLIC_SCOPE_FIXTURE_PREFIX = "votus_official_0029_"
+
+
+def _reap_orphaned_public_scope_fixtures(database_dsn: str) -> None:
+    """Remove public scope fixtures a killed run could not clean up in its finally block."""
+    orphan_pattern = f"{PUBLIC_SCOPE_FIXTURE_PREFIX}%"
+    with psycopg.connect(database_dsn) as connection:
+        connection.execute("delete from public.category where name like %s", (orphan_pattern,))
+        connection.execute("delete from public.election where round like %s", (orphan_pattern,))
+
+
+def test_0029_through_0031_forward_down_reapply_preserve_function_history_and_indexes() -> None:
+    """Cover migration-history mechanics only.
+
+    This schema isolates DDL, never data: the exploration functions pin
+    search_path=public,pg_temp and result_row's jurisdiction foreign key binds to
+    public.jurisdiction even though 0002 writes it unqualified. Seeding facts here would
+    contaminate public, so payload volume belongs to the scale proof, which measures real
+    index selection over production-shaped data.
+    """
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
 
-    schema_name = f"votus_official_0029_{uuid.uuid4().hex}"
+    schema_name = f"{PUBLIC_SCOPE_FIXTURE_PREFIX}{uuid.uuid4().hex}"
     schema_created = False
+    public_scope_created = False
     try:
+        _reap_orphaned_public_scope_fixtures(database_dsn)
         with psycopg.connect(database_dsn) as connection:
             connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
         schema_created = True
         params = conninfo_to_dict(database_dsn)
         params["options"] = f"-csearch_path={schema_name}"
         history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
-        assert _available_migration_numbers(maximum=30) == list(range(1, 31))
+        assert _available_migration_numbers(maximum=31) == list(range(1, 32))
         for number in (*range(1, 9), *range(11, 21)):
             _apply_migration(history_dsn, number)
         with psycopg.connect(history_dsn) as connection:
             assert connection.execute(
                 "select to_regrole('results_exploration_executor')"
             ).fetchone() != (None,)
+            # 0029/0030 hand ownership to results_exploration_executor and only grant it
+            # CREATE on public; the isolated history schema must grant the same privilege
+            # so the ownership transfer resolves against this schema instead of public.
             connection.execute(
-                sql.SQL("alter function results_exploration_official"
-                "(uuid,uuid,text,text,text,text,integer,text) "
-                "rename to results_exploration_official_0020")
+                sql.SQL("grant usage, create on schema {} to results_exploration_executor").format(
+                    sql.Identifier(schema_name)
+                )
             )
             connection.execute(
-                "create function results_exploration_official"
-                "(uuid,uuid,text,text,text,text,integer,text) returns jsonb "
+                sql.SQL(
+                    "alter function results_exploration_official"
+                    "(uuid,uuid,text,text,text,text,integer,text) "
+                    "rename to results_exploration_official_0020"
+                )
+            )
+            connection.execute(
+                "create function results_exploration_official("
+                "p_election_id uuid, p_category_id uuid, p_distrito_code text,"
+                "p_seccion_code text default null, p_circuito_code text default null,"
+                "p_establecimiento_code text default null, p_mesa_code integer default null,"
+                "p_requested_level text default 'seccion') returns jsonb "
                 "language sql stable security definer set search_path=public,pg_temp as "
                 "$$ select results_exploration_official_0020($1,$2,$3,$4,$5,$6,$7,$8) "
                 "|| jsonb_build_object('source_exclusions','[]'::jsonb) $$"
@@ -318,12 +364,17 @@ def test_0029_and_0030_forward_down_reapply_preserve_payload_and_0020() -> None:
             ).fetchone() == (None,)
         _apply_migration(history_dsn, 29)
         empty_ids = uuid.uuid4(), uuid.uuid4()
+        # Every exploration function pins search_path=public,pg_temp, so the scope this
+        # history schema exercises must exist in public even though the function bodies,
+        # tables, and indexes under test live in the isolated schema. Both natural keys
+        # carry the run-unique schema name so a killed run cannot collide with the next.
         with psycopg.connect(history_dsn) as connection:
             connection.execute(
-                "with e as (insert into election(id,year,round) values (%s,2025,'test')) "
-                "insert into category(id,name) values (%s,'EMPTY')",
-                empty_ids,
+                "with e as (insert into public.election(id,year,round) values (%s,2025,%s)) "
+                "insert into public.category(id,name) values (%s,%s)",
+                (empty_ids[0], schema_name, empty_ids[1], schema_name),
             )
+            public_scope_created = True
             before_0030 = connection.execute(
                 "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
                 empty_ids,
@@ -351,7 +402,71 @@ def test_0029_and_0030_forward_down_reapply_preserve_payload_and_0020() -> None:
             ).fetchone()
         assert removed == (True, True)
         _apply_migration(history_dsn, 30)
+        with psycopg.connect(history_dsn) as connection:
+            before_0031 = connection.execute(
+                "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
+                empty_ids,
+            ).fetchone()
+            function_before_0031 = connection.execute(
+                "select pg_get_functiondef('results_exploration_official_0030"
+                "(uuid,uuid,text,text,text,text,integer,text)'::regprocedure)"
+            ).fetchone()
+            rows_before_0031 = connection.execute("select count(*) from result_row").fetchone()
+        _apply_migration(history_dsn, 31)
+        with psycopg.connect(history_dsn) as connection:
+            after_0031 = connection.execute(
+                "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
+                empty_ids,
+            ).fetchone()
+            function_after_0031 = connection.execute(
+                "select pg_get_functiondef('results_exploration_official_0030"
+                "(uuid,uuid,text,text,text,text,integer,text)'::regprocedure)"
+            ).fetchone()
+            installed_0031 = connection.execute(
+                "select to_regclass(%s) is null,to_regclass(%s) is not null,"
+                "lower(pg_get_indexdef(%s::regclass)),"
+                "(select indisvalid and indisready from pg_index where indexrelid=%s::regclass),"
+                "count(*) from result_row",
+                (
+                    "result_row_official_district_geography_idx",
+                    "result_row_official_district_scope_idx",
+                    "result_row_official_district_scope_idx",
+                    "result_row_official_district_scope_idx",
+                ),
+            ).fetchone()
+        assert after_0031 == before_0031
+        assert function_after_0031 == function_before_0031
+        assert installed_0031 is not None and rows_before_0031 is not None
+        assert installed_0031[:2] == (True, True)
+        assert "(election_id, category_id, jurisdiction_id)" in installed_0031[2]
+        assert "include (archive_entry_id, granularity, list_id, votes)" in installed_0031[2]
+        assert installed_0031[3] is True
+        assert installed_0031[4] == rows_before_0031[0]
+        _apply_down_migration(history_dsn, 31)
+        with psycopg.connect(history_dsn) as connection:
+            restored_0030_index = connection.execute(
+                "select to_regclass(%s) is null,to_regclass(%s) is not null,"
+                "lower(pg_get_indexdef(%s::regclass)),"
+                "(select indisvalid and indisready from pg_index where indexrelid=%s::regclass),"
+                "count(*) from result_row",
+                (
+                    "result_row_official_district_scope_idx",
+                    "result_row_official_district_geography_idx",
+                    "result_row_official_district_geography_idx",
+                    "result_row_official_district_geography_idx",
+                ),
+            ).fetchone()
+        assert restored_0030_index is not None
+        assert restored_0030_index[:2] == (True, True)
+        assert restored_0030_index[3] is True
+        assert "(jurisdiction_id, election_id, category_id)" in restored_0030_index[2]
+        assert restored_0030_index[4] == rows_before_0031[0]
+        _apply_migration(history_dsn, 31)
     finally:
+        if public_scope_created:
+            with psycopg.connect(database_dsn) as connection:
+                connection.execute("delete from public.category where id = %s", (empty_ids[1],))
+                connection.execute("delete from public.election where id = %s", (empty_ids[0],))
         if schema_created:
             with psycopg.connect(database_dsn) as connection:
                 drop_schema = sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))

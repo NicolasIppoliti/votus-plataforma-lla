@@ -260,7 +260,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
         cross join lateral (select fact.votes from result_row fact where fact.jurisdiction_id=j.id
           and fact.election_id='30000000-0000-0000-0000-000000000001' and fact.category_id='30000000-0000-0000-0000-000000000002'
           and fact.source_kind='official' offset 0) rr$plan$ into evidence;
-      insert into scale_plan_evidence values ('district_geography_access',151754,evidence);
+      insert into scale_plan_evidence values ('district_scope_access',151754,evidence);
       execute $plan$explain (analyze,buffers,format json) select results_exploration_official(
         '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','04',
         p_requested_level=>'distrito')$plan$ into evidence;
@@ -295,18 +295,20 @@ select ok((select plan::text like '%result_row_non_official_scope_idx%'
     from scale_plan_evidence where label = 'official_source_exclusions'),
   'source exclusion audit uses the geography-selective non-official partial index');
     select ok((select label = 'official_core_scope'
-        and plan::text like '%result_row_official_district_geography_idx%'
+        and plan::text like '%result_row_official_district_scope_idx%'
+        and plan::text not like '%result_row_official_district_geography_idx%'
         and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
           + coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0)) <= 20
-        and (select district.plan::text like '%result_row_official_district_geography_idx%'
+        and (select district.plan::text like '%result_row_official_district_scope_idx%'
+          and district.plan::text not like '%result_row_official_district_geography_idx%'
           and not jsonb_path_exists(district.plan,
             '$.** ? (@."Node Type" == "Seq Scan" && @."Relation Name" == "result_row")')
           and (district.plan->0->>'Execution Time')::numeric<=2000
           and coalesce((district.plan->0->'Plan'->>'Shared Hit Blocks')::bigint,0)
             +coalesce((district.plan->0->'Plan'->>'Shared Read Blocks')::bigint,0)<=7500
-          from scale_plan_evidence district where district.label='district_geography_access')
+          from scale_plan_evidence district where district.label='district_scope_access')
       from scale_plan_evidence where label = 'official_core_scope'),
-      'official core and district path use bounded geography-first index access without a fact seq scan');
+      'official core and district path automatically use bounded scope-first index access without a fact seq scan');
 
 select ok((select label = 'coverage_production_rpc'
     and (plan->0->>'Execution Time')::numeric <= 15000
@@ -340,7 +342,7 @@ select ok((plan->0->>'Execution Time')::numeric <= case
   label || ' stays within its disposable plan budget and returns one payload row'
 ) from scale_plan_evidence
 where label not in ('coverage_production_rpc', 'coverage_unsupported_source_audit',
-  'district_geography_access','district_rpc')
+  'district_scope_access','district_rpc')
 order by label;
 select diag(format(
   '%s: representative_result_rows=%s planning_ms=%s execution_ms=%s top_node=%s shared_hit_blocks=%s shared_read_blocks=%s indexes=%s',
@@ -353,4 +355,10 @@ select diag(format(
 select * from finish();
 rollback;
 begin; delete from result_row where election_id::text like '30000000-%'; delete from jurisdiction where id::text like '30000000-%';
-delete from category where id::text like '30000000-%'; delete from election where id::text like '30000000-%'; commit;
+delete from category where id::text like '30000000-%'; delete from election where id::text like '30000000-%';
+-- The legacy/null fixture rows are gone, so restore the exact 0002 source-kind contract this
+-- proof relaxed. Leaving it dropped would hand every later proof in the same stack a schema
+-- whose DB-level source leakage guard is disarmed.
+alter table result_row alter column source_kind set not null;
+alter table result_row add constraint result_row_source_kind_check
+  check (source_kind in ('official', 'fiscalizacion')); commit;

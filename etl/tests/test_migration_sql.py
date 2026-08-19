@@ -875,9 +875,9 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "->>'status',",
         "result_row_non_official_scope_idx",
         "official_core_scope",
-        "district_geography_access",
+        "district_scope_access",
         "district_rpc",
-        "result_row_official_district_geography_idx",
+        "result_row_official_district_scope_idx",
         "j.seccion_code = '001'",
         "500, 'scale payload retains exactly 500 complete schools'",
         "12000::bigint",
@@ -888,6 +888,17 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
     assert "rollback;" in cleanup
     for table in ("result_row", "jurisdiction", "category", "election"):
         assert f"delete from {table} where" in cleanup
+    # The proof relaxes the 0002 source-kind contract to exercise unknown-source auditing.
+    # Cleanup must hand the next proof in the same stack the original schema back.
+    relaxed = sql.split("select * from finish();", 1)[0]
+    assert "drop constraint result_row_source_kind_check" in relaxed
+    assert "alter column source_kind drop not null" in relaxed
+    assert "alter column source_kind set not null" in cleanup
+    assert "add constraint result_row_source_kind_check" in cleanup
+    assert "check (source_kind in ('official', 'fiscalizacion'))" in cleanup
+    assert cleanup.index("delete from result_row where") < cleanup.index(
+        "alter column source_kind set not null"
+    )
     assert cleanup.rstrip().endswith("commit;")
 
 
@@ -932,6 +943,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0031_replace_district_covering_index.down.sql",
         "\\ir ../migrations/down/0030_optimize_results_exploration_district.down.sql",
         "\\ir ../migrations/down/0029_optimize_results_exploration_official.down.sql",
         "\\ir ../migrations/down/0028_bound_results_exploration_cold_start.down.sql",
@@ -946,6 +958,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0028_bound_results_exploration_cold_start.sql",
         "\\ir ../migrations/0029_optimize_results_exploration_official.sql",
         "\\ir ../migrations/0030_optimize_results_exploration_district.sql",
+        "\\ir ../migrations/0031_replace_district_covering_index.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -959,7 +972,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_exploration_scope_idx",
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
-        "30 as migration_inventory_count",
+        "result_row_official_district_scope_idx",
+        "31 as migration_inventory_count",
         "dropping only its index",
     ):
         assert required in sql
@@ -1208,30 +1222,53 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
     forward = " ".join(_sql("0030_optimize_results_exploration_district.sql").split())
     required = (
         "on result_row (jurisdiction_id, election_id, category_id)",
-        "where source_kind = 'official'", "include (archive_entry_id, granularity, list_id, votes)",
+        "where source_kind = 'official'",
+        "include (archive_entry_id, granularity, list_id, votes)",
         "create function results_exploration_official_0030(",
     )
     assert all(item in forward for item in required)
     core, wrapper = forward.split("create or replace function results_exploration_official(", 1)
     core = core.split("create function results_exploration_official_0030(", 1)[1]
-    stages = tuple(core.index(stage) for stage in (
-        "target_jurisdictions as materialized", "raw_rows as materialized",
-        "source_shapes as materialized", "normalized_shapes as materialized",
-        "classified_rows as materialized"))
-    selectors = (core.index("p_election_id is null"),
+    stages = tuple(
+        core.index(stage)
+        for stage in (
+            "target_jurisdictions as materialized",
+            "raw_rows as materialized",
+            "source_shapes as materialized",
+            "normalized_shapes as materialized",
+            "classified_rows as materialized",
+        )
+    )
+    selectors = (
+        core.index("p_election_id is null"),
         core.index("select exists(select 1 from election"),
         core.index("exists(select 1 from category"),
-        core.index("p_requested_level is distinct from 'distrito'"), stages[0])
+        core.index("p_requested_level is distinct from 'distrito'"),
+        stages[0],
+    )
     assert list(stages) == sorted(stages) and list(selectors) == sorted(selectors)
-    assert all(item in core for item in (
-        "cross join lateral", "offset 0", "select distinct archive_entry_id,granularity",
-        "pba_partido_rows_not_province_aggregate", "official_rows_without_mesa_code",
-        "exclusion_groups as", "group by exclusion_reason", "'exclusions'",
-        "unknown_election_id", "unknown_category_id", "jsonb_strip_nulls",
-        "official rows excluded from distrito aggregation"))
+    assert all(
+        item in core
+        for item in (
+            "cross join lateral",
+            "offset 0",
+            "select distinct archive_entry_id,granularity",
+            "pba_partido_rows_not_province_aggregate",
+            "official_rows_without_mesa_code",
+            "exclusion_groups as",
+            "group by exclusion_reason",
+            "'exclusions'",
+            "unknown_election_id",
+            "unknown_category_id",
+            "jsonb_strip_nulls",
+            "official rows excluded from distrito aggregation",
+        )
+    )
     shapes = core.split("normalized_shapes as materialized", 1)[1].split("), classified_rows", 1)[0]
-    for boundary in ("results_exploration_reporting_level(",
-        "results_exploration_party_jurisdiction("):
+    for boundary in (
+        "results_exploration_reporting_level(",
+        "results_exploration_party_jurisdiction(",
+    ):
         assert shapes.count(boundary) == 1
     mesa_count = core.split("'mesa_count'", 1)[1].split("'parties'", 1)[0]
     assert "count(distinct jurisdiction_id)" in mesa_count
@@ -1240,23 +1277,112 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
     assert "r.granularity='distrito' and s.effective_level='seccion'" in core
     assert "s.effective_level='mesa' and r.mesa_code is null" in core
     assert core.index("preaggregated as") < core.index("left join party_mapping")
-    assert all(item in wrapper for item in (
-        "results_exploration_official_0030(", "rr.source_kind is distinct from 'official'",
-        "scoped_rows as materialized", "source_shapes as materialized",
-        "normalized_shapes as materialized", "else 'unknown' end source_kind"))
-    assert forward.index("grant create on schema public") < forward.index(
-        "owner to results_exploration_executor") < forward.index("revoke create on schema public")
-    down = " ".join((MIGRATIONS / "down" / "0030_optimize_results_exploration_district.down.sql")
-        .read_text(encoding="utf-8").lower().split())
-    assert all(item in down for item in ("rename to results_exploration_official",
-        "drop function results_exploration_official_0030(",
-        "drop index if exists result_row_official_district_geography_idx"))
+    assert all(
+        item in wrapper
+        for item in (
+            "results_exploration_official_0030(",
+            "rr.source_kind is distinct from 'official'",
+            "scoped_rows as materialized",
+            "source_shapes as materialized",
+            "normalized_shapes as materialized",
+            "else 'unknown' end source_kind",
+        )
+    )
+    assert (
+        forward.index("grant create on schema public")
+        < forward.index("owner to results_exploration_executor")
+        < forward.index("revoke create on schema public")
+    )
+    down = " ".join(
+        (MIGRATIONS / "down" / "0030_optimize_results_exploration_district.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert all(
+        item in down
+        for item in (
+            "rename to results_exploration_official",
+            "drop function results_exploration_official_0030(",
+            "drop index if exists result_row_official_district_geography_idx",
+        )
+    )
     assert not any(word in down for word in ("delete from", "update result_row", "truncate"))
-    scale = " ".join((SQL_TESTS / "results_exploration_scale.sql").read_text(
-        encoding="utf-8").lower().split())
+    scale = " ".join(
+        (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
+    )
     shape_plan = scale.split("'official_core_scope'", 1)[0].rsplit(
-        "explain (analyze, buffers, format json)", 1)[1]
-    assert all(item in shape_plan for item in ("cross join lateral", "offset 0",
-        "source_shapes as materialized", "normalized_shapes as materialized",
-        "results_exploration_reporting_level("))
+        "explain (analyze, buffers, format json)", 1
+    )[1]
+    assert all(
+        item in shape_plan
+        for item in (
+            "cross join lateral",
+            "offset 0",
+            "source_shapes as materialized",
+            "normalized_shapes as materialized",
+            "results_exploration_reporting_level(",
+        )
+    )
     assert "select plan(19)" in scale and "selected_shapes<>1" in scale
+
+
+def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
+    forward_path = MIGRATIONS / "0031_replace_district_covering_index.sql"
+    down_path = MIGRATIONS / "down" / "0031_replace_district_covering_index.down.sql"
+
+    assert forward_path.exists(), "0031 district covering-index correction is required"
+    assert down_path.exists(), "0031 district covering-index down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    assert forward.startswith("-- 0031") and forward.endswith("commit;")
+    header, statements = forward.split("begin;", 1)
+    # The header must name the access path the reorder serves and the measured evidence,
+    # so a later reader can tell why the 0030 column order was reversed.
+    for required in (
+        "election_id and category_id",
+        "shared blocks",
+        "seq scan",
+        "no planner hints",
+    ):
+        assert required in header
+    assert "drop index if exists result_row_official_district_geography_idx" in statements
+    assert "create index if not exists result_row_official_district_scope_idx" in statements
+    assert "on result_row (election_id, category_id, jurisdiction_id)" in statements
+    assert "include (archive_entry_id, granularity, list_id, votes)" in statements
+    assert "where source_kind = 'official'" in statements
+    assert statements.count("drop index") == statements.count("create index") == 1
+    for forbidden in ("alter function", "create function", "update ", "delete from", "truncate"):
+        assert forbidden not in statements
+
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "drop index if exists result_row_official_district_scope_idx" in down
+    assert "create index if not exists result_row_official_district_geography_idx" in down
+    assert "on result_row (jurisdiction_id, election_id, category_id)" in down
+    assert "include (archive_entry_id, granularity, list_id, votes)" in down
+    assert "where source_kind = 'official'" in down
+    assert down.count("drop index") == down.count("create index") == 1
+    for forbidden in ("alter function", "create function", "update ", "delete from", "truncate"):
+        assert forbidden not in down
+
+    scale = " ".join(
+        (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
+    )
+    district_contract = scale.split("select ok((select label = 'official_core_scope'", 1)[1]
+    district_contract = district_contract.split(
+        "select ok((select label = 'coverage_production_rpc'", 1
+    )[0]
+    assert (
+        district_contract.count("plan::text like '%result_row_official_district_scope_idx%'") == 2
+    )
+    assert (
+        district_contract.count(
+            "plan::text not like '%result_row_official_district_geography_idx%'"
+        )
+        == 2
+    )
+    assert '"node type" == "seq scan" && @."relation name" == "result_row"' in district_contract
+    assert "execution time')::numeric<=2000" in district_contract
+    assert "shared read blocks')::bigint,0)<=7500" in district_contract
+    assert "enable_seqscan" not in scale and "enable_nestloop" not in scale
