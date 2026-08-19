@@ -874,14 +874,21 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "results_exploration_schools",
         "->>'status',",
         "result_row_non_official_scope_idx",
-        "result_row_exploration_scope_idx",
         "official_core_scope",
+        "district_geography_access",
+        "district_rpc",
+        "result_row_official_district_geography_idx",
         "j.seccion_code = '001'",
         "500, 'scale payload retains exactly 500 complete schools'",
         "12000::bigint",
         "rollback;",
     ):
         assert required in sql
+    cleanup = sql.split("select * from finish();", 1)[1]
+    assert "rollback;" in cleanup
+    for table in ("result_row", "jurisdiction", "category", "election"):
+        assert f"delete from {table} where" in cleanup
+    assert cleanup.rstrip().endswith("commit;")
 
 
 def test_results_exploration_coverage_scale_proof_matches_production_shape() -> None:
@@ -925,6 +932,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0030_optimize_results_exploration_district.down.sql",
         "\\ir ../migrations/down/0029_optimize_results_exploration_official.down.sql",
         "\\ir ../migrations/down/0028_bound_results_exploration_cold_start.down.sql",
         "\\ir ../migrations/down/0027_optimize_non_official_source_audit.down.sql",
@@ -937,6 +945,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0027_optimize_non_official_source_audit.sql",
         "\\ir ../migrations/0028_bound_results_exploration_cold_start.sql",
         "\\ir ../migrations/0029_optimize_results_exploration_official.sql",
+        "\\ir ../migrations/0030_optimize_results_exploration_district.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -949,6 +958,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "permission denied for function results_exploration_schools",
         "result_row_exploration_scope_idx",
         "result_row_non_official_scope_idx",
+        "result_row_official_district_geography_idx",
+        "30 as migration_inventory_count",
         "dropping only its index",
     ):
         assert required in sql
@@ -1191,3 +1202,61 @@ def test_0022_coverage_and_schools_report_every_filtered_source_row() -> None:
         )
     )
     assert "'source_exclusions'" in schools
+
+
+def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> None:
+    forward = " ".join(_sql("0030_optimize_results_exploration_district.sql").split())
+    required = (
+        "on result_row (jurisdiction_id, election_id, category_id)",
+        "where source_kind = 'official'", "include (archive_entry_id, granularity, list_id, votes)",
+        "create function results_exploration_official_0030(",
+    )
+    assert all(item in forward for item in required)
+    core, wrapper = forward.split("create or replace function results_exploration_official(", 1)
+    core = core.split("create function results_exploration_official_0030(", 1)[1]
+    stages = tuple(core.index(stage) for stage in (
+        "target_jurisdictions as materialized", "raw_rows as materialized",
+        "source_shapes as materialized", "normalized_shapes as materialized",
+        "classified_rows as materialized"))
+    selectors = (core.index("p_election_id is null"),
+        core.index("select exists(select 1 from election"),
+        core.index("exists(select 1 from category"),
+        core.index("p_requested_level is distinct from 'distrito'"), stages[0])
+    assert list(stages) == sorted(stages) and list(selectors) == sorted(selectors)
+    assert all(item in core for item in (
+        "cross join lateral", "offset 0", "select distinct archive_entry_id,granularity",
+        "pba_partido_rows_not_province_aggregate", "official_rows_without_mesa_code",
+        "exclusion_groups as", "group by exclusion_reason", "'exclusions'",
+        "unknown_election_id", "unknown_category_id", "jsonb_strip_nulls",
+        "official rows excluded from distrito aggregation"))
+    shapes = core.split("normalized_shapes as materialized", 1)[1].split("), classified_rows", 1)[0]
+    for boundary in ("results_exploration_reporting_level(",
+        "results_exploration_party_jurisdiction("):
+        assert shapes.count(boundary) == 1
+    mesa_count = core.split("'mesa_count'", 1)[1].split("'parties'", 1)[0]
+    assert "count(distinct jurisdiction_id)" in mesa_count
+    assert "where mesa_code is not null" not in mesa_count
+    assert "archive_entry_id~" not in forward
+    assert "r.granularity='distrito' and s.effective_level='seccion'" in core
+    assert "s.effective_level='mesa' and r.mesa_code is null" in core
+    assert core.index("preaggregated as") < core.index("left join party_mapping")
+    assert all(item in wrapper for item in (
+        "results_exploration_official_0030(", "rr.source_kind is distinct from 'official'",
+        "scoped_rows as materialized", "source_shapes as materialized",
+        "normalized_shapes as materialized", "else 'unknown' end source_kind"))
+    assert forward.index("grant create on schema public") < forward.index(
+        "owner to results_exploration_executor") < forward.index("revoke create on schema public")
+    down = " ".join((MIGRATIONS / "down" / "0030_optimize_results_exploration_district.down.sql")
+        .read_text(encoding="utf-8").lower().split())
+    assert all(item in down for item in ("rename to results_exploration_official",
+        "drop function results_exploration_official_0030(",
+        "drop index if exists result_row_official_district_geography_idx"))
+    assert not any(word in down for word in ("delete from", "update result_row", "truncate"))
+    scale = " ".join((SQL_TESTS / "results_exploration_scale.sql").read_text(
+        encoding="utf-8").lower().split())
+    shape_plan = scale.split("'official_core_scope'", 1)[0].rsplit(
+        "explain (analyze, buffers, format json)", 1)[1]
+    assert all(item in shape_plan for item in ("cross join lateral", "offset 0",
+        "source_shapes as materialized", "normalized_shapes as materialized",
+        "results_exploration_reporting_level("))
+    assert "select plan(19)" in scale and "selected_shapes<>1" in scale

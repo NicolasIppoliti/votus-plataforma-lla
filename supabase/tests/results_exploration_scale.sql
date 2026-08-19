@@ -1,9 +1,6 @@
 \set ON_ERROR_STOP on
 -- Disposable high-cardinality proof; timings are local, not production claims.
 begin;
-select plan(19);
-create temporary table scale_plan_evidence (label text primary key,
-  representative_result_rows bigint not null, plan jsonb not null) on commit drop;
 -- Issue #54 production-shaped coverage proof.
 insert into election (id, year, round) values
   ('30000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
@@ -117,17 +114,45 @@ where (election_id, category_id) <> (
   '30000000-0000-0000-0000-000000000001'::uuid,
   '30000000-0000-0000-0000-000000000002'::uuid
 );
-analyze jurisdiction;
-analyze result_row;
-select is((results_exploration_official(
-    '30000000-0000-0000-0000-000000000001'::uuid,
-    '30000000-0000-0000-0000-000000000002'::uuid, '02', '001')->>'total_votes')::bigint,
+insert into jurisdiction(id,distrito_code,seccion_code,mesa_code) select
+  ('30000000-0000-0000-0005-'||lpad(unit::text,12,'0'))::uuid,'04','001',unit from generate_series(1,2000) unit;
+insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index)
+select '30000000-0000-0000-0000-000000000001',('30000000-0000-0000-0005-'||lpad(unit::text,12,'0'))::uuid,
+  '30000000-0000-0000-0000-000000000002','mesa',party::text,unit%17,'official','national/district-fast-path',unit*10+party
+from generate_series(1,2000) unit cross join generate_series(1,10) party;
+insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index)
+select '30000000-0000-0000-0000-000000000003',('30000000-0000-0000-0005-'||lpad(unit::text,12,'0'))::uuid,
+  '30000000-0000-0000-0000-000000000002','mesa','other-election',99,'official','national/district-wrong-election',unit
+from generate_series(1,2000) unit;
+commit; vacuum (analyze) jurisdiction; vacuum (analyze) result_row;
+begin;
+select plan(19);
+create temporary table scale_plan_evidence (label text primary key,representative_result_rows bigint not null,plan jsonb not null) on commit drop;
+select is((results_exploration_official('30000000-0000-0000-0000-000000000001'::uuid,
+    '30000000-0000-0000-0000-000000000002'::uuid,'02','001')->>'total_votes')::bigint,
   41::bigint, 'tiny selected scope keeps official totals unchanged');
 select is(results_exploration_official(
     '30000000-0000-0000-0000-000000000001'::uuid,
     '30000000-0000-0000-0000-000000000002'::uuid, '02', '001')->'source_exclusions',
   '[{"kind":"unknown","rows":2,"votes":19}]'::jsonb,
   'tiny selected scope audits legacy and null sources as unknown exclusions');
+do $$ declare fast_payload jsonb; preserved_payload jsonb; selected_rows bigint; selected_shapes bigint; begin
+  select results_exploration_official(election_id,category_id,'04',p_requested_level=>'distrito'),
+    results_exploration_official_0029(election_id,category_id,'04',p_requested_level=>'distrito')
+    into fast_payload,preserved_payload from (values ('30000000-0000-0000-0000-000000000001'::uuid,
+      '30000000-0000-0000-0000-000000000002'::uuid)) ids(election_id,category_id);
+  if fast_payload-'source_exclusions' is distinct from preserved_payload then
+    raise exception 'large district payload differs from preserved 0029 semantics';
+  end if;
+      select count(*),count(distinct (rr.archive_entry_id,rr.granularity,j.distrito_code,
+        j.seccion_code,e.year,e.round,c.name)) into selected_rows,selected_shapes from jurisdiction j
+      cross join lateral (select rr.archive_entry_id,rr.granularity from result_row rr
+        where rr.jurisdiction_id=j.id and rr.election_id='30000000-0000-0000-0000-000000000001'
+          and rr.category_id='30000000-0000-0000-0000-000000000002' and rr.source_kind='official' offset 0) rr
+      join election e on e.id='30000000-0000-0000-0000-000000000001'
+      join category c on c.id='30000000-0000-0000-0000-000000000002' where j.distrito_code='04';
+      if selected_rows<>20000 or selected_shapes<>1 then raise exception 'district facts/shapes %/% instead of 20000/1',selected_rows,selected_shapes; end if;
+    end $$;
 select is((select jsonb_build_object(
     'status', payload->'status',
     'source_kind', payload->'source_kind',
@@ -209,16 +234,15 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
       '30000000-0000-0000-0000-000000000002'::uuid, '02', '028')$plan$
     into evidence;
     insert into scale_plan_evidence values ('official', representative_result_rows, evidence);
-    execute $plan$explain (analyze, buffers, format json)
-        with scoped_geography as materialized (
-          select id, seccion_code from jurisdiction
-          where distrito_code = '02' and seccion_code = '001'
-        ) select count(*) from scoped_geography j join result_row rr on rr.jurisdiction_id = j.id
-        where rr.election_id = '30000000-0000-0000-0000-000000000001'::uuid
-          and rr.category_id = '30000000-0000-0000-0000-000000000002'::uuid
-          and rr.source_kind = 'official'
-          and results_exploration_reporting_level(rr.archive_entry_id, rr.granularity, '02', j.seccion_code) = 'mesa'$plan$
-        into evidence;
+        execute $plan$explain (analyze, buffers, format json) with scoped_geography as materialized
+          (select id,seccion_code from jurisdiction where distrito_code='02' and seccion_code='001'),raw_rows as materialized
+          (select rr.*,j.seccion_code from scoped_geography j cross join lateral (select fact.archive_entry_id,fact.granularity
+            from result_row fact where fact.jurisdiction_id=j.id and fact.election_id='30000000-0000-0000-0000-000000000001'
+              and fact.category_id='30000000-0000-0000-0000-000000000002' and fact.source_kind='official' offset 0) rr),
+          source_shapes as materialized (select distinct archive_entry_id,granularity,seccion_code from raw_rows),normalized_shapes as materialized
+          (select s.*,results_exploration_reporting_level(archive_entry_id,granularity,'02',seccion_code) effective_level from source_shapes s)
+          select count(*) from raw_rows r join normalized_shapes s on (s.archive_entry_id,s.granularity,s.seccion_code)
+            is not distinct from (r.archive_entry_id,r.granularity,r.seccion_code) where s.effective_level='mesa'$plan$ into evidence;
       insert into scale_plan_evidence values ('official_core_scope', 129754, evidence);
       execute $plan$explain (analyze, buffers, format json)
         select count(*)::bigint, coalesce(sum(rr.votes), 0)::bigint
@@ -230,9 +254,19 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
       and rr.source_kind is distinct from 'official'
       and j.distrito_code = '02' and j.seccion_code = '001'$plan$
     into evidence;
-  insert into scale_plan_evidence values ('official_source_exclusions', 129754, evidence);
-  execute $plan$explain (analyze, buffers, format json)
-    select public.results_exploration_coverage(
+      insert into scale_plan_evidence values ('official_source_exclusions', 129754, evidence);
+      execute $plan$explain (analyze,buffers,format json) with target_jurisdictions as materialized
+        (select id from jurisdiction where distrito_code='04') select count(*),sum(rr.votes) from target_jurisdictions j
+        cross join lateral (select fact.votes from result_row fact where fact.jurisdiction_id=j.id
+          and fact.election_id='30000000-0000-0000-0000-000000000001' and fact.category_id='30000000-0000-0000-0000-000000000002'
+          and fact.source_kind='official' offset 0) rr$plan$ into evidence;
+      insert into scale_plan_evidence values ('district_geography_access',151754,evidence);
+      execute $plan$explain (analyze,buffers,format json) select results_exploration_official(
+        '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','04',
+        p_requested_level=>'distrito')$plan$ into evidence;
+      insert into scale_plan_evidence values ('district_rpc',151754,evidence);
+      execute $plan$explain (analyze, buffers, format json)
+        select public.results_exploration_coverage(
       '30000000-0000-0000-0000-000000000001'::uuid,
       '30000000-0000-0000-0000-000000000002'::uuid, '02', '027')$plan$
     into evidence;
@@ -260,19 +294,32 @@ end $$;
 select ok((select plan::text like '%result_row_non_official_scope_idx%'
     from scale_plan_evidence where label = 'official_source_exclusions'),
   'source exclusion audit uses the geography-selective non-official partial index');
-select ok((select label = 'official_core_scope'
-    and plan::text like '%result_row_exploration_scope_idx%'
-    and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
-      + coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0)) <= 20
-  from scale_plan_evidence where label = 'official_core_scope'),
-  'official core scopes tiny geography through the existing bounded access path');
+    select ok((select label = 'official_core_scope'
+        and plan::text like '%result_row_official_district_geography_idx%'
+        and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
+          + coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0)) <= 20
+        and (select district.plan::text like '%result_row_official_district_geography_idx%'
+          and not jsonb_path_exists(district.plan,
+            '$.** ? (@."Node Type" == "Seq Scan" && @."Relation Name" == "result_row")')
+          and (district.plan->0->>'Execution Time')::numeric<=2000
+          and coalesce((district.plan->0->'Plan'->>'Shared Hit Blocks')::bigint,0)
+            +coalesce((district.plan->0->'Plan'->>'Shared Read Blocks')::bigint,0)<=7500
+          from scale_plan_evidence district where district.label='district_geography_access')
+      from scale_plan_evidence where label = 'official_core_scope'),
+      'official core and district path use bounded geography-first index access without a fact seq scan');
+
 select ok((select label = 'coverage_production_rpc'
     and (plan->0->>'Execution Time')::numeric <= 15000
     and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
       + coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0)) <= 30000
     and (plan->0->'Plan'->>'Actual Rows')::bigint = 1
+    and (select (district.plan->0->>'Execution Time')::numeric<=5000
+      and coalesce((district.plan->0->'Plan'->>'Shared Hit Blocks')::bigint,0)
+        +coalesce((district.plan->0->'Plan'->>'Shared Read Blocks')::bigint,0)<=10000
+      and (district.plan->0->'Plan'->>'Actual Rows')::bigint=1
+      from scale_plan_evidence district where district.label='district_rpc')
   from scale_plan_evidence where label = 'coverage_production_rpc'),
-  'production-shaped public coverage RPC stays within time and shared-block budgets');
+  'production-shaped coverage and district RPCs stay within strict time and shared-block budgets');
 select ok((select label = 'coverage_unsupported_source_audit'
     and plan::text like '%result_row_non_official_scope_idx%'
     and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
@@ -292,7 +339,8 @@ select ok((plan->0->>'Execution Time')::numeric <= case
     and (plan->0->'Plan'->>'Actual Rows')::bigint = 1,
   label || ' stays within its disposable plan budget and returns one payload row'
 ) from scale_plan_evidence
-where label not in ('coverage_production_rpc', 'coverage_unsupported_source_audit')
+where label not in ('coverage_production_rpc', 'coverage_unsupported_source_audit',
+  'district_geography_access','district_rpc')
 order by label;
 select diag(format(
   '%s: representative_result_rows=%s planning_ms=%s execution_ms=%s top_node=%s shared_hit_blocks=%s shared_read_blocks=%s indexes=%s',
@@ -304,3 +352,5 @@ select diag(format(
 )) from scale_plan_evidence order by label;
 select * from finish();
 rollback;
+begin; delete from result_row where election_id::text like '30000000-%'; delete from jurisdiction where id::text like '30000000-%';
+delete from category where id::text like '30000000-%'; delete from election where id::text like '30000000-%'; commit;

@@ -13,12 +13,12 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 30))
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 31))
 
 
 def _validated_migration_path(number: int, *, down: bool = False) -> Path:
     if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
-        raise ValueError("migration number must be an integer from 1 through 29")
+        raise ValueError("migration number must be an integer from 1 through 30")
 
     directory = MIGRATIONS / "down" if down else MIGRATIONS
     resolved_directory = directory.resolve(strict=True)
@@ -262,7 +262,7 @@ def _seed_pre_0018_fiscalizacion_case(
     return official_jurisdiction_id, fiscalizacion_jurisdiction_id, before_count[0]
 
 
-def test_0029_official_forward_down_and_reapply_preserve_payload_and_0020() -> None:
+def test_0029_and_0030_forward_down_reapply_preserve_payload_and_0020() -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
@@ -276,7 +276,7 @@ def test_0029_official_forward_down_and_reapply_preserve_payload_and_0020() -> N
         params = conninfo_to_dict(database_dsn)
         params["options"] = f"-csearch_path={schema_name}"
         history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
-        assert _available_migration_numbers(maximum=29) == list(range(1, 30))
+        assert _available_migration_numbers(maximum=30) == list(range(1, 31))
         for number in (*range(1, 9), *range(11, 21)):
             _apply_migration(history_dsn, number)
         with psycopg.connect(history_dsn) as connection:
@@ -284,9 +284,9 @@ def test_0029_official_forward_down_and_reapply_preserve_payload_and_0020() -> N
                 "select to_regrole('results_exploration_executor')"
             ).fetchone() != (None,)
             connection.execute(
-                "alter function results_exploration_official"
+                sql.SQL("alter function results_exploration_official"
                 "(uuid,uuid,text,text,text,text,integer,text) "
-                "rename to results_exploration_official_0020"
+                "rename to results_exploration_official_0020")
             )
             connection.execute(
                 "create function results_exploration_official"
@@ -317,6 +317,40 @@ def test_0029_official_forward_down_and_reapply_preserve_payload_and_0020() -> N
                 "(uuid,uuid,text,text,text,text,integer,text)')"
             ).fetchone() == (None,)
         _apply_migration(history_dsn, 29)
+        empty_ids = uuid.uuid4(), uuid.uuid4()
+        with psycopg.connect(history_dsn) as connection:
+            connection.execute(
+                "with e as (insert into election(id,year,round) values (%s,2025,'test')) "
+                "insert into category(id,name) values (%s,'EMPTY')",
+                empty_ids,
+            )
+            before_0030 = connection.execute(
+                "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
+                empty_ids,
+            ).fetchone()
+        _apply_migration(history_dsn, 30)
+        with psycopg.connect(history_dsn) as connection:
+            after_0030 = connection.execute(
+                "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
+                empty_ids,
+            ).fetchone()
+            installed = connection.execute(
+                "select to_regprocedure('results_exploration_official_0030"
+                "(uuid,uuid,text,text,text,text,integer,text)') is not null,"
+                "to_regclass('result_row_official_district_geography_idx') is not null,"
+                "has_function_privilege('authenticated','results_exploration_official_0030"
+                "(uuid,uuid,text,text,text,text,integer,text)','execute')"
+            ).fetchone()
+        assert after_0030 == before_0030 and installed == (True, True, False)
+        _apply_down_migration(history_dsn, 30)
+        with psycopg.connect(history_dsn) as connection:
+            removed = connection.execute(
+                "select to_regprocedure('results_exploration_official_0030"
+                "(uuid,uuid,text,text,text,text,integer,text)') is null,"
+                "to_regclass('result_row_official_district_geography_idx') is null"
+            ).fetchone()
+        assert removed == (True, True)
+        _apply_migration(history_dsn, 30)
     finally:
         if schema_created:
             with psycopg.connect(database_dsn) as connection:
