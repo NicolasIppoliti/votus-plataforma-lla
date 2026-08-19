@@ -9,6 +9,7 @@ export const SUPABASE_START_TIMEOUT_MS = 10 * 60_000;
 export const RELEASE_GATE_MODE = {
 	FULL: "full",
 	RELEASE_PROOF_ONLY: "release-proof-only",
+	SCALE_PROOF_ONLY: "scale-proof-only",
 	ROLLBACK_PROOFS_ONLY: "rollback-proofs-only",
 } as const;
 
@@ -90,13 +91,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 28 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 29 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0029",
-	fileName: "0029_e2e_service_role_grants.sql",
+	version: "0030",
+	fileName: "0030_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
 
@@ -104,7 +105,8 @@ export function assertExactMigrationInventory(
 	actualVersions: readonly string[],
 	expectedVersions: readonly string[],
 ): void {
-	if (JSON.stringify(actualVersions) === JSON.stringify(expectedVersions)) return;
+	if (JSON.stringify(actualVersions) === JSON.stringify(expectedVersions))
+		return;
 	throw new Error(
 		`migration inventory must be exactly versions ${expectedVersions[0]} through ${expectedVersions.at(-1)}`,
 	);
@@ -141,33 +143,49 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 
 function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
 	const releaseProofOnly = argv.includes("--release-proof-only");
+	const scaleProofOnly = argv.includes("--scale-proof-only");
 	const rollbackProofsOnly = argv.includes("--rollback-proofs-only");
-	if (releaseProofOnly && rollbackProofsOnly)
-		throw new Error(
-			"--release-proof-only and --rollback-proofs-only cannot be combined",
-		);
+	if (
+		[releaseProofOnly, scaleProofOnly, rollbackProofsOnly].filter(Boolean)
+			.length > 1
+	)
+		throw new Error("reduced proof modes cannot be combined");
 	if (rollbackProofsOnly) return RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
+	if (scaleProofOnly) return RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	if (releaseProofOnly) return RELEASE_GATE_MODE.RELEASE_PROOF_ONLY;
 	return RELEASE_GATE_MODE.FULL;
 }
 
-export function createReleaseGatePlan(
-	mode: ReleaseGateMode,
-): ReleaseGatePlan {
+export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 	const rollbackProofsOnly = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
+	const scaleProofOnly = mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	return {
 		mode,
 		migrationVersions: [...MIGRATION_VERSIONS],
 		syntheticMigration: { ...SYNTHETIC_MIGRATION },
 		pgTapProofs: rollbackProofsOnly
 			? []
-			: PG_TAP_PROOFS.map((proof) => ({ ...proof })),
-		rollbackReapplyProofs: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({
-			...proof,
-		})),
-		requireBrowserCapability: !rollbackProofsOnly,
+			: PG_TAP_PROOFS.filter(
+					(proof) =>
+						!scaleProofOnly || proof.path === "tests/results_exploration_scale.sql",
+				).map((proof) => ({ ...proof })),
+		rollbackReapplyProofs: scaleProofOnly
+			? []
+			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
+		requireBrowserCapability:
+			mode === RELEASE_GATE_MODE.FULL ||
+			mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY,
 		runBrowser: mode === RELEASE_GATE_MODE.FULL,
 	};
+}
+
+export function formatPgTapFailure(
+	label: string,
+	status: number | null,
+	stdout: string,
+): string {
+	const evidence = stdout.trim();
+	return `${label} failed (exit ${status ?? "unavailable"}); pgTAP output:\n${evidence || "no pgTAP stdout"}`;
 }
 
 export async function runReleaseGateCli(
@@ -332,10 +350,7 @@ export async function cleanupReleaseGate<TServer>(
 			actions,
 			async (action) => {
 				if (action.kind === "stop-stack" && state.stackMutationAttempted)
-					await dependencies.stopStack(
-						ownership.workdir,
-						action.projectId,
-					);
+					await dependencies.stopStack(ownership.workdir, action.projectId);
 				else if (
 					action.kind === "remove-owned-containers" &&
 					state.stackMutationAttempted
@@ -405,9 +420,14 @@ function parseStatusUrl(value: string, label: string): URL {
 
 function isExactApiEndpoint(url: URL, expectedPort: number): boolean {
 	return (
-		url.protocol === "http:" && url.hostname === "127.0.0.1" &&
-		url.port === String(expectedPort) && url.username === "" && url.password === "" &&
-		url.pathname === "/" && url.search === "" && url.hash === ""
+		url.protocol === "http:" &&
+		url.hostname === "127.0.0.1" &&
+		url.port === String(expectedPort) &&
+		url.username === "" &&
+		url.password === "" &&
+		url.pathname === "/" &&
+		url.search === "" &&
+		url.hash === ""
 	);
 }
 
@@ -434,15 +454,12 @@ export function assertStackStatus(
 			throw new Error(`Supabase status omitted ${key}`);
 	const apiUrl = parseStatusUrl(status["API_URL"] as string, "API_URL");
 	if (!isExactApiEndpoint(apiUrl, expectedApiPort))
-		throw new Error("Supabase API URL does not match the reserved loopback endpoint");
-	const dbUrl = parseStatusUrl(status["DB_URL"] as string, "DB_URL");
-	if (
-		!dbUrl.protocol.startsWith("postgres") ||
-		dbUrl.hostname !== "127.0.0.1"
-	)
 		throw new Error(
-			"Supabase DB_URL is not an exact loopback Postgres endpoint",
+			"Supabase API URL does not match the reserved loopback endpoint",
 		);
+	const dbUrl = parseStatusUrl(status["DB_URL"] as string, "DB_URL");
+	if (!dbUrl.protocol.startsWith("postgres") || dbUrl.hostname !== "127.0.0.1")
+		throw new Error("Supabase DB_URL is not an exact loopback Postgres endpoint");
 	return status as unknown as StackStatus;
 }
 

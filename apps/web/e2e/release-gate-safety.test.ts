@@ -30,6 +30,7 @@ import {
 	assertExactMigrationInventory,
 	assertStackStatus,
 	assertTs7Version,
+	formatPgTapFailure,
 	cleanupReleaseGate,
 	establishOwnership,
 	reserveUniquePorts,
@@ -56,13 +57,13 @@ const ENV = {
 	NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
 	SUPABASE_SERVICE_ROLE_KEY: "service",
 	VOTUS_E2E_TEST_USER_EMAIL: "fixture@example.test",
-  VOTUS_E2E_TEST_USER_PASSWORD: randomBytes(24).toString("base64url"),
-  VOTUS_E2E_BASE_URL: "http://127.0.0.1:4100",
-  VOTUS_E2E_STORAGE_STATE: "/owned/auth-state.json",
-  VOTUS_E2E_BASE_URL_COMPARISON: "http://127.0.0.1:4101",
-  VOTUS_E2E_BASE_URL_FISCALIZACION: "http://127.0.0.1:4102",
-  VOTUS_E2E_BASE_URL_MUNICIPAL: "http://127.0.0.1:4103",
-  VOTUS_E2E_BASE_URL_PROVENANCE: "http://127.0.0.1:4104",
+	VOTUS_E2E_TEST_USER_PASSWORD: randomBytes(24).toString("base64url"),
+	VOTUS_E2E_BASE_URL: "http://127.0.0.1:4100",
+	VOTUS_E2E_STORAGE_STATE: "/owned/auth-state.json",
+	VOTUS_E2E_BASE_URL_COMPARISON: "http://127.0.0.1:4101",
+	VOTUS_E2E_BASE_URL_FISCALIZACION: "http://127.0.0.1:4102",
+	VOTUS_E2E_BASE_URL_MUNICIPAL: "http://127.0.0.1:4103",
+	VOTUS_E2E_BASE_URL_PROVENANCE: "http://127.0.0.1:4104",
 };
 const PASSED: GateTestResult[] = EXPECTED_E2E_SPECS.map((spec) => ({
 	spec,
@@ -99,7 +100,7 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("migration release-gate integration", () => {
-	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 28 }, (_, index) =>
+	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 29 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	);
 	it("inspects the exact production migration and proof plan", async () => {
@@ -107,10 +108,13 @@ describe("migration release-gate integration", () => {
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(EXPECTED_MIGRATION_VERSIONS);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0029",
-			fileName: "0029_e2e_service_role_grants.sql",
+			version: "0030",
+			fileName: "0030_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
+		expect(
+			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
+		).toBe(30);
 		expect(plan.pgTapProofs).toContainEqual({
 			path: "tests/results_coverage_scope_binding.sql",
 			label: "disposable coverage-scope-binding pgTAP",
@@ -134,6 +138,21 @@ describe("migration release-gate integration", () => {
 			assertSourceInventory(EXPECTED_MIGRATION_VERSIONS),
 		).resolves.toBeUndefined();
 	});
+	it("rolls back and reapplies production before installing synthetic 0030", () => {
+		const source = readFileSync(
+			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
+			"utf8",
+		);
+		const execution = source.split("async function executeGate(", 2)[1]!;
+		expect(
+			execution.indexOf("disposable Supabase incremental migrations"),
+		).toBeLessThan(
+			execution.indexOf("for (const proof of plan.rollbackReapplyProofs)"),
+		);
+		expect(
+			execution.indexOf("for (const proof of plan.rollbackReapplyProofs)"),
+		).toBeLessThan(execution.indexOf("await installSyntheticMigration("));
+	});
 	it.each([
 		{
 			defect: "missing",
@@ -141,20 +160,24 @@ describe("migration release-gate integration", () => {
 		},
 		{
 			defect: "duplicate",
-			actual: [...EXPECTED_MIGRATION_VERSIONS.slice(0, -1), "0027"],
+			actual: [...EXPECTED_MIGRATION_VERSIONS.slice(0, -1), "0028"],
 		},
 		{
 			defect: "skipped",
-			actual: EXPECTED_MIGRATION_VERSIONS.filter((version) => version !== "0014"),
+			actual: [
+				...EXPECTED_MIGRATION_VERSIONS.slice(0, 13),
+				...EXPECTED_MIGRATION_VERSIONS.slice(14),
+				"0030",
+			],
 		},
 		{
 			defect: "extra",
-			actual: [...EXPECTED_MIGRATION_VERSIONS, "0029"],
+			actual: [...EXPECTED_MIGRATION_VERSIONS, "0030"],
 		},
 	])("rejects a $defect migration inventory", ({ actual }) => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
-		).toThrow("migration inventory must be exactly versions 0001 through 0028");
+		).toThrow("migration inventory must be exactly versions 0001 through 0029");
 	});
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
@@ -164,6 +187,27 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
 	});
+	it("inspects only the scale proof for focused plan diagnosis", async () => {
+		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
+		expect(plan.mode).toBe(RELEASE_GATE_MODE.SCALE_PROOF_ONLY);
+		expect(plan.pgTapProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale.sql",
+				label: "disposable scale/EXPLAIN proof",
+				timeoutMs: 180_000,
+			},
+		]);
+		expect(plan.rollbackReapplyProofs).toEqual([]);
+		expect(plan.requireBrowserCapability).toBe(false);
+		expect(plan.runBrowser).toBe(false);
+	});
+	it("retains exact pgTAP stdout when a focused proof fails", () => {
+		expect(
+			formatPgTapFailure("scale proof", 1, "not ok 18 - shared blocks=3012\n"),
+		).toBe(
+			"scale proof failed (exit 1); pgTAP output:\nnot ok 18 - shared blocks=3012",
+		);
+	});
 	it("inspects rollback proofs without browser or pgTAP work", async () => {
 		const plan = await inspectReleaseGatePlan(["--rollback-proofs-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY);
@@ -172,23 +216,57 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through migration 0028", () => {
-		const proof = readFileSync(new URL("../../../supabase/tests/results_exploration_release.sql", import.meta.url), "utf8");
+	it("proves the exact results-exploration rollback through migration 0029", () => {
+		const proof = readFileSync(
+			new URL(
+				"../../../supabase/tests/results_exploration_release.sql",
+				import.meta.url,
+			),
+			"utf8",
+		);
 		const migrationSequence = Array.from(
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("28 as migration_inventory_count");
+		expect(proof).toContain("29 as migration_inventory_count");
 		expect(migrationSequence).toEqual([
-			"0028-down", "0027-down", "0026-down", "0025-down", "0023-down", "0022-down", "0021-down", "0020-down",
-			"0020-up", "0021-up", "0022-up", "0023-up", "0025-up", "0026-up", "0027-up", "0028-up",
+			"0029-down",
+			"0028-down",
+			"0027-down",
+			"0026-down",
+			"0025-down",
+			"0023-down",
+			"0022-down",
+			"0021-down",
+			"0020-down",
+			"0020-up",
+			"0021-up",
+			"0022-up",
+			"0023-up",
+			"0025-up",
+			"0026-up",
+			"0027-up",
+			"0028-up",
+			"0029-up",
 		]);
-		expect(proof).toContain("0028 rollback did not restore the exact 0026 facet discovery plan");
-		expect(proof).toContain("0026 rollback did not restore the exact optimized five-argument facets definition");
-		expect(proof).toContain("0026 forward apply did not restore the six-argument mesa lineage definition");
-		expect(proof).toContain("0027 rollback changed explorer functions instead of dropping only its index");
-		expect(proof).toContain("0027 forward apply installed the wrong non-official partial-index contract");
-		expect(proof).toContain("0028 forward apply did not restore bounded six-argument facet discovery");
+		expect(proof).toContain(
+			"0028 rollback did not restore the exact 0026 facet discovery plan",
+		);
+		expect(proof).toContain(
+			"0026 rollback did not restore the exact optimized five-argument facets definition",
+		);
+		expect(proof).toContain(
+			"0026 forward apply did not restore the six-argument mesa lineage definition",
+		);
+		expect(proof).toContain(
+			"0027 rollback changed explorer functions instead of dropping only its index",
+		);
+		expect(proof).toContain(
+			"0027 forward apply installed the wrong non-official partial-index contract",
+		);
+		expect(proof).toContain(
+			"0028 forward apply did not restore bounded six-argument facet discovery",
+		);
 	});
 	it("hands the full scale and rollback/reapply proofs to production execution", async () => {
 		const executedPlans: ReleaseGatePlan[] = [];
@@ -223,11 +301,7 @@ describe("migration release-gate integration", () => {
 		},
 		{
 			phase: "inspection",
-			argv: [
-				"--release-proof-only",
-				"--rollback-proofs-only",
-				"--inspect-plan",
-			],
+			argv: ["--scale-proof-only", "--rollback-proofs-only", "--inspect-plan"],
 		},
 	])("rejects conflicting reduced modes before $phase", async ({ argv }) => {
 		let executed = false;
@@ -241,9 +315,7 @@ describe("migration release-gate integration", () => {
 					output += chunk;
 				},
 			}),
-		).rejects.toThrow(
-			"--release-proof-only and --rollback-proofs-only cannot be combined",
-		);
+		).rejects.toThrow("reduced proof modes cannot be combined");
 		expect(executed).toBe(false);
 		expect(output).toBe("");
 	});
@@ -263,7 +335,7 @@ describe("migration release-gate integration", () => {
 	});
 });
 describe("base contracts", () => {
-  it("keeps the isolated CI Postgres service passwordless", () => {
+	it("keeps the isolated CI Postgres service passwordless", () => {
 		const workflow = readFileSync(
 			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
 			"utf8",
@@ -272,38 +344,31 @@ describe("base contracts", () => {
 			new URL("./gate-contract.ts", import.meta.url),
 			"utf8",
 		);
-		const passwordEnvironmentName = ["VOTUS_E2E_TEST_USER", "PASSWORD"].join(
-			"_",
-		);
-    expect(workflow).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
-    expect(workflow).not.toContain(`${["POSTGRES", "PASSWORD"].join("_")}:`);
-		expect(workflow).toContain(
-			"postgresql://postgres@127.0.0.1:54322/template1",
-		);
-    expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
-  });
-  it("allows a cold CI runner to pull and start Supabase", () => {
-    expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
-  });
-  it("requires and returns every generated environment value", () => {
-    expect(assertE2eEnvironment(ENV)).toEqual(ENV);
+		const passwordEnvironmentName = ["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_");
+		expect(workflow).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
+		expect(workflow).not.toContain(`${["POSTGRES", "PASSWORD"].join("_")}:`);
+		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
+		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
+	});
+	it("allows a cold CI runner to pull and start Supabase", () => {
+		expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
+	});
+	it("requires and returns every generated environment value", () => {
+		expect(assertE2eEnvironment(ENV)).toEqual(ENV);
 		expect(() => assertE2eEnvironment({})).toThrow(
 			["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_"),
 		);
-  });
-  it("accepts only the exact eight-pass inventory", () => {
-    expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
-    expect(() => assertGateReport([], "passed")).toThrow("discovered 0 tests");
+	});
+	it("accepts only the exact eight-pass inventory", () => {
+		expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
+		expect(() => assertGateReport([], "passed")).toThrow("discovered 0 tests");
 		expect(() =>
-			assertGateReport(
-				[{ ...PASSED[0]!, spec: "e2e/other.spec.ts" }],
-				"passed",
-			),
+			assertGateReport([{ ...PASSED[0]!, spec: "e2e/other.spec.ts" }], "passed"),
 		).toThrow("spec inventory mismatch");
 		expect(() => assertGateReport(PASSED.slice(0, 4), "passed")).toThrow(
 			"discovered 4 tests; expected 8",
 		);
-  });
+	});
 	it.each(["skipped", "interrupted", "failed", "timedOut"] as const)(
 		"rejects %s",
 		(status) => {
@@ -319,7 +384,7 @@ describe("base contracts", () => {
 		expect(() => assertGateReport(PASSED, "interrupted")).toThrow(
 			"suite status=interrupted",
 		));
-  it("plans exact owned cleanup and refuses foreign scope or marker", () => {
+	it("plans exact owned cleanup and refuses foreign scope or marker", () => {
 		expect(
 			planOwnedCleanup("/private/tmp", OWNERSHIP.workdir, OWNERSHIP, OWNERSHIP),
 		).toEqual(ACTIONS);
@@ -454,91 +519,90 @@ describe("base contracts", () => {
 			error.errors.some(
 				(item) =>
 					item instanceof Error &&
-					item.message ===
-						"disposable Supabase cleanup left owned Docker state",
+					item.message === "disposable Supabase cleanup left owned Docker state",
 			),
 		);
 	});
-  it("assigns authenticated state to every spec except the auth boundary test", () => {
-    const path = "/owned/auth-state.json";
-    for (const spec of EXPECTED_E2E_SPECS)
-      expect(storageStateForSpec(spec, path)).toEqual(
+	it("assigns authenticated state to every spec except the auth boundary test", () => {
+		const path = "/owned/auth-state.json";
+		for (const spec of EXPECTED_E2E_SPECS)
+			expect(storageStateForSpec(spec, path)).toEqual(
 				spec === "e2e/auth.spec.ts" ? emptyStorageState() : path,
 			);
 		expect(() => storageStateForSpec("e2e/unknown.spec.ts", path)).toThrow(
 			"unknown e2e spec",
 		);
-  });
-  it("accepts only policy-compliant server-created cookie deltas on the loopback app host", () => {
-    const baseUrl = "http://127.0.0.1:4100";
-    const preExistingCookie = {
-      name: "unrelated-pre-existing",
-      domain: "127.0.0.1",
-      path: "/",
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax" as const,
-    };
-    const sessionCookies = [
-      {
-        name: "opaque-session-chunk.0",
-        domain: "127.0.0.1",
-        path: "/",
-        httpOnly: true,
-        secure: false,
-        sameSite: "Lax" as const,
-      },
-      {
-        name: "opaque-session-chunk.1",
-        domain: "127.0.0.1",
-        path: "/",
-        httpOnly: true,
-        secure: false,
-        sameSite: "Lax" as const,
-      },
-    ];
-    expect(
-      assertLoopbackSessionCookieDelta(
-        [preExistingCookie],
-        [preExistingCookie, ...sessionCookies],
-        baseUrl,
-      ),
-    ).toEqual(sessionCookies);
-    expect(
-      sameCookieIdentity(sessionCookies[0]!, {
-        ...sessionCookies[0]!,
-        path: "/other",
-      }),
-    ).toBe(false);
-    expect(
-      sameCookieIdentity(sessionCookies[0]!, {
-        ...sessionCookies[0]!,
-        domain: "localhost",
-      }),
-    ).toBe(false);
-    expect(() =>
-      assertLoopbackSessionCookieDelta(
-        [preExistingCookie],
-        [preExistingCookie],
-        baseUrl,
-      ),
-    ).toThrow("new session cookie");
-    for (const invalidCookie of [
-      { ...sessionCookies[0]!, httpOnly: false },
-      { ...sessionCookies[0]!, secure: true },
-      { ...sessionCookies[0]!, sameSite: "Strict" as const },
-      { ...sessionCookies[0]!, path: "/dashboard" },
-      { ...sessionCookies[0]!, domain: "localhost" },
-    ])
-      expect(() =>
-        assertLoopbackSessionCookieDelta([], [invalidCookie], baseUrl),
-      ).toThrow("session cookie");
-  });
-  it("classifies and plans only proven stale owned workdirs", () => {
-    expect(classifyStaleOwnership(STALE_EVIDENCE)).toBe("reap");
-    expect(planStaleWorkdirReap(STALE_EVIDENCE)).toEqual([
-      { workdir: STALE_EVIDENCE.expectedWorkdir, projectId: "votus-e2e-stale" },
-    ]);
+	});
+	it("accepts only policy-compliant server-created cookie deltas on the loopback app host", () => {
+		const baseUrl = "http://127.0.0.1:4100";
+		const preExistingCookie = {
+			name: "unrelated-pre-existing",
+			domain: "127.0.0.1",
+			path: "/",
+			httpOnly: false,
+			secure: false,
+			sameSite: "Lax" as const,
+		};
+		const sessionCookies = [
+			{
+				name: "opaque-session-chunk.0",
+				domain: "127.0.0.1",
+				path: "/",
+				httpOnly: true,
+				secure: false,
+				sameSite: "Lax" as const,
+			},
+			{
+				name: "opaque-session-chunk.1",
+				domain: "127.0.0.1",
+				path: "/",
+				httpOnly: true,
+				secure: false,
+				sameSite: "Lax" as const,
+			},
+		];
+		expect(
+			assertLoopbackSessionCookieDelta(
+				[preExistingCookie],
+				[preExistingCookie, ...sessionCookies],
+				baseUrl,
+			),
+		).toEqual(sessionCookies);
+		expect(
+			sameCookieIdentity(sessionCookies[0]!, {
+				...sessionCookies[0]!,
+				path: "/other",
+			}),
+		).toBe(false);
+		expect(
+			sameCookieIdentity(sessionCookies[0]!, {
+				...sessionCookies[0]!,
+				domain: "localhost",
+			}),
+		).toBe(false);
+		expect(() =>
+			assertLoopbackSessionCookieDelta(
+				[preExistingCookie],
+				[preExistingCookie],
+				baseUrl,
+			),
+		).toThrow("new session cookie");
+		for (const invalidCookie of [
+			{ ...sessionCookies[0]!, httpOnly: false },
+			{ ...sessionCookies[0]!, secure: true },
+			{ ...sessionCookies[0]!, sameSite: "Strict" as const },
+			{ ...sessionCookies[0]!, path: "/dashboard" },
+			{ ...sessionCookies[0]!, domain: "localhost" },
+		])
+			expect(() =>
+				assertLoopbackSessionCookieDelta([], [invalidCookie], baseUrl),
+			).toThrow("session cookie");
+	});
+	it("classifies and plans only proven stale owned workdirs", () => {
+		expect(classifyStaleOwnership(STALE_EVIDENCE)).toBe("reap");
+		expect(planStaleWorkdirReap(STALE_EVIDENCE)).toEqual([
+			{ workdir: STALE_EVIDENCE.expectedWorkdir, projectId: "votus-e2e-stale" },
+		]);
 		expect(
 			classifyStaleOwnership({ ...STALE_EVIDENCE, ownerProcessActive: true }),
 		).toBe("live");
@@ -548,9 +612,7 @@ describe("base contracts", () => {
 				projectResourcesActive: true,
 			}),
 		).toBe("live");
-		expect(classifyStaleOwnership({ ...STALE_EVIDENCE, ageMs: 1 })).toBe(
-			"live",
-		);
+		expect(classifyStaleOwnership({ ...STALE_EVIDENCE, ageMs: 1 })).toBe("live");
 		expect(
 			classifyStaleOwnership({ ...STALE_EVIDENCE, repositoryMatches: false }),
 		).toBe("foreign");
@@ -566,16 +628,16 @@ describe("base contracts", () => {
 				projectResourcesActive: undefined,
 			}),
 		).toBe("ambiguous");
-  });
+	});
 });
 it("continues every cleanup step, verifies residuals, and aggregates failures", async () => {
-    const reached: string[] = [];
+	const reached: string[] = [];
 	await expect(
 		runOwnedCleanup(
 			ACTIONS,
 			async (action) => {
 				reached.push(action.kind);
-      if (action.kind !== "remove-workdir") throw new Error(action.kind);
+				if (action.kind !== "remove-workdir") throw new Error(action.kind);
 			},
 			async () => {
 				reached.push("verify");
@@ -596,15 +658,15 @@ it("publishes ownership before the first side effect and rolls back marker failu
 	const events: string[] = [];
 	expect(() =>
 		establishOwnership(state, OWNERSHIP, {
-      createWorkdir: () => events.push(`create:${state.ownership?.token}`),
+			createWorkdir: () => events.push(`create:${state.ownership?.token}`),
 			writeMarker: () => {
 				throw new Error("marker failed");
 			},
-      rollbackWorkdir: () => events.push("rollback"),
+			rollbackWorkdir: () => events.push("rollback"),
 		}),
 	).toThrow("marker failed");
-    expect(events).toEqual(["create:token", "rollback"]);
-    expect(state.ownership).toBeUndefined();
+	expect(events).toEqual(["create:token", "rollback"]);
+	expect(state.ownership).toBeUndefined();
 });
 it("reserves one unique set and releases duplicate reservations", async () => {
 	const released: number[] = [];
@@ -621,8 +683,8 @@ it("reserves one unique set and releases duplicate reservations", async () => {
 			};
 		},
 	);
-    expect(reservations.map(({ port }) => port)).toEqual([3100, 3200, 3300]);
-    expect(released).toEqual([3100]);
+	expect(reservations.map(({ port }) => port)).toEqual([3100, 3200, 3300]);
+	expect(released).toEqual([3100]);
 });
 describe("release-gate version and endpoint validation", () => {
 	const stackStatus = (apiUrl: string) =>
@@ -648,11 +710,16 @@ describe("release-gate version and endpoint validation", () => {
 		"http://localhost:43123/",
 		"http://127.0.0.1:43124/",
 	])("rejects malformed API endpoint %s", (apiUrl) => {
-		expect(() => assertStackStatus(stackStatus(apiUrl), 43123)).toThrow("Supabase API URL");
+		expect(() => assertStackStatus(stackStatus(apiUrl), 43123)).toThrow(
+			"Supabase API URL",
+		);
 	});
 	it("still requires all keys and validates DB_URL independently", () => {
 		expect(() =>
-			assertStackStatus(JSON.stringify({ API_URL: "http://127.0.0.1:43123" }), 43123),
+			assertStackStatus(
+				JSON.stringify({ API_URL: "http://127.0.0.1:43123" }),
+				43123,
+			),
 		).toThrow("ANON_KEY");
 		expect(() =>
 			assertStackStatus(
@@ -689,36 +756,36 @@ describe("ReleaseGateReporter", () => {
 		(spec, index) =>
 			({ id: String(index), location: { file: `/repo/${spec}` } }) as TestCase,
 	);
-  const suite = { allTests: () => cases } as Suite;
-  const fullResult = { status: "passed" } as FullResult;
+	const suite = { allTests: () => cases } as Suite;
+	const fullResult = { status: "passed" } as FullResult;
 	const makeReporter = (capture: (content: string) => void) =>
 		new ReleaseGateReporter({
 			receiptPath: "/receipt.json",
 			writeReceipt: (_path, content) => capture(content),
 			writeError: () => undefined,
 		});
-  it("is directly driven through the exact passing inventory", async () => {
-    let receipt = "";
+	it("is directly driven through the exact passing inventory", async () => {
+		let receipt = "";
 		const reporter = makeReporter((content) => {
 			receipt = content;
 		});
-    reporter.onBegin({} as FullConfig, suite);
+		reporter.onBegin({} as FullConfig, suite);
 		for (const testCase of cases)
 			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
-    await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
-    expect(JSON.parse(receipt).results).toHaveLength(8);
-  });
-  it("records a discovered test with no result as interrupted", async () => {
-    let receipt = "";
+		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
+		expect(JSON.parse(receipt).results).toHaveLength(8);
+	});
+	it("records a discovered test with no result as interrupted", async () => {
+		let receipt = "";
 		const reporter = makeReporter((content) => {
 			receipt = content;
 		});
-    reporter.onBegin({} as FullConfig, suite);
+		reporter.onBegin({} as FullConfig, suite);
 		await expect(reporter.onEnd(fullResult)).resolves.toEqual({
 			status: "failed",
 		});
 		expect(JSON.parse(receipt).results[0]).toMatchObject({
 			status: "interrupted",
 		});
-  });
+	});
 });

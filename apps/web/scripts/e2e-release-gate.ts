@@ -35,6 +35,7 @@ import {
 	assertStackStatus,
 	assertTs7Version,
 	cleanupReleaseGate,
+	formatPgTapFailure,
 	establishOwnership,
 	reserveUniquePorts,
 	runReleaseGateCli,
@@ -126,9 +127,7 @@ function runEvidence(
 		timeout,
 	});
 	if (result.error || result.status !== 0)
-		throw new Error(
-			`${label} failed (exit ${result.status ?? "unavailable"}); output redacted`,
-		);
+		throw new Error(formatPgTapFailure(label, result.status, result.stdout));
 	process.stdout.write(`${label}:\n${result.stdout.trim()}\n`);
 }
 async function expandSqlIncludes(
@@ -251,11 +250,7 @@ export async function assertSourceInventory(
 }
 function assertIsolationCapabilities(requireBrowser: boolean): void {
 	requireCommand("pnpm", ["--version"], "pnpm");
-	requireCommand(
-		"docker",
-		["info", "--format", "{{.ServerVersion}}"],
-		"Docker",
-	);
+	requireCommand("docker", ["info", "--format", "{{.ServerVersion}}"], "Docker");
 	requireCommand("supabase", ["--version"], "Supabase CLI");
 	assertTs7Version(
 		requireCommand(
@@ -372,10 +367,7 @@ async function createIsolatedWorkdir(
 		mode: 0o600,
 	});
 }
-async function installRemainingMigrations(
-	workdir: string,
-	syntheticMigration: ReleaseGateSyntheticMigration,
-): Promise<void> {
+async function installProductionMigrations(workdir: string): Promise<void> {
 	const targetMigrations = path.join(workdir, "supabase", "migrations");
 	const migrationNames = (
 		await readdir(path.join(SOURCE_SUPABASE, "migrations"))
@@ -387,9 +379,14 @@ async function installRemainingMigrations(
 			path.join(SOURCE_SUPABASE, "migrations", name),
 			path.join(targetMigrations, name),
 		);
+}
+async function installSyntheticMigration(
+	workdir: string,
+	migration: ReleaseGateSyntheticMigration,
+): Promise<void> {
 	await cp(
-		path.join(WEB_ROOT, syntheticMigration.sourcePath),
-		path.join(targetMigrations, syntheticMigration.fileName),
+		path.join(WEB_ROOT, migration.sourcePath),
+		path.join(workdir, "supabase", "migrations", migration.fileName),
 	);
 }
 async function waitForServer(url: string, child: ChildProcess): Promise<void> {
@@ -561,9 +558,7 @@ async function matchesRepository(
 ): Promise<boolean> {
 	try {
 		const target = path.join(candidate, "supabase", "migrations");
-		const sourceNames = (
-			await readdir(path.join(SOURCE_SUPABASE, "migrations"))
-		)
+		const sourceNames = (await readdir(path.join(SOURCE_SUPABASE, "migrations")))
 			.filter((name) => /^\d{4}_.+\.sql$/.test(name))
 			.sort();
 		const targetNames = (await readdir(target))
@@ -578,14 +573,8 @@ async function matchesRepository(
 			)
 				return false;
 		return (
-			(await readFile(
-				path.join(target, syntheticMigration.fileName),
-				"utf8",
-			)) ===
-			(await readFile(
-				path.join(WEB_ROOT, syntheticMigration.sourcePath),
-				"utf8",
-			))
+			(await readFile(path.join(target, syntheticMigration.fileName), "utf8")) ===
+			(await readFile(path.join(WEB_ROOT, syntheticMigration.sourcePath), "utf8"))
 		);
 	} catch {
 		return false;
@@ -734,10 +723,7 @@ async function executeGate(
 		process.env,
 		SUPABASE_START_TIMEOUT_MS,
 	);
-	await installRemainingMigrations(
-		ownership.workdir,
-		plan.syntheticMigration,
-	);
+	await installProductionMigrations(ownership.workdir);
 	runChecked(
 		"supabase",
 		[
@@ -778,6 +764,20 @@ async function executeGate(
 			await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
 			proof.label,
 		);
+	await installSyntheticMigration(ownership.workdir, plan.syntheticMigration);
+	runChecked(
+		"supabase",
+		[
+			"migration",
+			"up",
+			"--local",
+			"--include-all",
+			"--workdir",
+			ownership.workdir,
+			"--yes",
+		],
+		"disposable Supabase synthetic migration",
+	);
 	if (!plan.runBrowser) return;
 	const baseURLs = Object.fromEntries(
 		serverPlan.map(({ scenario, port }) => [
@@ -801,10 +801,7 @@ async function executeGate(
 			ownership.workdir,
 			"authenticated-state.json",
 		),
-		VOTUS_E2E_RESULT_FILE: path.join(
-			ownership.workdir,
-			"playwright-result.json",
-		),
+		VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
 	};
 	runChecked(
 		"pnpm",
@@ -845,10 +842,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 			void Promise.race([
 				cleanOnce(),
 				new Promise<never>((_, reject) =>
-					setTimeout(
-						() => reject(new Error("signal cleanup timed out")),
-						120_000,
-					),
+					setTimeout(() => reject(new Error("signal cleanup timed out")), 120_000),
 				),
 			])
 				.catch((error: unknown) =>
@@ -879,9 +873,11 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 	process.stdout.write(
 		plan.mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY
 			? "Rollback proofs passed: 2 SQL processes, cleanup complete\n"
-			: plan.mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY
-				? "Release proof passed: coverage scope binding, rollback/reapply, scale, pgTAP, and cleanup complete\n"
-				: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
+			: plan.mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY
+				? "Scale proof passed: pgTAP/EXPLAIN and cleanup complete\n"
+				: plan.mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY
+					? "Release proof passed: coverage scope binding, rollback/reapply, scale, pgTAP, and cleanup complete\n"
+					: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
 	);
 }
 export async function releaseGateMain(
@@ -895,10 +891,7 @@ export async function releaseGateMain(
 	});
 }
 const directEntry = process.argv[1];
-if (
-	directEntry &&
-	path.resolve(directEntry) === fileURLToPath(import.meta.url)
-)
+if (directEntry && path.resolve(directEntry) === fileURLToPath(import.meta.url))
 	void releaseGateMain().catch((error: unknown) => {
 		const message = error instanceof Error ? error.message : "unknown failure";
 		process.stderr.write(`E2E release gate failed: ${message}\n`);

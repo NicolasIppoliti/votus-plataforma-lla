@@ -89,8 +89,12 @@ test.describe("no fiscalización leakage into the rendered page", () => {
             selector.getByRole("option", { name: optionText, exact: true }),
           ).toHaveAttribute("value", value);
         }
-        await selector.selectOption(value);
-        await expect.poll(() => new URL(page.url()).searchParams.get(name)).toBe(value);
+        await Promise.all([
+          page.waitForURL(
+            (url) => url.pathname === "/drilldown" && url.searchParams.get(name) === value,
+          ),
+          selector.selectOption(value),
+        ]);
         await expectNoBlankSearchParams(page);
       };
       await refresh("Elección", "electionId", SOURCE_SCOPE.electionId);
