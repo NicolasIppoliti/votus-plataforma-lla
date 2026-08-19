@@ -52,23 +52,42 @@ test.describe("the fiscalizacion route explores coverage", () => {
         })).toBe(false);
       }
 
-      const refresh = async (label: string, name: string, value: string): Promise<void> => {
-        await page.getByLabel(label).selectOption(value);
-        await expect.poll(() => new URL(page.url()).searchParams.get(name)).toBe(value);
-        await expectNoBlankSearchParams(page);
+      const form = page.locator('form[action="/fiscalizacion"]');
+      await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
+      const draft = async (label: string, value: string, dependent: string): Promise<void> => {
+        const control = page.getByLabel(label), child = page.getByLabel(dependent);
+        const responsePromise = page.waitForResponse((response) =>
+          new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
+        await control.focus(); await control.selectOption(value);
+        expect(page.url()).toBe(coldUrl);
+        await expect(control).toBeFocused();
+        await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
+        const response = await responsePromise;
+        expect(await response.json()).toMatchObject({
+          capability: "coverage-scope-options", meaning: "scope-options-only",
+        });
+        await expect(child).toBeEnabled();
+        await expect(form).not.toHaveAttribute("aria-busy", "true");
+        await expect(form.locator('[aria-live="polite"]')).toHaveText("");
+        await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
-      await refresh("Elección", "electionId", COVERAGE_SCOPE.electionId);
-      await refresh("Categoría", "categoryId", COVERAGE_SCOPE.categoryId);
-      await refresh("Distrito", "distritoCode", COVERAGE_SCOPE.distritoCode);
+      await draft("Elección", COVERAGE_SCOPE.electionId, "Categoría");
+      await draft("Categoría", COVERAGE_SCOPE.categoryId, "Distrito");
+      await draft("Distrito", COVERAGE_SCOPE.distritoCode, "Sección");
+      const sectionResponse = page.waitForResponse((response) =>
+        new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
       await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode);
-      await page.getByRole("button", { name: "Mostrar cobertura" }).click();
-      await expectNoBlankSearchParams(page);
-      await expect(page).toHaveURL(new URL(
+      expect(page.url()).toBe(coldUrl); await sectionResponse;
+      const expectedUrl = new URL(
         `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
           `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
-          `&seccionCode=${COVERAGE_SCOPE.seccionCode}`,
-        baseURL,
-      ).toString());
+          `&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL,
+      ).toString();
+      const navigations: string[] = [];
+      page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
+      await page.getByRole("button", { name: "Mostrar cobertura" }).click();
+      await expect(page).toHaveURL(expectedUrl); await expectNoBlankSearchParams(page);
+      expect(navigations).toEqual([expectedUrl]);
 
       const primaryNavigation = page.getByRole("navigation", { name: "principal" });
       await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
@@ -100,8 +119,10 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(main).toContainText(`fiscalización: 1 filas / ${FISCALIZACION_VOTES} votos / 1 mesas`);
       await expect(main.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(3);
       const reusableUrl = page.url();
-      await page.reload();
+      await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
       await expect(page).toHaveURL(reusableUrl);
+      await expect(page.getByLabel("Sección")).toHaveValue(COVERAGE_SCOPE.seccionCode);
+      await page.reload(); await expect(page).toHaveURL(reusableUrl);
       await expect(page.getByRole("main")).toContainText("1 mesas cubiertas de 2 mesas oficiales");
       const schools = main.getByRole("list", { name: "Cobertura por establecimiento" });
       await expect(schools.getByRole("listitem")).toHaveCount(2);

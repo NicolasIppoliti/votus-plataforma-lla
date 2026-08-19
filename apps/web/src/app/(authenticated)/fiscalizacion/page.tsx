@@ -354,30 +354,11 @@ export interface TopPartyResult {
   unmappedByListId: { listId: string; rows: number; votes: number }[];
 }
 
-/**
- * Whether these rows may be combined into one figure at all.
- *
- * Official and fiscalización numbers are never summed together, and this is
- * the AGGREGATES' own guard: the caller checking before it calls them is
- * precisely "blocking one path is not blocking the others".
- */
-export function mixedSourceKindReason(rows: ResultRow[]): string | null {
-  const kinds = new Set(rows.map((row) => row.sourceKind));
-  if (kinds.size <= 1) return null;
-  // The aggregates' OWN guard, not the caller's. `renderFiscalizacionView`
-  // checking before it calls them is precisely "blocking one path is not
-  // blocking the others" -- `loadOfficialComparison` calls `partyShare` on a
-  // different row set entirely.
-  return (
-    `las filas mezclan tipos de fuente (${[...kinds].sort().join(", ")}); las cifras oficiales y ` +
-    "de fiscalización nunca se combinan en un mismo número"
-  );
-}
-
 function expectedSourceKindReason(rows: ResultRow[], expected: SourceKind): string | null {
   const breakdown = describeExcluded(tallyByKind(rows.filter((row) => row.sourceKind !== expected))); return breakdown === null ? null : `se esperaban únicamente filas ${sourceKindLabel(expected)}, pero se recibieron tipos de fuente distintos: ${breakdown}; las cifras oficiales y de fiscalización nunca se combinan en un mismo número`;
 }
 
+function combineRefusalReasons(...reasons: (string | null)[]): string | null { return [...new Set(reasons.filter((reason): reason is string => reason !== null))].join("; ") || null; }
 /**
  * The party with the most votes among the rows, or `null` when no row
  * resolved to a party at all.
@@ -417,10 +398,7 @@ export function topParty(rows: ResultRow[], expectedSourceKind: SourceKind): Top
   // granularity, so the unmapped tally is still computed and reported below.
   // Zeroing it hid the per-list-id breakdown entirely whenever levels were
   // mixed: a silent exclusion behind a plausible total.
-	const refusedReason =
-		expectedSourceKindReason(rows, expectedSourceKind) ??
-		mixedGranularityReason(rows) ??
-		nameConflictReason;
+	const refusedReason = combineRefusalReasons(expectedSourceKindReason(rows, expectedSourceKind), mixedGranularityReason(rows), nameConflictReason);
 
   // Keyed on the CANONICAL id. Keying on the name merged nothing across a
   // respelling and split one party in two within a year. Display names remain a
@@ -501,10 +479,7 @@ export function partyShare(
   // operator; the match still keys on the id.
   displayName: string = canonicalPartyId,
 ): ShareResult {
-  const mixed = expectedSourceKindReason(rows, expectedSourceKind) ?? mixedGranularityReason(rows);
-  if (mixed) {
-    return { status: "unavailable", reason: mixed };
-  }
+  const reasons = [expectedSourceKindReason(rows, expectedSourceKind), mixedGranularityReason(rows)];
 
   // On the CANONICAL id. Matching display names across two elections gave the
   // sides zero common keys whenever the curated file respelled a party, and
@@ -518,14 +493,11 @@ export function partyShare(
       .map((row) => row.partyName)
       .filter((name): name is string => Boolean(name)),
   );
-  if (matchingNames.size > 1) {
-    return {
-      status: "unavailable",
-      reason:
-        `los identificadores canónicos de partido tienen nombres no vacíos contradictorios (${canonicalPartyId}: ` +
-        `${[...matchingNames].sort().join(" | ")})`,
-    };
-  }
+  if (matchingNames.size > 1) reasons.push(
+    `los identificadores canónicos de partido tienen nombres no vacíos contradictorios (${canonicalPartyId}: ` +
+    `${[...matchingNames].sort().join(" | ")})`);
+  const refusedReason = combineRefusalReasons(...reasons);
+  if (refusedReason) return { status: "unavailable", reason: refusedReason };
 
   const totalVotes = rows.reduce((sum, row) => sum + row.votes, 0);
   if (totalVotes === 0) {
@@ -643,9 +615,6 @@ interface CoverageFormSelection {
               </div>
             </fieldset>
                 <div className="form-actions">
-                  <button className="button button--secondary" type="submit" formNoValidate>
-                    Actualizar opciones
-                  </button>
                   <button className="button button--primary" type="submit">Mostrar cobertura</button>
                 </div>
               </ScopeSelectorForm>
@@ -688,7 +657,7 @@ function coverageExclusionReasonLabel(reason: string): string {
       "filas con un tipo de fuente no admitido",
   };
   const label = labels[reason];
-  return label ?? "filas excluidas por una condición de integridad no reconocida";
+  return label ?? `filas excluidas por una condición de integridad no reconocida (${reason})`;
 }
 
 const spanishIntegerFormat = new Intl.NumberFormat("es-AR");
@@ -730,21 +699,25 @@ function schoolExclusions(entries: CoverageExclusion[]): ReactNode {
 
 type CoverageLoader = (selection: CoverageSelection) => Promise<CoverageResult>;
 
-function passesRenderedCoverageSourceIsolation(result: CoverageOk): boolean {
-	return (
-		result.sourceKind === "fiscalizacion" &&
-		result.sourceAudit.length === 1 &&
-		result.sourceAudit.every((entry) => entry.kind === "fiscalizacion") &&
-		result.denominatorAudit.length === 1 &&
-		result.denominatorAudit.every((entry) => entry.kind === "official") &&
-		result.isRandomSample === false &&
-		result.mesasCoverage.isRandomSample === false &&
-		result.escuelas.items.every((school) => school.isRandomSample === false) &&
-		result.mesas.length === result.mesasCoverage.denominatorUnits &&
-		result.mesas.filter((mesa) => mesa.covered).length ===
-			result.mesasCoverage.observedUnits &&
-		result.mesasCoverage.observedUnits <= result.mesasCoverage.denominatorUnits
-	);
+function coverageAuditFailures(label: string, entries: CoverageOk["sourceAudit"], expected: SourceKind, expectedMesas: number): string[] {
+	const failures = entries.length === 1 ? [] : [`${label}: se esperaba 1 entrada y se recibieron ${entries.length}.`];
+	entries.forEach((entry, index) => {
+		if (entries.length !== 1 || entry.kind !== expected) failures.push(`${label} ${index + 1}: ${sourceKindLabel(entry.kind)}: ${rowsAndVotes(entry.rows, entry.votes)}, ${entry.mesas} ${entry.mesas === 1 ? "mesa" : "mesas"}${entry.kind === expected ? "" : `; se esperaba ${sourceKindLabel(expected)}`}.`);
+		if (entry.kind === expected && entry.mesas !== expectedMesas) failures.push(`${label}: se recibieron ${entry.mesas} mesas; se esperaban ${expectedMesas}.`);
+	});
+	return failures;
+}
+function renderedCoverageSourceIsolationFailures(result: CoverageOk): string[] {
+	const covered = result.mesas.filter((mesa) => mesa.covered).length, coverage = result.mesasCoverage;
+	const failures = result.sourceKind === "fiscalizacion" ? [] : [`Tipo de fuente: se esperaba fiscalización y se recibió ${sourceKindLabel(result.sourceKind)}.`];
+	failures.push(...coverageAuditFailures("Auditoría de fuente", result.sourceAudit, "fiscalizacion", coverage.observedUnits), ...coverageAuditFailures("Auditoría del denominador", result.denominatorAudit, "official", coverage.denominatorUnits));
+	if (result.isRandomSample) failures.push("Cobertura general: isRandomSample=true; se esperaba false.");
+	if (coverage.isRandomSample) failures.push("Cobertura de mesas: isRandomSample=true; se esperaba false.");
+	if (result.mesas.length !== coverage.denominatorUnits) failures.push(`Detalle de mesas: se recibieron ${result.mesas.length}; el denominador declara ${coverage.denominatorUnits}.`);
+	if (covered !== coverage.observedUnits) failures.push(`Mesas cubiertas: el detalle marca ${covered}; la cobertura declara ${coverage.observedUnits} observada${coverage.observedUnits === 1 ? "" : "s"}.`);
+	if (coverage.observedUnits > coverage.denominatorUnits) failures.push(`Cobertura de mesas: ${coverage.observedUnits} observadas exceden ${coverage.denominatorUnits} del denominador.`);
+	for (const school of result.escuelas.items) if (school.isRandomSample) failures.push(`Escuela ${school.circuitoCode}/${school.code}: isRandomSample=true con ${school.observedUnits} mesa${school.observedUnits === 1 ? "" : "s"} observada${school.observedUnits === 1 ? "" : "s"} de ${school.denominatorUnits}; se esperaba false.`);
+	return failures;
 }
 
 export async function renderCoverageExplorer(
@@ -911,7 +884,7 @@ export async function renderCoverageExplorer(
 	// This is independent of the RPC parser and repository guard. A widened or
 	// regressed success payload must earn every rendered coverage claim again,
 	// before provenance is read and before any success evidence becomes visible.
-	if (!passesRenderedCoverageSourceIsolation(result)) {
+	const isolationFailures = renderedCoverageSourceIsolationFailures(result); if (isolationFailures.length > 0) {
 		return (
 			<main>
 				<h1>Cobertura de fiscalización</h1>
@@ -920,6 +893,9 @@ export async function renderCoverageExplorer(
 Se rechazó la solicitud: la evidencia de cobertura no superó la
 					verificación de aislamiento de fuentes de la página.
 				</p>
+				<ul aria-label="Fallas de aislamiento de cobertura">
+					{isolationFailures.map((reason, index) => <li key={`${index}-${reason}`}>{reason}</li>)}
+				</ul>
 				{schoolExclusions(result.escuelas.exclusions)}
 				{coverageExclusions(result)}
 			</main>
@@ -1271,7 +1247,7 @@ export function renderFiscalizacionView(
           entries={unmappedByListId(rows).entries}
           withoutListId={unmappedByListId(rows).withoutListId}
           totalRows={rows.length}
-          unsummable={foreignSourceReason ?? mixedLevels}
+          unsummable={combineRefusalReasons(foreignSourceReason, mixedLevels)}
           mappingConfigured={view.partyMappingConfigured}
         />
         {/* And the levels this page cannot order — rows it excludes from every
@@ -1305,7 +1281,7 @@ export function renderFiscalizacionView(
   // what `readGranularity` reports would land in one and not the other.
   const levels = readGranularity(rows);
   const unmapped = topParty(rows, "fiscalizacion");
-	const partyFigureRefusal = mixedLevels ?? unmapped.refusedReason;
+	const partyFigureRefusal = unmapped.refusedReason;
   const partyTotals = partyFigureRefusal !== null ? [] : votesByParty(rows);
 
   // Computed for the party the comparison names, not for whichever list
@@ -1392,7 +1368,7 @@ export function renderFiscalizacionView(
         entries={unmapped.unmappedByListId}
         withoutListId={unmappedByListId(rows).withoutListId}
         totalRows={rows.length}
-        unsummable={mixedLevels}
+        unsummable={partyFigureRefusal}
         mappingConfigured={view.partyMappingConfigured}
       />
       {unmapped.tied ? (
@@ -1726,11 +1702,8 @@ export async function loadOfficialComparison(
     };
   }
 
-  // VERIFIED, not assumed. The docstring claimed the `official` label holds
-  // "because `queryOfficial` filters to official rows" -- and then never
-  // checked. `partyShare` is no backstop either: `mixedSourceKindReason`
-  // fires only when kinds MIX, so a uniformly fiscalización row set passes
-  // clean and renders under the official-source badge.
+  // Independent expected-source and page guard: block widened responses before
+  // they can become official comparison figures.
   const foreign = response.rows.filter((row) => row.sourceKind !== "official");
   const foreignBreakdown = describeExcluded(tallyByKind(foreign));
   if (foreignBreakdown) {

@@ -186,9 +186,6 @@ interface ExplorerFormProps {
               </div>
             </fieldset>
             <div className="form-actions">
-              <button className="button button--secondary" type="submit" formNoValidate>
-                Actualizar opciones
-              </button>
               <button className="button button--primary" type="submit">Aplicar selección</button>
             </div>
           </ScopeSelectorForm>
@@ -217,6 +214,8 @@ function sourceExclusionNotes(exclusions: ExplorationSourceAudit[], aggregate: s
   </p>);
 }
 
+function sourceAuditNotes(entries: ExplorationSourceAudit[], label: string): ReactNode {
+  return <ul aria-label={`Auditoría de fuentes ${label}`}>{entries.map((entry, index) => <li key={`${entry.kind}-${index}`}>{displaySourceKind(entry.kind)}: {entry.rows} {entry.rows === 1 ? "fila" : "filas"} / {entry.votes} {entry.votes === 1 ? "voto" : "votos"}</li>)}</ul>; }
 function schoolExclusionNotes(
   exclusions: SchoolBreakdownExclusion[], sourceExclusions: ExplorationSourceAudit[],
 ): ReactNode {
@@ -326,6 +325,7 @@ async function renderOfficialExplorer(
   }
   if (!hasOnlyOfficialSourceAudit(result.sourceAudit)) {
     return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: la auditoría de fuentes del agregado incluye filas no oficiales.</p>
+      {sourceAuditNotes(result.sourceAudit, "del agregado")}
       {sourceExclusionNotes(result.sourceExclusions, "official")}</main>;
   }
 
@@ -346,6 +346,7 @@ return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rech
       if (schoolBreakdown.status === "ok" && !hasOnlyOfficialSourceAudit(schoolBreakdown.sourceAudit)) {
 
       return <main><h1>Explorar resultados oficiales</h1>{form}<p role="alert">Se rechazó la solicitud: la auditoría de fuentes del desglose por establecimiento incluye filas no oficiales.</p>
+        {sourceAuditNotes(schoolBreakdown.sourceAudit, "del desglose por establecimiento")}
         {sourceExclusionNotes(result.sourceExclusions, "official")}
         {schoolExclusionNotes(schoolBreakdown.exclusions, schoolBreakdown.sourceExclusions)}</main>;
     }
@@ -658,6 +659,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
       const foreignSourceReason = foreign.length > 0
         ? "las filas no son exclusivamente de fuente oficial; las cifras oficiales y de fiscalización nunca se combinan en un mismo número"
         : null;
+      const refusalReason = [...new Set([foreignSourceReason, unsummable].filter((reason): reason is string => reason !== null))].join("; ") || null;
       if (foreign.length > 0) {
 
     return (
@@ -673,7 +675,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
             WHICH list ids failed to map does not depend on source kinds, on
             the aggregate, or on whether a later read succeeded. */}
         <UnmappedListIds entries={unmapped.entries}
-        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={foreignSourceReason ?? unsummable}
+        withoutListId={unmapped.withoutListId} totalRows={rows.length} unsummable={refusalReason}
           mappingConfigured={response.partyMappingConfigured}
         />
         {/* And the levels this page cannot order, counted with it and just as

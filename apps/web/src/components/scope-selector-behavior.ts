@@ -69,11 +69,11 @@ const COVERAGE_DESCENDANTS: Partial<Record<ScopeControlName, readonly ScopeContr
 };
 
 const LEVEL_REQUIRED_CONTROLS: Record<string, readonly ScopeControlName[]> = {
-  distrito: [],
-  seccion: ["seccionCode"],
-  circuito: ["seccionCode", "circuitoCode"],
-  establecimiento: ["seccionCode", "circuitoCode", "establecimientoCode"],
-  mesa: ["seccionCode", "circuitoCode", "establecimientoCode", "mesaCode"],
+  distrito: ["level"],
+  seccion: ["level", "seccionCode"],
+  circuito: ["level", "seccionCode", "circuitoCode"],
+  establecimiento: ["level", "seccionCode", "circuitoCode", "establecimientoCode"],
+  mesa: ["level", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode"],
 };
 
 function hasValue(controls: ScopeControls, name: ScopeControlName): boolean {
@@ -90,7 +90,7 @@ function setRequired(controls: ScopeControls, name: ScopeControlName, required: 
   if (current) current.required = required;
 }
 
-function scopeDescendants(
+export function scopeDependentNames(
   kind: ScopeFormKind,
   changedName: ScopeControlName,
 ): readonly ScopeControlName[] {
@@ -104,10 +104,11 @@ function clearDescendants(
   kind: ScopeFormKind,
   changedName: ScopeControlName,
 ): void {
-  for (const name of scopeDescendants(kind, changedName)) {
-    const current = controls[name];
-    if (current) current.value = "";
-  }
+  const currentLevel = controls.level?.value ?? "";
+  const descendants = scopeDependentNames(kind, changedName);
+  for (const name of descendants) if (name !== "level" && controls[name]) controls[name].value = "";
+  if (kind === SCOPE_FORM_KIND.DRILLDOWN && controls.level &&
+    descendants.some((name) => LEVEL_REQUIRED_CONTROLS[currentLevel]?.includes(name))) controls.level.value = "";
 }
 
 export function synchronizeScopeControls(
@@ -170,6 +171,102 @@ export function scopeControlStates(
   ) as ScopeControlStates;
 }
 
+export type ScopeOptionDescriptor = { value: string; label: string; nameStatus?: string };
+export type ScopeOptionPatch = { name: ScopeControlName; options: ScopeOptionDescriptor[] };
+export type ScopeMembership = Partial<Record<ScopeControlName, readonly string[]>>;
+
+export function scopeEndpoint(kind: ScopeFormKind): string {
+  return kind === SCOPE_FORM_KIND.DRILLDOWN ? "/api/drilldown/scope-options" : "/api/fiscalizacion/scope-options"; }
+
+function canonicalEntries(values: ScopeControlValues): [ScopeControlName, string][] {
+  return SCOPE_CONTROL_NAMES.flatMap((name) => {
+    const value = values[name] ?? "";
+    return value === "" ? [] : [[name, value]];
+  }); }
+
+export function serializeScopeDraft(values: ScopeControlValues): string {
+  const draft: Record<string, string | number> = {};
+  for (const [name, value] of canonicalEntries(values)) draft[name] = name === "mesaCode" && /^\d+$/.test(value) ? Number(value) : value;
+  return JSON.stringify(draft);
+}
+
+export function canonicalScopeSearchParams(values: ScopeControlValues): URLSearchParams {
+  return new URLSearchParams(canonicalEntries(values)); }
+
+export function hasCompleteScopeParents(values: ScopeControlValues): boolean {
+  const chain = SCOPE_CONTROL_NAMES.slice(0, 7);
+  return chain.every((name, index) => !values[name] || chain.slice(0, index).every((parent) => Boolean(values[parent])));
+}
+
+export function hasValidScopeLevel(values: ScopeControlValues): boolean {
+  const requiredByLevel: Record<string, ScopeControlName> = {
+    distrito: "distritoCode", seccion: "seccionCode", circuito: "circuitoCode",
+    establecimiento: "establecimientoCode", mesa: "mesaCode",
+  };
+  const required = values.level ? requiredByLevel[values.level] : undefined;
+  return !values.level || Boolean(required && values[required]);
+}
+
+export function isScopeSelectionMember(values: ScopeControlValues, membership: ScopeMembership): boolean {
+  return SCOPE_CONTROL_NAMES.every((name) => !values[name] || Boolean(membership[name]?.includes(values[name])));
+}
+
+export function acceptScopeResponse(
+  requestGeneration: number, requestDraft: string, aborted: boolean,
+  currentGeneration: number, currentDraft: string,
+): boolean {
+  return !aborted && requestGeneration === currentGeneration && requestDraft === currentDraft;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null; }
+
+function simpleOptions(value: unknown, valueKey: string, labelKey: string): ScopeOptionDescriptor[] | null {
+  if (!Array.isArray(value)) return null;
+  const result: ScopeOptionDescriptor[] = [];
+  for (const item of value) {
+    const record = objectValue(item);
+    if (!record || (typeof record[valueKey] !== "string" && typeof record[valueKey] !== "number") ||
+      (typeof record[labelKey] !== "string" && typeof record[labelKey] !== "number")) return null;
+    result.push({ value: String(record[valueKey]), label: String(record[labelKey]) });
+  }
+  return result;
+}
+
+function namedOptions(value: unknown): ScopeOptionDescriptor[] | null {
+  if (!Array.isArray(value)) return null;
+  const result: ScopeOptionDescriptor[] = [];
+  for (const item of value) {
+    const record = objectValue(item), status = record?.nameStatus;
+    if (!record || typeof record.code !== "string" || !["present", "missing", "conflict"].includes(String(status)) ||
+      (record.name !== null && typeof record.name !== "string") || !Number.isInteger(record.nameVariantCount) ||
+      (status === "present" ? !record.name || record.nameVariantCount !== 1 : record.name !== null) ||
+      (status === "missing" ? record.nameVariantCount !== 0 : status === "conflict" && Number(record.nameVariantCount) < 2)) return null;
+    const label = status === "present" ? `${record.code} — ${record.name}` : status === "missing"
+      ? `${record.code} — nombre no disponible` : `${record.code} — nombres contradictorios (${record.nameVariantCount} variantes)`;
+    result.push({ value: record.code, label, nameStatus: String(status) });
+  }
+  return result;
+}
+
+export function mapScopeOptionDescriptors(value: unknown, kind: ScopeFormKind): ScopeOptionPatch[] | null {
+  const response = objectValue(value), facets = objectValue(response?.facets);
+  const expectedCapability = kind === SCOPE_FORM_KIND.DRILLDOWN ? "official-exploration" : "coverage-scope-options";
+  if (!response || response.meaning !== "scope-options-only" || response.capability !== expectedCapability || !facets) return null;
+  const elections = simpleOptions(facets.elections, "id", "label"), categories = simpleOptions(facets.categories, "id", "name");
+  const distritos = namedOptions(facets.distritos), secciones = namedOptions(facets.secciones);
+  const circuitos = namedOptions(facets.circuitos), establecimientos = namedOptions(facets.establecimientos);
+  const mesas = simpleOptions(facets.mesas, "code", "code");
+  const levels = Array.isArray(facets.availableLevels) && facets.availableLevels.every((item) =>
+    typeof item === "string" && Object.hasOwn(LEVEL_REQUIRED_CONTROLS, item))
+    ? facets.availableLevels.map((level) => ({ value: level, label: level })) : null;
+  if ([elections, categories, distritos, secciones, circuitos, establecimientos, mesas, levels].some((options) => options === null)) return null;
+  return [
+    ["electionId", elections], ["categoryId", categories], ["distritoCode", distritos], ["seccionCode", secciones],
+    ["circuitoCode", circuitos], ["establecimientoCode", establecimientos], ["mesaCode", mesas], ["level", levels],
+  ].map(([name, options]) => ({ name, options })) as ScopeOptionPatch[];
+}
+
 export function omitBlankSingletonControls(data: FormData): void {
   const names = new Set<string>();
   data.forEach((_value, name) => names.add(name));
@@ -183,24 +280,23 @@ function isScopeControlName(value: string): value is ScopeControlName {
   return SCOPE_CONTROL_NAMES.some((name) => name === value);
 }
 
-export function enhanceScopeForm(form: HTMLFormElement, kind: ScopeFormKind): () => void {
+export function enhanceScopeForm(
+  form: HTMLFormElement,
+  kind: ScopeFormKind,
+  onLocalChange?: (name: ScopeControlName) => void,
+): () => void {
   const controls: ScopeControls = {};
   for (const name of SCOPE_CONTROL_NAMES) {
     const element = form.elements.namedItem(name);
     if (element instanceof HTMLSelectElement) controls[name] = element;
   }
-  const refreshSubmitter = form.querySelector<HTMLButtonElement>(
-    'button[type="submit"][formnovalidate]',
-  );
   synchronizeScopeControls(controls, kind);
 
   const handleChange = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof HTMLSelectElement) || !isScopeControlName(target.name)) return;
     synchronizeScopeControls(controls, kind, target.name);
-    if (refreshSubmitter && scopeDescendants(kind, target.name).length > 0) {
-      form.requestSubmit(refreshSubmitter);
-    }
+    onLocalChange?.(target.name);
   };
   const handleFormData = (event: Event): void => {
     omitBlankSingletonControls((event as FormDataEvent).formData);

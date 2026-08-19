@@ -8,6 +8,7 @@ import type {
   SchoolBreakdownResult,
 } from "@/lib/results/exploration";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), useSearchParams: () => new URLSearchParams() }));
 /**
  * A refused query and an empty result are different answers. This page turned
  * the first into the second: `response.status === "ok" ? response.rows : []`
@@ -292,6 +293,7 @@ describe("drilldown page", () => {
           (await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement,
         );
 
+        expect(markup).toContain('<form action="/drilldown" method="get"');
         expectNativeControlState(markup, "electionId", { required: true, disabled: false });
         expectNativeControlState(markup, "categoryId", { required: true, disabled: true });
         expectNativeControlState(markup, "distritoCode", { required: true, disabled: true });
@@ -300,8 +302,8 @@ describe("drilldown page", () => {
         expectNativeControlState(markup, "establecimientoCode", { required: false, disabled: true });
         expectNativeControlState(markup, "mesaCode", { required: false, disabled: true });
         expectNativeControlState(markup, "level", { required: true, disabled: true });
-        expect(markup).toContain("Actualizar opciones");
-        expect(markup).toMatch(/<button[^>]*formNoValidate=""[^>]*>Actualizar opciones<\/button>/);
+        expect(markup).not.toContain("Actualizar opciones");
+        expect(markup).not.toContain("formNoValidate");
         expect(markup).toContain(">Aplicar selección</button>");
       });
 
@@ -609,7 +611,8 @@ describe("drilldown page", () => {
           electionYear: 2025, electionRound: "legislativas", totalVotes: 999, mesaCount: 1,
           sourceAudit: [
             { kind: "official", rows: 2, votes: 999 },
-            { kind: "fiscalizacion", rows: 1, votes: 77 },
+            { kind: "fiscalizacion", rows: 3, votes: 77 },
+            { kind: "unknown", rows: 2, votes: 11 },
           ],
           sourceExclusions: [
             { kind: "fiscalizacion", rows: 3, votes: 88 },
@@ -624,9 +627,11 @@ describe("drilldown page", () => {
         })) as ReactElement);
 
         expect(markup).toContain('<form action="/drilldown" method="get">');
-        expect(markup).toContain("Se rechazó la solicitud: la auditoría de fuentes del agregado incluye filas no oficiales.");
-        expect(markup).toContain("Se excluyeron 3 filas de fuente fiscalización / 88 votos del agregado oficial");
-        expect(markup).toContain("Se excluyeron 2 filas de fuente desconocida / 11 votos del agregado oficial");
+            expect(markup).toContain("Se rechazó la solicitud: la auditoría de fuentes del agregado incluye filas no oficiales.");
+            for (const fact of ["oficial: 2 filas / 999 votos", "fiscalización: 3 filas / 77 votos",
+              "desconocida: 2 filas / 11 votos", "Se excluyeron 3 filas de fuente fiscalización / 88 votos del agregado oficial",
+              "Se excluyeron 2 filas de fuente desconocida / 11 votos del agregado oficial"])
+              expect(markup.split(fact)).toHaveLength(2);
         expect(markup).not.toContain("999 votos a nivel seccion");
         expect(markup).not.toContain("LEAKED PARTY");
         expect(markup).not.toContain("Votos oficiales y porcentaje por partido");
@@ -672,6 +677,7 @@ describe("drilldown page", () => {
           sourceAudit: [
             { kind: "official", rows: 3, votes: 260 },
             { kind: "fiscalizacion", rows: 1, votes: 40 },
+            { kind: "unknown", rows: 2, votes: 9 },
           ],
           sourceExclusions: [{ kind: "fiscalizacion", rows: 4, votes: 73 }],
           exclusions: [{ reason: "official_rows_without_mesa_code", rows: 5, votes: 41 }],
@@ -687,10 +693,12 @@ describe("drilldown page", () => {
         })) as ReactElement);
 
         expect(markup).toContain('<form action="/drilldown" method="get">');
-        expect(markup).toContain("Se rechazó la solicitud: la auditoría de fuentes del desglose por establecimiento incluye filas no oficiales.");
-        expect(markup).toContain("Se excluyeron 2 filas de fuente desconocida / 19 votos del agregado oficial");
-        expect(markup).toContain("Se excluyeron 4 filas de fuente fiscalización / 73 votos del agregado establecimiento");
-        expect(markup).toContain("Se excluyeron 5 fila(s) / 41 voto(s): official_rows_without_mesa_code");
+            expect(markup).toContain("Se rechazó la solicitud: la auditoría de fuentes del desglose por establecimiento incluye filas no oficiales.");
+            for (const fact of ["oficial: 3 filas / 260 votos", "fiscalización: 1 fila / 40 votos",
+              "desconocida: 2 filas / 9 votos", "Se excluyeron 2 filas de fuente desconocida / 19 votos del agregado oficial",
+              "Se excluyeron 4 filas de fuente fiscalización / 73 votos del agregado establecimiento",
+              "Se excluyeron 5 fila(s) / 41 voto(s): official_rows_without_mesa_code"])
+              expect(markup.split(fact)).toHaveLength(2);
         expect(markup).not.toContain("Votos oficiales y porcentaje por partido");
         expect(markup).not.toContain("Votos oficiales por circuito y establecimiento");
         expect(markup).not.toContain("Leaked school");
@@ -1292,7 +1300,7 @@ describe("drilldown page — the unmapped breakdown survives every refusal", () 
             listId: "9876",
             votes: 60,
             sourceKind: "fiscalizacion",
-            granularity: "mesa",
+            granularity: "seccion",
             archiveEntryId: "fiscalizacion/2025-lla",
           },
         ];
@@ -1307,6 +1315,7 @@ describe("drilldown page — the unmapped breakdown survives every refusal", () 
         expect(markup).not.toContain("4321: 1 filas, 700 votos");
         expect(markup).not.toContain("9876: 1 filas, 60 votos");
         expect(markup).toContain("las cifras oficiales y de fiscalización nunca se combinan en un mismo número");
+        expect(markup).toContain("sumarlas duplicaría el conteo");
         expect(markup).not.toContain("Total oficial:");
         expect(markup).not.toContain("Desglose oficial");
       });

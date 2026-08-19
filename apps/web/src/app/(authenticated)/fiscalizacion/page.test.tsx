@@ -6,6 +6,7 @@ import { ResultsRepository } from "@/lib/fiscalizacion/repository";
 import type { ResultRow, RowSource } from "@/lib/fiscalizacion/repository";
 import type { CoverageOk, CoverageResult } from "@/lib/results/coverage";
 import type { SourceKind, SourceRef } from "@/lib/results/types";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), useSearchParams: () => new URLSearchParams() }));
 import FiscalizacionPage, {
 	FISCALIZACION_COVERAGE,
 	FISCALIZACION_PARTY_CONTEXT,
@@ -369,7 +370,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
                 status: "ok",
                 rows: [
                   { ...FISCALIZACION_ROW, listId: "4321", votes: 700 },
-                  { ...OFFICIAL_ROW, listId: "9876", votes: 60 },
+                  { ...OFFICIAL_ROW, listId: "9876", votes: 60, granularity: "seccion" },
                 ],
                 excluded: {},
                 coverage: FISCALIZACION_COVERAGE,
@@ -383,6 +384,7 @@ describe("fiscalizacion page — renderFiscalizacionView", () => {
             expect(html).not.toContain("4321: 1 filas, 700 votos");
             expect(html).not.toContain("9876: 1 filas, 60 votos");
             expect(html).toContain("las cifras oficiales y de fiscalización nunca se combinan en un mismo número");
+            expect(html).toContain("sumarlas duplicaría el conteo");
             expect(html).not.toContain("Cobertura:");
             expect(html).not.toContain("LA LIBERTAD AVANZA");
           });
@@ -1240,8 +1242,9 @@ describe("fiscalizacion page — the real entry point", () => {
               disabled: !new Set<string>(testCase.enabled).has(name),
             });
           }
-          expect(markup).toContain("Actualizar opciones");
-          expect(markup).toMatch(/<button[^>]*formNoValidate=""[^>]*>Actualizar opciones<\/button>/);
+          expect(markup).toContain('<form action="/fiscalizacion" method="get"');
+          expect(markup).not.toContain("Actualizar opciones");
+          expect(markup).not.toContain("formNoValidate");
           expect(markup).toContain(">Mostrar cobertura</button>");
         }
       });
@@ -1585,7 +1588,7 @@ describe("fiscalizacion page — the real entry point", () => {
 			);
 			expect(markup).not.toContain("1 mesas cubiertas de 2 mesas oficiales");
 			expect(markup).not.toContain("Auditoría de la fuente:");
-			expect(markup).not.toContain("Auditoría del denominador:");
+			expect(markup).not.toContain("Auditoría del denominador: oficial");
 			expect(markup).not.toContain("Guard fixture school");
 			expect(markup).not.toContain("Ver votos oficiales");
 			expect(markup).not.toContain("no es una muestra aleatoria");
@@ -1595,7 +1598,25 @@ describe("fiscalizacion page — the real entry point", () => {
 		},
 	);
 
-      it("retains the form and exclusion breakdowns when the rendered guard refuses", async () => {
+	it.each([
+		{ name: "contaminated audits", widen: (valid: CoverageOk) => ({ ...valid, sourceAudit: [...valid.sourceAudit, { kind: "official", rows: 4, votes: 701, mesas: 3 }, { kind: "unknown" as never, rows: 2, votes: 11, mesas: 2 }], denominatorAudit: [...valid.denominatorAudit, { kind: "fiscalizacion", rows: 5, votes: 812, mesas: 4 }, { kind: "unknown" as never, rows: 3, votes: 17, mesas: 2 }] }), facts: ["Auditoría de fuente: se esperaba 1 entrada y se recibieron 3", "fiscalización: 1 fila, 90 votos, 1 mesa", "oficial: 4 filas, 701 votos, 3 mesas", "desconocida: 2 filas, 11 votos, 2 mesas", "Auditoría del denominador: se esperaba 1 entrada y se recibieron 3", "oficial: 2 filas, 300 votos, 2 mesas", "fiscalización: 5 filas, 812 votos, 4 mesas", "desconocida: 3 filas, 17 votos, 2 mesas"] },
+		{ name: "count mismatches", widen: (valid: CoverageOk) => ({ ...valid, mesas: [{ ...valid.mesas[0], covered: false }], mesasCoverage: { ...valid.mesasCoverage, observedUnits: 3 } }), facts: ["Detalle de mesas: se recibieron 1; el denominador declara 2", "Mesas cubiertas: el detalle marca 0; la cobertura declara 3 observadas", "Cobertura de mesas: 3 observadas exceden 2 del denominador"] },
+		{ name: "audit mesa mismatches", widen: (valid: CoverageOk) => ({ ...valid, sourceAudit: [{ ...valid.sourceAudit[0], mesas: 9 }], denominatorAudit: [{ ...valid.denominatorAudit[0], mesas: 8 }] }), facts: ["Auditoría de fuente: se recibieron 9 mesas; se esperaban 1", "Auditoría del denominador: se recibieron 8 mesas; se esperaban 2"] },
+		{ name: "kind and random-sample flags", widen: (valid: CoverageOk) => ({ ...valid, sourceKind: "official", isRandomSample: true, mesasCoverage: { ...valid.mesasCoverage, isRandomSample: true }, escuelas: { ...valid.escuelas, items: valid.escuelas.items.map((school) => ({ ...school, isRandomSample: true })) } }), facts: ["Tipo de fuente: se esperaba fiscalización y se recibió oficial", "Cobertura general: isRandomSample=true", "Cobertura de mesas: isRandomSample=true", "Escuela 00001/E1: isRandomSample=true con 1 mesa observada de 2"] },
+	])("renders available refusal evidence for $name", async ({ widen, facts }) => {
+		const markup = await renderInjectedCoverage(widen(renderedCoverageResult()));
+		for (const fact of facts) expect(markup).toContain(fact);
+		expect(markup).not.toContain("1 mesas cubiertas de 2 mesas oficiales"); expect(markup).not.toContain("Ver votos oficiales"); expect(markup).not.toContain("official-guard-source"); expect(sourceRefReadCount).toBe(0);
+	});
+
+	it("renders distinct unknown exclusion reasons once as escaped text", async () => {
+		const valid = renderedCoverageResult(); valid.exclusions = [{ reason: "future_<alpha>", rows: 1, votes: 2 }, { reason: "future_&beta", rows: 3, votes: 4 }];
+		const markup = await renderInjectedCoverage({ ...valid, sourceKind: "official" });
+		expect(markup.match(/future_&lt;alpha&gt;/g) ?? []).toHaveLength(1); expect(markup.match(/future_&amp;beta/g) ?? []).toHaveLength(1);
+		expect(markup).not.toContain("<alpha>");
+	});
+
+              it("retains the form and exclusion breakdowns when the rendered guard refuses", async () => {
         const valid = renderedCoverageResult();
         valid.escuelas.exclusions = [
           { reason: "official_rows_without_establecimiento_code", rows: 3, votes: 44 },
@@ -1609,12 +1630,8 @@ describe("fiscalizacion page — the real entry point", () => {
         expect(markup).toContain(
           "Se rechazó la solicitud: la evidencia de cobertura no superó la verificación de aislamiento de fuentes de la página.",
         );
-        expect(markup).toContain(
-          "filas oficiales sin código de establecimiento: 3 filas, 44 votos",
-        );
-        expect(markup).toContain(
-          "filas de fiscalización sin correspondencia con una mesa oficial: 2 filas, 17 votos",
-        );
+        expect(markup.split("filas oficiales sin código de establecimiento: 3 filas, 44 votos")).toHaveLength(2);
+        expect(markup.split("filas de fiscalización sin correspondencia con una mesa oficial: 2 filas, 17 votos")).toHaveLength(2);
         expect(markup).not.toContain("1 mesas cubiertas de 2 mesas oficiales");
         expect(markup).not.toContain("Auditoría de la fuente:");
         expect(markup).not.toContain("Auditoría del denominador:");
@@ -2468,6 +2485,14 @@ describe("fiscalizacion page — the juxtaposition compares ONE party", () => {
 			});
 		},
 	);
+
+    it.each([["topParty", (rows: ResultRow[]) => topParty(rows).refusedReason],
+      ["partyShare", (rows: ResultRow[]) => { const result = partyShare(rows, "canon-110"); return result.status === "unavailable" ? result.reason : null; }]])(
+      "accumulates every independent refusal for %s", (_name, reasonFrom) => {
+        const rows = [NAMED("LA LIBERTAD AVANZA", 30, "110"), { ...NAMED("ALIANZA LA LIBERTAD AVANZA", 20, "20135"), sourceKind: "official" as const, granularity: "seccion" as const }], reason = reasonFrom(rows);
+        for (const fact of ["tipos de fuente distintos", "sumarlas duplicaría el conteo", "nombres no vacíos contradictorios"]) expect(reason?.split(fact)).toHaveLength(2);
+        expect(reason).toMatch(/^se esperaban únicamente filas fiscalización.*sumarlas duplicaría.*nombres no vacíos contradictorios/);
+      });
 
   it("test_an_unmapped_row_is_never_named_the_top_party", () => {
     // It still counts in the denominator — we just cannot say whose it is.

@@ -62,6 +62,7 @@ test.describe("no fiscalización leakage into the rendered page", () => {
       await page.getByRole("link", { name: "Explorar resultados" }).click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
       const coldUrl = page.url();
+      let draftUrl = coldUrl;
       await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expect(page).toHaveURL(coldUrl);
       await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
@@ -77,65 +78,38 @@ test.describe("no fiscalización leakage into the rendered page", () => {
         })).toBe(false);
       }
 
-      const refresh = async (
-        label: string,
-        name: string,
-        value: string,
-        optionText?: string,
-      ): Promise<void> => {
-        const selector = page.getByRole("combobox", { name: label, exact: true });
-        if (optionText) {
-          await expect(
-            selector.getByRole("option", { name: optionText, exact: true }),
-          ).toHaveAttribute("value", value);
+      const form = page.locator('form[action="/drilldown"]'); await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
+      const draft = async (label: string, value: string, dependent?: string, optionText?: string): Promise<void> => {
+        const control = page.getByRole("combobox", { name: label, exact: true });
+        if (optionText) await expect(control.getByRole("option", { name: optionText, exact: true })).toHaveAttribute("value", value);
+        const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/drilldown/scope-options");
+        await control.focus(); await control.selectOption(value);
+        expect(page.url()).toBe(draftUrl); await expect(control).toBeFocused();
+        if (dependent) {
+          const child = page.getByRole("combobox", { name: dependent, exact: true }); await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
         }
-        await Promise.all([
-          page.waitForURL(
-            (url) => url.pathname === "/drilldown" && url.searchParams.get(name) === value,
-          ),
-          selector.selectOption(value),
-        ]);
-        await expectNoBlankSearchParams(page);
+        expect(await (await responsePromise).json()).toMatchObject({ capability: "official-exploration", meaning: "scope-options-only" });
+        if (dependent && value) await expect(page.getByRole("combobox", { name: dependent, exact: true })).toBeEnabled();
+        await expect(form).not.toHaveAttribute("aria-busy", "true"); await expect(form.locator('[aria-live="polite"]')).toHaveText(""); await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
-      await refresh("Elección", "electionId", SOURCE_SCOPE.electionId);
-      await refresh("Categoría", "categoryId", SOURCE_SCOPE.categoryId);
-      await refresh(
-        "Distrito",
-        "distritoCode",
-        identity.distritoCode,
-        `${identity.distritoCode} — Buenos Aires`,
-      );
-
-      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("distrito");
-      await page.getByRole("button", { name: "Aplicar selección" }).click();
-      await expectNoBlankSearchParams(page);
-      await expect(page.getByRole("main")).toContainText("votos a nivel distrito");
-
-      await refresh(
-        "Sección",
-        "seccionCode",
-        identity.seccionCode,
-        `${identity.seccionCode} — Coronel de Marina L. Rosales`,
-      );
-      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("seccion");
-      await page.getByRole("button", { name: "Aplicar selección" }).click();
-      await expectNoBlankSearchParams(page);
-      await expect(page.getByRole("main")).toContainText("votos a nivel seccion");
-
-      await refresh("Circuito", "circuitoCode", "00001", "00001 — 00001");
-      await refresh(
-        "Establecimiento",
-        "establecimientoCode",
-        "E1",
-        "E1 — Synthetic school",
-      );
-      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("establecimiento");
-      await page.getByRole("button", { name: "Aplicar selección" }).click();
-      await expectNoBlankSearchParams(page);
-      await expect(page.getByRole("main")).toContainText("votos a nivel establecimiento");
-
-      await page.getByRole("combobox", { name: "Mesa", exact: true }).selectOption("1");
-      await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("mesa");
+      await draft("Elección", SOURCE_SCOPE.electionId, "Categoría"); await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito");
+      await draft("Distrito", identity.distritoCode, "Sección", `${identity.distritoCode} — Buenos Aires`); await draft("Sección", identity.seccionCode, "Circuito", `${identity.seccionCode} — Coronel de Marina L. Rosales`);
+      await draft("Nivel del informe", "seccion"); await draft("Circuito", "00001", "Establecimiento", "00001 — 00001"); expect(page.url()).toBe(draftUrl);
+      await draft("Establecimiento", "E1", "Mesa", "E1 — Synthetic school"); await draft("Mesa", "1"); await draft("Nivel del informe", "");
+      const clearResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/drilldown/scope-options");
+      const section = page.getByRole("combobox", { name: "Sección", exact: true }); await section.focus(); await section.selectOption("");
+      expect(page.url()).toBe(draftUrl); await expect(section).toBeFocused();
+      for (const label of ["Circuito", "Establecimiento", "Mesa"]) {
+        const child = page.getByRole("combobox", { name: label, exact: true });
+        await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
+      }
+      await clearResponse;
+      await draft("Sección", identity.seccionCode, "Circuito");
+      await draft("Circuito", "00001", "Establecimiento");
+      await draft("Establecimiento", "E1", "Mesa");
+      await draft("Mesa", "1"); await draft("Nivel del informe", "mesa");
+      const navigations: string[] = [];
+      page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
       await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expectNoBlankSearchParams(page);
       const explorerUrl = new URL(
@@ -146,14 +120,30 @@ test.describe("no fiscalización leakage into the rendered page", () => {
         baseURL,
       ).toString();
       await expect(page).toHaveURL(explorerUrl);
+      expect(navigations).toEqual([explorerUrl]);
+      expect(navigations.some((href) => href.includes("circuitoCode=") && href.includes("level=seccion"))).toBe(false); await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       const explorer = page.getByRole("main");
       await expect(explorer).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa, obtenidos de filas de fuente mesa`);
       await expect(explorer).toContainText(
         `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);
       await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votos a nivel mesa`);
       await expect(page.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(1);
-      await page.reload();
-      await expect(page).toHaveURL(explorerUrl);
+
+      await page.goBack(); await expect(page).toHaveURL(draftUrl);
+      await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
+      draftUrl = coldUrl; navigations.length = 0;
+      await draft("Elección", SOURCE_SCOPE.electionId, "Categoría"); await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito"); await draft("Distrito", identity.distritoCode, "Sección");
+      await draft("Sección", identity.seccionCode, "Circuito"); await draft("Circuito", "00001", "Establecimiento"); await draft("Establecimiento", "E1", "Mesa"); await draft("Nivel del informe", "establecimiento");
+      const secondUrl = explorerUrl.replace("&mesaCode=1&level=mesa", "&level=establecimiento");
+      await page.getByRole("button", { name: "Aplicar selección" }).click();
+      await expect(page).toHaveURL(secondUrl); await expectNoBlankSearchParams(page);
+      expect(navigations).toEqual([secondUrl]);
+      await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
+      await expect(explorer).toContainText("votos a nivel establecimiento");
+      await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
+      await expect(page).toHaveURL(secondUrl);
+      await expect(page.getByRole("combobox", { name: "Nivel del informe", exact: true })).toHaveValue("establecimiento");
+      await page.reload(); await expect(page).toHaveURL(secondUrl);
 
       await page.goto(new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
