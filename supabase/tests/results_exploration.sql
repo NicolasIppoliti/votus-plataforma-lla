@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(88);
+select plan(90);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -9,7 +9,8 @@ insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000005', 2025, 'provinciales');
 insert into category (id, name)
 values ('20000000-0000-0000-0000-000000000003', 'DIPUTADO NACIONAL'),
-  ('20000000-0000-0000-0000-000000000006', 'CONCEJALES');
+  ('20000000-0000-0000-0000-000000000006', 'CONCEJALES'),
+  ('20000000-0000-0000-0000-000000000007', 'MESA IDENTITY FIXTURE');
 insert into jurisdiction (
   id, distrito_code, distrito_name, seccion_code, seccion_name, circuito_code,
   circuito_name, establecimiento_code, establecimiento_name, mesa_code
@@ -25,6 +26,9 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000030', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00004', '00004', 'E10', 'Mesa lineage A', 7),
   ('20000000-0000-0000-0000-000000000031', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00004', '00004', 'E10', 'Mesa lineage A', 8),
   ('20000000-0000-0000-0000-000000000032', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00004', '00004', 'E11', 'Mesa lineage B', 7),
+  ('20000000-0000-0000-0000-000000000033', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00008', '00008', 'E20', 'Shared-code lineage A', 7),
+  ('20000000-0000-0000-0000-000000000034', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00009', '00009', 'E21', 'Shared-code lineage B', 7),
+  ('20000000-0000-0000-0000-000000000035', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00010', '00010', 'E22', 'Missing mesa identity', null),
   ('20000000-0000-0000-0000-000000000027', '02', 'Buenos Aires', '999', null, '00001', '00001', 'E9', 'Fiscal-only scope', 9);
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL');
@@ -56,6 +60,11 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000030', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 10, 'official', 'national/2025-mesa-lineage', 15),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000031', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 20, 'official', 'national/2025-mesa-lineage', 16),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000032', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 30, 'official', 'national/2025-mesa-lineage', 17),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000033', '20000000-0000-0000-0000-000000000007', 'mesa', 'A', 11, 'official', 'national/2025-mesa-identity', 18),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000033', '20000000-0000-0000-0000-000000000007', 'mesa', 'B', 12, 'official', 'national/2025-mesa-identity', 19),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000034', '20000000-0000-0000-0000-000000000007', 'mesa', 'A', 13, 'official', 'national/2025-mesa-identity', 20),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000034', '20000000-0000-0000-0000-000000000007', 'mesa', 'B', 14, 'official', 'national/2025-mesa-identity', 21),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000035', '20000000-0000-0000-0000-000000000007', 'mesa', 'A', 15, 'official', 'national/2025-mesa-identity', 22),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000003', 'mesa', null, 91, 'fiscalizacion', 'fiscalizacion/only-runtime', 23);
 create function pg_temp.schools(p_election uuid default '20000000-0000-0000-0000-000000000001')
 returns jsonb language sql stable as $$ select results_exploration_schools(p_election,
@@ -169,6 +178,13 @@ select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000003', '02', '027'
 )->>'total_votes')::bigint, 350::bigint,
   'official total excludes the internal source row');
+select is(results_exploration_official(
+    '20000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000003', '02', '027') - 'source_exclusions',
+  results_exploration_official_0029(
+    '20000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000003', '02', '027'),
+  '0029 core preserves the complete official payload semantics');
 select is((select (party->>'votes')::bigint from jsonb_array_elements(
   results_exploration_official(
     '20000000-0000-0000-0000-000000000001',
@@ -203,6 +219,14 @@ select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'
 )->>'mesa_count')::integer, 4, 'mesa-backed total reports its mesa count');
+select is((select jsonb_build_object('mesa_count', payload->'mesa_count',
+    'total_votes', payload->'total_votes', 'party_votes', (select jsonb_object_agg(
+      party->>'list_id', party->'votes') from jsonb_array_elements(payload->'parties') party))
+  from (select results_exploration_official(
+    '20000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000007', '02', '027') payload) result),
+  '{"mesa_count":2,"total_votes":65,"party_votes":{"A":39,"B":26}}'::jsonb,
+  'mesa count uses canonical full lineage, counts duplicate party rows once, and excludes null mesa identity');
 select is(results_exploration_official(
   '20000000-0000-0000-0000-000000000005',
   '20000000-0000-0000-0000-000000000003', '03', p_requested_level => 'distrito'

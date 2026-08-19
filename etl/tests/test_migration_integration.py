@@ -13,12 +13,12 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 29))
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 30))
 
 
 def _validated_migration_path(number: int, *, down: bool = False) -> Path:
     if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
-        raise ValueError("migration number must be an integer from 1 through 28")
+        raise ValueError("migration number must be an integer from 1 through 29")
 
     directory = MIGRATIONS / "down" if down else MIGRATIONS
     resolved_directory = directory.resolve(strict=True)
@@ -260,6 +260,68 @@ def _seed_pre_0018_fiscalizacion_case(
         assert before_count is not None
 
     return official_jurisdiction_id, fiscalizacion_jurisdiction_id, before_count[0]
+
+
+def test_0029_official_forward_down_and_reapply_preserve_payload_and_0020() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for isolated migration-history coverage")
+
+    schema_name = f"votus_official_0029_{uuid.uuid4().hex}"
+    schema_created = False
+    try:
+        with psycopg.connect(database_dsn) as connection:
+            connection.execute(sql.SQL("create schema {}").format(sql.Identifier(schema_name)))
+        schema_created = True
+        params = conninfo_to_dict(database_dsn)
+        params["options"] = f"-csearch_path={schema_name}"
+        history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+        assert _available_migration_numbers(maximum=29) == list(range(1, 30))
+        for number in (*range(1, 9), *range(11, 21)):
+            _apply_migration(history_dsn, number)
+        with psycopg.connect(history_dsn) as connection:
+            assert connection.execute(
+                "select to_regrole('results_exploration_executor')"
+            ).fetchone() != (None,)
+            connection.execute(
+                "alter function results_exploration_official"
+                "(uuid,uuid,text,text,text,text,integer,text) "
+                "rename to results_exploration_official_0020"
+            )
+            connection.execute(
+                "create function results_exploration_official"
+                "(uuid,uuid,text,text,text,text,integer,text) returns jsonb "
+                "language sql stable security definer set search_path=public,pg_temp as "
+                "$$ select results_exploration_official_0020($1,$2,$3,$4,$5,$6,$7,$8) "
+                "|| jsonb_build_object('source_exclusions','[]'::jsonb) $$"
+            )
+            baseline = connection.execute(
+                "select results_exploration_official(%s,%s,'02','027')",
+                (uuid.uuid4(), uuid.uuid4()),
+            ).fetchone()
+        _apply_migration(history_dsn, 29)
+        with psycopg.connect(history_dsn) as connection:
+            optimized = connection.execute(
+                "select results_exploration_official(%s,%s,'02','027')",
+                (uuid.uuid4(), uuid.uuid4()),
+            ).fetchone()
+            assert connection.execute(
+                "select to_regprocedure('results_exploration_official_0020"
+                "(uuid,uuid,text,text,text,text,integer,text)')"
+            ).fetchone() != (None,)
+        assert optimized == baseline
+        _apply_down_migration(history_dsn, 29)
+        with psycopg.connect(history_dsn) as connection:
+            assert connection.execute(
+                "select to_regprocedure('results_exploration_official_0029"
+                "(uuid,uuid,text,text,text,text,integer,text)')"
+            ).fetchone() == (None,)
+        _apply_migration(history_dsn, 29)
+    finally:
+        if schema_created:
+            with psycopg.connect(database_dsn) as connection:
+                drop_schema = sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))
+                connection.execute(drop_schema)
 
 
 def test_0025_facets_forward_down_and_reapply_restore_0020_behavior() -> None:

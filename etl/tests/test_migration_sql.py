@@ -874,6 +874,8 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "results_exploration_schools",
         "->>'status',",
         "result_row_non_official_scope_idx",
+        "result_row_exploration_scope_idx",
+        "official_core_scope",
         "j.seccion_code = '001'",
         "500, 'scale payload retains exactly 500 complete schools'",
         "12000::bigint",
@@ -923,6 +925,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0029_optimize_results_exploration_official.down.sql",
         "\\ir ../migrations/down/0028_bound_results_exploration_cold_start.down.sql",
         "\\ir ../migrations/down/0027_optimize_non_official_source_audit.down.sql",
         "\\ir ../migrations/down/0022_results_exploration_scale.down.sql",
@@ -933,6 +936,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0022_results_exploration_scale.sql",
         "\\ir ../migrations/0027_optimize_non_official_source_audit.sql",
         "\\ir ../migrations/0028_bound_results_exploration_cold_start.sql",
+        "\\ir ../migrations/0029_optimize_results_exploration_official.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -971,6 +975,55 @@ def test_0028_bounds_source_backed_dimension_discovery_and_restores_0026() -> No
 
     down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
     assert down.endswith("\\ir ../0026_scope_mesa_facets_to_establishment.sql")
+
+
+def test_0029_scopes_official_exploration_before_row_functions() -> None:
+    forward_path = MIGRATIONS / "0029_optimize_results_exploration_official.sql"
+    down_path = MIGRATIONS / "down" / "0029_optimize_results_exploration_official.down.sql"
+
+    assert forward_path.exists(), "0029 official-exploration optimization is required"
+    assert down_path.exists(), "0029 official-exploration down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    assert "create index" not in forward
+    assert "result_row_official_geography_scope_idx" not in forward
+    assert "create function results_exploration_official_0029(" in forward
+    core = forward.split("create function results_exploration_official_0029(", 1)[1]
+    core = core.split("create or replace function results_exploration_official(", 1)[0]
+    assert core.index("scoped_geography as materialized") < core.index(
+        "results_exploration_reporting_level("
+    )
+    assert "results_exploration_official_0020" not in core
+    assert "count(distinct mesa_code)" not in core
+    assert "count(distinct jurisdiction_id)" in core
+    assert "jurisdiction.id is the canonical normalized full-lineage mesa identity" in core
+    mesa_count = core.split("'mesa_count'", 1)[1].split("'parties'", 1)[0]
+    assert "where mesa_code is not null" in mesa_count
+    assert "drop function results_exploration_official_0020" not in forward
+    assert "alter function results_exploration_official_0020" not in forward
+    assert "rename to results_exploration_official_0022" in forward
+    wrapper = forward.split("create or replace function results_exploration_official(", 1)[1]
+    assert "results_exploration_official_0029(" in wrapper
+    assert wrapper.index("scoped_geography as materialized") < wrapper.index(
+        "results_exploration_reporting_level("
+    )
+    assert "rr.source_kind is distinct from 'official'" in wrapper
+    assert "'source_exclusions'" in wrapper
+    grant_create = "grant create on schema public to results_exploration_executor"
+    revoke_create = "revoke create on schema public from results_exploration_executor"
+    owner_change = "owner to results_exploration_executor"
+    assert forward.count(grant_create) == forward.count(revoke_create) == 1
+    assert forward.count(owner_change) == 2
+    assert forward.index(grant_create) < forward.index(owner_change)
+    assert forward.rindex(owner_change) < forward.index(revoke_create)
+    assert "statement_timeout" not in forward
+
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert "alter function results_exploration_official_0022(" in down
+    assert "rename to results_exploration_official" in down
+    assert "drop function results_exploration_official_0029(" in down
+    assert "drop index" not in down
+    assert "drop function results_exploration_official_0020" not in down
+    assert len(down_path.read_text(encoding="utf-8").splitlines()) <= 15
 
 
 def test_0027_adds_only_the_reversible_unknown_preserving_partial_index() -> None:

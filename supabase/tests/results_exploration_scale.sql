@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 -- Disposable high-cardinality proof; timings are local, not production claims.
 begin;
-select plan(17);
+select plan(19);
 create temporary table scale_plan_evidence (label text primary key,
   representative_result_rows bigint not null, plan jsonb not null) on commit drop;
 -- Issue #54 production-shaped coverage proof.
@@ -208,9 +208,21 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
       '30000000-0000-0000-0000-000000000001'::uuid,
       '30000000-0000-0000-0000-000000000002'::uuid, '02', '028')$plan$
     into evidence;
-  insert into scale_plan_evidence values ('official', representative_result_rows, evidence);
-  execute $plan$explain (analyze, buffers, format json)
-    select count(*)::bigint, coalesce(sum(rr.votes), 0)::bigint
+    insert into scale_plan_evidence values ('official', representative_result_rows, evidence);
+    execute $plan$explain (analyze, buffers, format json)
+        with scoped_geography as materialized (
+          select id, seccion_code from jurisdiction
+          where distrito_code = '02' and seccion_code = '001'
+        ) select count(*) from scoped_geography j join result_row rr on rr.jurisdiction_id = j.id
+        where rr.election_id = '30000000-0000-0000-0000-000000000001'::uuid
+          and rr.category_id = '30000000-0000-0000-0000-000000000002'::uuid
+          and rr.source_kind = 'official'
+          and results_exploration_reporting_level(rr.archive_entry_id, rr.granularity, '02', j.seccion_code) = 'mesa'$plan$
+        into evidence;
+      insert into scale_plan_evidence values ('official_core_scope', 129754, evidence);
+      execute $plan$explain (analyze, buffers, format json)
+        select count(*)::bigint, coalesce(sum(rr.votes), 0)::bigint
+
     from result_row rr
     join jurisdiction j on j.id = rr.jurisdiction_id
     where rr.election_id = '30000000-0000-0000-0000-000000000001'::uuid
@@ -248,6 +260,12 @@ end $$;
 select ok((select plan::text like '%result_row_non_official_scope_idx%'
     from scale_plan_evidence where label = 'official_source_exclusions'),
   'source exclusion audit uses the geography-selective non-official partial index');
+select ok((select label = 'official_core_scope'
+    and plan::text like '%result_row_exploration_scope_idx%'
+    and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
+      + coalesce((plan->0->'Plan'->>'Shared Read Blocks')::bigint, 0)) <= 20
+  from scale_plan_evidence where label = 'official_core_scope'),
+  'official core scopes tiny geography through the existing bounded access path');
 select ok((select label = 'coverage_production_rpc'
     and (plan->0->>'Execution Time')::numeric <= 15000
     and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
