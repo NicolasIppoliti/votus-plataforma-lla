@@ -79,6 +79,11 @@ insert into jurisdiction (id, distrito_code, seccion_code, circuito_code,
   establecimiento_code, establecimiento_name, mesa_code) values
   ('30000000-0000-0000-0003-000000000001', '02', '001', '00001',
     'SCOPE-001', 'Selected audit scope', 1);
+-- This relaxation commits, and the cleanup block at the end of the file restores it. An
+-- abort in between therefore leaves the DB-level source guard dropped. That is bounded, not
+-- guaranteed away: e2e-release-gate.ts runs the pgTAP proofs in a loop whose helper throws on
+-- a non-zero exit, so a failed proof stops the gate before any later proof observes the
+-- weakened schema, and the disposable stack is destroyed by owned cleanup.
 alter table result_row drop constraint result_row_source_kind_check;
 alter table result_row alter column source_kind drop not null;
 insert into result_row (election_id, jurisdiction_id, category_id, granularity, list_id, votes,
@@ -126,7 +131,7 @@ select '30000000-0000-0000-0000-000000000003',('30000000-0000-0000-0005-'||lpad(
 from generate_series(1,2000) unit;
 commit; vacuum (analyze) jurisdiction; vacuum (analyze) result_row;
 begin;
-select plan(19);
+select plan(21);
 create temporary table scale_plan_evidence (label text primary key,representative_result_rows bigint not null,plan jsonb not null) on commit drop;
 select is((results_exploration_official('30000000-0000-0000-0000-000000000001'::uuid,
     '30000000-0000-0000-0000-000000000002'::uuid,'02','001')->>'total_votes')::bigint,
@@ -309,6 +314,40 @@ select ok((select plan::text like '%result_row_non_official_scope_idx%'
           from scale_plan_evidence district where district.label='district_scope_access')
       from scale_plan_evidence where label = 'official_core_scope'),
       'official core and district path automatically use bounded scope-first index access without a fact seq scan');
+
+-- Everything above reads hand-written replicas of the function body. A later migration could
+-- redefine results_exploration_official and leave both the shipped migration file and those
+-- replicas untouched, so the suite would stay green while production stopped using the index.
+-- EXPLAIN cannot close that gap: for a SQL function call it reports a bare Result node and
+-- hides every nested plan, which is why district_rpc can bound time and buffers but can never
+-- name an index. pg_stat_get_xact_numscans can. It counts scans for the current transaction
+-- only, so no flush is needed and no concurrent backend can inflate the readings.
+create temporary table district_scan_evidence (label text primary key,
+  table_scans bigint not null, index_scans bigint not null, jurisdiction_count bigint not null) on commit drop;
+do $$ declare district_seq_before bigint; district_idx_before bigint;
+  district_seq_after bigint; district_idx_after bigint; district_index oid; district_payload jsonb; begin
+  district_index := to_regclass('public.result_row_official_district_scope_idx');
+  if district_index is null then raise exception '0031 scope-first district index is absent, so its access cannot be measured'; end if;
+  district_seq_before := pg_stat_get_xact_numscans('public.result_row'::regclass);
+  district_idx_before := pg_stat_get_xact_numscans(district_index);
+  district_payload := results_exploration_official('30000000-0000-0000-0000-000000000001'::uuid,
+    '30000000-0000-0000-0000-000000000002'::uuid,'04',p_requested_level=>'distrito');
+  district_seq_after := pg_stat_get_xact_numscans('public.result_row'::regclass);
+  district_idx_after := pg_stat_get_xact_numscans(district_index);
+  if jsonb_typeof(district_payload) is distinct from 'object' then
+    raise exception 'district RPC returned % instead of a payload object',coalesce(jsonb_typeof(district_payload),'null'); end if;
+  insert into district_scan_evidence values ('district_rpc_access',
+    district_seq_after-district_seq_before, district_idx_after-district_idx_before,
+    (select count(*) from jurisdiction where distrito_code='04'));
+end $$;
+-- The floor is one index scan per target jurisdiction because the district core reaches
+-- result_row through a lateral join over target_jurisdictions. A body that stopped doing that
+-- fails here and deserves a deliberate look rather than a silent pass.
+select ok((select index_scans >= jurisdiction_count and jurisdiction_count > 0
+    from district_scan_evidence where label = 'district_rpc_access'),
+  'production district RPC scans the scope-first index at least once per target jurisdiction');
+select ok((select table_scans = 0 from district_scan_evidence where label = 'district_rpc_access'),
+  'production district RPC reaches result_row without a sequential scan');
 
 select ok((select label = 'coverage_production_rpc'
     and (plan->0->>'Execution Time')::numeric <= 15000

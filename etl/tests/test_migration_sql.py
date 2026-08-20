@@ -868,7 +868,7 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "facets_cold_start",
         "results_exploration_facets(null, null, null, null, null, null)",
         "shared read blocks')::bigint, 0)) <= 500",
-        "7000",
+        "when label = 'facets_cold_start' then 7000",
         "results_exploration_official",
         "results_exploration_coverage",
         "results_exploration_schools",
@@ -1324,7 +1324,7 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
             "results_exploration_reporting_level(",
         )
     )
-    assert "select plan(19)" in scale and "selected_shapes<>1" in scale
+    assert "select plan(21)" in scale and "selected_shapes<>1" in scale
 
 
 def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
@@ -1386,3 +1386,49 @@ def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
     assert "execution time')::numeric<=2000" in district_contract
     assert "shared read blocks')::bigint,0)<=7500" in district_contract
     assert "enable_seqscan" not in scale and "enable_nestloop" not in scale
+
+
+def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -> None:
+    """The index contract must hold on the entry point, not only on hand-written replicas.
+
+    EXPLAIN of a SQL function call reports a bare Result node and no nested plans, so index
+    identity and sequential-scan absence cannot be read from the district_rpc plan. They are
+    proven instead from pg_stat counter deltas taken around a real RPC call.
+    """
+    raw = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    scale = " ".join(raw.split())
+    # Statements only: the surrounding prose explains why replicas are insufficient, so it
+    # names the very constructs the measured block must not execute.
+    statements = " ".join(re.sub(r"--[^\n]*", "", raw).split())
+
+    block = statements.split("do $$ declare district_seq_before", 1)[1].split("end $$;", 1)[0]
+
+    # pg_stat_get_xact_numscans is transaction-scoped and needs no flush, so concurrent
+    # backends cannot inflate the readings and the measurement lives beside its assertions.
+    # The cluster-wide views must not be used for this contract.
+    for cluster_wide in ("pg_stat_user_indexes", "pg_stat_user_tables", "pg_stat_force_next_flush"):
+        assert cluster_wide not in statements
+
+    # A missing index must abort loudly. Reading a counter for an index that is not there
+    # would otherwise let both readings agree and render absence of evidence as proof.
+    assert "to_regclass('public.result_row_official_district_scope_idx')" in block
+    assert "if district_index is null then raise exception" in block
+
+    # Ordering is the whole contract: both before-readings precede the call and both
+    # after-readings follow it, or the deltas measure nothing.
+    call = block.index("results_exploration_official(")
+    for before in ("district_seq_before :=", "district_idx_before :="):
+        assert block.index(before) < call, f"{before} must be read before the RPC call"
+    for after in ("district_seq_after :=", "district_idx_after :="):
+        assert block.index(after) > call, f"{after} must be read after the RPC call"
+    assert block.count("results_exploration_official(") == 1
+    assert "p_requested_level=>'distrito'" in block
+    for replica in ("explain", "as materialized", "cross join lateral"):
+        assert replica not in block
+
+    assert "select plan(21);" in scale
+    assert (
+        "ok((select index_scans >= jurisdiction_count from district_scan_evidence" in scale
+        or "index_scans >= jurisdiction_count" in scale
+    )
+    assert "table_scans = 0" in scale
