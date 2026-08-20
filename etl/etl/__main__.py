@@ -90,7 +90,12 @@ from .ingest.national import (
     load_national_rows,
     validate_mesa_tipo,
 )
-from .ingest.pba import PbaSchemaError, ingest_pba, load_pba_rows
+from .ingest.pba import (
+    PbaSchemaError,
+    ingest_pba,
+    load_pba_rows,
+    pba_parser_quarantine_review_kind,
+)
 from .jurisdiction import (
     is_canonicalizable_circuito_code,
     is_canonicalizable_code,
@@ -932,7 +937,7 @@ def ingest_source(
                     evidence.append("raw cell shapes " + ", ".join(quarantined.raw_cell_shapes))
                 quarantine_records.append(
                     ReviewItemRecord(
-                        kind=f"pba_{quarantined.reason}",
+                        kind=pba_parser_quarantine_review_kind(quarantined.reason),
                         severity="warning",
                         subject_ref=(
                             f"{source_id} {year}-{round_} distrito:{quarantined.distrito} "
@@ -2231,7 +2236,16 @@ def cmd_load_curated(args: argparse.Namespace) -> int:
         ("jurisdiction_crosswalk", counts.crosswalk.jurisdiction_crosswalk),
         ("mesa_crosswalk", counts.crosswalk.mesa_crosswalk),
     ):
-        print(f"{table_name}: loaded={count.loaded} deleted={count.deleted}")
+        deleted_by_reason = (
+            ",".join(
+                f"{reason}:{deleted}" for reason, deleted in sorted(count.deleted_by_reason.items())
+            )
+            or "none"
+        )
+        print(
+            f"{table_name}: operation={count.operation} loaded={count.loaded} "
+            f"deleted={count.deleted} deleted_by_reason={deleted_by_reason}"
+        )
     return 0
 
 
@@ -2481,17 +2495,12 @@ def official_mesa_votes_from_national(
 
 
 def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
-    """Join an archived fiscalización sheet to an archived official source BY
-    MESA IDENTITY and persist every divergence as a `review_item`.
+    """Compare fiscalización and official tallies by mesa identity.
 
-    This is the production caller `join_fiscalizacion_identity` and
-    `mesa_divergences_to_review_items` never had: both were complete, both were
-    tested, and the whole D9.5 path was reachable from nothing, so a diverging
-    mesa was never recorded anywhere an operator would see it.
-
-    A divergence is ALWAYS informational and NEVER a join failure (D9.5): the
-    command exits zero on divergences and nonzero only when the join itself
-    could not be performed.
+    Actionable tally divergences become informational review-item candidates.
+    Expected category-definition differences remain excluded from the queue and
+    are reported separately. Divergences never turn a successful join into a
+    command failure (D9.5).
     """
     # THE CHECK behind the name table's curated scope. `vector()` maps every
     # column through `OFFICIAL_AGRUPACION_NAME_BY_COLUMN`, curated for one
@@ -2852,12 +2861,13 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         f"{normalize_seccion_code(args.seccion) or '(sin seccion)'}/"
         f"{args.category}"
     )
+    divergence_projection = mesa_divergences_to_review_items(list(join.divergences))
     divergence_records = [
         replace(
             record,
             subject_ref=f"{args.source} vs {args.baseline} [{scope}] {record.subject_ref}",
         )
-        for record in mesa_divergences_to_review_items(list(join.divergences))
+        for record in divergence_projection.review_items
     ]
     records_to_write = [
         *parser_review_records,
@@ -2886,12 +2896,24 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    for exclusion in divergence_projection.exclusions:
+        print(
+            f"  expected exclusion: reason={exclusion.reason} "
+            f"column={exclusion.column!r} count={exclusion.count}",
+            file=sys.stderr,
+        )
+
+    observed_divergences = len(join.divergences)
+    actionable_candidates = len(divergence_projection.review_items)
+    expected_exclusions = sum(exclusion.count for exclusion in divergence_projection.exclusions)
     fresh_divergences = recorded_by_kind.get("mesa_tally_divergence", 0)
     print(
         f"joined {len(join.joined)} of {len(mesa_rows)} fiscalización mesa(s) to "
-        f"{args.baseline}; {len(join.divergences)} diverging column(s) recorded "
-        f"({fresh_divergences} new, "
-        f"{len(divergence_records) - fresh_divergences} not recorded)"
+        f"{args.baseline}; divergence totals: observed={observed_divergences}, "
+        f"actionable candidates={actionable_candidates}, "
+        f"actually inserted new={fresh_divergences}, "
+        f"active-not-recorded={actionable_candidates - fresh_divergences}, "
+        f"expected exclusions={expected_exclusions}"
     )
     return 0
 
@@ -2957,7 +2979,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_fiscalizacion_parser = subparsers.add_parser(
         "validate-fiscalizacion",
         help="Join an archived fiscalización sheet to an official source by mesa "
-        "identity and record every divergence as a review_item.",
+        "identity, queue actionable divergences, and report expected exclusions.",
     )
     validate_fiscalizacion_parser.add_argument("--source", required=True)
     validate_fiscalizacion_parser.add_argument("--baseline", required=True)

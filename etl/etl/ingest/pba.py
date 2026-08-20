@@ -30,6 +30,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
 from html.parser import HTMLParser
+from types import MappingProxyType
 
 from .. import db
 from ..archive import (
@@ -347,6 +348,23 @@ class QuarantinedPbaRow:
 class PbaParseResult:
     rows: tuple[PbaRow, ...]
     quarantined: tuple[QuarantinedPbaRow, ...]
+
+
+_PBA_PARSER_QUARANTINE_REVIEW_KIND_BY_REASON = MappingProxyType(
+    {
+        "unreadable_vote_cell": "pba_unreadable_vote_cell",
+        "conflicting_duplicate_semantic_result": "pba_conflicting_duplicate_semantic_result",
+        "exact_duplicate_semantic_result": "pba_exact_duplicate_semantic_result",
+    }
+)
+
+
+def pba_parser_quarantine_review_kind(reason: str) -> str:
+    """Return the stable review kind for one parser-owned quarantine reason."""
+    try:
+        return _PBA_PARSER_QUARANTINE_REVIEW_KIND_BY_REASON[reason]
+    except KeyError:
+        raise ValueError(f"unsupported PBA parser quarantine reason: {reason!r}") from None
 
 
 def _safe_cell_shape(raw: str) -> str:

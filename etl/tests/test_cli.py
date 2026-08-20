@@ -2392,6 +2392,156 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
     } == {"warning"}
 
 
+def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_totals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    import etl.__main__ as cli
+    from etl.crosswalk import MesaDivergence
+
+    fiscalizacion_id = "fiscalizacion/observability"
+    baseline_id = "national/observability"
+    sources = {
+        "fiscalizacion": [
+            {
+                "id": fiscalizacion_id,
+                "source": "internal",
+                "source_url": "local://fiscalizacion/fixture.csv",
+                "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "observability fixture",
+                "upload": "never",
+            }
+        ],
+        "national": [
+            {
+                "id": baseline_id,
+                "source": "example.test",
+                "source_url": "https://example.test/fixture.csv",
+                "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "observability baseline",
+            }
+        ],
+    }
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    candidates: list[object] = []
+    monkeypatch.setattr(cli, "load_sources", lambda _path: sources)
+    monkeypatch.setattr(cli, "load_manifest", lambda _path: [])
+    monkeypatch.setattr(
+        cli,
+        "latest_ok_record",
+        lambda _records, source_id: {
+            "id": source_id,
+            "status": "ok",
+            "archived_path": "archive/fixture.csv",
+        },
+    )
+    monkeypatch.setattr(
+        cli,
+        "LocalArchiveStore",
+        lambda **_kwargs: SimpleNamespace(exists=lambda *_args: True),
+    )
+    monkeypatch.setattr(cli, "read_archived_source", lambda *_args, **_kwargs: b"fixture")
+    monkeypatch.setattr(
+        cli,
+        "ingest_fiscalizacion",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            rows=[SimpleNamespace(mesa=42, votes={"La Libertad Avanza": 55})],
+            review_items=[],
+            quarantined=[],
+        ),
+    )
+    monkeypatch.setattr(cli, "national_csv_bytes", lambda _bytes: b"baseline")
+    monkeypatch.setattr(
+        cli,
+        "official_mesa_votes_from_national",
+        lambda *_args, **_kwargs: cli.OfficialMesaProjection(
+            tallies={42: object()}, skipped={}, review_items=()
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "join_fiscalizacion_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            joined=((object(), object()),),
+            unmatched_mesas=(),
+            collided_mesas=(),
+            divergences=(
+                MesaDivergence(
+                    mesa=42,
+                    column="La Libertad Avanza",
+                    fiscalizacion_value=55,
+                    official_value=57,
+                ),
+                MesaDivergence(
+                    mesa=42,
+                    column="Impugnado",
+                    fiscalizacion_value=2,
+                    official_value=0,
+                ),
+                MesaDivergence(
+                    mesa=42,
+                    column="En blanco",
+                    fiscalizacion_value=1,
+                    official_value=3,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(cli.psycopg, "connect", lambda _url: FakeConnection())
+    monkeypatch.setattr(
+        cli,
+        "insert_review_items",
+        lambda _conn, records: candidates.extend(records) or len(records),
+    )
+
+    exit_code = cli.cmd_validate_fiscalizacion(
+        SimpleNamespace(
+            distrito=cli.FISCALIZACION_DISTRITO,
+            seccion=cli.FISCALIZACION_SECCION,
+            category=cli.FISCALIZACION_CATEGORY,
+            sources_path=tmp_path / "sources.yaml",
+            source=fiscalizacion_id,
+            baseline=baseline_id,
+            database_url="postgresql://not-opened/test",
+            manifest_path=tmp_path / "manifest.json",
+            local_root=tmp_path / "archive",
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert len(candidates) == 1
+    assert (
+        "expected exclusion: reason=expected_category_definition_difference "
+        "column='En blanco' count=1"
+    ) in captured.err
+    assert (
+        "expected exclusion: reason=expected_category_definition_difference "
+        "column='Impugnado' count=1"
+    ) in captured.err
+    assert (
+        f"joined 1 of 1 fiscalización mesa(s) to {baseline_id}; divergence totals: "
+        "observed=3, actionable candidates=1, actually inserted new=1, "
+        "active-not-recorded=0, expected exclusions=2"
+    ) in captured.out
+    assert "3 diverging column(s) recorded" not in captured.out
+
+
 def test_validate_fiscalizacion_persists_duplicate_collapsed_once(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4001,13 +4151,13 @@ def test_load_curated_reports_per_table_replacement_counts_through_main(
     sources_path.write_text("national: []\n", encoding="utf-8")
     summary = SimpleNamespace(
         party_map=SimpleNamespace(
-            party_canonical=SimpleNamespace(loaded=3, deleted=2),
-            list_identity=SimpleNamespace(loaded=4, deleted=1),
-            party_mapping=SimpleNamespace(loaded=4, deleted=3),
+            party_canonical=TableReplacementCount(loaded=3, deleted=2),
+            list_identity=TableReplacementCount(loaded=4, deleted=1),
+            party_mapping=TableReplacementCount(loaded=4, deleted=3),
         ),
         crosswalk=SimpleNamespace(
-            jurisdiction_crosswalk=SimpleNamespace(loaded=5, deleted=4),
-            mesa_crosswalk=SimpleNamespace(loaded=6, deleted=5),
+            jurisdiction_crosswalk=TableReplacementCount(loaded=5, deleted=4),
+            mesa_crosswalk=TableReplacementCount(loaded=0, deleted=0, operation="no-op"),
         ),
     )
     monkeypatch.setattr("etl.__main__.load_curated", lambda **_kwargs: summary)
@@ -4024,11 +4174,15 @@ def test_load_curated_reports_per_table_replacement_counts_through_main(
 
     assert exit_code == 0
     assert capsys.readouterr().out.splitlines() == [
-        "party_canonical: loaded=3 deleted=2",
-        "list_identity: loaded=4 deleted=1",
-        "party_mapping: loaded=4 deleted=3",
-        "jurisdiction_crosswalk: loaded=5 deleted=4",
-        "mesa_crosswalk: loaded=6 deleted=5",
+        "party_canonical: operation=replacement loaded=3 deleted=2 "
+        "deleted_by_reason=absent_from_desired_projection:2",
+        "list_identity: operation=replacement loaded=4 deleted=1 "
+        "deleted_by_reason=absent_from_desired_projection:1",
+        "party_mapping: operation=replacement loaded=4 deleted=3 "
+        "deleted_by_reason=absent_from_desired_projection:3",
+        "jurisdiction_crosswalk: operation=replacement loaded=5 deleted=4 "
+        "deleted_by_reason=absent_from_desired_projection:4",
+        "mesa_crosswalk: operation=no-op loaded=0 deleted=0 deleted_by_reason=none",
     ]
 
 
@@ -4176,9 +4330,14 @@ def test_load_curated_populates_every_curated_table(tmp_path: Path, capsys) -> N
     ]
     assert len(reported) == len(expected_loaded)
     for line, (table_name, loaded) in zip(reported, expected_loaded, strict=True):
-        prefix = f"{table_name}: loaded={loaded} deleted="
+        prefix = f"{table_name}: operation=replacement loaded={loaded} deleted="
         assert line.startswith(prefix)
-        assert line.removeprefix(prefix).isdigit()
+        deleted, separator, reason_count = line.removeprefix(prefix).partition(
+            " deleted_by_reason=absent_from_desired_projection:"
+        )
+        assert separator
+        assert deleted.isdigit()
+        assert reason_count == deleted
 
     conn = psycopg.connect(TEST_DSN)
     try:

@@ -18,17 +18,69 @@ from dataclasses import dataclass
 from etl.crosswalk import MesaDivergence
 from etl.ingest.fiscalizacion import ReviewItemDraft
 
+REVIEW_ITEM_KINDS = frozenset(
+    {
+        "content_drift",
+        "fetch_failure",
+        "unmapped_party",
+        "unmapped_jurisdiction",
+        "mesa_discontinuity",
+        "source_reexported",
+        "duplicate_collapsed",
+        "duplicate_conflict",
+        "unmergeable_row",
+        "blank_vote_cell",
+        "mesa_tally_divergence",
+        "ambiguous_mesa_circuito",
+        "mesa_absent_from_official_import",
+        "unreadable_vote_cell",
+        "ambiguous_official_mesa_identity",
+        "pba_conflicting_duplicate_semantic_result",
+        "pba_exact_duplicate_semantic_result",
+        "pba_unreadable_vote_cell",
+    }
+)
+"""Every kind `review_item_kind_check` admits, declared once.
+
+This is the Python half of a contract whose other half is a database constraint;
+`test_0024_review_kind_allowlist_matches_the_declared_production_kinds` holds the two
+in exact agreement. It exists because the previous guard inferred the kinds by scanning
+producer source for `kind=` keyword arguments, which missed every literal written in
+another shape -- and, being a subset check, passed anyway when it missed one.
+"""
+
+
+class UndeclaredReviewKindError(ValueError):
+    """A record carried a kind `review_item_kind_check` would reject."""
+
+
+def validate_review_item_kind(kind: str) -> None:
+    """Reject a kind outside the shared Python/database review-item contract."""
+    if kind not in REVIEW_ITEM_KINDS:
+        raise UndeclaredReviewKindError(
+            f"review item kind {kind!r} is not declared. Add it to "
+            "REVIEW_ITEM_KINDS in etl/etl/review_item.py AND to review_item_kind_check "
+            "in a new migration; the database rejects the insert otherwise."
+        )
+
 
 @dataclass(frozen=True)
 class ReviewItemRecord:
     """One insert-ready `review_item` row (`detected_at`/`resolved_at` are
     left to the table's Postgres defaults -- this module never backdates
-    or resolves an item on ingestion)."""
+    or resolves an item on ingestion).
+
+    Construction validates normal producers early. The real write boundary validates
+    again because Python typing cannot prevent a duck-typed object from reaching it.
+    """
 
     kind: str
     severity: str
     subject_ref: str
     note: str | None
+
+    def __post_init__(self) -> None:
+        validate_review_item_kind(self.kind)
 
 
 @dataclass(frozen=True)
@@ -189,31 +241,50 @@ def review_item_draft_to_record(draft: ReviewItemDraft) -> ReviewItemRecord:
     )
 
 
+@dataclass(frozen=True)
+class MesaDivergenceExclusion:
+    reason: str
+    column: str
+    count: int
+
+
+@dataclass(frozen=True)
+class MesaDivergenceProjection:
+    review_items: tuple[ReviewItemRecord, ...]
+    exclusions: tuple[MesaDivergenceExclusion, ...]
+
+
 def mesa_divergences_to_review_items(
     divergences: list[MesaDivergence],
-) -> list[ReviewItemRecord]:
-    """Project `MesaDivergence` records (`etl.crosswalk`) into `review_item`
-    rows.
-
-    D9.5: a diverging per-mesa tally is ALWAYS informational, never a join
-    failure -- every produced item is `severity='info'`. The
-    `Impugnado`/`En blanco` columns are an EXPECTED category-definition
-    difference between a fiscal's provisional judgement and the definitive
-    escrutinio; design.md states this explicitly "MUST NOT render as
-    drift", so those columns are EXCLUDED here rather than inserted at a
-    different severity -- no `review_item` row is ever created for one.
-    """
-    return [
-        ReviewItemRecord(
-            kind="mesa_tally_divergence",
-            severity="info",
-            subject_ref=f"mesa:{divergence.mesa}",
-            note=(
-                f"fiscalización/official divergence on {divergence.column!r}: "
-                f"fiscalización={divergence.fiscalizacion_value}, "
-                f"official={divergence.official_value}"
-            ),
+) -> MesaDivergenceProjection:
+    """Project actionable divergences and account for expected exclusions."""
+    review_items: list[ReviewItemRecord] = []
+    excluded_by_column: dict[str, int] = {}
+    for divergence in divergences:
+        if divergence.is_expected_category_difference:
+            excluded_by_column[divergence.column] = excluded_by_column.get(divergence.column, 0) + 1
+            continue
+        review_items.append(
+            ReviewItemRecord(
+                kind="mesa_tally_divergence",
+                severity="info",
+                subject_ref=f"mesa:{divergence.mesa}",
+                note=(
+                    f"fiscalización/official divergence on {divergence.column!r}: "
+                    f"fiscalización={divergence.fiscalizacion_value}, "
+                    f"official={divergence.official_value}"
+                ),
+            )
         )
-        for divergence in divergences
-        if not divergence.is_expected_category_difference
-    ]
+
+    return MesaDivergenceProjection(
+        review_items=tuple(review_items),
+        exclusions=tuple(
+            MesaDivergenceExclusion(
+                reason="expected_category_definition_difference",
+                column=column,
+                count=count,
+            )
+            for column, count in sorted(excluded_by_column.items())
+        ),
+    )

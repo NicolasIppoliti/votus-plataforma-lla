@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import re
 from pathlib import Path
 
 import pytest
+
+from etl.review_item import REVIEW_ITEM_KINDS
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
@@ -120,84 +121,28 @@ def _review_kind_allowlist(sql: str) -> set[str]:
     return set(re.findall(r"'([a-z0-9_]+)'", constraint))
 
 
-def _production_review_kind_literals() -> set[str]:
-    production_root = REPO_ROOT / "etl" / "etl"
-    kinds: set[str] = set()
-    for source_path in production_root.rglob("*.py"):
-        tree = ast.parse(source_path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            for keyword in node.keywords:
-                if (
-                    keyword.arg == "kind"
-                    and isinstance(keyword.value, ast.Constant)
-                    and isinstance(keyword.value.value, str)
-                ):
-                    kinds.add(keyword.value.value)
+def test_0024_review_kind_allowlist_matches_the_declared_production_kinds() -> None:
+    """The constraint and `REVIEW_ITEM_KINDS` must agree exactly, in both directions.
 
-    pba_tree = ast.parse((production_root / "ingest" / "pba.py").read_text(encoding="utf-8"))
-    duplicate_kinds: set[str] = set()
-    pba_reasons: set[str] = set()
-    for node in ast.walk(pba_tree):
-        if not isinstance(node, ast.Assign) or not any(
-            isinstance(target, ast.Name) for target in node.targets
-        ):
-            continue
-        target_names = {target.id for target in node.targets if isinstance(target, ast.Name)}
-        if "kind" in target_names and isinstance(node.value, ast.IfExp):
-            duplicate_kinds.update(
-                value.value
-                for value in (node.value.body, node.value.orelse)
-                if isinstance(value, ast.Constant) and isinstance(value.value, str)
-            )
-        if "reason" not in target_names:
-            continue
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            pba_reasons.add(node.value.value)
-        elif isinstance(node.value, ast.JoinedStr):
-            suffix = "".join(
-                value.value
-                for value in node.value.values
-                if isinstance(value, ast.Constant) and isinstance(value.value, str)
-            )
-            pba_reasons.update(f"{kind}{suffix}" for kind in duplicate_kinds)
+    This replaces an AST scan of the producers, which only recognized `kind=` keyword
+    arguments holding a plain constant. Literals in any other shape were invisible to it,
+    and because the old assertion was a subset check, an incomplete left-hand side always
+    satisfied it: renaming a kind kept the suite green while the INSERT died in production
+    on `review_item_kind_check`. The real `insert_review_items` boundary now refuses an
+    undeclared kind regardless of the producer's object type or the syntax carrying its
+    literal, so this file only has to keep the constraint and the constant aligned.
 
-    cli_source = (production_root / "__main__.py").read_text(encoding="utf-8")
-    assert 'kind=f"pba_{quarantined.reason}"' in cli_source
-    kinds.update(f"pba_{reason}" for reason in pba_reasons)
-    return kinds
-
-
-def test_0024_review_kind_allowlist_covers_every_production_kind_literal() -> None:
+    Equality, not containment: a kind admitted by the constraint but no producer can emit
+    is dead allowance, and a declared kind the constraint rejects is a failed insert.
+    """
     sql = _sql("0024_expand_review_item_kinds.sql")
 
-    production_kinds = _production_review_kind_literals()
-    assert production_kinds
-    assert production_kinds <= _review_kind_allowlist(sql)
+    assert len(REVIEW_ITEM_KINDS) == 18, "migration 0024 established an exact 18-kind union"
+    assert set(REVIEW_ITEM_KINDS) == _review_kind_allowlist(sql)
 
 
 def test_0024_uses_the_exact_review_kind_union_and_has_a_guarded_down_migration() -> None:
-    expected = {
-        "content_drift",
-        "fetch_failure",
-        "unmapped_party",
-        "unmapped_jurisdiction",
-        "mesa_discontinuity",
-        "source_reexported",
-        "duplicate_collapsed",
-        "duplicate_conflict",
-        "unmergeable_row",
-        "blank_vote_cell",
-        "mesa_tally_divergence",
-        "ambiguous_mesa_circuito",
-        "mesa_absent_from_official_import",
-        "unreadable_vote_cell",
-        "ambiguous_official_mesa_identity",
-        "pba_conflicting_duplicate_semantic_result",
-        "pba_exact_duplicate_semantic_result",
-        "pba_unreadable_vote_cell",
-    }
+    expected = set(REVIEW_ITEM_KINDS)
     forward = _sql("0024_expand_review_item_kinds.sql")
     down_path = MIGRATIONS / "down" / "0024_expand_review_item_kinds.down.sql"
 

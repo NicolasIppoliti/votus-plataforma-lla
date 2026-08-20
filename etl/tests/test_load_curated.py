@@ -538,6 +538,31 @@ def test_jurisdiction_crosswalk_rows_loaded_from_curated_yaml(pg_conn: psycopg.C
     assert rows == [("02", "027", "Coronel de Marina Leonardo Rosales")]
 
 
+def test_omitted_mesa_projection_preserves_existing_rows(pg_conn: psycopg.Connection) -> None:
+    marker = uuid.uuid4().hex
+    stability = MesaStability(circuito=f"C-{marker}", mesa=1, present_2023=True, present_2025=True)
+    table = CrosswalkTable(jurisdictions=())
+    load_crosswalk_rows(
+        pg_conn,
+        table,
+        mesa_stabilities=((f"D-{marker}", f"S-{marker}", stability),),
+    )
+
+    summary = load_crosswalk_rows(pg_conn, table)
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select distrito_code, seccion_code, circuito_code, mesa_code "
+            "from mesa_crosswalk where distrito_code = %s and seccion_code = %s",
+            (f"D-{marker}", f"S-{marker}"),
+        )
+        assert cur.fetchall() == [(f"D-{marker}", f"S-{marker}", f"C-{marker}", 1)]
+    assert summary.mesa_crosswalk.operation == "no-op"
+    assert summary.mesa_crosswalk.loaded == 0
+    assert summary.mesa_crosswalk.deleted == 0
+    assert summary.mesa_crosswalk.deleted_by_reason == {}
+
+
 # ---------------------------------------------------------------------------
 # 15.7 -- mesa_crosswalk carries presence per year and the stability flag
 # ---------------------------------------------------------------------------
@@ -564,7 +589,18 @@ def test_mesa_crosswalk_carries_presence_per_year_and_stability_flag(
         ),
     ]
 
-    load_crosswalk_rows(pg_conn, table, mesa_stabilities=stabilities)
+    first = load_crosswalk_rows(pg_conn, table, mesa_stabilities=stabilities)
+    idempotent = load_crosswalk_rows(pg_conn, table, mesa_stabilities=stabilities)
+
+    assert first.mesa_crosswalk.operation == "replacement"
+    assert first.mesa_crosswalk.loaded == 2
+    assert first.mesa_crosswalk.deleted_by_reason == {
+        "absent_from_desired_projection": first.mesa_crosswalk.deleted
+    }
+    assert idempotent.mesa_crosswalk.operation == "replacement"
+    assert idempotent.mesa_crosswalk.loaded == 2
+    assert idempotent.mesa_crosswalk.deleted == 0
+    assert idempotent.mesa_crosswalk.deleted_by_reason == {"absent_from_desired_projection": 0}
 
     with pg_conn.cursor() as cur:
         cur.execute(

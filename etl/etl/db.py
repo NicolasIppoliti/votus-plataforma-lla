@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import LiteralString, Protocol
+from typing import Literal, LiteralString, Protocol
 
 from psycopg import sql
 
@@ -30,7 +30,7 @@ from etl.jurisdiction import (
     normalize_seccion_code,
 )
 from etl.party_map import PartyMappingTable
-from etl.review_item import ReviewItemRecord
+from etl.review_item import ReviewItemRecord, validate_review_item_kind
 
 
 class ArchiveEntryConflictError(ValueError):
@@ -157,10 +157,20 @@ def _merge_jurisdiction_names(
 class TableReplacementCount:
     loaded: int
     deleted: int
+    operation: Literal["replacement", "no-op"] = "replacement"
 
     def __post_init__(self) -> None:
         if self.loaded < 0 or self.deleted < 0:
             raise ValueError("replacement counts must be non-negative")
+        if self.operation == "no-op" and (self.loaded or self.deleted):
+            raise ValueError("no-op table counts must both be zero")
+
+    @property
+    def deleted_by_reason(self) -> dict[str, int]:
+        """Categorize the authoritative deletion total without duplicating it."""
+        if self.operation == "no-op":
+            return {}
+        return {"absent_from_desired_projection": self.deleted}
 
 
 @dataclass(frozen=True)
@@ -1163,7 +1173,7 @@ def load_party_map_rows(conn, table: PartyMappingTable) -> PartyMapReplacementSu
 def load_crosswalk_rows(
     conn,
     table: CrosswalkTable,
-    mesa_stabilities: Sequence[tuple[str, str, MesaStability]] = (),
+    mesa_stabilities: Sequence[tuple[str, str, MesaStability]] | None = None,
 ) -> CrosswalkReplacementSummary:
     """Load `curated/crosswalk.yaml` (already parsed into `table` by
     `etl.crosswalk.load_crosswalk`) into `jurisdiction_crosswalk`, plus any
@@ -1172,9 +1182,11 @@ def load_crosswalk_rows(
 
     `mesa_stabilities` is `(distrito_code, seccion_code, MesaStability)`
     triples. `MesaStability` carries the exact normalized circuito/mesa pair;
-    the caller supplies its distrito/seccion scope. `compute_mesa_stability`
-    MUST NOT default a code to "stable" (jurisdiction-model spec); this loader
-    does not recompute stability, it only persists whatever the caller computed.
+    the caller supplies its distrito/seccion scope. Omitting the projection
+    leaves `mesa_crosswalk` unchanged; supplying any sequence, including an
+    explicit empty sequence, replaces it in full. `compute_mesa_stability` MUST
+    NOT default a code to "stable" (jurisdiction-model spec); this loader does
+    not recompute stability, it only persists whatever the caller computed.
 
     Idempotent by plain `ON CONFLICT`: `jurisdiction_crosswalk` keys on
     `pba_distrito_code` (not null, migration 0003) and `mesa_crosswalk` keys on
@@ -1209,15 +1221,19 @@ def load_crosswalk_rows(
                 ),
             )
 
-        normalized_mesa_stabilities = [
-            (
-                normalize_distrito_code(distrito_code),
-                normalize_seccion_code(seccion_code),
-                normalize_circuito_code(stability.circuito),
-                stability,
-            )
-            for distrito_code, seccion_code, stability in mesa_stabilities
-        ]
+        normalized_mesa_stabilities = (
+            []
+            if mesa_stabilities is None
+            else [
+                (
+                    normalize_distrito_code(distrito_code),
+                    normalize_seccion_code(seccion_code),
+                    normalize_circuito_code(stability.circuito),
+                    stability,
+                )
+                for distrito_code, seccion_code, stability in mesa_stabilities
+            ]
+        )
         for distrito_code, seccion_code, circuito_code, stability in normalized_mesa_stabilities:
             cur.execute(
                 """
@@ -1253,27 +1269,30 @@ def load_crosswalk_rows(
             ([entry.pba_distrito_code for entry in table.jurisdictions],),
         )
         jurisdiction_crosswalk_deleted = cur.rowcount
-        cur.execute(
-            """
-            delete from mesa_crosswalk as current
-            where not exists (
-                select 1
-                from unnest(%s::text[], %s::text[], %s::text[], %s::int[])
-                     as desired(distrito_code, seccion_code, circuito_code, mesa_code)
-                where desired.distrito_code = current.distrito_code
-                  and desired.seccion_code = current.seccion_code
-                  and desired.circuito_code = current.circuito_code
-                  and desired.mesa_code = current.mesa_code
+        if mesa_stabilities is None:
+            mesa_crosswalk_deleted = 0
+        else:
+            cur.execute(
+                """
+                delete from mesa_crosswalk as current
+                where not exists (
+                    select 1
+                    from unnest(%s::text[], %s::text[], %s::text[], %s::int[])
+                         as desired(distrito_code, seccion_code, circuito_code, mesa_code)
+                    where desired.distrito_code = current.distrito_code
+                      and desired.seccion_code = current.seccion_code
+                      and desired.circuito_code = current.circuito_code
+                      and desired.mesa_code = current.mesa_code
+                )
+                """,
+                (
+                    [row[0] for row in normalized_mesa_stabilities],
+                    [row[1] for row in normalized_mesa_stabilities],
+                    [row[2] for row in normalized_mesa_stabilities],
+                    [row[3].mesa for row in normalized_mesa_stabilities],
+                ),
             )
-            """,
-            (
-                [row[0] for row in normalized_mesa_stabilities],
-                [row[1] for row in normalized_mesa_stabilities],
-                [row[2] for row in normalized_mesa_stabilities],
-                [row[3].mesa for row in normalized_mesa_stabilities],
-            ),
-        )
-        mesa_crosswalk_deleted = cur.rowcount
+            mesa_crosswalk_deleted = cur.rowcount
 
     return CrosswalkReplacementSummary(
         jurisdiction_crosswalk=TableReplacementCount(
@@ -1283,6 +1302,7 @@ def load_crosswalk_rows(
         mesa_crosswalk=TableReplacementCount(
             loaded=len(normalized_mesa_stabilities),
             deleted=mesa_crosswalk_deleted,
+            operation="no-op" if mesa_stabilities is None else "replacement",
         ),
     )
 
@@ -1307,6 +1327,8 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
     records = tuple(records)
     if not records:
         return 0
+    for record in records:
+        validate_review_item_kind(record.kind)
     if getattr(conn, "autocommit", False):
         raise RuntimeError(
             "review item writers require a transaction; autocommit connections are unsupported"

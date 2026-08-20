@@ -45,6 +45,7 @@ from etl.ingest.pba import (
     archive_pba_source,
     ingest_pba,
     load_pba_rows,
+    pba_parser_quarantine_review_kind,
     resolve_pba_jurisdictions,
 )
 from etl.jurisdiction import JurisdictionNames, QuarantinedPbaDistrito, resolve_pba_distrito_code
@@ -869,6 +870,35 @@ def test_duplicate_semantic_result_rows_are_structurally_quarantined(
     report = capsys.readouterr().err
     assert f"{reason}: 2" in report
     assert "('027', 'DIPUTADOS PROVINCIALES', '2206'): source rows 0, 1" in report
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected_kind"),
+    [
+        ("unreadable_vote_cell", "pba_unreadable_vote_cell"),
+        (
+            "conflicting_duplicate_semantic_result",
+            "pba_conflicting_duplicate_semantic_result",
+        ),
+        ("exact_duplicate_semantic_result", "pba_exact_duplicate_semantic_result"),
+    ],
+)
+def test_pba_parser_quarantine_reason_maps_to_existing_review_kind(
+    reason: str, expected_kind: str
+) -> None:
+    assert pba_parser_quarantine_review_kind(reason) == expected_kind
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "future_parser_reason",
+        "no curated crosswalk entry for PBA distrito '027'",
+    ],
+)
+def test_unknown_or_resolution_quarantine_reason_has_no_parser_review_kind(reason: str) -> None:
+    with pytest.raises(ValueError, match="unsupported PBA parser quarantine reason"):
+        pba_parser_quarantine_review_kind(reason)
 
 
 def test_duplicate_recognized_category_headers_are_schema_drift() -> None:
