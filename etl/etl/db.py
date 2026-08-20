@@ -7,9 +7,9 @@ one spot instead of being re-implemented per source.
 
 D8: "Load runs in one transaction per archive entry: delete-by-
 `archive_entry_id`, then bulk insert. Rebuild = truncate + replay."
-`load_result_rows` implements exactly that pair of statements and nothing
-else -- it does not commit; the caller controls the transaction boundary
-(production ingestion commits after a successful load, tests roll back for
+`load_result_rows` validates the archive's authoritative source kind before
+that mutation pair. It does not commit; the caller controls the transaction
+boundary (production ingestion commits after a successful load, tests roll back for
 isolation between runs).
 """
 
@@ -37,8 +37,62 @@ class ArchiveEntryConflictError(ValueError):
     """Persisted provenance disagrees with verified archive/source evidence."""
 
 
+class ArchiveEntryNotFoundError(ArchiveEntryConflictError):
+    """A result-row replacement references no authoritative archive entry."""
+
+
 class JurisdictionNameConflictError(ValueError):
     """Authoritative display metadata conflicts on one exact jurisdiction lineage."""
+
+
+class MixedSourceKindBatchError(ValueError):
+    """One result-row replacement batch contains more than one source kind."""
+
+
+class ArchiveEntrySourceKindMismatchError(ArchiveEntryConflictError):
+    """A result-row batch disagrees with its archive entry's authoritative source kind."""
+
+
+class ReviewItemTransactionIsolationError(RuntimeError):
+    """A review-item writer is running outside PostgreSQL READ COMMITTED."""
+
+
+def lock_archive_entry_source_authority(
+    conn,
+    *,
+    archive_entry_id: str,
+    expected_source_kind: str | None = None,
+) -> str:
+    """Lock and return one archive entry's authoritative source kind.
+
+    The row lock is transaction-scoped. Callers use this at their loader entry
+    boundary so a missing or contradictory archive cannot be caught after
+    election/category/jurisdiction writes and then accidentally committed.
+    """
+    with conn.cursor() as cur:
+        # SHARE conflicts with UPDATE's NO KEY UPDATE row lock, so even a
+        # non-key source_kind change waits until the caller commits or rolls back.
+        # Lock only this archive row; unrelated archive entries remain writable.
+        cur.execute(
+            "select source_kind from archive_entry where id = %s for share",
+            (archive_entry_id,),
+        )
+        archive_entry = cur.fetchone()
+
+    if archive_entry is None:
+        raise ArchiveEntryNotFoundError(
+            f"archive_entry {archive_entry_id!r} does not exist; "
+            "refusing before mutating loader projections"
+        )
+
+    authoritative_source_kind = archive_entry[0]
+    if expected_source_kind is not None and expected_source_kind != authoritative_source_kind:
+        raise ArchiveEntrySourceKindMismatchError(
+            f"archive_entry {archive_entry_id!r} has authoritative "
+            f"source_kind={authoritative_source_kind!r}, but the loader requires "
+            f"source_kind={expected_source_kind!r}; refusing before mutating loader projections"
+        )
+    return authoritative_source_kind
 
 
 _JURISDICTION_NAME_FIELDS: tuple[tuple[str, str], ...] = (
@@ -48,6 +102,7 @@ _JURISDICTION_NAME_FIELDS: tuple[tuple[str, str], ...] = (
     ("establecimiento", "establecimiento_name"),
 )
 _JURISDICTION_WRITER_LOCK_SQL = "LOCK TABLE jurisdiction IN SHARE ROW EXCLUSIVE MODE"
+_REVIEW_ITEM_WRITER_LOCK_ID = 2963544934623095067
 
 
 def _lock_jurisdiction_writer(conn, cur) -> None:
@@ -883,7 +938,9 @@ def load_result_rows(
     (task 8.2) -- the delete makes re-ingestion safe regardless of how many
     times, or in what order relative to other archive entries, it runs.
     Truncating `result_row` and calling this again reproduces the same
-    projection (task 8.3, "rebuild = truncate + replay").
+    projection (task 8.3, "rebuild = truncate + replay"). Before either
+    mutation, the referenced `archive_entry` must exist and any non-empty
+    batch must exactly match its authoritative `source_kind`.
     """
     # The election is a PARAMETER, not inferred from the surviving rows. The
     # empty-`records` branch used to fall back to an UNSCOPED delete, so a
@@ -915,6 +972,19 @@ def load_result_rows(
             f"{', '.join(repr(value) for value in foreign_archive_entries)}; "
             "refusing before deleting or inserting rows"
         )
+
+    source_kinds = sorted({record.source_kind for record in records})
+    if len(source_kinds) > 1:
+        raise MixedSourceKindBatchError(
+            "load_result_rows requires one source_kind per replacement batch; "
+            f"received {', '.join(source_kinds)}; refusing before deleting or inserting rows"
+        )
+
+    lock_archive_entry_source_authority(
+        conn,
+        archive_entry_id=archive_entry_id,
+        expected_source_kind=source_kinds[0] if source_kinds else None,
+    )
 
     with conn.cursor() as cur:
         # Scoped by election, not just by archive entry: one archived file may
@@ -1218,25 +1288,71 @@ def load_crosswalk_rows(
 
 
 def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
-    """Write path for `review_item` (task 11.19) -- the first table that
-    actually persists what `etl.review_item` projects from `MesaDivergence`
-    (`etl.crosswalk`, Phase 4) and `ReviewItemDraft`
-    (`etl.ingest.fiscalizacion`, Phase 6). Unlike `load_result_rows`, there
-    is no delete-by-`archive_entry_id` step here -- `review_item` has no
-    natural idempotency key (a divergence note is an append-only observed
-    event, not a rebuildable projection row), so the caller decides whether
-    re-running a given ingestion should re-record its review items.
+    """Insert observations that are not already active and return the inserted count.
+
+    Active observation identity is the NULL-safe tuple
+    `(kind, severity, subject_ref, note)` with `resolved_at is null`. Replaying
+    an identical active observation is an explicitly idempotent, already-active
+    suppression, including duplicates inside one input batch. A resolved row is
+    history, not active identity, so an identical recurrence inserts a new row.
+
+    The transaction-scoped advisory lock serializes every application writer
+    through the lookup-and-insert statement. Correctness requires PostgreSQL READ
+    COMMITTED so a writer that waited for the lock receives a fresh statement
+    snapshot and sees the prior writer's commit. Callers must commit or roll back
+    the non-autocommit transaction; the function verifies the server's actual
+    current transaction isolation and never changes it. The return value counts
+    only rows actually inserted, never the input length.
     """
+    records = tuple(records)
+    if not records:
+        return 0
+    if getattr(conn, "autocommit", False):
+        raise RuntimeError(
+            "review item writers require a transaction; autocommit connections are unsupported"
+        )
+
     with conn.cursor() as cur:
-        if records:
-            cur.executemany(
-                """
-                insert into review_item (kind, severity, subject_ref, note)
-                values (%s, %s, %s, %s)
-                """,
-                [
-                    (record.kind, record.severity, record.subject_ref, record.note)
-                    for record in records
-                ],
+        cur.execute("show transaction_isolation")
+        isolation_row = cur.fetchone()
+        isolation = isolation_row[0] if isolation_row and len(isolation_row) == 1 else None
+        if isolation != "read committed":
+            observed = isolation if isolation is not None else "unknown"
+            raise ReviewItemTransactionIsolationError(
+                "review item insertion requires read committed transaction isolation; "
+                f"PostgreSQL reports {observed!r}; refusing without changing isolation"
             )
-    return len(records)
+
+        # This must be a separate statement. Under READ COMMITTED, a writer that
+        # waited here gets a fresh snapshot for the INSERT below and therefore sees
+        # the prior lock holder's commit.
+        cur.execute("select pg_advisory_xact_lock(%s)", (_REVIEW_ITEM_WRITER_LOCK_ID,))
+        cur.execute(
+            """
+            with candidates (kind, severity, subject_ref, note) as (
+                select distinct kind, severity, subject_ref, note
+                from unnest(%s::text[], %s::text[], %s::text[], %s::text[])
+                    as candidate(kind, severity, subject_ref, note)
+            )
+            insert into review_item (kind, severity, subject_ref, note)
+            select candidate.kind, candidate.severity, candidate.subject_ref, candidate.note
+            from candidates as candidate
+            where not exists (
+                select 1
+                from review_item as active
+                where active.resolved_at is null
+                  and active.kind = candidate.kind
+                  and active.severity = candidate.severity
+                  and active.subject_ref = candidate.subject_ref
+                  and active.note is not distinct from candidate.note
+            )
+            returning 1
+            """,
+            (
+                [record.kind for record in records],
+                [record.severity for record in records],
+                [record.subject_ref for record in records],
+                [record.note for record in records],
+            ),
+        )
+        return len(cur.fetchall())

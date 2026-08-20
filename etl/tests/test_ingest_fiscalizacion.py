@@ -24,6 +24,7 @@ Two kinds of test data are used, deliberately:
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 import uuid
@@ -34,7 +35,7 @@ import psycopg
 import pytest
 import yaml
 
-from etl.__main__ import fresh_review_items
+from etl import db
 from etl.crosswalk import FISCALIZACION_VOTE_COLUMNS
 from etl.ingest.fiscalizacion import (
     FISCALIZACION_CATEGORY,
@@ -451,6 +452,22 @@ def _snapshot(conn: psycopg.Connection, archive_entry_id: str) -> list[tuple]:
         return cur.fetchall()
 
 
+def _loader_mutation_counts(conn: psycopg.Connection) -> tuple[int, int, int, int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+              (select count(*) from election),
+              (select count(*) from category),
+              (select count(*) from jurisdiction),
+              (select count(*) from result_row)
+            """
+        )
+        counts = cur.fetchone()
+    assert counts is not None
+    return counts
+
+
 def _jurisdiction_mesa(conn: psycopg.Connection, *, circuito: str, mesa: int) -> str:
     from etl import db
 
@@ -460,6 +477,35 @@ def _jurisdiction_mesa(conn: psycopg.Connection, *, circuito: str, mesa: int) ->
         seccion=FISCALIZACION_SECCION,
         circuito=circuito,
         mesa=mesa,
+    )
+
+
+def _project_test_archive_entry(
+    conn: psycopg.Connection,
+    *,
+    archive_entry_id: str,
+    capability: str,
+    year: int = 2025,
+) -> None:
+    from etl import db
+
+    source_kind = "fiscalizacion" if capability == "fiscalizacion" else "official"
+    db.project_archive_entry(
+        conn,
+        db.ArchiveEntryRecord(
+            id=archive_entry_id,
+            capability=capability,
+            source=f"fixture:{archive_entry_id}",
+            source_url=f"https://example.invalid/{archive_entry_id}.csv",
+            archived_path=f"tests/fixtures/{archive_entry_id}.csv",
+            sha256=hashlib.sha256(archive_entry_id.encode("utf-8")).hexdigest(),
+            mime="text/csv",
+            byte_count=len(archive_entry_id.encode("utf-8")),
+            fetched_at=f"{year}-01-01T00:00:00Z",
+            status="ok",
+            source_kind=source_kind,
+            notes=f"Synthetic {source_kind} result fixture.",
+        ),
     )
 
 
@@ -477,9 +523,16 @@ def _official_mesa(
     jurisdiction_id = _jurisdiction_mesa(conn, circuito=circuito, mesa=mesa)
     election_id = db.upsert_election(conn, year=year, round_=round_)
     category_id = db.upsert_category(conn, name=FISCALIZACION_CATEGORY)
+    archive_entry_id = f"official-test-{year}-{round_}-{mesa}-{circuito}"
+    _project_test_archive_entry(
+        conn,
+        archive_entry_id=archive_entry_id,
+        capability="national",
+        year=year,
+    )
     db.load_result_rows(
         conn,
-        archive_entry_id=f"official-test-{year}-{round_}-{mesa}-{circuito}",
+        archive_entry_id=archive_entry_id,
         election_id=election_id,
         records=[
             db.ResultRowRecord(
@@ -490,12 +543,52 @@ def _official_mesa(
                 list_id="official-test-list",
                 votes=1,
                 source_kind="official",
-                archive_entry_id=f"official-test-{year}-{round_}-{mesa}-{circuito}",
+                archive_entry_id=archive_entry_id,
                 source_row_index=0,
             )
         ],
     )
     return jurisdiction_id
+
+
+@pytest.mark.parametrize(
+    ("authoritative_source_kind", "expected_error"),
+    [
+        ("official", db.ArchiveEntrySourceKindMismatchError),
+        (None, db.ArchiveEntryNotFoundError),
+    ],
+)
+def test_load_fiscalizacion_rows_refuses_invalid_archive_authority_before_any_upstream_mutation(
+    pg_conn: psycopg.Connection,
+    authoritative_source_kind: str | None,
+    expected_error: type[Exception],
+) -> None:
+    archive_entry_id = f"fiscalizacion/loader-authority-{uuid.uuid4()}"
+    if authoritative_source_kind is not None:
+        _project_test_archive_entry(
+            pg_conn,
+            archive_entry_id=archive_entry_id,
+            capability="national",
+        )
+    row = FiscalizacionRow(
+        mesa=1_500_000_000 + uuid.uuid4().int % 100_000_000,
+        escuela="ESCUELA TEST",
+        votes={column: 1 for column in FISCALIZACION_VOTE_COLUMNS},
+        source_row_indices=(0,),
+    )
+    before = _loader_mutation_counts(pg_conn)
+
+    with pytest.raises(expected_error):
+        load_fiscalizacion_rows(
+            pg_conn,
+            [row],
+            year=2025,
+            round_=f"archive-authority-{uuid.uuid4()}",
+            party_map=load_party_map(PARTY_MAP_PATH),
+            archive_entry_id=archive_entry_id,
+        )
+
+    assert _loader_mutation_counts(pg_conn) == before
 
 
 def test_wide_columns_map_to_one_result_row_per_list(pg_conn: psycopg.Connection) -> None:
@@ -506,6 +599,9 @@ def test_wide_columns_map_to_one_result_row_per_list(pg_conn: psycopg.Connection
     `list_id` and are skipped rather than written under a fabricated id.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248A", mesa=9001)
     row = FiscalizacionRow(
@@ -538,6 +634,9 @@ def test_blank_vote_cell_is_missing_not_zero_in_the_loaded_rows(
     must produce NO `result_row` for that column -- never a zero-vote row.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     votes: dict[str, int | None] = {column: 5 for column in FISCALIZACION_VOTE_COLUMNS}
     votes["La Libertad Avanza"] = None  # blank cell, per the real source shape
@@ -569,6 +668,9 @@ def test_loaded_rows_carry_source_kind_fiscalizacion(pg_conn: psycopg.Connection
     provisional tally indistinguishable from the definitive escrutinio.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248A", mesa=9003)
     row = FiscalizacionRow(
@@ -602,6 +704,9 @@ def test_fiscalizacion_load_never_writes_a_fiscal_name(pg_conn: psycopg.Connecti
     fake_given_name = "Testigo Sintetico Tres"
     fake_surname = "Apellido Sintetico Cuatro"
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248A", mesa=9004)
     row = FiscalizacionRow(
@@ -657,6 +762,9 @@ def test_fiscalizacion_reingest_is_idempotent_per_d8(pg_conn: psycopg.Connection
     `archive_entry_id` and rows leaves `result_row` identical.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248A", mesa=9005)
     rows = [
@@ -696,6 +804,9 @@ def test_a_jurisdiction_shape_without_an_official_result_is_not_accepted(
     pg_conn: psycopg.Connection,
 ) -> None:
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _jurisdiction_mesa(pg_conn, circuito="00248A", mesa=9009)
     row = FiscalizacionRow(
@@ -722,6 +833,9 @@ def test_official_result_from_another_election_does_not_authorize_the_mesa(
     pg_conn: psycopg.Connection,
 ) -> None:
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(
         pg_conn,
@@ -754,6 +868,9 @@ def test_unpadded_scope_codes_match_the_normalized_national_scheme(
     pg_conn: psycopg.Connection,
 ) -> None:
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     official_id = _official_mesa(pg_conn, circuito="00248A", mesa=9010)
     row = FiscalizacionRow(
@@ -795,6 +912,9 @@ def test_a_fiscalizacion_mesa_reuses_the_official_jurisdiction_row(
     never juxtapose: pinning either uuid yields one source kind only.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     official_id = _official_mesa(pg_conn, circuito="00248A", mesa=9011)
     row = FiscalizacionRow(
@@ -834,6 +954,9 @@ def test_a_mesa_number_in_two_circuitos_is_quarantined_never_guessed(
     with their reason instead.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248C", mesa=9012)
     _official_mesa(pg_conn, circuito="00248D", mesa=9012)
@@ -889,8 +1012,6 @@ def test_migration_review_item_identity_is_seen_as_existing_by_runtime(
     The transaction is rolled back by ``pg_conn`` so this test never changes the
     shared disposable database after the assertion.
     """
-    import etl.db as db
-
     source_id = f"fiscalizacion/migration-identity-{uuid.uuid4()}"
     election_ref = "2025-legislativas"
     monkeypatch.setattr(db, "official_jurisdictions_for_mesa", lambda *args, **kwargs: matches)
@@ -928,7 +1049,7 @@ def test_migration_review_item_identity_is_seen_as_existing_by_runtime(
             (migration.kind, migration.severity, migration.subject_ref, migration.note),
         )
 
-    assert fresh_review_items(pg_conn, [runtime]) == []
+    assert db.insert_review_items(pg_conn, [runtime]) == 0
 
 
 def test_a_mesa_absent_from_the_official_import_is_quarantined_not_invented(
@@ -941,6 +1062,9 @@ def test_a_mesa_absent_from_the_official_import_is_quarantined_not_invented(
     one this loader cannot place, and saying so is the whole point.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     row = FiscalizacionRow(
         mesa=9013,
@@ -973,6 +1097,9 @@ def test_reingesting_a_source_that_now_parses_to_zero_rows_clears_the_old_ones(
     indistinguishable from current. The non-empty path was the only one tested.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248A", mesa=9006)
     row = FiscalizacionRow(
@@ -1020,6 +1147,9 @@ def test_a_party_column_with_no_curated_mapping_is_reported_not_just_absent(
     from dataclasses import replace as _replace
 
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     # One curated entry renamed: the column it served now matches nothing.
     broken = _replace(
@@ -1065,6 +1195,9 @@ def test_an_empty_reingest_does_not_wipe_another_election_sharing_the_entry(
     case is the one that cannot state its scope from its rows.
     """
     archive_entry_id = f"test-fiscalizacion-{uuid.uuid4()}"
+    _project_test_archive_entry(
+        pg_conn, archive_entry_id=archive_entry_id, capability="fiscalizacion"
+    )
     party_map = load_party_map(PARTY_MAP_PATH)
     _official_mesa(pg_conn, circuito="00248A", mesa=9008, round_="paso")
     _official_mesa(pg_conn, circuito="00248A", mesa=9008, round_="generales")

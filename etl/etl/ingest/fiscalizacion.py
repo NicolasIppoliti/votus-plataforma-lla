@@ -781,9 +781,9 @@ def mesa_subject_ref(distrito: str, seccion: str | None, mesa: int) -> str:
     and migration 0018 keys on the STORED (normalized) `seccion_code`. A
     caller passing the unpadded `"27"` the 2023 national file really carries
     produced `02-27-mesa-N` against the migration's `02-027-mesa-N` -- two
-    identities for one mesa, joined by nothing, and `fresh_review_items`
-    dedups on exact `subject_ref`, so the observation appended again on every
-    single run.
+    identities for one mesa, joined by nothing. The authoritative
+    active-observation write boundary compares exact `subject_ref` values, so
+    the mismatched observation was appended again on every single run.
 
     `(sin seccion)` for an absent seccion is the same fallback the migration
     writes, so both writers key a null seccion the same way too.
@@ -911,6 +911,12 @@ def load_fiscalizacion_rows(
 
     from .. import db
     from ..jurisdiction import normalize_distrito_code, normalize_seccion_code
+
+    db.lock_archive_entry_source_authority(
+        conn,
+        archive_entry_id=archive_entry_id,
+        expected_source_kind="fiscalizacion",
+    )
 
     # THE CHECK behind the docstring's claim. Two independent kwargs that
     # must describe one place, and nothing verified they did.

@@ -942,15 +942,14 @@ def ingest_source(
                         note="; ".join(evidence),
                     )
                 )
-            fresh = fresh_review_items(conn, quarantine_records)
-            insert_review_items(conn, fresh)
+            recorded_review_items = insert_review_items(conn, quarantine_records)
             if parse_result.quarantined:
                 reason_counts: dict[str, int] = {}
                 for quarantined in parse_result.quarantined:
                     reason_counts[quarantined.reason] = reason_counts.get(quarantined.reason, 0) + 1
                 print(
                     f"PBA parser quarantine: {len(parse_result.quarantined)} group(s), "
-                    f"{len(fresh)} review item(s) recorded -- "
+                    f"{recorded_review_items} review item(s) recorded -- "
                     + "; ".join(
                         f"{reason}: {count}" for reason, count in sorted(reason_counts.items())
                     ),
@@ -1002,14 +1001,10 @@ def ingest_source(
                 # all.
                 for draft in [*result.review_items, *loader_review_items]
             ]
-            # `review_item` has no natural key and `subject_ref` is only
-            # `"mesa N"`, so re-ingesting the same source would append the same
-            # observations again. Re-running produces byte-identical drafts, so
-            # skipping rows already present makes it idempotent without ever
-            # discarding a NEW observation -- and the skip count is reported,
-            # not swallowed.
-            fresh = fresh_review_items(conn, records)
-            insert_review_items(conn, fresh)
+            # Submit every observation to the atomic write boundary. It owns
+            # in-batch and active-observation dedupe, so a row resolved after an
+            # earlier read can recur instead of being lost to a stale prefilter.
+            recorded_review_items = insert_review_items(conn, records)
 
             # The quarantine, REPORTED. `ingest_fiscalizacion` produced these
             # and nothing read them, so every duplicate-conflict and
@@ -1043,8 +1038,8 @@ def ingest_source(
                     )
 
             print(
-                f"  review items: {len(fresh)} recorded, "
-                f"{len(records) - len(fresh)} already present",
+                f"  review items: {recorded_review_items} recorded, "
+                f"{len(records) - recorded_review_items} not recorded",
                 file=sys.stderr,
             )
         else:
@@ -1251,51 +1246,6 @@ def find_unmapped_jurisdictions(
                 )
             )
     return unmapped
-
-
-def fresh_review_items(conn, records):
-    """The review-queue records not already present, deduped BOTH ways.
-
-    `review_item` has no natural key, so re-running a command would append
-    the same observation again; and two drafts identical in
-    `(kind, severity, subject_ref, note)` within ONE run would both land,
-    showing one observation twice while the "already present" count described
-    a state that never existed.
-
-    ONE implementation. This existed as three separate copies against one
-    table -- `ingest_source`, `load_curated` and `cmd_validate_fiscalizacion`
-    -- and the third filtered only against what was stored, so the fix made
-    to the first two never reached it. Three ideas of one dedup is how the
-    third stays wrong.
-    """
-    records = list(records)
-    if not records:
-        # And `any(%s::text[])` below rather than `any(%s)`: with an EMPTY
-        # list psycopg cannot infer the array type and raises
-        # `IndeterminateDatatype`, so the success case -- nothing to record --
-        # crashed instead of exiting 0. Guarded twice, on purpose.
-        return []
-    with conn.cursor() as cur:
-        # EXACT match against the very subject_refs about to be written, never
-        # `like`: `_` and `%` are LIKE wildcards, so a source id such as
-        # `fiscalizacion/2025_cnel` would pull in ANOTHER source's rows and
-        # drop this one's genuinely new observation as "already present".
-        cur.execute(
-            "select kind, severity, subject_ref, note from review_item"
-            " where resolved_at is null and subject_ref = any(%s::text[])",
-            ([r.subject_ref for r in records],),
-        )
-        existing = {tuple(row) for row in cur.fetchall()}
-
-    fresh = []
-    seen: set[tuple[str, str, str, str]] = set()
-    for record in records:
-        key = (record.kind, record.severity, record.subject_ref, record.note)
-        if key in existing or key in seen:
-            continue
-        seen.add(key)
-        fresh.append(record)
-    return fresh
 
 
 def national_csv_bytes(raw_bytes: bytes) -> bytes:
@@ -2204,10 +2154,8 @@ def load_curated(
                 # YAML strings, a `national_seccion: "27"` wrote
                 # `mesa_crosswalk` row `02/027` (which `load_crosswalk_rows`
                 # normalizes three lines later) and `review_item` key
-                # `02-27-mesa-N`. Two identities for one mesa, and
-                # `fresh_review_items` dedups on EXACT `subject_ref`, so the
-                # day the curated padding is corrected every discontinuity
-                # appends again.
+                # `02-27-mesa-N`. Two identities for one mesa, so the day the
+                # curated padding is corrected every discontinuity appends again.
                 subject_ref=(
                     f"{normalize_distrito_code(distrito)}-"
                     f"{normalize_seccion_code(seccion)}-circuito-"
@@ -2224,11 +2172,11 @@ def load_curated(
             if stability.discontinuous
         ]
         if drafts:
-            fresh = fresh_review_items(conn, drafts)
-            insert_review_items(conn, fresh)
+            recorded_review_items = insert_review_items(conn, drafts)
             print(
                 f"  {len(drafts)} discontinuous mesa(s) recorded for review "
-                f"({len(fresh)} new, {len(drafts) - len(fresh)} already present)",
+                f"({recorded_review_items} new, "
+                f"{len(drafts) - recorded_review_items} not recorded)",
                 file=sys.stderr,
             )
 
@@ -2827,13 +2775,18 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     for reason, count in sorted(baseline_skipped.items()):
         print(f"  baseline: {count} row(s) not used — {reason}", file=sys.stderr)
 
-    def persist_records(records_to_write: list[ReviewItemRecord]) -> list[ReviewItemRecord]:
+    def persist_records(records_to_write: list[ReviewItemRecord]) -> dict[str, int]:
+        records_by_kind: dict[str, list[ReviewItemRecord]] = {}
+        for record in records_to_write:
+            records_by_kind.setdefault(record.kind, []).append(record)
+
         conn = psycopg.connect(database_url)
         try:
-            fresh_records = fresh_review_items(conn, records_to_write)
-            insert_review_items(conn, fresh_records)
+            recorded_by_kind: dict[str, int] = {}
+            for kind, kind_records in records_by_kind.items():
+                recorded_by_kind[kind] = insert_review_items(conn, kind_records)
             conn.commit()
-            return fresh_records
+            return recorded_by_kind
         except Exception:
             conn.rollback()
             raise
@@ -2893,8 +2846,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     # `--distrito 02 --seccion 027` and again as `--distrito 2 --seccion 27`
     # produced two scopes for ONE comparison -- `official_mesa_votes_from_
     # national` normalizes internally, so both runs compare identically --
-    # and `fresh_review_items` dedups on EXACT `subject_ref`, so every
-    # observation appended a second time.
+    # so every observation appended a second time.
     scope = (
         f"{normalize_distrito_code(args.distrito)}/"
         f"{normalize_seccion_code(args.seccion) or '(sin seccion)'}/"
@@ -2912,37 +2864,34 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         *official_projection.review_items,
         *divergence_records,
     ]
-    fresh = persist_records(records_to_write)
+    recorded_by_kind = persist_records(records_to_write)
 
     parser_counts: dict[str, int] = {}
     for record in parser_review_records:
         parser_counts[record.kind] = parser_counts.get(record.kind, 0) + 1
     for kind, count in sorted(parser_counts.items()):
-        new_count = sum(1 for record in fresh if record.kind == kind)
+        new_count = recorded_by_kind.get(kind, 0)
         print(
-            f"  {kind}: {count} review item(s) "
-            f"({new_count} new, {count - new_count} already present)",
+            f"  {kind}: {count} review item(s) ({new_count} new, {count - new_count} not recorded)",
             file=sys.stderr,
         )
 
     official_quarantine_count = len(official_projection.review_items)
     if official_quarantine_count:
-        fresh_official_quarantines = sum(
-            1 for record in fresh if record.kind == "ambiguous_official_mesa_identity"
-        )
+        fresh_official_quarantines = recorded_by_kind.get("ambiguous_official_mesa_identity", 0)
         print(
             f"  ambiguous_official_mesa_identity: {official_quarantine_count} review item(s) "
             f"({fresh_official_quarantines} new, "
-            f"{official_quarantine_count - fresh_official_quarantines} already present)",
+            f"{official_quarantine_count - fresh_official_quarantines} not recorded)",
             file=sys.stderr,
         )
 
-    fresh_divergences = sum(1 for record in fresh if record.kind == "mesa_tally_divergence")
+    fresh_divergences = recorded_by_kind.get("mesa_tally_divergence", 0)
     print(
         f"joined {len(join.joined)} of {len(mesa_rows)} fiscalización mesa(s) to "
         f"{args.baseline}; {len(join.divergences)} diverging column(s) recorded "
         f"({fresh_divergences} new, "
-        f"{len(divergence_records) - fresh_divergences} already present)"
+        f"{len(divergence_records) - fresh_divergences} not recorded)"
     )
     return 0
 

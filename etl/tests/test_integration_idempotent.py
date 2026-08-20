@@ -13,12 +13,23 @@ be down.
 from __future__ import annotations
 
 import os
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 import psycopg
 import pytest
 
-from etl.db import ResultRowRecord, insert_review_items, load_result_rows, upsert_jurisdiction
+from etl.db import (
+    ArchiveEntryNotFoundError,
+    ArchiveEntrySourceKindMismatchError,
+    ResultRowRecord,
+    ReviewItemTransactionIsolationError,
+    insert_review_items,
+    load_result_rows,
+    upsert_jurisdiction,
+)
 from etl.ingest.national import NationalRow, load_national_rows
 from etl.jurisdiction import make_result_row
 from etl.review_item import ReviewItemRecord
@@ -48,8 +59,14 @@ def test_unreachable_reason_names_the_dsn_and_the_remedy() -> None:
 
 
 class _RecordingCursor:
-    def __init__(self, statements: list[tuple[str, object]]) -> None:
+    def __init__(
+        self,
+        statements: list[tuple[str, object]],
+        archive_source_kind: str | None,
+    ) -> None:
         self.statements = statements
+        self.archive_source_kind = archive_source_kind
+        self.last_query = ""
 
     def __enter__(self):
         return self
@@ -58,27 +75,41 @@ class _RecordingCursor:
         return None
 
     def execute(self, query: str, params=None) -> None:
+        self.last_query = query
         self.statements.append((query, params))
 
     def executemany(self, query: str, params) -> None:
+        self.last_query = query
         self.statements.append((query, list(params)))
+
+    def fetchone(self) -> tuple[str] | None:
+        if "from archive_entry" in self.last_query:
+            if self.archive_source_kind is None:
+                return None
+            return (self.archive_source_kind,)
+        return ("read committed",)
+
+    def fetchall(self) -> list[tuple[int]]:
+        return [(1,)]
 
 
 class _RecordingConnection:
-    def __init__(self) -> None:
+    def __init__(self, *, archive_source_kind: str | None = "official") -> None:
+        self.autocommit = False
+        self.archive_source_kind = archive_source_kind
         self.statements: list[tuple[str, object]] = []
         self.commit_calls = 0
         self.cursor_calls = 0
 
     def cursor(self) -> _RecordingCursor:
         self.cursor_calls += 1
-        return _RecordingCursor(self.statements)
+        return _RecordingCursor(self.statements, self.archive_source_kind)
 
     def commit(self) -> None:
         self.commit_calls += 1
 
 
-def _result_record(*, archive_entry_id: str) -> ResultRowRecord:
+def _result_record(*, archive_entry_id: str, source_kind: str = "official") -> ResultRowRecord:
     return ResultRowRecord(
         election_id="election-1",
         jurisdiction_id="jurisdiction-1",
@@ -86,7 +117,7 @@ def _result_record(*, archive_entry_id: str) -> ResultRowRecord:
         granularity="mesa",
         list_id="list-1",
         votes=12,
-        source_kind="official",
+        source_kind=source_kind,
         archive_entry_id=archive_entry_id,
         source_row_index=0,
     )
@@ -105,6 +136,64 @@ def test_load_result_rows_refuses_a_foreign_archive_entry_before_any_sql() -> No
 
     assert conn.cursor_calls == 0
     assert conn.statements == []
+    assert conn.commit_calls == 0
+
+
+def test_load_result_rows_refuses_mixed_source_kinds_before_any_sql() -> None:
+    conn = _RecordingConnection()
+
+    with pytest.raises(ValueError, match="source_kind.*fiscalizacion.*official"):
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[
+                _result_record(archive_entry_id="entry-1"),
+                _result_record(archive_entry_id="entry-1", source_kind="fiscalizacion"),
+            ],
+        )
+
+    assert conn.cursor_calls == 0
+    assert conn.statements == []
+    assert conn.commit_calls == 0
+
+
+def test_load_result_rows_refuses_source_kind_that_disagrees_with_archive_authority() -> None:
+    conn = _RecordingConnection(archive_source_kind="official")
+
+    with pytest.raises(
+        ArchiveEntrySourceKindMismatchError,
+        match="archive_entry.*source_kind.*official.*fiscalizacion",
+    ):
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[_result_record(archive_entry_id="entry-1", source_kind="fiscalizacion")],
+        )
+
+    assert conn.cursor_calls == 1
+    assert len(conn.statements) == 1
+    assert "select source_kind" in conn.statements[0][0]
+    assert "from archive_entry" in conn.statements[0][0]
+    assert conn.commit_calls == 0
+
+
+def test_load_result_rows_refuses_a_missing_archive_entry_before_mutation() -> None:
+    conn = _RecordingConnection(archive_source_kind=None)
+
+    with pytest.raises(ArchiveEntryNotFoundError, match="archive_entry.*entry-1.*does not exist"):
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[_result_record(archive_entry_id="entry-1")],
+        )
+
+    assert conn.cursor_calls == 1
+    assert len(conn.statements) == 1
+    assert "select source_kind" in conn.statements[0][0]
+    assert "from archive_entry" in conn.statements[0][0]
     assert conn.commit_calls == 0
 
 
@@ -133,9 +222,45 @@ def test_load_result_rows_matching_archive_entry_keeps_delete_insert_idempotency
     )
 
     assert conn.statements == first_statements * 2
-    assert "delete from result_row" in first_statements[0][0]
-    assert "insert into result_row" in first_statements[1][0]
+    assert "select source_kind" in first_statements[0][0]
+    assert "from archive_entry" in first_statements[0][0]
+    assert "delete from result_row" in first_statements[1][0]
+    assert "insert into result_row" in first_statements[2][0]
     assert conn.commit_calls == 0
+
+
+def test_load_result_rows_empty_batch_validates_archive_then_keeps_scoped_delete() -> None:
+    conn = _RecordingConnection(archive_source_kind="fiscalizacion")
+
+    assert (
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[],
+        )
+        == 0
+    )
+
+    assert len(conn.statements) == 2
+    assert "select source_kind" in conn.statements[0][0]
+    assert "delete from result_row" in conn.statements[1][0]
+    assert conn.statements[1][1] == ("entry-1", "election-1")
+
+
+def test_load_result_rows_empty_batch_still_refuses_a_missing_archive() -> None:
+    conn = _RecordingConnection(archive_source_kind=None)
+
+    with pytest.raises(ArchiveEntryNotFoundError, match="archive_entry.*does not exist"):
+        load_result_rows(
+            conn,
+            archive_entry_id="entry-1",
+            election_id="election-1",
+            records=[],
+        )
+
+    assert len(conn.statements) == 1
+    assert "select source_kind" in conn.statements[0][0]
 
 
 def _require_ephemeral_postgres() -> psycopg.Connection:
@@ -201,6 +326,337 @@ def _snapshot(conn: psycopg.Connection, archive_entry_id: str) -> set[tuple]:
         return set(cur.fetchall())
 
 
+def _record_archive_entry(
+    conn: psycopg.Connection, archive_entry_id: str, *, source_kind: str = "official"
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into archive_entry (
+                id, capability, source, source_url, mime, fetched_at, status, source_kind
+            ) values (%s, 'integration-test', 'integration-test', %s, 'text/csv', now(), 'ok', %s)
+            """,
+            (archive_entry_id, f"https://example.invalid/{archive_entry_id}", source_kind),
+        )
+
+
+def _stored_result_records(
+    conn: psycopg.Connection, archive_entry_id: str
+) -> list[ResultRowRecord]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select election_id, jurisdiction_id, category_id, granularity, list_id, votes,
+                   source_kind, archive_entry_id, source_row_index, requested_granularity, mesa_tipo
+            from result_row
+            where archive_entry_id = %s
+            order by source_row_index, list_id
+            """,
+            (archive_entry_id,),
+        )
+        return [ResultRowRecord(*row) for row in cur.fetchall()]
+
+
+class _AuthorityPauseCursor:
+    def __init__(
+        self,
+        cursor,
+        *,
+        archive_entry_id: str,
+        authority_selected: threading.Event,
+        continue_replacement: threading.Event,
+    ) -> None:
+        self._cursor = cursor
+        self._archive_entry_id = archive_entry_id
+        self._authority_selected = authority_selected
+        self._continue_replacement = continue_replacement
+
+    def execute(self, query, params=None):
+        result = self._cursor.execute(query, params)
+        if (
+            isinstance(query, str)
+            and "from archive_entry" in query.lower()
+            and params == (self._archive_entry_id,)
+        ):
+            self._authority_selected.set()
+            if not self._continue_replacement.wait(timeout=5):
+                raise AssertionError("timed out while pausing after the archive authority read")
+        return result
+
+    def __enter__(self):
+        self._cursor.__enter__()
+        return self
+
+    def __exit__(self, *exc_info):
+        return self._cursor.__exit__(*exc_info)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _AuthorityPauseConnection:
+    def __init__(
+        self,
+        conn,
+        *,
+        archive_entry_id: str,
+        authority_selected: threading.Event,
+        continue_replacement: threading.Event,
+    ) -> None:
+        self._conn = conn
+        self._archive_entry_id = archive_entry_id
+        self._authority_selected = authority_selected
+        self._continue_replacement = continue_replacement
+
+    def cursor(self, *args, **kwargs):
+        return _AuthorityPauseCursor(
+            self._conn.cursor(*args, **kwargs),
+            archive_entry_id=self._archive_entry_id,
+            authority_selected=self._authority_selected,
+            continue_replacement=self._continue_replacement,
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_load_result_rows_locks_archive_authority_through_the_replacement_transaction() -> None:
+    probe = _require_ephemeral_postgres()
+    probe.close()
+    archive_entry_id = f"national/source-authority-lock-{uuid.uuid4()}"
+    authority_selected = threading.Event()
+    continue_replacement = threading.Event()
+    source_kind_update_started = threading.Event()
+    source_kind_updated = threading.Event()
+    rollback_source_kind_update = threading.Event()
+
+    with psycopg.connect(TEST_DSN) as seed_conn:
+        _record_archive_entry(seed_conn, archive_entry_id, source_kind="official")
+        load_national_rows(
+            seed_conn,
+            _fixture_rows(archive_entry_id),
+            year=2025,
+            round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
+        replacements = [
+            replace(record, votes=record.votes + 1)
+            for record in _stored_result_records(seed_conn, archive_entry_id)
+        ]
+
+    def replace_rows() -> int:
+        conn = psycopg.connect(TEST_DSN)
+        try:
+            paused_conn = _AuthorityPauseConnection(
+                conn,
+                archive_entry_id=archive_entry_id,
+                authority_selected=authority_selected,
+                continue_replacement=continue_replacement,
+            )
+            inserted = load_result_rows(
+                paused_conn,
+                archive_entry_id=archive_entry_id,
+                election_id=replacements[0].election_id,
+                records=replacements,
+            )
+            conn.commit()
+            return inserted
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def try_source_kind_update() -> None:
+        conn = psycopg.connect(TEST_DSN)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("set role etl_writer")
+                cur.execute("set local lock_timeout = '5s'")
+                source_kind_update_started.set()
+                cur.execute(
+                    "update archive_entry set source_kind = 'fiscalizacion' where id = %s",
+                    (archive_entry_id,),
+                )
+                assert cur.rowcount == 1
+            source_kind_updated.set()
+            if not rollback_source_kind_update.wait(timeout=5):
+                raise AssertionError("timed out before rolling back the competing authority update")
+        finally:
+            conn.rollback()
+            conn.close()
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    update_completed_before_replacement = False
+    try:
+        replacement_future = executor.submit(replace_rows)
+        assert authority_selected.wait(timeout=5), "the loader never reached its authority read"
+        update_future = executor.submit(try_source_kind_update)
+        assert source_kind_update_started.wait(timeout=5), "the updater never attempted its UPDATE"
+        update_completed_before_replacement = source_kind_updated.wait(timeout=0.5)
+        continue_replacement.set()
+        assert replacement_future.result(timeout=5) == len(replacements)
+        assert source_kind_updated.wait(timeout=5), "the updater stayed blocked after loader commit"
+        rollback_source_kind_update.set()
+        update_future.result(timeout=5)
+
+        with psycopg.connect(TEST_DSN) as verify_conn:
+            with verify_conn.cursor() as cur:
+                cur.execute(
+                    "select source_kind from archive_entry where id = %s", (archive_entry_id,)
+                )
+                assert cur.fetchone() == ("official",)
+            assert _stored_result_records(verify_conn, archive_entry_id) == replacements
+
+        assert not update_completed_before_replacement, (
+            "a non-key source_kind UPDATE completed after the authority read but before "
+            "result replacement; the authority row must stay locked through caller commit"
+        )
+    finally:
+        continue_replacement.set()
+        rollback_source_kind_update.set()
+        executor.shutdown(wait=True)
+        with psycopg.connect(TEST_DSN) as cleanup_conn:
+            with cleanup_conn.cursor() as cur:
+                cur.execute(
+                    "delete from result_row where archive_entry_id = %s", (archive_entry_id,)
+                )
+                cur.execute("delete from archive_entry where id = %s", (archive_entry_id,))
+
+
+def test_load_result_rows_does_not_lock_an_unrelated_archive_authority() -> None:
+    probe = _require_ephemeral_postgres()
+    probe.close()
+    target_archive_entry_id = f"national/source-authority-target-{uuid.uuid4()}"
+    unrelated_archive_entry_id = f"national/source-authority-unrelated-{uuid.uuid4()}"
+    authority_selected = threading.Event()
+    continue_replacement = threading.Event()
+
+    with psycopg.connect(TEST_DSN) as seed_conn:
+        _record_archive_entry(seed_conn, target_archive_entry_id, source_kind="official")
+        _record_archive_entry(seed_conn, unrelated_archive_entry_id, source_kind="official")
+        load_national_rows(
+            seed_conn,
+            _fixture_rows(target_archive_entry_id),
+            year=2025,
+            round_="legislativas",
+            archive_entry_id=target_archive_entry_id,
+        )
+        replacements = _stored_result_records(seed_conn, target_archive_entry_id)
+
+    def replace_rows() -> int:
+        conn = psycopg.connect(TEST_DSN)
+        try:
+            paused_conn = _AuthorityPauseConnection(
+                conn,
+                archive_entry_id=target_archive_entry_id,
+                authority_selected=authority_selected,
+                continue_replacement=continue_replacement,
+            )
+            inserted = load_result_rows(
+                paused_conn,
+                archive_entry_id=target_archive_entry_id,
+                election_id=replacements[0].election_id,
+                records=replacements,
+            )
+            conn.commit()
+            return inserted
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        replacement_future = executor.submit(replace_rows)
+        assert authority_selected.wait(timeout=5), "the loader never reached its authority read"
+        with psycopg.connect(TEST_DSN) as unrelated_conn:
+            with unrelated_conn.cursor() as cur:
+                cur.execute("set role etl_writer")
+                cur.execute("set local lock_timeout = '500ms'")
+                cur.execute(
+                    "update archive_entry set source_kind = 'fiscalizacion' where id = %s",
+                    (unrelated_archive_entry_id,),
+                )
+                assert cur.rowcount == 1
+            unrelated_conn.rollback()
+        continue_replacement.set()
+        assert replacement_future.result(timeout=5) == len(replacements)
+    finally:
+        continue_replacement.set()
+        executor.shutdown(wait=True)
+        with psycopg.connect(TEST_DSN) as cleanup_conn:
+            with cleanup_conn.cursor() as cur:
+                cur.execute(
+                    "delete from result_row where archive_entry_id = %s",
+                    (target_archive_entry_id,),
+                )
+                cur.execute(
+                    "delete from archive_entry where id = any(%s::text[])",
+                    ([target_archive_entry_id, unrelated_archive_entry_id],),
+                )
+
+
+def test_load_result_rows_rejects_uniform_fiscalizacion_for_official_archive_unchanged(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"national/source-authority-{uuid.uuid4()}"
+    _record_archive_entry(pg_conn, archive_entry_id, source_kind="official")
+    load_national_rows(
+        pg_conn,
+        _fixture_rows(archive_entry_id),
+        year=2025,
+        round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
+    before = _stored_result_records(pg_conn, archive_entry_id)
+    fiscalizacion_records = [replace(record, source_kind="fiscalizacion") for record in before]
+
+    with pytest.raises(
+        ArchiveEntrySourceKindMismatchError,
+        match="archive_entry.*source_kind.*official.*fiscalizacion",
+    ):
+        load_result_rows(
+            pg_conn,
+            archive_entry_id=archive_entry_id,
+            election_id=before[0].election_id,
+            records=fiscalizacion_records,
+        )
+
+    assert _stored_result_records(pg_conn, archive_entry_id) == before
+
+
+def test_load_result_rows_rejects_missing_archive_entry_without_inserting(
+    pg_conn: psycopg.Connection,
+) -> None:
+    seed_archive_entry_id = f"national/source-authority-seed-{uuid.uuid4()}"
+    missing_archive_entry_id = f"national/source-authority-missing-{uuid.uuid4()}"
+    _record_archive_entry(pg_conn, seed_archive_entry_id)
+    load_national_rows(
+        pg_conn,
+        _fixture_rows(seed_archive_entry_id),
+        year=2025,
+        round_="legislativas",
+        archive_entry_id=seed_archive_entry_id,
+    )
+    seed_records = _stored_result_records(pg_conn, seed_archive_entry_id)
+    missing_records = [
+        replace(record, archive_entry_id=missing_archive_entry_id) for record in seed_records
+    ]
+
+    with pytest.raises(ArchiveEntryNotFoundError, match="archive_entry.*does not exist"):
+        load_result_rows(
+            pg_conn,
+            archive_entry_id=missing_archive_entry_id,
+            election_id=seed_records[0].election_id,
+            records=missing_records,
+        )
+
+    assert _stored_result_records(pg_conn, missing_archive_entry_id) == []
+    assert _stored_result_records(pg_conn, seed_archive_entry_id) == seed_records
+
+
 def test_ephemeral_postgres_reingest_matches_original(pg_conn: psycopg.Connection) -> None:
     """Task 8.2: re-running `load_national_rows` for the SAME archive entry
     with the SAME rows leaves `result_row` identical -- D8's
@@ -208,6 +664,7 @@ def test_ephemeral_postgres_reingest_matches_original(pg_conn: psycopg.Connectio
     """
     archive_entry_id = f"test-national-{uuid.uuid4()}"
     rows = _fixture_rows(archive_entry_id)
+    _record_archive_entry(pg_conn, archive_entry_id)
 
     inserted_first = load_national_rows(
         pg_conn,
@@ -239,6 +696,7 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
     """
     archive_entry_id = f"test-national-{uuid.uuid4()}"
     rows = _fixture_rows(archive_entry_id)
+    _record_archive_entry(pg_conn, archive_entry_id)
 
     load_national_rows(
         pg_conn,
@@ -264,6 +722,18 @@ def test_drop_and_rebuild_equality(pg_conn: psycopg.Connection) -> None:
     rebuilt_snapshot = _snapshot(pg_conn, archive_entry_id)
 
     assert rebuilt_snapshot == original_snapshot
+
+
+def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
+    conn = _RecordingConnection()
+    record = ReviewItemRecord(
+        kind="content_drift",
+        severity="warning",
+        subject_ref="source:test",
+        note=None,
+    )
+
+    assert insert_review_items(conn, [record, record]) == 1
 
 
 def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:
@@ -298,6 +768,188 @@ def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Con
     assert row == ("mesa_tally_divergence", "info", subject_ref, records[0].note, None)
 
 
+def test_insert_review_items_suppresses_in_batch_and_sequential_active_replays(
+    pg_conn: psycopg.Connection,
+) -> None:
+    subject_ref = f"active-replay:{uuid.uuid4()}"
+    record = ReviewItemRecord(
+        kind="content_drift",
+        severity="warning",
+        subject_ref=subject_ref,
+        note=None,
+    )
+
+    assert insert_review_items(pg_conn, [record, record]) == 1
+    assert insert_review_items(pg_conn, [record]) == 0
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from review_item where subject_ref = %s and resolved_at is null",
+            (subject_ref,),
+        )
+        assert cur.fetchone() == (1,)
+
+
+def test_insert_review_items_preserves_resolved_history_and_inserts_a_recurrence(
+    pg_conn: psycopg.Connection,
+) -> None:
+    subject_ref = f"resolved-recurrence:{uuid.uuid4()}"
+    record = ReviewItemRecord(
+        kind="content_drift",
+        severity="warning",
+        subject_ref=subject_ref,
+        note=None,
+    )
+
+    assert insert_review_items(pg_conn, [record]) == 1
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "update review_item set resolved_at = now() where subject_ref = %s",
+            (subject_ref,),
+        )
+
+    assert insert_review_items(pg_conn, [record]) == 1
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select count(*), count(*) filter (where resolved_at is null) "
+            "from review_item where subject_ref = %s",
+            (subject_ref,),
+        )
+        assert cur.fetchone() == (2, 1)
+
+
+def test_insert_review_items_rejects_autocommit_before_database_access() -> None:
+    conn = _RecordingConnection()
+    conn.autocommit = True
+    record = ReviewItemRecord("content_drift", "warning", "autocommit:test", None)
+
+    with pytest.raises(RuntimeError, match="require a transaction; autocommit"):
+        insert_review_items(conn, [record])
+
+    assert conn.cursor_calls == 0
+    assert conn.statements == []
+
+
+def test_insert_review_items_rejects_repeatable_read_before_insert_boundary() -> None:
+    probe = _require_ephemeral_postgres()
+    probe.close()
+    subject_ref = f"repeatable-read-rejection:{uuid.uuid4()}"
+    record = ReviewItemRecord("content_drift", "warning", subject_ref, None)
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("begin isolation level repeatable read")
+            cur.execute("show transaction_isolation")
+            assert cur.fetchone() == ("repeatable read",)
+
+        with pytest.raises(ReviewItemTransactionIsolationError, match="requires read committed"):
+            insert_review_items(conn, [record])
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from review_item where subject_ref = %s",
+                (subject_ref,),
+            )
+            assert cur.fetchone() == (0,)
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def test_insert_review_items_rejects_serializable_before_insert_boundary() -> None:
+    probe = _require_ephemeral_postgres()
+    probe.close()
+    subject_ref = f"serializable-rejection:{uuid.uuid4()}"
+    record = ReviewItemRecord("content_drift", "warning", subject_ref, None)
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("begin isolation level serializable")
+            cur.execute("show transaction_isolation")
+            assert cur.fetchone() == ("serializable",)
+
+        with pytest.raises(ReviewItemTransactionIsolationError, match="requires read committed"):
+            insert_review_items(conn, [record])
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from review_item where subject_ref = %s",
+                (subject_ref,),
+            )
+            assert cur.fetchone() == (0,)
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def test_insert_review_items_accepts_explicit_read_committed_transaction() -> None:
+    probe = _require_ephemeral_postgres()
+    probe.close()
+    subject_ref = f"read-committed-success:{uuid.uuid4()}"
+    record = ReviewItemRecord("content_drift", "warning", subject_ref, None)
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("begin isolation level read committed")
+            cur.execute("show transaction_isolation")
+            assert cur.fetchone() == ("read committed",)
+
+        assert insert_review_items(conn, [record]) == 1
+        with conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from review_item where subject_ref = %s and resolved_at is null",
+                (subject_ref,),
+            )
+            assert cur.fetchone() == (1,)
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def test_insert_review_items_serializes_concurrent_application_writers() -> None:
+    probe = _require_ephemeral_postgres()
+    probe.close()
+    subject_ref = f"concurrent-active:{uuid.uuid4()}"
+    record = ReviewItemRecord(
+        kind="content_drift",
+        severity="warning",
+        subject_ref=subject_ref,
+        note=None,
+    )
+    ready = threading.Barrier(2)
+
+    def write_once() -> int:
+        conn = psycopg.connect(TEST_DSN)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("begin isolation level read committed")
+                cur.execute("show transaction_isolation")
+                assert cur.fetchone() == ("read committed",)
+            ready.wait(timeout=5)
+            inserted = insert_review_items(conn, [record])
+            conn.commit()
+            return inserted
+        finally:
+            conn.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            counts = sorted(executor.map(lambda _index: write_once(), range(2)))
+        assert counts == [0, 1]
+
+        with psycopg.connect(TEST_DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                "select count(*) from review_item where subject_ref = %s and resolved_at is null",
+                (subject_ref,),
+            )
+            assert cur.fetchone() == (1,)
+    finally:
+        with psycopg.connect(TEST_DSN) as conn, conn.cursor() as cur:
+            cur.execute("delete from review_item where subject_ref = %s", (subject_ref,))
+
+
 def test_two_elections_in_one_archive_entry_do_not_collide(
     pg_conn: psycopg.Connection,
 ) -> None:
@@ -318,6 +970,7 @@ def test_two_elections_in_one_archive_entry_do_not_collide(
     so the second silently overwrites the first.
     """
     archive_entry_id = f"test-multiyear-{uuid.uuid4()}"
+    _record_archive_entry(pg_conn, archive_entry_id)
 
     rows_2023 = _fixture_rows(archive_entry_id)
     inserted_2023 = load_national_rows(
@@ -480,6 +1133,7 @@ def test_jurisdiction_resolution_is_batched_not_per_row(pg_conn: psycopg.Connect
             )
         )
 
+    _record_archive_entry(pg_conn, archive_entry_id)
     counting_conn = _CountingConnectionProxy(pg_conn)
     inserted = load_national_rows(
         counting_conn,
@@ -519,6 +1173,7 @@ def test_a_reingest_that_now_yields_no_national_rows_clears_the_old_ones(
     archive_entry_id = f"national/empty-reingest-{uuid.uuid4()}"
     rows = _fixture_rows(archive_entry_id)
     assert rows, "sanity: the fixture must produce rows"
+    _record_archive_entry(pg_conn, archive_entry_id)
 
     try:
         load_national_rows(
@@ -555,6 +1210,7 @@ def test_a_reingest_that_now_yields_no_national_rows_clears_the_old_ones(
     finally:
         with pg_conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
+            cur.execute("delete from archive_entry where id = %s", (archive_entry_id,))
         pg_conn.commit()
 
 
@@ -565,6 +1221,7 @@ def test_an_empty_national_reingest_leaves_another_election_on_the_entry_alone(
     rows on the same archive entry with it."""
     archive_entry_id = f"national/empty-scope-{uuid.uuid4()}"
     rows = _fixture_rows(archive_entry_id)
+    _record_archive_entry(pg_conn, archive_entry_id)
 
     try:
         load_national_rows(
@@ -605,4 +1262,5 @@ def test_an_empty_national_reingest_leaves_another_election_on_the_entry_alone(
     finally:
         with pg_conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
+            cur.execute("delete from archive_entry where id = %s", (archive_entry_id,))
         pg_conn.commit()

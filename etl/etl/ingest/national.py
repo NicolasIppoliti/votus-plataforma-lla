@@ -679,6 +679,11 @@ def load_national_rows(
             "load_national_rows requires every row to carry the archive_entry_id given"
         )
 
+    db.lock_archive_entry_source_authority(
+        conn,
+        archive_entry_id=archive_entry_id,
+        expected_source_kind="official",
+    )
     election_id = db.upsert_election(conn, year=year, round_=round_)
     category_cache: dict[str, str] = {}
 

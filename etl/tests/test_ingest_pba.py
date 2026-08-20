@@ -28,6 +28,7 @@ import psycopg
 import pytest
 import requests
 
+from etl import db
 from etl.archive import ArchiveIntegrityError, FetchResponse
 from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.http_client import (
@@ -46,7 +47,7 @@ from etl.ingest.pba import (
     load_pba_rows,
     resolve_pba_jurisdictions,
 )
-from etl.jurisdiction import QuarantinedPbaDistrito, resolve_pba_distrito_code
+from etl.jurisdiction import JurisdictionNames, QuarantinedPbaDistrito, resolve_pba_distrito_code
 from etl.storage import LocalArchiveStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -435,6 +436,63 @@ def _require_ephemeral_postgres() -> psycopg.Connection:
         pytest.skip(f"no ephemeral Postgres reachable at {TEST_DSN!r}: {exc}")
 
 
+def _loader_mutation_counts(conn: psycopg.Connection) -> tuple[int, int, int, int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+              (select count(*) from election),
+              (select count(*) from category),
+              (select count(*) from jurisdiction),
+              (select count(*) from result_row)
+            """
+        )
+        counts = cur.fetchone()
+    assert counts is not None
+    return counts
+
+
+def _record_archive_authority(
+    conn: psycopg.Connection, *, archive_entry_id: str, source_kind: str
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into archive_entry (
+                id, capability, source, source_url, mime, fetched_at, status, source_kind
+            ) values (%s, 'integration-test', 'integration-test', %s, 'text/html', now(), 'ok', %s)
+            """,
+            (archive_entry_id, f"https://example.invalid/{archive_entry_id}", source_kind),
+        )
+
+
+def _project_official_pba_archive_entry(conn: psycopg.Connection, *, archive_entry_id: str) -> None:
+    from etl import db
+
+    payload = _read("pba_distrito_027_2025_sample.html")
+    source_entry = {
+        "id": archive_entry_id,
+        "capability": "pba",
+        "source": PBA_HOST,
+        "source_url": f"https://{PBA_HOST}{PBA_ALLOWED_PATHS[0]}",
+        "mime": "text/html",
+        "notes": "Verified public PBA HTML test fixture.",
+        "source_kind": "official",
+    }
+    manifest_record = {
+        **source_entry,
+        "archived_path": "archive/pba/distrito_027.html",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+        "fetched_at": "2025-09-08T12:00:00Z",
+        "status": "ok",
+    }
+    db.project_archive_entry(
+        conn,
+        db.archive_entry_from_evidence(manifest_record, source_entry),
+    )
+
+
 _CROSSWALK = CrosswalkTable(
     jurisdictions=(
         JurisdictionCrosswalkEntry(
@@ -445,6 +503,51 @@ _CROSSWALK = CrosswalkTable(
         ),
     )
 )
+
+
+@pytest.mark.parametrize(
+    ("authoritative_source_kind", "expected_error"),
+    [
+        ("fiscalizacion", db.ArchiveEntrySourceKindMismatchError),
+        (None, db.ArchiveEntryNotFoundError),
+    ],
+)
+def test_load_pba_rows_refuses_invalid_archive_authority_before_any_upstream_mutation(
+    authoritative_source_kind: str | None,
+    expected_error: type[Exception],
+) -> None:
+    conn = _require_ephemeral_postgres()
+    archive_entry_id = f"pba/loader-authority-{uuid.uuid4()}"
+    rows = list(
+        ingest_pba(
+            _read("pba_distrito_027_2025_sample.html"),
+            archive_entry_id=archive_entry_id,
+            requested_granularity="distrito",
+        ).rows
+    )
+    try:
+        if authoritative_source_kind is not None:
+            _record_archive_authority(
+                conn,
+                archive_entry_id=archive_entry_id,
+                source_kind=authoritative_source_kind,
+            )
+        before = _loader_mutation_counts(conn)
+
+        with pytest.raises(expected_error):
+            load_pba_rows(
+                conn,
+                rows,
+                year=2098,
+                round_=f"archive-authority-{uuid.uuid4()}",
+                crosswalk=_CROSSWALK,
+                archive_entry_id=archive_entry_id,
+            )
+
+        assert _loader_mutation_counts(conn) == before
+    finally:
+        conn.rollback()
+        conn.close()
 
 
 def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
@@ -466,6 +569,7 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
         requested_granularity="distrito",
     )
     rows = list(parse_result.rows)
+    _project_official_pba_archive_entry(conn, archive_entry_id=archive_entry_id)
     try:
         inserted = load_pba_rows(
             conn,
@@ -508,8 +612,12 @@ def test_load_pba_rows_passes_the_translated_partido_name_to_the_db_boundary(
         archive_entry_id="pba/name-boundary",
         requested_granularity="distrito",
     )
-    captured: list[tuple[str, str | None, object]] = []
+    captured: list[tuple[str, str | None, JurisdictionNames | None]] = []
 
+    monkeypatch.setattr(
+        "etl.ingest.pba.db.lock_archive_entry_source_authority",
+        lambda *_args, **_kwargs: "official",
+    )
     monkeypatch.setattr("etl.ingest.pba.db.upsert_election", lambda *_args, **_kwargs: "election")
     monkeypatch.setattr(
         "etl.ingest.pba.db.upsert_category", lambda _conn, *, name: f"category:{name}"
@@ -538,6 +646,7 @@ def test_load_pba_rows_passes_the_translated_partido_name_to_the_db_boundary(
     assert len(captured) == 1, "all rows share one translated jurisdiction lineage"
     distrito, seccion, names = captured[0]
     assert (distrito, seccion) == ("02", "027")
+    assert names is not None
     assert names.distrito is None
     assert names.seccion == "CORONEL ROSALES"
 
@@ -561,6 +670,7 @@ def test_load_pba_rows_writes_the_translated_national_lineage(tmp_path) -> None:
         requested_granularity="distrito",
     )
     rows = list(parse_result.rows)
+    _project_official_pba_archive_entry(conn, archive_entry_id=archive_entry_id)
     try:
         inserted = load_pba_rows(
             conn,
@@ -859,6 +969,7 @@ def test_the_write_path_reports_the_granularity_it_could_not_honour(capsys) -> N
     rows = list(parse_result.rows)
     assert all(row.degraded_from == "mesa" for row in rows), "sanity"
     capsys.readouterr()  # discard the parser's own report
+    _project_official_pba_archive_entry(conn, archive_entry_id=archive_entry_id)
 
     try:
         load_pba_rows(
@@ -980,6 +1091,7 @@ def test_a_reingest_whose_rows_all_quarantine_clears_the_old_ones() -> None:
         requested_granularity="distrito",
     )
     rows = list(parse_result.rows)
+    _project_official_pba_archive_entry(conn, archive_entry_id=archive_entry_id)
 
     def loaded() -> int:
         with conn.cursor() as cur:

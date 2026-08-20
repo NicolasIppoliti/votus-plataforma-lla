@@ -639,6 +639,11 @@ def load_pba_rows(
     if any(row.archive_entry_id != archive_entry_id for row in rows):
         raise ValueError("load_pba_rows requires every row to carry the archive_entry_id given")
 
+    db.lock_archive_entry_source_authority(
+        conn,
+        archive_entry_id=archive_entry_id,
+        expected_source_kind="official",
+    )
     resolution = resolve_pba_jurisdictions(rows, crosswalk)
     if resolution.quarantined:
         codes = sorted({q.distrito for q in resolution.quarantined})

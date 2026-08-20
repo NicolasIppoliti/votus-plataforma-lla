@@ -26,10 +26,14 @@ network fetch or the gitignored 88 MB archived ZIP:
 from __future__ import annotations
 
 import io
+import os
+import uuid
 from pathlib import Path
 
+import psycopg
 import pytest
 
+from etl import db
 from etl.ingest.national import (
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
@@ -39,6 +43,9 @@ from etl.ingest.national import (
 from etl.storage import extract_zip_safely
 
 FIXTURES = Path(__file__).parent / "fixtures"
+TEST_DSN = os.environ.get(
+    "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+)
 
 
 def _read(name: str) -> bytes:
@@ -53,6 +60,43 @@ def _text_of(csv_bytes: bytes) -> io.TextIOWrapper:
     same entry point without inventing a second one for their convenience.
     """
     return io.TextIOWrapper(io.BytesIO(csv_bytes), encoding="utf-8-sig", newline="")
+
+
+def _require_ephemeral_postgres() -> psycopg.Connection:
+    try:
+        return psycopg.connect(TEST_DSN, connect_timeout=2)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"no ephemeral Postgres reachable at {TEST_DSN!r}: {exc}")
+
+
+def _loader_mutation_counts(conn: psycopg.Connection) -> tuple[int, int, int, int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+              (select count(*) from election),
+              (select count(*) from category),
+              (select count(*) from jurisdiction),
+              (select count(*) from result_row)
+            """
+        )
+        counts = cur.fetchone()
+    assert counts is not None
+    return counts
+
+
+def _record_archive_authority(
+    conn: psycopg.Connection, *, archive_entry_id: str, source_kind: str
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into archive_entry (
+                id, capability, source, source_url, mime, fetched_at, status, source_kind
+            ) values (%s, 'integration-test', 'integration-test', %s, 'text/csv', now(), 'ok', %s)
+            """,
+            (archive_entry_id, f"https://example.invalid/{archive_entry_id}", source_kind),
+        )
 
 
 def test_2023_paso_fixture_keeps_internal_lists_one_row_per_mesa_list_combination() -> None:
@@ -150,6 +194,49 @@ def test_code_equivalent_circuito_names_collapse_across_categories_without_quara
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    ("authoritative_source_kind", "expected_error"),
+    [
+        ("fiscalizacion", db.ArchiveEntrySourceKindMismatchError),
+        (None, db.ArchiveEntryNotFoundError),
+    ],
+)
+def test_load_national_rows_refuses_invalid_archive_authority_before_any_upstream_mutation(
+    authoritative_source_kind: str | None,
+    expected_error: type[Exception],
+) -> None:
+    conn = _require_ephemeral_postgres()
+    archive_entry_id = f"national/loader-authority-{uuid.uuid4()}"
+    rows = ingest_national(
+        _read("national_2023_sample.csv"),
+        archive_entry_id=archive_entry_id,
+        election_year=2023,
+        election_round="paso",
+    )
+    try:
+        if authoritative_source_kind is not None:
+            _record_archive_authority(
+                conn,
+                archive_entry_id=archive_entry_id,
+                source_kind=authoritative_source_kind,
+            )
+        before = _loader_mutation_counts(conn)
+
+        with pytest.raises(expected_error):
+            load_national_rows(
+                conn,
+                rows,
+                year=2099,
+                round_=f"archive-authority-{uuid.uuid4()}",
+                archive_entry_id=archive_entry_id,
+            )
+
+        assert _loader_mutation_counts(conn) == before
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def test_load_national_rows_passes_all_names_to_the_batch_db_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -161,6 +248,10 @@ def test_load_national_rows_passes_all_names_to_the_batch_db_boundary(
     )
     captured_names = []
 
+    monkeypatch.setattr(
+        "etl.ingest.national.db.lock_archive_entry_source_authority",
+        lambda *_args, **_kwargs: "official",
+    )
     monkeypatch.setattr(
         "etl.ingest.national.db.upsert_election", lambda *_args, **_kwargs: "election"
     )

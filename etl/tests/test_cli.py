@@ -1010,6 +1010,202 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     assert all(cell not in output and cell not in repr(written) for cell in private_cells)
 
 
+def test_ingest_fiscalizacion_reports_the_authoritative_recorded_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    source_id = "fiscalizacion/authoritative-review-count"
+    payload = b"fixture"
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("fiscalizacion", "fixture.csv", payload)
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/fiscalizacion/fixture.csv",
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sources = {
+        "fiscalizacion": [
+            {
+                "id": source_id,
+                "source": "internal",
+                "source_url": "local://fixture.csv",
+                "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "authoritative count fixture",
+                "filename": "fixture.csv",
+                "upload": "never",
+            }
+        ]
+    }
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    draft = SimpleNamespace(
+        kind="blank_vote_cell",
+        severity="info",
+        subject_ref="mesa 1",
+        note="one candidate",
+    )
+    candidates: list[object] = []
+    monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _url: FakeConnection())
+    monkeypatch.setattr("etl.__main__.project_archive_entry", lambda *_args: None)
+    monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: object())
+    monkeypatch.setattr(
+        "etl.__main__.ingest_fiscalizacion",
+        lambda *_args, **_kwargs: SimpleNamespace(rows=[], review_items=[draft], quarantined=[]),
+    )
+    monkeypatch.setattr(
+        "etl.ingest.fiscalizacion.load_fiscalizacion_rows",
+        lambda *_args, **_kwargs: (0, []),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.insert_review_items",
+        lambda _conn, records: candidates.extend(records) or 0,
+    )
+
+    ingest_source(
+        source_id,
+        database_url="postgresql://not-opened/test",
+        year=2025,
+        round_="legislativas",
+        sources=sources,
+        local_root=local_root,
+        manifest_path=manifest_path,
+        party_map_path=tmp_path / "unused-party-map.yaml",
+    )
+
+    assert len(candidates) == 1
+    assert "review items: 0 recorded, 1 not recorded" in capsys.readouterr().err
+
+
+def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    from etl.db import insert_review_items as atomic_insert_review_items
+
+    _require_ephemeral_postgres()
+    source_id = f"fiscalizacion/resolved-after-prefilter-{uuid.uuid4()}"
+    payload = b"fixture"
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("fiscalizacion", "fixture.csv", payload)
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/fiscalizacion/fixture.csv",
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sources = {
+        "fiscalizacion": [
+            {
+                "id": source_id,
+                "source": "internal",
+                "source_url": "local://fixture.csv",
+                "mime": "text/csv",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "stale prefilter fixture",
+                "filename": "fixture.csv",
+                "upload": "never",
+            }
+        ]
+    }
+    draft = SimpleNamespace(
+        kind="blank_vote_cell",
+        severity="info",
+        subject_ref="mesa 1",
+        note="one candidate",
+    )
+    subject_ref = f"{source_id} 2025-legislativas mesa 1"
+
+    with psycopg.connect(TEST_DSN) as seed_conn, seed_conn.cursor() as cur:
+        cur.execute(
+            "insert into review_item (kind, severity, subject_ref, note) "
+            "values ('blank_vote_cell', 'info', %s, 'one candidate')",
+            (subject_ref,),
+        )
+
+    monkeypatch.setattr("etl.__main__.project_archive_entry", lambda *_args: None)
+    monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: object())
+    monkeypatch.setattr(
+        "etl.__main__.ingest_fiscalizacion",
+        lambda *_args, **_kwargs: SimpleNamespace(rows=[], review_items=[draft], quarantined=[]),
+    )
+    monkeypatch.setattr(
+        "etl.ingest.fiscalizacion.load_fiscalizacion_rows",
+        lambda *_args, **_kwargs: (0, []),
+    )
+
+    def resolve_then_insert(conn, records) -> int:
+        with psycopg.connect(TEST_DSN) as resolver_conn, resolver_conn.cursor() as cur:
+            cur.execute(
+                "update review_item set resolved_at = now() "
+                "where subject_ref = %s and resolved_at is null",
+                (subject_ref,),
+            )
+            assert cur.rowcount == 1
+        return atomic_insert_review_items(conn, records)
+
+    monkeypatch.setattr("etl.__main__.insert_review_items", resolve_then_insert)
+
+    try:
+        ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="legislativas",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+            party_map_path=tmp_path / "unused-party-map.yaml",
+        )
+
+        with psycopg.connect(TEST_DSN) as verify_conn, verify_conn.cursor() as cur:
+            cur.execute(
+                "select count(*), count(*) filter (where resolved_at is null) "
+                "from review_item where subject_ref = %s",
+                (subject_ref,),
+            )
+            assert cur.fetchone() == (2, 1), (
+                "resolution committed before the authoritative insert statement must allow "
+                "the submitted observation to recur"
+            )
+        assert "review items: 1 recorded, 0 not recorded" in capsys.readouterr().err
+    finally:
+        with psycopg.connect(TEST_DSN) as cleanup_conn, cleanup_conn.cursor() as cur:
+            cur.execute("delete from review_item where subject_ref = %s", (subject_ref,))
+
+
 @pytest.mark.parametrize(
     ("header", "expected_diagnosis"),
     [
@@ -1645,10 +1841,9 @@ def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(
         return len(rows)
 
     monkeypatch.setattr("etl.__main__.load_pba_rows", fake_load)
-    monkeypatch.setattr("etl.__main__.fresh_review_items", lambda _conn, records: list(records))
     monkeypatch.setattr(
         "etl.__main__.insert_review_items",
-        lambda _conn, records: persisted.extend(records) or len(records),
+        lambda _conn, records: persisted.extend(records) or 0,
     )
 
     inserted = ingest_source(
@@ -1675,6 +1870,7 @@ def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(
     assert "length=2; character_classes=ascii_letter,digit" in record.note
     report = capsys.readouterr().err
     assert "PBA parser quarantine" in report
+    assert "0 review item(s) recorded" in report
     assert "unreadable_vote_cell: 1" in report
 
 
@@ -2196,7 +2392,9 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
     } == {"warning"}
 
 
-def test_validate_fiscalizacion_persists_duplicate_collapsed_once(tmp_path: Path, capsys) -> None:
+def test_validate_fiscalizacion_persists_duplicate_collapsed_once(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _require_ephemeral_postgres()
 
     fixtures = Path(__file__).parent / "fixtures"
@@ -2298,7 +2496,12 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(tmp_path: Path
         conn.close()
 
     assert written == (1,)
-    assert "duplicate_collapsed: 1 review item(s)" in capsys.readouterr().err
+
+    monkeypatch.setattr("etl.__main__.insert_review_items", lambda _conn, _records: 0)
+    assert main(args) == 0
+    report = capsys.readouterr().err
+    assert "duplicate_collapsed: 1 review item(s)" in report
+    assert "duplicate_collapsed: 1 review item(s) (0 new, 1 not recorded)" in report
 
 
 def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
@@ -3004,6 +3207,63 @@ def test_load_curated_records_raw_mesa_presence_before_vote_filters(
     assert stability.present_2023 is True
     assert stability.present_2025 is True
     assert stability.stable is True
+
+
+def test_load_curated_reports_the_authoritative_new_review_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text("[]\n", encoding="utf-8")
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    jurisdiction = SimpleNamespace(
+        national_distrito_code="02",
+        national_seccion_code="027",
+    )
+    candidates: list[object] = []
+    monkeypatch.setattr(
+        "etl.__main__._require_complete_national_corpus",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "etl.__main__.load_crosswalk",
+        lambda _path: SimpleNamespace(jurisdictions=(jurisdiction,)),
+    )
+    monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: object())
+    monkeypatch.setattr(
+        "etl.__main__.collect_national_mesa_codes",
+        lambda *_args, year, **_kwargs: {("1", 1)} if year == 2023 else {("1", 1), ("1", 2)},
+    )
+    monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _url: FakeConnection())
+    monkeypatch.setattr("etl.__main__.load_party_map_rows", lambda *_args: object())
+    monkeypatch.setattr("etl.__main__.load_crosswalk_rows", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "etl.__main__.insert_review_items",
+        lambda _conn, records: candidates.extend(records) or 0,
+    )
+
+    load_curated(
+        database_url="postgresql://not-opened/test",
+        sources={},
+        local_root=tmp_path / "archive",
+        manifest_path=manifest_path,
+        party_map_path=tmp_path / "unused-party-map.yaml",
+        crosswalk_path=tmp_path / "unused-crosswalk.yaml",
+    )
+
+    assert len(candidates) == 1
+    assert "(0 new, 1 not recorded)" in capsys.readouterr().err
 
 
 def test_validate_crosswalk_refuses_a_parser_row_without_distrito(
@@ -5745,44 +6005,6 @@ def test_fetch_rejects_malformed_required_source_fields_through_main(
     assert exit_code == 1
     assert "sources.yaml" in reported
     assert "Traceback" not in reported
-
-
-def test_resolved_review_history_does_not_suppress_a_recurring_observation() -> None:
-    from etl.__main__ import fresh_review_items
-    from etl.db import insert_review_items
-    from etl.review_item import ReviewItemRecord
-
-    _require_ephemeral_postgres()
-    token = uuid.uuid4().hex
-    resolved = ReviewItemRecord("content_drift", "warning", f"resolved-{token}", "same")
-    active = ReviewItemRecord("content_drift", "warning", f"active-{token}", "same")
-    conn = psycopg.connect(TEST_DSN)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "insert into review_item (kind, severity, subject_ref, note, resolved_at) "
-                "values (%s, %s, %s, %s, now())",
-                (resolved.kind, resolved.severity, resolved.subject_ref, resolved.note),
-            )
-            cur.execute(
-                "insert into review_item (kind, severity, subject_ref, note) "
-                "values (%s, %s, %s, %s)",
-                (active.kind, active.severity, active.subject_ref, active.note),
-            )
-
-        fresh = fresh_review_items(conn, [resolved, active, resolved])
-        insert_review_items(conn, fresh)
-
-        assert fresh == [resolved]
-        with conn.cursor() as cur:
-            cur.execute(
-                "select count(*) from review_item where subject_ref = %s and resolved_at is null",
-                (resolved.subject_ref,),
-            )
-            assert cur.fetchone() == (1,)
-    finally:
-        conn.rollback()
-        conn.close()
 
 
 @pytest.mark.parametrize(
