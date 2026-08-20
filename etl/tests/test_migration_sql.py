@@ -1427,8 +1427,8 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
         assert replica not in block
 
     assert "select plan(21);" in scale
-    assert (
-        "ok((select index_scans >= jurisdiction_count from district_scan_evidence" in scale
-        or "index_scans >= jurisdiction_count" in scale
-    )
+    # jurisdiction_count > 0 is not decoration: without it a vanished '04' fixture would let
+    # the floor pass vacuously as 0 >= 0, which is the exact shape this contract exists to
+    # refuse.
+    assert "index_scans >= jurisdiction_count and jurisdiction_count > 0" in scale
     assert "table_scans = 0" in scale
