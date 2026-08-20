@@ -1,4 +1,13 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/0032_preaggregate_results_exploration_district.down.sql
+do $$ begin
+  if to_regprocedure('public.results_exploration_official_0032(uuid,uuid,text,text,text,text,integer,text)') is not null
+     or to_regprocedure('public.results_exploration_official_wrapper_0031(uuid,uuid,text,text,text,text,integer,text)') is not null
+     or to_regprocedure('public.results_exploration_official_0030(uuid,uuid,text,text,text,text,integer,text)') is null
+     or to_regclass('public.result_row_official_district_scope_idx') is null then
+    raise exception '0032 rollback did not restore the exact 0031 RPC and index state';
+  end if;
+end $$;
 \ir ../migrations/down/0031_replace_district_covering_index.down.sql
 do $$ begin
   if to_regclass('public.result_row_official_district_scope_idx') is not null
@@ -97,6 +106,7 @@ end $$;
 \ir ../migrations/0029_optimize_results_exploration_official.sql
 \ir ../migrations/0030_optimize_results_exploration_district.sql
 \ir ../migrations/0031_replace_district_covering_index.sql
+\ir ../migrations/0032_preaggregate_results_exploration_district.sql
 do $$
 declare
   facets_definition text;
@@ -123,11 +133,13 @@ begin
   if to_regclass('public.result_row_non_official_scope_idx') is null then
     raise exception '0027 forward apply omitted result_row_non_official_scope_idx';
   end if;
-  if to_regprocedure('public.results_exploration_official_0030(uuid,uuid,text,text,text,text,integer,text)') is null
+  if to_regprocedure('public.results_exploration_official_0032(uuid,uuid,text,text,text,text,integer,text)') is null
+     or to_regprocedure('public.results_exploration_official_wrapper_0031(uuid,uuid,text,text,text,text,integer,text)') is null
+     or to_regprocedure('public.results_exploration_official_0030(uuid,uuid,text,text,text,text,integer,text)') is null
      or to_regprocedure('public.results_exploration_official_0029(uuid,uuid,text,text,text,text,integer,text)') is null
      or to_regclass('public.result_row_official_district_scope_idx') is null
      or to_regclass('public.result_row_official_district_geography_idx') is not null then
-    raise exception '0031 forward apply omitted the district core or exact scope-first index replacement'; end if;
+    raise exception '0032 forward apply omitted the preaggregated district core or preserved history'; end if;
   select lower(pg_get_indexdef('public.result_row_non_official_scope_idx'::regclass))
     into index_definition;
   if position('(election_id, category_id, jurisdiction_id)' in index_definition) = 0
@@ -143,8 +155,8 @@ begin
   end if;
   if to_regprocedure('public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)') is null then raise exception '0022 forward apply omitted the preserved 0020 official RPC'; end if;
   if has_function_privilege('authenticated', 'public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or exists (select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl where p.oid = 'public.results_exploration_official_0020(uuid,uuid,text,text,text,text,integer,text)'::regprocedure and acl.grantee = 0 and acl.privilege_type = 'EXECUTE') then raise exception 'internal 0020 RPC remained directly executable'; end if;
-  if has_function_privilege('authenticated', 'public.results_exploration_official_0030(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or has_function_privilege('authenticated', 'public.results_exploration_official_0029(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or has_function_privilege('authenticated', 'public.results_exploration_official_0022(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') then
-    raise exception '0030 internal RPCs remained directly executable'; end if;
+  if has_function_privilege('authenticated', 'public.results_exploration_official_0032(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or has_function_privilege('authenticated', 'public.results_exploration_official_wrapper_0031(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or has_function_privilege('authenticated', 'public.results_exploration_official_0030(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or has_function_privilege('authenticated', 'public.results_exploration_official_0029(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') or has_function_privilege('authenticated', 'public.results_exploration_official_0022(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE') then
+    raise exception '0032 internal RPCs remained directly executable'; end if;
   if not has_function_privilege('authenticated', 'public.results_exploration_facets(uuid,uuid,text,text,text,text)', 'EXECUTE')
      or not has_function_privilege('authenticated', 'public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)', 'EXECUTE')
      or not has_function_privilege('authenticated', 'public.results_exploration_coverage(uuid,uuid,text,text)', 'EXECUTE')
@@ -218,4 +230,4 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
-select 'release-proof' as evidence, 31 as migration_inventory_count, '0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;
+select 'release-proof' as evidence, 32 as migration_inventory_count, '0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;

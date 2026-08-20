@@ -804,6 +804,9 @@ def test_0021_coverage_down_drops_only_coverage_objects() -> None:
 def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> None:
     sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
     for required in (
+        "select plan(30);",
+        "discard plans;",
+        "session-cached plans",
         "explain (analyze, buffers, format json)",
         "representative_result_rows",
         "execution time",
@@ -821,7 +824,12 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "result_row_non_official_scope_idx",
         "official_core_scope",
         "district_scope_access",
+        "district_core_rpc",
         "district_rpc",
+        "results_exploration_official_0032(",
+        "results_exploration_official_wrapper_0031(",
+        "index_scans between 1 and 4",
+        "unstable nested-function block totals",
         "result_row_official_district_scope_idx",
         "j.seccion_code = '001'",
         "500, 'scale payload retains exactly 500 complete schools'",
@@ -829,6 +837,12 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "rollback;",
     ):
         assert required in sql
+    encapsulated_contracts = sql.split(
+        "'production-shaped coverage rpc stays within its time and shared-block budgets'", 1
+    )[1].split("select ok((select label = 'coverage_unsupported_source_audit'", 1)[0]
+    assert "shared hit blocks" not in encapsulated_contracts
+    assert "shared read blocks" not in encapsulated_contracts
+    assert "core.label='district_core_rpc'" not in sql
     cleanup = sql.split("select * from finish();", 1)[1]
     assert "rollback;" in cleanup
     for table in ("result_row", "jurisdiction", "category", "election"):
@@ -888,6 +902,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0032_preaggregate_results_exploration_district.down.sql",
         "\\ir ../migrations/down/0031_replace_district_covering_index.down.sql",
         "\\ir ../migrations/down/0030_optimize_results_exploration_district.down.sql",
         "\\ir ../migrations/down/0029_optimize_results_exploration_official.down.sql",
@@ -904,6 +919,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0029_optimize_results_exploration_official.sql",
         "\\ir ../migrations/0030_optimize_results_exploration_district.sql",
         "\\ir ../migrations/0031_replace_district_covering_index.sql",
+        "\\ir ../migrations/0032_preaggregate_results_exploration_district.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -918,7 +934,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "31 as migration_inventory_count",
+        "32 as migration_inventory_count",
         "dropping only its index",
     ):
         assert required in sql
@@ -1269,7 +1285,7 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
             "results_exploration_reporting_level(",
         )
     )
-    assert "select plan(21)" in scale and "selected_shapes<>1" in scale
+    assert "select plan(30)" in scale and "selected_shapes<>1" in scale
 
 
 def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
@@ -1329,8 +1345,97 @@ def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
     )
     assert '"node type" == "seq scan" && @."relation name" == "result_row"' in district_contract
     assert "execution time')::numeric<=2000" in district_contract
-    assert "shared read blocks')::bigint,0)<=7500" in district_contract
+    assert "shared read blocks')::bigint,0)<=8500" in district_contract
+    assert "distrito 05 adds 581,400 entries to this same election/category partial index" in scale
+    assert "larger b-tree increases its page depth and page access" in scale
     assert "enable_seqscan" not in scale and "enable_nestloop" not in scale
+
+
+def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollback() -> None:
+    forward_path = MIGRATIONS / "0032_preaggregate_results_exploration_district.sql"
+    down_path = MIGRATIONS / "down" / "0032_preaggregate_results_exploration_district.down.sql"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+
+    assert forward.startswith("-- 0032") and forward.endswith("commit;")
+    assert "create function results_exploration_official_0032(" in forward
+    assert "rename to results_exploration_official_wrapper_0031" in forward
+    core = forward.split("create function results_exploration_official_0032(", 1)[1]
+    core = core.split("create or replace function results_exploration_official(", 1)[0]
+    stages = tuple(
+        core.index(stage)
+        for stage in (
+            "target_jurisdictions as materialized",
+            "raw_rows as materialized",
+            "source_summaries as materialized",
+            "normalized_shapes as materialized",
+            "exclusion_groups as materialized",
+            "levels as materialized",
+            "state as materialized",
+            "selected_by_archive_party as materialized",
+        )
+    )
+    assert list(stages) == sorted(stages)
+    for invariant in (
+        "pba_partido_rows_not_province_aggregate",
+        "official_rows_without_mesa_code",
+        "row_count-missing_mesa_rows",
+        "array_agg(distinct r.jurisdiction_id)",
+        "count(distinct jurisdiction_id)",
+        "source_audit",
+        "archive_entry_ids",
+        "results_exploration_official_0029(",
+        "jsonb_build_array(n.archive_entry_id,n.granularity,n.seccion_code)",
+        "jsonb_build_array(r.archive_entry_id,r.granularity,r.seccion_code)",
+    ):
+        assert invariant in core
+    assert "coalesce(n.seccion_code,chr(1))" not in core
+    assert core.count("results_exploration_reporting_level(") == 1
+    assert core.count("results_exploration_party_jurisdiction(") == 1
+    assert "classified_rows as materialized" not in core
+    assert "selected as materialized" not in core
+    assert "statement_timeout" not in forward
+    assert "create index" not in forward
+    assert "drop index" not in forward
+    assert (
+        forward.index("grant create on schema public")
+        < forward.index("owner to results_exploration_executor")
+        < forward.index("revoke create on schema public")
+    )
+    wrapper = forward.split("create or replace function results_exploration_official(", 1)[1]
+    assert "results_exploration_official_0032(" in wrapper
+    assert "rr.source_kind is distinct from 'official'" in wrapper
+    assert "'source_exclusions'" in wrapper
+
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "rename to results_exploration_official" in down
+    assert "drop function results_exploration_official_0032(" in down
+    assert "results_exploration_official_0030" not in down
+    assert not any(word in down for word in ("delete from", "update result_row", "truncate"))
+
+    scale = " ".join(
+        (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
+    )
+    for evidence in (
+        "from generate_series(1,78962) unit",
+        "from generate_series(1,581400) row_number",
+        "source_shapes',count(distinct",
+        "sections',count(distinct",
+        "canonical_party_id='scale-canonical' and verified",
+        "fiscalizacion/production-district-shape",
+        "results_exploration_official(",
+        "results_exploration_official_0032(",
+        "results_exploration_official_0029(",
+        "results_exploration_official_wrapper_0031(",
+        "p_requested_level=>'distrito'",
+        "public_elapsed_ms<=2000",
+        "new public district wrapper exactly preserves the real 0031 public wrapper jsonb payload",
+        "optimized district core exactly preserves the full realistic reference jsonb payload",
+        "null and literal chr(1) sections preserve the full reference core jsonb payload",
+        "null and literal chr(1) sections preserve the full reference public jsonb payload",
+        "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
+    ):
+        assert evidence in scale
 
 
 def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -> None:
@@ -1371,9 +1476,10 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     for replica in ("explain", "as materialized", "cross join lateral"):
         assert replica not in block
 
-    assert "select plan(21);" in scale
-    # jurisdiction_count > 0 is not decoration: without it a vanished '04' fixture would let
-    # the floor pass vacuously as 0 >= 0, which is the exact shape this contract exists to
-    # refuse.
-    assert "index_scans >= jurisdiction_count and jurisdiction_count > 0" in scale
+    assert "select plan(30);" in scale
+    # One public wrapper invocation dispatches once to the batched core. The small physical-scan
+    # allowance accommodates planner/parallel shape while still rejecting both no access and the
+    # old scan-per-jurisdiction algorithm.
+    assert "index_scans between 1 and 4" in scale
+    assert "index_scans >= jurisdiction_count" not in scale
     assert "table_scans = 0" in scale
