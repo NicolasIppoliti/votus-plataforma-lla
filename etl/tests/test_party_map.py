@@ -9,6 +9,8 @@ municipal's 22xx family is a scheme unrelated to national ids.
 
 from __future__ import annotations
 
+import csv
+import json
 import os
 import uuid
 from pathlib import Path
@@ -419,6 +421,14 @@ def test_party_map_loader_reports_database_deletion_counts_for_replacement_snaps
         assert result.list_identity.deleted == deletion_counts["list_identity"]
         assert result.party_mapping.loaded == loaded
         assert result.party_mapping.deleted == deletion_counts["party_mapping"]
+        for table_name, count in (
+            ("party_canonical", result.party_canonical),
+            ("list_identity", result.list_identity),
+            ("party_mapping", result.party_mapping),
+        ):
+            assert count.deleted_by_reason == {
+                "absent_from_desired_projection": deletion_counts[table_name]
+            }
 
 
 def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears_it() -> None:
@@ -480,6 +490,12 @@ def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears
         assert replacement.list_identity.deleted == 1
         assert replacement.party_mapping.loaded == 1
         assert replacement.party_mapping.deleted == 1
+        for count in (
+            replacement.party_canonical,
+            replacement.list_identity,
+            replacement.party_mapping,
+        ):
+            assert count.deleted_by_reason == {"absent_from_desired_projection": 1}
         with conn.cursor() as cur:
             cur.execute(
                 "select jurisdiction, list_id from party_mapping order by jurisdiction, list_id"
@@ -499,6 +515,8 @@ def test_party_map_loader_replaces_the_curated_projection_and_empty_input_clears
         assert empty.list_identity.deleted == 1
         assert empty.party_mapping.loaded == 0
         assert empty.party_mapping.deleted == 1
+        for count in (empty.party_canonical, empty.list_identity, empty.party_mapping):
+            assert count.deleted_by_reason == {"absent_from_desired_projection": 1}
         with conn.cursor() as cur:
             for table_name in ("party_mapping", "list_identity", "party_canonical"):
                 cur.execute(f"select count(*) from {table_name}")
@@ -854,10 +872,91 @@ def test_pba_municipal_scheme_never_resolved_against_national_ids() -> None:
 # --- regression: the real curated file loads and resolves ------------------
 
 
+def test_national_2023_president_primary_source_identities_are_curated_exactly() -> None:
+    with (FIXTURES / "national_2023_president_party_ids.csv").open(
+        encoding="utf-8", newline=""
+    ) as fixture:
+        fixture_rows = list(csv.DictReader(fixture))
+    expected_rows = [
+        {
+            "source_id": "national/2023-generales",
+            "archive_sha256": "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b",
+            "round": "generales",
+            "category": "PRESIDENTE Y VICE",
+            "list_id": list_id,
+            "party_name": party_name,
+            "lista_numero": "",
+        }
+        for list_id, party_name in (
+            ("132", "JUNTOS POR EL CAMBIO"),
+            ("133", "HACEMOS POR NUESTRO PAIS"),
+            ("134", "UNION POR LA PATRIA"),
+            ("135", "LA LIBERTAD AVANZA"),
+            ("136", "FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD"),
+        )
+    ] + [
+        {
+            "source_id": "national/2023-balotaje",
+            "archive_sha256": "6d63298575984a9639cc51ed3fb60def789ceab0a4ae9b1b1003571f2b4fa530",
+            "round": "balotaje",
+            "category": "PRESIDENTE Y VICE",
+            "list_id": list_id,
+            "party_name": party_name,
+            "lista_numero": "",
+        }
+        for list_id, party_name in (
+            ("134", "UNION POR LA PATRIA"),
+            ("135", "LA LIBERTAD AVANZA"),
+        )
+    ]
+    assert fixture_rows == expected_rows
+
+    manifest = json.loads((CURATED.parent / "archive-manifest.json").read_text(encoding="utf-8"))
+    manifest_sha_by_id = {entry["id"]: entry["sha256"] for entry in manifest}
+    expected_archives = {
+        "national/2023-generales": (
+            "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b"
+        ),
+        "national/2023-balotaje": (
+            "6d63298575984a9639cc51ed3fb60def789ceab0a4ae9b1b1003571f2b4fa530"
+        ),
+    }
+    assert {source_id: manifest_sha_by_id[source_id] for source_id in expected_archives} == (
+        expected_archives
+    )
+    assert {(row["source_id"], row["archive_sha256"]) for row in fixture_rows} == set(
+        expected_archives.items()
+    )
+
+    table = _load_party_map_table()
+    expected_canonical_party = {
+        "132": "JXC",
+        "133": "HXNP",
+        "134": "UP",
+        "135": "LLA",
+        "136": "FIT",
+    }
+    source_archive_by_round = {
+        "generales": "2023-generales.zip",
+        "balotaje": "2023-balotaje.zip",
+    }
+    for row in fixture_rows:
+        resolved = table.resolve(
+            year=2023,
+            jurisdiction="national",
+            category="PRESIDENTE",
+            list_id=row["list_id"],
+        )
+        assert isinstance(resolved, PartyMappingEntry)
+        assert resolved.party_name == row["party_name"]
+        assert resolved.canonical_party == expected_canonical_party[row["list_id"]]
+        assert source_archive_by_round[row["round"]] in (resolved.source or "")
+
+
 def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
     table = _load_party_map_table()
 
-    assert len(table.entries) == 28
+    assert len(table.entries) == 53
     labels = {declaration.id: declaration.display_name for declaration in table.canonical_parties}
     assert labels == {
         "JXC": "JUNTOS POR EL CAMBIO",
@@ -880,6 +979,110 @@ def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
         "COALICION_CIVICA": "COALICION CIVICA - A.R.I.",
         "UNION_FEDERAL": "ALIANZA UNION FEDERAL",
         "LLA_PRO_ALLIANCE": "ALIANZA LA LIBERTAD AVANZA",
+        "UNION_Y_LIBERTAD": "ALIANZA UNION Y LIBERTAD",
+        "SOMOS_BUENOS_AIRES": "ALIANZA SOMOS BUENOS AIRES",
+        "ES_CON_VOS": "ALIANZA ES CON VOS ES CON NOSOTROS",
+        "PARTIDO_LIBERTARIO": "PARTIDO LIBERTARIO",
+        "CONSTRUYENDO_PORVENIR": "CONSTRUYENDO PORVENIR",
+        "VALORES_REPUBLICANOS": "VALORES REPUBLICANOS",
+        "POLITICA_OBRERA": "PARTIDO POLITICA OBRERA",
+        "TIEMPO_DE_TODOS": "PARTIDO TIEMPO DE TODOS",
+    }
+
+
+def test_real_curated_party_map_has_exact_primary_source_category_coverage() -> None:
+    table = _load_party_map_table()
+
+    grouped = {
+        (entry.year, entry.jurisdiction, entry.category, entry.list_id): entry
+        for entry in table.entries
+    }
+    assert len(grouped) == len(table.entries)
+
+    def category_entries(jurisdiction: str, category: str) -> dict[str, PartyMappingEntry]:
+        return {
+            entry.list_id: entry
+            for entry in table.entries
+            if entry.year == 2025
+            and entry.jurisdiction == jurisdiction
+            and entry.category == category
+        }
+
+    presidente = {
+        entry.list_id: entry
+        for entry in table.entries
+        if entry.year == 2023
+        and entry.jurisdiction == "national"
+        and entry.category == "PRESIDENTE"
+    }
+    assert {list_id: entry.canonical_party for list_id, entry in presidente.items()} == {
+        "132": "JXC",
+        "133": "HXNP",
+        "134": "UP",
+        "135": "LLA",
+        "136": "FIT",
+    }
+    balotaje_lists = {
+        list_id for list_id, entry in presidente.items() if "balotaje" in (entry.source or "")
+    }
+    assert balotaje_lists == {"134", "135"}
+
+    concejales = category_entries("coronel_rosales_municipal", "CONCEJALES")
+    assert {list_id: entry.canonical_party for list_id, entry in concejales.items()} == {
+        "2206": "LLA_PRO_ALLIANCE",
+        "2200": "FUERZA_PATRIA",
+        "2201": "POTENCIA",
+        "2207": "UNION_Y_LIBERTAD",
+        "2204": "SOMOS_BUENOS_AIRES",
+        "962": "PRIMERO_ROSALES",
+        "2203": "FIT",
+        "2202": "ES_CON_VOS",
+    }
+    assert {entry.party_name for entry in concejales.values()} == {
+        "ALIANZA LA LIBERTAD AVANZA",
+        "ALIANZA FUERZA PATRIA",
+        "ALIANZA POTENCIA",
+        "ALIANZA UNION Y LIBERTAD",
+        "ALIANZA SOMOS BUENOS AIRES",
+        "AGRUPACION MUNICIPAL PRIMERO ROSALES",
+        "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD",
+        "ALIANZA ES CON VOS ES CON NOSOTROS",
+    }
+
+    diputados = category_entries("pba_provincial", "DIPUTADOS PROVINCIALES")
+    assert {list_id: entry.canonical_party for list_id, entry in diputados.items()} == {
+        "2206": "LLA_PRO_ALLIANCE",
+        "2200": "FUERZA_PATRIA",
+        "2201": "POTENCIA",
+        "2207": "UNION_Y_LIBERTAD",
+        "2204": "SOMOS_BUENOS_AIRES",
+        "2203": "FIT",
+        "2202": "ES_CON_VOS",
+        "1006": "PARTIDO_LIBERTARIO",
+        "1003": "CONSTRUYENDO_PORVENIR",
+        "1008": "VALORES_REPUBLICANOS",
+        "2208": "UNION_LIBERAL",
+        "959": "MOVIMIENTO_SOCIALISTA",
+        "963": "FRENTE_PATRIOTA_FEDERAL",
+        "974": "POLITICA_OBRERA",
+        "980": "TIEMPO_DE_TODOS",
+    }
+    assert {entry.party_name for entry in diputados.values()} == {
+        "ALIANZA LA LIBERTAD AVANZA",
+        "ALIANZA FUERZA PATRIA",
+        "ALIANZA POTENCIA",
+        "ALIANZA UNION Y LIBERTAD",
+        "ALIANZA SOMOS BUENOS AIRES",
+        "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD",
+        "ALIANZA ES CON VOS ES CON NOSOTROS",
+        "PARTIDO LIBERTARIO",
+        "CONSTRUYENDO PORVENIR",
+        "VALORES REPUBLICANOS",
+        "ALIANZA UNION LIBERAL",
+        "MOVIMIENTO  AVANZADA SOCIALISTA",
+        "PARTIDO FRENTE PATRIOTA FEDERAL",
+        "PARTIDO POLITICA OBRERA",
+        "PARTIDO TIEMPO DE TODOS",
     }
 
 

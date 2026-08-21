@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(108);
+select plan(118);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -10,7 +10,8 @@ insert into election (id, year, round) values
 insert into category (id, name)
 values ('20000000-0000-0000-0000-000000000003', 'DIPUTADO NACIONAL'),
   ('20000000-0000-0000-0000-000000000006', 'CONCEJALES'),
-  ('20000000-0000-0000-0000-000000000007', 'MESA IDENTITY FIXTURE');
+  ('20000000-0000-0000-0000-000000000007', 'MESA IDENTITY FIXTURE'),
+  ('20000000-0000-0000-0000-000000000008', 'DIPUTADOS PROVINCIALES');
 insert into jurisdiction (
   id, distrito_code, distrito_name, seccion_code, seccion_name, circuito_code,
   circuito_name, establecimiento_code, establecimiento_name, mesa_code
@@ -31,14 +32,17 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000035', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00010', '00010', 'E22', 'Missing mesa identity', null),
   ('20000000-0000-0000-0000-000000000027', '02', 'Buenos Aires', '999', null, '00001', '00001', 'E9', 'Fiscal-only scope', 9);
 insert into party_canonical (id, display_name)
-values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL');
+values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL'),
+('wu2-pba-municipal', 'WU2 PBA MUNICIPAL'), ('wu2-pba-provincial', 'WU2 PBA PROVINCIAL');
 insert into party_mapping (
   year, jurisdiction, category, list_id, canonical_party_id, verified
 ) values
   (2025, 'national', 'DIPUTADO NACIONAL', '110', 'wu1-canonical', true),
   (2023, 'national', 'DIPUTADO NACIONAL', '135', 'wu1-canonical', true),
   (2023, 'national', 'DIPUTADO NACIONAL', '20135', 'wu1-canonical', true),
-  (2023, 'coronel_rosales_municipal', 'CONCEJALES', '135', 'wu1-municipal', true);
+  (2023, 'coronel_rosales_municipal', 'CONCEJALES', '135', 'wu1-municipal', true),
+  (2025, 'coronel_rosales_municipal', 'CONCEJALES', '2206', 'wu2-pba-municipal', true),
+  (2025, 'pba_provincial', 'DIPUTADOS PROVINCIALES', '2206', 'wu2-pba-provincial', true);
 insert into result_row (
   election_id, jurisdiction_id, category_id, granularity, list_id, votes,
   source_kind, archive_entry_id, source_row_index
@@ -66,7 +70,9 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000034', '20000000-0000-0000-0000-000000000007', 'mesa', 'B', 14, 'official', 'national/2025-mesa-identity', 21),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000035', '20000000-0000-0000-0000-000000000007', 'mesa', 'A', 15, 'official', 'national/2025-mesa-identity', 22),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000003', 'mesa', null, 91, 'fiscalizacion', 'fiscalizacion/only-runtime', 23),
-  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027', 24);
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027', 24),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000006', 'seccion', '2206', 101, 'official', 'pba/2025-distrito-027', 25),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000008', 'seccion', '2206', 202, 'official', 'pba/2025-distrito-027', 26);
 create function pg_temp.schools(p_election uuid default '20000000-0000-0000-0000-000000000001')
 returns jsonb language sql stable as $$ select results_exploration_schools(p_election,
   '20000000-0000-0000-0000-000000000003', '02', '027') $$;
@@ -354,8 +360,39 @@ select is(results_exploration_official(
   '20000000-0000-0000-0000-000000000003', '02', '027')->>'source_kind',
   'official', 'success payload carries explicit official-source evidence');
 select is(results_exploration_party_jurisdiction(
-  'pba/2025-distrito-003', 2025, 'provinciales', 'DIPUTADO NACIONAL', '03', null), null,
-  'PBA archive shape never invents municipal party identity');
+  archive_entry_id, year, round, category, distrito_code, seccion_code), expected,
+  'party jurisdiction maps only the exact curated source shape: ' || label)
+from (values
+  ('national President', 'national/2023-generales', 2023, 'generales', 'PRESIDENTE', '02', '027', 'national'),
+  ('bundled national municipal', 'national/2023-generales', 2023, 'generales', 'CONCEJALES', '02', '027', 'coronel_rosales_municipal'),
+  ('PBA municipal', 'pba/2025-distrito-027', 2025, 'provinciales', 'CONCEJALES', '02', '027', 'coronel_rosales_municipal'),
+  ('PBA provincial', 'pba/2025-distrito-027', 2025, 'provinciales', 'DIPUTADOS PROVINCIALES', '02', '027', 'pba_provincial'),
+  ('unregistered PBA archive with curated codes', 'pba/2025-distrito-999', 2025, 'provinciales', 'DIPUTADOS PROVINCIALES', '02', '027', null),
+  ('PBA provincial outside curated section', 'pba/2025-distrito-028', 2025, 'provinciales', 'DIPUTADOS PROVINCIALES', '02', '028', null),
+  ('unmapped PBA category', 'pba/2025-distrito-027', 2025, 'provinciales', 'DIPUTADO NACIONAL', '02', '027', null)
+) cases(label,archive_entry_id,year,round,category,distrito_code,seccion_code,expected);
+select is(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000006', '02', '027') - 'source_exclusions',
+  results_exploration_official_0035(
+    '20000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000006', '02', '027'),
+  'generic public RPC preserves exact core payload parity for PBA municipal results');
+select is((select party->>'canonical_party_id' from jsonb_array_elements(
+    results_exploration_official('20000000-0000-0000-0000-000000000005',
+      '20000000-0000-0000-0000-000000000006', '02', '027')->'parties') party),
+  'wu2-pba-municipal', 'generic RPC resolves PBA Concejales with municipal party jurisdiction');
+select is(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000008', '02', '027') - 'source_exclusions',
+  results_exploration_official_0035(
+    '20000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000008', '02', '027'),
+  'generic public RPC preserves exact core payload parity for PBA provincial results');
+select is((select party->>'canonical_party_id' from jsonb_array_elements(
+    results_exploration_official('20000000-0000-0000-0000-000000000005',
+      '20000000-0000-0000-0000-000000000008', '02', '027')->'parties') party),
+  'wu2-pba-provincial', 'generic RPC resolves Diputados with provincial party jurisdiction');
 select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '999'

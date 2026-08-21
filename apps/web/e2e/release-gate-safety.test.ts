@@ -36,6 +36,7 @@ import {
 	establishOwnership,
 	reserveUniquePorts,
 	runOwnedCleanup,
+	runProductionReleasePhases,
 	runReleaseGateCli,
 	SUPABASE_START_TIMEOUT_MS,
 	type PortReservation,
@@ -101,7 +102,7 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("migration release-gate integration", () => {
-	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 35 }, (_, index) =>
+	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 36 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	);
 	it("inspects the exact production migration and proof plan", async () => {
@@ -109,13 +110,13 @@ describe("migration release-gate integration", () => {
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(EXPECTED_MIGRATION_VERSIONS);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0036",
-			fileName: "0036_e2e_service_role_grants.sql",
+			version: "0037",
+			fileName: "0037_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(36);
+		).toBe(37);
 		expect(plan.pgTapProofs).toContainEqual({
 			path: "tests/results_coverage_scope_binding.sql",
 			label: "disposable coverage-scope-binding pgTAP",
@@ -140,23 +141,82 @@ describe("migration release-gate integration", () => {
 			assertSourceInventory(plan.migrationVersions, plan.syntheticMigration),
 		).resolves.toBeUndefined();
 	});
-	it("runs production proofs in order before installing synthetic 0036", () => {
-		const source = readFileSync(
-			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
-			"utf8",
-		);
-		const execution = source.split("async function executeGate(", 2)[1]!;
-		const production = execution.indexOf(
-			"disposable Supabase incremental migrations",
-		);
-		const pgTap = execution.indexOf("for (const proof of plan.pgTapProofs)");
-		const rollback = execution.indexOf(
-			"for (const proof of plan.rollbackReapplyProofs)",
-		);
-		const synthetic = execution.indexOf("await installSyntheticMigration(");
-		expect(production).toBeLessThan(pgTap);
-		expect(pgTap).toBeLessThan(rollback);
-		expect(rollback).toBeLessThan(synthetic);
+	it("runs every production phase in plan order before installing synthetic 0037", async () => {
+		const plan = await inspectReleaseGatePlan();
+		const trace: string[] = [];
+		const stack = await runProductionReleasePhases(plan, {
+			runProductionMigrations: async () => {
+				trace.push("production-migrations");
+			},
+			validateStackStatus: async () => {
+				trace.push("stack-status");
+				return {
+					API_URL: "http://127.0.0.1:54321",
+					DB_URL:
+						"postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+					ANON_KEY: "anon",
+					SERVICE_ROLE_KEY: "service",
+				};
+			},
+			runPgTapProof: async (proof) => {
+				trace.push(`pgTAP:${proof.label}`);
+			},
+			runRollbackReapplyProof: async (proof) => {
+				trace.push(`rollback:${proof.label}`);
+			},
+			installSyntheticMigration: async (migration) => {
+				trace.push(`synthetic:${migration.fileName}`);
+			},
+		});
+		expect(trace).toEqual([
+			"production-migrations",
+			"stack-status",
+			"pgTAP:disposable results-exploration pgTAP",
+			"pgTAP:disposable scale/EXPLAIN proof",
+			"pgTAP:disposable coverage-scope-binding pgTAP",
+			"rollback:disposable rollback/reapply proof",
+			"rollback:disposable coverage-scope-binding rollback/reapply proof",
+			"synthetic:0037_e2e_service_role_grants.sql",
+		]);
+		expect(stack.API_URL).toBe("http://127.0.0.1:54321");
+	});
+	it("propagates a production phase rejection without running later phases", async () => {
+		const plan = await inspectReleaseGatePlan();
+		const trace: string[] = [];
+		await expect(
+			runProductionReleasePhases(plan, {
+				runProductionMigrations: async () => {
+					trace.push("production-migrations");
+				},
+				validateStackStatus: async () => {
+					trace.push("stack-status");
+					return {
+						API_URL: "http://127.0.0.1:54321",
+						DB_URL:
+							"postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+						ANON_KEY: "anon",
+						SERVICE_ROLE_KEY: "service",
+					};
+				},
+				runPgTapProof: async (proof) => {
+					trace.push(`pgTAP:${proof.label}`);
+					if (proof.path === "tests/results_exploration_scale.sql")
+						throw new Error("scale proof failed");
+				},
+				runRollbackReapplyProof: async (proof) => {
+					trace.push(`rollback:${proof.label}`);
+				},
+				installSyntheticMigration: async (migration) => {
+					trace.push(`synthetic:${migration.fileName}`);
+				},
+			}),
+		).rejects.toThrow("scale proof failed");
+		expect(trace).toEqual([
+			"production-migrations",
+			"stack-status",
+			"pgTAP:disposable results-exploration pgTAP",
+			"pgTAP:disposable scale/EXPLAIN proof",
+		]);
 	});
 	it.each([
 		{
@@ -177,22 +237,22 @@ describe("migration release-gate integration", () => {
 		},
 		{
 			defect: "extra",
-			actual: [...EXPECTED_MIGRATION_VERSIONS, "0036"],
+			actual: [...EXPECTED_MIGRATION_VERSIONS, "0037"],
 		},
 	])("rejects a $defect migration inventory", ({ actual }) => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
-		).toThrow("migration inventory must be exactly versions 0001 through 0035");
+		).toThrow("migration inventory must be exactly versions 0001 through 0036");
 	});
 	it("rejects a synthetic migration version collision", async () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(() =>
 			assertSyntheticMigrationDoesNotCollide(
-				["0035_production.sql", "0036_production.sql"],
+				["0036_production.sql", "0037_production.sql"],
 				plan.syntheticMigration,
 			),
 		).toThrow(
-			"synthetic migration 0036 collides with production migration 0036_production.sql",
+			"synthetic migration 0037 collides with production migration 0037_production.sql",
 		);
 	});
 	it("inspects release proofs without planning browser execution", async () => {
@@ -232,7 +292,7 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through 0035 while leaving unrelated 0024 installed", () => {
+	it("proves the exact results-exploration rollback through 0036 while leaving unrelated 0024 installed", () => {
 		const proof = readFileSync(
 			new URL(
 				"../../../supabase/tests/results_exploration_release.sql",
@@ -244,11 +304,12 @@ describe("migration release-gate integration", () => {
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("35 as migration_inventory_count");
+		expect(proof).toContain("36 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"0036-down",
 			"0035-down",
 			"0034-down",
 			"0033-down",
@@ -279,6 +340,7 @@ describe("migration release-gate integration", () => {
 			"0033-up",
 			"0034-up",
 			"0035-up",
+			"0036-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
@@ -716,6 +778,80 @@ it("reserves one unique set and releases duplicate reservations", async () => {
 	);
 	expect(reservations.map(({ port }) => port)).toEqual([3100, 3200, 3300]);
 	expect(released).toEqual([3100]);
+});
+it("releases accumulated reservations when a later reservation rejects", async () => {
+	const reserveError = new Error("reservation failed");
+	let reserveCalls = 0;
+	let releaseCalls = 0;
+	const reservation = reserveUniquePorts(2, async () => {
+		reserveCalls += 1;
+		if (reserveCalls === 2) throw reserveError;
+		return {
+			port: 3100,
+			release: async () => {
+				releaseCalls += 1;
+			},
+		};
+	});
+	await expect(reservation).rejects.toBe(reserveError);
+	expect(releaseCalls).toBe(1);
+});
+it("releases accumulated reservations when duplicate release rejects", async () => {
+	const duplicateReleaseError = new Error("duplicate release failed");
+	let reserveCalls = 0;
+	let accumulatedReleaseCalls = 0;
+	let duplicateReleaseCalls = 0;
+	const reservation = reserveUniquePorts(2, async () => {
+		reserveCalls += 1;
+		if (reserveCalls === 1)
+			return {
+				port: 3100,
+				release: async () => {
+					accumulatedReleaseCalls += 1;
+				},
+			};
+		return {
+			port: 3100,
+			release: async () => {
+				duplicateReleaseCalls += 1;
+				throw duplicateReleaseError;
+			},
+		};
+	});
+	await expect(reservation).rejects.toBe(duplicateReleaseError);
+	expect(accumulatedReleaseCalls).toBe(1);
+	expect(duplicateReleaseCalls).toBe(1);
+});
+it("attempts every accumulated release and aggregates cleanup failures", async () => {
+	const reserveError = new Error("reservation failed");
+	const cleanupErrors = new Map([
+		[3100, new Error("release 3100 failed")],
+		[3200, new Error("release 3200 failed")],
+	]);
+	const released: number[] = [];
+	let reserveCalls = 0;
+	const reservation = reserveUniquePorts(3, async () => {
+		reserveCalls += 1;
+		if (reserveCalls === 3) throw reserveError;
+		const port = reserveCalls === 1 ? 3100 : 3200;
+		return {
+			port,
+			release: async () => {
+				released.push(port);
+				throw cleanupErrors.get(port);
+			},
+		};
+	});
+	await expect(reservation).rejects.toSatisfy((error: AggregateError) => {
+		expect(error).toBeInstanceOf(AggregateError);
+		expect(error.errors).toEqual([
+			reserveError,
+			cleanupErrors.get(3200),
+			cleanupErrors.get(3100),
+		]);
+		return true;
+	});
+	expect(released).toEqual([3200, 3100]);
 });
 describe("release-gate version and endpoint validation", () => {
 	const stackStatus = (

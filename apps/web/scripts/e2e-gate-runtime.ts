@@ -70,6 +70,16 @@ export interface ReleaseGateCliDependencies {
 	writeOutput(chunk: string): void;
 }
 
+export interface ReleaseGateProductionPhaseEffects {
+	runProductionMigrations(): Promise<void>;
+	validateStackStatus(): Promise<StackStatus>;
+	runPgTapProof(proof: ReleaseGatePgTapProof): Promise<void>;
+	runRollbackReapplyProof(proof: ReleaseGateSqlProof): Promise<void>;
+	installSyntheticMigration(
+		migration: ReleaseGateSyntheticMigration,
+	): Promise<void>;
+}
+
 export interface ReleaseGateCleanupState<TServer> {
 	ownership?: GateOwnership;
 	stackMutationAttempted: boolean;
@@ -91,13 +101,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 35 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 36 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0036",
-	fileName: "0036_e2e_service_role_grants.sql",
+	version: "0037",
+	fileName: "0037_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
 
@@ -194,6 +204,19 @@ export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 			mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY,
 		runBrowser: mode === RELEASE_GATE_MODE.FULL,
 	};
+}
+
+export async function runProductionReleasePhases(
+	plan: ReleaseGatePlan,
+	effects: ReleaseGateProductionPhaseEffects,
+): Promise<StackStatus> {
+	await effects.runProductionMigrations();
+	const stack = await effects.validateStackStatus();
+	for (const proof of plan.pgTapProofs) await effects.runPgTapProof(proof);
+	for (const proof of plan.rollbackReapplyProofs)
+		await effects.runRollbackReapplyProof(proof);
+	await effects.installSyntheticMigration(plan.syntheticMigration);
+	return stack;
 }
 
 export function formatPgTapFailure(
@@ -413,18 +436,43 @@ export function establishOwnership(
 	}
 }
 
+async function releasePortReservations(
+	reservations: readonly PortReservation[],
+): Promise<void> {
+	const errors: unknown[] = [];
+	for (const reservation of [...reservations].reverse())
+		try {
+			await reservation.release();
+		} catch (error) {
+			collect(errors, error);
+		}
+	if (errors.length > 0)
+		throw new AggregateError(errors, "port reservation release failed");
+}
+
 export async function reserveUniquePorts(
 	count: number,
 	reserve: () => Promise<PortReservation>,
 ): Promise<PortReservation[]> {
 	const reservations: PortReservation[] = [];
-	while (reservations.length < count) {
-		const candidate = await reserve();
-		if (reservations.some(({ port }) => port === candidate.port))
-			await candidate.release();
-		else reservations.push(candidate);
+	try {
+		while (reservations.length < count) {
+			const candidate = await reserve();
+			if (reservations.some(({ port }) => port === candidate.port))
+				await candidate.release();
+			else reservations.push(candidate);
+		}
+		return reservations;
+	} catch (error) {
+		try {
+			await releasePortReservations(reservations);
+		} catch (cleanupError) {
+			const errors = [error];
+			collect(errors, cleanupError);
+			throw new AggregateError(errors, "port reservation cleanup failed");
+		}
+		throw error;
 	}
-	return reservations;
 }
 
 function parseStatusUrl(value: string, label: string): URL {

@@ -326,6 +326,50 @@ def test_party_projection_is_order_independent_and_declaration_updates_idempoten
     assert capsys.readouterr().err == ""
 
 
+def test_real_party_projection_loads_exact_president_and_pba_category_sets() -> None:
+    table = load_party_map(CURATED / "party_map.yaml")
+    conn = _PartyProjectionConnection()
+
+    summary = load_party_map_rows(conn, table)
+
+    assert summary.party_canonical.loaded == 28
+    assert summary.list_identity.loaded == 53
+    assert summary.party_mapping.loaded == 53
+    for count in (summary.party_canonical, summary.list_identity, summary.party_mapping):
+        assert count.deleted_by_reason == {"absent_from_desired_projection": 0}
+    assert {
+        list_id
+        for year, jurisdiction, category, list_id in conn.projection.party_mapping
+        if (year, jurisdiction, category) == (2023, "national", "PRESIDENTE")
+    } == {"132", "133", "134", "135", "136"}
+    assert {
+        list_id
+        for year, jurisdiction, category, list_id in conn.projection.party_mapping
+        if (year, jurisdiction, category) == (2025, "coronel_rosales_municipal", "CONCEJALES")
+    } == {"2206", "2200", "2201", "2207", "2204", "962", "2203", "2202"}
+    assert {
+        list_id
+        for year, jurisdiction, category, list_id in conn.projection.party_mapping
+        if (year, jurisdiction, category) == (2025, "pba_provincial", "DIPUTADOS PROVINCIALES")
+    } == {
+        "2206",
+        "2200",
+        "2201",
+        "2207",
+        "2204",
+        "2203",
+        "2202",
+        "1006",
+        "1003",
+        "1008",
+        "2208",
+        "959",
+        "963",
+        "974",
+        "980",
+    }
+
+
 def test_explicit_empty_party_projection_deletes_the_replacement_snapshot(tmp_path: Path) -> None:
     conn = _PartyProjectionConnection()
     key = (2025, "national", "DIPUTADO NACIONAL", "100")
@@ -350,6 +394,8 @@ def test_explicit_empty_party_projection_deletes_the_replacement_snapshot(tmp_pa
     assert summary.list_identity.deleted == 1
     assert summary.party_mapping.loaded == 0
     assert summary.party_mapping.deleted == 1
+    for count in (summary.party_canonical, summary.list_identity, summary.party_mapping):
+        assert count.deleted_by_reason == {"absent_from_desired_projection": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -456,26 +502,32 @@ def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
 def test_same_party_across_three_id_spaces_resolves_to_one_canonical(
     pg_conn: psycopg.Connection,
 ) -> None:
-    """Measured fact: LLA is `agrupacion_id` 135 in the 2023 PASO national
-    file and `agrupacion_id` 20135 in the 2023 generales national file (a
-    5-digit id space -- `2` + the PASO id). Both MUST resolve to the same
-    canonical party once loaded, proving the curated reconciliation this
-    phase exists for."""
+    """Measured fact: LLA changes identifier across three national sources.
+
+    PASO 2023 uses 135, generales 2023 uses 20135 for DIPUTADO NACIONAL,
+    and legislativas 2025 uses 110. All three MUST resolve to one canonical
+    party once loaded.
+    """
     table = load_party_map(CURATED / "party_map.yaml")
 
     load_party_map_rows(pg_conn, table)
 
     with pg_conn.cursor() as cur:
         cur.execute(
-            "select list_id, canonical_party_id from party_mapping "
-            "where year = 2023 and jurisdiction = 'national' "
-            "and category = 'DIPUTADO NACIONAL' and list_id in ('135', '20135')"
+            "select year, list_id, canonical_party_id from party_mapping "
+            "where jurisdiction = 'national' and category = 'DIPUTADO NACIONAL' "
+            "and ((year = 2023 and list_id in ('135', '20135')) "
+            "or (year = 2025 and list_id = '110'))"
         )
-        rows = dict(cur.fetchall())
+        rows = {(year, list_id): canonical_party_id for year, list_id, canonical_party_id in cur}
 
-    assert rows.get("135") is not None
-    assert rows.get("20135") is not None
-    assert rows["135"] == rows["20135"]
+    canonical_ids = {
+        rows.get((2023, "135")),
+        rows.get((2023, "20135")),
+        rows.get((2025, "110")),
+    }
+    assert None not in canonical_ids
+    assert len(canonical_ids) == 1
 
 
 # ---------------------------------------------------------------------------

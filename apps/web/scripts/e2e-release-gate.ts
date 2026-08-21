@@ -39,6 +39,7 @@ import {
 	formatPgTapFailure,
 	establishOwnership,
 	reserveUniquePorts,
+	runProductionReleasePhases,
 	runReleaseGateCli,
 	SUPABASE_START_TIMEOUT_MS,
 	type PortReservation,
@@ -732,65 +733,75 @@ async function executeGate(
 		process.env,
 		SUPABASE_START_TIMEOUT_MS,
 	);
-	await installProductionMigrations(ownership.workdir);
-	runChecked(
-		"supabase",
-		[
-			"migration",
-			"up",
-			"--local",
-			"--include-all",
-			"--workdir",
-			ownership.workdir,
-			"--yes",
-		],
-		"disposable Supabase incremental migrations",
-	);
-	const statusOutput = requireCommand(
-		"supabase",
-		["status", "--workdir", ownership.workdir, "-o", "json"],
-		"disposable Supabase status",
-	);
-	const stack = assertStackStatus(
-		statusOutput,
-		supabasePorts[0]!,
-		supabasePorts[1]!,
-	);
-	for (const proof of plan.pgTapProofs)
-		runEvidence(
-			"supabase",
-			[
-				"test",
-				"db",
-				path.join(SOURCE_SUPABASE, proof.path),
-				"--local",
-				"--workdir",
-				ownership.workdir,
-			],
-			proof.label,
-			REPO_ROOT,
-			proof.timeoutMs,
-		);
-	for (const proof of plan.rollbackReapplyProofs)
-		runOwnedSqlEvidence(
-			ownership.projectId,
-			await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
-			proof.label,
-		);
-	await installSyntheticMigration(ownership.workdir, plan.syntheticMigration);
-	runChecked(
-		"supabase",
-		[
-			"migration",
-			"up",
-			"--local",
-			"--include-all",
-			"--workdir",
-			ownership.workdir,
-			"--yes",
-		],
-		"disposable Supabase synthetic migration",
-	);
+	const stack = await runProductionReleasePhases(plan, {
+		runProductionMigrations: async () => {
+			await installProductionMigrations(ownership.workdir);
+			runChecked(
+				"supabase",
+				[
+					"migration",
+					"up",
+					"--local",
+					"--include-all",
+					"--workdir",
+					ownership.workdir,
+					"--yes",
+				],
+				"disposable Supabase incremental migrations",
+			);
+		},
+		validateStackStatus: async () => {
+			const statusOutput = requireCommand(
+				"supabase",
+				["status", "--workdir", ownership.workdir, "-o", "json"],
+				"disposable Supabase status",
+			);
+			return assertStackStatus(
+				statusOutput,
+				supabasePorts[0]!,
+				supabasePorts[1]!,
+			);
+		},
+		runPgTapProof: async (proof) => {
+			runEvidence(
+				"supabase",
+				[
+					"test",
+					"db",
+					path.join(SOURCE_SUPABASE, proof.path),
+					"--local",
+					"--workdir",
+					ownership.workdir,
+				],
+				proof.label,
+				REPO_ROOT,
+				proof.timeoutMs,
+			);
+		},
+		runRollbackReapplyProof: async (proof) => {
+			runOwnedSqlEvidence(
+				ownership.projectId,
+				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+				proof.label,
+			);
+		},
+		installSyntheticMigration: async (migration) => {
+			await installSyntheticMigration(ownership.workdir, migration);
+			runChecked(
+				"supabase",
+				[
+					"migration",
+					"up",
+					"--local",
+					"--include-all",
+					"--workdir",
+					ownership.workdir,
+					"--yes",
+				],
+				"disposable Supabase synthetic migration",
+			);
+		},
+	});
 	if (!plan.runBrowser) return;
 	const baseURLs = Object.fromEntries(
 		serverPlan.map(({ scenario, port }) => [

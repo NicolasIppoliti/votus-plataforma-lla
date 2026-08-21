@@ -903,6 +903,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0035_reject_partial_pba_district_totals.down.sql",
         "\\ir ../migrations/down/0034_optimize_results_exploration_shape_identity.down.sql",
         "\\ir ../migrations/down/0033_optimize_results_exploration_district_metadata.down.sql",
@@ -927,6 +928,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0033_optimize_results_exploration_district_metadata.sql",
         "\\ir ../migrations/0034_optimize_results_exploration_shape_identity.sql",
         "\\ir ../migrations/0035_reject_partial_pba_district_totals.sql",
+        "\\ir ../migrations/0036_map_pba_party_jurisdictions.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -941,7 +943,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "35 as migration_inventory_count",
+        "36 as migration_inventory_count",
         "dropping only its index",
     ):
         assert required in sql
@@ -1554,6 +1556,53 @@ def test_0034_uses_one_null_safe_text_array_shape_identity_per_raw_row() -> None
     assert "drop function results_exploration_official_0033(" not in down
 
 
+def test_0036_maps_pba_party_jurisdictions_and_restores_the_previous_boundary() -> None:
+    forward_path = MIGRATIONS / "0036_map_pba_party_jurisdictions.sql"
+    down_path = MIGRATIONS / "down" / "0036_map_pba_party_jurisdictions.down.sql"
+    assert forward_path.exists(), "0036 PBA party-jurisdiction migration is required"
+    assert down_path.exists(), "0036 PBA party-jurisdiction down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    signature = "results_exploration_party_jurisdiction(text,integer,text,text,text,text)"
+    for sql in (forward, down):
+        assert sql.startswith("begin;") and sql.endswith("commit;")
+        assert "create or replace function results_exploration_party_jurisdiction(" in sql
+        assert "language sql immutable strict security invoker" in sql
+        assert "set search_path = public, pg_temp" in sql
+        assert f"revoke all on function {signature} from public,anon" in sql
+        assert f"grant execute on function {signature} to authenticated" in sql
+
+    pba_mapping_branches = [
+        predicate
+        for predicate in re.findall(
+            r"when (.*?) then '(?:coronel_rosales_municipal|pba_provincial)'", forward
+        )
+        if "p_round = 'provinciales'" in predicate
+    ]
+    assert len(pba_mapping_branches) == 2
+    for predicate in pba_mapping_branches:
+        assert "p_archive_entry_id = 'pba/2025-distrito-027'" in predicate
+        assert "p_archive_entry_id ~" not in predicate
+        assert "p_year = 2025" in predicate
+        assert "p_round = 'provinciales'" in predicate
+        assert "p_distrito_code = '02'" in predicate
+        assert "p_seccion_code = '027'" in predicate
+    assert "p_category = 'concejales'" in forward
+    assert "then 'coronel_rosales_municipal'" in forward
+    assert "p_category = 'diputados provinciales'" in forward
+    for preserved in (
+        "p_archive_entry_id ~ '^national/2023-'",
+        "p_category = 'concejales'",
+        "then 'coronel_rosales_municipal'",
+        "p_archive_entry_id ~ '^national/' then 'national'",
+    ):
+        assert preserved in forward
+        assert preserved in down
+    assert "pba_provincial" not in down
+    assert "p_round = 'provinciales'" not in down
+
+
 def test_0035_rejects_pba_section_sources_for_district_requests_by_provenance() -> None:
     forward_path = MIGRATIONS / "0035_reject_partial_pba_district_totals.sql"
     down_path = MIGRATIONS / "down" / "0035_reject_partial_pba_district_totals.down.sql"
@@ -1596,7 +1645,8 @@ def test_0035_rejects_pba_section_sources_for_district_requests_by_provenance() 
         "rr.source_kind is distinct from 'official'",
         "payload->>'status'<>'ok' or effective_level=payload->>'source_granularity'",
         "p_seccion_code is null or seccion_code=p_seccion_code or effective_level='distrito'",
-        "p_circuito_code is null or circuito_code=p_circuito_code or effective_level in ('distrito','seccion')",
+        "p_circuito_code is null or circuito_code=p_circuito_code or "
+        "effective_level in ('distrito','seccion')",
         "p_establecimiento_code is null or establecimiento_code=p_establecimiento_code",
         "p_mesa_code is null or mesa_code=p_mesa_code or effective_level<>'mesa'",
     ):
@@ -1624,7 +1674,8 @@ def test_0035_rejects_pba_section_sources_for_district_requests_by_provenance() 
         "'seccion', '78', 29, 'official', 'pba/2025-distrito-027'",
         "'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027'",
         '"source_exclusions":[{"kind":"fiscalizacion","rows":1,"votes":43}]',
-        "province refusal audits nonofficial pba section rows without admitting them to official figures",
+        "province refusal audits nonofficial pba section rows without admitting them "
+        "to official figures",
         "legacy stored-distrito pba partido rows remain excluded",
         "national mesa-backed source remains eligible for district aggregation",
         "normalized 02/027 pba total is reachable as a section result",
