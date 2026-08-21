@@ -13,12 +13,12 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 33))
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 34))
 
 
 def _validated_migration_path(number: int, *, down: bool = False) -> Path:
     if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
-        raise ValueError("migration number must be an integer from 1 through 32")
+        raise ValueError("migration number must be an integer from 1 through 33")
 
     directory = MIGRATIONS / "down" if down else MIGRATIONS
     resolved_directory = directory.resolve(strict=True)
@@ -67,18 +67,19 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
     )
 
 
-def test_migration_inventory_accepts_exact_history_through_0032() -> None:
-    assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 33))
-    assert _available_migration_numbers() == list(range(1, 33))
+def test_migration_inventory_accepts_exact_history_through_0033() -> None:
+    assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 34))
+    assert _available_migration_numbers() == list(range(1, 34))
     assert (
-        _validated_migration_path(32).name == "0032_preaggregate_results_exploration_district.sql"
+        _validated_migration_path(33).name
+        == "0033_optimize_results_exploration_district_metadata.sql"
     )
     assert (
-        _validated_migration_path(32, down=True).name
-        == "0032_preaggregate_results_exploration_district.down.sql"
+        _validated_migration_path(33, down=True).name
+        == "0033_optimize_results_exploration_district_metadata.down.sql"
     )
-    with pytest.raises(ValueError, match="1 through 32"):
-        _validated_migration_path(33)
+    with pytest.raises(ValueError, match="1 through 33"):
+        _validated_migration_path(34)
 
 
 def _insert_review_item(database_dsn: str, kind: str, subject_ref: str) -> None:
@@ -287,7 +288,7 @@ def _reap_orphaned_public_scope_fixtures(database_dsn: str) -> None:
         connection.execute("delete from public.election where round like %s", (orphan_pattern,))
 
 
-def test_0029_through_0032_forward_down_reapply_preserve_function_history_and_indexes() -> None:
+def test_0029_through_0033_forward_down_reapply_preserve_function_history_and_indexes() -> None:
     """Cover migration-history mechanics only.
 
     This schema isolates DDL, never data: the exploration functions pin
@@ -312,7 +313,7 @@ def test_0029_through_0032_forward_down_reapply_preserve_function_history_and_in
         params = conninfo_to_dict(database_dsn)
         params["options"] = f"-csearch_path={schema_name}"
         history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
-        assert _available_migration_numbers(maximum=32) == list(range(1, 33))
+        assert _available_migration_numbers(maximum=33) == list(range(1, 34))
         for number in (*range(1, 9), *range(11, 21)):
             _apply_migration(history_dsn, number)
         with psycopg.connect(history_dsn) as connection:
@@ -490,6 +491,45 @@ def test_0029_through_0032_forward_down_reapply_preserve_function_history_and_in
             ).fetchone()
         assert after_0032 == before_0032
         assert installed_0032 == (True, True, False)
+        with psycopg.connect(history_dsn) as connection:
+            before_0033 = connection.execute(
+                "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
+                empty_ids,
+            ).fetchone()
+            wrapper_before_0033 = connection.execute(
+                "select pg_get_functiondef('results_exploration_official"
+                "(uuid,uuid,text,text,text,text,integer,text)'::regprocedure)"
+            ).fetchone()
+        _apply_migration(history_dsn, 33)
+        with psycopg.connect(history_dsn) as connection:
+            after_0033 = connection.execute(
+                "select results_exploration_official(%s,%s,'02',p_requested_level=>'distrito')",
+                empty_ids,
+            ).fetchone()
+            installed_0033 = connection.execute(
+                "select to_regprocedure('results_exploration_official_0033"
+                "(uuid,uuid,text,text,text,text,integer,text)') is not null,"
+                "to_regprocedure('results_exploration_official_wrapper_0032"
+                "(uuid,uuid,text,text,text,text,integer,text)') is not null,"
+                "to_regprocedure('results_exploration_official_0032"
+                "(uuid,uuid,text,text,text,text,integer,text)') is not null,"
+                "has_function_privilege('authenticated','results_exploration_official_0033"
+                "(uuid,uuid,text,text,text,text,integer,text)','execute')"
+            ).fetchone()
+        assert after_0033 == before_0033
+        assert installed_0033 == (True, True, True, False)
+        _apply_down_migration(history_dsn, 33)
+        with psycopg.connect(history_dsn) as connection:
+            restored_0032 = connection.execute(
+                "select pg_get_functiondef('results_exploration_official"
+                "(uuid,uuid,text,text,text,text,integer,text)'::regprocedure),"
+                "to_regprocedure('results_exploration_official_0033"
+                "(uuid,uuid,text,text,text,text,integer,text)') is null,"
+                "to_regprocedure('results_exploration_official_wrapper_0032"
+                "(uuid,uuid,text,text,text,text,integer,text)') is null"
+            ).fetchone()
+        assert restored_0032 is not None and wrapper_before_0033 is not None
+        assert restored_0032 == (wrapper_before_0033[0], True, True)
         _apply_down_migration(history_dsn, 32)
         with psycopg.connect(history_dsn) as connection:
             restored_0031 = connection.execute(
@@ -503,6 +543,7 @@ def test_0029_through_0032_forward_down_reapply_preserve_function_history_and_in
         assert restored_0031 is not None
         assert restored_0031 == (wrapper_before_0032[0], True, True)
         _apply_migration(history_dsn, 32)
+        _apply_migration(history_dsn, 33)
     finally:
         if public_scope_created and empty_ids is not None:
             with psycopg.connect(database_dsn) as connection:

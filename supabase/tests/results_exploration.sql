@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(104);
+select plan(106);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -178,9 +178,15 @@ select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000003', '02', '027'
 )->>'total_votes')::bigint, 350::bigint,
   'official total excludes the internal source row');
-select is(results_exploration_official_0032('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02','027'),
-  results_exploration_official_0029('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02','027'),
-  '0032 delegates every non-district payload to the unchanged 0029 core');
+select is(results_exploration_official_0033('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02','027'),
+  results_exploration_official_0032('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02','027'),
+  '0033 delegates every non-district payload with exact 0032 parity');
+select is(results_exploration_official_0033('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  results_exploration_official_0032('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  '0033 district core preserves exact realistic 0032 JSONB payload');
+select is(results_exploration_official('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  results_exploration_official_wrapper_0032('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  'public district wrapper preserves exact 0032 public JSONB payload');
 select is(results_exploration_official('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito')-'source_exclusions',
   results_exploration_official_0029('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
   'district fast path preserves mapped, unmapped, archive, mesa identity, audit, shares, and totals');
@@ -189,7 +195,7 @@ select ok(jsonb_build_array(public_payload-'source_exclusions',fast_payload)=jso
   'missing required selector delegates to 0029 without no_rows: '||label) from (values
   ('election',null::uuid,'20000000-0000-0000-0000-000000000003'::uuid,'02'::text),('category','20000000-0000-0000-0000-000000000001',null,'02'),
   ('distrito','20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003',null)) cases(label,election_id,category_id,distrito)
-cross join lateral (select results_exploration_official(election_id,category_id,distrito) public_payload,results_exploration_official_0032(election_id,category_id,distrito) fast_payload,
+cross join lateral (select results_exploration_official(election_id,category_id,distrito) public_payload,results_exploration_official_0033(election_id,category_id,distrito) fast_payload,
   results_exploration_official_0029(election_id,category_id,distrito) preserved_payload) payloads;
 select ok(public_payload-'source_exclusions'=core_payload and core_payload=jsonb_build_object('status',status,
   'reason',reason,'counts',counts) and not (public_payload ?| figures) and not (core_payload ?| figures),
@@ -201,7 +207,7 @@ select ok(public_payload-'source_exclusions'=core_payload and core_payload=jsonb
 ('valid empty district','20000000-0000-0000-0000-000000000005','20000000-0000-0000-0000-000000000007','distrito','no_rows','no official rows exist for the selected scope',jsonb_build_object('selected_rows',0,'requested_level_distrito',0)))
 cases(label,election_id,category_id,requested_level,status,reason,counts) cross join lateral (select
   results_exploration_official(election_id,category_id,'99',p_requested_level=>requested_level) public_payload,
-  results_exploration_official_0032(election_id,category_id,'99',p_requested_level=>requested_level) core_payload) payloads
+  results_exploration_official_0033(election_id,category_id,'99',p_requested_level=>requested_level) core_payload) payloads
 cross join lateral (select array['total_votes','parties','source_audit','archive_entry_ids','mesa_count'] figures) evidence;
 savepoint district_fast_path_edges;
 insert into jurisdiction(id,distrito_code) values ('20000000-0000-0000-0000-000000000036','02'),('20000000-0000-0000-0000-000000000037','04');

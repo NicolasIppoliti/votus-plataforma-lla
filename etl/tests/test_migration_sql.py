@@ -826,8 +826,9 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "district_scope_access",
         "district_core_rpc",
         "district_rpc",
+        "results_exploration_official_0033(",
         "results_exploration_official_0032(",
-        "results_exploration_official_wrapper_0031(",
+        "results_exploration_official_wrapper_0032(",
         "index_scans between 1 and 4",
         "unstable nested-function block totals",
         "result_row_official_district_scope_idx",
@@ -902,6 +903,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0033_optimize_results_exploration_district_metadata.down.sql",
         "\\ir ../migrations/down/0032_preaggregate_results_exploration_district.down.sql",
         "\\ir ../migrations/down/0031_replace_district_covering_index.down.sql",
         "\\ir ../migrations/down/0030_optimize_results_exploration_district.down.sql",
@@ -920,6 +922,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0030_optimize_results_exploration_district.sql",
         "\\ir ../migrations/0031_replace_district_covering_index.sql",
         "\\ir ../migrations/0032_preaggregate_results_exploration_district.sql",
+        "\\ir ../migrations/0033_optimize_results_exploration_district_metadata.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -934,7 +937,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "32 as migration_inventory_count",
+        "33 as migration_inventory_count",
         "dropping only its index",
     ):
         assert required in sql
@@ -1424,18 +1427,74 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "canonical_party_id='scale-canonical' and verified",
         "fiscalizacion/production-district-shape",
         "results_exploration_official(",
+        "results_exploration_official_0033(",
         "results_exploration_official_0032(",
-        "results_exploration_official_0029(",
-        "results_exploration_official_wrapper_0031(",
+        "results_exploration_official_wrapper_0032(",
         "p_requested_level=>'distrito'",
         "public_elapsed_ms<=2000",
-        "new public district wrapper exactly preserves the real 0031 public wrapper jsonb payload",
-        "optimized district core exactly preserves the full realistic reference jsonb payload",
+        "new public district wrapper exactly preserves the real 0032 public wrapper jsonb payload",
+        "0033 district core exactly preserves the full realistic 0032 jsonb payload",
         "null and literal chr(1) sections preserve the full reference core jsonb payload",
         "null and literal chr(1) sections preserve the full reference public jsonb payload",
         "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
     ):
         assert evidence in scale
+
+
+def test_0033_materializes_narrow_selected_rows_for_party_and_metadata_aggregation() -> None:
+    forward_path = MIGRATIONS / "0033_optimize_results_exploration_district_metadata.sql"
+    down_path = MIGRATIONS / "down" / "0033_optimize_results_exploration_district_metadata.down.sql"
+    assert forward_path.exists(), "0033 district metadata optimization migration is required"
+    assert down_path.exists(), "0033 district metadata optimization down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert forward.startswith("-- 0033") and forward.endswith("commit;")
+    assert "rename to results_exploration_official_wrapper_0032" in forward
+    assert "create function results_exploration_official_0033(" in forward
+    core = forward.split("create function results_exploration_official_0033(", 1)[1]
+    core = core.split("create or replace function results_exploration_official(", 1)[0]
+    assert core.count("selected_rows as materialized") == 1
+    selected_rows = core.split("selected_rows as materialized", 1)[1].split(
+        "), selected_by_archive_party", 1
+    )[0]
+    assert (
+        "select r.archive_entry_id,n.mapping_jurisdiction,r.list_id,r.votes,r.jurisdiction_id "
+        "from raw_rows r"
+    ) in selected_rows
+    selected_party = core.split("selected_by_archive_party as materialized", 1)[1].split(
+        "), preaggregated", 1
+    )[0]
+    assert "from selected_rows" in selected_party
+    selected_metadata = core.split("selected_metadata as", 1)[1].split("), archive_entries", 1)[0]
+    assert "count(*)::bigint rows" in selected_metadata
+    assert "coalesce(sum(votes),0)::bigint votes" in selected_metadata
+    assert "count(distinct jurisdiction_id)::bigint mesa_count" in selected_metadata
+    assert "from selected_rows" in selected_metadata
+    archive_entries = core.split("archive_entries as", 1)[1].split("select case", 1)[0]
+    assert "from selected_rows" in archive_entries
+    assert "array_agg(distinct" not in core
+    assert "jurisdiction_ids" not in core
+    assert "statement_timeout" not in forward
+    assert "work_mem" not in forward
+    assert "create index" not in forward
+    assert not any(token in forward for token in ("delete from", "update result_row", "truncate"))
+    wrapper = forward.split("create or replace function results_exploration_official(", 1)[1]
+    assert "results_exploration_official_0033(" in wrapper
+    assert "rr.source_kind is distinct from 'official'" in wrapper
+    for preserved in (
+        "results_exploration_official_0033",
+        "results_exploration_official_wrapper_0032",
+    ):
+        signature = f"{preserved}(uuid,uuid,text,text,text,text,integer,text)"
+        assert f"revoke all on function {signature} from public,anon,authenticated" in forward
+    assert forward.count("owner to results_exploration_executor") == 2
+
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "rename to results_exploration_official" in down
+    assert "drop function results_exploration_official_0033(" in down
+    assert "drop function results_exploration_official_0032(" not in down
+    assert not any(token in down for token in ("delete from", "update result_row", "truncate"))
 
 
 def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -> None:
