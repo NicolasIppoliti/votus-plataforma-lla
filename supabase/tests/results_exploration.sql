@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(118);
+select plan(124);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -20,7 +20,7 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000011', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00001', '00001', 'E1', 'Fixture school', 2),
   ('20000000-0000-0000-0000-000000000012', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00002', '00002', null, null, 3),
   ('20000000-0000-0000-0000-000000000013', '03', null, null, null, null, null, null, null, null),
-  ('20000000-0000-0000-0000-000000000014', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', null, null, null, null, null),
+  ('20000000-0000-0000-0000-000000000014', '02', null, '027', null, null, null, null, null, null),
   ('20000000-0000-0000-0000-000000000015', '02', 'Buenos Aires', '028', 'Bahía Blanca', '00003', '00003', 'E2', 'Other fixture school', 3),
   ('20000000-0000-0000-0000-000000000016', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00002', '00002', 'E1', 'Other fixture school', 4),
   ('20000000-0000-0000-0000-000000000017', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00003', null, 'E1', 'Fixture school', 5),
@@ -30,6 +30,9 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000033', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00008', '00008', 'E20', 'Shared-code lineage A', 7),
   ('20000000-0000-0000-0000-000000000034', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00009', '00009', 'E21', 'Shared-code lineage B', 7),
   ('20000000-0000-0000-0000-000000000035', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales', '00010', '00010', 'E22', 'Missing mesa identity', null),
+  ('20000000-0000-0000-0000-000000000080', '02', 'BUENOS AIRES', '027', 'CORONEL DE MARINA L. ROSALES', null, null, null, null, null),
+  ('20000000-0000-0000-0000-000000000081', '03', 'Third District North', null, null, null, null, null, null, null),
+  ('20000000-0000-0000-0000-000000000082', '03', 'Third District South', null, null, null, null, null, null, null),
   ('20000000-0000-0000-0000-000000000027', '02', 'Buenos Aires', '999', null, '00001', '00001', 'E9', 'Fiscal-only scope', 9);
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL'),
@@ -110,8 +113,68 @@ select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000003'
 )->'distritos',
   '[{"code":"02","name":"Buenos Aires","name_status":"present","name_variant_count":1},
-    {"code":"03","name":null,"name_status":"missing","name_variant_count":0}]'::jsonb,
-  'a missing district name does not contaminate the named district option');
+    {"code":"03","name":null,"name_status":"conflict","name_variant_count":2}]'::jsonb,
+  'same-code fallback prefers title case, rejects conflicts, and never crosses district codes');
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000006', '02'
+)->'secciones',
+  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1}]'::jsonb,
+  'production-shaped PBA section rows recover the conflict-checked canonical same-code name');
+savepoint selected_facet_name_precedence;
+update jurisdiction set distrito_name = 'Selected Third District'
+where id = '20000000-0000-0000-0000-000000000013';
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000003'
+)->'distritos'->1,
+  '{"code":"03","name":"Selected Third District","name_status":"present","name_variant_count":1}'::jsonb,
+  'a selected source-backed name wins without mixing conflicting global fallback names');
+rollback to savepoint selected_facet_name_precedence;
+savepoint blank_district_facet_names;
+update jurisdiction set distrito_name = case id
+  when '20000000-0000-0000-0000-000000000081' then '  Third District North  '
+  else '   ' end
+where id in (
+  '20000000-0000-0000-0000-000000000013',
+  '20000000-0000-0000-0000-000000000081',
+  '20000000-0000-0000-0000-000000000082'
+);
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000003'
+)->'distritos'->1,
+  '{"code":"03","name":"Third District North","name_status":"present","name_variant_count":1}'::jsonb,
+  'blank selected and global district names are ignored while one trimmed real name remains present');
+update jurisdiction set distrito_name = '   '
+where id = '20000000-0000-0000-0000-000000000081';
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000003'
+)->'distritos'->1,
+  '{"code":"03","name":null,"name_status":"missing","name_variant_count":0}'::jsonb,
+  'a district with only blank selected and global names remains missing');
+rollback to savepoint blank_district_facet_names;
+savepoint blank_section_facet_names;
+update jurisdiction set seccion_name = '   '
+where distrito_code = '02' and seccion_code = '027';
+update jurisdiction set seccion_name = '  Coronel de Marina L. Rosales  '
+where id = '20000000-0000-0000-0000-000000000010';
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000006', '02'
+)->'secciones',
+  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1}]'::jsonb,
+  'blank selected and global section names are ignored while one trimmed real name remains present');
+update jurisdiction set seccion_name = '   '
+where id = '20000000-0000-0000-0000-000000000010';
+select is(results_exploration_facets(
+  '20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000006', '02'
+)->'secciones',
+  '[{"code":"027","name":null,"name_status":"missing","name_variant_count":0}]'::jsonb,
+  'a section with only blank selected and global names remains missing');
+rollback to savepoint blank_section_facet_names;
 select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'

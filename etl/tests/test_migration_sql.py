@@ -804,7 +804,7 @@ def test_0021_coverage_down_drops_only_coverage_objects() -> None:
 def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> None:
     sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
     for required in (
-        "select plan(30);",
+        "select plan(31);",
         "discard plans;",
         "session-cached plans",
         "explain (analyze, buffers, format json)",
@@ -903,6 +903,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0037_add_selector_name_canonical_fallback.down.sql",
         "\\ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0035_reject_partial_pba_district_totals.down.sql",
         "\\ir ../migrations/down/0034_optimize_results_exploration_shape_identity.down.sql",
@@ -929,6 +930,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0034_optimize_results_exploration_shape_identity.sql",
         "\\ir ../migrations/0035_reject_partial_pba_district_totals.sql",
         "\\ir ../migrations/0036_map_pba_party_jurisdictions.sql",
+        "\\ir ../migrations/0037_add_selector_name_canonical_fallback.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -943,7 +945,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "36 as migration_inventory_count",
+        "37 as migration_inventory_count",
+        "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
         assert required in sql
@@ -1294,7 +1297,7 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
             "results_exploration_reporting_level(",
         )
     )
-    assert "select plan(30)" in scale and "selected_shapes<>1" in scale
+    assert "select plan(31)" in scale and "selected_shapes<>1" in scale
 
 
 def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
@@ -1556,6 +1559,44 @@ def test_0034_uses_one_null_safe_text_array_shape_identity_per_raw_row() -> None
     assert "drop function results_exploration_official_0033(" not in down
 
 
+def test_0037_adds_conflict_checked_selector_name_fallback_without_mutating_data() -> None:
+    forward_path = MIGRATIONS / "0037_add_selector_name_canonical_fallback.sql"
+    down_path = MIGRATIONS / "down" / "0037_add_selector_name_canonical_fallback.down.sql"
+
+    assert forward_path.exists(), "0037 selector-name fallback migration is required"
+    assert down_path.exists(), "0037 selector-name fallback down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    signature = "results_exploration_facets(uuid,uuid,text,text,text,text)"
+    internal_signature = "results_exploration_facets_0036(uuid,uuid,text,text,text,text)"
+
+    assert f"alter function {signature} rename to results_exploration_facets_0036" in forward
+    assert "create function results_exploration_facets(" in forward
+    assert "language sql stable security invoker" in forward
+    assert "set search_path = public, pg_temp" in forward
+    assert "lower(btrim(name))" in forward
+    assert "selected_variant_count > 0" in forward
+    assert "selected_variant_count = 0" in forward
+    assert "j.distrito_code = o.code" in forward
+    assert "j.distrito_code = p_distrito_code" in forward
+    assert "j.seccion_code = o.code" in forward
+    assert "btrim(name) = upper(btrim(name))" in forward
+    blank_name_filter = "filter (where name is not null and btrim(name) <> '')"
+    assert forward.count(blank_name_filter) == 8
+    assert "lower(trim(name))" not in forward
+    assert "select results_exploration_facets_0036(" not in forward
+    assert "jsonb_build_object" in forward
+    assert "'distritos'" in forward and "'secciones'" in forward
+    assert "update jurisdiction" not in forward
+    assert "insert into jurisdiction" not in forward
+    for role in ("public", "anon", "authenticated"):
+        assert f"revoke all on function {internal_signature} from {role}" in forward
+    assert f"drop function {signature}" in down
+    assert f"alter function {internal_signature} rename to results_exploration_facets" in down
+    assert "grant execute on function results_exploration_facets" in down
+
+
 def test_0036_maps_pba_party_jurisdictions_and_restores_the_previous_boundary() -> None:
     forward_path = MIGRATIONS / "0036_map_pba_party_jurisdictions.sql"
     down_path = MIGRATIONS / "down" / "0036_map_pba_party_jurisdictions.down.sql"
@@ -1721,7 +1762,7 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     for replica in ("explain", "as materialized", "cross join lateral"):
         assert replica not in block
 
-    assert "select plan(30);" in scale
+    assert "select plan(31);" in scale
     # One public wrapper invocation dispatches once to the batched core. The small physical-scan
     # allowance accommodates planner/parallel shape while still rejecting both no access and the
     # old scan-per-jurisdiction algorithm.

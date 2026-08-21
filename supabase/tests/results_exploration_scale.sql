@@ -27,6 +27,11 @@ select ('30000000-0000-0000-0001-' || lpad(unit::text, 12, '0'))::uuid,
   'E' || lpad(((unit - 1) % 500 + 1)::text, 5, '0'),
   'Synthetic scale school ' || ((unit - 1) % 500 + 1), unit
 from generate_series(1, 12000) unit;
+insert into jurisdiction (
+  id, distrito_code, distrito_name, seccion_code, seccion_name
+) values
+  ('30000000-0000-0000-0008-000000000001', '02', 'Buenos Aires', '027', 'Coronel de Marina L. Rosales'),
+  ('30000000-0000-0000-0008-000000000002', '02', 'BUENOS AIRES', '027', 'CORONEL DE MARINA L. ROSALES');
 insert into result_row (election_id, jurisdiction_id, category_id, granularity, list_id, votes,
   source_kind, archive_entry_id, source_row_index)
 select '30000000-0000-0000-0000-000000000001'::uuid,
@@ -174,8 +179,22 @@ commit; vacuum (analyze) jurisdiction; vacuum (analyze) result_row;
 -- Drop those session-cached plans so every scale assertion measures the analyzed fixture above.
 discard plans;
 begin;
-select plan(30);
+select plan(31);
 create temporary table scale_plan_evidence (label text primary key,representative_result_rows bigint not null,plan jsonb not null) on commit drop;
+select is((select jsonb_build_array(
+    jsonb_path_query_first(districts, '$[*] ? (@.code == "02")'),
+    jsonb_path_query_first(sections, '$[*] ? (@.code == "027")')
+  ) from (select
+    results_exploration_facets(
+      '30000000-0000-0000-0000-000000000001',
+      '30000000-0000-0000-0000-000000000002')->'distritos' as districts,
+    results_exploration_facets(
+      '30000000-0000-0000-0000-000000000001',
+      '30000000-0000-0000-0000-000000000002', '02')->'secciones' as sections
+  ) facets),
+  '[{"code":"02","name":"Buenos Aires","name_status":"present","name_variant_count":1},
+    {"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1}]'::jsonb,
+  'production-scale fallback resolves case-only global names without changing wire fields');
 select is((results_exploration_official('30000000-0000-0000-0000-000000000001'::uuid,
     '30000000-0000-0000-0000-000000000002'::uuid,'02','001')->>'total_votes')::bigint,
   41::bigint, 'tiny selected scope keeps official totals unchanged');

@@ -1,4 +1,30 @@
 \set ON_ERROR_STOP on
+do $$ begin
+  if to_regprocedure('public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)') is null
+     or has_function_privilege('authenticated',
+       'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)', 'EXECUTE')
+     or has_function_privilege('anon',
+       'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)', 'EXECUTE')
+     or exists (
+       select 1 from pg_proc p
+       cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+       where p.oid = 'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)'::regprocedure
+         and acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+     ) then
+    raise exception '0037 did not preserve a fully private six-argument 0036 facets base';
+  end if;
+end $$;
+\ir ../migrations/down/0037_add_selector_name_canonical_fallback.down.sql
+do $$ begin
+  if to_regprocedure('public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)') is not null
+     or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null
+     or not has_function_privilege('authenticated',
+       'public.results_exploration_facets(uuid,uuid,text,text,text,text)', 'EXECUTE')
+     or has_function_privilege('anon',
+       'public.results_exploration_facets(uuid,uuid,text,text,text,text)', 'EXECUTE') then
+    raise exception '0037 rollback did not restore the exact public 0036 facets boundary';
+  end if;
+end $$;
 \ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql
 do $$ begin
   if results_exploration_party_jurisdiction(
@@ -149,28 +175,42 @@ end $$;
 \ir ../migrations/0034_optimize_results_exploration_shape_identity.sql
 \ir ../migrations/0035_reject_partial_pba_district_totals.sql
 \ir ../migrations/0036_map_pba_party_jurisdictions.sql
+\ir ../migrations/0037_add_selector_name_canonical_fallback.sql
 do $$
 declare
   facets_definition text;
   index_definition text;
 begin
-  if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text)') is not null
-     or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null then
-    raise exception '0026 forward apply did not restore the six-argument mesa lineage definition';
-  end if;
-  select lower(pg_get_functiondef(
-    'public.results_exploration_facets(uuid,uuid,text,text,text,text)'::regprocedure
-  )) into facets_definition;
-  if position('with official as (' in facets_definition) > 0
-     or position('case when p_election_id is not null then' in facets_definition) = 0
-     or position('j.establecimiento_code = p_establecimiento_code' in facets_definition) = 0
-     or position('from election e' in facets_definition) = 0
-     or position('rr.election_id = e.id' in facets_definition) = 0
-     or position('from category c' in facets_definition) = 0
-     or position('rr.category_id = c.id' in facets_definition) = 0
-     or position('select distinct rr.election_id' in facets_definition) > 0 then
-    raise exception '0028 forward apply did not restore bounded six-argument facet discovery';
-  end if;
+      if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text)') is not null
+         or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null
+         or to_regprocedure('public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)') is null then
+        raise exception '0037 forward apply did not preserve the six-argument public/internal facet boundary';
+      end if;
+      select lower(pg_get_functiondef(
+        'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)'::regprocedure
+      )) into facets_definition;
+      if position('with official as (' in facets_definition) > 0
+         or position('case when p_election_id is not null then' in facets_definition) = 0
+         or position('j.establecimiento_code = p_establecimiento_code' in facets_definition) = 0
+         or position('from election e' in facets_definition) = 0
+         or position('rr.election_id = e.id' in facets_definition) = 0
+         or position('from category c' in facets_definition) = 0
+         or position('rr.category_id = c.id' in facets_definition) = 0
+         or position('select distinct rr.election_id' in facets_definition) > 0 then
+        raise exception '0037 did not preserve bounded 0036 six-argument facet discovery';
+      end if;
+      if has_function_privilege('authenticated',
+           'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)', 'EXECUTE')
+         or has_function_privilege('anon',
+           'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)', 'EXECUTE')
+         or exists (
+           select 1 from pg_proc p
+           cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+           where p.oid = 'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)'::regprocedure
+             and acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+         ) then
+        raise exception '0037 internal facets base remained directly executable';
+      end if;
   if to_regclass('public.result_row_exploration_scope_idx') is null then raise exception 'forward apply omitted result_row_exploration_scope_idx'; end if;
   if to_regclass('public.result_row_non_official_scope_idx') is null then
     raise exception '0027 forward apply omitted result_row_non_official_scope_idx';
@@ -324,4 +364,4 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
-select 'release-proof' as evidence, 36 as migration_inventory_count, '0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;
+select 'release-proof' as evidence, 37 as migration_inventory_count, '0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;

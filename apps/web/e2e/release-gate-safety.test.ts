@@ -102,7 +102,7 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("migration release-gate integration", () => {
-	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 36 }, (_, index) =>
+	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	);
 	it("inspects the exact production migration and proof plan", async () => {
@@ -110,13 +110,13 @@ describe("migration release-gate integration", () => {
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(EXPECTED_MIGRATION_VERSIONS);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0037",
-			fileName: "0037_e2e_service_role_grants.sql",
+			version: "0038",
+			fileName: "0038_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(37);
+		).toBe(38);
 		expect(plan.pgTapProofs).toContainEqual({
 			path: "tests/results_coverage_scope_binding.sql",
 			label: "disposable coverage-scope-binding pgTAP",
@@ -141,7 +141,7 @@ describe("migration release-gate integration", () => {
 			assertSourceInventory(plan.migrationVersions, plan.syntheticMigration),
 		).resolves.toBeUndefined();
 	});
-	it("runs every production phase in plan order before installing synthetic 0037", async () => {
+	it("runs every production phase in plan order before installing synthetic 0038", async () => {
 		const plan = await inspectReleaseGatePlan();
 		const trace: string[] = [];
 		const stack = await runProductionReleasePhases(plan, {
@@ -176,7 +176,7 @@ describe("migration release-gate integration", () => {
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
-			"synthetic:0037_e2e_service_role_grants.sql",
+			"synthetic:0038_e2e_service_role_grants.sql",
 		]);
 		expect(stack.API_URL).toBe("http://127.0.0.1:54321");
 	});
@@ -232,27 +232,27 @@ describe("migration release-gate integration", () => {
 			actual: [
 				...EXPECTED_MIGRATION_VERSIONS.slice(0, 13),
 				...EXPECTED_MIGRATION_VERSIONS.slice(14),
-				"0036",
+				"0037",
 			],
 		},
 		{
 			defect: "extra",
-			actual: [...EXPECTED_MIGRATION_VERSIONS, "0037"],
+			actual: [...EXPECTED_MIGRATION_VERSIONS, "0038"],
 		},
 	])("rejects a $defect migration inventory", ({ actual }) => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
-		).toThrow("migration inventory must be exactly versions 0001 through 0036");
+		).toThrow("migration inventory must be exactly versions 0001 through 0037");
 	});
 	it("rejects a synthetic migration version collision", async () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(() =>
 			assertSyntheticMigrationDoesNotCollide(
-				["0036_production.sql", "0037_production.sql"],
+				["0037_production.sql", "0038_production.sql"],
 				plan.syntheticMigration,
 			),
 		).toThrow(
-			"synthetic migration 0037 collides with production migration 0037_production.sql",
+			"synthetic migration 0038 collides with production migration 0038_production.sql",
 		);
 	});
 	it("inspects release proofs without planning browser execution", async () => {
@@ -292,7 +292,7 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through 0036 while leaving unrelated 0024 installed", () => {
+	it("proves the exact results-exploration rollback through 0037 while leaving unrelated 0024 installed", () => {
 		const proof = readFileSync(
 			new URL(
 				"../../../supabase/tests/results_exploration_release.sql",
@@ -304,11 +304,12 @@ describe("migration release-gate integration", () => {
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("36 as migration_inventory_count");
+		expect(proof).toContain("37 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"0037-down",
 			"0036-down",
 			"0035-down",
 			"0034-down",
@@ -341,6 +342,7 @@ describe("migration release-gate integration", () => {
 			"0034-up",
 			"0035-up",
 			"0036-up",
+			"0037-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
@@ -349,7 +351,7 @@ describe("migration release-gate integration", () => {
 			"0026 rollback did not restore the exact optimized five-argument facets definition",
 		);
 		expect(proof).toContain(
-			"0026 forward apply did not restore the six-argument mesa lineage definition",
+			"0037 forward apply did not preserve the six-argument public/internal facet boundary",
 		);
 		expect(proof).toContain(
 			"0027 rollback changed explorer functions instead of dropping only its index",
@@ -358,7 +360,10 @@ describe("migration release-gate integration", () => {
 			"0027 forward apply installed the wrong non-official partial-index contract",
 		);
 		expect(proof).toContain(
-			"0028 forward apply did not restore bounded six-argument facet discovery",
+			"0037 did not preserve bounded 0036 six-argument facet discovery",
+		);
+		expect(proof).toContain(
+			"0037 internal facets base remained directly executable",
 		);
 	});
 	it("hands the full scale and rollback/reapply proofs to production execution", async () => {
