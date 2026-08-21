@@ -826,9 +826,9 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "district_scope_access",
         "district_core_rpc",
         "district_rpc",
+        "results_exploration_official_0035(",
         "results_exploration_official_0034(",
-        "results_exploration_official_0033(",
-        "results_exploration_official_wrapper_0033(",
+        "results_exploration_official_wrapper_0034(",
         "index_scans between 1 and 4",
         "unstable nested-function block totals",
         "result_row_official_district_scope_idx",
@@ -903,6 +903,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/0035_reject_partial_pba_district_totals.down.sql",
         "\\ir ../migrations/down/0034_optimize_results_exploration_shape_identity.down.sql",
         "\\ir ../migrations/down/0033_optimize_results_exploration_district_metadata.down.sql",
         "\\ir ../migrations/down/0032_preaggregate_results_exploration_district.down.sql",
@@ -925,6 +926,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0032_preaggregate_results_exploration_district.sql",
         "\\ir ../migrations/0033_optimize_results_exploration_district_metadata.sql",
         "\\ir ../migrations/0034_optimize_results_exploration_shape_identity.sql",
+        "\\ir ../migrations/0035_reject_partial_pba_district_totals.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -939,7 +941,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "34 as migration_inventory_count",
+        "35 as migration_inventory_count",
         "dropping only its index",
     ):
         assert required in sql
@@ -1429,13 +1431,13 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "canonical_party_id='scale-canonical' and verified",
         "fiscalizacion/production-district-shape",
         "results_exploration_official(",
+        "results_exploration_official_0035(",
         "results_exploration_official_0034(",
-        "results_exploration_official_0033(",
-        "results_exploration_official_wrapper_0033(",
+        "results_exploration_official_wrapper_0034(",
         "p_requested_level=>'distrito'",
         "public_elapsed_ms<=2000",
-        "new public district wrapper exactly preserves the real 0033 public wrapper jsonb payload",
-        "0034 district core exactly preserves the full realistic 0033 jsonb payload",
+        "new public district wrapper exactly preserves the real 0034 public wrapper jsonb payload",
+        "0035 district core exactly preserves the full realistic 0034 jsonb payload",
         "null and literal chr(1) sections preserve the full reference core jsonb payload",
         "null and literal chr(1) sections preserve the full reference public jsonb payload",
         "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
@@ -1550,6 +1552,84 @@ def test_0034_uses_one_null_safe_text_array_shape_identity_per_raw_row() -> None
     assert "rename to results_exploration_official" in down
     assert "drop function results_exploration_official_0034(" in down
     assert "drop function results_exploration_official_0033(" not in down
+
+
+def test_0035_rejects_pba_section_sources_for_district_requests_by_provenance() -> None:
+    forward_path = MIGRATIONS / "0035_reject_partial_pba_district_totals.sql"
+    down_path = MIGRATIONS / "down" / "0035_reject_partial_pba_district_totals.down.sql"
+    assert forward_path.exists(), "0035 PBA district-total safety migration is required"
+    assert down_path.exists(), "0035 PBA district-total safety down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    assert forward.startswith("-- 0035") and forward.endswith("commit;")
+    assert "rename to results_exploration_official_wrapper_0034" in forward
+    assert "create function results_exploration_official_0035(" in forward
+    core = forward.split("create function results_exploration_official_0035(", 1)[1]
+    core = core.split("create or replace function results_exploration_official(", 1)[0]
+    exclusion = core.split("'pba_partido_rows_not_province_aggregate'::text", 1)[1].split(
+        "union all", 1
+    )[0]
+    assert "archive_entry_id~'^pba/[0-9]{4}-distrito-[0-9]+$'" in exclusion
+    assert "effective_level='seccion'" in exclusion
+    assert "granularity='distrito'" not in exclusion
+    selected_rows = core.split("selected_rows as materialized", 1)[1].split(
+        "), selected_by_archive_party", 1
+    )[0]
+    assert "archive_entry_id~'^pba/[0-9]{4}-distrito-[0-9]+$'" in selected_rows
+    assert "effective_level='seccion'" in selected_rows
+    assert "granularity='distrito'" not in selected_rows
+    assert "results_exploration_official_0034(" in core
+    assert "create index" not in forward
+    for forbidden in (
+        "statement_timeout",
+        "work_mem",
+        "delete from",
+        "update result_row",
+        "truncate",
+    ):
+        assert forbidden not in forward
+    wrapper = forward.split("create or replace function results_exploration_official(", 1)[1]
+    assert "results_exploration_official_0035(" in wrapper
+    assert "archive_entry_id~'^pba/[0-9]{4}-distrito-[0-9]+$'" not in wrapper
+    for required_audit_scope in (
+        "rr.source_kind is distinct from 'official'",
+        "payload->>'status'<>'ok' or effective_level=payload->>'source_granularity'",
+        "p_seccion_code is null or seccion_code=p_seccion_code or effective_level='distrito'",
+        "p_circuito_code is null or circuito_code=p_circuito_code or effective_level in ('distrito','seccion')",
+        "p_establecimiento_code is null or establecimiento_code=p_establecimiento_code",
+        "p_mesa_code is null or mesa_code=p_mesa_code or effective_level<>'mesa'",
+    ):
+        assert required_audit_scope in wrapper
+    assert "granularity='distrito' and effective_level='seccion'" not in wrapper
+    for internal in (
+        "results_exploration_official_0035",
+        "results_exploration_official_wrapper_0034",
+    ):
+        signature = f"{internal}(uuid,uuid,text,text,text,text,integer,text)"
+        assert f"revoke all on function {signature} from public,anon,authenticated" in forward
+        assert f"grant execute on function {signature} to results_exploration_executor" in forward
+    assert forward.count("owner to results_exploration_executor") == 2
+
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "alter function results_exploration_official_wrapper_0034(" in down
+    assert "rename to results_exploration_official" in down
+    assert "drop function results_exploration_official_0035(" in down
+    assert "drop function results_exploration_official_0034(" not in down
+
+    functional = " ".join(
+        (SQL_TESTS / "results_exploration.sql").read_text(encoding="utf-8").lower().split()
+    )
+    for evidence in (
+        "'seccion', '78', 29, 'official', 'pba/2025-distrito-027'",
+        "'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027'",
+        '"source_exclusions":[{"kind":"fiscalizacion","rows":1,"votes":43}]',
+        "province refusal audits nonofficial pba section rows without admitting them to official figures",
+        "legacy stored-distrito pba partido rows remain excluded",
+        "national mesa-backed source remains eligible for district aggregation",
+        "normalized 02/027 pba total is reachable as a section result",
+    ):
+        assert evidence in functional
 
 
 def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -> None:

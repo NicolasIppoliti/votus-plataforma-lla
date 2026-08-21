@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(106);
+select plan(108);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -52,7 +52,7 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000004', '20000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000003', 'mesa', '135', 70, 'official', 'national/2023-paso', 7),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000013', '20000000-0000-0000-0000-000000000003', 'distrito', '77', 23, 'official', 'pba/2025-distrito-003', 8),
   ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000006', 'mesa', '135', 31, 'official', 'national/2023-generales', 9),
-  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'distrito', '78', 29, 'official', 'pba/2025-distrito-027', 10),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'seccion', '78', 29, 'official', 'pba/2025-distrito-027', 10),
   ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000015', '20000000-0000-0000-0000-000000000003', 'mesa', '20135', 30, 'official', 'national/2023-generales', 11),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000016', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 30, 'official', 'national/2025-legislativas', 12),
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000017', '20000000-0000-0000-0000-000000000003', 'mesa', '110', 20, 'official', 'national/2025-legislativas', 13),
@@ -65,7 +65,8 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000034', '20000000-0000-0000-0000-000000000007', 'mesa', 'A', 13, 'official', 'national/2025-mesa-identity', 20),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000034', '20000000-0000-0000-0000-000000000007', 'mesa', 'B', 14, 'official', 'national/2025-mesa-identity', 21),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000035', '20000000-0000-0000-0000-000000000007', 'mesa', 'A', 15, 'official', 'national/2025-mesa-identity', 22),
-  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000003', 'mesa', null, 91, 'fiscalizacion', 'fiscalizacion/only-runtime', 23);
+  ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000003', 'mesa', null, 91, 'fiscalizacion', 'fiscalizacion/only-runtime', 23),
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027', 24);
 create function pg_temp.schools(p_election uuid default '20000000-0000-0000-0000-000000000001')
 returns jsonb language sql stable as $$ select results_exploration_schools(p_election,
   '20000000-0000-0000-0000-000000000003', '02', '027') $$;
@@ -181,12 +182,15 @@ select is((results_exploration_official(
 select is(results_exploration_official_0034('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02','027'),
   results_exploration_official_0033('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02','027'),
   '0034 delegates every non-district payload with exact 0033 parity');
-select is(results_exploration_official_0034('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  results_exploration_official_0033('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  '0034 district core preserves exact realistic 0033 JSONB payload');
+select is(results_exploration_official_0035('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  results_exploration_official_0034('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  '0035 district core preserves exact realistic 0034 JSONB payload outside PBA');
+select is(results_exploration_official('20000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito')->>'status','ok',
+  'national mesa-backed source remains eligible for district aggregation');
 select is(results_exploration_official('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  results_exploration_official_wrapper_0033('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  'public district wrapper preserves exact 0033 public JSONB payload');
+  results_exploration_official_wrapper_0034('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
+  'public district wrapper preserves exact 0034 public JSONB payload outside PBA');
 select is(results_exploration_official('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito')-'source_exclusions',
   results_exploration_official_0029('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
   'district fast path preserves mapped, unmapped, archive, mesa identity, audit, shares, and totals');
@@ -276,10 +280,18 @@ select is(results_exploration_official('20000000-0000-0000-0000-000000000005',
   '20000000-0000-0000-0000-000000000003', '02', '027')->>'source_granularity',
   'seccion', 'PBA provenance and normalized lineage report section level');
 select is((select jsonb_build_object('status',payload->'status','reason',payload->'reason','exclusions',payload->'exclusions',
+  'source_exclusions',payload->'source_exclusions',
   'has_figures',payload ?| array['total_votes','parties','source_audit','archive_entry_ids','mesa_count']) from (select
   results_exploration_official('20000000-0000-0000-0000-000000000005','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito') payload) result),
-  '{"status":"source_unavailable","reason":"official rows excluded from distrito aggregation","exclusions":[{"reason":"pba_partido_rows_not_province_aggregate","rows":1,"votes":29}],"has_figures":false}'::jsonb,
-  'province query refuses PBA partido rows with exact excluded rows and votes, without figures');
+  '{"status":"source_unavailable","reason":"official rows excluded from distrito aggregation","exclusions":[{"reason":"pba_partido_rows_not_province_aggregate","rows":1,"votes":29}],"source_exclusions":[{"kind":"fiscalizacion","rows":1,"votes":43}],"has_figures":false}'::jsonb,
+  'province refusal audits nonofficial PBA section rows without admitting them to official figures');
+savepoint legacy_pba_distrito;
+update result_row set granularity='distrito'
+where archive_entry_id='pba/2025-distrito-027' and source_row_index=10;
+select is(results_exploration_official('20000000-0000-0000-0000-000000000005',
+  '20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito')->>'status',
+  'source_unavailable','legacy stored-distrito PBA partido rows remain excluded');
+rollback to savepoint legacy_pba_distrito;
 savepoint combined_district_exclusions; insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index) values
 ('20000000-0000-0000-0000-000000000005','20000000-0000-0000-0000-000000000014','20000000-0000-0000-0000-000000000007','distrito','PBA',17,'official','pba/2025-distrito-027',28);
 select is((select jsonb_build_object('status',payload->'status','exclusions',payload->'exclusions','has_figures',payload ?| array['total_votes','parties','source_audit','archive_entry_ids','mesa_count']) from (select

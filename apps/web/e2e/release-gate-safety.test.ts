@@ -101,7 +101,7 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("migration release-gate integration", () => {
-	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 34 }, (_, index) =>
+	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 35 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	);
 	it("inspects the exact production migration and proof plan", async () => {
@@ -109,13 +109,13 @@ describe("migration release-gate integration", () => {
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(EXPECTED_MIGRATION_VERSIONS);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0035",
-			fileName: "0035_e2e_service_role_grants.sql",
+			version: "0036",
+			fileName: "0036_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(35);
+		).toBe(36);
 		expect(plan.pgTapProofs).toContainEqual({
 			path: "tests/results_coverage_scope_binding.sql",
 			label: "disposable coverage-scope-binding pgTAP",
@@ -140,7 +140,7 @@ describe("migration release-gate integration", () => {
 			assertSourceInventory(plan.migrationVersions, plan.syntheticMigration),
 		).resolves.toBeUndefined();
 	});
-	it("runs production proofs in order before installing synthetic 0035", () => {
+	it("runs production proofs in order before installing synthetic 0036", () => {
 		const source = readFileSync(
 			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
 			"utf8",
@@ -172,27 +172,27 @@ describe("migration release-gate integration", () => {
 			actual: [
 				...EXPECTED_MIGRATION_VERSIONS.slice(0, 13),
 				...EXPECTED_MIGRATION_VERSIONS.slice(14),
-				"0035",
+				"0036",
 			],
 		},
 		{
 			defect: "extra",
-			actual: [...EXPECTED_MIGRATION_VERSIONS, "0035"],
+			actual: [...EXPECTED_MIGRATION_VERSIONS, "0036"],
 		},
 	])("rejects a $defect migration inventory", ({ actual }) => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
-		).toThrow("migration inventory must be exactly versions 0001 through 0034");
+		).toThrow("migration inventory must be exactly versions 0001 through 0035");
 	});
 	it("rejects a synthetic migration version collision", async () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(() =>
 			assertSyntheticMigrationDoesNotCollide(
-				["0034_production.sql", "0035_production.sql"],
+				["0035_production.sql", "0036_production.sql"],
 				plan.syntheticMigration,
 			),
 		).toThrow(
-			"synthetic migration 0035 collides with production migration 0035_production.sql",
+			"synthetic migration 0036 collides with production migration 0036_production.sql",
 		);
 	});
 	it("inspects release proofs without planning browser execution", async () => {
@@ -232,7 +232,7 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through 0034 while leaving unrelated 0024 installed", () => {
+	it("proves the exact results-exploration rollback through 0035 while leaving unrelated 0024 installed", () => {
 		const proof = readFileSync(
 			new URL(
 				"../../../supabase/tests/results_exploration_release.sql",
@@ -244,11 +244,12 @@ describe("migration release-gate integration", () => {
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("34 as migration_inventory_count");
+		expect(proof).toContain("35 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"0035-down",
 			"0034-down",
 			"0033-down",
 			"0032-down",
@@ -277,6 +278,7 @@ describe("migration release-gate integration", () => {
 			"0032-up",
 			"0033-up",
 			"0034-up",
+			"0035-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
