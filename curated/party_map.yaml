@@ -478,38 +478,38 @@ mappings:
   # national/2023-generales (sha256 2562b18c...e79c6b) and
   # national/2023-balotaje (sha256 6d632985...fa530). The primary-source
   # category is PRESIDENTE Y VICE; all seven observed identities have empty
-  # lista_numero. Curated category PRESIDENTE is the normalized lookup label.
+  # lista_numero. Curated keys preserve that exact source category.
   - year: 2023
     jurisdiction: national
-    category: PRESIDENTE
+    category: PRESIDENTE Y VICE
     list_id: "132"
     canonical_party: JXC
     party_name: JUNTOS POR EL CAMBIO
     source: "archive/national/2023-generales.zip"
   - year: 2023
     jurisdiction: national
-    category: PRESIDENTE
+    category: PRESIDENTE Y VICE
     list_id: "133"
     canonical_party: HXNP
     party_name: HACEMOS POR NUESTRO PAIS
     source: "archive/national/2023-generales.zip"
   - year: 2023
     jurisdiction: national
-    category: PRESIDENTE
+    category: PRESIDENTE Y VICE
     list_id: "134"
     canonical_party: UP
     party_name: UNION POR LA PATRIA
     source: "archive/national/2023-generales.zip; archive/national/2023-balotaje.zip"
   - year: 2023
     jurisdiction: national
-    category: PRESIDENTE
+    category: PRESIDENTE Y VICE
     list_id: "135"
     canonical_party: LLA
     party_name: LA LIBERTAD AVANZA
     source: "archive/national/2023-generales.zip; archive/national/2023-balotaje.zip"
   - year: 2023
     jurisdiction: national
-    category: PRESIDENTE
+    category: PRESIDENTE Y VICE
     list_id: "136"
     canonical_party: FIT
     party_name: FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD

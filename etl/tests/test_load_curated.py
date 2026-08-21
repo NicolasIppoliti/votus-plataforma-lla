@@ -340,7 +340,7 @@ def test_real_party_projection_loads_exact_president_and_pba_category_sets() -> 
     assert {
         list_id
         for year, jurisdiction, category, list_id in conn.projection.party_mapping
-        if (year, jurisdiction, category) == (2023, "national", "PRESIDENTE")
+        if (year, jurisdiction, category) == (2023, "national", "PRESIDENTE Y VICE")
     } == {"132", "133", "134", "135", "136"}
     assert {
         list_id
@@ -449,16 +449,17 @@ def test_party_canonical_rows_created_once_per_canonical_party(pg_conn: psycopg.
 def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
     pg_conn: psycopg.Connection,
 ) -> None:
-    """The SAME `list_id` under two different (year, jurisdiction) keys
-    must persist as two DISTINCT `party_mapping` rows -- never deduped or
-    collided on `list_id` alone (party-identity-mapping spec)."""
+    """Every dimension of the party-mapping natural key is load-bearing.
+
+    The same list id under a different year, jurisdiction, or category must
+    persist independently instead of colliding on a partial key.
+    """
     marker = uuid.uuid4().hex[:8]
-    canonical_a = f"TEST_A_{marker}"
-    canonical_b = f"TEST_B_{marker}"
+    canonical_ids = tuple(f"TEST_{suffix}_{marker}" for suffix in "ABCD")
     table = PartyMappingTable(
-        canonical_parties=(
-            CanonicalPartyDeclaration(id=canonical_a, display_name="PARTY A"),
-            CanonicalPartyDeclaration(id=canonical_b, display_name="PARTY B"),
+        canonical_parties=tuple(
+            CanonicalPartyDeclaration(id=canonical_id, display_name=f"PARTY {suffix}")
+            for canonical_id, suffix in zip(canonical_ids, "ABCD", strict=True)
         ),
         entries=(
             _fake_entry(
@@ -466,7 +467,7 @@ def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
                 jurisdiction="national",
                 category="DIPUTADO NACIONAL",
                 list_id="999",
-                canonical_party=canonical_a,
+                canonical_party=canonical_ids[0],
                 party_name="PARTY A",
             ),
             _fake_entry(
@@ -474,8 +475,24 @@ def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
                 jurisdiction="national",
                 category="DIPUTADO NACIONAL",
                 list_id="999",
-                canonical_party=canonical_b,
+                canonical_party=canonical_ids[1],
                 party_name="PARTY B",
+            ),
+            _fake_entry(
+                year=2023,
+                jurisdiction="pba_provincial",
+                category="DIPUTADO NACIONAL",
+                list_id="999",
+                canonical_party=canonical_ids[2],
+                party_name="PARTY C",
+            ),
+            _fake_entry(
+                year=2023,
+                jurisdiction="national",
+                category="PRESIDENTE Y VICE",
+                list_id="999",
+                canonical_party=canonical_ids[3],
+                party_name="PARTY D",
             ),
         ),
     )
@@ -484,13 +501,19 @@ def test_party_mapping_keyed_by_year_jurisdiction_category_list_id(
 
     with pg_conn.cursor() as cur:
         cur.execute(
-            "select year, canonical_party_id from party_mapping where list_id = %s "
-            "and canonical_party_id in (%s, %s) order by year",
-            ("999", canonical_a, canonical_b),
+            "select year, jurisdiction, category, canonical_party_id "
+            "from party_mapping where list_id = %s and canonical_party_id = any(%s) "
+            "order by year, jurisdiction, category",
+            ("999", list(canonical_ids)),
         )
         rows = cur.fetchall()
 
-    assert rows == [(2023, canonical_a), (2025, canonical_b)]
+    assert rows == [
+        (2023, "national", "DIPUTADO NACIONAL", canonical_ids[0]),
+        (2023, "national", "PRESIDENTE Y VICE", canonical_ids[3]),
+        (2023, "pba_provincial", "DIPUTADO NACIONAL", canonical_ids[2]),
+        (2025, "national", "DIPUTADO NACIONAL", canonical_ids[1]),
+    ]
 
 
 # ---------------------------------------------------------------------------

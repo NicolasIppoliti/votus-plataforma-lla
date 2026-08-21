@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -21,6 +22,7 @@ import yaml
 
 from etl.db import load_party_map_rows
 from etl.ingest.national import ingest_national
+from etl.ingest.pba import ingest_pba
 from etl.jurisdiction import make_result_row
 from etl.party_map import (
     CanonicalPartyDeclaration,
@@ -807,7 +809,13 @@ def test_empty_lista_numero_in_2025_is_not_treated_as_missing_data() -> None:
     (agrupacion_id), never requiring `lista_numero`. Exercised against the
     REAL 2025 distrito-027 fixture, whose `lista_numero` column is
     genuinely empty end to end, not synthesized for this test."""
-    csv_bytes = (FIXTURES / "national_2025_027_diputados_sample.csv").read_bytes()
+    fixture_path = FIXTURES / "national_2025_027_diputados_sample.csv"
+    with fixture_path.open(encoding="utf-8", newline="") as source:
+        positive_rows = [row for row in csv.DictReader(source) if row["votos_tipo"] == "POSITIVO"]
+    assert positive_rows, "fixture must retain primary-source positive rows"
+    assert {row["lista_numero"] for row in positive_rows} == {""}
+
+    csv_bytes = fixture_path.read_bytes()
     rows = ingest_national(
         csv_bytes,
         archive_entry_id="national-2025-diputados-027",
@@ -816,11 +824,6 @@ def test_empty_lista_numero_in_2025_is_not_treated_as_missing_data() -> None:
     )
     lla_rows = [row for row in rows if row.list_id == "110"]
     assert lla_rows, "fixture must contain at least one agrupacion_id=110 (LLA) row"
-    # The fixture's `lista_numero` column is empty for agrupacion_id 110 --
-    # `NationalRow` never even carries a `lista_numero` field, which is the
-    # point: nothing downstream can depend on a column that does not exist.
-    assert not hasattr(lla_rows[0], "lista_numero")
-
     table = _load_party_map_table()
 
     for row in lla_rows:
@@ -944,7 +947,7 @@ def test_national_2023_president_primary_source_identities_are_curated_exactly()
         resolved = table.resolve(
             year=2023,
             jurisdiction="national",
-            category="PRESIDENTE",
+            category=row["category"],
             list_id=row["list_id"],
         )
         assert isinstance(resolved, PartyMappingEntry)
@@ -1013,7 +1016,7 @@ def test_real_curated_party_map_has_exact_primary_source_category_coverage() -> 
         for entry in table.entries
         if entry.year == 2023
         and entry.jurisdiction == "national"
-        and entry.category == "PRESIDENTE"
+        and entry.category == "PRESIDENTE Y VICE"
     }
     assert {list_id: entry.canonical_party for list_id, entry in presidente.items()} == {
         "132": "JXC",
@@ -1027,7 +1030,24 @@ def test_real_curated_party_map_has_exact_primary_source_category_coverage() -> 
     }
     assert balotaje_lists == {"134", "135"}
 
+    pba_source = (FIXTURES / "pba_distrito_027_2025_sample.html").read_bytes()
+    pba_rows = ingest_pba(
+        pba_source,
+        archive_entry_id="pba/2025-distrito-027",
+        requested_granularity="distrito",
+    ).rows
+    source_ids_by_category: dict[str, set[str]] = {}
+    for row in pba_rows:
+        source_ids_by_category.setdefault(row.category, set()).add(row.list_id or "")
+    source_names = dict(
+        re.findall(
+            r"<tr><td>(\d+)</td><td>([^<]+)</td>",
+            pba_source.decode("utf-8"),
+        )
+    )
+
     concejales = category_entries("coronel_rosales_municipal", "CONCEJALES")
+    assert set(concejales) == source_ids_by_category["CONCEJALES"]
     assert {list_id: entry.canonical_party for list_id, entry in concejales.items()} == {
         "2206": "LLA_PRO_ALLIANCE",
         "2200": "FUERZA_PATRIA",
@@ -1038,18 +1058,12 @@ def test_real_curated_party_map_has_exact_primary_source_category_coverage() -> 
         "2203": "FIT",
         "2202": "ES_CON_VOS",
     }
-    assert {entry.party_name for entry in concejales.values()} == {
-        "ALIANZA LA LIBERTAD AVANZA",
-        "ALIANZA FUERZA PATRIA",
-        "ALIANZA POTENCIA",
-        "ALIANZA UNION Y LIBERTAD",
-        "ALIANZA SOMOS BUENOS AIRES",
-        "AGRUPACION MUNICIPAL PRIMERO ROSALES",
-        "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD",
-        "ALIANZA ES CON VOS ES CON NOSOTROS",
+    assert {list_id: entry.party_name for list_id, entry in concejales.items()} == {
+        list_id: source_names[list_id] for list_id in source_ids_by_category["CONCEJALES"]
     }
 
     diputados = category_entries("pba_provincial", "DIPUTADOS PROVINCIALES")
+    assert set(diputados) == source_ids_by_category["DIPUTADOS PROVINCIALES"]
     assert {list_id: entry.canonical_party for list_id, entry in diputados.items()} == {
         "2206": "LLA_PRO_ALLIANCE",
         "2200": "FUERZA_PATRIA",
@@ -1067,22 +1081,9 @@ def test_real_curated_party_map_has_exact_primary_source_category_coverage() -> 
         "974": "POLITICA_OBRERA",
         "980": "TIEMPO_DE_TODOS",
     }
-    assert {entry.party_name for entry in diputados.values()} == {
-        "ALIANZA LA LIBERTAD AVANZA",
-        "ALIANZA FUERZA PATRIA",
-        "ALIANZA POTENCIA",
-        "ALIANZA UNION Y LIBERTAD",
-        "ALIANZA SOMOS BUENOS AIRES",
-        "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD",
-        "ALIANZA ES CON VOS ES CON NOSOTROS",
-        "PARTIDO LIBERTARIO",
-        "CONSTRUYENDO PORVENIR",
-        "VALORES REPUBLICANOS",
-        "ALIANZA UNION LIBERAL",
-        "MOVIMIENTO  AVANZADA SOCIALISTA",
-        "PARTIDO FRENTE PATRIOTA FEDERAL",
-        "PARTIDO POLITICA OBRERA",
-        "PARTIDO TIEMPO DE TODOS",
+    assert {list_id: entry.party_name for list_id, entry in diputados.items()} == {
+        list_id: source_names[list_id]
+        for list_id in source_ids_by_category["DIPUTADOS PROVINCIALES"]
     }
 
 
