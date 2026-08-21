@@ -91,13 +91,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 33 }, (_, index) =>
+const MIGRATION_VERSIONS = Array.from({ length: 34 }, (_, index) =>
 	String(index + 1).padStart(4, "0"),
 );
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0034",
-	fileName: "0034_e2e_service_role_grants.sql",
+	version: "0035",
+	fileName: "0035_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
 
@@ -451,6 +451,7 @@ function isExactApiEndpoint(url: URL, expectedPort: number): boolean {
 export function assertStackStatus(
 	output: string,
 	expectedApiPort: number,
+	expectedDbPort: number,
 ): StackStatus {
 	let parsed: unknown;
 	try {
@@ -474,9 +475,9 @@ export function assertStackStatus(
 		throw new Error(
 			"Supabase API URL does not match the reserved loopback endpoint",
 		);
-	const dbUrl = parseStatusUrl(status["DB_URL"] as string, "DB_URL");
-	if (!dbUrl.protocol.startsWith("postgres") || dbUrl.hostname !== "127.0.0.1")
-		throw new Error("Supabase DB_URL is not an exact loopback Postgres endpoint");
+	const expectedDbUrl = `postgresql://postgres:postgres@127.0.0.1:${expectedDbPort}/postgres`;
+	if (status["DB_URL"] !== expectedDbUrl)
+		throw new Error("Supabase DB_URL is not the exact reserved Postgres endpoint");
 	return status as unknown as StackStatus;
 }
 

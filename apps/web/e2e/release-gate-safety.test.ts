@@ -101,7 +101,7 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("migration release-gate integration", () => {
-	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 33 }, (_, index) =>
+	const EXPECTED_MIGRATION_VERSIONS = Array.from({ length: 34 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	);
 	it("inspects the exact production migration and proof plan", async () => {
@@ -109,13 +109,13 @@ describe("migration release-gate integration", () => {
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.FULL);
 		expect(plan.migrationVersions).toEqual(EXPECTED_MIGRATION_VERSIONS);
 		expect(plan.syntheticMigration).toEqual({
-			version: "0034",
-			fileName: "0034_e2e_service_role_grants.sql",
+			version: "0035",
+			fileName: "0035_e2e_service_role_grants.sql",
 			sourcePath: "e2e/service-role-grants.sql",
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(34);
+		).toBe(35);
 		expect(plan.pgTapProofs).toContainEqual({
 			path: "tests/results_coverage_scope_binding.sql",
 			label: "disposable coverage-scope-binding pgTAP",
@@ -140,7 +140,7 @@ describe("migration release-gate integration", () => {
 			assertSourceInventory(plan.migrationVersions, plan.syntheticMigration),
 		).resolves.toBeUndefined();
 	});
-	it("runs production proofs in order before installing synthetic 0034", () => {
+	it("runs production proofs in order before installing synthetic 0035", () => {
 		const source = readFileSync(
 			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
 			"utf8",
@@ -172,27 +172,27 @@ describe("migration release-gate integration", () => {
 			actual: [
 				...EXPECTED_MIGRATION_VERSIONS.slice(0, 13),
 				...EXPECTED_MIGRATION_VERSIONS.slice(14),
-				"0034",
+				"0035",
 			],
 		},
 		{
 			defect: "extra",
-			actual: [...EXPECTED_MIGRATION_VERSIONS, "0034"],
+			actual: [...EXPECTED_MIGRATION_VERSIONS, "0035"],
 		},
 	])("rejects a $defect migration inventory", ({ actual }) => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
-		).toThrow("migration inventory must be exactly versions 0001 through 0033");
+		).toThrow("migration inventory must be exactly versions 0001 through 0034");
 	});
 	it("rejects a synthetic migration version collision", async () => {
 		const plan = await inspectReleaseGatePlan();
 		expect(() =>
 			assertSyntheticMigrationDoesNotCollide(
-				["0033_production.sql", "0034_production.sql"],
+				["0034_production.sql", "0035_production.sql"],
 				plan.syntheticMigration,
 			),
 		).toThrow(
-			"synthetic migration 0034 collides with production migration 0034_production.sql",
+			"synthetic migration 0035 collides with production migration 0035_production.sql",
 		);
 	});
 	it("inspects release proofs without planning browser execution", async () => {
@@ -232,7 +232,7 @@ describe("migration release-gate integration", () => {
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
-	it("proves the exact results-exploration rollback through 0033 while leaving unrelated 0024 installed", () => {
+	it("proves the exact results-exploration rollback through 0034 while leaving unrelated 0024 installed", () => {
 		const proof = readFileSync(
 			new URL(
 				"../../../supabase/tests/results_exploration_release.sql",
@@ -244,11 +244,12 @@ describe("migration release-gate integration", () => {
 			proof.matchAll(/\\ir \.\.\/migrations\/(down\/)?(\d{4})_[^\n]+\.sql/g),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("33 as migration_inventory_count");
+		expect(proof).toContain("34 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"0034-down",
 			"0033-down",
 			"0032-down",
 			"0031-down",
@@ -275,6 +276,7 @@ describe("migration release-gate integration", () => {
 			"0031-up",
 			"0032-up",
 			"0033-up",
+			"0034-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
@@ -714,17 +716,22 @@ it("reserves one unique set and releases duplicate reservations", async () => {
 	expect(released).toEqual([3100]);
 });
 describe("release-gate version and endpoint validation", () => {
-	const stackStatus = (apiUrl: string) =>
+	const stackStatus = (
+		apiUrl: string,
+		dbUrl = "postgresql://postgres:postgres@127.0.0.1:43124/postgres",
+	) =>
 		JSON.stringify({
 			API_URL: apiUrl,
-			DB_URL: "postgresql://postgres@127.0.0.1:43124/postgres",
+			DB_URL: dbUrl,
 			ANON_KEY: "anon",
 			SERVICE_ROLE_KEY: "service",
 		});
 	it.each(["http://127.0.0.1:43123", "http://127.0.0.1:43123/"])(
 		"accepts the exact generated API endpoint %s",
 		(apiUrl) => {
-			expect(assertStackStatus(stackStatus(apiUrl), 43123).API_URL).toBe(apiUrl);
+			expect(assertStackStatus(stackStatus(apiUrl), 43123, 43124).API_URL).toBe(
+				apiUrl,
+			);
 		},
 	);
 	it.each([
@@ -737,24 +744,43 @@ describe("release-gate version and endpoint validation", () => {
 		"http://localhost:43123/",
 		"http://127.0.0.1:43124/",
 	])("rejects malformed API endpoint %s", (apiUrl) => {
-		expect(() => assertStackStatus(stackStatus(apiUrl), 43123)).toThrow(
+		expect(() => assertStackStatus(stackStatus(apiUrl), 43123, 43124)).toThrow(
 			"Supabase API URL",
 		);
+	});
+	it.each([
+		"postgres://postgres:postgres@127.0.0.1:43124/postgres",
+		"postgresql://other:postgres@127.0.0.1:43124/postgres",
+		"postgresql://postgres:other@127.0.0.1:43124/postgres",
+		"postgresql://postgres:postgres@localhost:43124/postgres",
+		"postgresql://postgres:postgres@127.0.0.1:43125/postgres",
+		"postgresql://postgres:postgres@127.0.0.1:43124/other",
+		"postgresql://postgres:postgres@127.0.0.1:43124/postgres?",
+		"postgresql://postgres:postgres@127.0.0.1:43124/postgres?sslmode=require",
+		"postgresql://postgres:postgres@127.0.0.1:43124/postgres#",
+		"postgresql://postgres:postgres@127.0.0.1:43124/postgres#fragment",
+	])("rejects malformed DB endpoint %s", (dbUrl) => {
+		expect(() =>
+			assertStackStatus(
+				stackStatus("http://127.0.0.1:43123", dbUrl),
+				43123,
+				43124,
+			),
+		).toThrow("Supabase DB_URL");
 	});
 	it("still requires all keys and validates DB_URL independently", () => {
 		expect(() =>
 			assertStackStatus(
 				JSON.stringify({ API_URL: "http://127.0.0.1:43123" }),
 				43123,
+				43124,
 			),
 		).toThrow("ANON_KEY");
 		expect(() =>
 			assertStackStatus(
-				stackStatus("http://127.0.0.1:43123").replace(
-					"postgresql://postgres@127.0.0.1:43124/postgres",
-					"https://example.test",
-				),
+				stackStatus("http://127.0.0.1:43123", "https://example.test"),
 				43123,
+				43124,
 			),
 		).toThrow("DB_URL");
 	});

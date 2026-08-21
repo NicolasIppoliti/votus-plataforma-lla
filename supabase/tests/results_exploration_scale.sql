@@ -226,12 +226,12 @@ do $$ declare started_at timestamptz; public_payload jsonb; core_payload jsonb;
   public_elapsed_ms numeric; core_elapsed_ms numeric;
   reference_public_elapsed_ms numeric; reference_core_elapsed_ms numeric; begin
   started_at:=clock_timestamp();
-  reference_core_payload:=results_exploration_official_0032(
+  reference_core_payload:=results_exploration_official_0033(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','05',
     p_requested_level=>'distrito');
   reference_core_elapsed_ms:=extract(epoch from clock_timestamp()-started_at)*1000;
   started_at:=clock_timestamp();
-  reference_public_payload:=results_exploration_official_wrapper_0032(
+  reference_public_payload:=results_exploration_official_wrapper_0033(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','05',
     p_requested_level=>'distrito');
   reference_public_elapsed_ms:=extract(epoch from clock_timestamp()-started_at)*1000;
@@ -240,7 +240,7 @@ do $$ declare started_at timestamptz; public_payload jsonb; core_payload jsonb;
     '30000000-0000-0000-0000-000000000002','05',p_requested_level=>'distrito');
   public_elapsed_ms:=extract(epoch from clock_timestamp()-started_at)*1000;
   started_at:=clock_timestamp();
-  core_payload:=results_exploration_official_0033('30000000-0000-0000-0000-000000000001',
+  core_payload:=results_exploration_official_0034('30000000-0000-0000-0000-000000000001',
     '30000000-0000-0000-0000-000000000002','05',p_requested_level=>'distrito');
   core_elapsed_ms:=extract(epoch from clock_timestamp()-started_at)*1000;
   insert into production_district_evidence values
@@ -249,10 +249,10 @@ do $$ declare started_at timestamptz; public_payload jsonb; core_payload jsonb;
 end $$;
 select is((select core_payload from production_district_evidence),
   (select reference_core_payload from production_district_evidence),
-  '0033 district core exactly preserves the full realistic 0032 JSONB payload');
+  '0034 district core exactly preserves the full realistic 0033 JSONB payload');
 select is((select public_payload from production_district_evidence),
   (select reference_public_payload from production_district_evidence),
-  'new public district wrapper exactly preserves the real 0032 public wrapper JSONB payload');
+  'new public district wrapper exactly preserves the real 0033 public wrapper JSONB payload');
 -- Only the optimized public call is latency-bounded. Neither preserved reference call is bounded:
 -- they remain in the disposable fixture solely so performance cannot trade away exact parity.
 select ok((select public_elapsed_ms<=2000 from production_district_evidence),
@@ -263,17 +263,17 @@ select diag(format(
   round(public_elapsed_ms,1),round(core_elapsed_ms,1),round(reference_public_elapsed_ms,1),
   round(reference_core_elapsed_ms,1)))
 from production_district_evidence;
-select is(results_exploration_official_0033(
+select is(results_exploration_official_0034(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
     p_requested_level=>'distrito'),
-  results_exploration_official_0032(
+  results_exploration_official_0033(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
     p_requested_level=>'distrito'),
   'NULL and literal chr(1) sections preserve the full reference core JSONB payload');
 select is(results_exploration_official(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
     p_requested_level=>'distrito'),
-  results_exploration_official_wrapper_0032(
+  results_exploration_official_wrapper_0033(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
     p_requested_level=>'distrito'),
   'NULL and literal chr(1) sections preserve the full reference public JSONB payload');
@@ -282,10 +282,10 @@ select is((select jsonb_build_object(
     'optimized_rows',(optimized->'source_audit'->0->>'rows')::bigint,
     'optimized_votes',(optimized->'source_audit'->0->>'votes')::bigint,
     'reference_total',(reference->>'total_votes')::bigint)
-  from (select results_exploration_official_0033(
+  from (select results_exploration_official_0034(
       '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
       p_requested_level=>'distrito') optimized,
-    results_exploration_official_0032(
+    results_exploration_official_0033(
       '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
       p_requested_level=>'distrito') reference) payloads),
   '{"optimized_total":24,"optimized_rows":2,"optimized_votes":24,"reference_total":24}'::jsonb,
@@ -398,7 +398,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
           and fact.election_id='30000000-0000-0000-0000-000000000001' and fact.category_id='30000000-0000-0000-0000-000000000002'
           and fact.source_kind='official' offset 0) rr$plan$ into evidence;
       insert into scale_plan_evidence values ('district_scope_access',151754,evidence);
-      execute $plan$explain (analyze,buffers,format json) select results_exploration_official_0033(
+      execute $plan$explain (analyze,buffers,format json) select results_exploration_official_0034(
         '30000000-0000-0000-0000-000000000001'::uuid,
         '30000000-0000-0000-0000-000000000002'::uuid,'04'::text,null::text,null::text,
         null::text,null::integer,'distrito'::text)$plan$ into evidence;
@@ -480,7 +480,7 @@ do $$ declare district_seq_before bigint; district_idx_before bigint;
   insert into district_scan_evidence values ('district_rpc_access',
     district_seq_after-district_seq_before, district_idx_after-district_idx_before);
 end $$;
--- One public call dispatches once to the 0033 core, whose batched raw_rows stage has one logical
+-- One public call dispatches once to the 0034 core, whose batched raw_rows stage has one logical
 -- scope-first fact access. Permit up to four physical scans for the planner/parallel shape, but
 -- reject both a missing access and the old per-jurisdiction scan algorithm.
 select ok((select index_scans between 1 and 4

@@ -751,7 +751,11 @@ async function executeGate(
 		["status", "--workdir", ownership.workdir, "-o", "json"],
 		"disposable Supabase status",
 	);
-	const stack = assertStackStatus(statusOutput, supabasePorts[0]!);
+	const stack = assertStackStatus(
+		statusOutput,
+		supabasePorts[0]!,
+		supabasePorts[1]!,
+	);
 	for (const proof of plan.pgTapProofs)
 		runEvidence(
 			"supabase",
