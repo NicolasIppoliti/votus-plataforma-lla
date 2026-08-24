@@ -1,7 +1,7 @@
 # SPIKE 003 — PBA 2025 full-corpus source discovery
 
-**Research date:** 2026-08-22  
-**Scope:** official 2025 Buenos Aires provincial and municipal definitive-election sources beyond the currently supported partido `027`.  
+**Research date:** 2026-08-22<br>
+**Scope:** official 2025 Buenos Aires provincial and municipal definitive-election sources beyond the currently supported partido `027`.<br>
 **Artifact policy:** primary official sources only. No candidate names, personal data, credentials, or source artifacts were persisted. Network responses were inspected as streams; no temporary downloads were created.
 
 ## Executive summary
