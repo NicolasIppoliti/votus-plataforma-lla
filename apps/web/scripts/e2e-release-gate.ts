@@ -36,6 +36,7 @@ import {
 	assertStackStatus,
 	assertSyntheticMigrationDoesNotCollide,
 	assertTs7Version,
+	migrationVersionFromFileName,
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
@@ -217,18 +218,27 @@ async function reservePort(): Promise<PortReservation> {
 		});
 	});
 }
-export async function assertSourceInventory(
+async function readExactSourceMigrationNames(
 	expectedMigrations: readonly string[],
 	syntheticMigration: ReleaseGateSyntheticMigration,
-): Promise<void> {
-	const migrationFiles = (
-		await readdir(path.join(SOURCE_SUPABASE, "migrations"))
-	)
-		.filter((name) => /^\d{4}_.+\.sql$/.test(name))
-		.sort();
-	const versions = migrationFiles.map((name) => name.slice(0, 4));
+): Promise<readonly string[]> {
+	const entries = await readdir(path.join(SOURCE_SUPABASE, "migrations"), {
+		withFileTypes: true,
+	});
+	const migrationEntries = entries.filter((entry) => entry.name.endsWith(".sql"));
+	for (const entry of migrationEntries)
+		if (!entry.isFile())
+			throw new Error(
+				`production migration inventory entry must be a regular file: ${entry.name}`,
+			);
+	const migrationFiles = migrationEntries.map(({ name }) => name).sort();
+	const versions = migrationFiles.map(migrationVersionFromFileName);
 	assertExactMigrationInventory(versions, expectedMigrations);
 	assertSyntheticMigrationDoesNotCollide(migrationFiles, syntheticMigration);
+	return migrationFiles;
+}
+
+async function assertE2eSpecInventory(): Promise<void> {
 	const specFiles = (await readdir(path.join(WEB_ROOT, "e2e")))
 		.filter((name) => name.endsWith(".spec.ts"))
 		.map((name) => `e2e/${name}`)
@@ -239,6 +249,18 @@ export async function assertSourceInventory(
 		throw new Error(
 			"Playwright spec inventory must be exactly the eight release-gate specs",
 		);
+}
+
+export async function assertSourceInventory(
+	expectedMigrations: readonly string[],
+	syntheticMigration: ReleaseGateSyntheticMigration,
+): Promise<readonly string[]> {
+	const migrationNames = await readExactSourceMigrationNames(
+		expectedMigrations,
+		syntheticMigration,
+	);
+	await assertE2eSpecInventory();
+	return migrationNames;
 }
 function assertIsolationCapabilities(requireBrowser: boolean): void {
 	requireCommand("pnpm", ["--version"], "pnpm");
@@ -278,6 +300,7 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 async function createIsolatedWorkdir(
 	nextPort: number,
 	ports: readonly number[],
+	migrationNames: readonly string[],
 	state: GateState,
 ): Promise<void> {
 	// Docker truncation can make an exact-id stop miss containers; keep this under 40.
@@ -297,11 +320,6 @@ async function createIsolatedWorkdir(
 	});
 	const targetSupabase = path.join(workdir, "supabase");
 	await mkdir(path.join(targetSupabase, "migrations"), { recursive: true });
-	const migrationNames = (
-		await readdir(path.join(SOURCE_SUPABASE, "migrations"))
-	)
-		.filter((name) => /^\d{4}_.+\.sql$/.test(name))
-		.sort();
 	for (const name of migrationNames.slice(0, 12))
 		await cp(
 			path.join(SOURCE_SUPABASE, "migrations", name),
@@ -359,13 +377,11 @@ async function createIsolatedWorkdir(
 		mode: 0o600,
 	});
 }
-async function installProductionMigrations(workdir: string): Promise<void> {
+async function installProductionMigrations(
+	workdir: string,
+	migrationNames: readonly string[],
+): Promise<void> {
 	const targetMigrations = path.join(workdir, "supabase", "migrations");
-	const migrationNames = (
-		await readdir(path.join(SOURCE_SUPABASE, "migrations"))
-	)
-		.filter((name) => /^\d{4}_.+\.sql$/.test(name))
-		.sort();
 	for (const name of migrationNames.slice(12))
 		await cp(
 			path.join(SOURCE_SUPABASE, "migrations", name),
@@ -553,16 +569,23 @@ function markerStrings(
 }
 async function matchesRepository(
 	candidate: string,
+	expectedMigrations: readonly string[],
 	syntheticMigration: ReleaseGateSyntheticMigration,
 ): Promise<boolean> {
 	try {
 		const target = path.join(candidate, "supabase", "migrations");
-		const sourceNames = (await readdir(path.join(SOURCE_SUPABASE, "migrations")))
-			.filter((name) => /^\d{4}_.+\.sql$/.test(name))
+		const sourceNames = await readExactSourceMigrationNames(
+			expectedMigrations,
+			syntheticMigration,
+		);
+		const targetEntries = (await readdir(target, { withFileTypes: true })).filter(
+			(entry) => entry.name.endsWith(".sql"),
+		);
+		if (targetEntries.some((entry) => !entry.isFile())) return false;
+		const targetNames = targetEntries
+			.map(({ name }) => name)
 			.sort();
-		const targetNames = (await readdir(target))
-			.filter((name) => /^\d{4}_.+\.sql$/.test(name))
-			.sort();
+		for (const name of targetNames) migrationVersionFromFileName(name);
 		assertSyntheticMigrationDoesNotCollide(sourceNames, syntheticMigration);
 		const expected = [...sourceNames, syntheticMigration.fileName].sort();
 		if (JSON.stringify(targetNames) !== JSON.stringify(expected)) return false;
@@ -606,6 +629,7 @@ function matchingProjectResourcesActive(
 	return active;
 }
 async function reapStaleOwnedWorkdirs(
+	expectedMigrations: readonly string[],
 	syntheticMigration: ReleaseGateSyntheticMigration,
 ): Promise<void> {
 	const tempRoot = os.tmpdir();
@@ -629,7 +653,11 @@ async function reapStaleOwnedWorkdirs(
 			marker,
 			ageMs: markerAgeMs,
 			staleAfterMs: STALE_AFTER_MS,
-			repositoryMatches: await matchesRepository(candidate, syntheticMigration),
+			repositoryMatches: await matchesRepository(
+				candidate,
+				expectedMigrations,
+				syntheticMigration,
+			),
 			ownerProcessActive: strings
 				? matchingProcessActive(strings.workdir, strings.projectId)
 				: undefined,
@@ -682,9 +710,12 @@ async function executeGate(
 	state: GateState,
 	plan: ReleaseGatePlan,
 ): Promise<void> {
-	await assertSourceInventory(plan.migrationVersions, plan.syntheticMigration);
+	const migrationNames = await assertSourceInventory(
+		plan.migrationVersions,
+		plan.syntheticMigration,
+	);
 	assertIsolationCapabilities(plan.requireBrowserCapability);
-	await reapStaleOwnedWorkdirs(plan.syntheticMigration);
+	await reapStaleOwnedWorkdirs(plan.migrationVersions, plan.syntheticMigration);
 	const reservations = await reserveUniquePorts(
 		10 + SERVER_SCENARIOS.length,
 		reservePort,
@@ -702,7 +733,7 @@ async function executeGate(
 	);
 	const nextPort = serverPlan[0]!.port;
 	const supabasePorts = supabaseReservations.map(({ port }) => port);
-	await createIsolatedWorkdir(nextPort, supabasePorts, state);
+	await createIsolatedWorkdir(nextPort, supabasePorts, migrationNames, state);
 	const ownership = state.ownership;
 	if (!ownership) throw new Error("disposable ownership was not established");
 	for (const reservation of supabaseReservations) await reservation.release();
@@ -725,7 +756,7 @@ async function executeGate(
 	);
 	const stack = await runProductionReleasePhases(plan, {
 		runProductionMigrations: async () => {
-			await installProductionMigrations(ownership.workdir);
+			await installProductionMigrations(ownership.workdir, migrationNames);
 			runChecked(
 				"supabase",
 				[

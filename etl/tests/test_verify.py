@@ -577,21 +577,27 @@ def test_provision_failure_after_create_uses_comment_marker_for_cleanup() -> Non
         ).open()
 
     assert identity.name not in connections.admin.databases
+    assert any(
+        "shobj_description" in statement.lower() for statement, _ in connections.admin.statements
+    )
 
 
-def test_failure_between_create_and_marker_keeps_original_error_and_cleans_database() -> None:
+def test_failure_between_create_and_marker_refuses_unmarked_database_cleanup() -> None:
     connections = _Connections()
     connections.admin.fail_comment = True
     identity = _identity()
 
-    with pytest.raises(RuntimeError, match="comment install failed"):
+    with pytest.raises(BaseExceptionGroup) as caught:
         DisposablePostgres(
             "postgresql://user:secret@localhost/template1",
             identity=identity,
             connect=connections,
         ).open()
 
-    assert identity.name not in connections.admin.databases
+    messages = [str(error) for error in caught.value.exceptions]
+    assert any("comment install failed" in message for message in messages)
+    assert any("database comment marker" in message for message in messages)
+    assert identity.name in connections.admin.databases
 
 
 def test_preexisting_database_is_never_deleted_when_create_refuses_it() -> None:
@@ -645,7 +651,7 @@ def test_cleanup_is_idempotent_and_refuses_a_changed_ownership_marker() -> None:
     database.open()
     connections.admin.databases[identity.name] = "shared-project"
 
-    with pytest.raises(UnsafeDatabaseError, match="ownership marker"):
+    with pytest.raises(UnsafeDatabaseError, match="comment marker"):
         database.close()
     assert identity.name in connections.admin.databases
 
@@ -656,13 +662,14 @@ def test_cleanup_is_idempotent_and_refuses_a_changed_ownership_marker() -> None:
     assert len(drops) == 1
 
 
-def test_apply_migrations_requires_a_complete_sequence_and_executes_every_file(
+def test_apply_migrations_requires_a_complete_mixed_version_sequence_and_executes_every_file(
     tmp_path: Path,
 ) -> None:
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     (migrations / "0001_first.sql").write_text("select 1;", encoding="utf-8")
     (migrations / "0002_second.sql").write_text("select 2;", encoding="utf-8")
+    (migrations / "20260824193650_third.sql").write_text("select 3;", encoding="utf-8")
     connections = _Connections()
     identity = _identity()
     connections.admin.databases[identity.name] = identity.marker
@@ -673,12 +680,20 @@ def test_apply_migrations_requires_a_complete_sequence_and_executes_every_file(
         connect=connections,
     )
 
-    assert applied == 2
-    assert [target.executed for target in connections.targets] == [["select 1;"], ["select 2;"]]
+    assert applied == 3
+    assert [target.executed for target in connections.targets] == [
+        ["select 1;"],
+        ["select 2;"],
+        ["select 3;"],
+    ]
 
     (migrations / "0002_second.sql").unlink()
-    (migrations / "0003_third.sql").write_text("select 3;", encoding="utf-8")
+    (migrations / "0003_gap.sql").write_text("select 4;", encoding="utf-8")
     with pytest.raises(RuntimeError, match="contiguous"):
+        apply_migrations("dbname=" + identity.name, migrations, connect=connections)
+
+    (migrations / "20260824193650_duplicate.sql").write_text("select 5;", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="versions must be unique"):
         apply_migrations("dbname=" + identity.name, migrations, connect=connections)
 
 
@@ -865,7 +880,7 @@ def test_signal_and_cleanup_failure_are_reported_separately_without_stale_signal
 
 def test_setup_and_cleanup_failure_are_reported_as_separate_causes() -> None:
     connections = _Connections()
-    connections.admin.fail_comment = True
+    connections.fail_marker_install = True
     connections.admin.fail_drop = True
 
     with pytest.raises(BaseExceptionGroup) as caught:
@@ -876,7 +891,7 @@ def test_setup_and_cleanup_failure_are_reported_as_separate_causes() -> None:
         ).open()
 
     messages = [str(error) for error in caught.value.exceptions]
-    assert any("comment install failed" in message for message in messages)
+    assert any("marker install failed" in message for message in messages)
     assert any("drop failed" in message for message in messages)
 
 

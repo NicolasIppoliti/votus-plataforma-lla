@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -14,23 +15,37 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 38))
+PBA_113_MIGRATION_VERSION = "20260824193650"
+EXPECTED_MIGRATION_VERSIONS = tuple(
+    [*(f"{number:04d}" for number in range(1, 38)), PBA_113_MIGRATION_VERSION]
+)
+MIGRATION_FILE_PATTERN = re.compile(r"^(\d{4}|\d{14})_[^/]+\.sql$")
 
 
-def _validated_migration_path(number: int, *, down: bool = False) -> Path:
-    if type(number) is not int or number not in SUPPORTED_MIGRATION_NUMBERS:
-        raise ValueError("migration number must be an integer from 1 through 37")
+def _normalized_migration_version(version: int | str) -> str:
+    if type(version) is int and version in SUPPORTED_MIGRATION_NUMBERS:
+        return f"{version:04d}"
+    if type(version) is str and version == PBA_113_MIGRATION_VERSION:
+        return version
+    raise ValueError(
+        "migration version must be an integer from 1 through 37 "
+        f"or the exact timestamp {PBA_113_MIGRATION_VERSION}"
+    )
 
+
+def _validated_migration_path(version: int | str, *, down: bool = False) -> Path:
+    normalized_version = _normalized_migration_version(version)
     directory = MIGRATIONS / "down" if down else MIGRATIONS
     resolved_directory = directory.resolve(strict=True)
     if resolved_directory != directory.absolute() or directory.is_symlink():
         raise RuntimeError(f"migration directory must not contain symlinks: {directory}")
 
-    prefix = f"{number:04d}_"
+    prefix = f"{normalized_version}_"
     suffix = ".down.sql" if down else ".sql"
     matches = tuple(directory.glob(f"{prefix}*{suffix}"))
     if len(matches) != 1:
         raise RuntimeError(
-            f"expected exactly one migration file for {number:04d}, found {len(matches)}"
+            f"expected exactly one migration file for {normalized_version}, found {len(matches)}"
         )
 
     migration = matches[0]
@@ -41,42 +56,60 @@ def _validated_migration_path(number: int, *, down: bool = False) -> Path:
         or not migration.name.endswith(suffix)
         or migration.resolve(strict=True).parent != resolved_directory
     ):
-        raise RuntimeError(f"invalid migration path for {number:04d}: {migration}")
+        raise RuntimeError(f"invalid migration path for {normalized_version}: {migration}")
     return migration
 
 
-def _apply_migration(database_dsn: str, number: int) -> None:
-    migration = _validated_migration_path(number)
+def _apply_migration(database_dsn: str, version: int | str) -> None:
+    migration = _validated_migration_path(version)
     migration_sql = migration.read_bytes()
     with psycopg.connect(database_dsn) as connection:
         connection.execute(migration_sql)
 
 
-def _apply_down_migration(database_dsn: str, number: int) -> None:
-    migration = _validated_migration_path(number, down=True)
+def _apply_down_migration(database_dsn: str, version: int | str) -> None:
+    migration = _validated_migration_path(version, down=True)
     migration_sql = migration.read_bytes()
     with psycopg.connect(database_dsn) as connection:
         connection.execute(migration_sql)
+
+
+def _available_migration_versions() -> list[str]:
+    versions: list[str] = []
+    for migration in MIGRATIONS.glob("*.sql"):
+        match = MIGRATION_FILE_PATTERN.fullmatch(migration.name)
+        if (
+            match is None
+            or migration.is_symlink()
+            or not migration.is_file()
+            or migration.resolve(strict=True).parent != MIGRATIONS.resolve(strict=True)
+        ):
+            raise RuntimeError(f"invalid production migration inventory entry: {migration.name}")
+        versions.append(match.group(1))
+    return sorted(versions)
 
 
 def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
-    return sorted(
-        int(migration.name.split("_", 1)[0])
-        for migration in MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql")
-        if maximum is None or int(migration.name.split("_", 1)[0]) <= maximum
-    )
+    return [
+        int(version)
+        for version in _available_migration_versions()
+        if len(version) == 4 and (maximum is None or int(version) <= maximum)
+    ]
 
 
-def test_migration_inventory_accepts_exact_history_through_0037() -> None:
+def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
+    assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
-    assert _validated_migration_path(37).name == "0037_add_selector_name_canonical_fallback.sql"
-    assert (
-        _validated_migration_path(37, down=True).name
-        == "0037_add_selector_name_canonical_fallback.down.sql"
+    assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
+        "20260824193650_map_pba_113_party_jurisdictions.sql"
     )
-    with pytest.raises(ValueError, match="1 through 37"):
-        _validated_migration_path(38)
+    assert _validated_migration_path(PBA_113_MIGRATION_VERSION, down=True).name == (
+        "20260824193650_map_pba_113_party_jurisdictions.down.sql"
+    )
+    for unsupported in (38, "0038", "20260824193651"):
+        with pytest.raises(ValueError, match="1 through 37"):
+            _validated_migration_path(unsupported)
 
 
 def _insert_review_item(database_dsn: str, kind: str, subject_ref: str) -> None:
@@ -285,7 +318,7 @@ def _reap_orphaned_public_scope_fixtures(database_dsn: str) -> None:
         connection.execute("delete from public.election where round like %s", (orphan_pattern,))
 
 
-def test_0029_through_0037_forward_down_reapply_preserve_function_history_and_indexes() -> None:
+def test_0029_through_timestamped_forward_down_reapply_preserve_history_and_indexes() -> None:
     """Cover migration-history mechanics only.
 
     This schema isolates DDL, never data: the exploration functions pin
@@ -310,7 +343,7 @@ def test_0029_through_0037_forward_down_reapply_preserve_function_history_and_in
         params = conninfo_to_dict(database_dsn)
         params["options"] = f"-csearch_path={schema_name}"
         history_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
-        assert _available_migration_numbers(maximum=37) == list(range(1, 38))
+        assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
         for number in (*range(1, 9), *range(11, 21)):
             _apply_migration(history_dsn, number)
         with psycopg.connect(history_dsn) as connection:
@@ -623,6 +656,53 @@ def test_0029_through_0037_forward_down_reapply_preserve_function_history_and_in
                 "(uuid,uuid,text,text,text,text)','execute')"
             ).fetchone()
         assert installed_0037 == (True, True, False, False, True, False)
+        with psycopg.connect(history_dsn) as connection:
+            party_boundary_before_pba_113 = connection.execute(
+                "select pg_get_functiondef('results_exploration_party_jurisdiction"
+                "(text,integer,text,text,text,text)'::regprocedure)"
+            ).fetchone()
+        _apply_migration(history_dsn, PBA_113_MIGRATION_VERSION)
+        with psycopg.connect(history_dsn) as connection:
+            installed_pba_113 = connection.execute(
+                "select results_exploration_party_jurisdiction("
+                "'pba/2025-distrito-113',2025,'provinciales',"
+                "'SENADORES PROVINCIALES','02','113'),"
+                "results_exploration_party_jurisdiction("
+                "'pba/2025-distrito-113',2025,'provinciales','CONCEJALES','02','113'),"
+                "results_exploration_party_jurisdiction("
+                "'pba/2025-distrito-027',2025,'provinciales',"
+                "'DIPUTADOS PROVINCIALES','02','027'),"
+                "has_function_privilege('authenticated',"
+                "'results_exploration_party_jurisdiction(text,integer,text,text,text,text)',"
+                "'execute'),has_function_privilege('anon',"
+                "'results_exploration_party_jurisdiction(text,integer,text,text,text,text)',"
+                "'execute')"
+            ).fetchone()
+        assert installed_pba_113 == (
+            "pba_provincial",
+            "tigre_municipal",
+            "pba_provincial",
+            True,
+            False,
+        )
+        _apply_down_migration(history_dsn, PBA_113_MIGRATION_VERSION)
+        with psycopg.connect(history_dsn) as connection:
+            restored_party_boundary_0037 = connection.execute(
+                "select pg_get_functiondef('results_exploration_party_jurisdiction"
+                "(text,integer,text,text,text,text)'::regprocedure),"
+                "results_exploration_party_jurisdiction("
+                "'pba/2025-distrito-113',2025,'provinciales','CONCEJALES','02','113')"
+            ).fetchone()
+        assert party_boundary_before_pba_113 is not None
+        assert restored_party_boundary_0037 == (party_boundary_before_pba_113[0], None)
+        _apply_migration(history_dsn, PBA_113_MIGRATION_VERSION)
+        with psycopg.connect(history_dsn) as connection:
+            reapplied_pba_113 = connection.execute(
+                "select results_exploration_party_jurisdiction("
+                "'pba/2025-distrito-113',2025,'provinciales','CONCEJALES','02','113')"
+            ).fetchone()
+        assert reapplied_pba_113 == ("tigre_municipal",)
+        _apply_down_migration(history_dsn, PBA_113_MIGRATION_VERSION)
         _apply_down_migration(history_dsn, 37)
         with psycopg.connect(history_dsn) as connection:
             restored_facets_0036 = connection.execute(
@@ -709,6 +789,7 @@ def test_0029_through_0037_forward_down_reapply_preserve_function_history_and_in
         _apply_migration(history_dsn, 35)
         _apply_migration(history_dsn, 36)
         _apply_migration(history_dsn, 37)
+        _apply_migration(history_dsn, PBA_113_MIGRATION_VERSION)
     finally:
         if public_scope_created and empty_ids is not None:
             with psycopg.connect(database_dsn) as connection:

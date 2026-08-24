@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0037_add_selector_name_canonical_fallback.down.sql",
         "\\ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0035_reject_partial_pba_district_totals.down.sql",
@@ -1004,6 +1005,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0035_reject_partial_pba_district_totals.sql",
         "\\ir ../migrations/0036_map_pba_party_jurisdictions.sql",
         "\\ir ../migrations/0037_add_selector_name_canonical_fallback.sql",
+        "\\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1018,7 +1020,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "37 as migration_inventory_count",
+        "38 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -1748,6 +1750,56 @@ def test_0036_maps_pba_party_jurisdictions_and_restores_the_previous_boundary() 
         assert preserved in down
     assert "pba_provincial" not in down
     assert "p_round = 'provinciales'" not in down
+
+
+def test_timestamped_migration_maps_only_pba_113_party_jurisdictions_and_restores_0037() -> None:
+    migration_version = "20260824193650"
+    forward_path = MIGRATIONS / f"{migration_version}_map_pba_113_party_jurisdictions.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{migration_version}_map_pba_113_party_jurisdictions.down.sql"
+    )
+    assert forward_path.exists(), "timestamped PBA 113 reachability migration is required"
+    assert down_path.exists(), "timestamped PBA 113 reachability down migration is required"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    signature = "results_exploration_party_jurisdiction(text,integer,text,text,text,text)"
+    for migration in (forward, down):
+        assert migration.startswith("begin;") and migration.endswith("commit;")
+        assert "create or replace function results_exploration_party_jurisdiction(" in migration
+        assert "language sql immutable strict security invoker" in migration
+        assert "set search_path = public, pg_temp" in migration
+        assert f"revoke all on function {signature} from public,anon" in migration
+        assert f"grant execute on function {signature} to authenticated" in migration
+        assert "alter function results_exploration_official" not in migration
+
+    pba_113_branches = [
+        predicate
+        for predicate in re.findall(
+            r"when (.*?) then '(?:tigre_municipal|pba_provincial)'", forward
+        )
+        if "p_archive_entry_id = 'pba/2025-distrito-113'" in predicate
+    ]
+    assert len(pba_113_branches) == 2
+    for predicate in pba_113_branches:
+        assert "p_year = 2025" in predicate
+        assert "p_round = 'provinciales'" in predicate
+        assert "p_distrito_code = '02'" in predicate
+        assert "p_seccion_code = '113'" in predicate
+        assert "p_archive_entry_id ~" not in predicate
+    assert "p_category = 'senadores provinciales'" in forward
+    assert "p_category = 'concejales'" in forward
+    assert "then 'tigre_municipal'" in forward
+    assert "pba/2025-distrito-113" not in down
+    assert "tigre_municipal" not in down
+    for preserved in (
+        "p_archive_entry_id = 'pba/2025-distrito-027'",
+        "then 'coronel_rosales_municipal'",
+        "p_category = 'diputados provinciales'",
+        "p_archive_entry_id ~ '^national/' then 'national'",
+    ):
+        assert preserved in forward
+        assert preserved in down
 
 
 def test_0035_rejects_pba_section_sources_for_district_requests_by_provenance() -> None:

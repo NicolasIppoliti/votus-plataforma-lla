@@ -173,15 +173,37 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	workdirExists(workdir: string): boolean;
 }
 
-const MIGRATION_VERSIONS = Array.from({ length: 37 }, (_, index) =>
-	String(index + 1).padStart(4, "0"),
-);
+const PBA_113_MIGRATION_VERSION = "20260824193650";
+const MIGRATION_VERSIONS = [
+	...Array.from({ length: 37 }, (_, index) =>
+		String(index + 1).padStart(4, "0"),
+	),
+	PBA_113_MIGRATION_VERSION,
+];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
-	version: "0038",
-	fileName: "0038_e2e_service_role_grants.sql",
+	version: "0039",
+	fileName: "0039_e2e_service_role_grants.sql",
 	sourcePath: "e2e/service-role-grants.sql",
 };
+
+const PRODUCTION_MIGRATION_FILE_PATTERN =
+	/^(\d{4}|\d{14})_[^/]+\.sql$/;
+
+export function migrationVersionFromFileName(fileName: string): string {
+	const match = fileName.match(PRODUCTION_MIGRATION_FILE_PATTERN);
+	if (!match) throw new Error(`invalid production migration filename: ${fileName}`);
+	return match[1]!;
+}
+
+function expectedMigrationBoundary(expectedVersions: readonly string[]): string {
+	const first = expectedVersions[0];
+	const last = expectedVersions.at(-1);
+	const previous = expectedVersions.at(-2);
+	return last?.length === 14 && previous
+		? `${first} through ${previous} plus ${last}`
+		: `${first} through ${last}`;
+}
 
 export function assertExactMigrationInventory(
 	actualVersions: readonly string[],
@@ -190,7 +212,7 @@ export function assertExactMigrationInventory(
 	if (JSON.stringify(actualVersions) === JSON.stringify(expectedVersions))
 		return;
 	throw new Error(
-		`migration inventory must be exactly versions ${expectedVersions[0]} through ${expectedVersions.at(-1)}`,
+		`migration inventory must be exactly versions ${expectedMigrationBoundary(expectedVersions)}`,
 	);
 }
 
@@ -199,7 +221,7 @@ export function assertSyntheticMigrationDoesNotCollide(
 	syntheticMigration: ReleaseGateSyntheticMigration,
 ): void {
 	const collision = productionFileNames.find(
-		(name) => name.slice(0, 4) === syntheticMigration.version,
+		(name) => migrationVersionFromFileName(name) === syntheticMigration.version,
 	);
 	if (collision)
 		throw new Error(
