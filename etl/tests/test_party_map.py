@@ -956,10 +956,81 @@ def test_national_2023_president_primary_source_identities_are_curated_exactly()
         assert source_archive_by_round[row["round"]] in (resolved.source or "")
 
 
+TIGRE_PARTY_MAPPINGS = {
+    ("pba_provincial", "SENADORES PROVINCIALES"): {
+        "2200": ("FUERZA_PATRIA", "ALIANZA FUERZA PATRIA"),
+        "2206": ("LLA_PRO_ALLIANCE", "ALIANZA LA LIBERTAD AVANZA"),
+        "2204": ("SOMOS_BUENOS_AIRES", "ALIANZA SOMOS BUENOS AIRES"),
+        "1006": ("PARTIDO_LIBERTARIO", "PARTIDO LIBERTARIO"),
+        "2201": ("POTENCIA", "ALIANZA POTENCIA"),
+        "2207": ("UNION_Y_LIBERTAD", "ALIANZA UNION Y LIBERTAD"),
+        "974": ("POLITICA_OBRERA", "PARTIDO POLITICA OBRERA"),
+        "980": ("TIEMPO_DE_TODOS", "PARTIDO TIEMPO DE TODOS"),
+        "1003": ("CONSTRUYENDO_PORVENIR", "CONSTRUYENDO PORVENIR"),
+        "959": ("MOVIMIENTO_SOCIALISTA", "MOVIMIENTO AVANZADA SOCIALISTA"),
+        "2202": ("ES_CON_VOS", "ALIANZA ES CON VOS ES CON NOSOTROS"),
+        "1008": ("VALORES_REPUBLICANOS", "VALORES REPUBLICANOS"),
+        "2203": ("FIT", "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD"),
+        "2208": ("UNION_LIBERAL", "ALIANZA UNION LIBERAL"),
+        "963": ("FRENTE_PATRIOTA_FEDERAL", "PARTIDO FRENTE PATRIOTA FEDERAL"),
+    },
+    ("tigre_municipal", "CONCEJALES"): {
+        "2200": ("FUERZA_PATRIA", "ALIANZA FUERZA PATRIA"),
+        "2206": ("LLA_PRO_ALLIANCE", "ALIANZA LA LIBERTAD AVANZA"),
+        "2204": ("SOMOS_BUENOS_AIRES", "ALIANZA SOMOS BUENOS AIRES"),
+        "1006": ("PARTIDO_LIBERTARIO", "PARTIDO LIBERTARIO"),
+        "2201": ("POTENCIA", "ALIANZA POTENCIA"),
+        "2207": ("UNION_Y_LIBERTAD", "ALIANZA UNION Y LIBERTAD"),
+        "2205": ("NUEVOS_AIRES", "ALIANZA NUEVOS AIRES"),
+        "974": ("POLITICA_OBRERA", "PARTIDO POLITICA OBRERA"),
+        "980": ("TIEMPO_DE_TODOS", "PARTIDO TIEMPO DE TODOS"),
+        "1003": ("CONSTRUYENDO_PORVENIR", "CONSTRUYENDO PORVENIR"),
+        "959": ("MOVIMIENTO_SOCIALISTA", "MOVIMIENTO AVANZADA SOCIALISTA"),
+        "193": ("ACCION_COMUNAL_TIGRE", "ACCION COMUNAL DEL PARTIDO DE TIGRE"),
+        "2203": ("FIT", "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD"),
+        "981": ("OPCION_VECINAL_TIGRE", "OPCION VECINAL PARA EL PROGRESO DE TIGRE"),
+        "2208": ("UNION_LIBERAL", "ALIANZA UNION LIBERAL"),
+    },
+}
+
+
+def test_tigre_curated_party_map_has_exact_present_identities_and_omits_absences() -> None:
+    table = _load_party_map_table()
+    source = "escrutinio-definitivo-2025/distrito_113.html"
+
+    for (jurisdiction, category), expected in TIGRE_PARTY_MAPPINGS.items():
+        entries = {
+            entry.list_id: (entry.canonical_party, entry.party_name)
+            for entry in table.entries
+            if (entry.year, entry.jurisdiction, entry.category) == (2025, jurisdiction, category)
+        }
+        assert entries == expected
+        assert all(
+            entry.source == source
+            for entry in table.entries
+            if (entry.year, entry.jurisdiction, entry.category) == (2025, jurisdiction, category)
+        )
+
+    assert sum(map(len, TIGRE_PARTY_MAPPINGS.values())) == 30
+    absent_keys = (
+        ("pba_provincial", "SENADORES PROVINCIALES", "193"),
+        ("pba_provincial", "SENADORES PROVINCIALES", "981"),
+        ("pba_provincial", "SENADORES PROVINCIALES", "2205"),
+        ("tigre_municipal", "CONCEJALES", "2202"),
+        ("tigre_municipal", "CONCEJALES", "1008"),
+        ("tigre_municipal", "CONCEJALES", "963"),
+    )
+    for jurisdiction, category, list_id in absent_keys:
+        assert isinstance(
+            table.resolve(year=2025, jurisdiction=jurisdiction, category=category, list_id=list_id),
+            UnmappedListId,
+        )
+
+
 def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
     table = _load_party_map_table()
 
-    assert len(table.entries) == 53
+    assert len(table.entries) == 83
     labels = {declaration.id: declaration.display_name for declaration in table.canonical_parties}
     assert labels == {
         "JXC": "JUNTOS POR EL CAMBIO",
@@ -968,6 +1039,8 @@ def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
         "LLA": "LA LIBERTAD AVANZA",
         "FIT": "FRENTE DE IZQUIERDA",
         "PRIMERO_ROSALES": "AGRUPACION MUNICIPAL PRIMERO ROSALES",
+        "ACCION_COMUNAL_TIGRE": "ACCION COMUNAL DEL PARTIDO DE TIGRE",
+        "OPCION_VECINAL_TIGRE": "OPCION VECINAL PARA EL PROGRESO DE TIGRE",
         "FRENTE_PATRIOTA_FEDERAL": "FRENTE PATRIOTA FEDERAL",
         "FUERZA_PATRIA": "ALIANZA FUERZA PATRIA",
         "NUEVO_BUENOS_AIRES": "PARTIDO NUEVO BUENOS AIRES",

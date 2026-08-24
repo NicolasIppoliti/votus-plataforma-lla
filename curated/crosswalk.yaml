@@ -21,6 +21,12 @@ jurisdictions:
     name: "Coronel de Marina Leonardo Rosales"
     verified: true
     source: "spikes/001-granularity-and-join-keys.md (task 0.4)"
+  - pba_distrito: "113"
+    national_distrito: "02"
+    national_seccion: "113"
+    name: "TIGRE"
+    verified: true
+    source: "spikes/007-pba-distrito-113-curation-evidence.md ([S1], [S2], [S4])"
 
 fiscalizacion_mesa_identity:
   distrito: "02"
