@@ -165,7 +165,12 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	},
 	{
 		path: "tests/results_exploration_scale.sql",
-		label: "disposable scale/EXPLAIN proof",
+		label: "disposable scale payload/parity pgTAP",
+		timeoutMs: 360_000,
+	},
+	{
+		path: "tests/results_exploration_scale_plans.sql",
+		label: "disposable scale EXPLAIN/plan pgTAP",
 		timeoutMs: 360_000,
 	},
 	{
@@ -219,7 +224,9 @@ export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 			? []
 			: PG_TAP_PROOFS.filter(
 					(proof) =>
-						!scaleProofOnly || proof.path === "tests/results_exploration_scale.sql",
+						!scaleProofOnly ||
+						proof.path === "tests/results_exploration_scale.sql" ||
+						proof.path === "tests/results_exploration_scale_plans.sql",
 				).map((proof) => ({ ...proof })),
 		rollbackReapplyProofs: scaleProofOnly
 			? []

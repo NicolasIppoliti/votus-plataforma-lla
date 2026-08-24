@@ -801,14 +801,44 @@ def test_0021_coverage_down_drops_only_coverage_objects() -> None:
     assert "results_exploration_facets" not in rollback
 
 
-def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> None:
+def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> None:
     setup_sql = (
         (SQL_TESTS / "results_exploration_scale_setup.sql").read_text(encoding="utf-8").lower()
     )
-    sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    semantic_sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    plan_sql = (
+        (SQL_TESTS / "results_exploration_scale_plans.sql").read_text(encoding="utf-8").lower()
+    )
+
     assert "discard plans;" in setup_sql
+    phase_plans = [
+        int(count)
+        for sql in (semantic_sql, plan_sql)
+        for count in re.findall(r"select\s+plan\((\d+)\);", sql)
+    ]
+    assert phase_plans == [16, 15]
+    assert sum(phase_plans) == 31
+
     for required in (
-        "select plan(31);",
+        "results_exploration_facets",
+        "results_exploration_official",
+        "results_exploration_coverage",
+        "results_exploration_schools",
+        "->>'status',",
+        "results_exploration_official_0035(",
+        "results_exploration_official_0034(",
+        "results_exploration_official_wrapper_0034(",
+        "500, 'scale payload retains exactly 500 complete schools'",
+        "12000::bigint",
+        "create temporary table production_district_evidence",
+    ):
+        assert required in semantic_sql
+    assert "explain (analyze, buffers, format json)" not in semantic_sql
+    assert "scale_plan_evidence" not in semantic_sql
+    assert "district_scan_evidence" not in semantic_sql
+    assert "delete from" not in semantic_sql
+
+    for required in (
         "explain (analyze, buffers, format json)",
         "representative_result_rows",
         "execution time",
@@ -819,41 +849,39 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
         "results_exploration_facets(null, null, null, null, null, null)",
         "shared read blocks')::bigint, 0)) <= 500",
         "when label = 'facets_cold_start' then 7000",
-        "results_exploration_official",
-        "results_exploration_coverage",
-        "results_exploration_schools",
-        "->>'status',",
         "result_row_non_official_scope_idx",
         "official_core_scope",
         "district_scope_access",
         "district_core_rpc",
         "district_rpc",
-        "results_exploration_official_0035(",
-        "results_exploration_official_0034(",
-        "results_exploration_official_wrapper_0034(",
         "index_scans between 1 and 4",
         "unstable nested-function block totals",
         "result_row_official_district_scope_idx",
         "j.seccion_code = '001'",
-        "500, 'scale payload retains exactly 500 complete schools'",
-        "12000::bigint",
-        "rollback;",
+        "create temporary table scale_plan_evidence",
+        "create temporary table district_scan_evidence",
     ):
-        assert required in sql
-    encapsulated_contracts = sql.split(
+        assert required in plan_sql
+    assert "production_district_evidence" not in plan_sql
+    encapsulated_contracts = plan_sql.split(
         "'production-shaped coverage rpc stays within its time and shared-block budgets'", 1
     )[1].split("select ok((select label = 'coverage_unsupported_source_audit'", 1)[0]
     assert "shared hit blocks" not in encapsulated_contracts
     assert "shared read blocks" not in encapsulated_contracts
-    assert "core.label='district_core_rpc'" not in sql
-    cleanup = sql.split("select * from finish();", 1)[1]
-    assert "rollback;" in cleanup
+    assert "core.label='district_core_rpc'" not in plan_sql
+
+    for phase_sql in (semantic_sql, plan_sql):
+        assert phase_sql.count("select * from finish();") == 1
+        assert phase_sql.count("rollback;") == 1
+    cleanup = plan_sql.split("select * from finish();", 1)[1]
     for table in ("result_row", "jurisdiction", "category", "election"):
         assert f"delete from {table} where" in cleanup
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
-    # Proof cleanup must hand the next phase in the same stack the original schema back.
+    # Only the final plan phase may restore it after deleting the committed fixture.
     assert "drop constraint result_row_source_kind_check" in setup_sql
     assert "alter column source_kind drop not null" in setup_sql
+    assert "alter column source_kind set not null" not in semantic_sql
+    assert "add constraint result_row_source_kind_check" not in semantic_sql
     assert "alter column source_kind set not null" in cleanup
     assert "add constraint result_row_source_kind_check" in cleanup
     assert "check (source_kind in ('official', 'fiscalizacion'))" in cleanup
@@ -867,8 +895,12 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
     setup_sql = (
         (SQL_TESTS / "results_exploration_scale_setup.sql").read_text(encoding="utf-8").lower()
     )
-    proof_sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
-    coverage_proof = " ".join(proof_sql.split())
+    semantic_sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    plan_sql = (
+        (SQL_TESTS / "results_exploration_scale_plans.sql").read_text(encoding="utf-8").lower()
+    )
+    coverage_semantics = " ".join(semantic_sql.split())
+    coverage_plans = " ".join(plan_sql.split())
     marker = "-- issue #54 production-shaped coverage proof"
     assert marker in setup_sql
     coverage_setup = " ".join(setup_sql.split(marker, 1)[1].split())
@@ -894,18 +926,24 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
         "'source_mesas', payload->'source_audit'->0->'mesas'",
         "'denominator_rows', payload->'denominator_audit'->0->'rows'",
         "'denominator_mesas', payload->'denominator_audit'->0->'mesas'",
+    ):
+        assert required in semantic_sql
+    for required in (
         "'coverage_production_rpc'",
         "'coverage_unsupported_source_audit'",
         "result_row_non_official_scope_idx",
         "shared hit blocks",
         "shared read blocks",
     ):
-        assert required in proof_sql
+        assert required in plan_sql
 
-    assert "'is_random_sample', false" in coverage_proof
-    assert re.search(r"coverage_production_rpc[^;]+<=\s*15000", coverage_proof)
-    assert re.search(r"coverage_production_rpc[^;]+shared[^;]+<=\s*30000", coverage_proof)
-    assert re.search(r"coverage_unsupported_source_audit[^;]+shared[^;]+<=\s*2500", coverage_proof)
+    assert "'is_random_sample', false" in coverage_semantics
+    assert re.search(r"coverage_production_rpc[^;]+<=\s*15000", coverage_plans)
+    assert re.search(r"coverage_production_rpc[^;]+shared[^;]+<=\s*30000", coverage_plans)
+    assert re.search(
+        r"coverage_unsupported_source_audit[^;]+shared[^;]+<=\s*2500",
+        coverage_plans,
+    )
 
 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
@@ -1289,10 +1327,16 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
         )
     )
     assert not any(word in down for word in ("delete from", "update result_row", "truncate"))
-    scale = " ".join(
+    semantic_proof = " ".join(
         (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
     )
-    shape_plan = scale.split("'official_core_scope'", 1)[0].rsplit(
+    plan_proof = " ".join(
+        (SQL_TESTS / "results_exploration_scale_plans.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    shape_plan = plan_proof.split("'official_core_scope'", 1)[0].rsplit(
         "explain (analyze, buffers, format json)", 1
     )[1]
     assert all(
@@ -1305,7 +1349,8 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
             "results_exploration_reporting_level(",
         )
     )
-    assert "select plan(31)" in scale and "selected_shapes<>1" in scale
+    assert "select plan(15)" in plan_proof
+    assert "selected_shapes<>1" in semantic_proof
 
 
 def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
@@ -1347,10 +1392,13 @@ def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
     for forbidden in ("alter function", "create function", "update ", "delete from", "truncate"):
         assert forbidden not in down
 
-    scale = " ".join(
-        (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
+    plan_proof = " ".join(
+        (SQL_TESTS / "results_exploration_scale_plans.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
     )
-    district_contract = scale.split("select ok((select label = 'official_core_scope'", 1)[1]
+    district_contract = plan_proof.split("select ok((select label = 'official_core_scope'", 1)[1]
     district_contract = district_contract.split(
         "select ok((select label = 'coverage_production_rpc'", 1
     )[0]
@@ -1366,9 +1414,12 @@ def test_0031_replaces_only_the_district_index_with_scope_first_order() -> None:
     assert '"node type" == "seq scan" && @."relation name" == "result_row"' in district_contract
     assert "execution time')::numeric<=2000" in district_contract
     assert "shared read blocks')::bigint,0)<=8500" in district_contract
-    assert "distrito 05 adds 581,400 entries to this same election/category partial index" in scale
-    assert "larger b-tree increases its page depth and page access" in scale
-    assert "enable_seqscan" not in scale and "enable_nestloop" not in scale
+    assert (
+        "distrito 05 adds 581,400 entries to this same election/category partial index"
+        in plan_proof
+    )
+    assert "larger b-tree increases its page depth and page access" in plan_proof
+    assert "enable_seqscan" not in plan_proof and "enable_nestloop" not in plan_proof
 
 
 def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollback() -> None:
@@ -1748,7 +1799,7 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     identity and sequential-scan absence cannot be read from the district_rpc plan. They are
     proven instead from pg_stat counter deltas taken around a real RPC call.
     """
-    raw = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    raw = (SQL_TESTS / "results_exploration_scale_plans.sql").read_text(encoding="utf-8").lower()
     scale = " ".join(raw.split())
     # Statements only: the surrounding prose explains why replicas are insufficient, so it
     # names the very constructs the measured block must not execute.
@@ -1779,7 +1830,7 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     for replica in ("explain", "as materialized", "cross join lateral"):
         assert replica not in block
 
-    assert "select plan(31);" in scale
+    assert "select plan(15);" in scale
     # One public wrapper invocation dispatches once to the batched core. The small physical-scan
     # allowance accommodates planner/parallel shape while still rejecting both no access and the
     # old scan-per-jurisdiction algorithm.

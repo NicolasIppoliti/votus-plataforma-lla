@@ -125,11 +125,28 @@ describe("migration release-gate integration", () => {
 				beforePgTapPath: "tests/results_exploration_scale.sql",
 			},
 		]);
-		expect(plan.pgTapProofs).toContainEqual({
-			path: "tests/results_coverage_scope_binding.sql",
-			label: "disposable coverage-scope-binding pgTAP",
-			timeoutMs: 120_000,
-		});
+		expect(plan.pgTapProofs).toEqual([
+			{
+				path: "tests/results_exploration.sql",
+				label: "disposable results-exploration pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/results_exploration_scale.sql",
+				label: "disposable scale payload/parity pgTAP",
+				timeoutMs: 360_000,
+			},
+			{
+				path: "tests/results_exploration_scale_plans.sql",
+				label: "disposable scale EXPLAIN/plan pgTAP",
+				timeoutMs: 360_000,
+			},
+			{
+				path: "tests/results_coverage_scope_binding.sql",
+				label: "disposable coverage-scope-binding pgTAP",
+				timeoutMs: 120_000,
+			},
+		]);
 		expect(plan.rollbackReapplyProofs).toEqual([
 			{
 				path: "tests/results_exploration_release.sql",
@@ -184,7 +201,8 @@ describe("migration release-gate integration", () => {
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
 			"setup:disposable scale fixture setup",
-			"pgTAP:disposable scale/EXPLAIN proof",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
@@ -215,8 +233,8 @@ describe("migration release-gate integration", () => {
 				},
 				runPgTapProof: async (proof) => {
 					trace.push(`pgTAP:${proof.label}`);
-					if (proof.path === "tests/results_exploration_scale.sql")
-						throw new Error("scale proof failed");
+					if (proof.path === "tests/results_exploration_scale_plans.sql")
+						throw new Error("scale plan proof failed");
 				},
 				runRollbackReapplyProof: async (proof) => {
 					trace.push(`rollback:${proof.label}`);
@@ -225,13 +243,14 @@ describe("migration release-gate integration", () => {
 					trace.push(`synthetic:${migration.fileName}`);
 				},
 			}),
-		).rejects.toThrow("scale proof failed");
+		).rejects.toThrow("scale plan proof failed");
 		expect(trace).toEqual([
 			"production-migrations",
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
 			"setup:disposable scale fixture setup",
-			"pgTAP:disposable scale/EXPLAIN proof",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
 		]);
 	});
 	it.each([
@@ -274,7 +293,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(3);
+		expect(plan.pgTapProofs).toHaveLength(4);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -293,7 +312,12 @@ describe("migration release-gate integration", () => {
 		expect(plan.pgTapProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale.sql",
-				label: "disposable scale/EXPLAIN proof",
+				label: "disposable scale payload/parity pgTAP",
+				timeoutMs: 360_000,
+			},
+			{
+				path: "tests/results_exploration_scale_plans.sql",
+				label: "disposable scale EXPLAIN/plan pgTAP",
 				timeoutMs: 360_000,
 			},
 		]);
@@ -335,7 +359,8 @@ describe("migration release-gate integration", () => {
 			"production-migrations",
 			"stack-status",
 			"setup:disposable scale fixture setup",
-			"pgTAP:disposable scale/EXPLAIN proof",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
 		]);
 	});
 	it("retains exact pgTAP stdout when a focused proof fails", () => {
@@ -444,6 +469,9 @@ describe("migration release-gate integration", () => {
 				pgTapProofs: expect.arrayContaining([
 					expect.objectContaining({
 						path: "tests/results_exploration_scale.sql",
+					}),
+					expect.objectContaining({
+						path: "tests/results_exploration_scale_plans.sql",
 					}),
 				]),
 				rollbackReapplyProofs: expect.arrayContaining([
