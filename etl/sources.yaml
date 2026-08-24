@@ -101,6 +101,20 @@ pba:
       etl.ingest.pba.PBA_HOST_POLICY (concurrency 1, >=4s delay, identifying
       UA, cert verification on). Verified 200, text/html, this session.
     filename: distrito_027.html
+  - id: pba/2025-distrito-113
+    election_year: 2025
+    election_round: provinciales
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: "https://www.juntaelectoral.gba.gov.ar/\
+      escrutinio-definitivo-2025/distrito_113.html"
+    mime: text/html
+    notes: >-
+      2025 Elecciones Provinciales, distrito 113 (Tigre) escrutinio
+      definitivo. DISTRITO-LEVEL totals only for Senadores Prov. Tit. and
+      Concejales Titulares. Verified 200, text/html, 472248 bytes, SHA-256
+      65a3e524b8a1b136960c22deb237b65ad7e6dc48bc5f3ca746770d315bb46b9b
+      on 2026-08-23 (spikes/007-pba-distrito-113-curation-evidence.md).
+    filename: distrito_113.html
   - id: pba/2025-concejales-bancas-027
     election_year: 2025
     election_round: provinciales

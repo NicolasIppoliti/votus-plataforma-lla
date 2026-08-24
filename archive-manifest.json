@@ -26,6 +26,19 @@
     "notes": "2025 Elecciones Provinciales, distrito 027 (Coronel Rosales) escrutinio definitivo. DISTRITO-LEVEL totals only (no mesa/circuito breakdown at this source) for two categories: Diputados Prov. Tit. and Concejales Titulares. Discovered by navigating from the linked landing page, not by pattern-guessing (spikes/002-pba-2025-paths.md); reached via etl.ingest.pba.PBA_HOST_POLICY (concurrency 1, >=4s delay, identifying UA, cert verification on). Verified 200, text/html, this session."
   },
   {
+    "id": "pba/2025-distrito-113",
+    "capability": "pba",
+    "source": "www.juntaelectoral.gba.gov.ar",
+    "source_url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/distrito_113.html",
+    "archived_path": "archive/pba/distrito_113.html",
+    "sha256": "65a3e524b8a1b136960c22deb237b65ad7e6dc48bc5f3ca746770d315bb46b9b",
+    "mime": "text/html",
+    "bytes": 472248,
+    "fetched_at": "2026-08-23T00:00:00Z",
+    "status": "ok",
+    "notes": "2025 Elecciones Provinciales, distrito 113 (Tigre) escrutinio definitivo. DISTRITO-LEVEL totals only for Senadores Prov. Tit. and Concejales Titulares. Verified from the official Junta source on 2026-08-23; see spikes/007-pba-distrito-113-curation-evidence.md."
+  },
+  {
     "id": "pba/2025-concejales-bancas-027",
     "capability": "pba",
     "source": "www.juntaelectoral.gba.gov.ar",

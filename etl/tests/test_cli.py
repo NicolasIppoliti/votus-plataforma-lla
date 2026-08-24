@@ -43,10 +43,11 @@ from etl.__main__ import (
     find_unmapped_parties,
     ingest_source,
     load_curated,
+    load_sources,
     main,
     resolve_national_results_bytes,
 )
-from etl.archive import FetchResponse
+from etl.archive import ArchiveIntegrityError, FetchResponse
 from etl.crosswalk import (
     FISCALIZACION_VOTE_COLUMNS,
     CrosswalkTable,
@@ -1776,6 +1777,179 @@ def test_ingest_drives_the_pba_branch_with_the_callers_crosswalk(tmp_path: Path)
     assert lineages == [("02", "027")], (
         f"the caller's crosswalk must reach `load_pba_rows`; got {lineages}"
     )
+
+
+def test_ingest_source_reaches_the_registered_distrito_113_write_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Distrito 113 must be reachable through the real archive-first entry path."""
+    import etl.__main__ as cli
+
+    source_id = "pba/2025-distrito-113"
+    html = (Path(__file__).parent / "fixtures" / "pba_distrito_113_2025_minimal.html").read_bytes()
+    expected_sha256 = hashlib.sha256(html).hexdigest()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("pba", "distrito_113.html", html)
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/distrito_113.html",
+                    "sha256": expected_sha256,
+                    "fetched_at": "2026-08-23T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    verified_hashes: list[str | None] = []
+    real_verified_read = cli.read_verified_archive
+
+    def verified_read(*args, **kwargs):
+        verified_hashes.append(kwargs.get("expected_sha256"))
+        return real_verified_read(*args, **kwargs)
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    projected_archives: list[tuple[str, str]] = []
+    written_rows = []
+
+    def reach_write_boundary(
+        _conn, rows, *, year: int, round_: str, crosswalk, archive_entry_id: str
+    ) -> int:
+        approved = crosswalk.resolve_pba("113")
+        assert approved is not None
+        assert (
+            approved.national_distrito_code,
+            approved.national_seccion_code,
+            approved.name,
+        ) == ("02", "113", "TIGRE")
+        assert (year, round_, archive_entry_id) == (2025, "provinciales", source_id)
+        written_rows.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr(cli, "read_verified_archive", verified_read)
+    monkeypatch.setattr(cli.psycopg, "connect", lambda _url: FakeConnection())
+    monkeypatch.setattr(
+        cli,
+        "project_archive_entry",
+        lambda _conn, record: projected_archives.append((record.id, record.source_kind)),
+    )
+    monkeypatch.setattr(cli, "load_pba_rows", reach_write_boundary)
+    monkeypatch.setattr(cli, "insert_review_items", lambda _conn, _records: 0)
+
+    inserted = ingest_source(
+        source_id,
+        database_url="postgresql://not-opened/test",
+        year=2025,
+        round_="provinciales",
+        sources=load_sources(REPO_ROOT / "etl" / "sources.yaml"),
+        local_root=local_root,
+        manifest_path=manifest_path,
+        crosswalk_path=CROSSWALK_PATH,
+    )
+
+    assert verified_hashes == [expected_sha256]
+    assert projected_archives == [(source_id, "official")]
+    assert inserted == len(written_rows) == 30
+    assert {row.result.distrito for row in written_rows} == {"113"}
+    assert {row.jurisdiction_names.distrito for row in written_rows} == {"TIGRE"}
+    assert {
+        category: {row.list_id for row in written_rows if row.category == category}
+        for category in ("SENADORES PROVINCIALES", "CONCEJALES")
+    } == {
+        "SENADORES PROVINCIALES": {
+            "2200",
+            "2206",
+            "2204",
+            "1006",
+            "2201",
+            "2207",
+            "974",
+            "980",
+            "1003",
+            "959",
+            "2202",
+            "1008",
+            "2203",
+            "2208",
+            "963",
+        },
+        "CONCEJALES": {
+            "2200",
+            "2206",
+            "2204",
+            "1006",
+            "2201",
+            "2207",
+            "2205",
+            "974",
+            "980",
+            "1003",
+            "959",
+            "193",
+            "2203",
+            "981",
+            "2208",
+        },
+    }
+
+
+def test_distrito_113_hash_drift_refuses_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "pba/2025-distrito-113"
+    fixture = (
+        Path(__file__).parent / "fixtures" / "pba_distrito_113_2025_minimal.html"
+    ).read_bytes()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("pba", "distrito_113.html", fixture + b"drift")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/distrito_113.html",
+                    "sha256": hashlib.sha256(fixture).hexdigest(),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli.psycopg,
+        "connect",
+        lambda _url: (_ for _ in ()).throw(
+            AssertionError("hash drift must precede database access")
+        ),
+    )
+
+    with pytest.raises(ArchiveIntegrityError):
+        ingest_source(
+            source_id,
+            database_url="postgresql://must-not-connect/test",
+            year=2025,
+            round_="provinciales",
+            sources=load_sources(REPO_ROOT / "etl" / "sources.yaml"),
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
 
 
 def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(
