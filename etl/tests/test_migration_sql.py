@@ -813,7 +813,8 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         (SQL_TESTS / "results_exploration_scale_cleanup.sql").read_text(encoding="utf-8").lower()
     )
 
-    for phase_sql in (setup_sql, semantic_sql, plan_sql):
+    assert setup_sql.startswith("\\set on_error_stop on\nset statement_timeout='300s';")
+    for phase_sql in (semantic_sql, plan_sql):
         assert phase_sql.startswith("\\set on_error_stop on\nset statement_timeout='120s';")
     assert cleanup_sql.startswith("\\set on_error_stop on\nset statement_timeout='300s';")
     production_migration_sql = "\n".join(
