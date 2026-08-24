@@ -294,7 +294,7 @@ describe("migration release-gate integration", () => {
 			{
 				path: "tests/results_exploration_scale.sql",
 				label: "disposable scale/EXPLAIN proof",
-				timeoutMs: 180_000,
+				timeoutMs: 360_000,
 			},
 		]);
 		expect(plan.rollbackReapplyProofs).toEqual([]);
