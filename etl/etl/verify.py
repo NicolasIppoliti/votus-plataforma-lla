@@ -26,6 +26,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 NAME_PREFIX = "votus_etl_verify_"
 MARKER_PREFIX = "votus-etl-verify:"
 ADMIN_DATABASE = "template1"
+_MIGRATION_FILE_PATTERN = re.compile(r"^(?P<version>[0-9]{4}|[0-9]{14})_.+\.sql$")
 _TEST_ROLE_MEMBERSHIPS = (
     "etl_writer:false:false:true",
     "results_exploration_executor:false:true:true",
@@ -187,6 +188,17 @@ class DisposablePostgres:
             (self.identity.name,),
         ).fetchone()
         return row == (1,)
+
+    def _verify_database_comment(self) -> None:
+        admin = _require_admin(self.admin)
+        row = admin.execute(
+            "select shobj_description(oid, 'pg_database') from pg_database where datname = %s",
+            (self.identity.name,),
+        ).fetchone()
+        if row != (self.identity.marker,):
+            raise UnsafeDatabaseError(
+                "refusing cleanup because the database comment marker changed"
+            )
 
     def _role_exists(self) -> bool:
         admin = _require_admin(self.admin)
@@ -453,6 +465,7 @@ class DisposablePostgres:
         errors: list[BaseException] = []
         if self.created_by_this_run and self._database_exists():
             try:
+                self._verify_database_comment()
                 if self.marker_table_created:
                     try:
                         self._verify_target()
@@ -531,18 +544,17 @@ def _migration_files(migrations: Path) -> list[Path]:
     if not migrations.is_dir():
         raise RuntimeError("migration path must be an existing directory")
     files = sorted(migrations.glob("*.sql"))
-    unexpected = next(
-        (path for path in files if re.fullmatch(r"[0-9]{4}_.+\.sql", path.name) is None),
-        None,
-    )
+    matches = [(path, _MIGRATION_FILE_PATTERN.fullmatch(path.name)) for path in files]
+    unexpected = next((path for path, match in matches if match is None), None)
     if unexpected is not None:
         raise RuntimeError(f"unexpected SQL migration entry: {unexpected.name}")
     non_file = next((path for path in files if not path.is_file()), None)
     if non_file is not None:
         raise RuntimeError(f"migration entry must be a regular file: {non_file.name}")
-    numbers = [int(path.name.split("_", 1)[0]) for path in files]
-    if len(numbers) != len(set(numbers)):
-        raise RuntimeError("migration numbers must be unique")
+    versions = [match.group("version") for _, match in matches if match is not None]
+    if len(versions) != len(set(versions)):
+        raise RuntimeError("migration versions must be unique")
+    numbers = [int(version) for version in versions if len(version) == 4]
     if not numbers or numbers != list(range(1, numbers[-1] + 1)):
         raise RuntimeError("migration numbers must form a complete contiguous sequence from 0001")
     return files

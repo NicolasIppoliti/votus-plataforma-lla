@@ -1,5 +1,29 @@
 \set ON_ERROR_STOP on
 do $$ begin
+  if results_exploration_party_jurisdiction(
+       'pba/2025-distrito-113', 2025, 'provinciales',
+       'SENADORES PROVINCIALES', '02', '113') is distinct from 'pba_provincial'
+     or results_exploration_party_jurisdiction(
+       'pba/2025-distrito-113', 2025, 'provinciales',
+       'CONCEJALES', '02', '113') is distinct from 'tigre_municipal'
+     or results_exploration_party_jurisdiction(
+       'pba/2025-distrito-027', 2025, 'provinciales',
+       'DIPUTADOS PROVINCIALES', '02', '027') is distinct from 'pba_provincial' then
+    raise exception 'timestamped PBA 113 migration omitted exact mappings or changed 027';
+  end if;
+end $$;
+\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql
+do $$ begin
+  if results_exploration_party_jurisdiction(
+       'pba/2025-distrito-113', 2025, 'provinciales',
+       'CONCEJALES', '02', '113') is not null
+     or results_exploration_party_jurisdiction(
+       'pba/2025-distrito-027', 2025, 'provinciales',
+       'DIPUTADOS PROVINCIALES', '02', '027') is distinct from 'pba_provincial' then
+    raise exception 'timestamped PBA 113 rollback did not restore exact 0037 boundary';
+  end if;
+end $$;
+do $$ begin
   if to_regprocedure('public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)') is null
      or has_function_privilege('authenticated',
        'public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)', 'EXECUTE')
@@ -176,6 +200,7 @@ end $$;
 \ir ../migrations/0035_reject_partial_pba_district_totals.sql
 \ir ../migrations/0036_map_pba_party_jurisdictions.sql
 \ir ../migrations/0037_add_selector_name_canonical_fallback.sql
+\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql
 do $$
 declare
   facets_definition text;
@@ -222,9 +247,15 @@ begin
        'pba/2025-distrito-027', 2025, 'provinciales',
        'DIPUTADOS PROVINCIALES', '02', '027') is distinct from 'pba_provincial'
      or results_exploration_party_jurisdiction(
+       'pba/2025-distrito-113', 2025, 'provinciales',
+       'SENADORES PROVINCIALES', '02', '113') is distinct from 'pba_provincial'
+     or results_exploration_party_jurisdiction(
+       'pba/2025-distrito-113', 2025, 'provinciales',
+       'CONCEJALES', '02', '113') is distinct from 'tigre_municipal'
+     or results_exploration_party_jurisdiction(
        'national/2023-generales', 2023, 'generales', 'PRESIDENTE', '02', '027')
        is distinct from 'national' then
-    raise exception '0036 forward apply omitted an exact party-jurisdiction mapping';
+    raise exception 'forward apply omitted an exact party-jurisdiction mapping';
   end if;
   if to_regprocedure('public.results_exploration_official_0035(uuid,uuid,text,text,text,text,integer,text)') is null
      or to_regprocedure('public.results_exploration_official_wrapper_0034(uuid,uuid,text,text,text,text,integer,text)') is null
@@ -364,4 +395,4 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
-select 'release-proof' as evidence, 37 as migration_inventory_count, '0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;
+select 'release-proof' as evidence, 38 as migration_inventory_count, '20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;

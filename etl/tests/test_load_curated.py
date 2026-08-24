@@ -332,9 +332,9 @@ def test_real_party_projection_loads_exact_president_and_pba_category_sets() -> 
 
     summary = load_party_map_rows(conn, table)
 
-    assert summary.party_canonical.loaded == 28
-    assert summary.list_identity.loaded == 53
-    assert summary.party_mapping.loaded == 53
+    assert summary.party_canonical.loaded == 30
+    assert summary.list_identity.loaded == 83
+    assert summary.party_mapping.loaded == 83
     for count in (summary.party_canonical, summary.list_identity, summary.party_mapping):
         assert count.deleted_by_reason == {"absent_from_desired_projection": 0}
     assert {
@@ -368,6 +368,85 @@ def test_real_party_projection_loads_exact_president_and_pba_category_sets() -> 
         "974",
         "980",
     }
+
+
+def test_tigre_curated_projection_persists_exact_identities_idempotently() -> None:
+    table = load_party_map(CURATED / "party_map.yaml")
+    conn = _PartyProjectionConnection()
+
+    first = load_party_map_rows(conn, table)
+    first_snapshot = (
+        dict(conn.projection.canonical),
+        dict(conn.projection.list_identity),
+        dict(conn.projection.party_mapping),
+    )
+    second = load_party_map_rows(conn, table)
+
+    assert first.party_canonical.loaded == second.party_canonical.loaded == 30
+    assert first.list_identity.loaded == second.list_identity.loaded == 83
+    assert first.party_mapping.loaded == second.party_mapping.loaded == 83
+    assert first_snapshot == (
+        conn.projection.canonical,
+        conn.projection.list_identity,
+        conn.projection.party_mapping,
+    )
+    assert conn.projection.canonical["ACCION_COMUNAL_TIGRE"] == (
+        "ACCION COMUNAL DEL PARTIDO DE TIGRE"
+    )
+    assert conn.projection.canonical["OPCION_VECINAL_TIGRE"] == (
+        "OPCION VECINAL PARA EL PROGRESO DE TIGRE"
+    )
+    senate_ids = {
+        "2200",
+        "2206",
+        "2204",
+        "1006",
+        "2201",
+        "2207",
+        "974",
+        "980",
+        "1003",
+        "959",
+        "2202",
+        "1008",
+        "2203",
+        "2208",
+        "963",
+    }
+    council_ids = {
+        "2200",
+        "2206",
+        "2204",
+        "1006",
+        "2201",
+        "2207",
+        "2205",
+        "974",
+        "980",
+        "1003",
+        "959",
+        "193",
+        "2203",
+        "981",
+        "2208",
+    }
+    for jurisdiction, category, expected_ids in (
+        ("pba_provincial", "SENADORES PROVINCIALES", senate_ids),
+        ("tigre_municipal", "CONCEJALES", council_ids),
+    ):
+        keys = {
+            key
+            for key in conn.projection.party_mapping
+            if key[:3] == (2025, jurisdiction, category)
+        }
+        assert {key[3] for key in keys} == expected_ids
+        assert keys <= conn.projection.list_identity.keys()
+    action_key = (2025, "tigre_municipal", "CONCEJALES", "193")
+    option_key = (2025, "tigre_municipal", "CONCEJALES", "981")
+    assert conn.projection.list_identity[action_key] == "ACCION COMUNAL DEL PARTIDO DE TIGRE"
+    assert conn.projection.party_mapping[action_key] == "ACCION_COMUNAL_TIGRE"
+    assert conn.projection.list_identity[option_key] == "OPCION VECINAL PARA EL PROGRESO DE TIGRE"
+    assert conn.projection.party_mapping[option_key] == "OPCION_VECINAL_TIGRE"
 
 
 def test_explicit_empty_party_projection_deletes_the_replacement_snapshot(tmp_path: Path) -> None:

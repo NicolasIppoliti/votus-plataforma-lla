@@ -45,6 +45,10 @@ canonical_parties:
     display_name: FRENTE DE IZQUIERDA
   - id: PRIMERO_ROSALES
     display_name: AGRUPACION MUNICIPAL PRIMERO ROSALES
+  - id: ACCION_COMUNAL_TIGRE
+    display_name: ACCION COMUNAL DEL PARTIDO DE TIGRE
+  - id: OPCION_VECINAL_TIGRE
+    display_name: OPCION VECINAL PARA EL PROGRESO DE TIGRE
   - id: FRENTE_PATRIOTA_FEDERAL
     display_name: FRENTE PATRIOTA FEDERAL
   - id: FUERZA_PATRIA
@@ -472,6 +476,220 @@ mappings:
     canonical_party: TIEMPO_DE_TODOS
     party_name: PARTIDO TIEMPO DE TODOS
     source: "escrutinio-definitivo-2025/distrito_027.html"
+
+  # --- 2025, PBA provincial (Senadores Provinciales) -------------------------
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2200"
+    canonical_party: FUERZA_PATRIA
+    party_name: ALIANZA FUERZA PATRIA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2206"
+    canonical_party: LLA_PRO_ALLIANCE
+    party_name: ALIANZA LA LIBERTAD AVANZA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2204"
+    canonical_party: SOMOS_BUENOS_AIRES
+    party_name: ALIANZA SOMOS BUENOS AIRES
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "1006"
+    canonical_party: PARTIDO_LIBERTARIO
+    party_name: PARTIDO LIBERTARIO
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2201"
+    canonical_party: POTENCIA
+    party_name: ALIANZA POTENCIA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2207"
+    canonical_party: UNION_Y_LIBERTAD
+    party_name: ALIANZA UNION Y LIBERTAD
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "974"
+    canonical_party: POLITICA_OBRERA
+    party_name: PARTIDO POLITICA OBRERA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "980"
+    canonical_party: TIEMPO_DE_TODOS
+    party_name: PARTIDO TIEMPO DE TODOS
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "1003"
+    canonical_party: CONSTRUYENDO_PORVENIR
+    party_name: CONSTRUYENDO PORVENIR
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "959"
+    canonical_party: MOVIMIENTO_SOCIALISTA
+    party_name: MOVIMIENTO AVANZADA SOCIALISTA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2202"
+    canonical_party: ES_CON_VOS
+    party_name: ALIANZA ES CON VOS ES CON NOSOTROS
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "1008"
+    canonical_party: VALORES_REPUBLICANOS
+    party_name: VALORES REPUBLICANOS
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2203"
+    canonical_party: FIT
+    party_name: FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "2208"
+    canonical_party: UNION_LIBERAL
+    party_name: ALIANZA UNION LIBERAL
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: pba_provincial
+    category: SENADORES PROVINCIALES
+    list_id: "963"
+    canonical_party: FRENTE_PATRIOTA_FEDERAL
+    party_name: PARTIDO FRENTE PATRIOTA FEDERAL
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+
+  # --- 2025, Tigre municipal (Concejales) ------------------------------------
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2200"
+    canonical_party: FUERZA_PATRIA
+    party_name: ALIANZA FUERZA PATRIA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2206"
+    canonical_party: LLA_PRO_ALLIANCE
+    party_name: ALIANZA LA LIBERTAD AVANZA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2204"
+    canonical_party: SOMOS_BUENOS_AIRES
+    party_name: ALIANZA SOMOS BUENOS AIRES
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "1006"
+    canonical_party: PARTIDO_LIBERTARIO
+    party_name: PARTIDO LIBERTARIO
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2201"
+    canonical_party: POTENCIA
+    party_name: ALIANZA POTENCIA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2207"
+    canonical_party: UNION_Y_LIBERTAD
+    party_name: ALIANZA UNION Y LIBERTAD
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2205"
+    canonical_party: NUEVOS_AIRES
+    party_name: ALIANZA NUEVOS AIRES
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "974"
+    canonical_party: POLITICA_OBRERA
+    party_name: PARTIDO POLITICA OBRERA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "980"
+    canonical_party: TIEMPO_DE_TODOS
+    party_name: PARTIDO TIEMPO DE TODOS
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "1003"
+    canonical_party: CONSTRUYENDO_PORVENIR
+    party_name: CONSTRUYENDO PORVENIR
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "959"
+    canonical_party: MOVIMIENTO_SOCIALISTA
+    party_name: MOVIMIENTO AVANZADA SOCIALISTA
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "193"
+    canonical_party: ACCION_COMUNAL_TIGRE
+    party_name: ACCION COMUNAL DEL PARTIDO DE TIGRE
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2203"
+    canonical_party: FIT
+    party_name: FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "981"
+    canonical_party: OPCION_VECINAL_TIGRE
+    party_name: OPCION VECINAL PARA EL PROGRESO DE TIGRE
+    source: "escrutinio-definitivo-2025/distrito_113.html"
+  - year: 2025
+    jurisdiction: tigre_municipal
+    category: CONCEJALES
+    list_id: "2208"
+    canonical_party: UNION_LIBERAL
+    party_name: ALIANZA UNION LIBERAL
+    source: "escrutinio-definitivo-2025/distrito_113.html"
 
   # --- 2023 national Presidente (generales and balotaje) --------------------
   # Verified for distrito 2 against archive-manifest identities

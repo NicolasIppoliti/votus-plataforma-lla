@@ -43,10 +43,11 @@ from etl.__main__ import (
     find_unmapped_parties,
     ingest_source,
     load_curated,
+    load_sources,
     main,
     resolve_national_results_bytes,
 )
-from etl.archive import FetchResponse
+from etl.archive import ArchiveIntegrityError, FetchResponse
 from etl.crosswalk import (
     FISCALIZACION_VOTE_COLUMNS,
     CrosswalkTable,
@@ -1776,6 +1777,365 @@ def test_ingest_drives_the_pba_branch_with_the_callers_crosswalk(tmp_path: Path)
     assert lineages == [("02", "027")], (
         f"the caller's crosswalk must reach `load_pba_rows`; got {lineages}"
     )
+
+
+def test_ingest_source_reaches_the_registered_distrito_113_write_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Distrito 113 must be reachable through the real archive-first entry path."""
+    import etl.__main__ as cli
+
+    source_id = "pba/2025-distrito-113"
+    html = (Path(__file__).parent / "fixtures" / "pba_distrito_113_2025_minimal.html").read_bytes()
+    expected_sha256 = hashlib.sha256(html).hexdigest()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("pba", "distrito_113.html", html)
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/distrito_113.html",
+                    "sha256": expected_sha256,
+                    "fetched_at": "2026-08-23T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    verified_hashes: list[str | None] = []
+    real_verified_read = cli.read_verified_archive
+
+    def verified_read(*args, **kwargs):
+        verified_hashes.append(kwargs.get("expected_sha256"))
+        return real_verified_read(*args, **kwargs)
+
+    class FakeConnection:
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    projected_archives: list[tuple[str, str]] = []
+    written_rows = []
+
+    def reach_write_boundary(
+        _conn, rows, *, year: int, round_: str, crosswalk, archive_entry_id: str
+    ) -> int:
+        approved = crosswalk.resolve_pba("113")
+        assert approved is not None
+        assert (
+            approved.national_distrito_code,
+            approved.national_seccion_code,
+            approved.name,
+        ) == ("02", "113", "TIGRE")
+        assert (year, round_, archive_entry_id) == (2025, "provinciales", source_id)
+        written_rows.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr(cli, "read_verified_archive", verified_read)
+    monkeypatch.setattr(cli.psycopg, "connect", lambda _url: FakeConnection())
+    monkeypatch.setattr(
+        cli,
+        "project_archive_entry",
+        lambda _conn, record: projected_archives.append((record.id, record.source_kind)),
+    )
+    monkeypatch.setattr(cli, "load_pba_rows", reach_write_boundary)
+    monkeypatch.setattr(cli, "insert_review_items", lambda _conn, _records: 0)
+
+    inserted = ingest_source(
+        source_id,
+        database_url="postgresql://not-opened/test",
+        year=2025,
+        round_="provinciales",
+        sources=load_sources(REPO_ROOT / "etl" / "sources.yaml"),
+        local_root=local_root,
+        manifest_path=manifest_path,
+        crosswalk_path=CROSSWALK_PATH,
+    )
+
+    assert verified_hashes == [expected_sha256]
+    assert projected_archives == [(source_id, "official")]
+    assert inserted == len(written_rows) == 30
+    assert {row.result.distrito for row in written_rows} == {"113"}
+    assert {row.jurisdiction_names.distrito for row in written_rows} == {"TIGRE"}
+    assert {
+        category: {row.list_id for row in written_rows if row.category == category}
+        for category in ("SENADORES PROVINCIALES", "CONCEJALES")
+    } == {
+        "SENADORES PROVINCIALES": {
+            "2200",
+            "2206",
+            "2204",
+            "1006",
+            "2201",
+            "2207",
+            "974",
+            "980",
+            "1003",
+            "959",
+            "2202",
+            "1008",
+            "2203",
+            "2208",
+            "963",
+        },
+        "CONCEJALES": {
+            "2200",
+            "2206",
+            "2204",
+            "1006",
+            "2201",
+            "2207",
+            "2205",
+            "974",
+            "980",
+            "1003",
+            "959",
+            "193",
+            "2203",
+            "981",
+            "2208",
+        },
+    }
+
+
+def test_registered_distrito_113_ingest_persists_30_official_rows_idempotently(
+    tmp_path: Path,
+) -> None:
+    """Issue #90: two real entry-point ingests leave one exact persisted projection."""
+    source_id = "pba/2025-distrito-113"
+    sources = load_sources(REPO_ROOT / "etl" / "sources.yaml")
+    registered_source = next(
+        (
+            entry
+            for capability_entries in sources.values()
+            for entry in capability_entries
+            if entry["id"] == source_id
+        ),
+        None,
+    )
+    assert registered_source is not None, (
+        "production etl/sources.yaml must register distrito 113 before database setup"
+    )
+    _require_ephemeral_postgres()
+
+    fixture = (
+        Path(__file__).parent / "fixtures" / "pba_distrito_113_2025_minimal.html"
+    ).read_bytes()
+    fixture_sha256 = hashlib.sha256(fixture).hexdigest()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("pba", "distrito_113.html", fixture)
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/distrito_113.html",
+                    "sha256": fixture_sha256,
+                    "fetched_at": "2026-08-23T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    preexisting_election_ids = set()
+    preexisting_category_ids = set()
+    preexisting_jurisdiction_ids = set()
+    persisted_election_ids = set()
+    persisted_category_ids = set()
+    persisted_jurisdiction_ids = set()
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id from election where year = %s and round = %s",
+                (2025, "provinciales"),
+            )
+            preexisting_election_ids = {row[0] for row in cur.fetchall()}
+            cur.execute(
+                "select id from category where name in (%s, %s)",
+                ("SENADORES PROVINCIALES", "CONCEJALES"),
+            )
+            preexisting_category_ids = {row[0] for row in cur.fetchall()}
+            cur.execute(
+                """
+                select id
+                  from jurisdiction
+                 where distrito_code = %s
+                   and seccion_code = %s
+                   and circuito_code is null
+                   and establecimiento_code is null
+                   and mesa_code is null
+                """,
+                ("02", "113"),
+            )
+            preexisting_jurisdiction_ids = {row[0] for row in cur.fetchall()}
+
+        first_inserted = ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="provinciales",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+            crosswalk_path=CROSSWALK_PATH,
+        )
+        second_inserted = ingest_source(
+            source_id,
+            database_url=TEST_DSN,
+            year=2025,
+            round_="provinciales",
+            sources=sources,
+            local_root=local_root,
+            manifest_path=manifest_path,
+            crosswalk_path=CROSSWALK_PATH,
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select c.name, rr.list_id, rr.votes, rr.source_kind,
+                       rr.election_id, rr.category_id, rr.jurisdiction_id
+                  from result_row rr
+                  join election e on e.id = rr.election_id
+                  join category c on c.id = rr.category_id
+                 where rr.archive_entry_id = %s
+                   and e.year = 2025
+                   and e.round = 'provinciales'
+                 order by c.name, rr.list_id
+                """,
+                (source_id,),
+            )
+            persisted_rows = cur.fetchall()
+            persisted_election_ids.update(row[4] for row in persisted_rows)
+            persisted_category_ids.update(row[5] for row in persisted_rows)
+            persisted_jurisdiction_ids.update(row[6] for row in persisted_rows)
+            cur.execute(
+                "select source_kind from archive_entry where id = %s",
+                (source_id,),
+            )
+            archive_projection = cur.fetchone()
+    finally:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select election_id, category_id, jurisdiction_id
+                  from result_row
+                 where archive_entry_id = %s
+                """,
+                (source_id,),
+            )
+            for election_id, category_id, jurisdiction_id in cur.fetchall():
+                persisted_election_ids.add(election_id)
+                persisted_category_ids.add(category_id)
+                persisted_jurisdiction_ids.add(jurisdiction_id)
+
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
+            created_jurisdiction_ids = persisted_jurisdiction_ids - preexisting_jurisdiction_ids
+            created_category_ids = persisted_category_ids - preexisting_category_ids
+            created_election_ids = persisted_election_ids - preexisting_election_ids
+            if created_jurisdiction_ids:
+                cur.execute(
+                    "delete from jurisdiction where id = any(%s)",
+                    (list(created_jurisdiction_ids),),
+                )
+            if created_category_ids:
+                cur.execute(
+                    "delete from category where id = any(%s)",
+                    (list(created_category_ids),),
+                )
+            if created_election_ids:
+                cur.execute(
+                    "delete from election where id = any(%s)",
+                    (list(created_election_ids),),
+                )
+        conn.commit()
+        conn.close()
+
+    expected_category_counts = {"SENADORES PROVINCIALES": 15, "CONCEJALES": 15}
+    category_absent_pairs = {
+        ("SENADORES PROVINCIALES", "2205"),
+        ("SENADORES PROVINCIALES", "193"),
+        ("SENADORES PROVINCIALES", "981"),
+        ("CONCEJALES", "2202"),
+        ("CONCEJALES", "1008"),
+        ("CONCEJALES", "963"),
+    }
+    persisted_category_lists = {(category, list_id) for category, list_id, *_rest in persisted_rows}
+
+    assert first_inserted == second_inserted == 30
+    assert len(persisted_rows) == 30, "re-ingestion must replace 30 rows, not append to 60"
+    assert {
+        category: sum(row_category == category for row_category, *_rest in persisted_rows)
+        for category in expected_category_counts
+    } == expected_category_counts
+    assert category_absent_pairs.isdisjoint(persisted_category_lists), (
+        "lists absent from a source category must not become fabricated persisted rows"
+    )
+    assert all(
+        votes == 1 and source_kind == "official"
+        for _, _, votes, source_kind, *_ids in persisted_rows
+    )
+    assert archive_projection == ("official",)
+
+
+def test_distrito_113_hash_drift_refuses_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "pba/2025-distrito-113"
+    fixture = (
+        Path(__file__).parent / "fixtures" / "pba_distrito_113_2025_minimal.html"
+    ).read_bytes()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("pba", "distrito_113.html", fixture + b"drift")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": "archive/pba/distrito_113.html",
+                    "sha256": hashlib.sha256(fixture).hexdigest(),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli.psycopg,
+        "connect",
+        lambda _url: (_ for _ in ()).throw(
+            AssertionError("hash drift must precede database access")
+        ),
+    )
+
+    with pytest.raises(ArchiveIntegrityError):
+        ingest_source(
+            source_id,
+            database_url="postgresql://must-not-connect/test",
+            year=2025,
+            round_="provinciales",
+            sources=load_sources(REPO_ROOT / "etl" / "sources.yaml"),
+            local_root=local_root,
+            manifest_path=manifest_path,
+        )
 
 
 def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(

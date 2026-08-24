@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -96,6 +97,26 @@ def test_distrito_level_totals_ingested_without_fabricating_lower_levels() -> No
     # parser MUST NOT invent a DIPUTADOS PROVINCIALES row for it.
     list_962_categories = {r.category for r in rows if r.list_id == "962"}
     assert list_962_categories == {"CONCEJALES"}
+
+
+def test_distrito_113_senate_and_council_cells_reconcile_without_absence_rows(capsys) -> None:
+    result = ingest_pba(
+        _read("pba_distrito_113_2025_minimal.html"),
+        archive_entry_id="pba/2025-distrito-113",
+        requested_granularity="distrito",
+    )
+
+    assert not result.quarantined
+    assert len(result.rows) == 30
+    assert Counter(row.category for row in result.rows) == {
+        "SENADORES PROVINCIALES": 15,
+        "CONCEJALES": 15,
+    }
+    assert all(row.votes == 1 for row in result.rows)
+    report = capsys.readouterr().err
+    for category in ("SENADORES PROVINCIALES", "CONCEJALES"):
+        assert f'{category} / list absent from this category ("-" or empty cell): 3' in report
+        assert f"{category} / summary row (empty list-id cell): 2" in report
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +626,43 @@ def test_load_pba_rows_surfaces_a_quarantined_distrito_instead_of_dropping_it(
     assert f"no curated crosswalk entry for PBA distrito '027': {len(rows)}" in reported
 
 
+def test_missing_113_crosswalk_quarantines_every_row_with_per_category_counts(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    rows = list(
+        ingest_pba(
+            _read("pba_distrito_113_2025_minimal.html"),
+            archive_entry_id="pba/2025-distrito-113",
+            requested_granularity="distrito",
+        ).rows
+    )
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "etl.ingest.pba.db.lock_archive_entry_source_authority",
+        lambda *_args, **_kwargs: "official",
+    )
+    monkeypatch.setattr("etl.ingest.pba.db.upsert_election", lambda *_args, **_kwargs: "election")
+    monkeypatch.setattr(
+        "etl.ingest.pba.db.load_result_rows",
+        lambda _conn, **kwargs: len(kwargs["records"]),
+    )
+
+    inserted = load_pba_rows(
+        object(),
+        rows,
+        year=2025,
+        round_="provinciales",
+        crosswalk=CrosswalkTable(jurisdictions=()),
+        archive_entry_id="pba/2025-distrito-113",
+    )
+
+    report = capsys.readouterr().err
+    assert inserted == 0
+    assert "quarantined 30 PBA row(s)" in report
+    assert "CONCEJALES: 15" in report
+    assert "SENADORES PROVINCIALES: 15" in report
+
+
 def test_load_pba_rows_passes_the_translated_partido_name_to_the_db_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -940,6 +998,38 @@ def test_incomplete_category_schema_is_refused_before_partial_rows_are_returned(
     message = str(excinfo.value)
     assert missing_category in message
     assert recognized_category in message
+
+
+@pytest.mark.parametrize(
+    ("headers", "message"),
+    [
+        (["Concejales Titulares"], "missing exactly one provincial chamber"),
+        (["Senadores Prov. Tit."], "missing categories: CONCEJALES"),
+        (
+            ["Senadores Prov. Tit.", "Senadores Provinciales", "Concejales Titulares"],
+            "SENADORES PROVINCIALES.*2.*3",
+        ),
+        (
+            ["Diputados Prov. Tit.", "Senadores Prov. Tit.", "Concejales Titulares"],
+            "both provincial chambers",
+        ),
+    ],
+)
+def test_pba_schema_requires_council_and_exactly_one_provincial_chamber(
+    headers: list[str], message: str
+) -> None:
+    header_html = "".join(f"<th>{header}</th>" for header in headers)
+    value_html = "".join("<td>1</td>" for _header in headers)
+    html = (
+        "<html><body>"
+        '<span class="detail-value-big">113 - TIGRE</span>'
+        f"<table><thead><tr><th>Lista</th>{header_html}</tr></thead>"
+        f"<tbody><tr><td>2206</td>{value_html}</tr></tbody></table>"
+        "</body></html>"
+    ).encode()
+
+    with pytest.raises(PbaSchemaError, match=message):
+        ingest_pba(html, archive_entry_id="pba/test")
 
 
 def test_a_short_row_is_reported_as_schema_drift_not_folded_into_the_expected_drops(

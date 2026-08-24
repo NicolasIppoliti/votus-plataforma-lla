@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(124);
+select plan(144);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -11,7 +11,8 @@ insert into category (id, name)
 values ('20000000-0000-0000-0000-000000000003', 'DIPUTADO NACIONAL'),
   ('20000000-0000-0000-0000-000000000006', 'CONCEJALES'),
   ('20000000-0000-0000-0000-000000000007', 'MESA IDENTITY FIXTURE'),
-  ('20000000-0000-0000-0000-000000000008', 'DIPUTADOS PROVINCIALES');
+  ('20000000-0000-0000-0000-000000000008', 'DIPUTADOS PROVINCIALES'),
+  ('20000000-0000-0000-0000-000000000009', 'SENADORES PROVINCIALES');
 insert into jurisdiction (
   id, distrito_code, distrito_name, seccion_code, seccion_name, circuito_code,
   circuito_name, establecimiento_code, establecimiento_name, mesa_code
@@ -33,10 +34,24 @@ insert into jurisdiction (
   ('20000000-0000-0000-0000-000000000080', '02', 'BUENOS AIRES', '027', 'CORONEL DE MARINA L. ROSALES', null, null, null, null, null),
   ('20000000-0000-0000-0000-000000000081', '03', 'Third District North', null, null, null, null, null, null, null),
   ('20000000-0000-0000-0000-000000000082', '03', 'Third District South', null, null, null, null, null, null, null),
+  ('20000000-0000-0000-0000-000000000083', '02', 'Buenos Aires', '113', 'TIGRE', null, null, null, null, null),
   ('20000000-0000-0000-0000-000000000027', '02', 'Buenos Aires', '999', null, '00001', '00001', 'E9', 'Fiscal-only scope', 9);
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL'),
-('wu2-pba-municipal', 'WU2 PBA MUNICIPAL'), ('wu2-pba-provincial', 'WU2 PBA PROVINCIAL');
+('wu2-pba-municipal', 'WU2 PBA MUNICIPAL'), ('wu2-pba-provincial', 'WU2 PBA PROVINCIAL'),
+('FUERZA_PATRIA', 'ALIANZA FUERZA PATRIA'),
+('LLA_PRO_ALLIANCE', 'ALIANZA LA LIBERTAD AVANZA'),
+('SOMOS_BUENOS_AIRES', 'ALIANZA SOMOS BUENOS AIRES'),
+('PARTIDO_LIBERTARIO', 'PARTIDO LIBERTARIO'), ('POTENCIA', 'ALIANZA POTENCIA'),
+('UNION_Y_LIBERTAD', 'ALIANZA UNION Y LIBERTAD'), ('NUEVOS_AIRES', 'ALIANZA NUEVOS AIRES'),
+('POLITICA_OBRERA', 'PARTIDO POLITICA OBRERA'), ('TIEMPO_DE_TODOS', 'PARTIDO TIEMPO DE TODOS'),
+('CONSTRUYENDO_PORVENIR', 'CONSTRUYENDO PORVENIR'),
+('MOVIMIENTO_SOCIALISTA', 'MOVIMIENTO AVANZADA SOCIALISTA'),
+('ES_CON_VOS', 'ALIANZA ES CON VOS ES CON NOSOTROS'), ('VALORES_REPUBLICANOS', 'VALORES REPUBLICANOS'),
+('FIT', 'FRENTE DE IZQUIERDA'), ('UNION_LIBERAL', 'UNION LIBERAL'),
+('FRENTE_PATRIOTA_FEDERAL', 'FRENTE PATRIOTA FEDERAL'),
+('ACCION_COMUNAL_TIGRE', 'ACCION COMUNAL DEL PARTIDO DE TIGRE'),
+('OPCION_VECINAL_TIGRE', 'OPCION VECINAL PARA EL PROGRESO DE TIGRE');
 insert into party_mapping (
   year, jurisdiction, category, list_id, canonical_party_id, verified
 ) values
@@ -45,7 +60,37 @@ insert into party_mapping (
   (2023, 'national', 'DIPUTADO NACIONAL', '20135', 'wu1-canonical', true),
   (2023, 'coronel_rosales_municipal', 'CONCEJALES', '135', 'wu1-municipal', true),
   (2025, 'coronel_rosales_municipal', 'CONCEJALES', '2206', 'wu2-pba-municipal', true),
-  (2025, 'pba_provincial', 'DIPUTADOS PROVINCIALES', '2206', 'wu2-pba-provincial', true);
+  (2025, 'pba_provincial', 'DIPUTADOS PROVINCIALES', '2206', 'wu2-pba-provincial', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2200', 'FUERZA_PATRIA', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2206', 'LLA_PRO_ALLIANCE', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2204', 'SOMOS_BUENOS_AIRES', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '1006', 'PARTIDO_LIBERTARIO', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2201', 'POTENCIA', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2207', 'UNION_Y_LIBERTAD', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '974', 'POLITICA_OBRERA', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '980', 'TIEMPO_DE_TODOS', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '1003', 'CONSTRUYENDO_PORVENIR', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '959', 'MOVIMIENTO_SOCIALISTA', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2202', 'ES_CON_VOS', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '1008', 'VALORES_REPUBLICANOS', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2203', 'FIT', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2208', 'UNION_LIBERAL', true),
+  (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '963', 'FRENTE_PATRIOTA_FEDERAL', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2200', 'FUERZA_PATRIA', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2206', 'LLA_PRO_ALLIANCE', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2204', 'SOMOS_BUENOS_AIRES', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '1006', 'PARTIDO_LIBERTARIO', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2201', 'POTENCIA', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2207', 'UNION_Y_LIBERTAD', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2205', 'NUEVOS_AIRES', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '974', 'POLITICA_OBRERA', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '980', 'TIEMPO_DE_TODOS', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '1003', 'CONSTRUYENDO_PORVENIR', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '959', 'MOVIMIENTO_SOCIALISTA', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '193', 'ACCION_COMUNAL_TIGRE', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2203', 'FIT', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '981', 'OPCION_VECINAL_TIGRE', true),
+  (2025, 'tigre_municipal', 'CONCEJALES', '2208', 'UNION_LIBERAL', true);
 insert into result_row (
   election_id, jurisdiction_id, category_id, granularity, list_id, votes,
   source_kind, archive_entry_id, source_row_index
@@ -76,6 +121,17 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027', 24),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000006', 'seccion', '2206', 101, 'official', 'pba/2025-distrito-027', 25),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000008', 'seccion', '2206', 202, 'official', 'pba/2025-distrito-027', 26);
+insert into result_row (
+  election_id, jurisdiction_id, category_id, granularity, list_id, votes,
+  source_kind, archive_entry_id, source_row_index
+)
+  select '20000000-0000-0000-0000-000000000005'::uuid, '20000000-0000-0000-0000-000000000083'::uuid, '20000000-0000-0000-0000-000000000009'::uuid, 'distrito', list_id, 1, 'official', 'pba/2025-distrito-113', 100 + ordinality
+    from unnest(array['2200','2206','2204','1006','2201','2207','974','980','1003','959','2202','1008','2203','2208','963']) with ordinality as senate(list_id, ordinality)
+  union all
+  select '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000083', '20000000-0000-0000-0000-000000000006', 'distrito', list_id, 1, 'official', 'pba/2025-distrito-113', 115 + ordinality
+    from unnest(array['2200','2206','2204','1006','2201','2207','2205','974','980','1003','959','193','2203','981','2208']) with ordinality as council(list_id, ordinality)
+  union all
+  select '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000083', '20000000-0000-0000-0000-000000000009', 'distrito', null, 99, 'fiscalizacion', 'pba/2025-distrito-113', 131;
 create function pg_temp.schools(p_election uuid default '20000000-0000-0000-0000-000000000001')
 returns jsonb language sql stable as $$ select results_exploration_schools(p_election,
   '20000000-0000-0000-0000-000000000003', '02', '027') $$;
@@ -119,8 +175,9 @@ select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000005',
   '20000000-0000-0000-0000-000000000006', '02'
 )->'secciones',
-  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1}]'::jsonb,
-  'production-shaped PBA section rows recover the conflict-checked canonical same-code name');
+  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1},
+{"code":"113","name":"TIGRE","name_status":"present","name_variant_count":1}]'::jsonb,
+  'production-shaped PBA section rows recover conflict-checked canonical same-code names');
 savepoint selected_facet_name_precedence;
 update jurisdiction set distrito_name = 'Selected Third District'
 where id = '20000000-0000-0000-0000-000000000013';
@@ -164,16 +221,18 @@ select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000005',
   '20000000-0000-0000-0000-000000000006', '02'
 )->'secciones',
-  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1}]'::jsonb,
-  'blank selected and global section names are ignored while one trimmed real name remains present');
+  '[{"code":"027","name":"Coronel de Marina L. Rosales","name_status":"present","name_variant_count":1},
+{"code":"113","name":"TIGRE","name_status":"present","name_variant_count":1}]'::jsonb,
+  'blank selected and global section names are ignored while real sibling names remain present');
 update jurisdiction set seccion_name = '   '
 where id = '20000000-0000-0000-0000-000000000010';
 select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000005',
   '20000000-0000-0000-0000-000000000006', '02'
 )->'secciones',
-  '[{"code":"027","name":null,"name_status":"missing","name_variant_count":0}]'::jsonb,
-  'a section with only blank selected and global names remains missing');
+  '[{"code":"027","name":null,"name_status":"missing","name_variant_count":0},
+{"code":"113","name":"TIGRE","name_status":"present","name_variant_count":1}]'::jsonb,
+  'a section with only blank selected and global names remains missing without affecting siblings');
 rollback to savepoint blank_section_facet_names;
 select is(results_exploration_facets(
   '20000000-0000-0000-0000-000000000001',
@@ -434,6 +493,103 @@ from (values
   ('PBA provincial outside curated section', 'pba/2025-distrito-028', 2025, 'provinciales', 'DIPUTADOS PROVINCIALES', '02', '028', null),
   ('unmapped PBA category', 'pba/2025-distrito-027', 2025, 'provinciales', 'DIPUTADO NACIONAL', '02', '027', null)
 ) cases(label,archive_entry_id,year,round,category,distrito_code,seccion_code,expected);
+select is(results_exploration_party_jurisdiction(
+  archive_entry_id, year, round, category, distrito_code, seccion_code), expected,
+  'distrito 113 mapping is exact and closed: ' || label)
+from (values
+  ('Senate', 'pba/2025-distrito-113', 2025, 'provinciales', 'SENADORES PROVINCIALES', '02', '113', 'pba_provincial'),
+  ('Council', 'pba/2025-distrito-113', 2025, 'provinciales', 'CONCEJALES', '02', '113', 'tigre_municipal'),
+  ('wrong source', 'pba/2025-distrito-114', 2025, 'provinciales', 'CONCEJALES', '02', '113', null),
+  ('wrong category', 'pba/2025-distrito-113', 2025, 'provinciales', 'DIPUTADOS PROVINCIALES', '02', '113', null),
+  ('wrong section', 'pba/2025-distrito-113', 2025, 'provinciales', 'CONCEJALES', '02', '027', null),
+  ('wrong district', 'pba/2025-distrito-113', 2025, 'provinciales', 'CONCEJALES', '03', '113', null),
+  ('wrong year', 'pba/2025-distrito-113', 2024, 'provinciales', 'CONCEJALES', '02', '113', null),
+  ('wrong round', 'pba/2025-distrito-113', 2025, 'generales', 'CONCEJALES', '02', '113', null)
+) cases(label,archive_entry_id,year,round,category,distrito_code,seccion_code,expected);
+select is((select jsonb_build_object(
+    'status', payload->'status', 'level', payload->'level',
+    'source_granularity', payload->'source_granularity', 'source_kind', payload->'source_kind',
+    'total_votes', payload->'total_votes', 'archive_entry_ids', payload->'archive_entry_ids')
+  from (select results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000009',
+    '02', '113') payload) response),
+  '{"status":"ok","level":"seccion","source_granularity":"seccion","source_kind":"official","total_votes":15,"archive_entry_ids":["pba/2025-distrito-113"]}'::jsonb,
+  'public RPC reaches official distrito 113 Senate rows only as normalized section results');
+select is(results_exploration_official(
+  '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000009',
+  '02', '113')->'source_audit', '[{"kind":"official","rows":15,"votes":15}]'::jsonb,
+  'distrito 113 Senate source audit contains official rows only');
+select is(results_exploration_official(
+  '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000009',
+  '02', '113')->'source_exclusions', '[{"kind":"fiscalizacion","rows":1,"votes":99}]'::jsonb,
+  'distrito 113 Senate excludes non-official rows without mixing figures');
+select is((select jsonb_build_object(
+    'canonical', count(*) filter (where party->>'identity_status'='canonical'),
+    'unmapped', count(*) filter (where party->>'identity_status'='unmapped'))
+  from jsonb_array_elements(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000009',
+    '02', '113')->'parties') party), '{"canonical":15,"unmapped":0}'::jsonb,
+  'distrito 113 Senate resolves all 15 exact approved party mappings');
+select is((select jsonb_agg(party->>'display_name' order by party->>'display_name')
+  from jsonb_array_elements(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000009',
+    '02', '113')->'parties') party),
+  '["ALIANZA ES CON VOS ES CON NOSOTROS","ALIANZA FUERZA PATRIA","ALIANZA LA LIBERTAD AVANZA","ALIANZA POTENCIA","ALIANZA SOMOS BUENOS AIRES","ALIANZA UNION Y LIBERTAD","CONSTRUYENDO PORVENIR","FRENTE DE IZQUIERDA","FRENTE PATRIOTA FEDERAL","MOVIMIENTO AVANZADA SOCIALISTA","PARTIDO LIBERTARIO","PARTIDO POLITICA OBRERA","PARTIDO TIEMPO DE TODOS","UNION LIBERAL","VALORES REPUBLICANOS"]'::jsonb,
+  'distrito 113 Senate exposes exact approved canonical display names');
+select is((select jsonb_build_object(
+    'status', payload->'status', 'level', payload->'level',
+    'source_granularity', payload->'source_granularity', 'source_kind', payload->'source_kind',
+    'total_votes', payload->'total_votes', 'archive_entry_ids', payload->'archive_entry_ids')
+  from (select results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+    '02', '113') payload) response),
+  '{"status":"ok","level":"seccion","source_granularity":"seccion","source_kind":"official","total_votes":15,"archive_entry_ids":["pba/2025-distrito-113"]}'::jsonb,
+  'public RPC reaches official distrito 113 Council rows only as normalized section results');
+select is(results_exploration_official(
+  '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+  '02', '113')->'source_audit', '[{"kind":"official","rows":15,"votes":15}]'::jsonb,
+  'distrito 113 Council source audit contains official rows only');
+select is(results_exploration_official(
+  '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+  '02', '113')->'source_exclusions', '[]'::jsonb,
+  'distrito 113 Council has no mixed source rows');
+select is((select jsonb_build_object(
+    'canonical', count(*) filter (where party->>'identity_status'='canonical'),
+    'unmapped', count(*) filter (where party->>'identity_status'='unmapped'))
+  from jsonb_array_elements(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+    '02', '113')->'parties') party), '{"canonical":15,"unmapped":0}'::jsonb,
+  'distrito 113 Council resolves all 15 exact approved party mappings');
+select is((select jsonb_agg(party->>'display_name' order by party->>'display_name')
+  from jsonb_array_elements(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+    '02', '113')->'parties') party),
+  '["ACCION COMUNAL DEL PARTIDO DE TIGRE","ALIANZA FUERZA PATRIA","ALIANZA LA LIBERTAD AVANZA","ALIANZA NUEVOS AIRES","ALIANZA POTENCIA","ALIANZA SOMOS BUENOS AIRES","ALIANZA UNION Y LIBERTAD","CONSTRUYENDO PORVENIR","FRENTE DE IZQUIERDA","MOVIMIENTO AVANZADA SOCIALISTA","OPCION VECINAL PARA EL PROGRESO DE TIGRE","PARTIDO LIBERTARIO","PARTIDO POLITICA OBRERA","PARTIDO TIEMPO DE TODOS","UNION LIBERAL"]'::jsonb,
+  'distrito 113 Council exposes exact approved canonical display names');
+select is((select jsonb_build_object(
+    'status', payload->'status', 'reason', payload->'reason',
+    'exclusions', payload->'exclusions', 'source_exclusions', payload->'source_exclusions',
+    'has_figures', payload ?| array['total_votes','parties','source_audit','archive_entry_ids','mesa_count'])
+  from (select results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+    '02', p_requested_level=>'distrito') payload) response),
+  '{"status":"source_unavailable","reason":"official rows excluded from distrito aggregation","exclusions":[{"reason":"pba_partido_rows_not_province_aggregate","rows":16,"votes":116}],"source_exclusions":[],"has_figures":false}'::jsonb,
+  'distrito request refuses Tigre partido rows instead of rendering them as Buenos Aires totals');
+savepoint pba113_incorrect_mapping;
+update party_mapping set verified=false
+where year=2025 and jurisdiction='tigre_municipal' and category='CONCEJALES' and list_id='2200';
+select is((select jsonb_build_object(
+    'canonical', count(*) filter (where party->>'identity_status'='canonical'),
+    'unmapped', jsonb_agg(jsonb_build_object(
+      'identity_status',party->'identity_status','list_id',party->'list_id',
+      'canonical_party_id',party->'canonical_party_id','display_name',party->'display_name'))
+      filter (where party->>'identity_status'='unmapped'))
+  from jsonb_array_elements(results_exploration_official(
+    '20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000006',
+    '02', '113')->'parties') party),
+  '{"canonical":14,"unmapped":[{"identity_status":"unmapped","list_id":"2200","canonical_party_id":null,"display_name":null}]}'::jsonb,
+  'missing or unverified distrito 113 mapping stays visibly unmapped and keeps its list id');
+rollback to savepoint pba113_incorrect_mapping;
 select is(results_exploration_official(
     '20000000-0000-0000-0000-000000000005',
     '20000000-0000-0000-0000-000000000006', '02', '027') - 'source_exclusions',

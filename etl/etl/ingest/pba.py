@@ -74,6 +74,7 @@ PBA_HOST = "www.juntaelectoral.gba.gov.ar"
 # can archive/open them, never parsed by this module.
 PBA_ALLOWED_PATHS: tuple[str, ...] = (
     "/escrutinio-definitivo-2025/distrito_027.html",
+    "/escrutinio-definitivo-2025/distrito_113.html",
     "/escrutinio-definitivo-2025/concejales/2025027.pdf",
     "/escrutinio-definitivo-2025/consejeros/2025027.pdf",
     "/escrutinio-definitivo-2025/concejales_distri/2025027.pdf",
@@ -149,9 +150,10 @@ GRANULARITY_ACTUAL = "distrito"
 
 _CATEGORY_HEADER_MATCH: tuple[tuple[str, str], ...] = (
     ("Diputados", "DIPUTADOS PROVINCIALES"),
+    ("Senadores", "SENADORES PROVINCIALES"),
     ("Concejales", "CONCEJALES"),
 )
-_EXPECTED_CATEGORIES = frozenset(category for _, category in _CATEGORY_HEADER_MATCH)
+_PROVINCIAL_CHAMBER_CATEGORIES = frozenset({"DIPUTADOS PROVINCIALES", "SENADORES PROVINCIALES"})
 
 
 class _DistritoTableParser(HTMLParser):
@@ -404,13 +406,23 @@ def ingest_pba(
     source_names = JurisdictionNames(distrito=distrito_name)
 
     category_columns = _category_column_indices(parser.headers)
-    missing_categories = _EXPECTED_CATEGORIES - category_columns.keys()
-    if missing_categories:
-        recognized_categories = sorted(category_columns)
+    recognized_categories = sorted(category_columns)
+    if "CONCEJALES" not in category_columns:
         raise PbaSchemaError(
-            "incomplete PBA category schema; missing categories: "
-            f"{', '.join(sorted(missing_categories))}; recognized categories: "
-            f"{', '.join(recognized_categories) if recognized_categories else '(none)'}"
+            "incomplete PBA category schema; missing categories: CONCEJALES; "
+            f"recognized categories: {', '.join(recognized_categories) or '(none)'}"
+        )
+    provincial_chambers = _PROVINCIAL_CHAMBER_CATEGORIES & category_columns.keys()
+    if len(provincial_chambers) != 1:
+        if not provincial_chambers:
+            raise PbaSchemaError(
+                "incomplete PBA category schema; missing exactly one provincial chamber "
+                "(DIPUTADOS PROVINCIALES or SENADORES PROVINCIALES); recognized categories: "
+                f"{', '.join(recognized_categories) or '(none)'}"
+            )
+        raise PbaSchemaError(
+            "conflicting PBA category schema; both provincial chambers are present "
+            f"({', '.join(sorted(provincial_chambers))}); refusing to pick one"
         )
 
     rows: list[PbaRow] = []
@@ -420,32 +432,34 @@ def ingest_pba(
     # while a SHORT ROW is malformed HTML, i.e. schema drift arriving as
     # absence. Reported together as one total, the drift would have hidden
     # inside the expected count.
-    excluded: dict[str, int] = {}
+    excluded: dict[tuple[str, str], int] = {}
     excluded_short_row_columns: set[str] = set()
 
-    def exclude(reason: str) -> None:
-        excluded[reason] = excluded.get(reason, 0) + 1
+    def exclude(category: str, reason: str) -> None:
+        key = (category, reason)
+        excluded[key] = excluded.get(key, 0) + 1
 
     for row_index, cells in enumerate(parser.rows):
         list_id = cells[0].strip() if cells else ""
         if not list_id:
-            # "VOTOS POSITIVOS" / "VOTO EN BLANCO" summary rows carry an
-            # empty list-id cell — not a normalized per-list result.
-            exclude("summary row (empty list-id cell)")
+            # Summary rows carry one non-result vote cell per category. Count
+            # each cell so accepted, absent and summary cells reconcile.
+            for category in category_columns:
+                exclude(category, "summary row (empty list-id cell)")
             continue
 
         for category, column in category_columns.items():
             if column >= len(cells):
                 # The header declared this category's column and the row does
                 # not reach it: the table changed shape under us.
-                exclude("short row (declared category column missing)")
+                exclude(category, "short row (declared category column missing)")
                 excluded_short_row_columns.add(category)
                 continue
             raw_votes = cells[column].strip()
             votes = _parse_votes(raw_votes)
             if isinstance(votes, _UnreadableVote):
                 reason = "unreadable_vote_cell"
-                exclude(reason)
+                exclude(category, reason)
                 quarantined.append(
                     QuarantinedPbaRow(
                         archive_entry_id=archive_entry_id,
@@ -461,7 +475,7 @@ def ingest_pba(
             if votes is None:
                 # "-" or an empty cell: that list did not run in that
                 # category, which is NOT zero votes, so no row is produced.
-                exclude('list absent from this category ("-" or empty cell)')
+                exclude(category, 'list absent from this category ("-" or empty cell)')
                 continue
 
             result = make_result_row(
@@ -488,7 +502,8 @@ def ingest_pba(
     for (distrito, category, list_id), group in duplicates.items():
         kind = "conflicting" if len({row.votes for row in group}) > 1 else "exact"
         reason = f"{kind}_duplicate_semantic_result"
-        excluded[reason] = excluded.get(reason, 0) + len(group)
+        key = (category, reason)
+        excluded[key] = excluded.get(key, 0) + len(group)
         quarantined.append(
             QuarantinedPbaRow(
                 archive_entry_id=archive_entry_id,
@@ -504,8 +519,10 @@ def ingest_pba(
 
     if excluded:
         report = "; ".join(
-            f"{reason}: {count}"
-            for reason, count in sorted(excluded.items(), key=lambda kv: -kv[1])
+            f"{category} / {reason}: {count}"
+            for (category, reason), count in sorted(
+                excluded.items(), key=lambda kv: (-kv[1], kv[0])
+            )
         )
         if duplicates:
             report += " -- duplicate evidence: " + "; ".join(
@@ -669,10 +686,16 @@ def load_pba_rows(
             f"{reason}: {count}"
             for reason, count in sorted(Counter(q.reason for q in resolution.quarantined).items())
         )
+        categories = "; ".join(
+            f"{category}: {count}"
+            for category, count in sorted(
+                Counter(q.category for q in resolution.quarantined).items()
+            )
+        )
         print(
             f"quarantined {len(resolution.quarantined)} PBA row(s) with no curated "
             f"jurisdiction_crosswalk entry for distrito(s) {', '.join(codes)} -- "
-            f"reasons: {reasons} -- not written to result_row",
+            f"categories: {categories} -- reasons: {reasons} -- not written to result_row",
             file=sys.stderr,
         )
     rows = list(resolution.resolved)

@@ -464,6 +464,12 @@ def test_crosswalk_loader_allows_different_secciones_in_one_national_distrito(
     assert len(load_crosswalk(path).jurisdictions) == 2
 
 
+def test_tigre_resolves_to_the_exact_approved_national_jurisdiction() -> None:
+    resolved = _load_crosswalk_table().resolve_pba("113")
+
+    assert resolved == JurisdictionCrosswalkEntry("113", "02", "113", "TIGRE")
+
+
 def test_coronel_rosales_resolves_across_numbering_schemes() -> None:
     table = _load_crosswalk_table()
 
@@ -581,9 +587,9 @@ def test_a_national_code_absent_from_the_crosswalk_is_reported_not_passed() -> N
     `resolve_jurisdictions` used to quarantine a national row whose
     (distrito, seccion) had no curated entry. It had no production caller,
     and wiring it in would have discarded the corpus: `crosswalk.yaml` holds
-    ONE entry, the PBA-to-national translation for distrito 027, because PBA
-    is the only source writing codes in a foreign scheme. National codes are
-    already national, so every distrito except 02/027 resolves to nothing.
+    only reviewed PBA-to-national translations, because PBA is the only source
+    writing codes in a foreign scheme. National codes are already national, so
+    uncurated national pairs resolve to nothing.
     What the codes are checked against instead is this command.
     """
     rows = ingest_national(
@@ -830,8 +836,8 @@ def test_distrito_lookup_normalizes_without_mapping_an_incomplete_row() -> None:
     """Distrito lookup normalizes codes but cannot supply a missing seccion."""
     table = _load_crosswalk_table()
 
-    assert len(table.entries_in_distrito("2")) == 1
-    assert len(table.entries_in_distrito("02")) == 1
+    assert len(table.entries_in_distrito("2")) == 2
+    assert len(table.entries_in_distrito("02")) == 2
     assert table.entries_in_distrito("99") == []
     unmapped = find_unmapped_jurisdictions([("2", None)], table)
     assert [entry.code for entry in unmapped] == ["02/(sin seccion)"]
