@@ -158,6 +158,7 @@ function runOwnedSqlEvidence(
 	projectId: string,
 	sql: string,
 	label: string,
+	timeout = 120_000,
 ): void {
 	const result = spawnSync(
 		"docker",
@@ -180,7 +181,7 @@ function runOwnedSqlEvidence(
 			input: sql,
 			encoding: "utf8",
 			stdio: ["pipe", "pipe", "pipe"],
-			timeout: 120_000,
+			timeout,
 		},
 	);
 	if (result.error || result.status !== 0)
@@ -762,6 +763,14 @@ async function executeGate(
 				supabasePorts[1]!,
 			);
 		},
+		runSetupProof: async (proof) => {
+			runOwnedSqlEvidence(
+				ownership.projectId,
+				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+				proof.label,
+				proof.timeoutMs,
+			);
+		},
 		runPgTapProof: async (proof) => {
 			runEvidence(
 				"supabase",
@@ -898,7 +907,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 		plan.mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY
 			? "Rollback proofs passed: 2 SQL processes, cleanup complete\n"
 			: plan.mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY
-				? "Scale proof passed: pgTAP/EXPLAIN and cleanup complete\n"
+				? "Scale proof passed: fixture setup, pgTAP/EXPLAIN, and cleanup complete\n"
 				: plan.mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY
 					? "Release proof passed: coverage scope binding, rollback/reapply, scale, pgTAP, and cleanup complete\n"
 					: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",

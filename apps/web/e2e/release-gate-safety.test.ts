@@ -117,6 +117,14 @@ describe("migration release-gate integration", () => {
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
 		).toBe(38);
+		expect(plan.setupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_setup.sql",
+				label: "disposable scale fixture setup",
+				timeoutMs: 600_000,
+				beforePgTapPath: "tests/results_exploration_scale.sql",
+			},
+		]);
 		expect(plan.pgTapProofs).toContainEqual({
 			path: "tests/results_coverage_scope_binding.sql",
 			label: "disposable coverage-scope-binding pgTAP",
@@ -158,6 +166,9 @@ describe("migration release-gate integration", () => {
 					SERVICE_ROLE_KEY: "service",
 				};
 			},
+			runSetupProof: async (proof) => {
+				trace.push(`setup:${proof.label}`);
+			},
 			runPgTapProof: async (proof) => {
 				trace.push(`pgTAP:${proof.label}`);
 			},
@@ -172,6 +183,7 @@ describe("migration release-gate integration", () => {
 			"production-migrations",
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
+			"setup:disposable scale fixture setup",
 			"pgTAP:disposable scale/EXPLAIN proof",
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"rollback:disposable rollback/reapply proof",
@@ -198,6 +210,9 @@ describe("migration release-gate integration", () => {
 						SERVICE_ROLE_KEY: "service",
 					};
 				},
+				runSetupProof: async (proof) => {
+					trace.push(`setup:${proof.label}`);
+				},
 				runPgTapProof: async (proof) => {
 					trace.push(`pgTAP:${proof.label}`);
 					if (proof.path === "tests/results_exploration_scale.sql")
@@ -215,6 +230,7 @@ describe("migration release-gate integration", () => {
 			"production-migrations",
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
+			"setup:disposable scale fixture setup",
 			"pgTAP:disposable scale/EXPLAIN proof",
 		]);
 	});
@@ -266,16 +282,61 @@ describe("migration release-gate integration", () => {
 	it("inspects only the scale proof for focused plan diagnosis", async () => {
 		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.SCALE_PROOF_ONLY);
+		expect(plan.setupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_setup.sql",
+				label: "disposable scale fixture setup",
+				timeoutMs: 600_000,
+				beforePgTapPath: "tests/results_exploration_scale.sql",
+			},
+		]);
 		expect(plan.pgTapProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale.sql",
 				label: "disposable scale/EXPLAIN proof",
-				timeoutMs: 600_000,
+				timeoutMs: 180_000,
 			},
 		]);
 		expect(plan.rollbackReapplyProofs).toEqual([]);
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
+	});
+	it("runs scale-only setup and proof without unrelated release phases", async () => {
+		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
+		const trace: string[] = [];
+		await runProductionReleasePhases(plan, {
+			runProductionMigrations: async () => {
+				trace.push("production-migrations");
+			},
+			validateStackStatus: async () => {
+				trace.push("stack-status");
+				return {
+					API_URL: "http://127.0.0.1:54321",
+					DB_URL:
+						"postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+					ANON_KEY: "anon",
+					SERVICE_ROLE_KEY: "service",
+				};
+			},
+			runSetupProof: async (proof) => {
+				trace.push(`setup:${proof.label}`);
+			},
+			runPgTapProof: async (proof) => {
+				trace.push(`pgTAP:${proof.label}`);
+			},
+			runRollbackReapplyProof: async (proof) => {
+				trace.push(`rollback:${proof.label}`);
+			},
+			installSyntheticMigration: async (migration) => {
+				trace.push(`synthetic:${migration.fileName}`);
+			},
+		});
+		expect(trace).toEqual([
+			"production-migrations",
+			"stack-status",
+			"setup:disposable scale fixture setup",
+			"pgTAP:disposable scale/EXPLAIN proof",
+		]);
 	});
 	it("retains exact pgTAP stdout when a focused proof fails", () => {
 		expect(
@@ -287,6 +348,7 @@ describe("migration release-gate integration", () => {
 	it("inspects rollback proofs without browser or pgTAP work", async () => {
 		const plan = await inspectReleaseGatePlan(["--rollback-proofs-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY);
+		expect(plan.setupProofs).toEqual([]);
 		expect(plan.pgTapProofs).toEqual([]);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(false);

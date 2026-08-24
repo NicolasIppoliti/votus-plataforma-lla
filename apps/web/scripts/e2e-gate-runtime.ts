@@ -50,6 +50,13 @@ export interface ReleaseGatePgTapProof {
 	timeoutMs: number;
 }
 
+export interface ReleaseGateSetupProof {
+	path: string;
+	label: string;
+	timeoutMs: number;
+	beforePgTapPath: string;
+}
+
 export interface ReleaseGateSqlProof {
 	path: string;
 	label: string;
@@ -59,6 +66,7 @@ export interface ReleaseGatePlan {
 	mode: ReleaseGateMode;
 	migrationVersions: readonly string[];
 	syntheticMigration: ReleaseGateSyntheticMigration;
+	setupProofs: readonly ReleaseGateSetupProof[];
 	pgTapProofs: readonly ReleaseGatePgTapProof[];
 	rollbackReapplyProofs: readonly ReleaseGateSqlProof[];
 	requireBrowserCapability: boolean;
@@ -73,6 +81,7 @@ export interface ReleaseGateCliDependencies {
 export interface ReleaseGateProductionPhaseEffects {
 	runProductionMigrations(): Promise<void>;
 	validateStackStatus(): Promise<StackStatus>;
+	runSetupProof(proof: ReleaseGateSetupProof): Promise<void>;
 	runPgTapProof(proof: ReleaseGatePgTapProof): Promise<void>;
 	runRollbackReapplyProof(proof: ReleaseGateSqlProof): Promise<void>;
 	installSyntheticMigration(
@@ -139,6 +148,15 @@ export function assertSyntheticMigrationDoesNotCollide(
 		);
 }
 
+const SETUP_PROOFS: readonly ReleaseGateSetupProof[] = [
+	{
+		path: "tests/results_exploration_scale_setup.sql",
+		label: "disposable scale fixture setup",
+		timeoutMs: 600_000,
+		beforePgTapPath: "tests/results_exploration_scale.sql",
+	},
+];
+
 const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/results_exploration.sql",
@@ -148,7 +166,7 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/results_exploration_scale.sql",
 		label: "disposable scale/EXPLAIN proof",
-		timeoutMs: 600_000,
+		timeoutMs: 180_000,
 	},
 	{
 		path: "tests/results_coverage_scope_binding.sql",
@@ -190,6 +208,13 @@ export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 		mode,
 		migrationVersions: [...MIGRATION_VERSIONS],
 		syntheticMigration: { ...SYNTHETIC_MIGRATION },
+		setupProofs: rollbackProofsOnly
+			? []
+			: SETUP_PROOFS.filter(
+					(proof) =>
+						!scaleProofOnly ||
+						proof.beforePgTapPath === "tests/results_exploration_scale.sql",
+				).map((proof) => ({ ...proof })),
 		pgTapProofs: rollbackProofsOnly
 			? []
 			: PG_TAP_PROOFS.filter(
@@ -212,10 +237,16 @@ export async function runProductionReleasePhases(
 ): Promise<StackStatus> {
 	await effects.runProductionMigrations();
 	const stack = await effects.validateStackStatus();
-	for (const proof of plan.pgTapProofs) await effects.runPgTapProof(proof);
+	for (const proof of plan.pgTapProofs) {
+		for (const setup of plan.setupProofs)
+			if (setup.beforePgTapPath === proof.path)
+				await effects.runSetupProof(setup);
+		await effects.runPgTapProof(proof);
+	}
 	for (const proof of plan.rollbackReapplyProofs)
 		await effects.runRollbackReapplyProof(proof);
-	await effects.installSyntheticMigration(plan.syntheticMigration);
+	if (plan.mode !== RELEASE_GATE_MODE.SCALE_PROOF_ONLY)
+		await effects.installSyntheticMigration(plan.syntheticMigration);
 	return stack;
 }
 
