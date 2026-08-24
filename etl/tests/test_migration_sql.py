@@ -802,11 +802,13 @@ def test_0021_coverage_down_drops_only_coverage_objects() -> None:
 
 
 def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> None:
+    setup_sql = (
+        (SQL_TESTS / "results_exploration_scale_setup.sql").read_text(encoding="utf-8").lower()
+    )
     sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    assert "discard plans;" in setup_sql
     for required in (
         "select plan(31);",
-        "discard plans;",
-        "session-cached plans",
         "explain (analyze, buffers, format json)",
         "representative_result_rows",
         "execution time",
@@ -848,11 +850,10 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
     assert "rollback;" in cleanup
     for table in ("result_row", "jurisdiction", "category", "election"):
         assert f"delete from {table} where" in cleanup
-    # The proof relaxes the 0002 source-kind contract to exercise unknown-source auditing.
-    # Cleanup must hand the next proof in the same stack the original schema back.
-    relaxed = sql.split("select * from finish();", 1)[0]
-    assert "drop constraint result_row_source_kind_check" in relaxed
-    assert "alter column source_kind drop not null" in relaxed
+    # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
+    # Proof cleanup must hand the next phase in the same stack the original schema back.
+    assert "drop constraint result_row_source_kind_check" in setup_sql
+    assert "alter column source_kind drop not null" in setup_sql
     assert "alter column source_kind set not null" in cleanup
     assert "add constraint result_row_source_kind_check" in cleanup
     assert "check (source_kind in ('official', 'fiscalizacion'))" in cleanup
@@ -863,10 +864,14 @@ def test_results_exploration_scale_proof_is_bounded_and_reports_real_plans() -> 
 
 
 def test_results_exploration_coverage_scale_proof_matches_production_shape() -> None:
-    sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    setup_sql = (
+        (SQL_TESTS / "results_exploration_scale_setup.sql").read_text(encoding="utf-8").lower()
+    )
+    proof_sql = (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower()
+    coverage_proof = " ".join(proof_sql.split())
     marker = "-- issue #54 production-shaped coverage proof"
-    assert marker in sql
-    coverage_proof = " ".join(sql.split(marker, 1)[1].split())
+    assert marker in setup_sql
+    coverage_setup = " ".join(setup_sql.split(marker, 1)[1].split())
 
     for required in (
         "2025, 'legislativas'",
@@ -875,6 +880,9 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
         "generate_series(1, 153) official_mesa",
         "generate_series(1, 93) covered_mesa",
         "generate_series(1, 15) result_position",
+    ):
+        assert required in coverage_setup
+    for required in (
         "2295::bigint",
         "1395::bigint",
         "results_exploration_coverage(",
@@ -892,7 +900,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
         "shared hit blocks",
         "shared read blocks",
     ):
-        assert required in coverage_proof
+        assert required in proof_sql
 
     assert "'is_random_sample', false" in coverage_proof
     assert re.search(r"coverage_production_rpc[^;]+<=\s*15000", coverage_proof)
@@ -1425,16 +1433,25 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
     assert "results_exploration_official_0030" not in down
     assert not any(word in down for word in ("delete from", "update result_row", "truncate"))
 
-    scale = " ".join(
+    scale_setup = " ".join(
+        (SQL_TESTS / "results_exploration_scale_setup.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    scale_proof = " ".join(
         (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
     )
     for evidence in (
         "from generate_series(1,78962) unit",
         "from generate_series(1,581400) row_number",
+        "fiscalizacion/production-district-shape",
+    ):
+        assert evidence in scale_setup
+    for evidence in (
         "source_shapes',count(distinct",
         "sections',count(distinct",
         "canonical_party_id='scale-canonical' and verified",
-        "fiscalizacion/production-district-shape",
         "results_exploration_official(",
         "results_exploration_official_0035(",
         "results_exploration_official_0034(",
@@ -1447,7 +1464,7 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "null and literal chr(1) sections preserve the full reference public jsonb payload",
         "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
     ):
-        assert evidence in scale
+        assert evidence in scale_proof
 
 
 def test_0033_materializes_narrow_selected_rows_for_party_and_metadata_aggregation() -> None:
