@@ -34,6 +34,7 @@ import {
 	formatPgTapFailure,
 	cleanupReleaseGate,
 	establishOwnership,
+	planOwnedSqlInvocation,
 	reserveUniquePorts,
 	runOwnedCleanup,
 	runProductionReleasePhases,
@@ -117,11 +118,44 @@ describe("migration release-gate integration", () => {
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
 		).toBe(38);
-		expect(plan.pgTapProofs).toContainEqual({
-			path: "tests/results_coverage_scope_binding.sql",
-			label: "disposable coverage-scope-binding pgTAP",
-			timeoutMs: 120_000,
-		});
+		expect(plan.setupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_setup.sql",
+				label: "disposable scale fixture setup",
+				timeoutMs: 600_000,
+				beforePgTapPath: "tests/results_exploration_scale.sql",
+			},
+		]);
+		expect(plan.pgTapProofs).toEqual([
+			{
+				path: "tests/results_exploration.sql",
+				label: "disposable results-exploration pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/results_exploration_scale.sql",
+				label: "disposable scale payload/parity pgTAP",
+				timeoutMs: 360_000,
+			},
+			{
+				path: "tests/results_exploration_scale_plans.sql",
+				label: "disposable scale EXPLAIN/plan pgTAP",
+				timeoutMs: 360_000,
+			},
+			{
+				path: "tests/results_coverage_scope_binding.sql",
+				label: "disposable coverage-scope-binding pgTAP",
+				timeoutMs: 120_000,
+			},
+		]);
+		expect(plan.postPgTapCleanupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_cleanup.sql",
+				label: "disposable scale fixture SQL cleanup",
+				timeoutMs: 360_000,
+				afterPgTapPath: "tests/results_exploration_scale_plans.sql",
+			},
+		]);
 		expect(plan.rollbackReapplyProofs).toEqual([
 			{
 				path: "tests/results_exploration_release.sql",
@@ -158,8 +192,14 @@ describe("migration release-gate integration", () => {
 					SERVICE_ROLE_KEY: "service",
 				};
 			},
+			runSetupProof: async (proof) => {
+				trace.push(`setup:${proof.label}`);
+			},
 			runPgTapProof: async (proof) => {
 				trace.push(`pgTAP:${proof.label}`);
+			},
+			runPostPgTapCleanupProof: async (proof) => {
+				trace.push(`post-pgTAP-cleanup:${proof.label}`);
 			},
 			runRollbackReapplyProof: async (proof) => {
 				trace.push(`rollback:${proof.label}`);
@@ -172,7 +212,10 @@ describe("migration release-gate integration", () => {
 			"production-migrations",
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
-			"pgTAP:disposable scale/EXPLAIN proof",
+			"setup:disposable scale fixture setup",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
@@ -198,10 +241,16 @@ describe("migration release-gate integration", () => {
 						SERVICE_ROLE_KEY: "service",
 					};
 				},
+				runSetupProof: async (proof) => {
+					trace.push(`setup:${proof.label}`);
+				},
 				runPgTapProof: async (proof) => {
 					trace.push(`pgTAP:${proof.label}`);
-					if (proof.path === "tests/results_exploration_scale.sql")
-						throw new Error("scale proof failed");
+					if (proof.path === "tests/results_exploration_scale_plans.sql")
+						throw new Error("scale plan proof failed");
+				},
+				runPostPgTapCleanupProof: async (proof) => {
+					trace.push(`post-pgTAP-cleanup:${proof.label}`);
 				},
 				runRollbackReapplyProof: async (proof) => {
 					trace.push(`rollback:${proof.label}`);
@@ -210,12 +259,59 @@ describe("migration release-gate integration", () => {
 					trace.push(`synthetic:${migration.fileName}`);
 				},
 			}),
-		).rejects.toThrow("scale proof failed");
+		).rejects.toThrow("scale plan proof failed");
 		expect(trace).toEqual([
 			"production-migrations",
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
-			"pgTAP:disposable scale/EXPLAIN proof",
+			"setup:disposable scale fixture setup",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+		]);
+	});
+	it("does not retry post-pgTAP cleanup or run later phases when cleanup fails", async () => {
+		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
+		const trace: string[] = [];
+		await expect(
+			runProductionReleasePhases(plan, {
+				runProductionMigrations: async () => {
+					trace.push("production-migrations");
+				},
+				validateStackStatus: async () => {
+					trace.push("stack-status");
+					return {
+						API_URL: "http://127.0.0.1:54321",
+						DB_URL:
+							"postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+						ANON_KEY: "anon",
+						SERVICE_ROLE_KEY: "service",
+					};
+				},
+				runSetupProof: async (proof) => {
+					trace.push(`setup:${proof.label}`);
+				},
+				runPgTapProof: async (proof) => {
+					trace.push(`pgTAP:${proof.label}`);
+				},
+				runPostPgTapCleanupProof: async (proof) => {
+					trace.push(`post-pgTAP-cleanup:${proof.label}`);
+					throw new Error("scale fixture cleanup failed");
+				},
+				runRollbackReapplyProof: async (proof) => {
+					trace.push(`rollback:${proof.label}`);
+				},
+				installSyntheticMigration: async (migration) => {
+					trace.push(`synthetic:${migration.fileName}`);
+				},
+			}),
+		).rejects.toThrow("scale fixture cleanup failed");
+		expect(trace).toEqual([
+			"production-migrations",
+			"stack-status",
+			"setup:disposable scale fixture setup",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 		]);
 	});
 	it.each([
@@ -258,7 +354,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(3);
+		expect(plan.pgTapProofs).toHaveLength(4);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -266,16 +362,79 @@ describe("migration release-gate integration", () => {
 	it("inspects only the scale proof for focused plan diagnosis", async () => {
 		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.SCALE_PROOF_ONLY);
+		expect(plan.setupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_setup.sql",
+				label: "disposable scale fixture setup",
+				timeoutMs: 600_000,
+				beforePgTapPath: "tests/results_exploration_scale.sql",
+			},
+		]);
 		expect(plan.pgTapProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale.sql",
-				label: "disposable scale/EXPLAIN proof",
-				timeoutMs: 180_000,
+				label: "disposable scale payload/parity pgTAP",
+				timeoutMs: 360_000,
+			},
+			{
+				path: "tests/results_exploration_scale_plans.sql",
+				label: "disposable scale EXPLAIN/plan pgTAP",
+				timeoutMs: 360_000,
+			},
+		]);
+		expect(plan.postPgTapCleanupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_cleanup.sql",
+				label: "disposable scale fixture SQL cleanup",
+				timeoutMs: 360_000,
+				afterPgTapPath: "tests/results_exploration_scale_plans.sql",
 			},
 		]);
 		expect(plan.rollbackReapplyProofs).toEqual([]);
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
+	});
+	it("runs scale-only setup and proof without unrelated release phases", async () => {
+		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
+		const trace: string[] = [];
+		await runProductionReleasePhases(plan, {
+			runProductionMigrations: async () => {
+				trace.push("production-migrations");
+			},
+			validateStackStatus: async () => {
+				trace.push("stack-status");
+				return {
+					API_URL: "http://127.0.0.1:54321",
+					DB_URL:
+						"postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+					ANON_KEY: "anon",
+					SERVICE_ROLE_KEY: "service",
+				};
+			},
+			runSetupProof: async (proof) => {
+				trace.push(`setup:${proof.label}`);
+			},
+			runPgTapProof: async (proof) => {
+				trace.push(`pgTAP:${proof.label}`);
+			},
+			runPostPgTapCleanupProof: async (proof) => {
+				trace.push(`post-pgTAP-cleanup:${proof.label}`);
+			},
+			runRollbackReapplyProof: async (proof) => {
+				trace.push(`rollback:${proof.label}`);
+			},
+			installSyntheticMigration: async (migration) => {
+				trace.push(`synthetic:${migration.fileName}`);
+			},
+		});
+		expect(trace).toEqual([
+			"production-migrations",
+			"stack-status",
+			"setup:disposable scale fixture setup",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
+		]);
 	});
 	it("retains exact pgTAP stdout when a focused proof fails", () => {
 		expect(
@@ -287,6 +446,7 @@ describe("migration release-gate integration", () => {
 	it("inspects rollback proofs without browser or pgTAP work", async () => {
 		const plan = await inspectReleaseGatePlan(["--rollback-proofs-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY);
+		expect(plan.setupProofs).toEqual([]);
 		expect(plan.pgTapProofs).toEqual([]);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(false);
@@ -383,7 +543,15 @@ describe("migration release-gate integration", () => {
 					expect.objectContaining({
 						path: "tests/results_exploration_scale.sql",
 					}),
+					expect.objectContaining({
+						path: "tests/results_exploration_scale_plans.sql",
+					}),
 				]),
+				postPgTapCleanupProofs: [
+					expect.objectContaining({
+						path: "tests/results_exploration_scale_cleanup.sql",
+					}),
+				],
 				rollbackReapplyProofs: expect.arrayContaining([
 					expect.objectContaining({
 						path: "tests/results_exploration_release.sql",
@@ -448,6 +616,49 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
+	it("runs owned setup SQL with in-container cancellation before the host fallback", () => {
+		expect(planOwnedSqlInvocation(OWNERSHIP.projectId, 600_000)).toEqual({
+			command: "docker",
+			args: [
+				"exec",
+				"-i",
+				`supabase_db_${OWNERSHIP.projectId}`,
+				"timeout",
+				"-s",
+				"INT",
+				"-k",
+				"10",
+				"600",
+				"psql",
+				"-X",
+				"-v",
+				"ON_ERROR_STOP=1",
+				"-U",
+				"postgres",
+				"-d",
+				"postgres",
+			],
+			hostTimeoutMs: 615_000,
+		});
+	});
+	it.each([
+		"foreign-project",
+		"votus-e2e-owned;sh",
+		"votus-e2e-owned-",
+		`votus-e2e-${"a".repeat(30)}`,
+	])("rejects unsafe owned SQL project ID %s", (projectId) => {
+		expect(() => planOwnedSqlInvocation(projectId, 120_000)).toThrow(
+			"owned SQL project ID is invalid",
+		);
+	});
+	it.each([0, -1_000, 1_001, 601_000, Number.NaN])(
+		"rejects unsafe owned SQL phase timeout %s",
+		(timeoutMs) => {
+			expect(() =>
+				planOwnedSqlInvocation(OWNERSHIP.projectId, timeoutMs),
+			).toThrow("owned SQL phase timeout");
+		},
+	);
 	it("allows a cold CI runner to pull and start Supabase", () => {
 		expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
 	});
@@ -970,6 +1181,72 @@ describe("ReleaseGateReporter", () => {
 			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
 		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
 		expect(JSON.parse(receipt).results).toHaveLength(8);
+	});
+	it("records only a valid failure line for non-passing tests", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => {
+			receipt = content;
+		});
+		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, {
+			status: "failed",
+			errors: [
+				{
+					message: "private error text",
+					stack: "private stack text",
+					snippet: "private source snippet",
+					location: { file: "/private/failure.spec.ts", line: 0, column: 17 },
+				},
+				{
+					message: "fractional private error text",
+					location: { file: "/private/failure.spec.ts", line: 1.5, column: 5 },
+				},
+				{
+					message: "second private error text",
+					location: { file: "/private/failure.spec.ts", line: 42, column: 9 },
+				},
+			],
+		} as TestResult);
+		reporter.onTestEnd(cases[1]!, {
+			status: "passed",
+			errors: [
+				{
+					message: "passing result private error text",
+					location: { file: "/private/passing.spec.ts", line: 24, column: 3 },
+				},
+			],
+		} as TestResult);
+		reporter.onTestEnd(cases[2]!, {
+			status: "failed",
+			errors: [{ message: "location-less private error text" }],
+		} as TestResult);
+		for (const testCase of cases.slice(3))
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+		await reporter.onEnd({ status: "failed" } as FullResult);
+
+		const results = (JSON.parse(receipt) as { results: unknown[] }).results;
+		expect(results[0]).toEqual({
+			spec: EXPECTED_E2E_SPECS[0],
+			status: "failed",
+			failureLine: 42,
+		});
+		expect(results[1]).toEqual({
+			spec: EXPECTED_E2E_SPECS[1],
+			status: "passed",
+		});
+		expect(results[2]).toEqual({
+			spec: EXPECTED_E2E_SPECS[2],
+			status: "failed",
+		});
+		for (const privateValue of [
+			"private error text",
+			"private stack text",
+			"private source snippet",
+			"/private/failure.spec.ts",
+			"column",
+		])
+			expect(receipt).not.toContain(privateValue);
 	});
 	it("records a discovered test with no result as interrupted", async () => {
 		let receipt = "";
