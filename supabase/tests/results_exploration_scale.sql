@@ -171,8 +171,17 @@ select ok((select payload->>'status' = 'ok'
     and jsonb_typeof(payload->'elections') = 'array'
     and jsonb_array_length(payload->'elections') = 4
     and jsonb_array_length(payload->'categories') = 0
+    and (select array_agg(jsonb_array_length(
+        results_exploration_facets(election_id,null,null,null,null,null)->'categories')
+        order by election_id)
+      from (values
+        ('30000000-0000-0000-0000-000000000001'::uuid),
+        ('30000000-0000-0000-0000-000000000003'::uuid),
+        ('30000000-0000-0000-0000-000000000004'::uuid),
+        ('30000000-0000-0000-0000-000000000005'::uuid)
+      ) elections(election_id)) = array[15,15,15,15]
   from (select results_exploration_facets(null, null, null, null, null, null) payload) cold_start),
-  'cold-start facets preserve the payload contract across four election scopes');
+  'cold-start facets preserve four election scopes with fifteen categories each');
 select is(results_exploration_schools('30000000-0000-0000-0000-000000000001'::uuid,
   '30000000-0000-0000-0000-000000000002'::uuid, '02', '028')->>'status',
   'ok', 'supported high-cardinality school payload reaches real aggregation');

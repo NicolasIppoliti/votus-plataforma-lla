@@ -14,7 +14,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
   execute $plan$explain (analyze, buffers, format json)
     select results_exploration_facets(null, null, null, null, null, null)$plan$
     into evidence;
-  insert into scale_plan_evidence values ('facets_cold_start', 122357, evidence);
+  insert into scale_plan_evidence values ('facets_cold_start', 122360, evidence);
   execute $plan$explain (analyze, buffers, format json)
     select results_exploration_official(
       '30000000-0000-0000-0000-000000000001'::uuid,

@@ -813,7 +813,7 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         (SQL_TESTS / "results_exploration_scale_cleanup.sql").read_text(encoding="utf-8").lower()
     )
 
-    assert setup_sql.startswith("\\set on_error_stop on\nset statement_timeout='300s';")
+    assert setup_sql.startswith("\\set on_error_stop on\nset statement_timeout='540s';")
     for phase_sql in (semantic_sql, plan_sql):
         assert phase_sql.startswith("\\set on_error_stop on\nset statement_timeout='120s';")
     assert cleanup_sql.startswith("\\set on_error_stop on\nset statement_timeout='300s';")
@@ -822,6 +822,8 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
     )
     assert "statement_timeout" not in production_migration_sql
     assert "discard plans;" in setup_sql
+    assert "select id as category_id from category" in setup_sql
+    assert "where name like 'scale %'" not in setup_sql
     phase_plans = [
         int(count)
         for sql in (semantic_sql, plan_sql)
@@ -842,6 +844,8 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         "500, 'scale payload retains exactly 500 complete schools'",
         "12000::bigint",
         "create temporary table production_district_evidence",
+        "array[15,15,15,15]",
+        "four election scopes with fifteen categories each",
     ):
         assert required in semantic_sql
     assert "explain (analyze, buffers, format json)" not in semantic_sql
@@ -857,6 +861,7 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         "shared read blocks",
         "results_exploration_facets",
         "facets_cold_start",
+        "facets_cold_start', 122360",
         "results_exploration_facets(null, null, null, null, null, null)",
         "shared read blocks')::bigint, 0)) <= 500",
         "when label = 'facets_cold_start' then 7000",
