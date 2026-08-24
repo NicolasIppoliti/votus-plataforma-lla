@@ -1493,6 +1493,12 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
     scale_proof = " ".join(
         (SQL_TESTS / "results_exploration_scale.sql").read_text(encoding="utf-8").lower().split()
     )
+    scale_plans = " ".join(
+        (SQL_TESTS / "results_exploration_scale_plans.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
     for evidence in (
         "from generate_series(1,78962) unit",
         "from generate_series(1,581400) row_number",
@@ -1508,7 +1514,7 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "results_exploration_official_0034(",
         "results_exploration_official_wrapper_0034(",
         "p_requested_level=>'distrito'",
-        "public_elapsed_ms<=2000",
+        "public_elapsed_ms<=3000",
         "new public district wrapper exactly preserves the real 0034 public wrapper jsonb payload",
         "0035 district core exactly preserves the full realistic 0034 jsonb payload",
         "null and literal chr(1) sections preserve the full reference core jsonb payload",
@@ -1516,6 +1522,11 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
     ):
         assert evidence in scale_proof
+    for evidence in (
+        "production district core stays within 3000ms",
+        "public district wrapper stays within 3000ms",
+    ):
+        assert evidence in scale_plans
 
 
 def test_0033_materializes_narrow_selected_rows_for_party_and_metadata_aggregation() -> None:

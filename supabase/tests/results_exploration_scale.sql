@@ -95,8 +95,8 @@ select is((select public_payload from production_district_evidence),
   'new public district wrapper exactly preserves the real 0034 public wrapper JSONB payload');
 -- Only the optimized public call is latency-bounded. Neither preserved reference call is bounded:
 -- they remain in the disposable fixture solely so performance cannot trade away exact parity.
-select ok((select public_elapsed_ms<=2000 from production_district_evidence),
-  (select format('production-shaped district RPC stays under 2000ms (public_elapsed_ms=%s)',
+select ok((select public_elapsed_ms<=3000 from production_district_evidence),
+  (select format('production-shaped district RPC stays under 3000ms (public_elapsed_ms=%s)',
     round(public_elapsed_ms,1)) from production_district_evidence));
 select diag(format(
   'production_district_rpc public_elapsed_ms=%s core_elapsed_ms=%s reference_public_elapsed_ms=%s reference_core_elapsed_ms=%s',

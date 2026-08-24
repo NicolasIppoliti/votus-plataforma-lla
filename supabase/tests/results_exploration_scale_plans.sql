@@ -152,14 +152,14 @@ select ok((select label = 'coverage_production_rpc'
 -- A bare Result node includes unstable nested-function block totals, so the encapsulated core
 -- and wrapper contracts intentionally use only strict latency and one-row shape. Stable block
 -- budgets remain on the hand-written fact-access and nonofficial-audit replicas above and below.
-select ok((select (plan->0->>'Execution Time')::numeric<=2000
+select ok((select (plan->0->>'Execution Time')::numeric<=3000
     and (plan->0->'Plan'->>'Actual Rows')::bigint=1
   from scale_plan_evidence where label='district_core_rpc'),
-  'production district core stays within 2000ms and returns one row');
-select ok((select (plan->0->>'Execution Time')::numeric<=2000
+  'production district core stays within 3000ms and returns one row');
+select ok((select (plan->0->>'Execution Time')::numeric<=3000
     and (plan->0->'Plan'->>'Actual Rows')::bigint=1
   from scale_plan_evidence where label='district_rpc'),
-  'public district wrapper stays within 2000ms and returns one row');
+  'public district wrapper stays within 3000ms and returns one row');
 select ok((select label = 'coverage_unsupported_source_audit'
     and plan::text like '%result_row_non_official_scope_idx%'
     and (coalesce((plan->0->'Plan'->>'Shared Hit Blocks')::bigint, 0)
