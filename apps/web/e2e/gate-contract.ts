@@ -39,6 +39,7 @@ export type E2eEnvironment = Record<RequiredEnvironmentName, string>;
 export interface GateTestResult {
 	spec: string;
 	status: TestStatus;
+	failureLine?: number;
 }
 export interface GateOwnership {
 	workdir: string;
