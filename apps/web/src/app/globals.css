@@ -539,7 +539,7 @@ select option {
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   padding-block-end: 0.35rem;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
 }
 
 .table-scroll:focus-visible {
