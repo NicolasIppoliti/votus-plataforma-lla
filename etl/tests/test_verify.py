@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import signal
 import subprocess
-import tomllib
+import sys
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -65,7 +65,28 @@ class _AdminConnection:
             name = str(params[-1])
             if name not in self.roles:
                 return _Result()
-            return _Result((True, False, False, False, False, False, False, False))
+            if "array_agg" not in lowered:
+                return _Result((True, False, False, False, False, False, False, False))
+            expected_memberships = (
+                [
+                    "etl_writer:false:false:true",
+                    "results_exploration_executor:false:true:true",
+                ]
+                if self.roles[name] == "scoped-memberships"
+                else []
+            )
+            return _Result(
+                (
+                    True,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    expected_memberships,
+                    False,
+                )
+            )
         if "from pg_roles" in lowered and "pg_auth_members" in lowered:
             if isinstance(params, tuple):
                 name = str(params[0])
@@ -134,6 +155,14 @@ class _AdminConnection:
             self.roles.pop(name, None)
             return _Result()
         if lowered.startswith("grant connect, create, temporary on database"):
+            return _Result()
+        if lowered.startswith("grant etl_writer to"):
+            assert "with inherit false, set true" in lowered
+            return _Result()
+        if lowered.startswith("grant results_exploration_executor to"):
+            assert "with inherit true, set true" in lowered
+            name = statement.rsplit('"', 2)[1]
+            self.roles[name] = "scoped-memberships"
             return _Result()
         raise AssertionError(f"unexpected SQL: {statement}")
 
@@ -447,6 +476,8 @@ def test_post_migration_grants_are_complete_and_role_remains_cluster_unprivilege
     ]
     assert grants == [
         f'grant connect, create, temporary on database "{identity.name}" to "{identity.role_name}"',
+        f'grant etl_writer to "{identity.role_name}" with inherit false, set true',
+        f'grant results_exploration_executor to "{identity.role_name}" with inherit true, set true',
         f'grant usage, create on schema public to "{identity.role_name}"',
         f'grant usage on schema votus_verification to "{identity.role_name}"',
         f'grant select on table votus_verification.ownership_marker to "{identity.role_name}"',
@@ -651,6 +682,21 @@ def test_apply_migrations_requires_a_complete_sequence_and_executes_every_file(
         apply_migrations("dbname=" + identity.name, migrations, connect=connections)
 
 
+def test_apply_migrations_rejects_unexpected_sql_entries_before_connecting(
+    tmp_path: Path,
+) -> None:
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    (migrations / "0001_first.sql").write_text("select 1;", encoding="utf-8")
+    (migrations / "migration_typo.sql").write_text("select 2;", encoding="utf-8")
+    connections = _Connections()
+
+    with pytest.raises(RuntimeError, match="unexpected SQL migration entry"):
+        apply_migrations("dbname=votus_etl_verify_test", migrations, connect=connections)
+
+    assert connections.dsns == []
+
+
 def test_apply_migrations_rejects_non_file_entries_before_connecting(tmp_path: Path) -> None:
     migrations = tmp_path / "migrations"
     migrations.mkdir()
@@ -834,9 +880,19 @@ def test_setup_and_cleanup_failure_are_reported_as_separate_causes() -> None:
     assert any("drop failed" in message for message in messages)
 
 
-def test_command_is_reachable_from_the_installed_package_entry_point() -> None:
-    project = tomllib.loads(
-        (Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+def test_command_is_reachable_from_the_installed_package_entry_point(tmp_path: Path) -> None:
+    entry_point = Path(sys.executable).with_name("etl-verify")
+    assert entry_point.is_file()
+
+    completed = subprocess.run(
+        [str(entry_point)],
+        cwd=tmp_path,
+        env={},
+        capture_output=True,
+        check=False,
+        text=True,
     )
 
-    assert project["project"]["scripts"]["etl-verify"] == "etl.verify:main"
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "ETL_TEST_ADMIN_DATABASE_URL must name a reachable 'template1'" in completed.stderr

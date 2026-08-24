@@ -26,6 +26,10 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 NAME_PREFIX = "votus_etl_verify_"
 MARKER_PREFIX = "votus-etl-verify:"
 ADMIN_DATABASE = "template1"
+_TEST_ROLE_MEMBERSHIPS = (
+    "etl_writer:false:false:true",
+    "results_exploration_executor:false:true:true",
+)
 _cleanup_depth = 0
 _deferred_signal: signal.Signals | None = None
 
@@ -238,14 +242,26 @@ class DisposablePostgres:
         if row != (self.identity.name, self.identity.marker):
             raise UnsafeDatabaseError("connected database failed its disposable identity check")
 
-    def _verify_role(self) -> None:
+    def _verify_role(self, *, expected_memberships: tuple[str, ...] = ()) -> None:
         admin = _require_admin(self.admin)
         row = admin.execute(
             """
             select rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
                    rolreplication, rolbypassrls,
-                   exists (
-                     select 1 from pg_auth_members where member = pg_authid.oid
+                   coalesce(
+                     (
+                       select array_agg(
+                                granted_role.rolname
+                                || ':' || membership.admin_option::text
+                                || ':' || membership.inherit_option::text
+                                || ':' || membership.set_option::text
+                                order by granted_role.rolname
+                              )
+                         from pg_auth_members membership
+                         join pg_roles granted_role on granted_role.oid = membership.roleid
+                        where membership.member = pg_authid.oid
+                     ),
+                     array[]::text[]
                    ),
                    exists (
                      select 1
@@ -258,12 +274,21 @@ class DisposablePostgres:
             """,
             (self.identity.name, self.identity.role_name),
         ).fetchone()
-        expected = (True, False, False, False, False, False, False, False)
+        expected = (
+            True,
+            False,
+            False,
+            False,
+            False,
+            False,
+            list(expected_memberships),
+            False,
+        )
         if row != expected:
             categories = None if row is None else row[6:]
             raise UnsafeDatabaseError(
                 "disposable role privilege verification failed "
-                f"(outbound memberships and cross-database CREATE: {categories})"
+                f"(scoped memberships and cross-database CREATE: {categories})"
             )
 
     def open(self) -> str:
@@ -350,7 +375,17 @@ class DisposablePostgres:
                     sql.Identifier(self.identity.role_name),
                 )
             )
-            self._verify_role()
+            admin.execute(
+                sql.SQL("grant etl_writer to {} with inherit false, set true").format(
+                    sql.Identifier(self.identity.role_name)
+                )
+            )
+            admin.execute(
+                sql.SQL(
+                    "grant results_exploration_executor to {} with inherit true, set true"
+                ).format(sql.Identifier(self.identity.role_name))
+            )
+            self._verify_role(expected_memberships=_TEST_ROLE_MEMBERSHIPS)
         finally:
             admin.close()
             self.admin = None
@@ -495,18 +530,21 @@ class DisposablePostgres:
 def _migration_files(migrations: Path) -> list[Path]:
     if not migrations.is_dir():
         raise RuntimeError("migration path must be an existing directory")
-    files = sorted(migrations.glob("[0-9][0-9][0-9][0-9]_*.sql"))
+    files = sorted(migrations.glob("*.sql"))
+    unexpected = next(
+        (path for path in files if re.fullmatch(r"[0-9]{4}_.+\.sql", path.name) is None),
+        None,
+    )
+    if unexpected is not None:
+        raise RuntimeError(f"unexpected SQL migration entry: {unexpected.name}")
     non_file = next((path for path in files if not path.is_file()), None)
     if non_file is not None:
         raise RuntimeError(f"migration entry must be a regular file: {non_file.name}")
-    try:
-        numbers = [int(path.name.split("_", 1)[0]) for path in files]
-    except ValueError as exc:
-        raise RuntimeError("migration filenames must begin with four decimal digits") from exc
-    if not numbers or numbers != list(range(1, numbers[-1] + 1)):
-        raise RuntimeError("migration numbers must form a complete contiguous sequence from 0001")
+    numbers = [int(path.name.split("_", 1)[0]) for path in files]
     if len(numbers) != len(set(numbers)):
         raise RuntimeError("migration numbers must be unique")
+    if not numbers or numbers != list(range(1, numbers[-1] + 1)):
+        raise RuntimeError("migration numbers must form a complete contiguous sequence from 0001")
     return files
 
 
