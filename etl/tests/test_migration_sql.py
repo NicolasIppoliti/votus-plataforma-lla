@@ -891,9 +891,11 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
     assert cleanup_sql.rstrip().endswith(
         "select 'scale fixture cleanup complete' as cleanup_status;"
     )
-    for table in ("result_row", "jurisdiction", "category", "election"):
-        assert f"delete from {table} where" in cleanup_sql
-        assert f"delete from {table} where" not in plan_sql
+    assert "scale cleanup refused non-fixture rows" in cleanup_sql
+    assert "truncate table result_row, jurisdiction, category, election," in cleanup_sql
+    assert "party_mapping, party_canonical" in cleanup_sql
+    assert "delete from" not in cleanup_sql
+    assert "truncate table" not in plan_sql
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
     # Only the owned post-pgTAP cleanup phase may restore it after deleting the committed fixture.
     assert "drop constraint result_row_source_kind_check" in setup_sql
@@ -905,7 +907,7 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
     assert cleanup_sql.count("alter column source_kind set not null") == 1
     assert cleanup_sql.count("add constraint result_row_source_kind_check") == 1
     assert "check (source_kind in ('official', 'fiscalizacion'))" in cleanup_sql
-    assert cleanup_sql.index("delete from result_row where") < cleanup_sql.index(
+    assert cleanup_sql.index("truncate table result_row") < cleanup_sql.index(
         "alter column source_kind set not null"
     )
     assert cleanup_sql.index("alter column source_kind set not null") < cleanup_sql.index("commit;")
