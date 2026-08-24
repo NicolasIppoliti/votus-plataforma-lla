@@ -1,5 +1,5 @@
 \set ON_ERROR_STOP on
-SET statement_timeout='300s';
+SET statement_timeout='540s';
 -- Disposable high-cardinality fixture setup; timings are local, not production claims.
 begin;
 -- Issue #54 production-shaped coverage proof.
@@ -123,7 +123,7 @@ from (values
   ('30000000-0000-0000-0000-000000000005'::uuid)
 ) elections(election_id)
 cross join lateral (
-  select id as category_id from category where name like 'SCALE %'
+  select id as category_id from category
 ) categories
 where (election_id, category_id) <> (
   '30000000-0000-0000-0000-000000000001'::uuid,
