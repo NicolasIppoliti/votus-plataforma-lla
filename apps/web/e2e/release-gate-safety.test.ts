@@ -34,6 +34,7 @@ import {
 	formatPgTapFailure,
 	cleanupReleaseGate,
 	establishOwnership,
+	planOwnedSqlInvocation,
 	reserveUniquePorts,
 	runOwnedCleanup,
 	runProductionReleasePhases,
@@ -147,6 +148,14 @@ describe("migration release-gate integration", () => {
 				timeoutMs: 120_000,
 			},
 		]);
+		expect(plan.postPgTapCleanupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_cleanup.sql",
+				label: "disposable scale fixture SQL cleanup",
+				timeoutMs: 360_000,
+				afterPgTapPath: "tests/results_exploration_scale_plans.sql",
+			},
+		]);
 		expect(plan.rollbackReapplyProofs).toEqual([
 			{
 				path: "tests/results_exploration_release.sql",
@@ -189,6 +198,9 @@ describe("migration release-gate integration", () => {
 			runPgTapProof: async (proof) => {
 				trace.push(`pgTAP:${proof.label}`);
 			},
+			runPostPgTapCleanupProof: async (proof) => {
+				trace.push(`post-pgTAP-cleanup:${proof.label}`);
+			},
 			runRollbackReapplyProof: async (proof) => {
 				trace.push(`rollback:${proof.label}`);
 			},
@@ -203,6 +215,7 @@ describe("migration release-gate integration", () => {
 			"setup:disposable scale fixture setup",
 			"pgTAP:disposable scale payload/parity pgTAP",
 			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
@@ -236,6 +249,9 @@ describe("migration release-gate integration", () => {
 					if (proof.path === "tests/results_exploration_scale_plans.sql")
 						throw new Error("scale plan proof failed");
 				},
+				runPostPgTapCleanupProof: async (proof) => {
+					trace.push(`post-pgTAP-cleanup:${proof.label}`);
+				},
 				runRollbackReapplyProof: async (proof) => {
 					trace.push(`rollback:${proof.label}`);
 				},
@@ -251,6 +267,51 @@ describe("migration release-gate integration", () => {
 			"setup:disposable scale fixture setup",
 			"pgTAP:disposable scale payload/parity pgTAP",
 			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+		]);
+	});
+	it("does not retry post-pgTAP cleanup or run later phases when cleanup fails", async () => {
+		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
+		const trace: string[] = [];
+		await expect(
+			runProductionReleasePhases(plan, {
+				runProductionMigrations: async () => {
+					trace.push("production-migrations");
+				},
+				validateStackStatus: async () => {
+					trace.push("stack-status");
+					return {
+						API_URL: "http://127.0.0.1:54321",
+						DB_URL:
+							"postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+						ANON_KEY: "anon",
+						SERVICE_ROLE_KEY: "service",
+					};
+				},
+				runSetupProof: async (proof) => {
+					trace.push(`setup:${proof.label}`);
+				},
+				runPgTapProof: async (proof) => {
+					trace.push(`pgTAP:${proof.label}`);
+				},
+				runPostPgTapCleanupProof: async (proof) => {
+					trace.push(`post-pgTAP-cleanup:${proof.label}`);
+					throw new Error("scale fixture cleanup failed");
+				},
+				runRollbackReapplyProof: async (proof) => {
+					trace.push(`rollback:${proof.label}`);
+				},
+				installSyntheticMigration: async (migration) => {
+					trace.push(`synthetic:${migration.fileName}`);
+				},
+			}),
+		).rejects.toThrow("scale fixture cleanup failed");
+		expect(trace).toEqual([
+			"production-migrations",
+			"stack-status",
+			"setup:disposable scale fixture setup",
+			"pgTAP:disposable scale payload/parity pgTAP",
+			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 		]);
 	});
 	it.each([
@@ -321,6 +382,14 @@ describe("migration release-gate integration", () => {
 				timeoutMs: 360_000,
 			},
 		]);
+		expect(plan.postPgTapCleanupProofs).toEqual([
+			{
+				path: "tests/results_exploration_scale_cleanup.sql",
+				label: "disposable scale fixture SQL cleanup",
+				timeoutMs: 360_000,
+				afterPgTapPath: "tests/results_exploration_scale_plans.sql",
+			},
+		]);
 		expect(plan.rollbackReapplyProofs).toEqual([]);
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
@@ -348,6 +417,9 @@ describe("migration release-gate integration", () => {
 			runPgTapProof: async (proof) => {
 				trace.push(`pgTAP:${proof.label}`);
 			},
+			runPostPgTapCleanupProof: async (proof) => {
+				trace.push(`post-pgTAP-cleanup:${proof.label}`);
+			},
 			runRollbackReapplyProof: async (proof) => {
 				trace.push(`rollback:${proof.label}`);
 			},
@@ -361,6 +433,7 @@ describe("migration release-gate integration", () => {
 			"setup:disposable scale fixture setup",
 			"pgTAP:disposable scale payload/parity pgTAP",
 			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
+			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 		]);
 	});
 	it("retains exact pgTAP stdout when a focused proof fails", () => {
@@ -474,6 +547,11 @@ describe("migration release-gate integration", () => {
 						path: "tests/results_exploration_scale_plans.sql",
 					}),
 				]),
+				postPgTapCleanupProofs: [
+					expect.objectContaining({
+						path: "tests/results_exploration_scale_cleanup.sql",
+					}),
+				],
 				rollbackReapplyProofs: expect.arrayContaining([
 					expect.objectContaining({
 						path: "tests/results_exploration_release.sql",
@@ -538,6 +616,49 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
+	it("runs owned setup SQL with in-container cancellation before the host fallback", () => {
+		expect(planOwnedSqlInvocation(OWNERSHIP.projectId, 600_000)).toEqual({
+			command: "docker",
+			args: [
+				"exec",
+				"-i",
+				`supabase_db_${OWNERSHIP.projectId}`,
+				"timeout",
+				"-s",
+				"INT",
+				"-k",
+				"10",
+				"600",
+				"psql",
+				"-X",
+				"-v",
+				"ON_ERROR_STOP=1",
+				"-U",
+				"postgres",
+				"-d",
+				"postgres",
+			],
+			hostTimeoutMs: 615_000,
+		});
+	});
+	it.each([
+		"foreign-project",
+		"votus-e2e-owned;sh",
+		"votus-e2e-owned-",
+		`votus-e2e-${"a".repeat(30)}`,
+	])("rejects unsafe owned SQL project ID %s", (projectId) => {
+		expect(() => planOwnedSqlInvocation(projectId, 120_000)).toThrow(
+			"owned SQL project ID is invalid",
+		);
+	});
+	it.each([0, -1_000, 1_001, 601_000, Number.NaN])(
+		"rejects unsafe owned SQL phase timeout %s",
+		(timeoutMs) => {
+			expect(() =>
+				planOwnedSqlInvocation(OWNERSHIP.projectId, timeoutMs),
+			).toThrow("owned SQL phase timeout");
+		},
+	);
 	it("allows a cold CI runner to pull and start Supabase", () => {
 		expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
 	});

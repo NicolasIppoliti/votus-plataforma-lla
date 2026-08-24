@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+SET statement_timeout='120s';
 -- Disposable high-cardinality payload/parity proof; fixture state is committed by setup.
 begin;
 select plan(16);

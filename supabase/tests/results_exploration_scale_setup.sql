@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+SET statement_timeout='120s';
 -- Disposable high-cardinality fixture setup; timings are local, not production claims.
 begin;
 -- Issue #54 production-shaped coverage proof.

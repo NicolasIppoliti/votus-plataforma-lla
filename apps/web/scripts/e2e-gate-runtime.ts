@@ -6,6 +6,58 @@ import {
 
 export const SUPABASE_START_TIMEOUT_MS = 10 * 60_000;
 
+const OWNED_SQL_HOST_GRACE_MS = 15_000;
+const OWNED_SQL_PROJECT_ID_PATTERN = /^votus-e2e-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+export interface OwnedSqlInvocation {
+	command: "docker";
+	args: readonly string[];
+	hostTimeoutMs: number;
+}
+
+export function planOwnedSqlInvocation(
+	projectId: string,
+	phaseTimeoutMs: number,
+): OwnedSqlInvocation {
+	if (
+		projectId.length > 39 ||
+		!OWNED_SQL_PROJECT_ID_PATTERN.test(projectId)
+	)
+		throw new Error("owned SQL project ID is invalid");
+	if (
+		!Number.isSafeInteger(phaseTimeoutMs) ||
+		phaseTimeoutMs <= 0 ||
+		phaseTimeoutMs > SUPABASE_START_TIMEOUT_MS ||
+		phaseTimeoutMs % 1_000 !== 0
+	)
+		throw new Error(
+			"owned SQL phase timeout must be positive whole seconds within 10 minutes",
+		);
+	return {
+		command: "docker",
+		args: [
+			"exec",
+			"-i",
+			`supabase_db_${projectId}`,
+			"timeout",
+			"-s",
+			"INT",
+			"-k",
+			"10",
+			String(phaseTimeoutMs / 1_000),
+			"psql",
+			"-X",
+			"-v",
+			"ON_ERROR_STOP=1",
+			"-U",
+			"postgres",
+			"-d",
+			"postgres",
+		],
+		hostTimeoutMs: phaseTimeoutMs + OWNED_SQL_HOST_GRACE_MS,
+	};
+}
+
 export const RELEASE_GATE_MODE = {
 	FULL: "full",
 	RELEASE_PROOF_ONLY: "release-proof-only",
@@ -57,6 +109,13 @@ export interface ReleaseGateSetupProof {
 	beforePgTapPath: string;
 }
 
+export interface ReleaseGatePostPgTapCleanupProof {
+	path: string;
+	label: string;
+	timeoutMs: number;
+	afterPgTapPath: string;
+}
+
 export interface ReleaseGateSqlProof {
 	path: string;
 	label: string;
@@ -68,6 +127,7 @@ export interface ReleaseGatePlan {
 	syntheticMigration: ReleaseGateSyntheticMigration;
 	setupProofs: readonly ReleaseGateSetupProof[];
 	pgTapProofs: readonly ReleaseGatePgTapProof[];
+	postPgTapCleanupProofs: readonly ReleaseGatePostPgTapCleanupProof[];
 	rollbackReapplyProofs: readonly ReleaseGateSqlProof[];
 	requireBrowserCapability: boolean;
 	runBrowser: boolean;
@@ -83,6 +143,9 @@ export interface ReleaseGateProductionPhaseEffects {
 	validateStackStatus(): Promise<StackStatus>;
 	runSetupProof(proof: ReleaseGateSetupProof): Promise<void>;
 	runPgTapProof(proof: ReleaseGatePgTapProof): Promise<void>;
+	runPostPgTapCleanupProof(
+		proof: ReleaseGatePostPgTapCleanupProof,
+	): Promise<void>;
 	runRollbackReapplyProof(proof: ReleaseGateSqlProof): Promise<void>;
 	installSyntheticMigration(
 		migration: ReleaseGateSyntheticMigration,
@@ -180,6 +243,15 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	},
 ];
 
+const POST_PG_TAP_CLEANUP_PROOFS: readonly ReleaseGatePostPgTapCleanupProof[] = [
+	{
+		path: "tests/results_exploration_scale_cleanup.sql",
+		label: "disposable scale fixture SQL cleanup",
+		timeoutMs: 360_000,
+		afterPgTapPath: "tests/results_exploration_scale_plans.sql",
+	},
+];
+
 const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 	{
 		path: "tests/results_exploration_release.sql",
@@ -228,6 +300,9 @@ export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 						proof.path === "tests/results_exploration_scale.sql" ||
 						proof.path === "tests/results_exploration_scale_plans.sql",
 				).map((proof) => ({ ...proof })),
+		postPgTapCleanupProofs: rollbackProofsOnly
+			? []
+			: POST_PG_TAP_CLEANUP_PROOFS.map((proof) => ({ ...proof })),
 		rollbackReapplyProofs: scaleProofOnly
 			? []
 			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
@@ -249,6 +324,9 @@ export async function runProductionReleasePhases(
 			if (setup.beforePgTapPath === proof.path)
 				await effects.runSetupProof(setup);
 		await effects.runPgTapProof(proof);
+		for (const cleanup of plan.postPgTapCleanupProofs)
+			if (cleanup.afterPgTapPath === proof.path)
+				await effects.runPostPgTapCleanupProof(cleanup);
 	}
 	for (const proof of plan.rollbackReapplyProofs)
 		await effects.runRollbackReapplyProof(proof);

@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+SET statement_timeout='120s';
 -- Disposable high-cardinality EXPLAIN/plan proof; fixture state is committed by setup.
 begin;
 select plan(15);
@@ -192,13 +193,3 @@ select diag(format(
 )) from scale_plan_evidence order by label;
 select * from finish();
 rollback;
-begin; delete from result_row where election_id::text like '30000000-%'; delete from jurisdiction where id::text like '30000000-%';
-delete from party_mapping where canonical_party_id='scale-canonical';
-delete from party_canonical where id='scale-canonical';
-delete from category where id::text like '30000000-%'; delete from election where id::text like '30000000-%';
--- The legacy/null fixture rows are gone, so restore the exact 0002 source-kind contract this
--- proof relaxed. Leaving it dropped would hand every later proof in the same stack a schema
--- whose DB-level source leakage guard is disarmed.
-alter table result_row alter column source_kind set not null;
-alter table result_row add constraint result_row_source_kind_check
-  check (source_kind in ('official', 'fiscalizacion')); commit;

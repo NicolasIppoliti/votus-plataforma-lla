@@ -809,7 +809,17 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
     plan_sql = (
         (SQL_TESTS / "results_exploration_scale_plans.sql").read_text(encoding="utf-8").lower()
     )
+    cleanup_sql = (
+        (SQL_TESTS / "results_exploration_scale_cleanup.sql").read_text(encoding="utf-8").lower()
+    )
 
+    for phase_sql in (setup_sql, semantic_sql, plan_sql):
+        assert phase_sql.startswith("\\set on_error_stop on\nset statement_timeout='120s';")
+    assert cleanup_sql.startswith("\\set on_error_stop on\nset statement_timeout='300s';")
+    production_migration_sql = "\n".join(
+        path.read_text(encoding="utf-8").lower() for path in MIGRATIONS.rglob("*.sql")
+    )
+    assert "statement_timeout" not in production_migration_sql
     assert "discard plans;" in setup_sql
     phase_plans = [
         int(count)
@@ -873,22 +883,31 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
     for phase_sql in (semantic_sql, plan_sql):
         assert phase_sql.count("select * from finish();") == 1
         assert phase_sql.count("rollback;") == 1
-    cleanup = plan_sql.split("select * from finish();", 1)[1]
+    assert plan_sql.rstrip().endswith("rollback;")
+    assert "select * from finish();" not in cleanup_sql
+    assert "rollback;" not in cleanup_sql
+    assert cleanup_sql.count("select 'scale fixture cleanup complete' as cleanup_status;") == 1
+    assert cleanup_sql.rstrip().endswith(
+        "select 'scale fixture cleanup complete' as cleanup_status;"
+    )
     for table in ("result_row", "jurisdiction", "category", "election"):
-        assert f"delete from {table} where" in cleanup
+        assert f"delete from {table} where" in cleanup_sql
+        assert f"delete from {table} where" not in plan_sql
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
-    # Only the final plan phase may restore it after deleting the committed fixture.
+    # Only the owned post-pgTAP cleanup phase may restore it after deleting the committed fixture.
     assert "drop constraint result_row_source_kind_check" in setup_sql
     assert "alter column source_kind drop not null" in setup_sql
     assert "alter column source_kind set not null" not in semantic_sql
     assert "add constraint result_row_source_kind_check" not in semantic_sql
-    assert "alter column source_kind set not null" in cleanup
-    assert "add constraint result_row_source_kind_check" in cleanup
-    assert "check (source_kind in ('official', 'fiscalizacion'))" in cleanup
-    assert cleanup.index("delete from result_row where") < cleanup.index(
+    assert "alter column source_kind set not null" not in plan_sql
+    assert "add constraint result_row_source_kind_check" not in plan_sql
+    assert cleanup_sql.count("alter column source_kind set not null") == 1
+    assert cleanup_sql.count("add constraint result_row_source_kind_check") == 1
+    assert "check (source_kind in ('official', 'fiscalizacion'))" in cleanup_sql
+    assert cleanup_sql.index("delete from result_row where") < cleanup_sql.index(
         "alter column source_kind set not null"
     )
-    assert cleanup.rstrip().endswith("commit;")
+    assert cleanup_sql.index("alter column source_kind set not null") < cleanup_sql.index("commit;")
 
 
 def test_results_exploration_coverage_scale_proof_matches_production_shape() -> None:

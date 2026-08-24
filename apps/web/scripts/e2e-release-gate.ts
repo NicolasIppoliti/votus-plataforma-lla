@@ -38,6 +38,7 @@ import {
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
+	planOwnedSqlInvocation,
 	reserveUniquePorts,
 	runProductionReleasePhases,
 	runReleaseGateCli,
@@ -160,30 +161,15 @@ function runOwnedSqlEvidence(
 	label: string,
 	timeout = 120_000,
 ): void {
-	const result = spawnSync(
-		"docker",
-		[
-			"exec",
-			"-i",
-			`supabase_db_${projectId}`,
-			"psql",
-			"-X",
-			"-v",
-			"ON_ERROR_STOP=1",
-			"-U",
-			"postgres",
-			"-d",
-			"postgres",
-		],
-		{
-			cwd: REPO_ROOT,
-			env: process.env,
-			input: sql,
-			encoding: "utf8",
-			stdio: ["pipe", "pipe", "pipe"],
-			timeout,
-		},
-	);
+	const invocation = planOwnedSqlInvocation(projectId, timeout);
+	const result = spawnSync(invocation.command, invocation.args, {
+		cwd: REPO_ROOT,
+		env: process.env,
+		input: sql,
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+		timeout: invocation.hostTimeoutMs,
+	});
 	if (result.error || result.status !== 0)
 		throw new Error(
 			`${label} failed (exit ${result.status ?? "unavailable"}); output redacted`,
@@ -784,6 +770,14 @@ async function executeGate(
 				],
 				proof.label,
 				REPO_ROOT,
+				proof.timeoutMs,
+			);
+		},
+		runPostPgTapCleanupProof: async (proof) => {
+			runOwnedSqlEvidence(
+				ownership.projectId,
+				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+				proof.label,
 				proof.timeoutMs,
 			);
 		},
