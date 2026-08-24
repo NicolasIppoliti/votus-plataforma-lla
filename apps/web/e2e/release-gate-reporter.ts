@@ -21,7 +21,13 @@ export default class ReleaseGateReporter implements Reporter {
   }
   onTestEnd(test: TestCase, result: TestResult): void {
     const spec = `e2e/${path.basename(test.location.file)}`;
-    this.results.set(test.id, { spec, status: result.status });
+    const failureLine = result.status === "passed"
+      ? undefined
+      : result.errors?.find(({ location }) =>
+          Number.isInteger(location?.line) && location!.line > 0)?.location?.line;
+    this.results.set(test.id, failureLine === undefined
+      ? { spec, status: result.status }
+      : { spec, status: result.status, failureLine });
   }
   async onEnd(result: FullResult): Promise<{ status: FullResult["status"] } | void> {
     const completed = this.discovered.map((test) => {

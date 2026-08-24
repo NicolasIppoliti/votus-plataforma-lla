@@ -1182,6 +1182,72 @@ describe("ReleaseGateReporter", () => {
 		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
 		expect(JSON.parse(receipt).results).toHaveLength(8);
 	});
+	it("records only a valid failure line for non-passing tests", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => {
+			receipt = content;
+		});
+		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, {
+			status: "failed",
+			errors: [
+				{
+					message: "private error text",
+					stack: "private stack text",
+					snippet: "private source snippet",
+					location: { file: "/private/failure.spec.ts", line: 0, column: 17 },
+				},
+				{
+					message: "fractional private error text",
+					location: { file: "/private/failure.spec.ts", line: 1.5, column: 5 },
+				},
+				{
+					message: "second private error text",
+					location: { file: "/private/failure.spec.ts", line: 42, column: 9 },
+				},
+			],
+		} as TestResult);
+		reporter.onTestEnd(cases[1]!, {
+			status: "passed",
+			errors: [
+				{
+					message: "passing result private error text",
+					location: { file: "/private/passing.spec.ts", line: 24, column: 3 },
+				},
+			],
+		} as TestResult);
+		reporter.onTestEnd(cases[2]!, {
+			status: "failed",
+			errors: [{ message: "location-less private error text" }],
+		} as TestResult);
+		for (const testCase of cases.slice(3))
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+		await reporter.onEnd({ status: "failed" } as FullResult);
+
+		const results = (JSON.parse(receipt) as { results: unknown[] }).results;
+		expect(results[0]).toEqual({
+			spec: EXPECTED_E2E_SPECS[0],
+			status: "failed",
+			failureLine: 42,
+		});
+		expect(results[1]).toEqual({
+			spec: EXPECTED_E2E_SPECS[1],
+			status: "passed",
+		});
+		expect(results[2]).toEqual({
+			spec: EXPECTED_E2E_SPECS[2],
+			status: "failed",
+		});
+		for (const privateValue of [
+			"private error text",
+			"private stack text",
+			"private source snippet",
+			"/private/failure.spec.ts",
+			"column",
+		])
+			expect(receipt).not.toContain(privateValue);
+	});
 	it("records a discovered test with no result as interrupted", async () => {
 		let receipt = "";
 		const reporter = makeReporter((content) => {

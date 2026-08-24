@@ -21,6 +21,7 @@ import {
 	EXPECTED_E2E_SPECS,
 	classifyStaleOwnership,
 	planStaleWorkdirReap,
+	type GateTestResult,
 } from "../e2e/gate-contract.ts";
 import {
 	SERVER_SCENARIOS,
@@ -69,7 +70,7 @@ interface GateState extends ReleaseGateCleanupState<OwnedNextServer> {
 }
 interface PlaywrightReceipt {
 	suiteStatus: string;
-	results: Array<{ spec: string; status: string }>;
+	results: GateTestResult[];
 }
 function commandResult(
 	command: string,
@@ -425,7 +426,9 @@ async function runPlaywright(
 			.map(([status, count]) => `${status}=${count}`)
 			.join(", ")}, suite=${receipt.suiteStatus}, non-passing=[${receipt.results
 			.filter(({ status }) => status !== "passed")
-			.map(({ spec, status }) => `${spec}:${status}`)
+			.map(({ spec, status, failureLine }) =>
+				`${spec}:${status}${failureLine === undefined ? "" : `@${failureLine}`}`,
+			)
 			.join(", ")}]`;
 	} catch {
 		/* missing receipt is a failure */
