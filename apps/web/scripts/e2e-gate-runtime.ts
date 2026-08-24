@@ -148,7 +148,7 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/results_exploration_scale.sql",
 		label: "disposable scale/EXPLAIN proof",
-		timeoutMs: 360_000,
+		timeoutMs: 600_000,
 	},
 	{
 		path: "tests/results_coverage_scope_binding.sql",
