@@ -21,6 +21,7 @@ import {
 	EXPECTED_E2E_SPECS,
 	classifyStaleOwnership,
 	planStaleWorkdirReap,
+	type GateTestResult,
 } from "../e2e/gate-contract.ts";
 import {
 	SERVER_SCENARIOS,
@@ -38,6 +39,7 @@ import {
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
+	planOwnedSqlInvocation,
 	reserveUniquePorts,
 	runProductionReleasePhases,
 	runReleaseGateCli,
@@ -68,7 +70,7 @@ interface GateState extends ReleaseGateCleanupState<OwnedNextServer> {
 }
 interface PlaywrightReceipt {
 	suiteStatus: string;
-	results: Array<{ spec: string; status: string }>;
+	results: GateTestResult[];
 }
 function commandResult(
 	command: string,
@@ -158,31 +160,17 @@ function runOwnedSqlEvidence(
 	projectId: string,
 	sql: string,
 	label: string,
+	timeout = 120_000,
 ): void {
-	const result = spawnSync(
-		"docker",
-		[
-			"exec",
-			"-i",
-			`supabase_db_${projectId}`,
-			"psql",
-			"-X",
-			"-v",
-			"ON_ERROR_STOP=1",
-			"-U",
-			"postgres",
-			"-d",
-			"postgres",
-		],
-		{
-			cwd: REPO_ROOT,
-			env: process.env,
-			input: sql,
-			encoding: "utf8",
-			stdio: ["pipe", "pipe", "pipe"],
-			timeout: 120_000,
-		},
-	);
+	const invocation = planOwnedSqlInvocation(projectId, timeout);
+	const result = spawnSync(invocation.command, invocation.args, {
+		cwd: REPO_ROOT,
+		env: process.env,
+		input: sql,
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+		timeout: invocation.hostTimeoutMs,
+	});
 	if (result.error || result.status !== 0)
 		throw new Error(
 			`${label} failed (exit ${result.status ?? "unavailable"}); output redacted`,
@@ -438,7 +426,9 @@ async function runPlaywright(
 			.map(([status, count]) => `${status}=${count}`)
 			.join(", ")}, suite=${receipt.suiteStatus}, non-passing=[${receipt.results
 			.filter(({ status }) => status !== "passed")
-			.map(({ spec, status }) => `${spec}:${status}`)
+			.map(({ spec, status, failureLine }) =>
+				`${spec}:${status}${failureLine === undefined ? "" : `@${failureLine}`}`,
+			)
 			.join(", ")}]`;
 	} catch {
 		/* missing receipt is a failure */
@@ -762,6 +752,14 @@ async function executeGate(
 				supabasePorts[1]!,
 			);
 		},
+		runSetupProof: async (proof) => {
+			runOwnedSqlEvidence(
+				ownership.projectId,
+				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+				proof.label,
+				proof.timeoutMs,
+			);
+		},
 		runPgTapProof: async (proof) => {
 			runEvidence(
 				"supabase",
@@ -775,6 +773,14 @@ async function executeGate(
 				],
 				proof.label,
 				REPO_ROOT,
+				proof.timeoutMs,
+			);
+		},
+		runPostPgTapCleanupProof: async (proof) => {
+			runOwnedSqlEvidence(
+				ownership.projectId,
+				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+				proof.label,
 				proof.timeoutMs,
 			);
 		},
@@ -898,7 +904,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 		plan.mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY
 			? "Rollback proofs passed: 2 SQL processes, cleanup complete\n"
 			: plan.mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY
-				? "Scale proof passed: pgTAP/EXPLAIN and cleanup complete\n"
+				? "Scale proof passed: fixture setup, pgTAP/EXPLAIN, and cleanup complete\n"
 				: plan.mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY
 					? "Release proof passed: coverage scope binding, rollback/reapply, scale, pgTAP, and cleanup complete\n"
 					: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
