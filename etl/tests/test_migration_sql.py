@@ -976,6 +976,9 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/"
+        "20260825165116_organization_workspace_authorization_facts.down.sql",
+        "\\ir ../migrations/down/20260825144358_organization_workspace_expand.down.sql",
         "\\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0037_add_selector_name_canonical_fallback.down.sql",
         "\\ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql",
@@ -1006,6 +1009,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0036_map_pba_party_jurisdictions.sql",
         "\\ir ../migrations/0037_add_selector_name_canonical_fallback.sql",
         "\\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql",
+        "\\ir ../migrations/20260825144358_organization_workspace_expand.sql",
+        "\\ir ../migrations/20260825165116_organization_workspace_authorization_facts.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1020,7 +1025,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "39 as migration_inventory_count",
+        "40 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2036,3 +2041,143 @@ def test_organization_workspace_defaults_and_down_are_bounded_and_fail_closed() 
     assert not any(
         token in rollback for token in ("cascade", "drop owned", "drop table", "drop function")
     )
+
+
+def test_organization_workspace_authority_facts_are_closed_and_reversible() -> None:
+    version = "20260825165116"
+    forward_path = MIGRATIONS / f"{version}_organization_workspace_authorization_facts.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_facts.down.sql"
+    )
+    assert forward_path.read_text(encoding="utf-8").strip(), "authority-facts migration is empty"
+    assert down_path.exists(), "authority-facts down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+
+    tables = (
+        "organization",
+        "organization_membership",
+        "section_scope",
+        "organization_section_entitlement",
+        "workspace_audit_event",
+    )
+    for table in tables:
+        assert f"create table workspace_private.{table}" in forward
+        assert f"alter table workspace_private.{table} enable row level security" in forward
+        assert f"alter table workspace_private.{table} force row level security" in forward
+        assert f"revoke all on table workspace_private.{table} from public" in forward
+        assert f"drop table workspace_private.{table}" in down
+    assert forward.count("owner to workspace_admin_owner") == 4
+    assert forward.count("owner to workspace_audit_owner") == 1
+    assert "create policy" not in forward and "security definer" not in forward
+    assert "references auth." not in forward
+    assert "on delete restrict" in forward
+    assert "where revoked_at is null" in forward
+    assert "organization_section_entitlement_scope_idx" in forward
+    assert (
+        "workspace_private.organization_section_entitlement (distrito_code, seccion_code)"
+        in forward
+    )
+    assert "actor_ref is null or" in forward
+    assert "jsonb_typeof(detail) = 'object'" in forward
+    assert "create table public." not in forward
+    for value in (
+        "platform_operator",
+        "organization_user",
+        "system",
+        "etl",
+        "organization_created",
+        "organization_disabled",
+        "membership_granted",
+        "membership_revoked",
+        "section_scope_registered",
+        "section_entitlement_granted",
+        "section_entitlement_revoked",
+        "context_bootstrapped",
+        "context_switched",
+        "context_invalidated",
+        "context_revoked",
+        "authorization_denied",
+        "review_scope_recorded",
+        "review_visibility_denied",
+        "succeeded",
+        "denied",
+        "no_op",
+        "operator_request",
+        "same_state",
+        "scope_invalid",
+        "claims_mismatch",
+        "context_conflict",
+        "bearer_invalid",
+        "platform_only_review",
+        "organization_switched",
+    ):
+        assert f"'{value}'" in forward
+    for forbidden in ("email", "token", "password", "dsn", "cascade"):
+        assert forbidden not in forward
+    assert "raise exception 'authority-facts rollback refused" in down
+    assert "cascade" not in down
+    assert down.index("drop table workspace_private.workspace_audit_event") < down.index(
+        "drop table workspace_private.organization"
+    )
+
+
+def test_organization_workspace_section_scope_requires_canonical_national_codes() -> None:
+    migration = _sql("20260825165116_organization_workspace_authorization_facts.sql")
+    sql = " ".join(migration.split())
+    section_scope_codes = (
+        "constraint section_scope_codes_check check "
+        "(distrito_code = btrim(distrito_code) and distrito_code <> '' "
+        "and distrito_code ~ '^[0-9]{2}$' and seccion_code = btrim(seccion_code) "
+        "and seccion_code <> '' and seccion_code ~ '^[0-9]{3}$')"
+    )
+
+    assert section_scope_codes in sql
+
+
+def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
+    version = "20260825165116"
+    migrations = (
+        _sql(f"{version}_organization_workspace_authorization_facts.sql"),
+        (MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_facts.down.sql")
+        .read_text(encoding="utf-8")
+        .lower(),
+    )
+
+    role_closure_capture = (
+        "with recursive runner_role_closure(role_oid) as ("
+        "select current_user::text::regrole::oid union "
+        "select edge.roleid from pg_auth_members edge "
+        "join runner_role_closure inherited on inherited.role_oid = edge.member) "
+        "select bool_or(role_oid = 'workspace_admin_owner'::regrole::oid), "
+        "bool_or(role_oid = 'workspace_audit_owner'::regrole::oid) "
+        "into admin_was_member, audit_was_member from runner_role_closure;"
+    )
+    membership_variables = {
+        "workspace_admin_owner": "admin_was_member",
+        "workspace_audit_owner": "audit_was_member",
+    }
+
+    for migration in migrations:
+        sql = " ".join(migration.split())
+        assert role_closure_capture in sql
+        assert "pg_has_role" not in sql
+        for role, membership_variable in membership_variables.items():
+            setting = f"votus_pr3a.{role}_was_member"
+            capture = f"set_config('{setting}', {membership_variable}::text, true)"
+            conditional_grant = (
+                f"if current_setting('{setting}', true) = 'false' then "
+                f"grant {role} to current_user; end if;"
+            )
+            conditional_revoke = (
+                f"if current_setting('{setting}', true) = 'false' then "
+                f"revoke {role} from current_user; end if;"
+            )
+            assert capture in sql
+            assert conditional_grant in sql
+            assert conditional_revoke in sql
+            assert sql.index(role_closure_capture) < sql.index(capture)
+            assert sql.index(capture) < sql.index(conditional_grant)
+            assert sql.index(conditional_grant) < sql.index(conditional_revoke)
+            assert sql.count(f"grant {role} to current_user;") == 1
+            assert sql.count(f"revoke {role} from current_user;") == 1

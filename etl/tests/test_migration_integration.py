@@ -17,8 +17,13 @@ MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 38))
 PBA_113_MIGRATION_VERSION = "20260824193650"
 WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358"
+WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
-    {PBA_113_MIGRATION_VERSION, WORKSPACE_FOUNDATION_MIGRATION_VERSION}
+    {
+        PBA_113_MIGRATION_VERSION,
+        WORKSPACE_FOUNDATION_MIGRATION_VERSION,
+        WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
+    }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
     [*(f"{number:04d}" for number in range(1, 38)), *sorted(SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS)]
@@ -117,7 +122,14 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert _validated_migration_path(WORKSPACE_FOUNDATION_MIGRATION_VERSION, down=True).name == (
         "20260825144358_organization_workspace_expand.down.sql"
     )
-    for unsupported in (38, "0038", "20260824193651"):
+    assert _validated_migration_path(WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION).name == (
+        "20260825165116_organization_workspace_authorization_facts.sql"
+    )
+    assert (
+        _validated_migration_path(WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION, down=True).name
+        == "20260825165116_organization_workspace_authorization_facts.down.sql"
+    )
+    for unsupported in (38, "0038", "20260824193651", "20260825165117"):
         with pytest.raises(ValueError, match="1 through 37"):
             _validated_migration_path(unsupported)
 
