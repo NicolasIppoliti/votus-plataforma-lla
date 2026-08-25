@@ -2003,6 +2003,7 @@ def test_organization_workspace_defaults_and_down_are_bounded_and_fail_closed() 
     assert "alter default privileges for role %i in schema" not in sql
     assert "on tables" not in sql and "on sequences" not in sql
     assert "foreach" in sql and "execute format" in sql and "pg_auth_members" in sql
+    assert "edge.admin_option and not edge.inherit_option and not edge.set_option" in sql
 
     assert down_path.name == "20260825144358_organization_workspace_expand.down.sql"
     assert down.startswith("begin;") and down.rstrip().endswith("commit;")

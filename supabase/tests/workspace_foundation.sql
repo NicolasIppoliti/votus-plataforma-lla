@@ -21,13 +21,14 @@ select is(
      and not r.rolbypassrls and r.rolpassword is null),
   8::bigint,
   'all workspace roles are locked and passwordless');
-select is(
-  (select count(*) from pg_auth_members m join pg_roles granted on granted.oid = m.roleid
+select ok(
+  not exists (select 1 from pg_auth_members m join pg_roles granted on granted.oid = m.roleid
    join pg_roles member on member.oid = m.member
-   where granted.rolname like 'workspace\_%' escape '\'
-      or member.rolname like 'workspace\_%' escape '\'),
-  0::bigint,
-  'workspace and boundary roles have zero memberships');
+   where (granted.rolname like 'workspace\_%' escape '\'
+      or member.rolname like 'workspace\_%' escape '\')
+     and not (granted.rolname like 'workspace\_%' escape '\' and member.rolname=current_user
+       and m.admin_option and not m.inherit_option and not m.set_option)),
+  'workspace roles have no effective memberships beyond creator admin-only edges');
 select is(
   (select array_agg(r.rolname::text || ':' || acl.privilege_type order by r.rolname, acl.privilege_type)
    from pg_namespace n cross join lateral aclexplode(n.nspacl) acl
