@@ -1,25 +1,11 @@
 begin;
-select plan(20);
+select plan(18);
 select is(
   (select count(*) from pg_namespace n
    where n.nspname = any(array['workspace_private', 'workspace_api'])
      and pg_get_userbyid(n.nspowner) = current_user),
   2::bigint,
   'workspace schemas exist and are owned by the migration owner');
-select is(
-  (select count(*) from (
-     select c.oid from pg_class c join pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = any(array['workspace_private', 'workspace_api'])
-     union all select p.oid from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = any(array['workspace_private', 'workspace_api'])
-     union all select t.oid from pg_type t join pg_namespace n on n.oid = t.typnamespace
-       where n.nspname = any(array['workspace_private', 'workspace_api'])
-     union all select pol.oid from pg_policy pol join pg_class c on c.oid = pol.polrelid
-       join pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = any(array['workspace_private', 'workspace_api'])
-   ) state_objects),
-  0::bigint,
-  'workspace schemas contain no tables, sequences, functions, types, policies, or state');
 select is(
   (select array_agg(r.rolname order by r.rolname) from pg_roles r
    where r.rolname like 'workspace\_%' escape '\'),
@@ -35,13 +21,14 @@ select is(
      and not r.rolbypassrls and r.rolpassword is null),
   8::bigint,
   'all workspace roles are locked and passwordless');
-select is(
-  (select count(*) from pg_auth_members m join pg_roles granted on granted.oid = m.roleid
+select ok(
+  not exists (select 1 from pg_auth_members m join pg_roles granted on granted.oid = m.roleid
    join pg_roles member on member.oid = m.member
-   where granted.rolname like 'workspace\_%' escape '\'
-      or member.rolname like 'workspace\_%' escape '\'),
-  0::bigint,
-  'workspace and boundary roles have zero memberships');
+   where (granted.rolname like 'workspace\_%' escape '\'
+      or member.rolname like 'workspace\_%' escape '\')
+     and not (granted.rolname like 'workspace\_%' escape '\' and member.rolname=current_user
+       and m.admin_option and not m.inherit_option and not m.set_option)),
+  'workspace roles have no effective memberships beyond creator admin-only edges');
 select is(
   (select array_agg(r.rolname::text || ':' || acl.privilege_type order by r.rolname, acl.privilege_type)
    from pg_namespace n cross join lateral aclexplode(n.nspacl) acl
@@ -137,14 +124,6 @@ select ok(
   and not pg_has_role('service_role', 'workspace_bootstrap_owner', 'MEMBER')
   and not pg_has_role('service_role', 'workspace_bootstrap_caller', 'MEMBER'),
   'service_role has no bootstrap authority');
-select is(
-  (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = any(array['workspace_private','workspace_api']) or
-     (n.nspname = 'public' and (p.proname like 'workspace\_%' escape '\'
-       or p.proname like '%bootstrap%'))),
-  0::bigint,
-  'foundation adds no SECURITY DEFINER, bootstrap, API, or workspace functions'
-);
 select ok(exists (select 1 from pg_database d
   cross join lateral aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) acl
   where d.datname=current_database() and acl.grantee=0 and acl.privilege_type='TEMPORARY'),

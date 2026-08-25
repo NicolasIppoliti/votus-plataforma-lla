@@ -176,6 +176,7 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 const PBA_113_MIGRATION_VERSION = "20260824193650";
 const WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358";
 const WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116";
+const WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048";
 const MIGRATION_VERSIONS = [
 	...Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
@@ -183,6 +184,7 @@ const MIGRATION_VERSIONS = [
 	PBA_113_MIGRATION_VERSION,
 	WORKSPACE_FOUNDATION_MIGRATION_VERSION,
 	WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
+	WORKSPACE_ADMIN_MIGRATION_VERSION,
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -291,10 +293,6 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 	{
 		path: "tests/results_coverage_scope_binding_release.sql",
 		label: "disposable coverage-scope-binding rollback/reapply proof",
-	},
-	{
-		path: "tests/workspace_foundation_release.sql",
-		label: "disposable workspace-foundation rollback/reapply proof",
 	},
 ];
 

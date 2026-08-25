@@ -977,6 +977,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
         "\\ir ../migrations/down/"
+        "20260825180048_organization_workspace_authorization_admin.down.sql",
+        "\\ir ../migrations/down/"
         "20260825165116_organization_workspace_authorization_facts.down.sql",
         "\\ir ../migrations/down/20260825144358_organization_workspace_expand.down.sql",
         "\\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql",
@@ -1011,6 +1013,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql",
         "\\ir ../migrations/20260825144358_organization_workspace_expand.sql",
         "\\ir ../migrations/20260825165116_organization_workspace_authorization_facts.sql",
+        "\\ir ../migrations/20260825180048_organization_workspace_authorization_admin.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1025,7 +1028,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "40 as migration_inventory_count",
+        "41 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2003,6 +2006,7 @@ def test_organization_workspace_defaults_and_down_are_bounded_and_fail_closed() 
     assert "alter default privileges for role %i in schema" not in sql
     assert "on tables" not in sql and "on sequences" not in sql
     assert "foreach" in sql and "execute format" in sql and "pg_auth_members" in sql
+    assert "edge.admin_option and not edge.inherit_option and not edge.set_option" in sql
 
     assert down_path.name == "20260825144358_organization_workspace_expand.down.sql"
     assert down.startswith("begin;") and down.rstrip().endswith("commit;")
@@ -2055,21 +2059,19 @@ def test_organization_workspace_authority_facts_are_closed_and_reversible() -> N
     down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
 
     tables = (
-        "organization",
-        "organization_membership",
-        "section_scope",
-        "organization_section_entitlement",
-        "workspace_audit_event",
-    )
+        "organization organization_membership section_scope "
+        "organization_section_entitlement workspace_audit_event"
+    ).split()
     for table in tables:
         assert f"create table workspace_private.{table}" in forward
         assert f"alter table workspace_private.{table} enable row level security" in forward
         assert f"alter table workspace_private.{table} force row level security" in forward
         assert f"revoke all on table workspace_private.{table} from public" in forward
         assert f"drop table workspace_private.{table}" in down
-    assert forward.count("owner to workspace_admin_owner") == 4
+    assert forward.count("owner to workspace_admin_owner") == 5
     assert forward.count("owner to workspace_audit_owner") == 1
-    assert "create policy" not in forward and "security definer" not in forward
+    assert forward.count("create policy workspace_admin_owner_") == 4
+    assert "function workspace_private.authorization_facts_status()" in forward and "security definer" in forward
     assert "references auth." not in forward
     assert "on delete restrict" in forward
     assert "where revoked_at is null" in forward
@@ -2122,6 +2124,7 @@ def test_organization_workspace_authority_facts_are_closed_and_reversible() -> N
     )
 
 
+
 def test_organization_workspace_section_scope_requires_canonical_national_codes() -> None:
     migration = _sql("20260825165116_organization_workspace_authorization_facts.sql")
     sql = " ".join(migration.split())
@@ -2135,7 +2138,45 @@ def test_organization_workspace_section_scope_requires_canonical_national_codes(
     assert section_scope_codes in sql
 
 
-def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
+def test_workspace_admin_boundary_is_private_rls_backed_and_reversible() -> None:
+    version = "20260825180048"
+    forward_path = MIGRATIONS / f"{version}_organization_workspace_authorization_admin.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_admin.down.sql"
+    )
+    assert forward_path.read_text(encoding="utf-8").strip(), "workspace admin migration is empty"
+    assert down_path.exists(), "workspace admin down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    functions = (
+        "append_audit_event create_organization disable_organization grant_membership "
+        "revoke_membership register_section_scope grant_section_entitlement "
+        "revoke_section_entitlement"
+    ).split()
+    for function in functions:
+        assert f"function workspace_private.{function}" in forward
+        assert "security definer set search_path=pg_catalog,workspace_private,pg_temp" in forward
+        assert f"revoke all on function workspace_private.{function}" in forward
+        assert f"drop function workspace_private.{function}" in down
+        assert "grant execute on function workspace_private.append_audit_event" in forward
+    assert "to workspace_admin_owner" in forward
+    assert forward.count("to workspace_platform_admin") == 7
+    for table in (
+        "organization organization_membership section_scope "
+        "organization_section_entitlement workspace_audit_event"
+    ).split():
+        assert "create policy workspace_" in forward
+        assert f"on workspace_private.{table}" in forward
+    assert "for delete" not in forward
+    assert "execute format" not in forward and "execute immediate" not in forward
+    assert "public.jurisdiction" in forward
+    assert "raise exception 'workspace-admin rollback refused" in down
+    assert "cascade" not in down
+    for forbidden in ("email", "token", "password", "dsn", "auth."):
+        assert forbidden not in forward
+
+
+def test_authority_facts_migrations_preserve_runner_owner_set_authority() -> None:
     version = "20260825165116"
     migrations = (
         _sql(f"{version}_organization_workspace_authorization_facts.sql"),
@@ -2144,27 +2185,22 @@ def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
         .lower(),
     )
 
-    role_closure_capture = (
-        "with recursive runner_role_closure(role_oid) as ("
-        "select current_user::text::regrole::oid union "
-        "select edge.roleid from pg_auth_members edge "
-        "join runner_role_closure inherited on inherited.role_oid = edge.member) "
-        "select bool_or(role_oid = 'workspace_admin_owner'::regrole::oid), "
-        "bool_or(role_oid = 'workspace_audit_owner'::regrole::oid) "
-        "into admin_was_member, audit_was_member from runner_role_closure;"
+    set_authority_capture = (
+        "select pg_has_role(current_user,'workspace_admin_owner','set'), "
+        "pg_has_role(current_user,'workspace_audit_owner','set') "
+        "into admin_could_set, audit_could_set;"
     )
-    membership_variables = {
-        "workspace_admin_owner": "admin_was_member",
-        "workspace_audit_owner": "audit_was_member",
+    set_authority_variables = {
+        "workspace_admin_owner": "admin_could_set",
+        "workspace_audit_owner": "audit_could_set",
     }
 
     for migration in migrations:
         sql = " ".join(migration.split())
-        assert role_closure_capture in sql
-        assert "pg_has_role" not in sql
-        for role, membership_variable in membership_variables.items():
-            setting = f"votus_pr3a.{role}_was_member"
-            capture = f"set_config('{setting}', {membership_variable}::text, true)"
+        assert set_authority_capture in sql
+        for role, authority_variable in set_authority_variables.items():
+            setting = f"votus_pr3a.{role}_could_set"
+            capture = f"set_config('{setting}', {authority_variable}::text, true)"
             conditional_grant = (
                 f"if current_setting('{setting}', true) = 'false' then "
                 f"grant {role} to current_user; end if;"
@@ -2176,7 +2212,7 @@ def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
             assert capture in sql
             assert conditional_grant in sql
             assert conditional_revoke in sql
-            assert sql.index(role_closure_capture) < sql.index(capture)
+            assert sql.index(set_authority_capture) < sql.index(capture)
             assert sql.index(capture) < sql.index(conditional_grant)
             assert sql.index(conditional_grant) < sql.index(conditional_revoke)
             assert sql.count(f"grant {role} to current_user;") == 1
