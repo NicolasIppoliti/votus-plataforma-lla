@@ -32,7 +32,9 @@ do $$ begin
   end if;
 end $$;
 drop table workspace_private.rollback_sentinel;
+grant workspace_query_owner to current_user;
 alter default privileges for role workspace_query_owner grant execute on functions to public;
+revoke workspace_query_owner from current_user;
 do $$ begin
   if exists (select 1 from pg_default_acl d join pg_roles r on r.oid=d.defaclrole
     where r.rolname='workspace_query_owner' and d.defaclnamespace=0 and d.defaclobjtype='f') then
@@ -55,7 +57,9 @@ do $$ begin
     raise exception 'default ACL rollback refusal was not atomic';
   end if;
 end $$;
+grant workspace_query_owner to current_user;
 alter default privileges for role workspace_query_owner revoke execute on functions from public;
+revoke workspace_query_owner from current_user;
 \ir ../migrations/down/20260825144358_organization_workspace_expand.down.sql
 do $$ declare before workspace_predecessor%rowtype; begin
   select * into before from workspace_predecessor;
@@ -86,8 +90,11 @@ do $$ begin
      or (select count(*) from pg_authid r where r.rolname like 'workspace\_%' escape '\'
        and not r.rolcanlogin and not r.rolinherit and not r.rolsuper and not r.rolcreatedb
        and not r.rolcreaterole and not r.rolreplication and not r.rolbypassrls and r.rolpassword is null) <> 8
-     or exists (select 1 from pg_auth_members m join pg_roles r on r.oid in (m.roleid,m.member)
-       where r.rolname like 'workspace\_%' escape '\')
+     or exists (select 1 from pg_auth_members m join pg_roles granted on granted.oid=m.roleid
+       join pg_roles member on member.oid=m.member where (granted.rolname like 'workspace\_%' escape '\'
+         or member.rolname like 'workspace\_%' escape '\') and not
+         (granted.rolname like 'workspace\_%' escape '\' and member.rolname=current_user
+          and m.admin_option and not m.inherit_option and not m.set_option))
          or (select count(*) from pg_default_acl d join pg_roles r on r.oid=d.defaclrole
            where r.rolname like 'workspace\_%' escape '\' and d.defaclnamespace=0 and d.defaclobjtype='f'
            and (select count(*) from aclexplode(d.defaclacl))=1 and exists
