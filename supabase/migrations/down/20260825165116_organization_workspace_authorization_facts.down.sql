@@ -12,7 +12,8 @@ begin
     raise exception 'authority-facts rollback refused unexpected indexes';
   end if;
   if exists (select 1 from pg_trigger where tgrelid=any(facts) and not tgisinternal)
-     or exists (select 1 from pg_policy where polrelid=any(facts))
+     or (select count(*) from pg_policy where polrelid=any(facts)) <> 4
+     or exists (select 1 from pg_policy where polrelid=any(facts) and polname not in ('workspace_admin_owner_organization_select','workspace_admin_owner_membership_select','workspace_admin_owner_scope_select','workspace_admin_owner_entitlement_select'))
      or exists (select 1 from pg_class s join pg_depend d on d.objid=s.oid where s.relkind='S' and d.refobjid=any(facts)) then
     raise exception 'authority-facts rollback refused unexpected triggers, policies, or sequences';
   end if;
@@ -22,39 +23,33 @@ begin
 end $$;
 do $$
 declare
-  admin_was_member boolean;
-  audit_was_member boolean;
+admin_could_set boolean;
+  audit_could_set boolean;
 begin
-  with recursive runner_role_closure(role_oid) as (select current_user::text::regrole::oid
-    union
-    select edge.roleid
-    from pg_auth_members edge
-    join runner_role_closure inherited on inherited.role_oid = edge.member)
-  select
-    bool_or(role_oid = 'workspace_admin_owner'::regrole::oid),
-    bool_or(role_oid = 'workspace_audit_owner'::regrole::oid)
-  into admin_was_member, audit_was_member
-  from runner_role_closure;
-  perform set_config('votus_pr3a.workspace_admin_owner_was_member', admin_was_member::text, true);
-  perform set_config('votus_pr3a.workspace_audit_owner_was_member', audit_was_member::text, true);
-  if current_setting('votus_pr3a.workspace_admin_owner_was_member', true) = 'false' then
+  select pg_has_role(current_user,'workspace_admin_owner','SET'),
+    pg_has_role(current_user,'workspace_audit_owner','SET')
+  into admin_could_set, audit_could_set;
+  perform set_config('votus_pr3a.workspace_admin_owner_could_set', admin_could_set::text, true);
+  perform set_config('votus_pr3a.workspace_audit_owner_could_set', audit_could_set::text, true);
+  if current_setting('votus_pr3a.workspace_admin_owner_could_set', true) = 'false' then
     grant workspace_admin_owner to current_user;
   end if;
-  if current_setting('votus_pr3a.workspace_audit_owner_was_member', true) = 'false' then
+  if current_setting('votus_pr3a.workspace_audit_owner_could_set', true) = 'false' then
     grant workspace_audit_owner to current_user;
   end if;
 end $$;
-drop table workspace_private.workspace_audit_event;
+drop function workspace_private.authorization_facts_status();
+    drop table workspace_private.workspace_audit_event;
 drop table workspace_private.organization_section_entitlement;
 drop table workspace_private.organization_membership;
 drop table workspace_private.section_scope;
 drop table workspace_private.organization;
 do $$
 begin
-  if current_setting('votus_pr3a.workspace_audit_owner_was_member', true) = 'false' then
+if current_setting('votus_pr3a.workspace_audit_owner_could_set', true) = 'false' then
     revoke workspace_audit_owner from current_user;
   end if;
-  if current_setting('votus_pr3a.workspace_admin_owner_was_member', true) = 'false' then
+  if current_setting('votus_pr3a.workspace_admin_owner_could_set', true) = 'false' then
     revoke workspace_admin_owner from current_user;
   end if;
 end $$;

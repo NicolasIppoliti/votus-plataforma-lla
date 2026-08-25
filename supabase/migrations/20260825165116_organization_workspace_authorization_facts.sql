@@ -1,25 +1,18 @@
 begin;
 do $$
 declare
-  admin_was_member boolean;
-  audit_was_member boolean;
+admin_could_set boolean;
+  audit_could_set boolean;
 begin
-  with recursive runner_role_closure(role_oid) as (select current_user::text::regrole::oid
-    union
-    select edge.roleid
-    from pg_auth_members edge
-    join runner_role_closure inherited on inherited.role_oid = edge.member)
-  select
-    bool_or(role_oid = 'workspace_admin_owner'::regrole::oid),
-    bool_or(role_oid = 'workspace_audit_owner'::regrole::oid)
-  into admin_was_member, audit_was_member
-  from runner_role_closure;
-  perform set_config('votus_pr3a.workspace_admin_owner_was_member', admin_was_member::text, true);
-  perform set_config('votus_pr3a.workspace_audit_owner_was_member', audit_was_member::text, true);
-  if current_setting('votus_pr3a.workspace_admin_owner_was_member', true) = 'false' then
+  select pg_has_role(current_user,'workspace_admin_owner','SET'),
+    pg_has_role(current_user,'workspace_audit_owner','SET')
+  into admin_could_set, audit_could_set;
+  perform set_config('votus_pr3a.workspace_admin_owner_could_set', admin_could_set::text, true);
+  perform set_config('votus_pr3a.workspace_audit_owner_could_set', audit_could_set::text, true);
+  if current_setting('votus_pr3a.workspace_admin_owner_could_set', true) = 'false' then
     grant workspace_admin_owner to current_user;
   end if;
-  if current_setting('votus_pr3a.workspace_audit_owner_was_member', true) = 'false' then
+  if current_setting('votus_pr3a.workspace_audit_owner_could_set', true) = 'false' then
     grant workspace_audit_owner to current_user;
   end if;
 end $$;
@@ -98,11 +91,19 @@ create index workspace_audit_event_organization_idx on workspace_private.workspa
 create index workspace_audit_event_session_idx on workspace_private.workspace_audit_event (session_id, occurred_at desc) where session_id is not null;
 create index workspace_audit_event_user_idx on workspace_private.workspace_audit_event (user_id, occurred_at desc) where user_id is not null;
 
-alter table workspace_private.organization owner to workspace_admin_owner;
+create policy workspace_admin_owner_organization_select on workspace_private.organization for select to workspace_admin_owner using (true); create policy workspace_admin_owner_membership_select on workspace_private.organization_membership for select to workspace_admin_owner using (true);
+    create policy workspace_admin_owner_scope_select on workspace_private.section_scope for select to workspace_admin_owner using (true); create policy workspace_admin_owner_entitlement_select on workspace_private.organization_section_entitlement for select to workspace_admin_owner using (true);
+    grant create on schema workspace_private to workspace_admin_owner, workspace_audit_owner;
+    alter table workspace_private.organization owner to workspace_admin_owner;
 alter table workspace_private.organization_membership owner to workspace_admin_owner;
 alter table workspace_private.section_scope owner to workspace_admin_owner;
 alter table workspace_private.organization_section_entitlement owner to workspace_admin_owner;
 alter table workspace_private.workspace_audit_event owner to workspace_audit_owner;
+create function workspace_private.authorization_facts_status() returns jsonb language sql stable security definer set search_path=pg_catalog,workspace_private,pg_temp as $$select jsonb_build_object('organizations',(select count(*) from workspace_private.organization),'active_memberships',(select count(*) from workspace_private.organization_membership where revoked_at is null),'registered_scopes',(select count(*) from workspace_private.section_scope),'active_entitlements',(select count(*) from workspace_private.organization_section_entitlement where revoked_at is null))$$;
+alter function workspace_private.authorization_facts_status() owner to workspace_admin_owner;
+revoke all on function workspace_private.authorization_facts_status() from public;
+grant usage on schema workspace_private to workspace_platform_admin; grant execute on function workspace_private.authorization_facts_status() to workspace_platform_admin;
+revoke create on schema workspace_private from workspace_admin_owner, workspace_audit_owner;
 alter table workspace_private.organization enable row level security;
 alter table workspace_private.organization force row level security;
 alter table workspace_private.organization_membership enable row level security;
@@ -135,10 +136,10 @@ begin
 end $$;
 do $$
 begin
-  if current_setting('votus_pr3a.workspace_audit_owner_was_member', true) = 'false' then
+if current_setting('votus_pr3a.workspace_audit_owner_could_set', true) = 'false' then
     revoke workspace_audit_owner from current_user;
   end if;
-  if current_setting('votus_pr3a.workspace_admin_owner_was_member', true) = 'false' then
+  if current_setting('votus_pr3a.workspace_admin_owner_could_set', true) = 'false' then
     revoke workspace_admin_owner from current_user;
   end if;
 end $$;

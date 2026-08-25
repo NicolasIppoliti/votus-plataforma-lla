@@ -2056,21 +2056,19 @@ def test_organization_workspace_authority_facts_are_closed_and_reversible() -> N
     down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
 
     tables = (
-        "organization",
-        "organization_membership",
-        "section_scope",
-        "organization_section_entitlement",
-        "workspace_audit_event",
-    )
+        "organization organization_membership section_scope "
+        "organization_section_entitlement workspace_audit_event"
+    ).split()
     for table in tables:
         assert f"create table workspace_private.{table}" in forward
         assert f"alter table workspace_private.{table} enable row level security" in forward
         assert f"alter table workspace_private.{table} force row level security" in forward
         assert f"revoke all on table workspace_private.{table} from public" in forward
         assert f"drop table workspace_private.{table}" in down
-    assert forward.count("owner to workspace_admin_owner") == 4
+    assert forward.count("owner to workspace_admin_owner") == 5
     assert forward.count("owner to workspace_audit_owner") == 1
-    assert "create policy" not in forward and "security definer" not in forward
+    assert forward.count("create policy workspace_admin_owner_") == 4
+    assert "function workspace_private.authorization_facts_status()" in forward and "security definer" in forward
     assert "references auth." not in forward
     assert "on delete restrict" in forward
     assert "where revoked_at is null" in forward
@@ -2136,7 +2134,7 @@ def test_organization_workspace_section_scope_requires_canonical_national_codes(
     assert section_scope_codes in sql
 
 
-def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
+def test_authority_facts_migrations_preserve_runner_owner_set_authority() -> None:
     version = "20260825165116"
     migrations = (
         _sql(f"{version}_organization_workspace_authorization_facts.sql"),
@@ -2145,27 +2143,22 @@ def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
         .lower(),
     )
 
-    role_closure_capture = (
-        "with recursive runner_role_closure(role_oid) as ("
-        "select current_user::text::regrole::oid union "
-        "select edge.roleid from pg_auth_members edge "
-        "join runner_role_closure inherited on inherited.role_oid = edge.member) "
-        "select bool_or(role_oid = 'workspace_admin_owner'::regrole::oid), "
-        "bool_or(role_oid = 'workspace_audit_owner'::regrole::oid) "
-        "into admin_was_member, audit_was_member from runner_role_closure;"
+    set_authority_capture = (
+        "select pg_has_role(current_user,'workspace_admin_owner','set'), "
+        "pg_has_role(current_user,'workspace_audit_owner','set') "
+        "into admin_could_set, audit_could_set;"
     )
-    membership_variables = {
-        "workspace_admin_owner": "admin_was_member",
-        "workspace_audit_owner": "audit_was_member",
+    set_authority_variables = {
+        "workspace_admin_owner": "admin_could_set",
+        "workspace_audit_owner": "audit_could_set",
     }
 
     for migration in migrations:
         sql = " ".join(migration.split())
-        assert role_closure_capture in sql
-        assert "pg_has_role" not in sql
-        for role, membership_variable in membership_variables.items():
-            setting = f"votus_pr3a.{role}_was_member"
-            capture = f"set_config('{setting}', {membership_variable}::text, true)"
+        assert set_authority_capture in sql
+        for role, authority_variable in set_authority_variables.items():
+            setting = f"votus_pr3a.{role}_could_set"
+            capture = f"set_config('{setting}', {authority_variable}::text, true)"
             conditional_grant = (
                 f"if current_setting('{setting}', true) = 'false' then "
                 f"grant {role} to current_user; end if;"
@@ -2177,7 +2170,7 @@ def test_authority_facts_migrations_preserve_runner_owner_memberships() -> None:
             assert capture in sql
             assert conditional_grant in sql
             assert conditional_revoke in sql
-            assert sql.index(role_closure_capture) < sql.index(capture)
+            assert sql.index(set_authority_capture) < sql.index(capture)
             assert sql.index(capture) < sql.index(conditional_grant)
             assert sql.index(conditional_grant) < sql.index(conditional_revoke)
             assert sql.count(f"grant {role} to current_user;") == 1

@@ -176,10 +176,6 @@ describe("migration release-gate integration", () => {
 				path: "tests/results_coverage_scope_binding_release.sql",
 				label: "disposable coverage-scope-binding rollback/reapply proof",
 			},
-			{
-				path: "tests/workspace_foundation_release.sql",
-				label: "disposable workspace-foundation rollback/reapply proof",
-			},
 		]);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(true);
@@ -240,7 +236,6 @@ describe("migration release-gate integration", () => {
 			"pgTAP:disposable workspace-foundation pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
-			"rollback:disposable workspace-foundation rollback/reapply proof",
 			"synthetic:0039_e2e_service_role_grants.sql",
 		]);
 		expect(stack.API_URL).toBe("http://127.0.0.1:54321");
@@ -388,7 +383,7 @@ describe("migration release-gate integration", () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
 		expect(plan.pgTapProofs).toHaveLength(5);
-		expect(plan.rollbackReapplyProofs).toHaveLength(3);
+		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
 	});
@@ -481,7 +476,7 @@ describe("migration release-gate integration", () => {
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY);
 		expect(plan.setupProofs).toEqual([]);
 		expect(plan.pgTapProofs).toEqual([]);
-		expect(plan.rollbackReapplyProofs).toHaveLength(3);
+		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(false);
 		expect(plan.runBrowser).toBe(false);
 	});
@@ -601,10 +596,6 @@ describe("migration release-gate integration", () => {
 				rollbackReapplyProofs: expect.arrayContaining([
 					expect.objectContaining({
 						path: "tests/results_exploration_release.sql",
-					}),
-					expect.objectContaining({
-						path: "tests/workspace_foundation_release.sql",
-						label: "disposable workspace-foundation rollback/reapply proof",
 					}),
 				]),
 			}),
