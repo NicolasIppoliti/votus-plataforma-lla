@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
@@ -9,6 +9,7 @@ import { verifyBootstrapClaims } from "../src/lib/supabase/verified-bootstrap-cl
 interface LocalStatus { API_URL: string; DB_URL: string; ANON_KEY: string }
 interface ProcessOutcome { denied: boolean; stdout: string; succeeded: boolean }
 const ROOT = new URL("../../..", import.meta.url).pathname;
+const SUPABASE_PORT_OFFSET = 2_000;
 const run = (file: string, args: string[], input?: string, env = process.env) =>
   execFileSync(file, args, { cwd: ROOT, encoding: "utf8", input, env, stdio: ["pipe", "pipe", "pipe"] });
 const fail = (message: string): never => { throw new Error(message); };
@@ -84,10 +85,23 @@ alter role authenticator in database postgres set pgrst.db_schemas to 'public, g
 
 async function main() {
   const scratch = await mkdtemp(join(tmpdir(), "votus-bootstrap-spike-"));
-  let started = false, admin: ReturnType<typeof database> | undefined, email: string | undefined, previousExposure = "__unset__";
+  const supabaseDirectory = join(scratch, "supabase");
+  const workdirArgs = ["--workdir", scratch];
+  let startAttempted = false, admin: ReturnType<typeof database> | undefined, email: string | undefined, previousExposure = "__unset__";
   try {
-    run("supabase", ["start", "--ignore-health-check"]); started = true;
-    const status = JSON.parse(run("supabase", ["status", "--output", "json"])) as LocalStatus;
+    const repositoryConfig = await readFile(join(ROOT, "supabase", "config.toml"), "utf8");
+    const projectId = `votus-bootstrap-spike-${process.pid}-${randomBytes(6).toString("hex")}`;
+    const isolatedConfig = repositoryConfig
+      .replace(/^project_id = ".*"$/m, `project_id = "${projectId}"`)
+      .replace(/^(\s*(?:port|shadow_port|inspector_port)\s*=\s*)(5432\d|8083)(\s*(?:#.*)?)$/gm, (_, prefix: string, port: string, suffix: string) => {
+        const isolatedPort = port === "8083" ? 56_328 : Number(port) + SUPABASE_PORT_OFFSET;
+        return `${prefix}${isolatedPort}${suffix}`;
+      });
+    await mkdir(supabaseDirectory);
+    await writeFile(join(supabaseDirectory, "config.toml"), isolatedConfig);
+    startAttempted = true;
+    run("supabase", ["start", "--ignore-health-check", ...workdirArgs]);
+    const status = JSON.parse(run("supabase", ["status", "--output", "json", ...workdirArgs])) as LocalStatus;
     admin = database(status.DB_URL); const password = randomBytes(24).toString("base64url");
     previousExposure = admin("select coalesce((select substring(setting from '^pgrst\\.db_schemas=(.*)$') from pg_db_role_setting s join pg_roles r on r.oid=s.setrole cross join lateral unnest(s.setconfig) setting where r.rolname='authenticator' and s.setdatabase=(select oid from pg_database where datname=current_database()) and setting like 'pgrst.db_schemas=%'),'__unset__')").trim();
     admin(sql().replace(":'login_password'", `'${password.replaceAll("'", "''")}'`));
@@ -141,7 +155,10 @@ async function main() {
   } finally {
     try {
       if (admin) { const exposureRestore = previousExposure === "__unset__" ? "reset pgrst.db_schemas" : `set pgrst.db_schemas to '${previousExposure.replaceAll("'", "''")}'`; admin(`alter role authenticator in database postgres ${exposureRestore}; notify pgrst,'reload config'; notify pgrst,'reload schema'; delete from auth.users where email='${email ?? ""}'; drop schema if exists workspace_api cascade; drop schema if exists workspace_private cascade; revoke workspace_bootstrap_owner,workspace_context_owner from postgres; drop role if exists workspace_spike_login; revoke usage on schema extensions from workspace_context_owner; revoke connect on database postgres from workspace_bootstrap_caller; drop role if exists workspace_context_owner; drop role if exists workspace_bootstrap_caller; drop role if exists workspace_bootstrap_owner;`); }
-    } finally { await rm(scratch, { recursive: true, force: true }); if (started) run("supabase", ["stop", "--no-backup"]); }
+    } finally {
+      try { if (startAttempted) run("supabase", ["stop", "--no-backup", ...workdirArgs]); }
+      finally { await rm(scratch, { recursive: true, force: true }); }
+    }
   }
 }
 
