@@ -977,6 +977,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
         "\\ir ../migrations/down/"
+        "20260825180048_organization_workspace_authorization_admin.down.sql",
+        "\\ir ../migrations/down/"
         "20260825165116_organization_workspace_authorization_facts.down.sql",
         "\\ir ../migrations/down/20260825144358_organization_workspace_expand.down.sql",
         "\\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql",
@@ -1011,6 +1013,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql",
         "\\ir ../migrations/20260825144358_organization_workspace_expand.sql",
         "\\ir ../migrations/20260825165116_organization_workspace_authorization_facts.sql",
+        "\\ir ../migrations/20260825180048_organization_workspace_authorization_admin.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1025,7 +1028,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "40 as migration_inventory_count",
+        "41 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2121,6 +2124,7 @@ def test_organization_workspace_authority_facts_are_closed_and_reversible() -> N
     )
 
 
+
 def test_organization_workspace_section_scope_requires_canonical_national_codes() -> None:
     migration = _sql("20260825165116_organization_workspace_authorization_facts.sql")
     sql = " ".join(migration.split())
@@ -2132,6 +2136,44 @@ def test_organization_workspace_section_scope_requires_canonical_national_codes(
     )
 
     assert section_scope_codes in sql
+
+
+def test_workspace_admin_boundary_is_private_rls_backed_and_reversible() -> None:
+    version = "20260825180048"
+    forward_path = MIGRATIONS / f"{version}_organization_workspace_authorization_admin.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_admin.down.sql"
+    )
+    assert forward_path.read_text(encoding="utf-8").strip(), "workspace admin migration is empty"
+    assert down_path.exists(), "workspace admin down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    functions = (
+        "append_audit_event create_organization disable_organization grant_membership "
+        "revoke_membership register_section_scope grant_section_entitlement "
+        "revoke_section_entitlement"
+    ).split()
+    for function in functions:
+        assert f"function workspace_private.{function}" in forward
+        assert "security definer set search_path=pg_catalog,workspace_private,pg_temp" in forward
+        assert f"revoke all on function workspace_private.{function}" in forward
+        assert f"drop function workspace_private.{function}" in down
+        assert "grant execute on function workspace_private.append_audit_event" in forward
+    assert "to workspace_admin_owner" in forward
+    assert forward.count("to workspace_platform_admin") == 7
+    for table in (
+        "organization organization_membership section_scope "
+        "organization_section_entitlement workspace_audit_event"
+    ).split():
+        assert "create policy workspace_" in forward
+        assert f"on workspace_private.{table}" in forward
+    assert "for delete" not in forward
+    assert "execute format" not in forward and "execute immediate" not in forward
+    assert "public.jurisdiction" in forward
+    assert "raise exception 'workspace-admin rollback refused" in down
+    assert "cascade" not in down
+    for forbidden in ("email", "token", "password", "dsn", "auth."):
+        assert forbidden not in forward
 
 
 def test_authority_facts_migrations_preserve_runner_owner_set_authority() -> None:
