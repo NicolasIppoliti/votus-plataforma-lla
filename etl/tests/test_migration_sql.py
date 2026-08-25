@@ -1020,7 +1020,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "38 as migration_inventory_count",
+        "39 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -1927,3 +1927,112 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     assert "index_scans between 1 and 4" in scale
     assert "index_scans >= jurisdiction_count" not in scale
     assert "table_scans = 0" in scale
+
+
+_WORKSPACE_ROLES = (
+    "workspace_bootstrap_owner workspace_bootstrap_caller workspace_context_owner "
+    "workspace_query_owner workspace_admin_owner workspace_review_ingest_owner "
+    "workspace_audit_owner workspace_platform_admin"
+).split()
+
+
+def _workspace_foundation_migrations() -> tuple[str, Path, str]:
+    matches = list(MIGRATIONS.glob("*_organization_workspace_expand.sql"))
+    assert len(matches) == 1
+    forward_path = matches[0]
+    version = forward_path.name.removesuffix("_organization_workspace_expand.sql")
+    assert version.isdigit() and len(version) == 14
+    down_path = MIGRATIONS / "down" / f"{version}_organization_workspace_expand.down.sql"
+    forward = forward_path.read_text(encoding="utf-8").lower()
+    assert forward.strip(), "the generated workspace migration must be implemented"
+    assert down_path.exists(), "the matching generated down migration is required"
+    return forward, down_path, down_path.read_text(encoding="utf-8").lower()
+
+
+def test_organization_workspace_foundation_is_additive_and_closed_by_default() -> None:
+    forward, _, _ = _workspace_foundation_migrations()
+    sql = " ".join(forward.split())
+    assert forward.startswith("begin;") and forward.rstrip().endswith("commit;")
+    for schema in ("workspace_private", "workspace_api"):
+        assert f"create schema {schema}" in sql
+        assert f"revoke all on schema {schema} from public" in sql
+    assert "foreach client_role in array array['anon', 'authenticated', 'service_role']" in sql
+    assert "if to_regrole(client_role) is not null" in sql
+    assert "revoke all on schema workspace_private from %i" in sql
+    assert "revoke all on schema workspace_api from %i" in sql
+    for role in _WORKSPACE_ROLES:
+        assert f"'{role}'" in sql
+    role_flags = "nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls"
+    assert role_flags in sql
+    api_usage = (
+        "grant usage on schema workspace_api to workspace_context_owner, workspace_query_owner"
+    )
+    assert api_usage in sql
+    assert "grant create on schema workspace" not in sql
+    assert "revoke create on schema public" in sql
+    assert "acldefault" in sql and "acl.grantee = 0" in sql
+    forbidden = (
+        "create table",
+        "create sequence",
+        "create function",
+        "security definer",
+        "enable row level security",
+        "create policy",
+        "auth.",
+        "password",
+        "revoke temp",
+    )
+    assert not any(token in sql for token in forbidden)
+
+
+def test_organization_workspace_defaults_and_down_are_bounded_and_fail_closed() -> None:
+    forward, down_path, down = _workspace_foundation_migrations()
+    sql = " ".join(forward.split())
+    rollback = " ".join(down.split())
+    global_function_revoke = (
+        "alter default privileges for role %i revoke execute on functions from public"
+    )
+    assert sql.count(global_function_revoke) == 1
+    assert "foreach owner_role in array workspace_roles" in sql
+    assert "default_owners" not in sql
+    assert "alter default privileges for role %i in schema" not in sql
+    assert "on tables" not in sql and "on sequences" not in sql
+    assert "foreach" in sql and "execute format" in sql and "pg_auth_members" in sql
+
+    assert down_path.name == "20260825144358_organization_workspace_expand.down.sql"
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "migration_creator" not in rollback and "default_owners" not in rollback
+    assert "pg_depend" in rollback and "pg_describe_object" in rollback
+    default_acl_guard = rollback.split("select string_agg( pg_describe_object", 1)[0]
+    for required in (
+        "pg_default_acl",
+        "defaults.defaclnamespace = 0",
+        "owner.rolname = any(workspace_roles)",
+        "defaults.defaclobjtype <> 'f'",
+        "count(*)",
+        "count(distinct defaults.defaclrole)",
+        "cardinality(workspace_roles)",
+        "aclexplode",
+        "acl.grantor = defaults.defaclrole",
+        "acl.grantee = defaults.defaclrole",
+        "acl.privilege_type = 'execute'",
+        "not acl.is_grantable",
+        "unexpected schema-scoped entries",
+    ):
+        assert required in default_acl_guard
+    schema_default_guard = "namespace.nspname = any(array['workspace_private', 'workspace_api'])"
+    assert schema_default_guard in default_acl_guard
+    assert "raise exception" in rollback
+    assert rollback.count("for role %i grant execute on functions to public") == 1
+    assert "foreach owner_role in array workspace_roles" in rollback
+    assert "in schema %i revoke execute on functions from public" not in rollback
+    assert rollback.index("workspace rollback refused default acls") < rollback.index(
+        "select string_agg( pg_describe_object"
+    )
+    for schema in ("workspace_api", "workspace_private"):
+        assert f"drop schema {schema}" in rollback
+    for role in _WORKSPACE_ROLES:
+        assert f"drop role {role}" in rollback
+    assert not any(
+        token in rollback for token in ("cascade", "drop owned", "drop table", "drop function")
+    )

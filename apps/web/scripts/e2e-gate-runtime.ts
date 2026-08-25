@@ -174,11 +174,13 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 }
 
 const PBA_113_MIGRATION_VERSION = "20260824193650";
+const WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358";
 const MIGRATION_VERSIONS = [
 	...Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	),
 	PBA_113_MIGRATION_VERSION,
+	WORKSPACE_FOUNDATION_MIGRATION_VERSION,
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {

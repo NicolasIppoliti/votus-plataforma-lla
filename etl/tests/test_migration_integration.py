@@ -16,8 +16,12 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 38))
 PBA_113_MIGRATION_VERSION = "20260824193650"
+WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358"
+SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
+    {PBA_113_MIGRATION_VERSION, WORKSPACE_FOUNDATION_MIGRATION_VERSION}
+)
 EXPECTED_MIGRATION_VERSIONS = tuple(
-    [*(f"{number:04d}" for number in range(1, 38)), PBA_113_MIGRATION_VERSION]
+    [*(f"{number:04d}" for number in range(1, 38)), *sorted(SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS)]
 )
 MIGRATION_FILE_PATTERN = re.compile(r"^(\d{4}|\d{14})_[^/]+\.sql$")
 
@@ -25,11 +29,11 @@ MIGRATION_FILE_PATTERN = re.compile(r"^(\d{4}|\d{14})_[^/]+\.sql$")
 def _normalized_migration_version(version: int | str) -> str:
     if type(version) is int and version in SUPPORTED_MIGRATION_NUMBERS:
         return f"{version:04d}"
-    if type(version) is str and version == PBA_113_MIGRATION_VERSION:
+    if type(version) is str and version in SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS:
         return version
     raise ValueError(
-        "migration version must be an integer from 1 through 37 "
-        f"or the exact timestamp {PBA_113_MIGRATION_VERSION}"
+        "migration version must be an integer from 1 through 37 or one of the exact "
+        f"timestamps {sorted(SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS)}"
     )
 
 
@@ -106,6 +110,12 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     )
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION, down=True).name == (
         "20260824193650_map_pba_113_party_jurisdictions.down.sql"
+    )
+    assert _validated_migration_path(WORKSPACE_FOUNDATION_MIGRATION_VERSION).name == (
+        "20260825144358_organization_workspace_expand.sql"
+    )
+    assert _validated_migration_path(WORKSPACE_FOUNDATION_MIGRATION_VERSION, down=True).name == (
+        "20260825144358_organization_workspace_expand.down.sql"
     )
     for unsupported in (38, "0038", "20260824193651"):
         with pytest.raises(ValueError, match="1 through 37"):
