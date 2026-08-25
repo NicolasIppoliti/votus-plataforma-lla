@@ -87,8 +87,10 @@ begin
     from pg_auth_members edge
     join pg_roles granted on granted.oid = edge.roleid
     join pg_roles member on member.oid = edge.member
-    where (granted.rolname = any(workspace_roles) and member.rolname = any(boundary_roles))
-       or (member.rolname = any(workspace_roles) and granted.rolname = any(boundary_roles))
+    where ((granted.rolname = any(workspace_roles) and member.rolname = any(boundary_roles))
+       or (member.rolname = any(workspace_roles) and granted.rolname = any(boundary_roles)))
+      and not (granted.rolname = any(workspace_roles) and member.rolname = current_user
+        and edge.admin_option and not edge.inherit_option and not edge.set_option)
   ) then
     raise exception 'workspace role membership closure failed';
   end if;
