@@ -18,11 +18,13 @@ SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 38))
 PBA_113_MIGRATION_VERSION = "20260824193650"
 WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358"
 WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116"
+WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
         WORKSPACE_FOUNDATION_MIGRATION_VERSION,
         WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
+        WORKSPACE_ADMIN_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -129,7 +131,13 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         _validated_migration_path(WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION, down=True).name
         == "20260825165116_organization_workspace_authorization_facts.down.sql"
     )
-    for unsupported in (38, "0038", "20260824193651", "20260825165117"):
+    assert _validated_migration_path(WORKSPACE_ADMIN_MIGRATION_VERSION).name == (
+        "20260825180048_organization_workspace_authorization_admin.sql"
+    )
+    assert _validated_migration_path(WORKSPACE_ADMIN_MIGRATION_VERSION, down=True).name == (
+        "20260825180048_organization_workspace_authorization_admin.down.sql"
+    )
+    for unsupported in (38, "0038", "20260824193651", "20260825165117", "20260825180049"):
         with pytest.raises(ValueError, match="1 through 37"):
             _validated_migration_path(unsupported)
 
@@ -803,7 +811,7 @@ def test_0029_through_timestamped_forward_down_reapply_preserve_history_and_inde
                 "to_regprocedure('results_exploration_official_wrapper_0031"
                 "(uuid,uuid,text,text,text,text,integer,text)') is null"
             ).fetchone()
-        assert restored_0031 is not None
+        assert restored_0031 is not None and wrapper_before_0032 is not None
         assert restored_0031 == (wrapper_before_0032[0], True, True)
         _apply_migration(history_dsn, 32)
         _apply_migration(history_dsn, 33)
