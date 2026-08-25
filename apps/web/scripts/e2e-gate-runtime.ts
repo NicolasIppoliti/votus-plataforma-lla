@@ -265,6 +265,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 		label: "disposable coverage-scope-binding pgTAP",
 		timeoutMs: 120_000,
 	},
+	{
+		path: "tests/workspace_foundation.sql",
+		label: "disposable workspace-foundation pgTAP",
+		timeoutMs: 120_000,
+	},
 ];
 
 const POST_PG_TAP_CLEANUP_PROOFS: readonly ReleaseGatePostPgTapCleanupProof[] = [
@@ -284,6 +289,10 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 	{
 		path: "tests/results_coverage_scope_binding_release.sql",
 		label: "disposable coverage-scope-binding rollback/reapply proof",
+	},
+	{
+		path: "tests/workspace_foundation_release.sql",
+		label: "disposable workspace-foundation rollback/reapply proof",
 	},
 ];
 
