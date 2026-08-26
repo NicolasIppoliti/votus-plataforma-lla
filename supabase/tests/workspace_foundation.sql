@@ -1,5 +1,5 @@
 begin;
-select plan(18);
+select plan(19);
 select is(
   (select count(*) from pg_namespace n
    where n.nspname = any(array['workspace_private', 'workspace_api'])
@@ -119,6 +119,7 @@ select is(
      and referenced.nspname = 'auth'),
   0::bigint,
   'workspace foundation has no Auth dependencies');
+select is((select array_agg(p.proname order by p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='workspace_api'),array['available_organizations','bootstrap_workspace_context','current_workspace','invalidate_workspace_context','switch_workspace_context']::name[],'workspace interface has the exact five claims-bound functions');
 select ok(
   not has_schema_privilege('service_role', 'workspace_private', 'USAGE')
   and not has_schema_privilege('service_role', 'workspace_api', 'USAGE')

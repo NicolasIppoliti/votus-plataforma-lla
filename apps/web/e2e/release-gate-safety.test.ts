@@ -113,6 +113,7 @@ describe("migration release-gate integration", () => {
 		"20260825165116",
 		"20260825180048",
 		"20260826033130",
+		"20260826050000",
 	];
 	it("inspects the exact production migration and proof plan", async () => {
 		const plan = await inspectReleaseGatePlan();
@@ -125,7 +126,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(43);
+		).toBe(44);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -200,7 +201,7 @@ describe("migration release-gate integration", () => {
 		);
 		expect(names).toHaveLength(plan.migrationVersions.length);
 		expect(names.at(-1)).toBe(
-			"20260826033130_session_bound_context_invalidation.sql",
+			"20260826050000_workspace_context_selection.sql",
 		);
 	});
 	it("runs every production phase in plan order before installing synthetic 0039", async () => {
@@ -370,7 +371,7 @@ describe("migration release-gate integration", () => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
 		).toThrow(
-			"migration inventory must be exactly versions 0001 through 20260825180048 plus 20260826033130",
+			"migration inventory must be exactly versions 0001 through 20260826033130 plus 20260826050000",
 		);
 	});
 	it.each([
@@ -508,11 +509,12 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("42 as migration_inventory_count");
+		expect(proof).toContain("43 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"20260826050000-down",
 			"20260826033130-down",
 			"20260825180048-down",
 			"20260825165116-down",
@@ -557,6 +559,7 @@ describe("migration release-gate integration", () => {
 			"20260825165116-up",
 			"20260825180048-up",
 			"20260826033130-up",
+			"20260826050000-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",

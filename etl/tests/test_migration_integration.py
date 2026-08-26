@@ -23,6 +23,7 @@ WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358"
 WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116"
 WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048"
 WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130"
+WORKSPACE_SELECTION_MIGRATION_VERSION = "20260826050000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -30,6 +31,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
         WORKSPACE_ADMIN_MIGRATION_VERSION,
         WORKSPACE_CONTEXT_MIGRATION_VERSION,
+        WORKSPACE_SELECTION_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -115,7 +117,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 42
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 43
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -148,6 +150,12 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     )
     assert _validated_migration_path(WORKSPACE_CONTEXT_MIGRATION_VERSION, down=True).name == (
         "20260826033130_session_bound_context_invalidation.down.sql"
+    )
+    assert _validated_migration_path(WORKSPACE_SELECTION_MIGRATION_VERSION).name == (
+        "20260826050000_workspace_context_selection.sql"
+    )
+    assert _validated_migration_path(WORKSPACE_SELECTION_MIGRATION_VERSION, down=True).name == (
+        "20260826050000_workspace_context_selection.down.sql"
     )
     for unsupported in (
         38,
@@ -1274,6 +1282,90 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             )
 
 
+# fmt: off
+
+def test_workspace_context_selection_switching_and_session_isolation() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for workspace selection coverage")
+    params = conninfo_to_dict(database_dsn)
+    params["user"] = "postgres"
+    params.pop("password", None)
+    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    user_id, session_id, other_session = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    organizations = [uuid.uuid4() for _ in range(3)]
+
+    def rpc(name: str, session: uuid.UUID, *args: object) -> dict[str, object]:
+        claims = json.dumps({"sub": str(user_id), "session_id": str(session), "exp": 253402300798})
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,))
+            connection.execute("set role authenticated")
+            row = connection.execute(f"select workspace_api.{name}({','.join(['%s'] * len(args))})", args).fetchone()  # noqa: E501, S608
+            assert row is not None and isinstance(row[0], dict)
+            return row[0]
+
+    try:
+        assert rpc("current_workspace", session_id) == {"status": "selection_required", "context_revision": 0}  # noqa: E501
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_admin_owner")
+            connection.cursor().executemany(
+                "insert into workspace_private.organization(id,slug,display_name,disabled_at) values(%s,%s,%s,%s)",  # noqa: E501
+                [(organizations[0], f"active-{organizations[0].hex}", "Active", None),
+                 (organizations[1], f"revoked-{organizations[1].hex}", "Revoked", None),
+                 (organizations[2], f"disabled-{organizations[2].hex}", "Disabled", "2000-01-01")],
+            )
+            connection.cursor().executemany(
+                "insert into workspace_private.organization_membership(organization_id,user_id,revoked_at) values(%s,%s,%s)",  # noqa: E501
+                [(organizations[0], user_id, None), (organizations[1], user_id, "2100-01-01"),
+                 (organizations[2], user_id, None)],
+            )
+        assert rpc("available_organizations", session_id) == {
+            "status": "ok",
+            "organizations": [{"id": str(organizations[0]), "display_name": "Active"}],
+            "total": 1, "truncated": False,
+        }
+        first = rpc("bootstrap_workspace_context", session_id)
+        assert first == {"status": "selection_required", "context_revision": 1}
+        assert rpc("bootstrap_workspace_context", session_id) == first
+        assert rpc("bootstrap_workspace_context", other_session) == first
+        assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "active", "context_revision": 2}  # noqa: E501
+        assert rpc("current_workspace", session_id) == {"status": "active", "context_revision": 2,
+            "organization": {"id": str(organizations[0]), "display_name": "Active"}}
+        assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "same_state", "context_revision": 2}  # noqa: E501
+        assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "conflict", "context_revision": 2}  # noqa: E501
+        assert rpc("current_workspace", other_session) == {"status": "selection_required", "context_revision": 1}  # noqa: E501
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_admin_owner")
+            connection.execute("update workspace_private.organization_membership set membership_revision=2 where organization_id=%s and user_id=%s", (organizations[0], user_id))  # noqa: E501
+        assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 2}
+        assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "active", "context_revision": 3}  # noqa: E501
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_admin_owner")
+            connection.execute("update workspace_private.organization set entitlement_revision=1 where id=%s", (organizations[0],))  # noqa: E501
+        assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 3}
+        assert rpc("switch_workspace_context", session_id, organizations[0], 3) == {"status": "active", "context_revision": 4}  # noqa: E501
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_admin_owner")
+            connection.execute("update workspace_private.organization set disabled_at=now() where id=%s", (organizations[0],))  # noqa: E501
+        assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 4}
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_context_owner")
+            connection.execute("update workspace_private.workspace_context set fixed_expires_at='2000-01-01' where session_id=%s", (session_id,))  # noqa: E501
+        assert rpc("current_workspace", session_id) == {"status": "expired", "context_revision": 4}
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_context_owner")
+            connection.execute("update workspace_private.workspace_context set fixed_expires_at='2100-01-01',revoked_at=now() where session_id=%s", (session_id,))  # noqa: E501
+        assert rpc("current_workspace", session_id) == {"status": "revoked", "context_revision": 4}
+    finally:
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("delete from workspace_private.workspace_audit_event where user_id=%s", (user_id,))  # noqa: E501
+            connection.execute("delete from workspace_private.workspace_context where user_id=%s", (user_id,))  # noqa: E501
+            connection.execute("delete from workspace_private.organization_membership where organization_id=any(%s)", (organizations,))  # noqa: E501
+            connection.execute("delete from workspace_private.organization where id=any(%s)", (organizations,))  # noqa: E501
+
+# fmt: on
+
+
 def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
@@ -1547,6 +1639,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(
@@ -1589,6 +1682,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             )
         _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
         _apply_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(
@@ -1598,18 +1692,24 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             ).fetchone() == (True, True)
     finally:
         with psycopg.connect(admin_dsn) as connection:
-            admin_installed, context_installed = connection.execute(
+            admin_installed, context_installed, selection_installed = connection.execute(
                 "select to_regprocedure('workspace_private.create_organization"
                 "(text,text,text,text)') is not null,"
-                "to_regprocedure('workspace_api.invalidate_workspace_context()') is not null"
+                "to_regprocedure('workspace_api.invalidate_workspace_context()') is not null,"
+                "to_regprocedure('workspace_api.current_workspace()') is not null"
             ).fetchone()
         if context_installed and not admin_installed:
+            if selection_installed:
+                _apply_down_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
+                selection_installed = False
             _apply_down_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
             context_installed = False
         if not admin_installed:
             _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
         if not context_installed:
             _apply_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
+        if not selection_installed:
+            _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             connection.execute(
                 "with removed as (delete from workspace_private.workspace_audit_event "
