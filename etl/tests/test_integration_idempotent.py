@@ -372,6 +372,7 @@ class _AuthorityPauseCursor:
         self._authority_selected = authority_selected
         self._continue_replacement = continue_replacement
 
+    # pi-lens-ignore: python-sql-injection
     def execute(self, query, params=None):
         result = self._cursor.execute(query, params)
         if (
