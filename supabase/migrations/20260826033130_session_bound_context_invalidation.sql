@@ -29,7 +29,7 @@ alter table workspace_private.workspace_context enable row level security;
 alter table workspace_private.workspace_context force row level security;
 create policy workspace_context_owner_context_all on workspace_private.workspace_context
   for all to workspace_context_owner using (true) with check (true);
-revoke all on table workspace_private.workspace_context from public,anon,authenticated,service_role;
+revoke all on table workspace_private.workspace_context from public,anon,authenticated;
 reset role;
 set role workspace_admin_owner;
 revoke references on workspace_private.organization,workspace_private.organization_membership from workspace_context_owner;
@@ -83,7 +83,8 @@ begin
 end $$;
 alter function workspace_api.invalidate_workspace_context() owner to workspace_context_owner;
 revoke create on schema workspace_api from workspace_context_owner;
-revoke all on function workspace_api.invalidate_workspace_context() from public,anon,service_role;
+revoke all on function workspace_api.invalidate_workspace_context() from public,anon;
+do $$ begin if to_regrole('service_role') is not null then revoke all on table workspace_private.workspace_context from service_role; revoke all on function workspace_api.invalidate_workspace_context() from service_role; end if; end $$;
 grant execute on function workspace_api.invalidate_workspace_context() to authenticated;
 do $$ declare r text; begin
   foreach r in array array['workspace_context_owner','workspace_audit_owner','workspace_admin_owner'] loop
