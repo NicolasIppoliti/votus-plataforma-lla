@@ -975,7 +975,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
         with conn.cursor() as cur:
             cur.execute(
                 "select kind, severity, note, subject_ref from review_item "
-                "where starts_with(subject_ref, %s)",
+                "where starts_with(subject_ref, %s) order by kind",
                 (f"{source_id} ",),
             )
             written = cur.fetchall()

@@ -1,0 +1,12 @@
+begin;
+do $$ declare r text; begin foreach r in array array['workspace_admin_owner','workspace_context_owner','workspace_query_owner'] loop perform set_config('votus_facets_down.'||r,pg_has_role(current_user,r,'SET')::text,true); if not pg_has_role(current_user,r,'SET') then execute format('grant %I to %I',r,current_user); end if; end loop; end $$;
+set role workspace_query_owner; drop function workspace_api.official_facets(); drop function workspace_private.authorized_section_scopes(); reset role;
+set role workspace_context_owner; drop policy workspace_query_owner_context_select on workspace_private.workspace_context; revoke select on workspace_private.workspace_context from workspace_query_owner; revoke execute on function workspace_private.trusted_workspace_claims() from workspace_query_owner; reset role;
+set role workspace_admin_owner;
+drop policy workspace_query_owner_organization_select on workspace_private.organization; drop policy workspace_query_owner_membership_select on workspace_private.organization_membership; drop policy workspace_query_owner_entitlement_select on workspace_private.organization_section_entitlement; drop policy workspace_query_owner_section_select on workspace_private.section_scope;
+revoke select on workspace_private.organization,workspace_private.organization_membership,workspace_private.organization_section_entitlement,workspace_private.section_scope from workspace_query_owner; reset role;
+drop policy workspace_query_owner_result_row_select on public.result_row; drop policy workspace_query_owner_jurisdiction_select on public.jurisdiction; drop policy workspace_query_owner_election_select on public.election; drop policy workspace_query_owner_category_select on public.category;
+revoke select on public.result_row,public.jurisdiction,public.election,public.category from workspace_query_owner;
+drop index public.result_row_authorized_official_facets_idx;
+do $$ declare r text; begin foreach r in array array['workspace_query_owner','workspace_context_owner','workspace_admin_owner'] loop if current_setting('votus_facets_down.'||r,true)='false' then execute format('revoke %I from %I',r,current_user); end if; end loop; end $$;
+commit;

@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260826160000_authorized_official_facets.down.sql",
         "\\ir ../migrations/down/20260826120000_structured_review_scope.down.sql",
         "\\ir ../migrations/down/20260826050000_workspace_context_selection.down.sql",
         "\\ir ../migrations/down/20260826033130_session_bound_context_invalidation.down.sql",
@@ -1020,6 +1021,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260826033130_session_bound_context_invalidation.sql",
         "\\ir ../migrations/20260826050000_workspace_context_selection.sql",
         "\\ir ../migrations/20260826120000_structured_review_scope.sql",
+        "\\ir ../migrations/20260826160000_authorized_official_facets.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1034,7 +1036,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "44 as migration_inventory_count",
+        "45 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2250,3 +2252,37 @@ def test_structured_review_scope_is_closed_typed_and_reversible() -> None:
     assert down.startswith("begin;") and down.endswith("commit;")
     assert "drop table workspace_private.review_item_section_scope" in down
     assert "drop column tenant_scope_state" in down
+
+
+def test_authorized_official_facets_are_claims_bound_bounded_and_reversible() -> None:
+    version = "20260826160000"
+    forward = _sql(f"{version}_authorized_official_facets.sql")
+    down = (
+        (MIGRATIONS / "down" / f"{version}_authorized_official_facets.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    normalized = " ".join(forward.split())
+    assert "rr.granularity<>'distrito'" not in normalized
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_api.official_facets()",
+        "trusted_workspace_claims()",
+        "ctx.fixed_expires_at<=statement_timestamp()",
+        "org.entitlement_revision<>ctx.entitlement_revision",
+        "member.membership_revision<>ctx.membership_revision",
+        "rr.source_kind='official'",
+        "j.seccion_code is not null",
+        "result_row_authorized_official_facets_idx",
+        "limit 200",
+        "facet_total>200",
+    ):
+        assert required in normalized
+    assert normalized.index("trusted_workspace_claims()") < normalized.index(
+        "from workspace_private.workspace_context"
+    )
+    assert "service_role" in normalized and "to authenticated" in normalized
+    assert "alter table public.result_row" not in normalized
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "create " not in down and "drop function workspace_api.official_facets()" in down
+    assert "drop index public.result_row_authorized_official_facets_idx" in down

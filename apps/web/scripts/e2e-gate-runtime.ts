@@ -180,6 +180,7 @@ const WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048";
 const WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130";
 const WORKSPACE_SELECTION_MIGRATION_VERSION = "20260826050000";
 const STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000";
+const AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION = "20260826160000";
 const MIGRATION_VERSIONS = [
 	...Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
@@ -191,6 +192,7 @@ const MIGRATION_VERSIONS = [
 	WORKSPACE_CONTEXT_MIGRATION_VERSION,
 	WORKSPACE_SELECTION_MIGRATION_VERSION,
 	STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION,
+	AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION,
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -293,6 +295,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_review_scope.sql",
 		label: "disposable workspace-review-scope pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_facets.sql",
+		label: "disposable workspace-authorized-facets pgTAP",
 		timeoutMs: 120_000,
 	},
 ];

@@ -46,6 +46,10 @@ export async function observeWorkspace(client: SupabaseClient) {
   return { bootstrap, available, current };
 }
 
+export async function authorizedOfficialFacets(client: SupabaseClient) {
+  return rpcData(await verifiedWorkspaceApi(client), "official_facets");
+}
+
 export async function switchWorkspaceContext(
   client: SupabaseClient,
   organizationId: string,
