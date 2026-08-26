@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -21,12 +22,14 @@ PBA_113_MIGRATION_VERSION = "20260824193650"
 WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358"
 WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116"
 WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048"
+WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
         WORKSPACE_FOUNDATION_MIGRATION_VERSION,
         WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
         WORKSPACE_ADMIN_MIGRATION_VERSION,
+        WORKSPACE_CONTEXT_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -112,6 +115,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 42
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -139,7 +143,20 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert _validated_migration_path(WORKSPACE_ADMIN_MIGRATION_VERSION, down=True).name == (
         "20260825180048_organization_workspace_authorization_admin.down.sql"
     )
-    for unsupported in (38, "0038", "20260824193651", "20260825165117", "20260825180049"):
+    assert _validated_migration_path(WORKSPACE_CONTEXT_MIGRATION_VERSION).name == (
+        "20260826033130_session_bound_context_invalidation.sql"
+    )
+    assert _validated_migration_path(WORKSPACE_CONTEXT_MIGRATION_VERSION, down=True).name == (
+        "20260826033130_session_bound_context_invalidation.down.sql"
+    )
+    for unsupported in (
+        38,
+        "0038",
+        "20260824193651",
+        "20260825165117",
+        "20260825180049",
+        "20260826033131",
+    ):
         with pytest.raises(ValueError, match="1 through 37"):
             _validated_migration_path(unsupported)
 
@@ -1272,6 +1289,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
     distrito_code = str(10 + fixture_id.int % 90)
     seccion_code = str((fixture_id.int // 100) % 1_000).zfill(3)
     user_id = uuid.uuid4()
+    context_user_id = uuid.uuid4()
+    context_ids, context_sessions = ((uuid.uuid4(), uuid.uuid4()) for _ in range(2))
     signatures = (
         "workspace_private.create_organization(text,text,text,text)",
         "workspace_private.disable_organization(uuid,text,text)",
@@ -1304,6 +1323,58 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             ).fetchone()
             assert created is not None and created[0]["changed"] is True
             organization_id = uuid.UUID(created[0]["organization_id"])
+            connection.execute("set role workspace_admin_owner")
+            connection.execute(
+                "insert into workspace_private.organization_membership(organization_id,user_id) "
+                "values(%s,%s)",
+                (organization_id, context_user_id),
+            )
+            connection.execute("set role workspace_context_owner")
+            context_base = (context_user_id, organization_id, 1, 0, 1)
+            connection.cursor().executemany(
+                "insert into workspace_private.workspace_context(id,session_id,user_id,"
+                "organization_id,membership_revision,entitlement_revision,context_revision,"
+                "fixed_expires_at) values(%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    (context_ids[0], context_sessions[0], *context_base, "2100-01-01"),
+                    (context_ids[1], context_sessions[1], *context_base, "2000-01-01"),
+                ),
+            )
+
+        def claims(session_id, subject_id=context_user_id, exp=253402300798):
+            return {"sub": str(subject_id), "session_id": str(session_id), "exp": exp}
+
+        def invalidate(payload):
+            encoded = payload if isinstance(payload, str) else json.dumps(payload)
+            with psycopg.connect(admin_dsn) as rpc:
+                rpc.execute("select set_config('request.jwt.claims',%s,false)", (encoded,))
+                rpc.execute("set role authenticated")
+                row = rpc.execute("select workspace_api.invalidate_workspace_context()").fetchone()
+                assert row is not None
+                return row[0]
+
+        assert invalidate(claims(uuid.uuid4())) == {"invalidated": False}
+        assert invalidate(claims(context_sessions[0])) == {"invalidated": True}
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(
+                "select (select revoked_at is not null "
+                "from workspace_private.workspace_context where id=%s),"
+                "(select revoked_at is null from workspace_private.workspace_context where id=%s),"
+                "(select count(*) from workspace_private.workspace_audit_event where context_id=%s "
+                "and session_id=%s and action='context_invalidated' and reason_code='logout')",
+                (context_ids[0], context_ids[1], context_ids[0], context_sessions[0]),
+            ).fetchone() == (True, True, 1)
+        assert invalidate(claims(context_sessions[0])) == {"invalidated": False}
+        failures = (
+            (claims(context_sessions[1], uuid.uuid4()), "VOT03"),
+            (claims(context_sessions[1], exp=1), "VOT02"),
+            ('{"sub":', "VOT02"),
+        )
+        for payload, sqlstate in failures:
+            with pytest.raises(psycopg.Error) as error:
+                invalidate(payload)
+            assert error.value.sqlstate == sqlstate
+        assert invalidate(claims(context_sessions[1])) == {"invalidated": True}
 
         barrier = Barrier(2)
 
@@ -1476,6 +1547,20 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(
+                "select to_regprocedure('workspace_api.invalidate_workspace_context()') is null,"
+                "to_regclass('workspace_private.workspace_context') is null,"
+                "to_regprocedure('workspace_private.create_organization"
+                "(text,text,text,text)') is not null"
+            ).fetchone() == (True, True, True)
+            assert (
+                connection.execute(
+                    "select workspace_private.authorization_facts_status()"
+                ).fetchone()
+                == facts_before
+            )
         _apply_down_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             policies = connection.execute(
@@ -1503,21 +1588,35 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 == facts_before
             )
         _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(
                 "select to_regprocedure('workspace_private.create_organization"
-                "(text,text,text,text)') is not null"
-            ).fetchone() == (True,)
+                "(text,text,text,text)') is not null,"
+                "to_regprocedure('workspace_api.invalidate_workspace_context()') is not null"
+            ).fetchone() == (True, True)
     finally:
         with psycopg.connect(admin_dsn) as connection:
-            installed = connection.execute(
+            admin_installed, context_installed = connection.execute(
                 "select to_regprocedure('workspace_private.create_organization"
-                "(text,text,text,text)') is not null"
+                "(text,text,text,text)') is not null,"
+                "to_regprocedure('workspace_api.invalidate_workspace_context()') is not null"
             ).fetchone()
-        if installed == (False,):
+        if context_installed and not admin_installed:
+            _apply_down_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
+            context_installed = False
+        if not admin_installed:
             _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
+        if not context_installed:
+            _apply_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
+            connection.execute(
+                "with removed as (delete from workspace_private.workspace_audit_event "
+                "where user_id=%s and action='context_invalidated') "
+                "delete from workspace_private.workspace_context where user_id=%s",
+                (context_user_id, context_user_id),
+            )
             connection.execute(
                 "delete from workspace_private.workspace_audit_event where actor_ref=%s",
                 (actor,),

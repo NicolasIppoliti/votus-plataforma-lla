@@ -55,15 +55,15 @@ select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.proname
     and acl.privilege_type='EXECUTE'),16::bigint,
   'the eight PR3B functions expose only owner and intended caller execution');
 select is((select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
-  where n.nspname='workspace_private' and c.relkind='r' and c.relforcerowsecurity),5::bigint,
-  'all five authority tables force RLS');
+  where n.nspname='workspace_private' and c.relkind='r' and c.relforcerowsecurity),6::bigint,
+  'all six private authority tables force RLS');
 select is((select count(*) from pg_policies where schemaname='workspace_private'
   and policyname=any(array['workspace_admin_owner_organization_select',
     'workspace_admin_owner_membership_select','workspace_admin_owner_scope_select',
     'workspace_admin_owner_entitlement_select'])),4::bigint,
   'the four parent owner SELECT policies remain present');
-select is((select count(*) from pg_policies where policyname like 'workspace\_%' escape '\'),14::bigint,
-  'the complete parent and administration policy set is present');
+select is((select count(*) from pg_policies where policyname like 'workspace\_%' escape '\'),16::bigint,
+  'the complete administration and context policy set is present');
 select ok(not has_table_privilege('votus_workspace_admin_test','public.jurisdiction','SELECT'),
   'the caller receives no direct jurisdiction access');
 select * from finish();

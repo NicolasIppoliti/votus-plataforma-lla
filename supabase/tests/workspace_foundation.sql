@@ -44,16 +44,17 @@ select is(
    from pg_namespace n cross join lateral aclexplode(n.nspacl) acl
    join pg_roles r on r.oid = acl.grantee
    where n.nspname = 'workspace_api' and acl.grantee <> n.nspowner),
-  array['workspace_context_owner:USAGE','workspace_query_owner:USAGE'],
-  'workspace_api has only context/query USAGE');
+    array['authenticated:USAGE','workspace_context_owner:USAGE','workspace_query_owner:USAGE'],
+    'workspace_api exposes only the claims-bound authenticated interface');
 select ok(
-  not exists (select 1 from unnest(array['workspace_private','workspace_api']) schema_name,
-    unnest(array['anon','authenticated','service_role']) role_name
-    where has_schema_privilege(role_name, schema_name, 'USAGE'))
+  not exists (select 1 from unnest(array['anon','authenticated','service_role']) role_name
+    where has_schema_privilege(role_name,'workspace_private','USAGE'))
+  and not exists (select 1 from unnest(array['anon','service_role']) role_name
+    where has_schema_privilege(role_name,'workspace_api','USAGE'))
   and not exists (select 1 from pg_namespace n cross join lateral aclexplode(n.nspacl) acl
     where n.nspname=any(array['workspace_private','workspace_api']) and acl.grantee=0
       and acl.privilege_type='USAGE'),
-  'PUBLIC and client roles are denied workspace schema usage');
+  'private facts and the workspace interface deny unintended client roles and PUBLIC');
 select ok(
   not exists (select 1 from unnest(array['workspace_private','workspace_api']) schema_name,
     unnest(array['anon','authenticated','service_role','workspace_bootstrap_owner',

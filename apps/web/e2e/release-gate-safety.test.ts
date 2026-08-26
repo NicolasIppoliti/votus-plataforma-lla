@@ -112,6 +112,7 @@ describe("migration release-gate integration", () => {
 		"20260825144358",
 		"20260825165116",
 		"20260825180048",
+		"20260826033130",
 	];
 	it("inspects the exact production migration and proof plan", async () => {
 		const plan = await inspectReleaseGatePlan();
@@ -124,7 +125,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(42);
+		).toBe(43);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -164,6 +165,11 @@ describe("migration release-gate integration", () => {
 				label: "disposable workspace-administration pgTAP",
 				timeoutMs: 120_000,
 			},
+			{
+				path: "tests/workspace_context_invalidation.sql",
+				label: "disposable workspace-context invalidation pgTAP",
+				timeoutMs: 120_000,
+			},
 		]);
 		expect(plan.postPgTapCleanupProofs).toEqual([
 			{
@@ -194,7 +200,7 @@ describe("migration release-gate integration", () => {
 		);
 		expect(names).toHaveLength(plan.migrationVersions.length);
 		expect(names.at(-1)).toBe(
-			"20260825180048_organization_workspace_authorization_admin.sql",
+			"20260826033130_session_bound_context_invalidation.sql",
 		);
 	});
 	it("runs every production phase in plan order before installing synthetic 0039", async () => {
@@ -241,6 +247,7 @@ describe("migration release-gate integration", () => {
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"pgTAP:disposable workspace-foundation pgTAP",
 			"pgTAP:disposable workspace-administration pgTAP",
+			"pgTAP:disposable workspace-context invalidation pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
 			"synthetic:0039_e2e_service_role_grants.sql",
@@ -363,7 +370,7 @@ describe("migration release-gate integration", () => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
 		).toThrow(
-			"migration inventory must be exactly versions 0001 through 20260825165116 plus 20260825180048",
+			"migration inventory must be exactly versions 0001 through 20260825180048 plus 20260826033130",
 		);
 	});
 	it.each([
@@ -389,7 +396,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(6);
+		expect(plan.pgTapProofs).toHaveLength(7);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -501,11 +508,12 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("41 as migration_inventory_count");
+		expect(proof).toContain("42 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"20260826033130-down",
 			"20260825180048-down",
 			"20260825165116-down",
 			"20260825144358-down",
@@ -548,6 +556,7 @@ describe("migration release-gate integration", () => {
 			"20260825144358-up",
 			"20260825165116-up",
 			"20260825180048-up",
+			"20260826033130-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
@@ -599,6 +608,11 @@ describe("migration release-gate integration", () => {
 					expect.objectContaining({
 						path: "tests/workspace_administration.sql",
 						label: "disposable workspace-administration pgTAP",
+						timeoutMs: 120_000,
+					}),
+					expect.objectContaining({
+						path: "tests/workspace_context_invalidation.sql",
+						label: "disposable workspace-context invalidation pgTAP",
 						timeoutMs: 120_000,
 					}),
 				]),

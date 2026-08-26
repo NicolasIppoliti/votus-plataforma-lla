@@ -286,6 +286,7 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 	);
 	if (
 		!startHelp.includes("--workdir") ||
+		!startHelp.includes("--ignore-health-check") ||
 		!stopHelp.includes("--project-id") ||
 		!stopHelp.includes("--no-backup")
 	)
@@ -747,6 +748,7 @@ async function executeGate(
 			ownership.workdir,
 			"--exclude",
 			EXCLUDED_SERVICES,
+			"--ignore-health-check",
 			"--yes",
 		],
 		"disposable Supabase start",

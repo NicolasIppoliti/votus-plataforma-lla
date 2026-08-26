@@ -177,6 +177,7 @@ const PBA_113_MIGRATION_VERSION = "20260824193650";
 const WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358";
 const WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116";
 const WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048";
+const WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130";
 const MIGRATION_VERSIONS = [
 	...Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
@@ -185,6 +186,7 @@ const MIGRATION_VERSIONS = [
 	WORKSPACE_FOUNDATION_MIGRATION_VERSION,
 	WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
 	WORKSPACE_ADMIN_MIGRATION_VERSION,
+	WORKSPACE_CONTEXT_MIGRATION_VERSION,
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -277,6 +279,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_administration.sql",
 		label: "disposable workspace-administration pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_context_invalidation.sql",
+		label: "disposable workspace-context invalidation pgTAP",
 		timeoutMs: 120_000,
 	},
 ];
