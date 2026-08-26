@@ -2071,7 +2071,8 @@ def test_organization_workspace_authority_facts_are_closed_and_reversible() -> N
     assert forward.count("owner to workspace_admin_owner") == 5
     assert forward.count("owner to workspace_audit_owner") == 1
     assert forward.count("create policy workspace_admin_owner_") == 4
-    assert "function workspace_private.authorization_facts_status()" in forward and "security definer" in forward
+    assert "function workspace_private.authorization_facts_status()" in forward
+    assert "security definer" in forward
     assert "references auth." not in forward
     assert "on delete restrict" in forward
     assert "where revoked_at is null" in forward
