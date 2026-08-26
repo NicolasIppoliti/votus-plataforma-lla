@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260826200000_authorized_official_operations.down.sql",
         "\\ir ../migrations/down/20260826160000_authorized_official_facets.down.sql",
         "\\ir ../migrations/down/20260826120000_structured_review_scope.down.sql",
         "\\ir ../migrations/down/20260826050000_workspace_context_selection.down.sql",
@@ -1022,6 +1023,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260826050000_workspace_context_selection.sql",
         "\\ir ../migrations/20260826120000_structured_review_scope.sql",
         "\\ir ../migrations/20260826160000_authorized_official_facets.sql",
+        "\\ir ../migrations/20260826200000_authorized_official_operations.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1036,7 +1038,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "45 as migration_inventory_count",
+        "46 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2286,3 +2288,48 @@ def test_authorized_official_facets_are_claims_bound_bounded_and_reversible() ->
     assert down.startswith("begin;") and down.rstrip().endswith("commit;")
     assert "create " not in down and "drop function workspace_api.official_facets()" in down
     assert "drop index public.result_row_authorized_official_facets_idx" in down
+
+
+def test_authorized_official_operations_are_independent_bounded_and_reversible() -> None:
+    version = "20260826200000"
+    forward = _sql(f"{version}_authorized_official_operations.sql")
+    down_path = MIGRATIONS / "down" / f"{version}_authorized_official_operations.down.sql"
+    down = down_path.read_text(encoding="utf-8").lower()
+    normalized = " ".join(forward.split())
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_api.official_result(",
+        "workspace_api.official_comparison(",
+        "public.results_exploration_official(",
+        "j.seccion_code is null",
+        "official_rows_without_section_identity",
+        "octet_length(payload::text)>120000",
+        "left_payload:=workspace_api.official_result",
+        "right_payload:=workspace_api.official_result",
+        "operation_unavailable",
+        "from public,anon,authenticated",
+        "to authenticated",
+        "to_regrole('service_role')",
+    ):
+        assert required in normalized
+    assert "source_kind='official'" in normalized and "update result_row" not in normalized
+    assert "'rows'" not in normalized and "'votes'" not in normalized
+    assert "set_config('votus_operations.'||r" in normalized and ",true)" in normalized
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "drop function workspace_api.official_comparison" in down
+    assert "drop function workspace_api.official_result" in down
+    proof_path = SQL_TESTS / "workspace_authorized_operations.sql"
+    proof = " ".join(proof_path.read_text(encoding="utf-8").lower().split())
+    for evidence in (
+        "select plan(10)",
+        "from pg_proc",
+        "prosecdef",
+        "proconfig",
+        "authorized_section_scopes",
+        "results_exploration_reporting_level",
+        "octet_length",
+        "result_row_authorized_official_facets_idx",
+    ):
+        assert evidence in proof
+    for semantic_fixture in ("insert into", "set local role", "request.jwt.claims"):
+        assert semantic_fixture not in proof

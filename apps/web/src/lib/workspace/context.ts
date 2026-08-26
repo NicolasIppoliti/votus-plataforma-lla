@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { OfficialSelection } from "../../app/api/workspace/official/input";
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -29,7 +30,7 @@ async function verifiedWorkspaceApi(client: SupabaseClient) {
 async function rpcData(
   api: ReturnType<SupabaseClient["schema"]>,
   name: string,
-  parameters?: Record<string, number | string>,
+  parameters?: Record<string, number | string | null>,
 ) {
   const { data, error } = parameters
     ? await api.rpc(name, parameters)
@@ -48,6 +49,32 @@ export async function observeWorkspace(client: SupabaseClient) {
 
 export async function authorizedOfficialFacets(client: SupabaseClient) {
   return rpcData(await verifiedWorkspaceApi(client), "official_facets");
+}
+
+function officialParameters(selection: OfficialSelection) {
+  return {
+    p_category_id: selection.categoryId,
+    p_circuito_code: selection.circuitoCode,
+    p_distrito_code: selection.distritoCode,
+    p_election_id: selection.electionId,
+    p_establecimiento_code: selection.establecimientoCode,
+    p_mesa_code: selection.mesaCode,
+    p_requested_level: selection.requestedLevel,
+    p_seccion_code: selection.seccionCode,
+  };
+}
+
+export async function authorizedOfficialResult(client: SupabaseClient, selection: OfficialSelection) {
+  return rpcData(await verifiedWorkspaceApi(client), "official_result", officialParameters(selection));
+}
+
+export async function authorizedOfficialComparison(client: SupabaseClient, left: OfficialSelection, right: OfficialSelection) {
+  const leftParameters = officialParameters(left);
+  const rightParameters = officialParameters(right);
+  return rpcData(await verifiedWorkspaceApi(client), "official_comparison", Object.fromEntries([
+    ...Object.entries(leftParameters).map(([key, value]) => [key.replace("p_", "p_left_"), value]),
+    ...Object.entries(rightParameters).map(([key, value]) => [key.replace("p_", "p_right_"), value]),
+  ]));
 }
 
 export async function switchWorkspaceContext(

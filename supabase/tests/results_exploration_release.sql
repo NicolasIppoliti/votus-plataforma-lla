@@ -1,4 +1,6 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/20260826200000_authorized_official_operations.down.sql
+do $$ begin if to_regprocedure('workspace_api.official_result(uuid,uuid,text,text,text,text,integer,text)') is not null or to_regprocedure('workspace_api.official_comparison(uuid,uuid,text,text,text,text,integer,text,uuid,uuid,text,text,text,text,integer,text)') is not null then raise exception 'authorized operations rollback left an interface installed'; end if; end $$;
 \ir ../migrations/down/20260826160000_authorized_official_facets.down.sql
 do $$ begin
   if results_exploration_party_jurisdiction(
@@ -215,11 +217,13 @@ end $$;
 \ir ../migrations/20260826050000_workspace_context_selection.sql
 \ir ../migrations/20260826120000_structured_review_scope.sql
 \ir ../migrations/20260826160000_authorized_official_facets.sql
+\ir ../migrations/20260826200000_authorized_official_operations.sql
 do $$
 declare
   facets_definition text;
   index_definition text;
 begin
+      if to_regprocedure('workspace_api.official_result(uuid,uuid,text,text,text,text,integer,text)') is null or to_regprocedure('workspace_api.official_comparison(uuid,uuid,text,text,text,text,integer,text,uuid,uuid,text,text,text,text,integer,text)') is null or not has_function_privilege('authenticated','workspace_api.official_result(uuid,uuid,text,text,text,text,integer,text)','EXECUTE') or has_function_privilege('anon','workspace_api.official_result(uuid,uuid,text,text,text,text,integer,text)','EXECUTE') or (to_regrole('service_role') is not null and has_function_privilege('service_role','workspace_api.official_result(uuid,uuid,text,text,text,text,integer,text)','EXECUTE')) then raise exception 'authorized operations reapply did not restore exact closed interfaces'; end if;
       if to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text)') is not null
          or to_regprocedure('public.results_exploration_facets(uuid,uuid,text,text,text,text)') is null
          or to_regprocedure('public.results_exploration_facets_0036(uuid,uuid,text,text,text,text)') is null then
@@ -414,4 +418,4 @@ grant workspace_platform_admin to current_user;
 set local role workspace_platform_admin;
 \ir ../scripts/workspace_authority_status.sql
 rollback;
-select 'release-proof' as evidence, 45 as migration_inventory_count, '20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;
+select 'release-proof' as evidence, 46 as migration_inventory_count, '20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up' as migration_sequence, 'authenticated-execute/anon-denied/internal-denied' as grant_state;

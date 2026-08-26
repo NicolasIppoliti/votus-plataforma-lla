@@ -26,6 +26,7 @@ WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130"
 WORKSPACE_SELECTION_MIGRATION_VERSION = "20260826050000"
 STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000"
 AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION = "20260826160000"
+AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION = "20260826200000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -36,6 +37,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         WORKSPACE_SELECTION_MIGRATION_VERSION,
         STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION,
+        AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -121,7 +123,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 45
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 46
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -175,6 +177,13 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         _validated_migration_path(AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION, down=True).name
         == "20260826160000_authorized_official_facets.down.sql"
     )
+    assert _validated_migration_path(AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION).name == (
+        "20260826200000_authorized_official_operations.sql"
+    )
+    operations_down = _validated_migration_path(
+        AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION, down=True
+    )
+    assert operations_down.name == "20260826200000_authorized_official_operations.down.sql"
     for unsupported in (
         38,
         "0038",
@@ -1384,6 +1393,52 @@ def test_workspace_context_selection_switching_and_session_isolation() -> None:
 # fmt: on
 
 
+# fmt: off
+def test_authorized_official_operations_preserve_independent_section_scope_semantics() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for authorized operation coverage")
+    params = conninfo_to_dict(database_dsn); params["user"] = "postgres"; params.pop("password", None)  # noqa: E501, E702
+    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    user_id, election_id, category_id, exact_j, other_j, coarse_j, org_one, org_two, session_one, session_two = (uuid.uuid4() for _ in range(10))  # noqa: E501
+    result_args = [election_id, category_id, "02", "027", None, None, None, "seccion"]
+    comparison_args = [*result_args, election_id, category_id, "02", "028", None, None, None, "seccion"]  # noqa: E501
+    created_scopes: list[tuple[str, str]] = []
+
+    def rpc(session_id: uuid.UUID, name: str, args: list[object]) -> dict[str, object]:
+        assert name in {"official_result", "official_comparison"}
+        claims = json.dumps({"sub": str(user_id), "session_id": str(session_id), "exp": 253402300798})  # noqa: E501
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,)); connection.execute("set role authenticated")  # noqa: E501, E702
+            row = connection.execute(f"select workspace_api.{name}({','.join(['%s'] * len(args))})", args).fetchone()  # noqa: E501, S608
+            assert row is not None and isinstance(row[0], dict); return row[0]  # noqa: E702
+
+    try:
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("insert into election(id,year,round) values(%s,2098,%s)", (election_id, f"operations-{election_id.hex}")); connection.execute("insert into category(id,name) values(%s,%s)", (category_id, f"operations-{category_id.hex}"))  # noqa: E501, E702
+            connection.cursor().executemany("insert into jurisdiction(id,distrito_code,seccion_code,seccion_name) values(%s,%s,%s,%s)", [(exact_j,"02","027","Exact"),(other_j,"02","028","Other"),(coarse_j,"02",None,None)])  # noqa: E501
+            connection.cursor().executemany("insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index) values(%s,%s,%s,%s,%s,%s,%s,%s,%s)", [(election_id,exact_j,category_id,"distrito","A",1,"official","pba/2098-distrito-027",1),(election_id,exact_j,category_id,"distrito","A2",2,"official","pba/2098-distrito-027",2),(election_id,exact_j,category_id,"distrito","A",100,"fiscalizacion","fixture-fiscal",3),(election_id,other_j,category_id,"seccion","B",4,"official","national/2098",4)])  # noqa: E501
+            connection.execute("set role workspace_admin_owner"); connection.cursor().executemany("insert into workspace_private.organization(id,slug,display_name,entitlement_revision) values(%s,%s,%s,1)", [(org_one,f"operations-{org_one.hex}","Fixture One"),(org_two,f"operations-{org_two.hex}","Fixture Two")]); connection.cursor().executemany("insert into workspace_private.organization_membership(organization_id,user_id,membership_revision) values(%s,%s,1)", [(org_one,user_id),(org_two,user_id)])  # noqa: E501, E702
+            for scope in (("02","027"),("02","028")):
+                if connection.execute("insert into workspace_private.section_scope values(%s,%s) on conflict do nothing returning distrito_code", scope).fetchone(): created_scopes.append(scope)  # noqa: E501, E701
+            connection.cursor().executemany("insert into workspace_private.organization_section_entitlement(organization_id,distrito_code,seccion_code) values(%s,%s,%s)", [(org_one,"02","027"),(org_two,"02","028")])  # noqa: E501
+            connection.execute("set role workspace_context_owner"); connection.cursor().executemany("insert into workspace_private.workspace_context(session_id,user_id,organization_id,membership_revision,entitlement_revision,context_revision,fixed_expires_at) values(%s,%s,%s,1,1,1,'2100-01-01')", [(session_one,user_id,org_one),(session_two,user_id,org_two)])  # noqa: E501, E702
+        exact = rpc(session_one, "official_result", result_args)
+        assert exact["total_votes"] == 3 and exact["source_granularity"] == "seccion" and len(exact["parties"]) == 2 and sorted(p["votes"] for p in exact["parties"]) == [1, 2]  # noqa: E501
+        assert rpc(session_one, "official_result", [*result_args[:3], "028", *result_args[4:]])["authorization_status"] == "scope_denied"  # noqa: E501
+        denied = rpc(session_one, "official_comparison", comparison_args); assert denied == {"status":"authorization_denied","side":"right","authorization_status":"scope_denied","truncated":False} and "left" not in denied  # noqa: E501, E702
+        opposite = rpc(session_two, "official_comparison", comparison_args); assert opposite["side"] == "left" and not ({"left", "right"} & opposite.keys())  # noqa: E501, E702
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index) values(%s,%s,%s,'distrito','C',90,'official','national/2098-coarse',5)", (election_id,coarse_j,category_id))  # noqa: E501
+        coarse = rpc(session_one, "official_result", result_args)
+        assert coarse["status"] == "source_unavailable" and coarse["exclusions"] == [{"reason":"official_rows_without_section_identity"}] and coarse["truncated"] is False and not ({"total_votes", "parties", "rows", "votes"} & coarse.keys())  # noqa: E501
+        unavailable = rpc(session_one, "official_comparison", [*result_args, *result_args]); assert unavailable == {"status":"operation_unavailable","side":"left","operation_status":"source_unavailable","truncated":False} and not ({"left", "right"} & unavailable.keys())  # noqa: E501, E702
+    finally:
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("delete from workspace_private.workspace_context where session_id=any(%s)", ([session_one,session_two],)); connection.execute("delete from workspace_private.organization_section_entitlement where organization_id=any(%s)", ([org_one,org_two],)); connection.execute("delete from workspace_private.organization_membership where organization_id=any(%s)", ([org_one,org_two],)); connection.execute("delete from workspace_private.organization where id=any(%s)", ([org_one,org_two],)); connection.execute("delete from result_row where election_id=%s", (election_id,)); connection.execute("delete from jurisdiction where id=any(%s)", ([exact_j,other_j,coarse_j],)); connection.execute("delete from category where id=%s", (category_id,)); connection.execute("delete from election where id=%s", (election_id,)); connection.cursor().executemany("delete from workspace_private.section_scope where distrito_code=%s and seccion_code=%s", created_scopes)  # noqa: E501, E702
+# fmt: on
+
+
 def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
@@ -1657,6 +1712,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
@@ -1705,6 +1761,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         _apply_migration(admin_dsn, STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(
