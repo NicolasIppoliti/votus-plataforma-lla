@@ -274,6 +274,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 		label: "disposable workspace-foundation pgTAP",
 		timeoutMs: 120_000,
 	},
+	{
+		path: "tests/workspace_administration.sql",
+		label: "disposable workspace-administration pgTAP",
+		timeoutMs: 120_000,
+	},
 ];
 
 const POST_PG_TAP_CLEANUP_PROOFS: readonly ReleaseGatePostPgTapCleanupProof[] = [

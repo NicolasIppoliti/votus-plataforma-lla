@@ -159,6 +159,11 @@ describe("migration release-gate integration", () => {
 				label: "disposable workspace-foundation pgTAP",
 				timeoutMs: 120_000,
 			},
+			{
+				path: "tests/workspace_administration.sql",
+				label: "disposable workspace-administration pgTAP",
+				timeoutMs: 120_000,
+			},
 		]);
 		expect(plan.postPgTapCleanupProofs).toEqual([
 			{
@@ -235,6 +240,7 @@ describe("migration release-gate integration", () => {
 			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 			"pgTAP:disposable coverage-scope-binding pgTAP",
 			"pgTAP:disposable workspace-foundation pgTAP",
+			"pgTAP:disposable workspace-administration pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
 			"synthetic:0039_e2e_service_role_grants.sql",
@@ -383,7 +389,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(5);
+		expect(plan.pgTapProofs).toHaveLength(6);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -588,6 +594,11 @@ describe("migration release-gate integration", () => {
 					expect.objectContaining({
 						path: "tests/workspace_foundation.sql",
 						label: "disposable workspace-foundation pgTAP",
+						timeoutMs: 120_000,
+					}),
+					expect.objectContaining({
+						path: "tests/workspace_administration.sql",
+						label: "disposable workspace-administration pgTAP",
 						timeoutMs: 120_000,
 					}),
 				]),

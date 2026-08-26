@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import psycopg
 import pytest
@@ -1253,3 +1255,291 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
             connection.execute(
                 sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name))
             )
+
+
+def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for workspace admin coverage")
+    params = conninfo_to_dict(database_dsn)
+    params["user"] = "postgres"
+    params.pop("password", None)
+    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    fixture_id = uuid.uuid4()
+    actor = f"test:workspace-admin:{fixture_id}"
+    slug = f"workspace-admin-{fixture_id.hex}"
+    display_name = f"Workspace Admin {fixture_id.hex}"
+    distrito_code = str(10 + fixture_id.int % 90)
+    seccion_code = str((fixture_id.int // 100) % 1_000).zfill(3)
+    user_id = uuid.uuid4()
+    signatures = (
+        "workspace_private.create_organization(text,text,text,text)",
+        "workspace_private.disable_organization(uuid,text,text)",
+        "workspace_private.grant_membership(uuid,uuid,text,text)",
+        "workspace_private.revoke_membership(uuid,uuid,text,text)",
+        "workspace_private.register_section_scope(text,text,text,text)",
+        "workspace_private.grant_section_entitlement(uuid,text,text,text,text)",
+        "workspace_private.revoke_section_entitlement(uuid,text,text,text,text)",
+    )
+    statements = {
+        "create": "select workspace_private.create_organization(%s,%s,%s)",
+        "disable": "select workspace_private.disable_organization(%s,%s)",
+        "grant_membership": "select workspace_private.grant_membership(%s,%s,%s)",
+        "revoke_membership": "select workspace_private.revoke_membership(%s,%s,%s)",
+        "register_scope": "select workspace_private.register_section_scope(%s,%s,%s)",
+        "grant_entitlement": ("select workspace_private.grant_section_entitlement(%s,%s,%s,%s)"),
+        "revoke_entitlement": ("select workspace_private.revoke_section_entitlement(%s,%s,%s,%s)"),
+    }
+    organization_id: uuid.UUID | None = None
+
+    try:
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute(
+                "insert into public.jurisdiction(id,distrito_code,seccion_code) values(%s,%s,%s)",
+                (fixture_id, distrito_code, seccion_code),
+            )
+            connection.execute("set role workspace_platform_admin")
+            created = connection.execute(
+                statements["create"], (slug, display_name, actor)
+            ).fetchone()
+            assert created is not None and created[0]["changed"] is True
+            organization_id = uuid.UUID(created[0]["organization_id"])
+
+        barrier = Barrier(2)
+
+        def register_concurrently() -> bool:
+            with psycopg.connect(admin_dsn) as connection:
+                connection.execute("set role workspace_platform_admin")
+                barrier.wait(timeout=10)
+                row = connection.execute(
+                    statements["register_scope"],
+                    (distrito_code, seccion_code, actor),
+                ).fetchone()
+                assert row is not None
+                return row[0]["changed"]
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(register_concurrently) for _ in range(2)]
+            assert sorted(future.result() for future in futures) == [False, True]
+
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("set role workspace_platform_admin")
+
+            def call(name: str, *args: object) -> dict[str, object]:
+                row = connection.execute(statements[name], args).fetchone()
+                assert row is not None and isinstance(row[0], dict)
+                return row[0]
+
+            def audit_count() -> int:
+                row = connection.execute(
+                    "select count(*) from workspace_private.workspace_audit_event "
+                    "where actor_ref=%s",
+                    (actor,),
+                ).fetchone()
+                assert row is not None
+                return row[0]
+
+            def no_op(name: str, *args: object) -> dict[str, object]:
+                connection.execute("reset role")
+                before = audit_count()
+                connection.execute("set role workspace_platform_admin")
+                result = call(name, *args)
+                connection.execute("reset role")
+                after = audit_count()
+                connection.execute("set role workspace_platform_admin")
+                assert result["changed"] is False and after == before
+                return result
+
+            def denied(name: str, *args: object) -> None:
+                with pytest.raises(psycopg.Error):
+                    with connection.transaction():
+                        call(name, *args)
+
+            denied("create", slug, f"{display_name} duplicate", actor)
+            denied("create", f"{slug}-duplicate", display_name, actor)
+            denied("disable", uuid.uuid4(), actor)
+            denied("revoke_membership", organization_id, uuid.uuid4(), actor)
+            denied("register_scope", "8", seccion_code, actor)
+            denied("register_scope", "99", "999", actor)
+            denied("revoke_entitlement", organization_id, distrito_code, seccion_code, actor)
+
+            membership = call("grant_membership", organization_id, user_id, actor)
+            assert membership["membership_revision"] == 1
+            assert no_op("grant_membership", organization_id, user_id, actor) == {
+                **membership,
+                "changed": False,
+            }
+            membership = call("revoke_membership", organization_id, user_id, actor)
+            assert membership["membership_revision"] == 2
+            assert no_op("revoke_membership", organization_id, user_id, actor) == {
+                **membership,
+                "changed": False,
+            }
+            entitlement = call(
+                "grant_entitlement", organization_id, distrito_code, seccion_code, actor
+            )
+            assert entitlement["entitlement_revision"] == 1
+            assert entitlement["organization_revision"] == 1
+            assert no_op(
+                "grant_entitlement", organization_id, distrito_code, seccion_code, actor
+            ) == {**entitlement, "changed": False}
+            entitlement = call(
+                "revoke_entitlement", organization_id, distrito_code, seccion_code, actor
+            )
+            assert entitlement["entitlement_revision"] == 2
+            assert entitlement["organization_revision"] == 2
+            assert no_op(
+                "revoke_entitlement", organization_id, distrito_code, seccion_code, actor
+            ) == {**entitlement, "changed": False}
+            disabled = call("disable", organization_id, actor)
+            assert disabled["changed"] is True
+            assert no_op("disable", organization_id, actor) == {
+                **disabled,
+                "changed": False,
+                "status": "already_disabled",
+            }
+            denied("grant_membership", organization_id, uuid.uuid4(), actor)
+            denied("grant_entitlement", organization_id, distrito_code, seccion_code, actor)
+            connection.execute("reset role")
+            audit = connection.execute(
+                "select count(*),array_agg(action order by action),"
+                "bool_and(actor_kind='platform_operator' and reason_code='operator_request') "
+                "from workspace_private.workspace_audit_event where actor_ref=%s",
+                (actor,),
+            ).fetchone()
+            assert audit == (
+                7,
+                [
+                    "membership_granted",
+                    "membership_revoked",
+                    "organization_created",
+                    "organization_disabled",
+                    "section_entitlement_granted",
+                    "section_entitlement_revoked",
+                    "section_scope_registered",
+                ],
+                True,
+            )
+            assert connection.execute(
+                "select count(*) from workspace_private.section_scope "
+                "where distrito_code=%s and seccion_code=%s",
+                (distrito_code, seccion_code),
+            ).fetchone() == (1,)
+            for signature in signatures:
+                assert connection.execute(
+                    "select has_function_privilege('workspace_platform_admin',%s,'EXECUTE'),"
+                    "has_function_privilege('anon',%s,'EXECUTE')",
+                    (signature, signature),
+                ).fetchone() == (True, False)
+            assert connection.execute(
+                "select has_function_privilege('workspace_admin_owner',"
+                "'workspace_private.append_audit_event(text,uuid,text,text,jsonb)','EXECUTE'),"
+                "has_function_privilege('workspace_platform_admin',"
+                "'workspace_private.append_audit_event(text,uuid,text,text,jsonb)','EXECUTE')"
+            ).fetchone() == (True, False)
+            facts_before = connection.execute(
+                "select workspace_private.authorization_facts_status()"
+            ).fetchone()
+
+        for role in (
+            "anon",
+            "authenticated",
+            "etl_writer",
+            "workspace_bootstrap_caller",
+            "workspace_query_owner",
+            "workspace_platform_admin",
+        ):
+            with psycopg.connect(admin_dsn) as connection:
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    with connection.transaction():
+                        connection.execute(
+                            sql.SQL("set local role {}").format(sql.Identifier(role))
+                        )
+                        connection.execute(
+                            "insert into workspace_private.organization(slug,display_name) "
+                            "values('direct-dml','Direct DML')"
+                        )
+
+        membership_sql = (
+            "select granted.rolname,member.rolname,m.admin_option,m.inherit_option,m.set_option "
+            "from pg_auth_members m join pg_roles granted on granted.oid=m.roleid "
+            "join pg_roles member on member.oid=m.member "
+            "where granted.rolname in ('workspace_admin_owner','workspace_audit_owner') "
+            "and member.rolname=current_user order by granted.rolname"
+        )
+        with psycopg.connect(admin_dsn) as connection:
+            role_edges_before = connection.execute(membership_sql).fetchall()
+        assert [(row[0], *row[2:]) for row in role_edges_before] in (
+            [],
+            [
+                ("workspace_admin_owner", True, False, False),
+                ("workspace_audit_owner", True, False, False),
+            ],
+        )
+        _apply_down_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
+        with psycopg.connect(admin_dsn) as connection:
+            policies = connection.execute(
+                "select array_agg(policyname order by policyname) from pg_policies "
+                "where schemaname='workspace_private'"
+            ).fetchone()
+            assert policies == (
+                [
+                    "workspace_admin_owner_entitlement_select",
+                    "workspace_admin_owner_membership_select",
+                    "workspace_admin_owner_organization_select",
+                    "workspace_admin_owner_scope_select",
+                ],
+            )
+            assert connection.execute(
+                "select to_regprocedure('workspace_private.authorization_facts_status()') "
+                "is not null,to_regprocedure('workspace_private.create_organization"
+                "(text,text,text,text)') is null"
+            ).fetchone() == (True, True)
+            connection.execute("set role workspace_platform_admin")
+            assert (
+                connection.execute(
+                    "select workspace_private.authorization_facts_status()"
+                ).fetchone()
+                == facts_before
+            )
+        _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(membership_sql).fetchall() == role_edges_before
+            assert connection.execute(
+                "select to_regprocedure('workspace_private.create_organization"
+                "(text,text,text,text)') is not null"
+            ).fetchone() == (True,)
+    finally:
+        with psycopg.connect(admin_dsn) as connection:
+            installed = connection.execute(
+                "select to_regprocedure('workspace_private.create_organization"
+                "(text,text,text,text)') is not null"
+            ).fetchone()
+        if installed == (False,):
+            _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute(
+                "delete from workspace_private.workspace_audit_event where actor_ref=%s",
+                (actor,),
+            )
+            if organization_id is not None:
+                connection.execute(
+                    "delete from workspace_private.organization_section_entitlement "
+                    "where organization_id=%s",
+                    (organization_id,),
+                )
+                connection.execute(
+                    "delete from workspace_private.organization_membership "
+                    "where organization_id=%s",
+                    (organization_id,),
+                )
+                connection.execute(
+                    "delete from workspace_private.organization where id=%s",
+                    (organization_id,),
+                )
+            connection.execute(
+                "delete from workspace_private.section_scope where distrito_code=%s "
+                "and seccion_code=%s",
+                (distrito_code, seccion_code),
+            )
+            connection.execute("delete from public.jurisdiction where id=%s", (fixture_id,))
