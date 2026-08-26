@@ -122,8 +122,10 @@ from .numeric import parse_source_int
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
 from .review_item import (
     ReviewItemRecord,
+    ReviewItemSectionScope,
     mesa_divergences_to_review_items,
     review_item_draft_to_record,
+    review_scope_breakdown,
     source_archive_identity,
     source_refetch_review_items,
     validate_prior_source_identity,
@@ -948,6 +950,13 @@ def ingest_source(
                     )
                 )
             recorded_review_items = insert_review_items(conn, quarantine_records)
+            scope_counts = review_scope_breakdown(quarantine_records)
+            print(
+                "PBA review scope: "
+                f"section_scoped={scope_counts['section_scoped']}, "
+                f"platform_only={scope_counts['platform_only']}",
+                file=sys.stderr,
+            )
             if parse_result.quarantined:
                 reason_counts: dict[str, int] = {}
                 for quarantined in parse_result.quarantined:
@@ -999,6 +1008,9 @@ def ingest_source(
                 replace(
                     review_item_draft_to_record(draft),
                     subject_ref=f"{source_id} {year}-{round_} {draft.subject_ref}",
+                    section_scopes=(
+                        ReviewItemSectionScope(FISCALIZACION_DISTRITO, FISCALIZACION_SECCION),
+                    ),
                 )
                 # BOTH producers. The parser's drafts and the LOADER's — a mesa
                 # whose circuito cannot be resolved is quarantined at load
@@ -1042,6 +1054,13 @@ def ingest_source(
                         file=sys.stderr,
                     )
 
+            scope_counts = review_scope_breakdown(records)
+            print(
+                "  review scope: "
+                f"section_scoped={scope_counts['section_scoped']}, "
+                f"platform_only={scope_counts['platform_only']}",
+                file=sys.stderr,
+            )
             print(
                 f"  review items: {recorded_review_items} recorded, "
                 f"{len(records) - recorded_review_items} not recorded",
@@ -2524,6 +2543,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    review_scope = ReviewItemSectionScope(curated_distrito, curated_seccion)
 
     sources = load_sources(Path(args.sources_path))
     fiscalizacion_entry = find_source_entry(sources, args.source)
@@ -2647,6 +2667,7 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
                 f"{args.source} {fiscalizacion_election[0]}-"
                 f"{fiscalizacion_election[1]} {draft.subject_ref}"
             ),
+            section_scopes=(review_scope,),
         )
         for draft in result.review_items
     ]
@@ -2807,7 +2828,12 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         # official row in the requested scope is ambiguous and the comparison
         # must fail for lack of a safe baseline.
         if official_projection.review_items:
-            persist_records(list(official_projection.review_items))
+            persist_records(
+                [
+                    replace(record, section_scopes=(review_scope,))
+                    for record in official_projection.review_items
+                ]
+            )
         print(
             f"error: no baseline row matched distrito={args.distrito} "
             f"seccion={args.seccion} category={args.category!r}; there is nothing "
@@ -2866,12 +2892,16 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         replace(
             record,
             subject_ref=f"{args.source} vs {args.baseline} [{scope}] {record.subject_ref}",
+            section_scopes=(review_scope,),
         )
         for record in divergence_projection.review_items
     ]
     records_to_write = [
         *parser_review_records,
-        *official_projection.review_items,
+        *(
+            replace(record, section_scopes=(review_scope,))
+            for record in official_projection.review_items
+        ),
         *divergence_records,
     ]
     recorded_by_kind = persist_records(records_to_write)

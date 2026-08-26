@@ -69,7 +69,7 @@ class _AdminConnection:
                 return _Result((True, False, False, False, False, False, False, False))
             expected_memberships = (
                 [
-                    "etl_writer:false:false:true",
+                    "etl_writer:false:true:true",
                     "results_exploration_executor:false:true:true",
                 ]
                 if self.roles[name] == "scoped-memberships"
@@ -157,7 +157,7 @@ class _AdminConnection:
         if lowered.startswith("grant connect, create, temporary on database"):
             return _Result()
         if lowered.startswith("grant etl_writer to"):
-            assert "with inherit false, set true" in lowered
+            assert "with inherit true, set true" in lowered
             return _Result()
         if lowered.startswith("grant results_exploration_executor to"):
             assert "with inherit true, set true" in lowered
@@ -474,9 +474,14 @@ def test_post_migration_grants_are_complete_and_role_remains_cluster_unprivilege
         for statement in target.executed
         if statement.lower().startswith("grant")
     ]
+    assert any(
+        "insert into workspace_private.section_scope" in statement.lower()
+        for target in connections.targets
+        for statement in target.executed
+    )
     assert grants == [
         f'grant connect, create, temporary on database "{identity.name}" to "{identity.role_name}"',
-        f'grant etl_writer to "{identity.role_name}" with inherit false, set true',
+        f'grant etl_writer to "{identity.role_name}" with inherit true, set true',
         f'grant results_exploration_executor to "{identity.role_name}" with inherit true, set true',
         f'grant usage, create on schema public to "{identity.role_name}"',
         f'grant usage on schema votus_verification to "{identity.role_name}"',

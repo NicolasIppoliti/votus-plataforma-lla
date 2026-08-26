@@ -28,7 +28,7 @@ MARKER_PREFIX = "votus-etl-verify:"
 ADMIN_DATABASE = "template1"
 _MIGRATION_FILE_PATTERN = re.compile(r"^(?P<version>[0-9]{4}|[0-9]{14})_.+\.sql$")
 _TEST_ROLE_MEMBERSHIPS = (
-    "etl_writer:false:false:true",
+    "etl_writer:false:true:true",
     "results_exploration_executor:false:true:true",
 )
 _cleanup_depth = 0
@@ -388,7 +388,7 @@ class DisposablePostgres:
                 )
             )
             admin.execute(
-                sql.SQL("grant etl_writer to {} with inherit false, set true").format(
+                sql.SQL("grant etl_writer to {} with inherit true, set true").format(
                     sql.Identifier(self.identity.role_name)
                 )
             )
@@ -421,6 +421,10 @@ class DisposablePostgres:
             )
             connection.execute(
                 sql.SQL("grant all privileges on all functions in schema public to {}").format(role)
+            )
+            connection.execute(
+                "insert into workspace_private.section_scope(distrito_code,seccion_code) "
+                "values('02','027') on conflict do nothing"
             )
             connection.execute(
                 sql.SQL(

@@ -34,7 +34,7 @@ select is(
    from pg_namespace n cross join lateral aclexplode(n.nspacl) acl
    join pg_roles r on r.oid = acl.grantee
    where n.nspname = 'workspace_private' and acl.grantee <> n.nspowner),
-  array['workspace_admin_owner:USAGE','workspace_audit_owner:USAGE',
+  array['etl_writer:USAGE','workspace_admin_owner:USAGE','workspace_audit_owner:USAGE',
     'workspace_bootstrap_caller:USAGE','workspace_bootstrap_owner:USAGE',
     'workspace_context_owner:USAGE','workspace_platform_admin:USAGE',
     'workspace_query_owner:USAGE','workspace_review_ingest_owner:USAGE'],

@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260826120000_structured_review_scope.down.sql",
         "\\ir ../migrations/down/20260826050000_workspace_context_selection.down.sql",
         "\\ir ../migrations/down/20260826033130_session_bound_context_invalidation.down.sql",
         "\\ir ../migrations/down/"
@@ -1018,6 +1019,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260825180048_organization_workspace_authorization_admin.sql",
         "\\ir ../migrations/20260826033130_session_bound_context_invalidation.sql",
         "\\ir ../migrations/20260826050000_workspace_context_selection.sql",
+        "\\ir ../migrations/20260826120000_structured_review_scope.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1032,7 +1034,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "43 as migration_inventory_count",
+        "44 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2221,3 +2223,30 @@ def test_authority_facts_migrations_preserve_runner_owner_set_authority() -> Non
             assert sql.index(conditional_grant) < sql.index(conditional_revoke)
             assert sql.count(f"grant {role} to current_user;") == 1
             assert sql.count(f"revoke {role} from current_user;") == 1
+
+
+def test_structured_review_scope_is_closed_typed_and_reversible() -> None:
+    version = "20260826120000"
+    forward_path = MIGRATIONS / f"{version}_structured_review_scope.sql"
+    down_path = MIGRATIONS / "down" / f"{version}_structured_review_scope.down.sql"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    for required in (
+        "tenant_scope_state",
+        "platform_only",
+        "section_scoped",
+        "workspace_private.review_item_section_scope",
+        "foreign key (distrito_code, seccion_code)",
+        "workspace_private.record_review_item",
+        "p_distrito_codes text[]",
+        "p_seccion_codes text[]",
+        "to etl_writer",
+    ):
+        assert required in forward
+    assert "subject_ref" in forward and "regexp_matches" not in forward
+    assert "grant insert on workspace_private" not in forward
+    assert "workspace_private.section_scope" not in forward.split("insert into", 1)[1]
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "drop table workspace_private.review_item_section_scope" in down
+    assert "drop column tenant_scope_state" in down

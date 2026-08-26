@@ -24,6 +24,7 @@ WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116"
 WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048"
 WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130"
 WORKSPACE_SELECTION_MIGRATION_VERSION = "20260826050000"
+STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -32,6 +33,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         WORKSPACE_ADMIN_MIGRATION_VERSION,
         WORKSPACE_CONTEXT_MIGRATION_VERSION,
         WORKSPACE_SELECTION_MIGRATION_VERSION,
+        STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -117,7 +119,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 43
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 44
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -156,6 +158,13 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     )
     assert _validated_migration_path(WORKSPACE_SELECTION_MIGRATION_VERSION, down=True).name == (
         "20260826050000_workspace_context_selection.down.sql"
+    )
+    assert _validated_migration_path(STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION).name == (
+        "20260826120000_structured_review_scope.sql"
+    )
+    assert (
+        _validated_migration_path(STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION, down=True).name
+        == "20260826120000_structured_review_scope.down.sql"
     )
     for unsupported in (
         38,
@@ -1639,6 +1648,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
@@ -1683,6 +1693,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, WORKSPACE_ADMIN_MIGRATION_VERSION)
         _apply_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
         _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(

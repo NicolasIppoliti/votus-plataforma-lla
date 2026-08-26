@@ -18,6 +18,7 @@ from etl.ingest.fiscalizacion import ReviewItemDraft
 from etl.review_item import (
     REVIEW_ITEM_KINDS,
     ReviewItemRecord,
+    ReviewItemSectionScope,
     SourceArchiveIdentity,
     UndeclaredReviewKindError,
     mesa_divergences_to_review_items,
@@ -88,6 +89,23 @@ def test_genuine_divergence_becomes_mesa_tally_divergence_review_item() -> None:
     assert "La Libertad Avanza" in (item.note or "")
     assert "55" in (item.note or "")
     assert "57" in (item.note or "")
+
+
+def test_review_item_scope_accepts_only_exact_canonical_sections() -> None:
+    scope = ReviewItemSectionScope(distrito_code="02", seccion_code="027")
+    record = ReviewItemRecord(
+        kind="blank_vote_cell",
+        severity="info",
+        subject_ref="looks-like-scope:99/999",
+        note=None,
+        section_scopes=(scope,),
+    )
+
+    assert record.tenant_scope_state == "section_scoped"
+    assert record.section_scopes == (scope,)
+    for distrito, seccion in (("2", "027"), ("02", "27"), ("AA", "027")):
+        with pytest.raises(ValueError, match="exact canonical section"):
+            ReviewItemSectionScope(distrito_code=distrito, seccion_code=seccion)
 
 
 def test_review_item_draft_projects_verbatim() -> None:
