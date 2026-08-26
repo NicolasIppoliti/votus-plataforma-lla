@@ -2125,7 +2125,6 @@ def test_organization_workspace_authority_facts_are_closed_and_reversible() -> N
     )
 
 
-
 def test_organization_workspace_section_scope_requires_canonical_national_codes() -> None:
     migration = _sql("20260825165116_organization_workspace_authorization_facts.sql")
     sql = " ".join(migration.split())
