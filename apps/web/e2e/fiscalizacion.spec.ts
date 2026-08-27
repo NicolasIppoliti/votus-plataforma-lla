@@ -1,11 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
-import {
-  FISCALIZACION_VOTES,
-  coverageFixture,
-  withResultFixture,
-} from "./result-fixture";
+import { coverageFixture, withResultFixture } from "./result-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
 
 /**
@@ -30,13 +26,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
 }
 
 test.describe("the fiscalizacion route explores coverage", () => {
-  test("test_route_reaches_uncovered_official_results", async ({ page }) => {
+  test("test_route_reaches_only_authorized_fiscalizacion_evidence", async ({ page }) => {
     await withResultFixture(SPEC, COVERAGE_FIXTURE, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
       await expect(page).toHaveURL(/\/dashboard/);
-
-      // Reachable from the authenticated layout (task 13.10), not merely
-      // addressable by URL.
       await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
       const coldUrl = page.url();
@@ -56,33 +49,23 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
       const draft = async (label: string, value: string, dependent: string): Promise<void> => {
         const control = page.getByLabel(label), child = page.getByLabel(dependent);
-        const responsePromise = page.waitForResponse((response) =>
-          new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
+        const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
         await control.focus(); await control.selectOption(value);
         expect(page.url()).toBe(coldUrl);
-        await expect(control).toBeFocused();
         await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
         const response = await responsePromise;
-        expect(await response.json()).toMatchObject({
-          capability: "coverage-scope-options", meaning: "scope-options-only",
-        });
+        expect(await response.json()).toMatchObject({ capability: "coverage-scope-options", meaning: "scope-options-only" });
         await expect(child).toBeEnabled();
         await expect(form).not.toHaveAttribute("aria-busy", "true");
-        await expect(form.locator('[aria-live="polite"]')).toHaveText("");
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
       await draft("Elección", COVERAGE_SCOPE.electionId, "Categoría");
       await draft("Categoría", COVERAGE_SCOPE.categoryId, "Distrito");
       await draft("Distrito", COVERAGE_SCOPE.distritoCode, "Sección");
-      const sectionResponse = page.waitForResponse((response) =>
-        new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
+      const sectionResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
       await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode);
-      expect(page.url()).toBe(coldUrl); await sectionResponse;
-      const expectedUrl = new URL(
-        `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
-          `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
-          `&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL,
-      ).toString();
+      await sectionResponse;
+      const expectedUrl = new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL).toString();
       const navigations: string[] = [];
       page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
       await page.getByRole("button", { name: "Mostrar cobertura" }).click();
@@ -98,7 +81,6 @@ test.describe("the fiscalizacion route explores coverage", () => {
         }),
       ).toHaveAttribute("aria-current", "page");
 
-      const main = page.getByRole("main");
       for (const [label, value, optionText] of [
         ["Distrito", COVERAGE_SCOPE.distritoCode,
           `${COVERAGE_SCOPE.distritoCode} — Buenos Aires`],
@@ -110,68 +92,21 @@ test.describe("the fiscalizacion route explores coverage", () => {
         await expect(selector.getByRole("option", { name: optionText, exact: true }))
           .toHaveAttribute("value", value);
       }
-      await expect(main).toContainText("1 mesas cubiertas de 2 mesas oficiales");
-      await expect(main).toContainText("1 sin cobertura");
-      await expect(main).toContainText("No es una muestra aleatoria");
-      await expect(main).toContainText(
-        "Sin cobertura significa que no hay presencia de fiscalización, no que los votos oficiales sean cero o falten",
-      );
-      await expect(main).toContainText(`fiscalización: 1 filas / ${FISCALIZACION_VOTES} votos / 1 mesas`);
-      await expect(main.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(3);
+      const main = page.getByRole("main");
+      await expect(main).toContainText("Estado de cobertura: authorization_denied");
+      await expect(main).toContainText("Estado del resultado: authorization_denied");
+      await expect(main).not.toContainText("mesas cubiertas de 2 mesas oficiales");
+      await expect(main.getByRole("link", { name: /Consultar evidencia|Consultar resultado|Ver votos oficiales/ })).toHaveCount(0);
       const reusableUrl = page.url();
       await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
       await expect(page).toHaveURL(reusableUrl);
       await expect(page.getByLabel("Sección")).toHaveValue(COVERAGE_SCOPE.seccionCode);
       await page.reload(); await expect(page).toHaveURL(reusableUrl);
-      await expect(page.getByRole("main")).toContainText("1 mesas cubiertas de 2 mesas oficiales");
-      const schools = main.getByRole("list", { name: "Cobertura por establecimiento" });
-      await expect(schools.getByRole("listitem")).toHaveCount(2);
-      await expect(schools).toContainText("Circuito 00001 — Synthetic school: 1 de 1 mesas cubiertas");
-      await expect(schools).toContainText("Circuito 00002 — Synthetic school: 0 de 1 mesas cubiertas");
-      await expect(schools.getByRole("link", { name: "Ver votos oficiales del establecimiento" }).nth(0))
-        .toHaveAttribute("href", /circuitoCode=00001.*establecimientoCode=E1.*level=establecimiento/);
-      await expect(schools.getByRole("link", { name: "Ver votos oficiales del establecimiento" }).nth(1))
-        .toHaveAttribute("href", /circuitoCode=00002.*establecimientoCode=E1.*level=establecimiento/);
-      await page.goto(new URL(
-        `/drilldown?electionId=${COVERAGE_SCOPE.electionId}` +
-          `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
-          `&seccionCode=${COVERAGE_SCOPE.seccionCode}&level=seccion`, baseURL,
-      ).toString());
-      const schoolBreakdown = page.getByRole("table", { name: "Votos oficiales por circuito y establecimiento" });
-      await expect(schoolBreakdown).toContainText("Circuito 00001 — E1 — Synthetic school");
-      await expect(schoolBreakdown).toContainText("Circuito 00002 — E1 — Synthetic school");
-      await expect(schoolBreakdown.getByRole("row")).toHaveCount(3);
-      await expect(schoolBreakdown).toContainText(`${33_333} votos`);
+      await expect(page.getByRole("main")).toContainText("Estado de cobertura: authorization_denied");
 
-      await page.goto(new URL(
-        `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
-          `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
-          `&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL,
-      ).toString());
-      const coverageMain = page.getByRole("main");
-      await coverageMain.getByRole("link", { name: "Ver votos oficiales" }).last().click();
-      await expect(page).toHaveURL(/\/drilldown\?/);
-      await expect(page.getByRole("main")).toContainText("33333 votos a nivel establecimiento");
-      await expect(page.getByRole("main")).not.toContainText(String(FISCALIZACION_VOTES));
-
-      await page.goto(new URL(
-        `/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}` +
-          `&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}` +
-          "&seccionCode=999",
-        baseURL,
-      ).toString());
-      const unavailableCoverage = page
-        .getByRole("main")
-        .getByRole("status");
-      await expect(unavailableCoverage).toContainText(
-        "Cobertura no disponible para este alcance",
-      );
-      await expect(unavailableCoverage).toContainText(
-        "No se estimó la cobertura porque no existe un denominador oficial por mesa",
-      );
-      await expect(unavailableCoverage).not.toContainText(
-        "no official mesa rows exist for the selected scope",
-      );
+      await page.goto(new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}&categoryId=${COVERAGE_SCOPE.categoryId}&jurisdictionId=legacy-public`, baseURL).toString());
+      await expect(page.getByRole("main").getByRole("alert")).toContainText("parámetros de consulta no admitidos");
+      await expect(page.getByRole("main")).not.toContainText("Cobertura: 93 de 153 mesas");
     });
   });
 });

@@ -32,7 +32,29 @@ describe("workspace fiscalizacion result GET", () => {
     const body = await response.json(); expect(body).toEqual(SAFE); expect(JSON.stringify(body)).not.toMatch(/source_url|person_name|internal_notes/);
   });
 
-  it("independently rejects widened source, sample, bound, and count claims", async () => {
+  it("shares administrative normalization semantics with the coverage route", async () => {
+        const response = await GET(new Request(
+          `${BASE}?election_id=50000000-0000-0000-0000-000000000001&category_id=51000000-0000-0000-0000-000000000001&distrito_code=%202%20&seccion_code=%2027%20&opt_in=false`,
+        ));
+
+        expect(response.status).toBe(200);
+        expect(mocks.rpc).toHaveBeenCalledWith("fiscalizacion_result", expect.objectContaining({
+          p_distrito_code: "02",
+          p_opt_in: false,
+          p_seccion_code: "027",
+        }));
+      });
+
+      it("shares malformed administrative-code rejection semantics with the coverage route", async () => {
+        const response = await GET(new Request(
+          `${BASE}?election_id=50000000-0000-0000-0000-000000000001&category_id=51000000-0000-0000-0000-000000000001&distrito_code=2A&seccion_code=027&opt_in=true`,
+        ));
+
+        expect(response.status).toBe(400);
+        expect(mocks.createClient).not.toHaveBeenCalled();
+      });
+
+      it("independently rejects widened source, sample, bound, and count claims", async () => {
     const unsafe = [
       { ...SAFE, source_kind: "official" }, { ...SAFE, is_random_sample: true },
       { ...SAFE, rows: { items: Array(101).fill(SAFE.rows.items[0]), total: 101, truncated: true } },

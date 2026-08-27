@@ -65,7 +65,29 @@ describe("workspace fiscalizacion coverage GET", () => {
     });
   });
 
-  it("fails closed when the RPC loses its independent source guard", async () => {
+  it("shares administrative normalization semantics with the result route", async () => {
+        const response = await GET(new Request(
+          `${BASE}?election_id=50000000-0000-0000-0000-000000000001&category_id=51000000-0000-0000-0000-000000000001&distrito_code=%202%20&seccion_code=%2027%20&opt_in=false`,
+        ));
+
+        expect(response.status).toBe(200);
+        expect(mocks.rpc).toHaveBeenCalledWith("fiscalizacion_coverage", expect.objectContaining({
+          p_distrito_code: "02",
+          p_opt_in: false,
+          p_seccion_code: "027",
+        }));
+      });
+
+      it("shares malformed administrative-code rejection semantics with the result route", async () => {
+        const response = await GET(new Request(
+          `${BASE}?election_id=50000000-0000-0000-0000-000000000001&category_id=51000000-0000-0000-0000-000000000001&distrito_code=2A&seccion_code=027&opt_in=true`,
+        ));
+
+        expect(response.status).toBe(400);
+        expect(mocks.createClient).not.toHaveBeenCalled();
+      });
+
+      it("fails closed when the RPC loses its independent source guard", async () => {
       mocks.rpc.mockResolvedValueOnce({ data: { status: "ok", source_kind: "official", is_random_sample: true }, error: null });
       const response = await GET(new Request(`${BASE}?${SELECTION}&opt_in=true`));
       expect(response.status).toBe(403);
@@ -85,10 +107,37 @@ describe("workspace fiscalizacion coverage GET", () => {
       expect(JSON.stringify(await response.json())).not.toContain("votes");
     });
 
-    it("returns source inconsistency only as a count-free refusal", async () => {
+    it("preserves a bounded source-inconsistency breakdown without leaking wider fields", async () => {
+      mocks.rpc.mockResolvedValueOnce({
+        data: {
+          status: "source_inconsistent",
+          exclusions: {
+            items: [{ reason: "mixed_granularity", rows: 2, votes: 999 }],
+            total: 1,
+            truncated: false,
+          },
+          internal_rows: 9,
+        },
+        error: null,
+      });
+
+      const response = await GET(new Request(`${BASE}?${SELECTION}&opt_in=true`));
+
+      await expect(response.json()).resolves.toEqual({
+        status: "source_inconsistent",
+        exclusions: {
+          items: [{ reason: "mixed_granularity", rows: 2 }],
+          total: 1,
+          truncated: false,
+        },
+      });
+    });
+
+    it("fails closed when source inconsistency omits its breakdown", async () => {
       mocks.rpc.mockResolvedValueOnce({ data: { status: "source_inconsistent" }, error: null });
       const response = await GET(new Request(`${BASE}?${SELECTION}&opt_in=true`));
-      await expect(response.json()).resolves.toEqual({ status: "source_inconsistent" });
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ status: "unavailable" });
     });
 
     it("passes an omitted opt-in as false so the facade owns the distinct refusal", async () => {
