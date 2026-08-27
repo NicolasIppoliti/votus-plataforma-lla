@@ -709,6 +709,35 @@ describe("migration release-gate integration", () => {
 	});
 });
 describe("base contracts", () => {
+	it("keeps the authorized review browser fixture service-role-only and self-cleaning", () => {
+		const fixtureSql = readFileSync(
+			new URL("./service-role-grants.sql", import.meta.url),
+			"utf8",
+		);
+		expect(fixtureSql).toContain(
+			"create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid) returns jsonb",
+		);
+		expect(fixtureSql).toContain(
+			"create function public.e2e_cleanup_authorized_review_fixture(p_fixture jsonb) returns jsonb",
+		);
+		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g)).toHaveLength(2);
+		expect(fixtureSql).toContain(
+			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated",
+		);
+		expect(fixtureSql).toContain(
+			"revoke all on function public.e2e_cleanup_authorized_review_fixture(jsonb) from public, anon, authenticated",
+		);
+		expect(fixtureSql).toContain(
+			"grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid) to service_role",
+		);
+		expect(fixtureSql).toContain(
+			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
+		);
+		expect(fixtureSql).toContain("delete from workspace_private.workspace_context");
+		expect(fixtureSql).toContain("delete from public.review_item");
+		expect(fixtureSql).toContain("delete from workspace_private.organization");
+		expect(fixtureSql).toContain("'owns_section_scope'");
+	});
 	it("keeps the isolated CI Postgres service passwordless", () => {
 		const workflow = readFileSync(
 			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
