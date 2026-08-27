@@ -2,17 +2,20 @@ const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 const CODE = {
   distrito: /^\d{2}$/,
   seccion: /^\d{3}$/,
-  circuito: /^[0-9A-Z]{1,16}$/,
+  circuito: /^[0-9A-Za-z-]{1,16}$/,
   establecimiento: /^[0-9A-Z._-]{1,64}$/,
 } as const;
 export const OFFICIAL_LEVEL = {
   DISTRITO: "distrito", SECCION: "seccion", CIRCUITO: "circuito", ESTABLECIMIENTO: "establecimiento", MESA: "mesa",
 } as const;
 export type OfficialLevel = (typeof OFFICIAL_LEVEL)[keyof typeof OFFICIAL_LEVEL];
-export interface OfficialSelection {
+export interface OfficialSectionSelection {
   electionId: string;
   categoryId: string;
   distritoCode: string;
+  seccionCode: string;
+}
+export interface OfficialSelection extends Omit<OfficialSectionSelection, "seccionCode"> {
   seccionCode: string | null;
   circuitoCode: string | null;
   establecimientoCode: string | null;
@@ -20,7 +23,8 @@ export interface OfficialSelection {
   requestedLevel: OfficialLevel;
 }
 
-const KEYS = ["election_id", "category_id", "distrito_code", "seccion_code", "circuito_code", "establecimiento_code", "mesa_code", "requested_level"] as const;
+const SECTION_KEYS = ["election_id", "category_id", "distrito_code", "seccion_code"] as const;
+const KEYS = [...SECTION_KEYS, "circuito_code", "establecimiento_code", "mesa_code", "requested_level"] as const;
 
 function one(params: URLSearchParams, key: string): string | null {
   const values = params.getAll(key);

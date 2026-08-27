@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260827000000_authorized_official_projections.down.sql",
         "\\ir ../migrations/down/20260826200000_authorized_official_operations.down.sql",
         "\\ir ../migrations/down/20260826160000_authorized_official_facets.down.sql",
         "\\ir ../migrations/down/20260826120000_structured_review_scope.down.sql",
@@ -1024,6 +1025,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260826120000_structured_review_scope.sql",
         "\\ir ../migrations/20260826160000_authorized_official_facets.sql",
         "\\ir ../migrations/20260826200000_authorized_official_operations.sql",
+        "\\ir ../migrations/20260827000000_authorized_official_projections.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1038,7 +1040,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "46 as migration_inventory_count",
+        "47 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2333,3 +2335,54 @@ def test_authorized_official_operations_are_independent_bounded_and_reversible()
         assert evidence in proof
     for semantic_fixture in ("insert into", "set local role", "request.jwt.claims"):
         assert semantic_fixture not in proof
+
+
+def test_authorized_official_projections_are_bounded_source_honest_and_reversible() -> None:
+    version = "20260827000000"
+    forward = _sql(f"{version}_authorized_official_projections.sql")
+    down_path = MIGRATIONS / "down" / f"{version}_authorized_official_projections.down.sql"
+    down = down_path.read_text(encoding="utf-8").lower()
+    normalized = " ".join(forward.split())
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_api.official_schools(",
+        "workspace_api.official_provenance(",
+        "workspace_api.official_reference(",
+        "public.results_exploration_schools(",
+        "workspace_api.official_result(",
+        "source_unavailable",
+        "archive_entry_ids",
+        "source_audit",
+        "source_kind='official'",
+        "limit 100",
+        "octet_length(payload::text)>120000",
+        "to_regrole('service_role')",
+        "set_config('votus_projections.workspace_query_owner'",
+    ):
+        assert required in normalized
+    schools = normalized.split("create function workspace_api.official_schools", 1)[1]
+    schools = schools.split("create function workspace_api.official_provenance", 1)[0]
+    assert schools.index("authorized_section_scopes()") < schools.index(
+        "results_exploration_schools("
+    )
+    reference = normalized.split("create function workspace_api.official_reference", 1)[1]
+    reference = reference.split("create function workspace_api.official_provenance", 1)[0]
+    assert "rr.source_kind='official'" in reference and "limit 100" in reference
+    assert "j.seccion_code=p_seccion_code" in reference and "fiscalizacion" not in reference
+    provenance = normalized.split("create function workspace_api.official_provenance", 1)[1]
+    assert provenance.index("workspace_api.official_result(") < provenance.index(
+        "public.archive_entry"
+    )
+    for private_field in ("source_url", "archived_path", "notes"):
+        assert private_field not in provenance
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert (
+        down.index("drop function workspace_api.official_provenance")
+        < down.index("drop function workspace_api.official_reference")
+        < down.index("drop function workspace_api.official_schools")
+    )
+    proof_text = (SQL_TESTS / "workspace_authorized_projections.sql").read_text(encoding="utf-8")
+    proof = " ".join(proof_text.lower().split())
+    assert "select plan(" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
+    for runtime_fixture in ("insert into", "set local role", "request.jwt.claims"):
+        assert runtime_fixture not in proof

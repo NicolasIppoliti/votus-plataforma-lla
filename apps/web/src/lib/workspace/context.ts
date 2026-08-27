@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { OfficialSelection } from "../../app/api/workspace/official/input";
+import type { OfficialSectionSelection, OfficialSelection } from "../../app/api/workspace/official/input";
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -64,8 +64,26 @@ function officialParameters(selection: OfficialSelection) {
   };
 }
 
-export async function authorizedOfficialResult(client: SupabaseClient, selection: OfficialSelection) {
-  return rpcData(await verifiedWorkspaceApi(client), "official_result", officialParameters(selection));
+function officialSectionParameters(selection: OfficialSectionSelection) {
+  return {
+    p_category_id: selection.categoryId,
+    p_distrito_code: selection.distritoCode,
+    p_election_id: selection.electionId,
+    p_seccion_code: selection.seccionCode,
+  };
+}
+
+export async function authorizedOfficialBundle(client: SupabaseClient, selection: OfficialSelection) {
+  if (!selection.seccionCode) throw new Error("Invalid workspace selection");
+  const api = await verifiedWorkspaceApi(client);
+  const section = officialSectionParameters({ ...selection, seccionCode: selection.seccionCode });
+  const [result, schools, reference, provenance] = await Promise.all([
+    rpcData(api, "official_result", officialParameters(selection)),
+    rpcData(api, "official_schools", section),
+    rpcData(api, "official_reference", section),
+    rpcData(api, "official_provenance", section),
+  ]);
+  return { result, schools, reference, provenance };
 }
 
 export async function authorizedOfficialComparison(client: SupabaseClient, left: OfficialSelection, right: OfficialSelection) {

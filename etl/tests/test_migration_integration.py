@@ -27,6 +27,7 @@ WORKSPACE_SELECTION_MIGRATION_VERSION = "20260826050000"
 STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000"
 AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION = "20260826160000"
 AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION = "20260826200000"
+AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION = "20260827000000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -38,6 +39,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION,
+        AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -123,7 +125,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 46
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 47
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -184,6 +186,13 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION, down=True
     )
     assert operations_down.name == "20260826200000_authorized_official_operations.down.sql"
+    assert _validated_migration_path(AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION).name == (
+        "20260827000000_authorized_official_projections.sql"
+    )
+    assert (
+        _validated_migration_path(AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION, down=True).name
+        == "20260827000000_authorized_official_projections.down.sql"
+    )
     for unsupported in (
         38,
         "0038",
@@ -1406,7 +1415,7 @@ def test_authorized_official_operations_preserve_independent_section_scope_seman
     created_scopes: list[tuple[str, str]] = []
 
     def rpc(session_id: uuid.UUID, name: str, args: list[object]) -> dict[str, object]:
-        assert name in {"official_result", "official_comparison"}
+        assert name in {"official_result", "official_comparison", "official_reference"}
         claims = json.dumps({"sub": str(user_id), "session_id": str(session_id), "exp": 253402300798})  # noqa: E501
         with psycopg.connect(admin_dsn) as connection:
             connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,)); connection.execute("set role authenticated")  # noqa: E501, E702
@@ -1426,6 +1435,7 @@ def test_authorized_official_operations_preserve_independent_section_scope_seman
         exact = rpc(session_one, "official_result", result_args)
         assert exact["total_votes"] == 3 and exact["source_granularity"] == "seccion" and len(exact["parties"]) == 2 and sorted(p["votes"] for p in exact["parties"]) == [1, 2]  # noqa: E501
         assert rpc(session_one, "official_result", [*result_args[:3], "028", *result_args[4:]])["authorization_status"] == "scope_denied"  # noqa: E501
+        reference = rpc(session_one, "official_reference", result_args[:4]); assert reference["source_exclusions"] == [{"kind":"fiscalizacion","reason":"non_official_source","rows":1}] and "votes" not in json.dumps(reference["source_exclusions"])  # noqa: E501, E702
         denied = rpc(session_one, "official_comparison", comparison_args); assert denied == {"status":"authorization_denied","side":"right","authorization_status":"scope_denied","truncated":False} and "left" not in denied  # noqa: E501, E702
         opposite = rpc(session_two, "official_comparison", comparison_args); assert opposite["side"] == "left" and not ({"left", "right"} & opposite.keys())  # noqa: E501, E702
         with psycopg.connect(admin_dsn) as connection:
@@ -1712,6 +1722,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION)
@@ -1762,6 +1773,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(

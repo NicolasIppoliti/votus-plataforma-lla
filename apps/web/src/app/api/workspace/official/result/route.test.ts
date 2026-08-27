@@ -5,7 +5,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("../../../../../lib/supabase/server-client", () => ({ createSupabaseServerClient: mocks.createClient }));
 const { GET } = await import("./route");
 
-const URL = "http://localhost/api/workspace/official/result?election_id=50000000-0000-0000-0000-000000000001&category_id=51000000-0000-0000-0000-000000000001&distrito_code=02&seccion_code=027&requested_level=seccion";
+const URL = "http://localhost/api/workspace/official/result?election_id=50000000-0000-0000-0000-000000000001&category_id=51000000-0000-0000-0000-000000000001&distrito_code=02&seccion_code=027&circuito_code=circuito-X&requested_level=seccion";
 
 beforeEach(() => {
   mocks.getClaims.mockReset().mockResolvedValue({ data: { claims: { sub: "41000000-0000-0000-0000-000000000001", session_id: "42000000-0000-0000-0000-000000000001", exp: Math.floor(Date.now() / 1_000) + 300 } }, error: null });
@@ -20,9 +20,12 @@ describe("workspace official result GET", () => {
     expect(response.status).toBe(200);
     expect(mocks.createClient).toHaveBeenCalledOnce();
     expect(mocks.getClaims).toHaveBeenCalledOnce();
-    expect(mocks.rpc).toHaveBeenCalledWith("official_result", { p_category_id: "51000000-0000-0000-0000-000000000001", p_circuito_code: null, p_distrito_code: "02", p_election_id: "50000000-0000-0000-0000-000000000001", p_establecimiento_code: null, p_mesa_code: null, p_requested_level: "seccion", p_seccion_code: "027" });
+expect(mocks.rpc).toHaveBeenCalledWith("official_result", { p_category_id: "51000000-0000-0000-0000-000000000001", p_circuito_code: "circuito-X", p_distrito_code: "02", p_election_id: "50000000-0000-0000-0000-000000000001", p_establecimiento_code: null, p_mesa_code: null, p_requested_level: "seccion", p_seccion_code: "027" });
+    const section = { p_category_id: "51000000-0000-0000-0000-000000000001", p_distrito_code: "02", p_election_id: "50000000-0000-0000-0000-000000000001", p_seccion_code: "027" };
+    for (const name of ["official_schools", "official_reference", "official_provenance"]) expect(mocks.rpc).toHaveBeenCalledWith(name, section);
+    expect(mocks.rpc.mock.calls.map(([name]) => name)).toEqual(["official_result", "official_schools", "official_reference", "official_provenance"]);
     expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
-    await expect(response.json()).resolves.toMatchObject({ status: "ok", source_kind: "official" });
+    await expect(response.json()).resolves.toMatchObject({ result: { status: "ok" }, schools: { status: "ok" }, reference: { status: "ok" }, provenance: { status: "ok" } });
   });
 
   it("rejects malformed or repeated input before creating a client", async () => {
