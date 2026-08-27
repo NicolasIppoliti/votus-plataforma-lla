@@ -3,8 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SignOutForm } from "@/components/SignOutForm";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
+import { WorkspaceSelector } from "@/components/WorkspaceSelector";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 
 /**
@@ -49,6 +51,8 @@ export default async function AuthenticatedLayout({
     redirect("/login");
   }
 
+  const selection = await loadWorkspaceSelection();
+
   // A denied or failed workspace check is "unknown", never a false clean queue.
   let unresolvedCount: number | undefined;
   try {
@@ -72,6 +76,7 @@ export default async function AuthenticatedLayout({
             <span className="site-brand__descriptor">espacio de evidencia</span>
           </Link>
           <p className="site-context">Análisis electoral interno</p>
+          <WorkspaceSelector initialSelection={selection} />
           <SignOutForm />
         </div>
         <PrimaryNavigation />
@@ -80,6 +85,7 @@ export default async function AuthenticatedLayout({
         <div className="source-disclaimer">
           <SourceDisclaimer />
         </div>
+        {unresolvedCount === undefined ? <p className="review-alert" role="status">No se pudo verificar el estado de revisión.</p> : null}
         {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
           <p className="review-alert" role="alert">
                 <span className="status-label">Requiere revisión</span>

@@ -5,6 +5,27 @@ import type { OfficialSectionSelection, OfficialSelection } from "../../app/api/
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+export const WORKSPACE_CONTEXT_ERROR_CATEGORY = {
+  MISMATCH: "mismatch",
+} as const;
+
+type WorkspaceContextErrorCategory =
+  (typeof WORKSPACE_CONTEXT_ERROR_CATEGORY)[keyof typeof WORKSPACE_CONTEXT_ERROR_CATEGORY];
+
+class WorkspaceContextError extends Error {
+  readonly category: WorkspaceContextErrorCategory;
+
+  constructor(category: WorkspaceContextErrorCategory) {
+    super("Workspace operation failed");
+    this.name = "WorkspaceContextError";
+    this.category = category;
+  }
+}
+
+export function workspaceContextErrorCategory(error: unknown): WorkspaceContextErrorCategory | null {
+  return error instanceof WorkspaceContextError ? error.category : null;
+}
+
 interface FiscalizacionCoverageEvidence {
   status: "ok" | "denominator_unavailable" | "selection_invalid" | "source_unavailable";
   authorization_status: "authorized";
@@ -53,6 +74,9 @@ async function rpcData(
   const { data, error } = parameters
     ? await api.rpc(name, parameters)
     : await api.rpc(name);
+  if (error?.code === "VOT03") {
+    throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.MISMATCH);
+  }
   if (error) throw new Error("Workspace operation failed");
   return data;
 }

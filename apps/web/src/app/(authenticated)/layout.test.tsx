@@ -5,12 +5,13 @@ import { expect, it, vi } from "vitest";
 import AuthenticatedLayout from "./layout";
 
 const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
-const workspace = vi.hoisted(() => ({ reviewItems: vi.fn() }));
+const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 const globalStyles = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
   usePathname: () => navigation.pathname,
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 
 vi.mock("@/lib/supabase/server-client", () => ({
@@ -24,8 +25,12 @@ vi.mock("@/lib/supabase/server-client", () => ({
 vi.mock("@/lib/workspace/context", () => ({
   authorizedReviewItems: workspace.reviewItems,
 }));
+vi.mock("@/lib/workspace/selection", () => ({
+  loadWorkspaceSelection: workspace.selection,
+}));
 
 workspace.reviewItems.mockResolvedValue({ status: "ok", total: 0 });
+workspace.selection.mockResolvedValue({ status: "active", revision: 2, activeOrganizationId: "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13", organizations: [{ id: "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13", name: "Municipalidad" }], total: 1, truncated: false });
 
 async function renderLayout(pathname: string): Promise<string> {
   navigation.pathname = pathname;
@@ -46,6 +51,20 @@ it("keeps authenticated header, navigation, and content on the shared centered c
   expect(navigationRule).toBeDefined();
   expect(navigationRule).toMatch(/margin-block:\s*0;/);
   expect(navigationRule).not.toMatch(/(?:^|;)\s*margin\s*:/);
+});
+
+it.each([
+  [{ status: "active", total: 1, truncated: false }, ["Organización", "Municipalidad", "Cambiar organización"]],
+  [{ status: "stale", total: 1, truncated: false }, ["Tu acceso a la organización activa cambió. Seleccioná una organización autorizada nuevamente."]],
+  [{ status: "revoked", total: 1, truncated: false }, ["El contexto de organización fue revocado. Volvé a iniciar sesión."]],
+  [{ status: "expired", total: 1, truncated: false }, ["El contexto de organización venció. Volvé a iniciar sesión."]],
+  [{ status: "mismatch", total: null, truncated: null }, ["No se pudo verificar que este contexto pertenezca a tu sesión."]],
+  [{ status: "selection_required", total: 0, truncated: false }, ["No hay organizaciones disponibles."]],
+  [{ status: "active", total: 101, truncated: true }, ["La lista está limitada a las primeras 100 de 101 organizaciones autorizadas"]],
+])("renders workspace state $status distinctly", async (state, messages) => {
+  workspace.selection.mockResolvedValueOnce({ revision: 2, activeOrganizationId: state.status === "active" ? "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13" : null, organizations: state.total === 0 ? [] : [{ id: "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13", name: "Municipalidad" }], ...state });
+  const markup = await renderLayout("/dashboard");
+  for (const message of messages) expect(markup).toContain(message);
 });
 
 it("renders exactly one keyboard-accessible sign-out form action", async () => {
@@ -120,6 +139,7 @@ it("links authenticated operators to the official results explorer", async () =>
   expect(markup).toContain("Explorar resultados");
 });
 
+it("surfaces an unknown review state", async () => { workspace.reviewItems.mockRejectedValueOnce(new Error("unavailable")); expect(await renderLayout("/dashboard")).toContain("No se pudo verificar el estado de revisión."); });
 it("renders the authorized unresolved count from the verified workspace facade", async () => {
   workspace.reviewItems.mockResolvedValueOnce({ status: "ok", total: 3 });
   const markup = await renderLayout("/dashboard");

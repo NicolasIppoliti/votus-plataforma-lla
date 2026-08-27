@@ -33,9 +33,14 @@ async function withReviewItem<T>(page: Page, run: () => Promise<T>): Promise<T> 
 
   let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
   try {
-    const bootstrap = await page.request.get("/api/workspace"); expect(bootstrap.ok()).toBe(true); const workspace = await bootstrap.json() as { current?: { context_revision?: unknown } };
-    const expectedRevision = workspace.current?.context_revision; if (typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new Error("workspace bootstrap returned an invalid revision");
-    const switched = await page.request.post("/api/workspace", { data: { organizationId: fixture.organization_id, expectedRevision } }); expect(switched.ok()).toBe(true); await expect(switched.json()).resolves.toMatchObject({ status: "active" });
+    await page.goto("/dashboard");
+    const organizationSelector = page.getByLabel("Organización");
+    await expect(organizationSelector).toBeVisible();
+    await organizationSelector.selectOption(fixture.organization_id);
+    const switchResponse = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Cambiar organización" }).click();
+    const response = await switchResponse;
+    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
     outcome = { value: await run() };
   } catch (error) {
     outcome = { error };
