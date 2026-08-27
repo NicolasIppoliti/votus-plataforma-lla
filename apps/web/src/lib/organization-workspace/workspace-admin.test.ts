@@ -38,6 +38,29 @@ describe("workspace operator CLI", () => {
 		expect(() => readFileSync(marker)).toThrow();
 	});
 
+	it("lists bounded platform review items and classifies only SQLSTATE 42501 as denial", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "workspace-admin-review-"));
+		const fake = path.join(directory, "psql");
+		writeFileSync(fake, `#!/usr/bin/env node\nconst a=process.argv.slice(2),p=a.find(v=>v.startsWith('p1='));if(p==='p1=41'){process.stderr.write('ERROR:  42501\\nDETAIL: private');process.exit(1)}if(p==='p1=42'){process.stderr.write('ERROR:  08006\\nDETAIL: private');process.exit(1)}process.stdout.write('{"status":"ok","items":[],"category_counts":[],"reason_counts":[],"total":1,"truncated":false,"exclusions":[]}')`);
+		chmodSync(fake, 0o700);
+		const environment = { PATH: `${directory}:${process.env.PATH}`, WORKSPACE_PLATFORM_ADMIN_DATABASE_URL: DATABASE_URL, WORKSPACE_PLATFORM_ADMIN_SSL_ROOT_CERT: "/operator/ca.pem" };
+		for (const input of [
+			{ operation: "list-platform-review-items", limit: -1, offset: 0 },
+			{ operation: "list-platform-review-items", limit: 101, offset: 0 },
+			{ operation: "list-platform-review-items", limit: 1, offset: -1 },
+			{ operation: "list-platform-review-items", limit: 1, offset: 2_000_000_001 },
+			{ operation: "list-platform-review-items", limit: "1", offset: 0 },
+		]) expect(run(input, environment).stderr).toBe("workspace_admin_failed:input_error\n");
+		const success = run({ operation: "list-platform-review-items", limit: 0, offset: 2_000_000_000 }, environment);
+		expect(success).toMatchObject({ status: 0, stderr: "" });
+		expect(success.stdout).toContain('"status":"ok"');
+		for (const [limit, classification] of [[41, "authorization_denied"], [42, "database_unavailable"]] as const) {
+			const result = run({ operation: "list-platform-review-items", limit, offset: 0 }, environment);
+			expect(result).toMatchObject({ status: 1, stdout: "", stderr: `workspace_admin_failed:${classification}\n` });
+			expect(result.stderr).not.toContain("private");
+		}
+	});
+
 	it("dispatches every operation to its private function with bounded parameters", () => {
 		const directory = mkdtempSync(path.join(tmpdir(), "workspace-admin-"));
 		const marker = path.join(directory, "call.json");

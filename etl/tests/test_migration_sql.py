@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260827160000_platform_review_operator_access.down.sql",
         "\\ir ../migrations/down/20260827130000_authorized_fiscal_result.down.sql",
         "\\ir ../migrations/down/20260827112658_authorized_fiscal_coverage.down.sql",
         "\\ir ../migrations/down/20260827040000_authorized_fiscal_review.down.sql",
@@ -1032,6 +1033,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827040000_authorized_fiscal_review.sql",
         "\\ir ../migrations/20260827112658_authorized_fiscal_coverage.sql",
         "\\ir ../migrations/20260827130000_authorized_fiscal_result.sql",
+        "\\ir ../migrations/20260827160000_platform_review_operator_access.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1046,7 +1048,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "51 as migration_inventory_count",
+        "52 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2427,6 +2429,44 @@ def test_authorized_review_facade_is_scope_shared_bounded_and_reversible() -> No
     proof = (
         (SQL_TESTS / "workspace_authorized_fiscal_review.sql").read_text(encoding="utf-8").lower()
     )
-    assert "select plan(9)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
-    for runtime_fixture in ("insert into", "set local role", "request.jwt.claims"):
-        assert runtime_fixture not in proof
+    assert "select plan(19)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
+    assert "insert into public.review_item" in proof
+    assert "set local role workspace_platform_admin" in proof
+    assert "request.jwt.claims" not in proof
+
+
+def test_platform_review_operator_access_is_closed_bounded_and_reversible() -> None:
+    version = "20260827160000"
+    forward = _sql(f"{version}_platform_review_operator_access.sql")
+    down = (
+        (MIGRATIONS / "down" / f"{version}_platform_review_operator_access.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    normalized = " ".join(forward.split())
+    for required in (
+        "revoke select on table public.review_item,public.review_item_unresolved_count",
+        "drop policy review_item_authenticated_read",
+        "workspace_private.platform_review_items(",
+        "tenant_scope_state='platform_only'",
+        "category_counts",
+        "reason_counts",
+        "pagination_bound",
+        "octet_length(payload::text)>8192",
+        "to workspace_platform_admin",
+        "review_item_platform_unresolved_idx",
+    ):
+        assert required in normalized
+    platform_function = normalized.split(
+        "create function workspace_private.platform_review_items", 1
+    )[1]
+    assert "subject_ref" not in platform_function
+    assert "workspace_api.review_items" not in normalized and "record_review_item" not in normalized
+    assert normalized.count("drop policy") == 1
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "drop function workspace_private.platform_review_items" in down
+    restored_select = (
+        "grant select on public.review_item,public.review_item_unresolved_count to authenticated"
+    )
+    assert restored_select in down
+    assert "using(workspace_private.review_item_is_authorized(id))" in "".join(down.split())
