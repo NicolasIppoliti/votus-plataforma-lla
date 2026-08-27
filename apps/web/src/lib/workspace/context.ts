@@ -5,6 +5,24 @@ import type { OfficialSectionSelection, OfficialSelection } from "../../app/api/
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+interface FiscalizacionCoverageEvidence {
+  status: "ok" | "denominator_unavailable" | "selection_invalid" | "source_unavailable";
+  authorization_status: "authorized";
+  source_kind: "fiscalizacion";
+  is_random_sample: false;
+  vote_data: "not_included";
+  observed_units: number;
+  denominator_units: number;
+  uncovered: { items: unknown[]; total: number; truncated: boolean };
+  exclusions: { items: unknown[]; total: number; truncated: boolean };
+  truncated: boolean;
+}
+
+export type AuthorizedFiscalizacionCoverage = FiscalizacionCoverageEvidence
+  | { status: "opt_in_required" | "source_inconsistent" }
+  | { status: "authorization_denied"; authorization_status: string | null }
+  | { status: "payload_too_large"; authorization_status: "authorized"; source_kind: "fiscalizacion"; is_random_sample: false; vote_data: "not_included"; truncated: true };
+
 function hasStrictSessionClaims(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const claims = value as Record<string, unknown>;
@@ -30,7 +48,7 @@ async function verifiedWorkspaceApi(client: SupabaseClient) {
 async function rpcData(
   api: ReturnType<SupabaseClient["schema"]>,
   name: string,
-  parameters?: Record<string, number | string | null>,
+  parameters?: Record<string, boolean | number | string | null>,
 ) {
   const { data, error } = parameters
     ? await api.rpc(name, parameters)
@@ -49,6 +67,17 @@ export async function observeWorkspace(client: SupabaseClient) {
 
 export async function authorizedOfficialFacets(client: SupabaseClient) {
   return rpcData(await verifiedWorkspaceApi(client), "official_facets");
+}
+
+export async function authorizedFiscalizacionCoverage(
+  client: SupabaseClient,
+  selection: OfficialSectionSelection,
+  optIn: boolean,
+): Promise<AuthorizedFiscalizacionCoverage> {
+  return rpcData(await verifiedWorkspaceApi(client), "fiscalizacion_coverage", {
+    ...officialSectionParameters(selection),
+    p_opt_in: optIn,
+  }) as Promise<AuthorizedFiscalizacionCoverage>;
 }
 
 export async function authorizedReviewItems(client: SupabaseClient, limit = 50, offset = 0) {

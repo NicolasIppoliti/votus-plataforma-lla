@@ -1647,6 +1647,7 @@ describe("fiscalizacion page — the real entry point", () => {
         expect(markup).toContain("1 mesas cubiertas de 2 mesas oficiales");
         expect(markup).toContain("Guard fixture school");
         expect(markup).toContain("Auditoría de la fuente: fiscalización");
+        expect(markup).toContain("/api/workspace/fiscalizacion/coverage?election_id=20000000-0000-0000-0000-000000000001&amp;category_id=20000000-0000-0000-0000-000000000003&amp;distrito_code=02&amp;seccion_code=027&amp;opt_in=true");
         expect(markup).toContain("official-guard-source");
         expect(sourceRefReadCount).toBe(1);
       });
