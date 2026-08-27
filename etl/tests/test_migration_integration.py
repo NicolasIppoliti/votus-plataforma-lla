@@ -30,6 +30,7 @@ AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION = "20260826200000"
 AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION = "20260827000000"
 AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION = "20260827040000"
 AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION = "20260827112658"
+AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION = "20260827130000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -44,6 +45,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION,
         AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION,
         AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION,
+        AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -129,7 +131,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 49
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 50
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -209,6 +211,8 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert _validated_migration_path(
         AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION, down=True
     ).name == ("20260827112658_authorized_fiscal_coverage.down.sql")
+    assert _validated_migration_path(AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION).name == "20260827130000_authorized_fiscal_result.sql"
+    assert _validated_migration_path(AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION, down=True).name == "20260827130000_authorized_fiscal_result.down.sql"
     for unsupported in (
         38,
         "0038",

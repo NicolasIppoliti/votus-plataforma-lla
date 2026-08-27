@@ -44,6 +44,20 @@ export type AuthorizedFiscalizacionCoverage = FiscalizacionCoverageEvidence
   | { status: "authorization_denied"; authorization_status: string | null }
   | { status: "payload_too_large"; authorization_status: "authorized"; source_kind: "fiscalizacion"; is_random_sample: false; vote_data: "not_included"; truncated: true };
 
+export const FISCAL_RESULT_STATUS = { OK: "ok", NO_ROWS: "no_rows", OPT_IN_REQUIRED: "opt_in_required", SOURCE_INCONSISTENT: "source_inconsistent", AUTHORIZATION_DENIED: "authorization_denied", PAYLOAD_TOO_LARGE: "payload_too_large" } as const;
+interface FiscalResultReference { election_year: number | null; election_round: string | null; category_name: string | null; distrito_code: string; seccion_code: string; denominator_units: number }
+interface FiscalResultRow { list_id: string | null; canonical_party_id: string | null; party_name: string | null; granularity: string; votes: number; rows: number }
+interface FiscalResultUnmapped { list_id: string | null; votes: number; rows: number }
+interface FiscalResultExclusion { reason: string; rows: number }
+interface FiscalResultProvenance { id: string; sha256: string | null; fetched_at: string; status: string }
+interface FiscalResultCollection<T> { items: T[]; total: number; truncated: boolean }
+interface FiscalResultEvidence { status: typeof FISCAL_RESULT_STATUS.OK | typeof FISCAL_RESULT_STATUS.NO_ROWS; authorization_status: "authorized"; source_kind: "fiscalizacion"; is_random_sample: false; reference: FiscalResultReference; rows: FiscalResultCollection<FiscalResultRow>; unmapped: FiscalResultCollection<FiscalResultUnmapped>; exclusions: FiscalResultCollection<FiscalResultExclusion>; provenance: FiscalResultCollection<FiscalResultProvenance>; truncated: boolean }
+export type AuthorizedFiscalizacionResult = FiscalResultEvidence
+  | { status: typeof FISCAL_RESULT_STATUS.OPT_IN_REQUIRED }
+  | { status: typeof FISCAL_RESULT_STATUS.SOURCE_INCONSISTENT; exclusions: FiscalResultCollection<FiscalResultExclusion> }
+  | { status: typeof FISCAL_RESULT_STATUS.AUTHORIZATION_DENIED; authorization_status: string | null }
+  | { status: typeof FISCAL_RESULT_STATUS.PAYLOAD_TOO_LARGE; authorization_status: "authorized"; source_kind: "fiscalizacion"; is_random_sample: false; truncated: true };
+
 function hasStrictSessionClaims(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const claims = value as Record<string, unknown>;
@@ -102,6 +116,10 @@ export async function authorizedFiscalizacionCoverage(
     ...officialSectionParameters(selection),
     p_opt_in: optIn,
   }) as Promise<AuthorizedFiscalizacionCoverage>;
+}
+
+export async function authorizedFiscalizacionResult(client: SupabaseClient, selection: OfficialSectionSelection, optIn: boolean): Promise<AuthorizedFiscalizacionResult> {
+  return rpcData(await verifiedWorkspaceApi(client), "fiscalizacion_result", { ...officialSectionParameters(selection), p_opt_in: optIn }) as Promise<AuthorizedFiscalizacionResult>;
 }
 
 export async function authorizedReviewItems(client: SupabaseClient, limit = 50, offset = 0) {

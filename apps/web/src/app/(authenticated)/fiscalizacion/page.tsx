@@ -783,9 +783,11 @@ export async function renderCoverageExplorer(
   const seccionCode = normalized.value.seccionCode;
   const form = <><CoverageExplorerForm facets={facets} selected={selected} />
     {electionId && categoryId && distritoCode && seccionCode ? (
-      <Link href={`/api/workspace/fiscalizacion/coverage?election_id=${encodeURIComponent(electionId)}&category_id=${encodeURIComponent(categoryId)}&distrito_code=${distritoCode}&seccion_code=${seccionCode}&opt_in=true`}>
+      <><Link href={`/api/workspace/fiscalizacion/coverage?election_id=${encodeURIComponent(electionId)}&category_id=${encodeURIComponent(categoryId)}&distrito_code=${distritoCode}&seccion_code=${seccionCode}&opt_in=true`}>
         Consultar evidencia autorizada vote-free
-      </Link>
+      </Link>{" · "}<Link href={`/api/workspace/fiscalizacion/result?election_id=${encodeURIComponent(electionId)}&category_id=${encodeURIComponent(categoryId)}&distrito_code=${distritoCode}&seccion_code=${seccionCode}&opt_in=true`}>
+        Consultar resultado autorizado de fiscalización
+      </Link></>
     ) : null}
   </>;
       if (!electionId || !categoryId || !distritoCode || !seccionCode) {
