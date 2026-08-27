@@ -51,6 +51,16 @@ export async function authorizedOfficialFacets(client: SupabaseClient) {
   return rpcData(await verifiedWorkspaceApi(client), "official_facets");
 }
 
+export async function authorizedReviewItems(client: SupabaseClient, limit = 50, offset = 0) {
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0 || offset > 2_000_000_000) {
+    throw new Error("Invalid review pagination");
+  }
+  return rpcData(await verifiedWorkspaceApi(client), "review_items", {
+    p_limit: limit,
+    p_offset: offset,
+  });
+}
+
 function officialParameters(selection: OfficialSelection) {
   return {
     p_category_id: selection.categoryId,

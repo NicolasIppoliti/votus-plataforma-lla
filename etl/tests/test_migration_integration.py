@@ -28,6 +28,7 @@ STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000"
 AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION = "20260826160000"
 AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION = "20260826200000"
 AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION = "20260827000000"
+AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION = "20260827040000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -40,6 +41,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION,
+        AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -125,7 +127,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 47
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 48
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -193,6 +195,12 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         _validated_migration_path(AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION, down=True).name
         == "20260827000000_authorized_official_projections.down.sql"
     )
+    assert _validated_migration_path(AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION).name == (
+        "20260827040000_authorized_fiscal_review.sql"
+    )
+    assert _validated_migration_path(
+        AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION, down=True
+    ).name == ("20260827040000_authorized_fiscal_review.down.sql")
     for unsupported in (
         38,
         "0038",
@@ -1722,6 +1730,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION)
@@ -1774,6 +1783,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(
@@ -1833,3 +1843,126 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 (distrito_code, seccion_code),
             )
             connection.execute("delete from public.jurisdiction where id=%s", (fixture_id,))
+
+
+def test_authorized_review_facade_filters_platform_and_other_section_rows() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for authorized review coverage")
+    params = conninfo_to_dict(database_dsn)
+    params["user"] = "postgres"
+    params.pop("password", None)
+    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})  # noqa: E501, E702
+    user_id, org, empty_org, session, empty_session = (uuid.uuid4() for _ in range(5))
+    prefix = f"review-{uuid.uuid4().hex}"
+    created_scopes: list[tuple[str, str]] = []  # noqa: E501, E702
+
+    def rpc(session_id: uuid.UUID, limit: int = 50, offset: int = 0) -> dict[str, object]:
+        claims = json.dumps(
+            {"sub": str(user_id), "session_id": str(session_id), "exp": 253402300798}
+        )
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute("select set_config('request.jwt.claims',%s,true)", (claims,))
+            connection.execute("set local role authenticated")
+            row = connection.execute(
+                "select workspace_api.review_items(%s,%s)", (limit, offset)
+            ).fetchone()
+            assert row is not None and isinstance(row[0], dict)
+            return row[0]
+
+    try:
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.info.server_version >= 170000
+            connection.execute("set role workspace_admin_owner")
+            connection.cursor().executemany(
+                "insert into workspace_private.organization(id,slug,display_name,entitlement_revision) values(%s,%s,%s,1)",  # noqa: E501
+                [
+                    (org, f"review-{org.hex}", "Review"),
+                    (empty_org, f"review-{empty_org.hex}", "Empty"),
+                ],
+            )
+            connection.cursor().executemany(
+                "insert into workspace_private.organization_membership(organization_id,user_id,membership_revision) values(%s,%s,1)",  # noqa: E501
+                [(org, user_id), (empty_org, user_id)],
+            )
+            for scope in (("02", "027"), ("02", "028")):
+                inserted = connection.execute(
+                    "insert into workspace_private.section_scope values(%s,%s) on conflict do nothing returning distrito_code",  # noqa: E501
+                    scope,
+                ).fetchone()
+                if inserted:
+                    created_scopes.append(scope)
+            connection.execute(
+                "insert into workspace_private.organization_section_entitlement(organization_id,distrito_code,seccion_code) values(%s,'02','027')",  # noqa: E501
+                (org,),
+            )
+            connection.execute("set role workspace_context_owner")
+            connection.cursor().executemany(
+                "insert into workspace_private.workspace_context(session_id,user_id,organization_id,membership_revision,entitlement_revision,context_revision,fixed_expires_at) values(%s,%s,%s,1,1,1,'2100-01-01')",  # noqa: E501
+                [(session, user_id, org), (empty_session, user_id, empty_org)],
+            )
+            connection.execute("set role etl_writer")
+            connection.execute(
+                "select workspace_private.record_review_item('content_drift','warning',%s,null,array[]::text[],array[]::text[])",  # noqa: E501
+                (prefix + "-platform",),
+            )
+            connection.execute(
+                "select workspace_private.record_review_item('source_reexported','warning',%s,null,array['02'],array['027'])",  # noqa: E501
+                (prefix + "-visible",),
+            )
+            connection.execute(
+                "select workspace_private.record_review_item('duplicate_collapsed','warning',%s,null,array['02'],array['028'])",  # noqa: E501
+                (prefix + "-other",),
+            )
+        page = rpc(session, 0, 0)
+        assert page == {
+            "status": "ok",
+            "authorization_status": "authorized",
+            "items": [],
+            "total": 1,
+            "truncated": True,
+            "exclusions": [{"reason": "pagination_bound", "rows": 1}],
+        }
+        listed = rpc(session)
+        assert (
+            [item["kind"] for item in listed["items"]] == ["source_reexported"]
+            and "subject_ref" not in json.dumps(listed)
+            and "note" not in json.dumps(listed)
+        )  # noqa: E501, E702
+        assert rpc(empty_session) == {
+            "status": "ok",
+            "authorization_status": "authorized_empty",
+            "items": [],
+            "total": 0,
+            "truncated": False,
+            "exclusions": [],
+        }
+        denied = rpc(uuid.uuid4())
+        assert (
+            denied["status"] == "authorization_denied"
+            and denied["authorization_status"] == "context_missing"
+            and denied["total"] == 0
+        )  # noqa: E501, E702
+    finally:
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute(
+                "delete from workspace_private.workspace_context where session_id=any(%s)",
+                ([session, empty_session],),
+            )
+            connection.execute(
+                "delete from workspace_private.organization_section_entitlement where organization_id=%s",  # noqa: E501
+                (org,),
+            )
+            connection.execute(
+                "delete from workspace_private.organization_membership where organization_id=any(%s)",  # noqa: E501
+                ([org, empty_org],),
+            )
+            connection.execute(
+                "delete from workspace_private.organization where id=any(%s)",
+                ([org, empty_org],),
+            )
+            connection.execute("delete from review_item where subject_ref like %s", (prefix + "%",))
+            connection.cursor().executemany(
+                "delete from workspace_private.section_scope where distrito_code=%s and seccion_code=%s",  # noqa: E501
+                created_scopes,
+            )

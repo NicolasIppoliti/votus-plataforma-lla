@@ -36,11 +36,11 @@ select ok(not has_table_privilege('votus_workspace_admin_test',
   'workspace_private.organization','INSERT,UPDATE,DELETE'),
   'the caller cannot perform direct organization DML');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-  where n.nspname='workspace_private' and p.prosecdef),13::bigint,
-  'all thirteen private workspace functions are security definer');
+  where n.nspname='workspace_private' and p.prosecdef),14::bigint,
+  'all fourteen private workspace functions are security definer');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='workspace_private' and p.proconfig @>
-    array['search_path=pg_catalog, workspace_private, pg_temp']),13::bigint,
+    array['search_path=pg_catalog, workspace_private, pg_temp']),14::bigint,
   'all private functions have the fixed search path');
 select is((select array_agg(r.rolname order by r.rolname) from pg_proc p
   join pg_namespace n on n.oid=p.pronamespace join pg_roles r on r.oid=p.proowner
@@ -48,12 +48,12 @@ select is((select array_agg(r.rolname order by r.rolname) from pg_proc p
   array['workspace_admin_owner','workspace_admin_owner','workspace_admin_owner',
     'workspace_admin_owner','workspace_admin_owner','workspace_admin_owner',
     'workspace_admin_owner','workspace_admin_owner','workspace_audit_owner','workspace_context_owner',
-    'workspace_query_owner','workspace_review_ingest_owner','workspace_review_ingest_owner']::name[],
+    'workspace_query_owner','workspace_query_owner','workspace_review_ingest_owner','workspace_review_ingest_owner']::name[],
   'private function ownership is exact');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl
   where n.nspname='workspace_private' and p.proname<>'authorization_facts_status'
-    and acl.privilege_type='EXECUTE'),22::bigint,
+    and acl.privilege_type='EXECUTE'),24::bigint,
   'private functions expose only owner and intended caller execution');
 select is((select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
   where n.nspname='workspace_private' and c.relkind='r' and c.relforcerowsecurity),7::bigint,
@@ -63,7 +63,7 @@ select is((select count(*) from pg_policies where schemaname='workspace_private'
     'workspace_admin_owner_membership_select','workspace_admin_owner_scope_select',
     'workspace_admin_owner_entitlement_select'])),4::bigint,
   'the four parent owner SELECT policies remain present');
-select is((select count(*) from pg_policies where policyname like 'workspace\_%' escape '\'),32::bigint,
+select is((select count(*) from pg_policies where policyname like 'workspace\_%' escape '\'),34::bigint,
   'the complete administration and context policy set is present');
 select ok(not has_table_privilege('votus_workspace_admin_test','public.jurisdiction','SELECT'),
   'the caller receives no direct jurisdiction access');

@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import AuthenticatedLayout from "./layout";
 
 const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
+const workspace = vi.hoisted(() => ({ reviewItems: vi.fn() }));
 const globalStyles = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 
 vi.mock("next/navigation", () => ({
@@ -17,13 +18,14 @@ vi.mock("@/lib/supabase/server-client", () => ({
     auth: {
       getUser: async () => ({ data: { user: { id: "authenticated-operator" } } }),
     },
-    from: () => ({
-      select: () => ({
-        maybeSingle: async () => ({ data: { unresolved_count: 0 } }),
-      }),
-    }),
   }),
 }));
+
+vi.mock("@/lib/workspace/context", () => ({
+  authorizedReviewItems: workspace.reviewItems,
+}));
+
+workspace.reviewItems.mockResolvedValue({ status: "ok", total: 0 });
 
 async function renderLayout(pathname: string): Promise<string> {
   navigation.pathname = pathname;
@@ -116,6 +118,14 @@ it("links authenticated operators to the official results explorer", async () =>
 
   expect(markup).toContain('href="/drilldown"');
   expect(markup).toContain("Explorar resultados");
+});
+
+it("renders the authorized unresolved count from the verified workspace facade", async () => {
+  workspace.reviewItems.mockResolvedValueOnce({ status: "ok", total: 3 });
+  const markup = await renderLayout("/dashboard");
+
+  expect(workspace.reviewItems).toHaveBeenCalledWith(expect.anything(), 0, 0);
+  expect(markup).toContain("3 elemento(s) de revisión pendiente(s)");
 });
 
 it("preserves source status and keeps cold routes out of primary navigation", async () => {

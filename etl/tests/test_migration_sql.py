@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260827040000_authorized_fiscal_review.down.sql",
         "\\ir ../migrations/down/20260827000000_authorized_official_projections.down.sql",
         "\\ir ../migrations/down/20260826200000_authorized_official_operations.down.sql",
         "\\ir ../migrations/down/20260826160000_authorized_official_facets.down.sql",
@@ -1026,6 +1027,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260826160000_authorized_official_facets.sql",
         "\\ir ../migrations/20260826200000_authorized_official_operations.sql",
         "\\ir ../migrations/20260827000000_authorized_official_projections.sql",
+        "\\ir ../migrations/20260827040000_authorized_fiscal_review.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1040,7 +1042,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "47 as migration_inventory_count",
+        "48 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2384,5 +2386,43 @@ def test_authorized_official_projections_are_bounded_source_honest_and_reversibl
     proof_text = (SQL_TESTS / "workspace_authorized_projections.sql").read_text(encoding="utf-8")
     proof = " ".join(proof_text.lower().split())
     assert "select plan(" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
+    for runtime_fixture in ("insert into", "set local role", "request.jwt.claims"):
+        assert runtime_fixture not in proof
+
+
+def test_authorized_review_facade_is_scope_shared_bounded_and_reversible() -> None:
+    version = "20260827040000"
+    forward = _sql(f"{version}_authorized_fiscal_review.sql")
+    down = (
+        (MIGRATIONS / "down" / f"{version}_authorized_fiscal_review.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    normalized = " ".join(forward.split())
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_private.review_item_is_authorized(",
+        "workspace_api.review_items(",
+        "visible as materialized",
+        "limit p_limit offset p_offset",
+        "pagination_bound",
+        "security_invoker=true",
+        "review_item_authorized_unresolved_idx",
+        "to_regrole('service_role')",
+        "to authenticated",
+    ):
+        assert required in normalized
+    assert normalized.count("using(workspace_private.review_item_is_authorized(id))") == 2
+    api = normalized.split("create function workspace_api.review_items", 1)[1]
+    assert "resolved_at is null" in api and "octet_length(payload::text)>120000" in api
+    assert "subject_ref" not in api and "note" not in api and "source_kind" not in api
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert down.index("drop function workspace_api.review_items") < down.index(
+        "drop function workspace_private.review_item_is_authorized"
+    )
+    proof = (
+        (SQL_TESTS / "workspace_authorized_fiscal_review.sql").read_text(encoding="utf-8").lower()
+    )
+    assert "select plan(9)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
     for runtime_fixture in ("insert into", "set local role", "request.jwt.claims"):
         assert runtime_fixture not in proof

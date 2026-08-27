@@ -183,6 +183,7 @@ const STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000";
 const AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION = "20260826160000";
 const AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION = "20260826200000";
 const AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION = "20260827000000";
+const AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION = "20260827040000";
 const MIGRATION_VERSIONS = [
 	...Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
@@ -197,6 +198,7 @@ const MIGRATION_VERSIONS = [
 	AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION,
 	AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION,
 	AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION,
+	AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION,
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -314,6 +316,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_authorized_projections.sql",
 		label: "disposable workspace-authorized-projections pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_fiscal_review.sql",
+		label: "disposable workspace-authorized-review pgTAP",
 		timeoutMs: 120_000,
 	},
 ];
