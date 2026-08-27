@@ -733,6 +733,7 @@ describe("base contracts", () => {
 		expect(fixtureSql).toContain(
 			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
 		);
+		expect(fixtureSql).toContain("select pg_notify('pgrst','reload schema')");
 		expect(fixtureSql).toContain("delete from workspace_private.workspace_context");
 		expect(fixtureSql).toContain("delete from public.review_item");
 		expect(fixtureSql).toContain("delete from workspace_private.organization");

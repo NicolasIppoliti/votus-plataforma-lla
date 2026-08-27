@@ -23,30 +23,32 @@ grant select (id)
 on table public.review_item
 to service_role;
 
+grant workspace_admin_owner to current_user;
+grant workspace_context_owner,workspace_review_ingest_owner to workspace_admin_owner with inherit true,set false;
+grant workspace_admin_owner to workspace_audit_owner with inherit true,set false;
+grant workspace_audit_owner to current_user;
+set role workspace_audit_owner; create policy e2e_workspace_audit_owner_delete on workspace_private.workspace_audit_event for delete to workspace_audit_owner using(true); reset role;
+grant update,delete on public.review_item to workspace_audit_owner;
+create policy e2e_workspace_audit_review_all on public.review_item for all to workspace_audit_owner using(true) with check(true);
+grant create on schema public to workspace_audit_owner;
+set role workspace_audit_owner;
 create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid) returns jsonb
 language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 declare
   organization_id uuid := gen_random_uuid();
-  distrito_code text;
-  seccion_code text;
+  distrito_code text := '02';
+  seccion_code text := '027';
   owns_section_scope boolean := false;
 begin
   if p_user_id is null or p_review_item_id is null then raise exception 'e2e authorized review fixture identifiers are required'; end if;
   if p_review_item_id <> '00000000-0000-4000-8000-000000000024'::uuid then raise exception 'e2e authorized review fixture review item is not owned'; end if;
-  perform 1 from auth.users where id = p_user_id;
-  if not found then raise exception 'e2e authorized review fixture user is missing'; end if;
-  perform 1 from public.review_item item
+    perform 1 from public.review_item item
   where item.id = p_review_item_id and item.resolved_at is null and item.tenant_scope_state = 'platform_only'
     and not exists (select 1 from workspace_private.review_item_section_scope scope where scope.review_item_id = item.id)
   for update;
   if not found then raise exception 'e2e authorized review fixture review item is missing or collides'; end if;
   if exists (select 1 from workspace_private.organization where slug = 'e2e-authorized-review-browser') then raise exception 'e2e authorized review fixture organization collides'; end if;
-  select jurisdiction.distrito_code, jurisdiction.seccion_code into distrito_code, seccion_code
-  from public.jurisdiction jurisdiction where jurisdiction.seccion_code is not null
-  order by jurisdiction.distrito_code, jurisdiction.seccion_code limit 1;
-  if not found then raise exception 'e2e authorized review fixture exact section is missing'; end if;
-
-  insert into workspace_private.organization(id, slug, display_name, entitlement_revision)
+    insert into workspace_private.organization(id, slug, display_name, entitlement_revision)
   values (organization_id, 'e2e-authorized-review-browser', 'E2E Authorized Review Browser', 1);
   insert into workspace_private.organization_membership(organization_id, user_id) values (organization_id, p_user_id);
   insert into workspace_private.section_scope values (distrito_code, seccion_code)
@@ -125,3 +127,7 @@ revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) fr
 revoke all on function public.e2e_cleanup_authorized_review_fixture(jsonb) from public, anon, authenticated;
 grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid) to service_role;
 grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role;
+reset role;
+revoke create on schema public from workspace_audit_owner;
+revoke workspace_admin_owner,workspace_audit_owner from current_user;
+select pg_notify('pgrst','reload schema');

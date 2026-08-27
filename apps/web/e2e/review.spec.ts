@@ -15,7 +15,7 @@ const REVIEW_ITEM = {
   note: `The official mesa identity needs manual review because ${"the source lineage remains ambiguous; ".repeat(6)}`,
 } as const;
 
-async function withReviewItem<T>(run: () => Promise<T>): Promise<T> {
+async function withReviewItem<T>(page: Page, run: () => Promise<T>): Promise<T> {
   const environment = assertE2eEnvironment(process.env);
   const admin = createClient(
     environment.NEXT_PUBLIC_SUPABASE_URL,
@@ -27,18 +27,22 @@ async function withReviewItem<T>(run: () => Promise<T>): Promise<T> {
   if (insertError) {
     throw new Error(`failed to seed review item: ${insertError.message}`);
   }
+  const { data: auth, error: authError } = await admin.auth.admin.listUsers();
+  const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase()); if (authError || !user) { const cause = new Error(`failed to resolve fixture user: ${authError?.message ?? "user missing"}`); const { error } = await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id); if (error) throw new AggregateError([cause, new Error(error.message)], "review fixture setup and cleanup failed"); throw cause; }
+  const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_review_fixture", { p_user_id: user.id, p_review_item_id: REVIEW_ITEM.id }); if (fixtureError || typeof fixture?.organization_id !== "string") { const cause = new Error(`failed to set up authorized review fixture: ${fixtureError?.message ?? "invalid response"}`); const cleanup = fixtureError ? await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id) : await admin.rpc("e2e_cleanup_authorized_review_fixture", { p_fixture: fixture }); if (cleanup.error) throw new AggregateError([cause, new Error(cleanup.error.message)], "review fixture setup and cleanup failed"); throw cause; }
 
-  let outcome: { value: T } | { error: unknown };
+  let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
   try {
+    const bootstrap = await page.request.get("/api/workspace"); expect(bootstrap.ok()).toBe(true); const workspace = await bootstrap.json() as { current?: { context_revision?: unknown } };
+    const expectedRevision = workspace.current?.context_revision; if (typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new Error("workspace bootstrap returned an invalid revision");
+    const switched = await page.request.post("/api/workspace", { data: { organizationId: fixture.organization_id, expectedRevision } }); expect(switched.ok()).toBe(true); await expect(switched.json()).resolves.toMatchObject({ status: "active" });
     outcome = { value: await run() };
   } catch (error) {
     outcome = { error };
+  } finally {
+    ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_review_fixture", { p_fixture: fixture }));
   }
 
-  const { error: cleanupError } = await admin
-    .from("review_item")
-    .delete()
-    .eq("id", REVIEW_ITEM.id);
   if ("error" in outcome) {
     if (cleanupError) {
       throw new AggregateError(
@@ -146,7 +150,7 @@ test.describe("the review route reflects the disposable database", () => {
   test("test_authenticated_route_contains_long_review_evidence_without_page_overflow", async ({
     page,
   }) => {
-    await withReviewItem(async () => {
+    await withReviewItem(page, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto("/dashboard");
       await expect(page).toHaveURL(/\/dashboard/);
