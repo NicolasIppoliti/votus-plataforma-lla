@@ -211,8 +211,13 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert _validated_migration_path(
         AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION, down=True
     ).name == ("20260827112658_authorized_fiscal_coverage.down.sql")
-    assert _validated_migration_path(AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION).name == "20260827130000_authorized_fiscal_result.sql"
-    assert _validated_migration_path(AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION, down=True).name == "20260827130000_authorized_fiscal_result.down.sql"
+    assert _validated_migration_path(AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION).name == (
+        "20260827130000_authorized_fiscal_result.sql"
+    )
+    assert (
+        _validated_migration_path(AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION, down=True).name
+        == "20260827130000_authorized_fiscal_result.down.sql"
+    )
     for unsupported in (
         38,
         "0038",
