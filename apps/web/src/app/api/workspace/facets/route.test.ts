@@ -25,7 +25,7 @@ describe("workspace facets GET", () => {
     expect(mocks.createClient).toHaveBeenCalledOnce();
     expect(mocks.getClaims).toHaveBeenCalledOnce();
     expect(mocks.schema).toHaveBeenCalledWith("workspace_api");
-    expect(mocks.rpc).toHaveBeenCalledWith("official_facets");
+    expect(mocks.rpc).toHaveBeenCalledWith("official_facets", { p_election_id: null, p_category_id: null, p_distrito_code: null, p_seccion_code: null, p_circuito_code: null, p_establecimiento_code: null });
     expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
     await expect(response.json()).resolves.toEqual({ status: "ok", facets: [], total: 0, truncated: false });
   });
