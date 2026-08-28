@@ -1778,6 +1778,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION)
+        _apply_down_migration(admin_dsn, AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
@@ -1834,6 +1836,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION)
         _apply_migration(admin_dsn, PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(
@@ -1915,7 +1919,7 @@ def test_authorized_review_facade_filters_platform_and_other_section_rows() -> N
             connection.execute("select set_config('request.jwt.claims',%s,true)", (claims,))
             connection.execute("set local role authenticated")
             row = connection.execute(
-                "select workspace_api.review_items(%s,%s)", (limit, offset)
+                "select workspace_api.review_items(%s::integer,%s::integer)", (limit, offset)
             ).fetchone()
             assert row is not None and isinstance(row[0], dict)
             return row[0]
