@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260827170000_authorized_fiscalizacion_facets.down.sql",
         "\\ir ../migrations/down/20260827160000_platform_review_operator_access.down.sql",
         "\\ir ../migrations/down/20260827130000_authorized_fiscal_result.down.sql",
         "\\ir ../migrations/down/20260827112658_authorized_fiscal_coverage.down.sql",
@@ -1034,6 +1035,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827112658_authorized_fiscal_coverage.sql",
         "\\ir ../migrations/20260827130000_authorized_fiscal_result.sql",
         "\\ir ../migrations/20260827160000_platform_review_operator_access.sql",
+        "\\ir ../migrations/20260827170000_authorized_fiscalizacion_facets.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1048,7 +1050,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "52 as migration_inventory_count",
+        "53 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2298,6 +2300,23 @@ def test_authorized_official_facets_are_claims_bound_bounded_and_reversible() ->
     assert down.startswith("begin;") and down.rstrip().endswith("commit;")
     assert "create " not in down and "drop function workspace_api.official_facets()" in down
     assert "drop index public.result_row_authorized_official_facets_idx" in down
+
+
+def test_authorized_facet_names_are_exact_bounded_and_reversible() -> None:
+    version = "20260827170000"
+    forward = _sql(f"{version}_authorized_fiscalizacion_facets.sql")
+    down = _sql(f"down/{version}_authorized_fiscalizacion_facets.down.sql")
+    normalized = " ".join(forward.split())
+    for required in (
+        "create or replace function workspace_api.official_facets()",
+        "distrito_name", "seccion_name", "name_variant_count",
+        "rr.source_kind='official'", "j.seccion_code is not null",
+        "facet_total>200", "'facets','[]'::jsonb", "'truncated',true",
+    ):
+        assert required in normalized
+    assert "workspace_private.authorized_section_scopes()" in normalized
+    assert "create or replace function workspace_api.official_facets()" in down
+    assert "distrito_name" not in down and "seccion_name" not in down
 
 
 def test_authorized_official_operations_are_independent_bounded_and_reversible() -> None:

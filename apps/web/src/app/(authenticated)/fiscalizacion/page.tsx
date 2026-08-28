@@ -7,13 +7,12 @@ import {
   scopeControlStates,
 } from "@/components/scope-selector-behavior";
 import {
-  createResultsExplorationRepository,
   formatFacetOptionLabel,
   normalizeExplorationParams,
   type ExplorationFacets,
 } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
-import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR, createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import type {
   AuthorizedFiscalizacionCoverage,
   AuthorizedFiscalizacionResult,
@@ -485,44 +484,18 @@ async function renderFiscalizacionPage(
       : {}),
   };
 
-  let facets: ExplorationFacets;
-  try {
-    const client = await createSupabaseServerClient();
-    facets = await createResultsExplorationRepository(client).facets(selected);
-  } catch (error) {
-    return refusal(error instanceof Error ? error.message : String(error));
-  }
-
-  const form = <CoverageExplorerForm facets={facets} selected={selected} />;
-  const distritoCode = normalized.value.distritoCode;
-  const seccionCode = normalized.value.seccionCode;
-  if (!electionId || !categoryId || !distritoCode || !seccionCode) {
-    return (
-      <main className="page-shell">
-        <div className="shell-container">
-          <PageHeader />
-          {form}
-          <p role="status">
-            Elija la elección, la categoría, el distrito y la sección disponibles. La
-            URL resultante se puede reutilizar.
-          </p>
-        </div>
-      </main>
-    );
-  }
-
-  const selection: FiscalizacionEvidenceSelection = {
-    electionId,
-    categoryId,
-    distritoCode,
-    seccionCode,
-  };
-  const [coverage, result] = await Promise.allSettled([
-    loadSafeFiscalizacionCoverage(selection, true),
-    loadSafeFiscalizacionResult(selection, true),
-  ]);
-
-  return <AuthorizedEvidence form={form} coverage={coverage} result={result} />;
+   const distritoCode = normalized.value.distritoCode;
+   const seccionCode = normalized.value.seccionCode;
+   if (electionId && categoryId && distritoCode && seccionCode) {
+     const selection: FiscalizacionEvidenceSelection = { electionId, categoryId, distritoCode, seccionCode };
+     const [coverage, result, facets] = await Promise.all([Promise.allSettled([loadSafeFiscalizacionCoverage(selection, true), loadSafeFiscalizacionResult(selection, true)]), createAuthorizedOfficialFacetRepository().facets(selected).catch(() => null)]).then(([evidence, loadedFacets]) => [evidence[0], evidence[1], loadedFacets] as const);
+     return <AuthorizedEvidence form={facets ? <CoverageExplorerForm facets={facets} selected={selected} /> : null} coverage={coverage} result={result} />;
+   }
+   let facets: ExplorationFacets;
+   try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }
+   catch (error) { return refusal(error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones" : "No se pudieron cargar las opciones"); }
+   const form = <CoverageExplorerForm facets={facets} selected={selected} />;
+   return <main className="page-shell"><div className="shell-container"><PageHeader />{form}<p role="status">Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></div></main>;
 }
 
 export default async function FiscalizacionPage({

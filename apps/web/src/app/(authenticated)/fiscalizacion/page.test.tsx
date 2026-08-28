@@ -1,11 +1,9 @@
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  coverage: vi.fn(),
-  facetsRpc: vi.fn(),
-  result: vi.fn(),
+  coverage: vi.fn(), facets: vi.fn(), createFacetRepository: vi.fn(), result: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -13,11 +11,9 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-vi.mock("@/lib/supabase/server-client", () => ({
-  createSupabaseServerClient: () =>
-    Promise.resolve({
-      rpc: mocks.facetsRpc,
-    }),
+vi.mock("@/lib/workspace/official-facets", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/workspace/official-facets")>(),
+  createAuthorizedOfficialFacetRepository: mocks.createFacetRepository,
 }));
 
 vi.mock("@/lib/workspace/fiscalizacion-evidence", () => ({
@@ -25,7 +21,8 @@ vi.mock("@/lib/workspace/fiscalizacion-evidence", () => ({
   loadSafeFiscalizacionResult: mocks.result,
 }));
 
-import FiscalizacionPage from "./page";
+const { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR } = await import("@/lib/workspace/official-facets");
+const { default: FiscalizacionPage } = await import("./page");
 
 const COMPLETE_SELECTION = {
   electionId: "50000000-0000-0000-0000-000000000001",
@@ -51,22 +48,22 @@ const FACETS = {
     {
       code: "02",
       name: "Buenos Aires",
-      name_status: "present",
-      name_variant_count: 1,
+      nameStatus: "present",
+      nameVariantCount: 1,
     },
   ],
   secciones: [
     {
       code: "027",
       name: "Coronel Rosales",
-      name_status: "present",
-      name_variant_count: 1,
+      nameStatus: "present",
+      nameVariantCount: 1,
     },
   ],
   circuitos: [],
   establecimientos: [],
   mesas: [],
-  available_levels: [],
+  availableLevels: [],
 };
 
 const AUTHORIZED_COVERAGE = {
@@ -165,15 +162,14 @@ async function renderComplete(): Promise<string> {
   return renderPage(COMPLETE_SELECTION);
 }
 
-afterEach(() => {
-  mocks.coverage.mockReset();
-  mocks.result.mockReset();
-  mocks.facetsRpc.mockReset();
+beforeEach(() => {
+  mocks.coverage.mockReset(); mocks.result.mockReset(); mocks.facets.mockReset();
+  mocks.createFacetRepository.mockReset().mockReturnValue({ facets: mocks.facets });
 });
 
 describe("FiscalizacionPage", () => {
-  it("renders the reusable dependent selector journey from source-backed facets", async () => {
-    mocks.facetsRpc.mockResolvedValue({ data: FACETS, error: null });
+  it("renders the reusable dependent selector journey from authorized facets", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
 
     const cold = await renderPage();
     expect(cold).toContain('<form action="/fiscalizacion" method="get">');
@@ -196,10 +192,19 @@ describe("FiscalizacionPage", () => {
     );
     expect(selected).toContain('<option value="02" selected="">');
     expect(selected).toContain('<option value="027" selected="">');
+    expect(mocks.createFacetRepository).toHaveBeenCalled();
+  });
+
+  it("renders authorization denial distinctly from unavailable or empty facets", async () => {
+    mocks.facets.mockRejectedValue(new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED));
+    const denied = await renderPage();
+    expect(denied).toContain("No tiene autorización para consultar estas opciones");
+    expect(denied).not.toContain("No se pudieron cargar las opciones");
+    expect(mocks.coverage).not.toHaveBeenCalled(); expect(mocks.result).not.toHaveBeenCalled();
   });
 
   it("loads coverage and result independently with explicit opt-in", async () => {
-    mocks.facetsRpc.mockResolvedValue({ data: FACETS, error: null });
+    mocks.facets.mockResolvedValue(FACETS);
     mocks.coverage.mockRejectedValue(new Error("coverage denied"));
     mocks.result.mockResolvedValue({ status: "authorization_denied" });
 
@@ -212,7 +217,7 @@ describe("FiscalizacionPage", () => {
   });
 
   it("renders authorized bounded coverage, results, exclusions, unmapped rows, and provenance", async () => {
-    mocks.facetsRpc.mockResolvedValue({ data: FACETS, error: null });
+    mocks.facets.mockResolvedValue(FACETS);
     mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
     mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
 
@@ -253,7 +258,7 @@ describe("FiscalizacionPage", () => {
     ["result", "authorization_denied"],
     ["result", "payload_too_large"],
   ] as const)("renders the %s status %s", async (side, status) => {
-    mocks.facetsRpc.mockResolvedValue({ data: FACETS, error: null });
+    mocks.facets.mockResolvedValue(FACETS);
     const payload =
       status === "source_inconsistent"
         ? {
@@ -335,7 +340,7 @@ describe("FiscalizacionPage", () => {
   ] as const)(
     "refuses before figures when %s",
     async (_name, side, widen) => {
-      mocks.facetsRpc.mockResolvedValue({ data: FACETS, error: null });
+      mocks.facets.mockResolvedValue(FACETS);
       mocks.coverage.mockResolvedValue(
         side === "coverage"
           ? widen(AUTHORIZED_COVERAGE)

@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/20260827170000_authorized_fiscalizacion_facets.down.sql
 \ir ../migrations/down/20260827160000_platform_review_operator_access.down.sql
 do $$ begin if to_regprocedure('workspace_private.platform_review_items(integer,integer)') is not null or not has_table_privilege('authenticated','public.review_item','SELECT') or (to_regrole('service_role') is not null and (has_table_privilege('service_role','public.review_item','SELECT') or has_table_privilege('service_role','public.review_item_unresolved_count','SELECT'))) then raise exception 'platform review rollback did not restore the tenant review ACL'; end if; end $$;
 \ir ../migrations/down/20260827130000_authorized_fiscal_result.down.sql
@@ -233,6 +234,7 @@ end $$;
 \ir ../migrations/20260827112658_authorized_fiscal_coverage.sql
 \ir ../migrations/20260827130000_authorized_fiscal_result.sql
 \ir ../migrations/20260827160000_platform_review_operator_access.sql
+\ir ../migrations/20260827170000_authorized_fiscalizacion_facets.sql
 do $$
 declare
   facets_definition text;
@@ -438,4 +440,4 @@ grant workspace_platform_admin to current_user;
 set local role workspace_platform_admin;
 \ir ../scripts/workspace_authority_status.sql
 rollback;
-select 'release-proof' as evidence, 52 as migration_inventory_count, '20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;
+select 'release-proof' as evidence, 53 as migration_inventory_count, '20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;
