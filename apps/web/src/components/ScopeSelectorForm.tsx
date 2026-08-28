@@ -43,6 +43,8 @@ export function handleScopeSubmit(
   else setError("Revise que la selección sea válida y esté completa.");
 }
 
+export function needsScopeOptionsFetch(membership: ScopeMembership, kind: ScopeFormKind, changedName: ScopeControlName): boolean { return scopeDependentNames(kind, changedName).some((name) => !(membership[name]?.length)); }
+
 function patchOptions(form: HTMLFormElement, patches: ScopeOptionPatch[]): void {
   for (const patch of patches) {
     const select = form.elements.namedItem(patch.name);
@@ -120,7 +122,8 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
       }
     };
     retryRef.current = () => { void loadOptions(); };
-    const cleanupEnhancement = enhanceScopeForm(form, kind, (name) => { void loadOptions(name); });
+    const preloadedMembership = controlMembership(form);
+    const cleanupEnhancement = enhanceScopeForm(form, kind, (name) => { if (needsScopeOptionsFetch(preloadedMembership, kind, name)) void loadOptions(name); });
     const handleSubmit = (event: SubmitEvent): void => {
       handleScopeSubmit(event, form, busy, failed, setError);
     };

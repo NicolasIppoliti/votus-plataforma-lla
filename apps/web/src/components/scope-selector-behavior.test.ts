@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleScopeSubmit } from "./ScopeSelectorForm";
+import { handleScopeSubmit, needsScopeOptionsFetch } from "./ScopeSelectorForm";
 import {
   SCOPE_CONTROL_NAMES,
   SCOPE_FORM_KIND,
@@ -219,6 +219,12 @@ describe("scope selector behavior", () => {
     expect(harness.requestSubmit).not.toHaveBeenCalled();
     expect(harness.onLocalChange).toHaveBeenCalledWith(changedName);
     harness.cleanup();
+  });
+
+  it("fetches only when the mount-time preload lacks a dependent", () => {
+    const complete = { categoryId: ["c"], distritoCode: ["02"], seccionCode: ["027"] };
+    expect(needsScopeOptionsFetch(complete, SCOPE_FORM_KIND.COVERAGE, "electionId")).toBe(false);
+    expect(needsScopeOptionsFetch({ ...complete, seccionCode: [] }, SCOPE_FORM_KIND.COVERAGE, "electionId")).toBe(true);
   });
 
   it("allows a complete preloaded selection to use one native form navigation", () => {
