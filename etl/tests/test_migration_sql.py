@@ -2309,9 +2309,14 @@ def test_authorized_facet_names_are_exact_bounded_and_reversible() -> None:
     normalized = " ".join(forward.split())
     for required in (
         "create or replace function workspace_api.official_facets()",
-        "distrito_name", "seccion_name", "name_variant_count",
-        "rr.source_kind='official'", "j.seccion_code is not null",
-        "facet_total>200", "'facets','[]'::jsonb", "'truncated',true",
+        "distrito_name",
+        "seccion_name",
+        "name_variant_count",
+        "rr.source_kind='official'",
+        "j.seccion_code is not null",
+        "facet_total>200",
+        "'facets','[]'::jsonb",
+        "'truncated',true",
     ):
         assert required in normalized
     assert "workspace_private.authorized_section_scopes()" in normalized

@@ -229,12 +229,14 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         _validated_migration_path(PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION, down=True).name
         == "20260827160000_platform_review_operator_access.down.sql"
     )
-    assert _validated_migration_path(
-        AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION
-    ).name == "20260827170000_authorized_fiscalizacion_facets.sql"
-    assert _validated_migration_path(
-        AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION, down=True
-    ).name == "20260827170000_authorized_fiscalizacion_facets.down.sql"
+    assert (
+        _validated_migration_path(AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION).name
+        == "20260827170000_authorized_fiscalizacion_facets.sql"
+    )
+    assert (
+        _validated_migration_path(AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION, down=True).name
+        == "20260827170000_authorized_fiscalizacion_facets.down.sql"
+    )
     for unsupported in (
         38,
         "0038",
