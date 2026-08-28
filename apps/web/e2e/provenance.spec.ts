@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
@@ -36,9 +37,26 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
   }
 }
 
-test.describe("no fiscalización leakage into the rendered page", () => {
+    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>): Promise<T> {
+      const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+      const { data: auth, error: authError } = await admin.auth.admin.listUsers();
+      const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
+      if (authError || !user) throw new Error(`failed to resolve official fixture user: ${authError?.message ?? "user missing"}`);
+      const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode });
+      if (fixtureError || typeof fixture?.organization_id !== "string") throw new Error(`failed to set up authorized official fixture: ${fixtureError?.message ?? "invalid response"}`);
+      let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
+      try {
+        await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByLabel("Organización"); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
+        const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched;
+        expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } }); outcome = { value: await run() };
+      } catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
+      if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "official assertion and fixture cleanup failed"); throw outcome.error; }
+      if (cleanupError) throw new Error(`failed to clean official fixture: ${cleanupError.message}`); return outcome.value;
+    }
+
+    test.describe("no fiscalización leakage into the rendered page", () => {
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
-    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => {
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
       await expect(page).toHaveURL(/\/dashboard/);
 
@@ -159,6 +177,6 @@ test.describe("no fiscalización leakage into the rendered page", () => {
         baseURL,
       ).toString());
       await expect(page.getByRole("main").getByRole("alert")).toContainText("Se rechazó");
-    });
+    }));
   });
 });

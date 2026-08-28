@@ -25,11 +25,12 @@ export interface FacetOption {
 }
 interface CategoryOption { id: string; name: string; }
 interface MesaOption { code: number; }
+export interface ExplorationFacetExclusion { reason: string; rows: number; }
 export interface ExplorationFacets {
   elections: ElectionOption[]; categories: CategoryOption[];
   distritos: FacetOption[]; secciones: FacetOption[]; circuitos: FacetOption[];
   establecimientos: FacetOption[]; mesas: MesaOption[];
-  availableLevels: ExplorationLevel[];
+  availableLevels: ExplorationLevel[]; exclusions?: ExplorationFacetExclusion[];
 }
 export interface ExplorationParty {
   identityStatus: IdentityStatus; canonicalPartyId: string | null; displayName: string | null;
@@ -333,6 +334,10 @@ export function formatFacetOptionLabel(option: FacetOption): string {
   if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — nombre no disponible`;
   return `${option.code} — nombres contradictorios (${option.nameVariantCount} variantes)`;
 }
+function parseFacetExclusions(value: unknown): ExplorationFacetExclusion[] {
+  if (!Array.isArray(value)||value.length>2) throw new Error("invalid facet exclusions"); const reasons=new Set<string>();
+  return value.map((raw)=>{if(!isRecord(raw)||Object.keys(raw).sort().join()!=="reason,rows")throw new Error("invalid facet exclusion"); const reason=stringField(raw,"reason"),rows=nonnegativeInteger(raw,"rows"); if(reason.length>128||rows===0||reasons.has(reason))throw new Error("invalid facet exclusion"); reasons.add(reason); return{reason,rows};});
+}
 function parseFacets(value: unknown): ExplorationFacets {
   try {
     if (!isRecord(value) || value["status"] !== "ok") throw new Error("invalid envelope");
@@ -367,6 +372,7 @@ function parseFacets(value: unknown): ExplorationFacets {
         return { code: nonnegativeInteger(option, "code") };
       }),
       availableLevels,
+      ...(value["exclusions"] === undefined ? {} : { exclusions: parseFacetExclusions(value["exclusions"]) }),
     };
   } catch {
     throw new ResultsExplorationContractError("results_exploration_facets_contract", "respuesta de facetas malformada");

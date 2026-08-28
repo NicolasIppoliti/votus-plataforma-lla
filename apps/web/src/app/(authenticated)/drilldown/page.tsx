@@ -40,12 +40,14 @@ import {
   formatFacetOptionLabel,
   hasOnlyOfficialSourceAudit,
   normalizeExplorationParams,
+  type ExplorationFacetExclusion,
   type ExplorationFacets,
   type ExplorationLevel,
   type ExplorationSourceAudit,
   type SchoolBreakdownExclusion,
   type SchoolBreakdownResult,
 } from "@/lib/results/exploration";
+import { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR, createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 
 interface DrilldownPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -189,6 +191,7 @@ interface ExplorerFormProps {
               <button className="button button--primary" type="submit">Aplicar selección</button>
             </div>
           </ScopeSelectorForm>
+          {facetExclusionNotes(facets.exclusions ?? [])}
         </section>
       );
     }
@@ -207,6 +210,12 @@ function displaySourceKind(kind: string): string {
   if (kind === "unknown") return "desconocida";
   return kind;
 }
+
+const FACET_EXCLUSION_LABELS = { non_official_source_rows:"filas de fuente no oficial",official_rows_with_incomplete_lineage:"filas oficiales con linaje incompleto",coarse_facets_overflow:"opciones generales",circuitos_overflow:"circuitos",establecimientos_overflow:"establecimientos",mesas_overflow:"mesas" } as const;
+function facetExclusionNotes(exclusions: readonly ExplorationFacetExclusion[], overflow=false):ReactNode { return exclusions.map((exclusion)=>{
+  const label=FACET_EXCLUSION_LABELS[exclusion.reason as keyof typeof FACET_EXCLUSION_LABELS]; if(!label)return null;
+  return <p role="note" key={exclusion.reason}>{overflow?`La profundidad ${label} excede el límite seguro: ${exclusion.rows} filas.`:`Se excluyeron ${exclusion.rows} ${exclusion.rows===1?"fila":"filas"} de las opciones: ${label}.`}</p>;
+}); }
 
 function sourceExclusionNotes(exclusions: ExplorationSourceAudit[], aggregate: string): ReactNode {
   return exclusions.map((exclusion) => <p role="note" key={`${aggregate}-${exclusion.kind}`}>
@@ -251,7 +260,7 @@ async function renderOfficialExplorer(
   const repository = createResultsExplorationRepository(client);
   let facets: ExplorationFacets;
   try {
-    facets = await repository.facets({
+    facets = await createAuthorizedOfficialFacetRepository().facets({
       ...(electionId ? { electionId } : {}),
       ...(categoryId ? { categoryId } : {}),
       ...(normalized.value.distritoCode ? { distritoCode: normalized.value.distritoCode } : {}),
@@ -259,9 +268,17 @@ async function renderOfficialExplorer(
       ...(normalized.value.circuitoCode ? { circuitoCode: normalized.value.circuitoCode } : {}),
       ...(normalized.value.establecimientoCode ? { establecimientoCode: normalized.value.establecimientoCode } : {}),
     });
-  } catch (error) {
-    return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}</p></main>;
-  }
+      } catch (error) {
+        if (error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.PAYLOAD_TOO_LARGE) {
+          return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: las opciones autorizadas exceden el límite seguro.</p>{facetExclusionNotes(error.exclusions, true)}</main>;
+        }
+        const reason = error instanceof AuthorizedOfficialFacetsError
+          ? error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones"
+            : error.code === OFFICIAL_FACETS_ERROR.NONMEMBER ? "La selección no pertenece al alcance autorizado"
+              : "No se pudieron cargar las opciones autorizadas"
+          : "No se pudieron cargar las opciones autorizadas";
+        return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: {reason}.</p></main>;
+      }
 
   const requestedCircuito = normalized.value.circuitoCode;
   const circuitoMatches = !requestedCircuito || facets.circuitos.some((option) => option.code === requestedCircuito);

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ExplorationFacetSelection } from "@/lib/results/exploration";
 import type { OfficialSectionSelection, OfficialSelection } from "../../app/api/workspace/official/input";
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -106,8 +107,15 @@ export async function observeWorkspace(client: SupabaseClient) {
   return { bootstrap, available, current };
 }
 
-export async function authorizedOfficialFacets(client: SupabaseClient) {
-  return rpcData(await verifiedWorkspaceApi(client), "official_facets");
+export async function authorizedOfficialFacets(client: SupabaseClient, selection: ExplorationFacetSelection = {}) {
+  return rpcData(await verifiedWorkspaceApi(client), "official_facets", {
+    p_election_id: selection.electionId ?? null,
+    p_category_id: selection.categoryId ?? null,
+    p_distrito_code: selection.distritoCode ?? null,
+    p_seccion_code: selection.seccionCode ?? null,
+    p_circuito_code: selection.circuitoCode ?? null,
+    p_establecimiento_code: selection.establecimientoCode ?? null,
+  });
 }
 
 export async function authorizedFiscalizacionCoverage(

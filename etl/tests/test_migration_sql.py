@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260827200000_authorized_official_drilldown_facets.down.sql",
         "\\ir ../migrations/down/20260827170000_authorized_fiscalizacion_facets.down.sql",
         "\\ir ../migrations/down/20260827160000_platform_review_operator_access.down.sql",
         "\\ir ../migrations/down/20260827130000_authorized_fiscal_result.down.sql",
@@ -1036,6 +1037,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827130000_authorized_fiscal_result.sql",
         "\\ir ../migrations/20260827160000_platform_review_operator_access.sql",
         "\\ir ../migrations/20260827170000_authorized_fiscalizacion_facets.sql",
+        "\\ir ../migrations/20260827200000_authorized_official_drilldown_facets.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1050,7 +1052,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "53 as migration_inventory_count",
+        "54 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):

@@ -46,6 +46,7 @@ const EXPLORATION_FACETS = {
   available_levels: ["distrito", "seccion", "circuito", "establecimiento", "mesa"],
 };
 let explorationFacetResult: unknown = EXPLORATION_FACETS;
+let explorationFacetError: Error | null = null;
 let explorationRpcError: string | null = null;
 let explorationRepositoryBypass: ExplorationResult | null = null;
 let explorationSchoolRepositoryBypass: SchoolBreakdownResult | null = null;
@@ -200,7 +201,18 @@ vi.mock("@/lib/results/exploration", async (importOriginal) => {
       } };
 });
 
-const { default: DrilldownPage } = await import("./page");
+    vi.mock("@/lib/workspace/official-facets", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/workspace/official-facets")>();
+      return { ...actual, createAuthorizedOfficialFacetRepository: () => ({ facets: async (selection: Record<string, string>) => {
+        if (explorationFacetError) throw explorationFacetError;
+        const exploration = await import("@/lib/results/exploration");
+        return new exploration.ResultsExplorationRepository({ rpc: (name: string, args: Record<string, unknown>) => {
+          explorationRpcCalls.push({ name, args }); return Promise.resolve({ data: explorationFacetResult, error: null });
+        } }).facets(selection);
+      } }) };
+    });
+
+    const { default: DrilldownPage } = await import("./page");
 
 beforeEach(() => {
   process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
@@ -226,6 +238,7 @@ afterEach(() => {
     reason: "the registered source publishes no establecimiento data",
     counts: { establecimiento_identity_available_rows: 0 }, exclusions: [], source_exclusions: [] };
   explorationFacetResult = EXPLORATION_FACETS;
+  explorationFacetError = null;
   explorationRpcError = null;
       explorationRepositoryBypass = null;
       explorationSchoolRepositoryBypass = null;
@@ -279,13 +292,21 @@ function expectNativeControlState(
 }
 
 describe("drilldown page", () => {
-  it("renders authenticated selectors from a cold start", async () => {
+  it("renders authenticated selectors and bounded facet exclusions from a cold start", async () => {
+    explorationFacetResult = { ...EXPLORATION_FACETS, exclusions: [{ reason: "non_official_source_rows", rows: 3 }] };
     const markup = renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve({}) })) as ReactElement);
     expect(explorationRpcCalls.map((call) => call.name)).toEqual(["results_exploration_facets"]);
     expect(markup).toContain('<main class="page-shell">');
     expect(markup).not.toContain('id="main-content"');
     for (const text of ["Explorar resultados oficiales", '<form action="/drilldown" method="get">',
-      "2025 legislativas", "DIPUTADO NACIONAL"]) expect(markup).toContain(text);
+      "2025 legislativas", "DIPUTADO NACIONAL", "Se excluyeron 3 filas de las opciones: filas de fuente no oficial"])
+      expect(markup).toContain(text);
+  });
+
+  it("renders bounded overflow depth and count without provider details", async () => { const {AuthorizedOfficialFacetsError,OFFICIAL_FACETS_ERROR}=await import("@/lib/workspace/official-facets");
+    explorationFacetError=new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.PAYLOAD_TOO_LARGE,[{reason:"mesas_overflow",rows:240}]);
+    const markup=renderToStaticMarkup((await DrilldownPage({searchParams:Promise.resolve({})})) as ReactElement);
+    expect(markup).toContain("La profundidad mesas excede el límite seguro: 240 filas"); expect(markup).not.toContain("authorized official facets");
   });
 
       it("renders the native cold-start validation matrix and separate refresh submitter", async () => {
