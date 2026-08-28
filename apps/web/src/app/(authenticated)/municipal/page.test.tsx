@@ -96,13 +96,13 @@ describe("municipal page — renderMunicipalView", () => {
 let entryPointRows: ResultRow[] = [];
 let entryPointSources: SourceRef[] = [];
 let entryPointMappingFailure: Error | null = null;
-let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null;
+let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null; let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
 
 afterEach(() => {
   entryPointRows = [];
   entryPointSources = [];
   entryPointMappingFailure = null;
-  authorizedEvidenceState = null;
+  authorizedEvidenceState = null; authorizedEvidenceSource = "official";
   redirectMock.mockClear();
   delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   delete process.env["MUNICIPAL_ELECTION_ID"];
@@ -172,7 +172,7 @@ vi.mock("@/lib/supabase/server-client", () => ({
 
 vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
   loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (entryPointMappingFailure || process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
-    status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "seccion", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
+    status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
     parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: [{ kind: "official", rows: 1, votes: 4200 }], sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
   }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) })),
 }));
@@ -237,6 +237,8 @@ describe("municipal page — the real entry point", () => {
     expect(markup).toContain("El espacio de trabajo no autoriza esta sección municipal");
     expect(markup).not.toContain("4200 voto(s)");
   });
+
+  it("test_production_refuses_unofficial_evidence", async () => { authorizedEvidenceSource = "fiscalizacion"; entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }]; const { default: Page } = await import("./page"); const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement); expect(html).toContain("no es de fuente oficial"); expect(html).not.toContain("4200 voto(s)"); });
 
   it("test_the_data_path_reaches_the_render_with_its_sources", async () => {
     // The missing-params branch was the only one driven. `sources` reaching
@@ -459,24 +461,18 @@ describe("municipal page — path 3 fires when the repository filter regresses",
       expect(html).not.toContain("8400 voto(s)");
     });
 
-    describe("municipal page — an untraceable figure says so", () => {
-  it("test_an_archive_entry_with_no_source_record_is_named", () => {
-    // `fetchSourceRefs` returns `missing` precisely so a figure whose archive
-    // entry resolved to nothing is not rendered as traced.
-    const html = renderToStaticMarkup(
-      renderMunicipalView(
-        { status: "ok", rows: MUNICIPAL_ROWS, excluded: {}, partyMappingConfigured: true },
-        [],
-        ["pba/2025-municipal-coronel-rosales"],
-      ),
-    );
+describe("municipal page — an untraceable figure says so", () => {
+      it("test_an_archive_entry_with_no_source_record_is_named", () => {
+        const html = renderToStaticMarkup(renderMunicipalView(
+          { status: "ok", rows: MUNICIPAL_ROWS, excluded: {}, partyMappingConfigured: true }, [],
+          ["pba/2025-municipal-coronel-rosales"],
+        ));
+        expect(html).toContain("no se resolvieron a un registro de fuente");
+        expect(html).toContain("pba/2025-municipal-coronel-rosales");
+      });
+    });
 
-    expect(html).toContain("no se resolvieron a un registro de fuente");
-    expect(html).toContain("pba/2025-municipal-coronel-rosales");
-  });
-});
-
-describe("municipal page — a repeated query param reaches the guard", () => {
+    describe("municipal page — a repeated query param reaches the guard", () => {
   it("test_a_repeated_query_param_is_reported_not_treated_as_absent", async () => {
     // Next.js hands `string[]` for a repeated param, and `stringParam`
     // returned `undefined` for those — so a SUPPLIED value vanished and the

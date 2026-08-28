@@ -58,12 +58,12 @@ export type MunicipalView =
       /** Archive entries known before party mapping failed. */
       archiveEntryIds?: string[];
     };
+function auditByKind(entries: { kind: string; rows: number; votes: number }[]): ExcludedByKind { return entries.reduce<ExcludedByKind>((totals, { kind, rows, votes }) => ({ ...totals, [kind]: { rows: (totals[kind]?.rows ?? 0) + rows, votes: (totals[kind]?.votes ?? 0) + votes } }), {}); }
 export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOfficialEvidence, { status: "ok" }>, categoryId: string): MunicipalView {
-  const { result } = evidence;
-  if (result.archiveEntryIds.length !== 1) return { status: "read_failed", reason: "la evidencia municipal no identifica una única entrada de archivo", archiveEntryIds: result.archiveEntryIds };
+  const { result } = evidence; const excluded = auditByKind(result.sourceExclusions); const sourceAudit = auditByKind(result.sourceAudit);
+  if (result.sourceKind !== "official") return { status: "read_failed", reason: "la evidencia municipal no es de fuente oficial", excluded };
+  if (result.archiveEntryIds.length !== 1) return { status: "read_failed", reason: "la evidencia municipal no identifica una única entrada de archivo", archiveEntryIds: result.archiveEntryIds, excluded };
   const archiveEntryId = result.archiveEntryIds[0]!;
-  const excluded: ExcludedByKind = Object.fromEntries(result.sourceExclusions.map(({ kind, rows, votes }) => [kind, { rows, votes }]));
-  const sourceAudit: ExcludedByKind = Object.fromEntries(result.sourceAudit.map(({ kind, rows, votes }) => [kind, { rows, votes }]));
   return { status: "ok", rows: result.parties.map((party) => ({ jurisdictionId: MUNICIPAL_JURISDICTION_ID, categoryId,
     listId: party.listId, votes: party.votes, sourceKind: "official", granularity: result.sourceGranularity,
     requestedGranularity: result.level, archiveEntryId, partyName: party.displayName,
@@ -148,8 +148,7 @@ export function renderMunicipalView(
         forman parte de ninguna cifra de esta página.
       </p>
     ) : null;
-  const sourceAudit = describeExcluded(view.sourceAudit ?? {});
-  const sourceAuditNote = sourceAudit ? <p role="note">Auditoría de fuente: {sourceAudit}.</p> : null;
+  const sourceAudit = describeExcluded(view.sourceAudit ?? {}); const sourceAuditNote = sourceAudit ? <p role="note">Auditoría de fuente: {sourceAudit}.</p> : null;
 
   // PATH 3. See `drilldown`: unreachable while the repository filter holds,
   // live the moment it does not.
@@ -202,11 +201,7 @@ export function renderMunicipalView(
         />
         <UnorderableLevels entries={unrecognized} />
       {missingProvenance.length > 0 ? (
-        <p role="alert">
-          {missingProvenance.length} entrada(s) de archivo que respaldan estas
-          cifras no se resolvieron a un registro de fuente (
-          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
-        </p>
+        <p role="alert">{missingProvenance.length} entrada(s) sin fuente verificable: {missingProvenance.join(", ")}.</p>
       ) : null}
       <OfficialProvenance sources={sources} />
       </main>
