@@ -34,6 +34,7 @@ AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION = "20260827130000"
 PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION = "20260827160000"
 AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION = "20260827170000"
 AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION = "20260827200000"
+AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION = "20260827220000"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -52,6 +53,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION,
         AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION,
+        AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -137,7 +139,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 53
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 54
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -249,6 +251,12 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         ).name
         == "20260827200000_authorized_official_drilldown_facets.down.sql"
     )
+    assert _validated_migration_path(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION).name == (
+        "20260827220000_authorized_school_party_lookup.sql"
+    )
+    assert _validated_migration_path(
+        AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION, down=True
+    ).name == "20260827220000_authorized_school_party_lookup.down.sql"
     for unsupported in (
         38,
         "0038",
@@ -467,7 +475,7 @@ def _reap_orphaned_public_scope_fixtures(database_dsn: str) -> None:
         connection.execute("delete from public.election where round like %s", (orphan_pattern,))
 
 
-def test_0029_through_timestamped_forward_down_reapply_preserve_history_and_indexes() -> None:
+def test_0029_through_pba_mapping_forward_down_reapply_preserve_history_and_indexes() -> None:
     """Cover migration-history mechanics only.
 
     This schema isolates DDL, never data: the exploration functions pin
@@ -1778,6 +1786,20 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        _apply_down_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(
+                "select has_table_privilege("
+                "'workspace_query_owner','public.party_mapping','SELECT'),"
+                "has_table_privilege("
+                "'workspace_query_owner','public.party_canonical','SELECT'),"
+                "(select count(*) from pg_policies where schemaname='public' "
+                "and tablename in ('party_mapping','party_canonical') "
+                "and policyname like 'workspace_query_owner_party_%'),"
+                "(select bool_and(relowner=current_user::regrole) from pg_class "
+                "where oid in ('public.party_mapping'::regclass,"
+                "'public.party_canonical'::regclass))"
+            ).fetchone() == (False, False, 0, True)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION)
@@ -1838,8 +1860,24 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
+            assert connection.execute(
+                "select has_table_privilege("
+                "'workspace_query_owner','public.party_mapping','SELECT'),"
+                "has_table_privilege("
+                "'workspace_query_owner','public.party_canonical','SELECT'),"
+                "not exists(select from "
+                "unnest(array['anon','authenticated','service_role']) r,"
+                "unnest(array['party_mapping','party_canonical']) t "
+                "where to_regrole(r) is not null "
+                "and has_table_privilege(r,'public.'||t,'SELECT')),(select count(*) "
+                "from pg_policies where schemaname='public' "
+                "and tablename in ('party_mapping','party_canonical') "
+                "and cmd='SELECT' and roles=array['workspace_query_owner']::name[] "
+                "and qual='true' and with_check is null)"
+            ).fetchone() == (True, True, True, 2)
             assert connection.execute(
                 "select to_regprocedure('workspace_private.create_organization"
                 "(text,text,text,text)') is not null,"
@@ -1847,12 +1885,17 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             ).fetchone() == (True, True)
     finally:
         with psycopg.connect(admin_dsn) as connection:
-            admin_installed, context_installed, selection_installed = connection.execute(
-                "select to_regprocedure('workspace_private.create_organization"
-                "(text,text,text,text)') is not null,"
-                "to_regprocedure('workspace_api.invalidate_workspace_context()') is not null,"
-                "to_regprocedure('workspace_api.current_workspace()') is not null"
-            ).fetchone()
+            admin_installed, context_installed, selection_installed, lookup_installed = (
+                connection.execute(
+                    "select to_regprocedure('workspace_private.create_organization"
+                    "(text,text,text,text)') is not null,"
+                    "to_regprocedure("
+                    "'workspace_api.invalidate_workspace_context()') is not null,"
+                    "to_regprocedure('workspace_api.current_workspace()') is not null,"
+                    "has_table_privilege("
+                    "'workspace_query_owner','public.party_mapping','SELECT')"
+                ).fetchone()
+            )
         if context_installed and not admin_installed:
             if selection_installed:
                 _apply_down_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
@@ -1865,6 +1908,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             _apply_migration(admin_dsn, WORKSPACE_CONTEXT_MIGRATION_VERSION)
         if not selection_installed:
             _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
+        if not lookup_installed:
+            _apply_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             connection.execute(
                 "with removed as (delete from workspace_private.workspace_audit_event "

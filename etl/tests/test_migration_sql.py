@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260827220000_authorized_school_party_lookup.down.sql",
         "\\ir ../migrations/down/20260827200000_authorized_official_drilldown_facets.down.sql",
         "\\ir ../migrations/down/20260827170000_authorized_fiscalizacion_facets.down.sql",
         "\\ir ../migrations/down/20260827160000_platform_review_operator_access.down.sql",
@@ -1038,6 +1039,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827160000_platform_review_operator_access.sql",
         "\\ir ../migrations/20260827170000_authorized_fiscalizacion_facets.sql",
         "\\ir ../migrations/20260827200000_authorized_official_drilldown_facets.sql",
+        "\\ir ../migrations/20260827220000_authorized_school_party_lookup.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1052,7 +1054,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "54 as migration_inventory_count",
+        "55 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "dropping only its index",
     ):
@@ -2417,9 +2419,43 @@ def test_authorized_official_projections_are_bounded_source_honest_and_reversibl
     )
     proof_text = (SQL_TESTS / "workspace_authorized_projections.sql").read_text(encoding="utf-8")
     proof = " ".join(proof_text.lower().split())
-    assert "select plan(" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
-    for runtime_fixture in ("insert into", "set local role", "request.jwt.claims"):
-        assert runtime_fixture not in proof
+    assert "select plan(13)" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
+    for runtime_fixture in ("insert into", "set local role authenticated", "request.jwt.claims"):
+        assert runtime_fixture in proof
+    assert "authorized official schools succeeds through the query owner" in proof
+    assert "canonical_party_id" in proof
+
+
+def test_authorized_school_party_lookup_is_exact_least_privilege_and_reversible() -> None:
+    version = "20260827220000"
+    forward = " ".join(_sql(f"{version}_authorized_school_party_lookup.sql").split())
+    down = " ".join(
+        (MIGRATIONS / "down" / f"{version}_authorized_school_party_lookup.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert forward.startswith("begin;") and forward.endswith("commit;")
+    assert (
+        "grant select on public.party_mapping, public.party_canonical "
+        "to workspace_query_owner"
+    ) in forward
+    for table in ("party_mapping", "party_canonical"):
+        policy = f"workspace_query_owner_{table}_select"
+        assert (
+            f"create policy {policy} on public.{table} for select "
+            "to workspace_query_owner using (true)"
+        ) in forward
+        assert f"drop policy {policy} on public.{table}" in down
+    assert "authenticated" not in forward
+    assert " to anon" not in forward and " from anon" not in forward
+    assert "service_role" not in forward
+    assert "alter table" not in forward and "owner to" not in forward
+    assert (
+        "revoke select on public.party_mapping, public.party_canonical "
+        "from workspace_query_owner"
+    ) in down
+    assert down.startswith("begin;") and down.endswith("commit;")
 
 
 def test_authorized_review_facade_is_scope_shared_bounded_and_reversible() -> None:
