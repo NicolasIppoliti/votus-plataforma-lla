@@ -1,9 +1,9 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  SCOPE_CONTROL_NAMES, SCOPE_FORM_KIND, acceptScopeResponse, canonicalScopeSearchParams,
+  SCOPE_CONTROL_NAMES, SCOPE_FORM_KIND, acceptScopeResponse,
   enhanceScopeForm, hasCompleteScopeParents, hasValidScopeLevel, isScopeSelectionMember,
   mapScopeOptionDescriptors, scopeDependentNames, scopeEndpoint, serializeScopeDraft,
   synchronizeScopeControls, type ScopeControlName, type ScopeControls, type ScopeControlValues,
@@ -29,6 +29,20 @@ function controlMembership(form: HTMLFormElement): ScopeMembership {
   }));
 }
 
+export function handleScopeSubmit(
+  event: SubmitEvent, form: HTMLFormElement, busy: boolean, failed: boolean,
+  setError: (message: string) => void,
+): void {
+  const values = controlValues(formControls(form));
+  if (!busy && !failed && form.checkValidity() && hasCompleteScopeParents(values) &&
+    hasValidScopeLevel(values) && isScopeSelectionMember(values, controlMembership(form))) return;
+  event.preventDefault();
+  form.reportValidity();
+  if (busy) setError("Espere a que termine la actualización de opciones.");
+  else if (failed) setError("Actualice las opciones antes de aplicar la selección.");
+  else setError("Revise que la selección sea válida y esté completa.");
+}
+
 function patchOptions(form: HTMLFormElement, patches: ScopeOptionPatch[]): void {
   for (const patch of patches) {
     const select = form.elements.namedItem(patch.name);
@@ -46,7 +60,6 @@ function patchOptions(form: HTMLFormElement, patches: ScopeOptionPatch[]): void 
 }
 
 export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormProps): ReactNode {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const appliedQuery = searchParams.toString();
   const formRef = useRef<HTMLFormElement>(null);
@@ -109,18 +122,7 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
     retryRef.current = () => { void loadOptions(); };
     const cleanupEnhancement = enhanceScopeForm(form, kind, (name) => { void loadOptions(name); });
     const handleSubmit = (event: SubmitEvent): void => {
-      event.preventDefault();
-      const values = controlValues(controls);
-      if (busy || failed || !form.checkValidity() || !hasCompleteScopeParents(values) ||
-        !hasValidScopeLevel(values) || !isScopeSelectionMember(values, controlMembership(form))) {
-        form.reportValidity();
-        if (busy) setError("Espere a que termine la actualización de opciones.");
-        else if (failed) setError("Actualice las opciones antes de aplicar la selección.");
-        else setError("Revise que la selección sea válida y esté completa.");
-        return;
-      }
-      const query = canonicalScopeSearchParams(values).toString();
-      router.push(query ? `${action}?${query}` : action);
+      handleScopeSubmit(event, form, busy, failed, setError);
     };
     form.addEventListener("submit", handleSubmit);
     return () => {
@@ -128,7 +130,7 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
       cleanupEnhancement();
       form.removeEventListener("submit", handleSubmit);
     };
-  }, [action, appliedQuery, kind, router]);
+  }, [appliedQuery, kind]);
 
   return <form action={action} method="get" aria-busy={loading || undefined} key={appliedQuery} ref={formRef}>
     {children}

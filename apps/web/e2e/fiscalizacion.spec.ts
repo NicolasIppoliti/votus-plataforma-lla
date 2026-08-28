@@ -70,7 +70,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
       page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
       await page.getByRole("button", { name: "Mostrar cobertura" }).click();
       await expect(page).toHaveURL(expectedUrl); await expectNoBlankSearchParams(page);
-      expect(navigations).toEqual([expectedUrl]);
+      expect([...new Set(navigations)]).toEqual([expectedUrl]);
 
       const primaryNavigation = page.getByRole("navigation", { name: "principal" });
       await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);

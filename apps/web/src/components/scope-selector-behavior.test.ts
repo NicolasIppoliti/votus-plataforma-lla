@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { handleScopeSubmit } from "./ScopeSelectorForm";
 import {
   SCOPE_CONTROL_NAMES,
   SCOPE_FORM_KIND,
@@ -19,13 +20,13 @@ import {
 } from "./scope-selector-behavior";
 
 class FakeSelect {
+  options: { value: string }[];
   disabled = false;
   required = false;
-
   constructor(
     readonly name: ScopeControlName,
     public value: string,
-  ) {}
+  ) { this.options = [{ value: "" }, { value }]; }
 }
 
 function enhancedFormHarness(kind: ScopeFormKind) {
@@ -218,6 +219,22 @@ describe("scope selector behavior", () => {
     expect(harness.requestSubmit).not.toHaveBeenCalled();
     expect(harness.onLocalChange).toHaveBeenCalledWith(changedName);
     harness.cleanup();
+  });
+
+  it("allows a complete preloaded selection to use one native form navigation", () => {
+    const values = { electionId: "e-2025", categoryId: "c-diputados", distritoCode: "02", seccionCode: "027" };
+    const controls = Object.fromEntries(Object.entries(values).map(([name, value]) =>
+      [name, new FakeSelect(name as ScopeControlName, value)]));
+    const form = { elements: { namedItem: (name: string) => controls[name] ?? null },
+      checkValidity: () => true, reportValidity: vi.fn() } as unknown as HTMLFormElement;
+    vi.stubGlobal("HTMLSelectElement", FakeSelect);
+    const submit = new Event("submit", { cancelable: true }) as SubmitEvent, setError = vi.fn();
+
+    handleScopeSubmit(submit, form, false, false, setError);
+
+    expect(submit.defaultPrevented).toBe(false);
+    expect(form.reportValidity).not.toHaveBeenCalled();
+    expect(setError).not.toHaveBeenCalled();
   });
 
   it("serializes canonical drafts and URLs in fixed order while omitting blanks", () => {
