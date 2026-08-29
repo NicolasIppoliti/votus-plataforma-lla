@@ -178,13 +178,34 @@ export async function authorizedOfficialBundle(client: SupabaseClient, selection
   return { result, schools, reference, provenance };
 }
 
+function comparisonParameters(left: OfficialSelection, right: OfficialSelection) {
+  return Object.fromEntries([
+    ...Object.entries(officialParameters(left)).map(([key, value]) => [key.replace("p_", "p_left_"), value]),
+    ...Object.entries(officialParameters(right)).map(([key, value]) => [key.replace("p_", "p_right_"), value]),
+  ]);
+}
+
 export async function authorizedOfficialComparison(client: SupabaseClient, left: OfficialSelection, right: OfficialSelection) {
-  const leftParameters = officialParameters(left);
-  const rightParameters = officialParameters(right);
-  return rpcData(await verifiedWorkspaceApi(client), "official_comparison", Object.fromEntries([
-    ...Object.entries(leftParameters).map(([key, value]) => [key.replace("p_", "p_left_"), value]),
-    ...Object.entries(rightParameters).map(([key, value]) => [key.replace("p_", "p_right_"), value]),
-  ]));
+  return rpcData(await verifiedWorkspaceApi(client), "official_comparison", comparisonParameters(left, right));
+}
+
+export async function authorizedOfficialComparisonBundle(
+  client: SupabaseClient,
+  left: OfficialSelection,
+  right: OfficialSelection,
+) {
+  if (!left.seccionCode || !right.seccionCode) throw new Error("Invalid workspace selection");
+  const api = await verifiedWorkspaceApi(client);
+  const leftSection = officialSectionParameters({ ...left, seccionCode: left.seccionCode });
+  const rightSection = officialSectionParameters({ ...right, seccionCode: right.seccionCode });
+  const [comparison, leftReference, rightReference, leftProvenance, rightProvenance] = await Promise.all([
+    rpcData(api, "official_comparison", comparisonParameters(left, right)),
+    rpcData(api, "official_reference", leftSection),
+    rpcData(api, "official_reference", rightSection),
+    rpcData(api, "official_provenance", leftSection),
+    rpcData(api, "official_provenance", rightSection),
+  ]);
+  return { comparison, leftReference, rightReference, leftProvenance, rightProvenance };
 }
 
 export async function switchWorkspaceContext(

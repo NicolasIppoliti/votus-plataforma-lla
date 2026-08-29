@@ -755,7 +755,9 @@ describe("base contracts", () => {
 		);
 		expect(fixtureSql).toContain("create function public.e2e_setup_authorized_fiscal_fixture(p_user_id uuid, p_distrito_code text, p_seccion_code text) returns jsonb"); expect(fixtureSql).toContain("'e2e-authorized-fiscal-browser-'||organization_id");
 		expect(fixtureSql).toContain("create function public.e2e_cleanup_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
-		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g)).toHaveLength(4);
+		expect(fixtureSql).toContain("create function public.e2e_revoke_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
+		expect(fixtureSql).toContain("update workspace_private.organization set entitlement_revision = entitlement_revision + 1");
+		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g)).toHaveLength(5);
 		expect(fixtureSql).toContain(
 			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated",
 		);
@@ -768,7 +770,7 @@ describe("base contracts", () => {
 		expect(fixtureSql).toContain(
 			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
 		);
-		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)"]) {
+		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)", "e2e_revoke_authorized_fiscal_fixture(jsonb)"]) {
 			expect(fixtureSql).toContain(`revoke all on function public.${signature} from public, anon, authenticated`); expect(fixtureSql).toContain(`grant execute on function public.${signature} to service_role`);
 		}
 		expect(fixtureSql).toContain("select pg_notify('pgrst','reload schema')");

@@ -98,7 +98,7 @@ export function resultScenarioIdentity(spec: string): ResultScenarioIdentity {
   const electionRounds = electionYears.map((year) => `${prefix}-round-${year}`);
   const archiveEntryIds =
     scenario === "comparison"
-      ? [`${prefix}-result-2023`, `${prefix}-result-2025`]
+      ? [`national/${prefix}-result-2023`, `national/${prefix}-result-2025`]
       : scenario === "fiscalizacion"
         ? [
             `${prefix}-result-official-covered`,
@@ -190,7 +190,9 @@ export function planResultNaturalKeys(spec: string): string[] {
             sourceKind: sourceKinds[index]!,
           }),
         ),
-        ...(identity.scenario === "municipal" ? planScenarioPartyNaturalKeys(spec) : []),
+         ...(identity.scenario === "municipal" || identity.scenario === "comparison"
+           ? planScenarioPartyNaturalKeys(spec)
+           : []),
       ];
     }
 
@@ -220,12 +222,11 @@ export function planResultCleanup(spec: string): string[] {
   const identity = resultScenarioIdentity(spec);
   return [
     ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
-    ...(identity.scenario === "municipal" ? planScenarioPartyCleanup(spec) : []),
-    ...identity.electionIds.map((id) => `election:${id}`),
-    ...(identity.scenario === "fiscalizacion" || identity.scenario === "provenance" ||
-    identity.scenario === "municipal"
-      ? identity.archiveEntryIds.map((id) => `archive_entry:${id}`)
+    ...(identity.scenario === "municipal" || identity.scenario === "comparison"
+      ? planScenarioPartyCleanup(spec)
       : []),
+    ...identity.electionIds.map((id) => `election:${id}`),
+    ...identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
     ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
     `category:${identity.categoryId}`,
   ];
