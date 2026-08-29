@@ -1,5 +1,5 @@
+import type { ResultRow } from "./result-rows";
 import { GRANULARITY, type Granularity } from "./types";
-import type { ResultRow } from "@/lib/fiscalizacion/repository";
 
 /**
  * Coarsest to finest. Hand-written over the shared `GRANULARITY` values: the

@@ -3,13 +3,13 @@ import { GranularityBadge } from "@/components/GranularityBadge";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
 import {
-  type OkResultsQueryResponse,
   describeExcluded,
   tallyByKind,
+  type ExcludedByKind,
+  type ResultRow,
   unmappedByListId,
   votesByParty,
-} from "@/lib/fiscalizacion/repository";
-import type { ExcludedByKind } from "@/lib/fiscalizacion/repository";
+} from "@/lib/results/result-rows";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
   jurisdictionTotalLevel,
@@ -25,7 +25,13 @@ import {
 
 export type MunicipalView =
   // The authorized adapter cannot produce an unofficial opt-in state.
-  | (OkResultsQueryResponse & { sourceAudit?: ExcludedByKind })
+  | {
+      status: "ok";
+      rows: ResultRow[];
+      excluded: ExcludedByKind;
+      partyMappingConfigured: boolean;
+      sourceAudit?: ExcludedByKind;
+    }
   | {
       status: "read_failed";
       reason: string;

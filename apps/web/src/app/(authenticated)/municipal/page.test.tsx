@@ -6,7 +6,7 @@ const { redirectMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
-import type { ResultRow } from "@/lib/fiscalizacion/repository";
+import type { ResultRow } from "@/lib/results/result-rows";
 import type { SourceRef } from "@/lib/results/types";
 import { type MunicipalView, renderMunicipalView } from "./page";
 
@@ -95,13 +95,11 @@ describe("municipal page — renderMunicipalView", () => {
 
 let entryPointRows: ResultRow[] = [];
 let entryPointSources: SourceRef[] = [];
-let entryPointMappingFailure: Error | null = null;
 let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null; let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
 
 afterEach(() => {
   entryPointRows = [];
   entryPointSources = [];
-  entryPointMappingFailure = null;
   authorizedEvidenceState = null; authorizedEvidenceSource = "official";
   redirectMock.mockClear();
   delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
@@ -171,50 +169,11 @@ vi.mock("@/lib/supabase/server-client", () => ({
 }));
 
 vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
-  loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (entryPointMappingFailure || process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
+  loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
     status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
     parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: [{ kind: "official", rows: 1, votes: 4200 }], sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
   }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) })),
 }));
-
-vi.mock("@/lib/fiscalizacion/repository", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/fiscalizacion/repository")>();
-  return {
-    ...actual,
-    createResultsRepository: () =>
-      Promise.resolve(
-        new actual.ResultsRepository(
-          { fetchRows: () => Promise.resolve(entryPointRows) },
-          {
-            // Resolves ONLY for this route's own mapping family. Ignoring the
-            // context made the test pass whether `MUNICIPAL_PARTY_CONTEXT` or
-            // some other context reached the source — so it proved nothing
-            // about the wiring it exists to check.
-                fetchPartyNames: (context) =>
-                  entryPointMappingFailure
-                    ? Promise.reject(entryPointMappingFailure)
-                    : Promise.resolve(
-                        context.jurisdiction === "coronel_rosales_municipal" &&
-                        context.category === "CONCEJALES"
-                          ? new Map([
-                              ["2206", { canonicalPartyId: "lla", displayName: "ALIANZA LA LIBERTAD AVANZA" }],
-                            ])
-                          : new Map(),
-                      ),
-          },
-        ),
-      ),
-    fetchElectionYear: (_client: unknown, electionId: string) => {
-      // The uuid the database stores, mapped the way the `election` table does.
-      if (electionId === "bfeb6235-2ac7-4f8d-aa09-a3db8bd1e2da") return Promise.resolve({ status: "ok" as const, year: 2025 });
-      const match = /^(\d{4})/.exec(electionId);
-      return Promise.resolve(
-        match ? { status: "ok" as const, year: Number(match[1]) } : { status: "no_row" as const },
-      );
-    },
-    fetchSourceRefs: () => Promise.resolve({ sources: entryPointSources, missing: [] }),
-  };
-});
 
 describe("municipal page — the real entry point", () => {
   beforeEach(() => {
