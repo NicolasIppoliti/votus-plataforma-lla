@@ -1,6 +1,6 @@
 import "server-only";
 import type { OfficialSelection } from "../../app/api/workspace/official/input";
-import { ResultsExplorationRepository, type ExplorationOk, type ExplorationParty, type ExplorationSelection, type ExplorationSourceAudit } from "../results/exploration";
+import { parseOfficialExploration, type ExplorationOk, type ExplorationParty, type ExplorationSourceAudit } from "../results/exploration-contract";
 import { createSupabaseServerClient } from "../supabase/server-client";
 import { authorizedOfficialComparisonBundle } from "./context";
 
@@ -29,7 +29,6 @@ function sameSet(left: readonly string[], right: readonly string[]): boolean { c
 function validSectionPair(left: OfficialSelection, right: OfficialSelection): boolean {
   return Boolean(left.seccionCode && right.seccionCode && left.distritoCode === right.distritoCode && left.seccionCode === right.seccionCode && left.requestedLevel === "seccion" && right.requestedLevel === "seccion" && left.circuitoCode === null && right.circuitoCode === null && left.establecimientoCode === null && right.establecimientoCode === null && left.mesaCode === null && right.mesaCode === null);
 }
-function parserSelection(selection: OfficialSelection): ExplorationSelection { return { electionId: selection.electionId, categoryId: selection.categoryId, distritoCode: selection.distritoCode, seccionCode: selection.seccionCode!, requestedLevel: selection.requestedLevel }; }
 function canonicalParties(parties: ExplorationParty[]): boolean {
   const ids = new Set<string>();
   for (const party of parties) {
@@ -38,10 +37,10 @@ function canonicalParties(parties: ExplorationParty[]): boolean {
   }
   return parties.length > 0;
 }
-async function parseResult(value: Raw, selection: OfficialSelection): Promise<ExplorationOk | null> {
+async function parseResult(value: Raw): Promise<ExplorationOk | null> {
   if (value["status"] !== "ok" || value["source_kind"] !== "official" || value["truncated"] !== false || !bounded(value["parties"], ITEM_LIMIT) || !bounded(value["source_audit"], 1) || !bounded(value["source_exclusions"], EXCLUSION_LIMIT) || !uniqueText(value["archive_entry_ids"])?.length) return null;
   try {
-    const parsed = await new ResultsExplorationRepository({ rpc: () => Promise.resolve({ data: value, error: null }) }).official(parserSelection(selection));
+    const parsed = parseOfficialExploration(value);
     return parsed.status === "ok" && parsed.level === "seccion" && canonicalParties(parsed.parties) ? parsed : null;
   } catch { return null; }
 }
@@ -103,7 +102,7 @@ export async function loadAuthorizedOfficialComparisonEvidence(leftSelection: Of
     if (!bundle) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED }; const failure = failureStatus(bundle); if (failure) return failure;
     const comparison = record(bundle["comparison"]), leftRaw = record(comparison?.["left"]), rightRaw = record(comparison?.["right"]);
     if (!comparison || comparison["status"] !== "ok" || comparison["truncated"] !== false || !leftRaw || !rightRaw) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
-    const [leftResult, rightResult] = await Promise.all([parseResult(leftRaw, leftSelection), parseResult(rightRaw, rightSelection)]);
+    const [leftResult, rightResult] = await Promise.all([parseResult(leftRaw), parseResult(rightRaw)]);
     if (!leftResult || !rightResult) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
     const leftReferenceRaw = record(bundle["leftReference"]), rightReferenceRaw = record(bundle["rightReference"]), leftProvenanceRaw = record(bundle["leftProvenance"]), rightProvenanceRaw = record(bundle["rightProvenance"]);
     if (!leftReferenceRaw || !rightReferenceRaw || !leftProvenanceRaw || !rightProvenanceRaw) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };

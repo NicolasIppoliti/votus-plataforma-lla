@@ -1,9 +1,10 @@
 import "server-only";
 
 import {
-  EXPLORATION_LEVEL, ResultsExplorationRepository,
-  type ExplorationOk, type ExplorationSelection, type SchoolBreakdownOk,
-} from "../results/exploration";
+  parseOfficialExploration, parseSchoolBreakdown,
+  type ExplorationOk, type SchoolBreakdownOk,
+} from "../results/exploration-contract";
+import { hierarchyInvalid, type ExplorationSelection } from "../results/exploration";
 import { createSupabaseServerClient } from "../supabase/server-client";
 import { authorizedOfficialBundle } from "./context";
 import type { OfficialSelection } from "../../app/api/workspace/official/input";
@@ -148,10 +149,10 @@ async function parseDisplayedParts(result: Raw, schools: Raw, selection: Officia
     identities.add(`${school["circuito_code"]}\0${school["code"]}`);
   }
   const parserSelection = selectionForParser(selection);
-  const repository = new ResultsExplorationRepository({ rpc: (name) => Promise.resolve({ data: name === "results_exploration_official" ? result : schools, error: null }) });
   try {
-    const parsedResult = await repository.official(parserSelection);
-    const parsedSchools = await repository.schools({ ...parserSelection, requestedLevel: EXPLORATION_LEVEL.SECCION });
+    if (hierarchyInvalid(parserSelection)) return null;
+    const parsedResult = parseOfficialExploration(result);
+    const parsedSchools = parseSchoolBreakdown(schools);
     return parsedResult.status === "ok" && parsedSchools.status === "ok" && parsedResult.level === selection.requestedLevel
       ? { result: parsedResult, schools: parsedSchools } : null;
   } catch { return null; }
