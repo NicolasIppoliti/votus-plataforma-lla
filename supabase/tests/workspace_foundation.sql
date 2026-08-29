@@ -133,8 +133,8 @@ select ok(exists (select 1 from pg_database d
 select ok(
   has_table_privilege('workspace_query_owner','public.party_mapping','SELECT')
   and has_table_privilege('workspace_query_owner','public.party_canonical','SELECT')
-  and has_table_privilege('authenticated','public.party_mapping','SELECT')
-  and has_table_privilege('authenticated','public.party_canonical','SELECT')
+  and not has_table_privilege('authenticated','public.party_mapping','SELECT')
+  and not has_table_privilege('authenticated','public.party_canonical','SELECT')
   and not exists(select from unnest(array['anon','service_role']) r,
     unnest(array['party_mapping','party_canonical']) t
     where to_regrole(r) is not null and has_table_privilege(r,'public.'||t,'SELECT'))

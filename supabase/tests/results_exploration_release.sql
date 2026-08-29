@@ -1,4 +1,16 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql
+do $$ begin
+  if not has_table_privilege('authenticated','public.jurisdiction','SELECT')
+     or not has_table_privilege('authenticated','public.party_mapping','SELECT')
+     or has_table_privilege('authenticated','public.review_item','SELECT')
+     or not has_function_privilege('authenticated','public.results_exploration_reporting_level(text,text,text,text)','EXECUTE')
+     or not has_function_privilege('authenticated','public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)','EXECUTE')
+     or exists(select from pg_policies where schemaname='public' and policyname like 'results_exploration_executor_%')
+     or exists(select from unnest(array['anon','service_role']) r where to_regrole(r) is not null and (has_table_privilege(r,'public.jurisdiction','SELECT') or has_function_privilege(r,'public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)','EXECUTE'))) then
+    raise exception 'legacy results cutover rollback did not restore only the authenticated predecessor';
+  end if;
+end $$;
 \ir ../migrations/down/20260827220000_authorized_school_party_lookup.down.sql
 do $$ begin if has_table_privilege('workspace_query_owner','public.party_mapping','SELECT') or has_table_privilege('workspace_query_owner','public.party_canonical','SELECT') or exists(select from pg_policies where schemaname='public' and tablename=any(array['party_mapping','party_canonical']) and policyname like 'workspace_query_owner_party_%') then raise exception 'authorized school party lookup rollback did not restore the prior ACL baseline'; end if; end $$;
 \ir ../migrations/down/20260827200000_authorized_official_drilldown_facets.down.sql
@@ -443,9 +455,24 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \echo 'expected permission denied for function results_exploration_schools'
   \quit 1
 \endif
+\ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql
+do $$ begin
+  if exists(select from unnest(array['jurisdiction','election','category','result_row','jurisdiction_crosswalk','mesa_crosswalk','fiscalizacion_mesa_identity','archive_entry','party_canonical','list_identity','party_mapping','review_item','review_item_unresolved_count']) t, unnest(array['anon','authenticated','service_role']) r where to_regrole(r) is not null and has_table_privilege(r,'public.'||t,'SELECT'))
+     or exists(select from pg_policies where schemaname='public' and policyname like '%_authenticated_read')
+     or exists(select from unnest(array['results_exploration_party_jurisdiction(text,integer,text,text,text,text)','results_exploration_reporting_level(text,text,text,text)','results_exploration_facets(uuid,uuid,text,text,text,text)','results_exploration_official(uuid,uuid,text,text,text,text,integer,text)','results_exploration_coverage(uuid,uuid,text,text)','results_exploration_schools(uuid,uuid,text,text)']) f, unnest(array['anon','authenticated','service_role']) r where to_regrole(r) is not null and has_function_privilege(r,'public.'||f,'EXECUTE')) then
+    raise exception 'authenticated legacy public result access survived cutover';
+  end if;
+  if not has_table_privilege('workspace_query_owner','public.result_row','SELECT')
+     or not has_table_privilege('workspace_query_owner','public.party_mapping','SELECT')
+     or not has_function_privilege('workspace_query_owner','public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)','EXECUTE')
+     or not has_function_privilege('authenticated','workspace_api.official_result(uuid,uuid,text,text,text,text,integer,text)','EXECUTE')
+     or not has_function_privilege('authenticated','workspace_api.official_schools(uuid,uuid,text,text)','EXECUTE') then
+    raise exception 'workspace-authorized result access changed during legacy cutover';
+  end if;
+end $$;
 begin;
 grant workspace_platform_admin to current_user;
 set local role workspace_platform_admin;
 \ir ../scripts/workspace_authority_status.sql
 rollback;
-select 'release-proof' as evidence, 55 as migration_inventory_count, '20260827220000-down,20260827200000-down,20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up,20260827200000-up,20260827220000-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;
+select 'release-proof' as evidence, 56 as migration_inventory_count, '20260829032228-down,20260827220000-down,20260827200000-down,20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up,20260827200000-up,20260827220000-up,20260829032228-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;

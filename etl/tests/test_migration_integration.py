@@ -35,6 +35,7 @@ PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION = "20260827160000"
 AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION = "20260827170000"
 AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION = "20260827200000"
 AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION = "20260827220000"
+LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION = "20260829032228"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -54,6 +55,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION,
         AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION,
         AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION,
+        LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -139,7 +141,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 54
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 55
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 38))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -258,6 +260,12 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         _validated_migration_path(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION, down=True).name
         == "20260827220000_authorized_school_party_lookup.down.sql"
     )
+    assert _validated_migration_path(LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION).name == (
+        "20260829032228_revoke_legacy_results_public_contract.sql"
+    )
+    assert _validated_migration_path(
+        LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION, down=True
+    ).name == "20260829032228_revoke_legacy_results_public_contract.down.sql"
     for unsupported in (
         38,
         "0038",
@@ -1881,7 +1889,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "and tablename in ('party_mapping','party_canonical') "
                 "and cmd='SELECT' and roles=array['workspace_query_owner']::name[] "
                 "and qual='true' and with_check is null)"
-            ).fetchone() == (True, True, True, True, True, 2)
+            ).fetchone() == (True, True, False, False, True, 2)
             assert connection.execute(
                 "select to_regprocedure('workspace_private.create_organization"
                 "(text,text,text,text)') is not null,"

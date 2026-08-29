@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql",
         "\\ir ../migrations/down/20260827220000_authorized_school_party_lookup.down.sql",
         "\\ir ../migrations/down/20260827200000_authorized_official_drilldown_facets.down.sql",
         "\\ir ../migrations/down/20260827170000_authorized_fiscalizacion_facets.down.sql",
@@ -1040,6 +1041,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827170000_authorized_fiscalizacion_facets.sql",
         "\\ir ../migrations/20260827200000_authorized_official_drilldown_facets.sql",
         "\\ir ../migrations/20260827220000_authorized_school_party_lookup.sql",
+        "\\ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1054,8 +1056,9 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "55 as migration_inventory_count",
+        "56 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
+        "authenticated legacy public result access survived cutover",
         "dropping only its index",
     ):
         assert required in sql
@@ -2530,3 +2533,57 @@ def test_platform_review_operator_access_is_closed_bounded_and_reversible() -> N
     )
     assert restored_select in down
     assert "using(workspace_private.review_item_is_authorized(id))" in "".join(down.split())
+
+
+def test_legacy_results_public_contract_cutover_is_exact_and_reversible() -> None:
+    forward_paths = tuple(MIGRATIONS.glob("*_revoke_legacy_results_public_contract.sql"))
+    down_paths = tuple(
+        (MIGRATIONS / "down").glob("*_revoke_legacy_results_public_contract.down.sql")
+    )
+    assert len(forward_paths) == 1, "the generated public-contract cutover migration is required"
+    assert len(down_paths) == 1, "the matching predecessor-only down migration is required"
+
+    forward = " ".join(forward_paths[0].read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_paths[0].read_text(encoding="utf-8").lower().split())
+    tables = (
+        "jurisdiction",
+        "election",
+        "category",
+        "result_row",
+        "jurisdiction_crosswalk",
+        "mesa_crosswalk",
+        "fiscalizacion_mesa_identity",
+        "archive_entry",
+        "party_canonical",
+        "list_identity",
+        "party_mapping",
+        "review_item",
+        "review_item_unresolved_count",
+    )
+    functions = (
+        "results_exploration_party_jurisdiction(text,integer,text,text,text,text)",
+        "results_exploration_reporting_level(text,text,text,text)",
+        "results_exploration_facets(uuid,uuid,text,text,text,text)",
+        "results_exploration_official(uuid,uuid,text,text,text,text,integer,text)",
+        "results_exploration_coverage(uuid,uuid,text,text)",
+        "results_exploration_schools(uuid,uuid,text,text)",
+    )
+    policies = tuple(f"{table}_authenticated_read" for table in tables[:11])
+
+    assert forward.startswith("begin;") and forward.endswith("commit;")
+    assert down.startswith("begin;") and down.endswith("commit;")
+    for table in tables:
+        assert table in forward
+    for policy in policies:
+        assert f"drop policy {policy} on public.{policy.removesuffix('_authenticated_read')}" in forward
+        assert f"create policy {policy}" in down
+    for function in functions:
+        assert function in forward
+        assert function in down
+    for preserved_role in ("etl_writer", "workspace_query_owner"):
+        assert f"from {preserved_role}" not in forward
+        assert f"to {preserved_role}" not in down
+    assert "to authenticated" in down
+    assert "to anon" not in down and "to service_role" not in down
+    assert "review_item_authenticated_read" not in down
+    assert "review_item_unresolved_count to authenticated" not in down

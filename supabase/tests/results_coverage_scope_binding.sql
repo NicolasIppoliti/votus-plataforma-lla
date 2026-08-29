@@ -21,9 +21,9 @@ select is(results_exploration_coverage(
 select isnt(results_exploration_coverage(
   '20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000003',
   '02', '999')->>'status', 'ok', 'refusal behavior remains intact');
-select ok(has_function_privilege('authenticated',
+select ok(not has_function_privilege('authenticated',
   'results_exploration_coverage(uuid,uuid,text,text)', 'execute'),
-  'authenticated retains coverage execution');
+  'authenticated remains denied legacy coverage execution');
 select ok(not has_function_privilege('anon',
   'results_exploration_coverage(uuid,uuid,text,text)', 'execute'),
   'anonymous coverage execution remains denied');

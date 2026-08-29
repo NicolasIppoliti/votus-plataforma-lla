@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(144);
+select plan(147);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -430,7 +430,7 @@ select is(results_exploration_official('20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027')->'source_audit',
   '[{"kind":"official","rows":6,"votes":350}]'::jsonb,
   'aggregate source audit is derived from every included row');
-set local role authenticated;
+set local role results_exploration_executor;
 select is(results_exploration_official('20000000-0000-0000-0000-000000000002',
   '20000000-0000-0000-0000-000000000003', '02', p_mesa_code => 3,
   p_requested_level => 'mesa')->>'status', 'selection_invalid',
@@ -616,14 +616,39 @@ select is((results_exploration_official(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '999'
 )->'counts'->>'selected_rows')::integer, 0, 'no-row refusal reports selected rows');
-select lives_ok($$
+select throws_ok($$
   set local role authenticated;
   select results_exploration_facets();
-  select results_exploration_official(
-    '20000000-0000-0000-0000-000000000001',
-    '20000000-0000-0000-0000-000000000003', '02', '027');
-  reset role;
-$$, 'authenticated executes both official explorer RPCs');
+$$, '42501', 'permission denied for function results_exploration_facets',
+  'authenticated cannot execute the legacy public facets RPC');
+select ok(not exists(
+  select from unnest(array['jurisdiction','election','category','result_row',
+    'jurisdiction_crosswalk','mesa_crosswalk','fiscalizacion_mesa_identity','archive_entry',
+    'party_canonical','list_identity','party_mapping','review_item',
+    'review_item_unresolved_count']) table_name,
+    unnest(array['anon','authenticated','service_role']) role_name
+  where to_regrole(role_name) is not null
+    and has_table_privilege(role_name,'public.'||table_name,'SELECT')),
+  'client roles cannot select legacy public result tables or views');
+select ok(not exists(
+  select from pg_policies where schemaname='public'
+    and tablename=any(array['jurisdiction','election','category','result_row',
+      'jurisdiction_crosswalk','mesa_crosswalk','fiscalizacion_mesa_identity','archive_entry',
+      'party_canonical','list_identity','party_mapping','review_item'])
+    and 'authenticated'=any(roles)),
+  'authenticated has no surviving legacy public read policy');
+select ok(not exists(
+  select from unnest(array[
+    'results_exploration_party_jurisdiction(text,integer,text,text,text,text)',
+    'results_exploration_reporting_level(text,text,text,text)',
+    'results_exploration_facets(uuid,uuid,text,text,text,text)',
+    'results_exploration_official(uuid,uuid,text,text,text,text,integer,text)',
+    'results_exploration_coverage(uuid,uuid,text,text)',
+    'results_exploration_schools(uuid,uuid,text,text)']) function_name,
+    unnest(array['anon','authenticated','service_role']) role_name
+  where to_regrole(role_name) is not null
+    and has_function_privilege(role_name,'public.'||function_name,'EXECUTE')),
+  'client roles cannot execute legacy public result functions');
 select throws_ok($$
   set local role authenticated; select results_exploration_official_0020('20000000-0000-0000-0000-000000000001',
     '20000000-0000-0000-0000-000000000003', '02', '027')
@@ -934,12 +959,12 @@ select is(jsonb_array_length(results_exploration_coverage(
   '20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003', '02', '027'
 )->'provenance'->'official_archive_entry_ids'), 1, 'coverage carries official denominator provenance');
-select lives_ok($$
+select throws_ok($$
   set local role authenticated;
   select results_exploration_coverage('20000000-0000-0000-0000-000000000001',
     '20000000-0000-0000-0000-000000000003', '02', '027');
-  reset role;
-$$, 'authenticated executes the coverage RPC');
+$$, '42501', 'permission denied for function results_exploration_coverage',
+  'authenticated cannot execute the legacy public coverage RPC');
 select throws_ok($$
   set local role anon;
   select results_exploration_coverage('20000000-0000-0000-0000-000000000001',

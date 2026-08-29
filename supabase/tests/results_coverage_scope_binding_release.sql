@@ -33,9 +33,9 @@ do $$ declare payload jsonb; begin
       'results_exploration_coverage(uuid,uuid,text,text)'::regprocedure and prosecdef) then
     raise exception 'coverage changed from security invoker';
   end if;
-  if not has_function_privilege('authenticated',
+  if has_function_privilege('authenticated',
       'results_exploration_coverage(uuid,uuid,text,text)', 'execute') then
-    raise exception 'authenticated coverage execution was not restored';
+    raise exception 'authenticated legacy coverage execution was restored';
   end if;
   if has_function_privilege('anon',
       'results_exploration_coverage(uuid,uuid,text,text)', 'execute') then
@@ -44,4 +44,4 @@ do $$ declare payload jsonb; begin
 end $$;
 rollback;
 select '0023-down,0023-up' as migration_sequence,
-  'scope-bound/authenticated-execute/anon-denied/security-invoker' as contract;
+  'scope-bound/client-denied/security-invoker' as contract;
