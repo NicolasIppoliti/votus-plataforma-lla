@@ -2437,8 +2437,7 @@ def test_authorized_school_party_lookup_is_exact_least_privilege_and_reversible(
     )
     assert forward.startswith("begin;") and forward.endswith("commit;")
     assert (
-        "grant select on public.party_mapping, public.party_canonical "
-        "to workspace_query_owner"
+        "grant select on public.party_mapping, public.party_canonical to workspace_query_owner"
     ) in forward
     for table in ("party_mapping", "party_canonical"):
         policy = f"workspace_query_owner_{table}_select"
@@ -2452,8 +2451,7 @@ def test_authorized_school_party_lookup_is_exact_least_privilege_and_reversible(
     assert "service_role" not in forward
     assert "alter table" not in forward and "owner to" not in forward
     assert (
-        "revoke select on public.party_mapping, public.party_canonical "
-        "from workspace_query_owner"
+        "revoke select on public.party_mapping, public.party_canonical from workspace_query_owner"
     ) in down
     assert down.startswith("begin;") and down.endswith("commit;")
 
