@@ -2575,7 +2575,8 @@ def test_legacy_results_public_contract_cutover_is_exact_and_reversible() -> Non
     for table in tables:
         assert table in forward
     for policy in policies:
-        assert f"drop policy {policy} on public.{policy.removesuffix('_authenticated_read')}" in forward
+        table = policy.removesuffix("_authenticated_read")
+        assert f"drop policy {policy} on public.{table}" in forward
         assert f"create policy {policy}" in down
     for function in functions:
         assert function in forward
