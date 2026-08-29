@@ -263,9 +263,10 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert _validated_migration_path(LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION).name == (
         "20260829032228_revoke_legacy_results_public_contract.sql"
     )
-    assert _validated_migration_path(
-        LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION, down=True
-    ).name == "20260829032228_revoke_legacy_results_public_contract.down.sql"
+    assert (
+        _validated_migration_path(LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION, down=True).name
+        == "20260829032228_revoke_legacy_results_public_contract.down.sql"
+    )
     for unsupported in (
         38,
         "0038",
