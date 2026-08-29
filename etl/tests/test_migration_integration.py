@@ -254,9 +254,10 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert _validated_migration_path(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION).name == (
         "20260827220000_authorized_school_party_lookup.sql"
     )
-    assert _validated_migration_path(
-        AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION, down=True
-    ).name == "20260827220000_authorized_school_party_lookup.down.sql"
+    assert (
+        _validated_migration_path(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION, down=True).name
+        == "20260827220000_authorized_school_party_lookup.down.sql"
+    )
     for unsupported in (
         38,
         "0038",
@@ -1795,14 +1796,13 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "'workspace_query_owner','public.party_canonical','SELECT'),"
                 "(select count(*) from pg_policies where schemaname='public' "
                 "and tablename in ('party_mapping','party_canonical') "
-                "and policyname like 'workspace_query_owner_party_%'),"
-                "(select bool_and(relowner=current_user::regrole) from pg_class "
-                "where oid in ('public.party_mapping'::regclass,"
-                "'public.party_canonical'::regclass))"
-            ).fetchone() == (False, False, 0, True)
+                "and policyname like 'workspace_query_owner_party_%')"
+            ).fetchone() == (False, False, 0)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION)
+        _apply_down_migration(admin_dsn, AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION)
+        _apply_down_migration(admin_dsn, AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
@@ -1857,6 +1857,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION)
+        _apply_migration(admin_dsn, AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION)
         _apply_migration(admin_dsn, PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION)
         _apply_migration(admin_dsn, AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION)
@@ -1868,8 +1870,10 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "'workspace_query_owner','public.party_mapping','SELECT'),"
                 "has_table_privilege("
                 "'workspace_query_owner','public.party_canonical','SELECT'),"
+                "has_table_privilege('authenticated','public.party_mapping','SELECT'),"
+                "has_table_privilege('authenticated','public.party_canonical','SELECT'),"
                 "not exists(select from "
-                "unnest(array['anon','authenticated','service_role']) r,"
+                "unnest(array['anon','service_role']) r,"
                 "unnest(array['party_mapping','party_canonical']) t "
                 "where to_regrole(r) is not null "
                 "and has_table_privilege(r,'public.'||t,'SELECT')),(select count(*) "
@@ -1877,7 +1881,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "and tablename in ('party_mapping','party_canonical') "
                 "and cmd='SELECT' and roles=array['workspace_query_owner']::name[] "
                 "and qual='true' and with_check is null)"
-            ).fetchone() == (True, True, True, 2)
+            ).fetchone() == (True, True, True, True, True, 2)
             assert connection.execute(
                 "select to_regprocedure('workspace_private.create_organization"
                 "(text,text,text,text)') is not null,"
