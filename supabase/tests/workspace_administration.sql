@@ -67,7 +67,7 @@ select is((select count(*) from pg_policies where schemaname='workspace_private'
     'workspace_admin_owner_membership_select','workspace_admin_owner_scope_select',
     'workspace_admin_owner_entitlement_select'])),4::bigint,
   'the four parent owner SELECT policies remain present');
-select is((select count(*) from pg_policies where policyname like 'workspace\_%' escape '\'),35::bigint,
+select is((select count(*) from pg_policies where policyname like 'workspace\_%' escape '\'),37::bigint,
   'the complete administration and context policy set is present');
 select ok(not has_table_privilege('votus_workspace_admin_test','public.jurisdiction','SELECT'),
   'the caller receives no direct jurisdiction access');

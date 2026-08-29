@@ -1,5 +1,5 @@
 begin;
-select plan(19);
+select plan(20);
 select is(
   (select count(*) from pg_namespace n
    where n.nspname = any(array['workspace_private', 'workspace_api'])
@@ -130,5 +130,20 @@ select ok(exists (select 1 from pg_database d
   cross join lateral aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) acl
   where d.datname=current_database() and acl.grantee=0 and acl.privilege_type='TEMPORARY'),
   'PUBLIC TEMP remains observed and was not revoked');
+select ok(
+  has_table_privilege('workspace_query_owner','public.party_mapping','SELECT')
+  and has_table_privilege('workspace_query_owner','public.party_canonical','SELECT')
+  and has_table_privilege('authenticated','public.party_mapping','SELECT')
+  and has_table_privilege('authenticated','public.party_canonical','SELECT')
+  and not exists(select from unnest(array['anon','service_role']) r,
+    unnest(array['party_mapping','party_canonical']) t
+    where to_regrole(r) is not null and has_table_privilege(r,'public.'||t,'SELECT'))
+  and (select array_agg(tablename||':'||policyname order by tablename) from pg_policies
+    where schemaname='public' and tablename=any(array['party_mapping','party_canonical'])
+      and cmd='SELECT' and roles=array['workspace_query_owner']::name[] and qual='true'
+      and with_check is null)
+    = array['party_canonical:workspace_query_owner_party_canonical_select',
+      'party_mapping:workspace_query_owner_party_mapping_select']::text[],
+  'party lookups remain behind the exact query-owner ACL and RLS policies');
 select * from finish();
 rollback;
