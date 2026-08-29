@@ -67,15 +67,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         baseURL,
       ).toString());
 
-      const main = page.getByRole("main");
-      const officialTotal = main.getByRole("note").filter({ hasText: "Total oficial:" });
-      await expect(officialTotal).toContainText(`Total oficial: ${OFFICIAL_VOTES} votos`);
-      await expect(officialTotal).not.toContainText(String(FISCALIZACION_VOTES));
-      await expect(main).toContainText(
-        `1 fila fiscalización / ${FISCALIZACION_VOTES} votos se excluyeron por el filtro de fuente oficial`,
-      );
-      await expect(main).not.toContainText(FISCALIZACION_MARKER);
-      await expect(main).not.toContainText(`Total oficial: ${OFFICIAL_VOTES + FISCALIZACION_VOTES}`);
+      const legacy = page.getByRole("main");
+      await expect(legacy.getByRole("alert")).toContainText("parámetros heredados");
+      await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
+      await expect(legacy).not.toContainText(`${OFFICIAL_VOTES} votos`);
 
       await page.getByRole("link", { name: "Explorar resultados" }).click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
@@ -145,7 +140,15 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(explorer).toContainText(
         `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);
       await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votos a nivel mesa`);
-      await expect(page.getByRole("list", { name: "procedencia" }).getByRole("listitem")).toHaveCount(1);
+      await expect(explorer).not.toContainText(FISCALIZACION_MARKER);
+      await expect(explorer.getByRole("heading", { name: "Referencia electoral autorizada" })).toBeVisible();
+      const provenance = page.getByRole("list", { name: "procedencia" });
+      await expect(provenance.getByRole("listitem")).toHaveCount(1);
+      await expect(provenance).toContainText(identity.archiveEntryIds[0]!);
+      await expect(provenance).toContainText("SHA-256");
+      await expect(provenance.getByRole("link")).toHaveCount(0);
+      await expect(provenance).not.toContainText("http://");
+      await expect(provenance).not.toContainText("https://");
 
       await page.goBack(); await expect(page).toHaveURL(draftUrl);
       await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
