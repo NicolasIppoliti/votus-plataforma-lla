@@ -91,6 +91,14 @@ function parseProvenance(value: Raw, result: ExplorationOk): OfficialComparisonP
   }
   return { items: parsed, sourceExclusions };
 }
+function sourceExclusionEvidenceMatchesResult(result: ExplorationOk, reference: OfficialComparisonReferenceEvidence, provenance: OfficialComparisonProvenanceEvidence): boolean {
+  const expected = result.sourceExclusions;
+  if (reference.sourceExclusions.length !== expected.length || provenance.sourceExclusions.length !== expected.length) return false;
+  return expected.every((entry, index) => {
+    const referenceEntry = reference.sourceExclusions[index], provenanceEntry = provenance.sourceExclusions[index];
+    return referenceEntry?.kind === entry.kind && referenceEntry.rows === entry.rows && provenanceEntry?.kind === entry.kind && provenanceEntry.rows === entry.rows && provenanceEntry.votes === entry.votes;
+  });
+}
 function unmappedSummary(side: OfficialComparisonSide, result: ExplorationOk): OfficialComparisonUnmappedSide | null {
   const parties = result.parties.filter((party) => party.identityStatus === "unmapped");
   return parties.length === 0 ? null : { side, partyCount: parties.length, totalVotes: parties.reduce((total, party) => total + party.votes, 0) };
@@ -116,7 +124,7 @@ export async function loadAuthorizedOfficialComparisonEvidence(leftSelection: Of
     const leftReferenceRaw = record(bundle["leftReference"]), rightReferenceRaw = record(bundle["rightReference"]), leftProvenanceRaw = record(bundle["leftProvenance"]), rightProvenanceRaw = record(bundle["rightProvenance"]);
     if (!leftReferenceRaw || !rightReferenceRaw || !leftProvenanceRaw || !rightProvenanceRaw) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
     const leftReference = parseReference(leftReferenceRaw, leftSelection, leftResult), rightReference = parseReference(rightReferenceRaw, rightSelection, rightResult), leftProvenance = parseProvenance(leftProvenanceRaw, leftResult), rightProvenance = parseProvenance(rightProvenanceRaw, rightResult);
-    if (!leftReference || !rightReference || !leftProvenance || !rightProvenance) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
+    if (!leftReference || !rightReference || !leftProvenance || !rightProvenance || !sourceExclusionEvidenceMatchesResult(leftResult, leftReference, leftProvenance) || !sourceExclusionEvidenceMatchesResult(rightResult, rightReference, rightProvenance)) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
     const unmappedSides = [unmappedSummary(OFFICIAL_COMPARISON_SIDE.LEFT, leftResult), unmappedSummary(OFFICIAL_COMPARISON_SIDE.RIGHT, rightResult)]
       .filter((side): side is OfficialComparisonUnmappedSide => side !== null);
     if (unmappedSides.length > 0) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES, sides: unmappedSides };
