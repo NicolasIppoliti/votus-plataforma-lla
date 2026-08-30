@@ -2424,7 +2424,7 @@ def test_authorized_official_projections_are_bounded_source_honest_and_reversibl
     )
     proof_text = (SQL_TESTS / "workspace_authorized_projections.sql").read_text(encoding="utf-8")
     proof = " ".join(proof_text.lower().split())
-    assert "select plan(13)" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
+    assert "select plan(15)" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
     for runtime_fixture in ("insert into", "set local role authenticated", "request.jwt.claims"):
         assert runtime_fixture in proof
     assert "authorized official schools succeeds through the query owner" in proof
