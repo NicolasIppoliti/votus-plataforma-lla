@@ -19,7 +19,7 @@ def _sql(name: str) -> str:
 
 _UUID_PATTERN = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE)
 _JURISDICTION_LIFETIME_EVENT = re.compile(
-    r"(?P<insert>insert\s+into\s+jurisdiction\s*\([^;]*?\)\s*values\s*"
+    r"(?P<insert>insert\s+into\s+(?:public\s*\.\s*)?jurisdiction\s*\([^;]*?\)\s*values\s*"
     r"(?P<values>.*?);)"
     r"|(?P<savepoint>\bsavepoint\s+(?P<savepoint_name>[a-z_][a-z0-9_]*)\s*;)"
     r"|(?P<rollback>\brollback\s+to(?:\s+savepoint)?\s+"
@@ -34,7 +34,7 @@ def _assert_jurisdiction_fixture_ids_are_unique(sql: str) -> None:
     expected_event_starts = sorted(
         match.start()
         for pattern in (
-            r"\binsert\s+into\s+jurisdiction\b",
+            r'\binsert\s+into\s+(?:[^;(]*\.\s*)?(?:(?:U&)?"jurisdiction"|jurisdiction)\s*\(',
             r"(?m)^\s*savepoint\b",
             r"\brollback\s+to\b",
         )
@@ -102,17 +102,36 @@ def test_jurisdiction_fixture_uniqueness_tracks_savepoint_lifetimes_and_fails_cl
     fixture_id = "20000000-0000-0000-0000-000000000001"
     insert = f"insert into jurisdiction (id) values ('{fixture_id}');"
 
+    qualified = f"insert into public.jurisdiction (id) values ('{fixture_id}');"
+
     with pytest.raises(AssertionError, match="simultaneously-live"):
         _assert_jurisdiction_fixture_ids_are_unique(f"{insert}\n{insert}")
+    with pytest.raises(AssertionError, match="simultaneously-live"):
+        _assert_jurisdiction_fixture_ids_are_unique(f"{insert}\n{qualified}")
 
     _assert_jurisdiction_fixture_ids_are_unique(
-        f"savepoint fixture;\n{insert}\nrollback to savepoint fixture;\n{insert}"
+        f"savepoint fixture;\n{qualified}\nrollback to savepoint fixture;\n{insert}"
     )
 
     with pytest.raises(AssertionError, match="unsupported or ambiguous"):
         _assert_jurisdiction_fixture_ids_are_unique(
             f"{insert}\ninsert into jurisdiction (id) select '{fixture_id}';"
         )
+    for unsupported_schema in ("private", "private$schema", "organización"):
+        with pytest.raises(AssertionError, match="unsupported or ambiguous"):
+            _assert_jurisdiction_fixture_ids_are_unique(
+                f"{insert}\ninsert into {unsupported_schema}.jurisdiction (id) "
+                f"values ('{fixture_id}');"
+            )
+    for quoted in (
+        f"insert into public.\"jurisdiction\" (id) values ('{fixture_id}');",
+        f'insert into "public"."jurisdiction" (id) values (\'{fixture_id}\');',
+        f"insert into U&\"private\".jurisdiction (id) values ('{fixture_id}');",
+        f"insert into U&\"jurisdiction\" (id) values ('{fixture_id}');",
+        f"insert into catalog.public.jurisdiction (id) values ('{fixture_id}');",
+    ):
+        with pytest.raises(AssertionError, match="unsupported or ambiguous"):
+            _assert_jurisdiction_fixture_ids_are_unique(f"{insert}\n{quoted}")
 
 
 def _review_kind_allowlist(sql: str) -> set[str]:
