@@ -975,7 +975,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
         with conn.cursor() as cur:
             cur.execute(
                 "select kind, severity, note, subject_ref from review_item "
-                "where starts_with(subject_ref, %s)",
+                "where starts_with(subject_ref, %s) order by kind",
                 (f"{source_id} ",),
             )
             written = cur.fetchall()
@@ -1096,7 +1096,12 @@ def test_ingest_fiscalizacion_reports_the_authoritative_recorded_count(
     )
 
     assert len(candidates) == 1
-    assert "review items: 0 recorded, 1 not recorded" in capsys.readouterr().err
+    assert [
+        (scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes
+    ] == [("02", "027")]
+    report = capsys.readouterr().err
+    assert "review scope: section_scoped=1, platform_only=0" in report
+    assert "review items: 0 recorded, 1 not recorded" in report
 
 
 def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
@@ -2222,6 +2227,7 @@ def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(
     record = persisted[0]
     assert record.kind == "pba_unreadable_vote_cell"
     assert record.severity == "warning"
+    assert record.tenant_scope_state == "platform_only"
     assert source_id in record.subject_ref
     assert "distrito:027" in record.subject_ref
     assert "category:DIPUTADOS PROVINCIALES" in record.subject_ref
@@ -2229,6 +2235,7 @@ def test_ingest_persists_pba_parser_quarantine_through_the_real_entrypoint(
     assert "source rows 0" in record.note
     assert "length=2; character_classes=ascii_letter,digit" in record.note
     report = capsys.readouterr().err
+    assert "review scope: section_scoped=0, platform_only=1" in report
     assert "PBA parser quarantine" in report
     assert "0 review item(s) recorded" in report
     assert "unreadable_vote_cell: 1" in report
@@ -2886,6 +2893,9 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
     captured = capsys.readouterr()
     assert exit_code == 0
     assert len(candidates) == 1
+    assert [
+        (scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes
+    ] == [("02", "027")]
     assert (
         "expected exclusion: reason=expected_category_definition_difference "
         "column='En blanco' count=1"

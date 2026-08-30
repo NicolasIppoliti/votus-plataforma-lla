@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import {
   describeExcluded,
   type ExcludedByKind,
-} from "@/lib/fiscalizacion/repository";
+} from "@/lib/results/result-rows";
 
 export interface UnmappedListIdsProps {
   entries: { listId: string; rows: number; votes: number }[];

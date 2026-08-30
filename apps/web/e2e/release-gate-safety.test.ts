@@ -109,6 +109,24 @@ describe("migration release-gate integration", () => {
 			String(index + 1).padStart(4, "0"),
 		),
 		"20260824193650",
+		"20260825144358",
+		"20260825165116",
+		"20260825180048",
+		"20260826033130",
+		"20260826050000",
+		"20260826120000",
+		"20260826160000",
+		"20260826200000",
+		"20260827000000",
+		"20260827040000",
+		"20260827112658",
+		"20260827130000",
+		"20260827160000",
+		"20260827170000",
+		"20260827200000",
+		"20260827220000",
+		"20260829032228",
+		"20260829232200",
 	];
 	it("inspects the exact production migration and proof plan", async () => {
 		const plan = await inspectReleaseGatePlan();
@@ -121,7 +139,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(39);
+		).toBe(57);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -149,6 +167,51 @@ describe("migration release-gate integration", () => {
 			{
 				path: "tests/results_coverage_scope_binding.sql",
 				label: "disposable coverage-scope-binding pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_foundation.sql",
+				label: "disposable workspace-foundation pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_administration.sql",
+				label: "disposable workspace-administration pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_context_invalidation.sql",
+				label: "disposable workspace-context invalidation pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_review_scope.sql",
+				label: "disposable workspace-review-scope pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_authorized_facets.sql",
+				label: "disposable workspace-authorized-facets pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_authorized_operations.sql",
+				label: "disposable workspace-authorized-operations pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_authorized_projections.sql",
+				label: "disposable workspace-authorized-projections pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_authorized_fiscal_review.sql",
+				label: "disposable workspace-authorized-review pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_authorized_fiscal_coverage.sql",
+				label: "disposable workspace-authorized-coverage pgTAP",
 				timeoutMs: 120_000,
 			},
 		]);
@@ -181,7 +244,7 @@ describe("migration release-gate integration", () => {
 		);
 		expect(names).toHaveLength(plan.migrationVersions.length);
 		expect(names.at(-1)).toBe(
-			"20260824193650_map_pba_113_party_jurisdictions.sql",
+			"20260829232200_bound_authorized_result_evidence.sql",
 		);
 	});
 	it("runs every production phase in plan order before installing synthetic 0039", async () => {
@@ -226,6 +289,15 @@ describe("migration release-gate integration", () => {
 			"pgTAP:disposable scale EXPLAIN/plan pgTAP",
 			"post-pgTAP-cleanup:disposable scale fixture SQL cleanup",
 			"pgTAP:disposable coverage-scope-binding pgTAP",
+			"pgTAP:disposable workspace-foundation pgTAP",
+			"pgTAP:disposable workspace-administration pgTAP",
+			"pgTAP:disposable workspace-context invalidation pgTAP",
+			"pgTAP:disposable workspace-review-scope pgTAP",
+			"pgTAP:disposable workspace-authorized-facets pgTAP",
+			"pgTAP:disposable workspace-authorized-operations pgTAP",
+			"pgTAP:disposable workspace-authorized-projections pgTAP",
+			"pgTAP:disposable workspace-authorized-review pgTAP",
+			"pgTAP:disposable workspace-authorized-coverage pgTAP",
 			"rollback:disposable rollback/reapply proof",
 			"rollback:disposable coverage-scope-binding rollback/reapply proof",
 			"synthetic:0039_e2e_service_role_grants.sql",
@@ -348,7 +420,7 @@ describe("migration release-gate integration", () => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
 		).toThrow(
-			"migration inventory must be exactly versions 0001 through 0037 plus 20260824193650",
+			"migration inventory must be exactly versions 0001 through 20260829032228 plus 20260829232200",
 		);
 	});
 	it.each([
@@ -374,7 +446,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(4);
+		expect(plan.pgTapProofs).toHaveLength(13);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -486,11 +558,29 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("38 as migration_inventory_count");
+		expect(proof).toContain("57 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"20260829232200-down",
+			"20260829032228-down",
+			"20260827220000-down",
+			"20260827200000-down",
+			"20260827170000-down",
+			"20260827160000-down",
+			"20260827130000-down",
+			"20260827112658-down",
+			"20260827040000-down",
+			"20260827000000-down",
+			"20260826200000-down",
+			"20260826160000-down",
+			"20260826120000-down",
+			"20260826050000-down",
+			"20260826033130-down",
+			"20260825180048-down",
+			"20260825165116-down",
+			"20260825144358-down",
 			"20260824193650-down",
 			"0037-down",
 			"0036-down",
@@ -527,6 +617,24 @@ describe("migration release-gate integration", () => {
 			"0036-up",
 			"0037-up",
 			"20260824193650-up",
+			"20260825144358-up",
+			"20260825165116-up",
+			"20260825180048-up",
+			"20260826033130-up",
+			"20260826050000-up",
+			"20260826120000-up",
+			"20260826160000-up",
+			"20260826200000-up",
+			"20260827000000-up",
+			"20260827040000-up",
+			"20260827112658-up",
+			"20260827130000-up",
+			"20260827160000-up",
+			"20260827170000-up",
+			"20260827200000-up",
+			"20260827220000-up",
+			"20260829032228-up",
+			"20260829232200-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
@@ -569,6 +677,21 @@ describe("migration release-gate integration", () => {
 					}),
 					expect.objectContaining({
 						path: "tests/results_exploration_scale_plans.sql",
+					}),
+					expect.objectContaining({
+						path: "tests/workspace_foundation.sql",
+						label: "disposable workspace-foundation pgTAP",
+						timeoutMs: 120_000,
+					}),
+					expect.objectContaining({
+						path: "tests/workspace_administration.sql",
+						label: "disposable workspace-administration pgTAP",
+						timeoutMs: 120_000,
+					}),
+					expect.objectContaining({
+						path: "tests/workspace_context_invalidation.sql",
+						label: "disposable workspace-context invalidation pgTAP",
+						timeoutMs: 120_000,
 					}),
 				]),
 				postPgTapCleanupProofs: [
@@ -625,6 +748,43 @@ describe("migration release-gate integration", () => {
 	});
 });
 describe("base contracts", () => {
+	it("keeps the authorized review browser fixture service-role-only and self-cleaning", () => {
+		const fixtureSql = readFileSync(
+			new URL("./service-role-grants.sql", import.meta.url),
+			"utf8",
+		);
+		expect(fixtureSql).toContain(
+			"create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid) returns jsonb",
+		);
+		expect(fixtureSql).toContain(
+			"create function public.e2e_cleanup_authorized_review_fixture(p_fixture jsonb) returns jsonb",
+		);
+		expect(fixtureSql).toContain("create function public.e2e_setup_authorized_fiscal_fixture(p_user_id uuid, p_distrito_code text, p_seccion_code text) returns jsonb"); expect(fixtureSql).toContain("'e2e-authorized-fiscal-browser-'||organization_id");
+		expect(fixtureSql).toContain("create function public.e2e_cleanup_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
+		expect(fixtureSql).toContain("create function public.e2e_revoke_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
+		expect(fixtureSql).toContain("update workspace_private.organization set entitlement_revision = entitlement_revision + 1");
+		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g)).toHaveLength(5);
+		expect(fixtureSql).toContain(
+			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated",
+		);
+		expect(fixtureSql).toContain(
+			"revoke all on function public.e2e_cleanup_authorized_review_fixture(jsonb) from public, anon, authenticated",
+		);
+		expect(fixtureSql).toContain(
+			"grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid) to service_role",
+		);
+		expect(fixtureSql).toContain(
+			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
+		);
+		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)", "e2e_revoke_authorized_fiscal_fixture(jsonb)"]) {
+			expect(fixtureSql).toContain(`revoke all on function public.${signature} from public, anon, authenticated`); expect(fixtureSql).toContain(`grant execute on function public.${signature} to service_role`);
+		}
+		expect(fixtureSql).toContain("select pg_notify('pgrst','reload schema')");
+		expect(fixtureSql).toContain("delete from workspace_private.workspace_context");
+		expect(fixtureSql).toContain("delete from public.review_item");
+		expect(fixtureSql).toContain("delete from workspace_private.organization");
+		expect(fixtureSql).toContain("'owns_section_scope'");
+	});
 	it("keeps the isolated CI Postgres service passwordless", () => {
 		const workflow = readFileSync(
 			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),

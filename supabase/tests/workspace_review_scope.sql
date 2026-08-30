@@ -1,0 +1,18 @@
+begin;
+select plan(14);
+select is((select column_default from information_schema.columns where table_schema='public' and table_name='review_item' and column_name='tenant_scope_state'),'''platform_only''::text','review items default to explicit platform-only state');
+select ok((select attnotnull from pg_attribute where attrelid='public.review_item'::regclass and attname='tenant_scope_state'),'tenant scope state is required');
+select ok((select pg_get_constraintdef(oid) like '%platform_only%section_scoped%' from pg_constraint where conrelid='public.review_item'::regclass and conname='review_item_tenant_scope_state_check'),'tenant scope state is closed');
+select is((select array_agg(attname order by attnum) from pg_attribute where attrelid='workspace_private.review_item_section_scope'::regclass and attnum>0 and not attisdropped),array['review_item_id','distrito_code','seccion_code']::name[],'structured scope stores only review id and exact section identity');
+select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid='workspace_private.review_item_section_scope'::regclass),'structured review scope forces RLS');
+select ok(not has_table_privilege('etl_writer','workspace_private.review_item_section_scope','INSERT,UPDATE,DELETE') and not has_table_privilege('etl_writer','workspace_private.section_scope','INSERT,UPDATE,DELETE'),'ETL cannot write review scope or section authority directly');
+select ok(has_function_privilege('etl_writer','workspace_private.record_review_item(text,text,text,text,text[],text[])','EXECUTE') and not has_function_privilege('anon','workspace_private.record_review_item(text,text,text,text,text[],text[])','EXECUTE') and not has_function_privilege('authenticated','workspace_private.record_review_item(text,text,text,text,text[],text[])','EXECUTE'),'only the ETL boundary can execute structured ingestion');
+select is((select pg_get_userbyid(relowner) from pg_class where oid='workspace_private.review_item_section_scope'::regclass),'workspace_review_ingest_owner','structured scope has the dedicated owner');
+select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='workspace_private' and p.proname in ('record_review_item','enforce_review_item_scope_state') and p.proowner='workspace_review_ingest_owner'::regrole),2::bigint,'scope functions have the dedicated owner');
+select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='workspace_private' and p.proname in ('record_review_item','enforce_review_item_scope_state') and p.prosecdef and p.proconfig @> array['search_path=pg_catalog, workspace_private, pg_temp']),2::bigint,'scope functions are fixed-path security definers');
+select is((select count(*) from pg_trigger where tgname in ('review_item_scope_state_on_item','review_item_scope_state_on_scope') and tgdeferrable and tginitdeferred),2::bigint,'scope consistency triggers are deferred and initially deferred');
+select is((select count(*) from pg_policies where policyname in ('workspace_review_ingest_owner_review_select','workspace_review_ingest_owner_review_insert','workspace_review_ingest_owner_section_select','workspace_review_ingest_owner_scope_all')),4::bigint,'the exact ingestion policy set exists');
+select is((select count(*) from pg_constraint where conrelid='workspace_private.review_item_section_scope'::regclass and contype='f'),2::bigint,'scope facts have exact review-item and section foreign keys');
+select ok(to_regclass('workspace_private.review_item_section_scope_section_idx') is not null,'scope lookup index exists');
+select * from finish();
+rollback;

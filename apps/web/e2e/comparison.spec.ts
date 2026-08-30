@@ -1,190 +1,43 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
-
 import { assertE2eEnvironment } from "./gate-contract";
-import { withResultFixture } from "./result-fixture";
-import { resultScenarioIdentity, scenarioBaseUrl } from "./scenario-ownership";
-
-/**
- * provenance-display spec: "Mixed-granularity comparison is flagged in the
- * display, not just the API" — the `/compare` page must visibly show the
- * D6 refusal, not merely encode it in a `status` field the UI ignores.
- *
- * Simplification, disclosed: real ingestion never produces two elections'
- * rows sharing one `jurisdiction_id` at different `granularity` values. This
- * fixture seeds that table shape specifically to prove the reachable page
- * displays the refusal.
- */
-
-const environment = assertE2eEnvironment(process.env);
-const SPEC = "e2e/comparison.spec.ts";
-const identity = resultScenarioIdentity(SPEC);
-const party = identity.comparisonParty;
-if (!party) throw new Error("comparison party identity is missing");
-const baseURL = scenarioBaseUrl(SPEC, environment);
-const admin = createClient(
-  environment.NEXT_PUBLIC_SUPABASE_URL,
-  environment.SUPABASE_SERVICE_ROLE_KEY,
-);
-
-interface SupabaseOperation {
-  error: { message: string } | null;
+import { comparisonFixture, withResultFixture } from "./result-fixture";
+import { scenarioBaseUrl } from "./scenario-ownership";
+const environment = assertE2eEnvironment(process.env), SPEC = "e2e/comparison.spec.ts";
+const { identity, seed } = comparisonFixture(SPEC), baseURL = scenarioBaseUrl(SPEC, environment);
+interface WorkspaceFixture { organization_id: string; user_id: string; distrito_code: string; seccion_code: string; }
+async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuthorization: () => Promise<void>) => Promise<T>): Promise<T> {
+  const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+  const { data: users, error: userError } = await admin.auth.admin.listUsers();
+  const user = users?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
+  if (userError || !user) throw new Error("failed to resolve comparison fixture user");
+  const { data, error } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode });
+  if (error || typeof data?.organization_id !== "string") throw new Error("failed to set up authorized comparison fixture");
+  const fixture = data as WorkspaceFixture; let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null = null;
+  try {
+    await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByLabel("Organización"); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
+    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched;
+    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
+    const revokeAuthorization = async (): Promise<void> => { const revoked = await admin.rpc("e2e_revoke_authorized_fiscal_fixture", { p_fixture: fixture }); if (revoked.error || revoked.data?.revoked !== true) throw new Error("failed to revoke authorized comparison fixture"); };
+    outcome = { value: await run(revokeAuthorization) };
+  } catch (caught) { outcome = { error: caught }; }
+  finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
+  if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "comparison assertions and cleanup failed"); throw outcome.error; }
+  if (cleanupError) throw new Error("failed to clean authorized comparison fixture"); return outcome.value;
 }
-
-function assertOperation(operation: SupabaseOperation, label: string): void {
-  if (operation.error) throw new Error(`${label}: ${operation.error.message}`);
-}
-
-test.describe("mixed-granularity comparison is flagged in the display", () => {
-  test.beforeAll(async () => {
-    assertOperation(
-      await admin.from("party_canonical").insert({
-        id: party.canonicalPartyId,
-        display_name: party.displayName,
-      }),
-      "failed to seed canonical party",
-    );
-    try {
-      assertOperation(
-        await admin.from("party_mapping").insert(
-          identity.electionYears.map((year, index) => ({
-            id: party.mappingIds[index]!,
-            year,
-            jurisdiction: party.jurisdiction,
-            category: identity.categoryName,
-            list_id: party.listIds[index]!,
-            canonical_party_id: party.canonicalPartyId,
-            verified: true,
-            source: SPEC,
-          })),
-        ),
-        "failed to seed party mappings",
-      );
-    } catch (error) {
-      await admin
-        .from("party_canonical")
-        .delete()
-        .eq("id", party.canonicalPartyId);
-      throw error;
-    }
-  });
-
-  test.afterAll(async () => {
-    const errors: unknown[] = [];
-    const cleanup = async (
-      label: string,
-      operation: PromiseLike<SupabaseOperation>,
-    ): Promise<void> => {
-      try {
-        const result = await operation;
-        if (result.error)
-          errors.push(new Error(`${label}: ${result.error.message}`));
-      } catch (error) {
-        errors.push(error);
-      }
-    };
-
-    // Exact dependency order: mappings reference the canonical party.
-    await cleanup(
-      "party mappings",
-      admin.from("party_mapping").delete().in("id", party.mappingIds),
-    );
-    await cleanup(
-      "canonical party",
-      admin.from("party_canonical").delete().eq("id", party.canonicalPartyId),
-    );
-    if (errors.length > 0) {
-      throw new AggregateError(errors, "comparison party cleanup failed");
-    }
-  });
-
-  test("test_mixed_granularity_flagged_in_display_not_only_api", async ({
-    page,
-  }) => {
-    const categoryId = identity.categoryId;
-    const [election2023Id, election2025Id] = identity.electionIds;
-    if (!election2023Id || !election2025Id) {
-      throw new Error("comparison identity is incomplete");
-    }
-
-    await withResultFixture(
-      SPEC,
-      {
-        category: { id: categoryId, name: identity.categoryName },
-        jurisdictions: [
-          {
-            id: identity.jurisdictionId,
-            distrito_code: identity.distritoCode,
-            seccion_code: identity.seccionCode,
-          },
-        ],
-        elections: [
-          {
-            id: election2023Id,
-            year: identity.electionYears[0]!,
-            round: identity.electionRounds[0]!,
-          },
-          {
-            id: election2025Id,
-            year: identity.electionYears[1]!,
-            round: identity.electionRounds[1]!,
-          },
-        ],
-        rows: [
-          {
-            election_id: election2023Id,
-            jurisdiction_id: identity.jurisdictionId,
-            category_id: categoryId,
-            granularity: "mesa",
-            list_id: party.listIds[0]!,
-            votes: 10,
-            archive_entry_id: identity.archiveEntryIds[0]!,
-            source_row_index: 0,
-            source_kind: "official",
-          },
-          {
-            election_id: election2025Id,
-            jurisdiction_id: identity.jurisdictionId,
-            category_id: categoryId,
-            granularity: "distrito",
-            list_id: party.listIds[1]!,
-            votes: 20,
-            archive_entry_id: identity.archiveEntryIds[1]!,
-            source_row_index: 0,
-            source_kind: "official",
-          },
-        ],
-      },
-      async () => {
-        await page.goto(new URL("/dashboard", baseURL).toString());
-        await expect(page).toHaveURL(/\/dashboard/);
-
-        await page
-          .getByRole("link", { name: "Comparar resultados electorales" })
-          .click();
-        await expect(page).toHaveURL(/\/compare$/);
-        await page.getByLabel("Elección de 2023").selectOption(election2023Id);
-        await page.getByLabel("Elección de 2025").selectOption(election2025Id);
-        await page.getByRole("button", { name: "Actualizar opciones" }).click();
-        await page.getByLabel("Categoría común").selectOption(categoryId);
-        await page.getByRole("button", { name: "Comparar elecciones" }).click();
-        await expect(page).toHaveURL(
-          new RegExp(
-            `/compare\\?election2023=${election2023Id}&election2025=${election2025Id}&categoryId=${categoryId}`,
-          ),
-        );
-
-        // Next.js also renders its own route-announcer alert, so scope by text.
-        const mismatchAlert = page.getByText("Granularidad mixta", {
-          exact: false,
-        });
-        await expect(mismatchAlert).toBeVisible();
-        await expect(mismatchAlert).toContainText("mesa");
-        await expect(mismatchAlert).toContainText("distrito");
-        await expect(mismatchAlert).not.toContainText("aggregateTo");
-        await expect(page.getByText("agregado a partir de datos", { exact: false })).toHaveCount(0);
-        await expect(page.getByRole("status", { name: /granularidad:/ })).toHaveCount(0);
-      },
-    );
+async function submitOptions(page: Page): Promise<void> { await page.getByRole("button", { name: "Actualizar opciones" }).click(); await expect(page.getByRole("main")).toBeVisible(); }
+test.describe("authorized official comparison", () => {
+  test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {
+    await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
+      await page.getByRole("link", { name: "Comparar resultados electorales" }).click(); await expect(page).toHaveURL(/\/compare$/);
+      await page.getByLabel("Elección izquierda (2023)").selectOption(identity.electionIds[0]!); await page.getByLabel("Elección derecha (2025)").selectOption(identity.electionIds[1]!); await submitOptions(page);
+      await page.getByLabel("Categoría izquierda").selectOption(identity.categoryId); await page.getByLabel("Categoría derecha").selectOption(identity.categoryId); await submitOptions(page);
+      await page.getByLabel("Distrito compartido").selectOption(identity.distritoCode); await submitOptions(page); await page.getByRole("combobox", { name: "Sección compartida", exact: true }).selectOption(identity.seccionCode); await submitOptions(page);
+      const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ leftElectionId: identity.electionIds[0], leftCategoryId: identity.categoryId, rightElectionId: identity.electionIds[1], rightCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
+      const main = page.getByRole("main"); await expect(main).toContainText("sin cambio"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
+      await expect(main).toContainText(identity.archiveEntryIds[0]!); await expect(main).toContainText(identity.archiveEntryIds[1]!); await expect(main).toContainText("SHA-256"); await expect(main).not.toContainText("https://"); await expect(main).not.toContainText("example.test");
+      await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
+    }));
   });
 });

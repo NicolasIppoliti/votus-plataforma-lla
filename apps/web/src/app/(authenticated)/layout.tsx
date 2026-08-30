@@ -3,7 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SignOutForm } from "@/components/SignOutForm";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
+import { WorkspaceSelector } from "@/components/WorkspaceSelector";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { authorizedReviewItems } from "@/lib/workspace/context";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 
 /**
@@ -48,14 +51,21 @@ export default async function AuthenticatedLayout({
     redirect("/login");
   }
 
-  // `review_item_unresolved_count` (0007_review_item.sql) — a missing row
-  // or a query error is treated as "unknown", not "zero", so the banner
-  // never falsely claims a clean queue; it simply does not render.
-  const { data: unresolvedRow } = await supabase
-    .from("review_item_unresolved_count")
-    .select("unresolved_count")
-    .maybeSingle();
-  const unresolvedCount = unresolvedRow?.["unresolved_count"] as number | undefined;
+  const selection = await loadWorkspaceSelection();
+
+  // A denied or failed workspace check is "unknown", never a false clean queue.
+  let unresolvedCount: number | undefined;
+  try {
+    const review = await authorizedReviewItems(supabase, 0, 0);
+    if (typeof review === "object" && review !== null) {
+      const payload = review as Record<string, unknown>;
+      if (payload["status"] === "ok" && typeof payload["total"] === "number" && Number.isSafeInteger(payload["total"]) && payload["total"] >= 0) {
+        unresolvedCount = payload["total"];
+      }
+    }
+  } catch {
+    unresolvedCount = undefined;
+  }
 
   return (
     <div className="app-shell">
@@ -66,6 +76,7 @@ export default async function AuthenticatedLayout({
             <span className="site-brand__descriptor">espacio de evidencia</span>
           </Link>
           <p className="site-context">Análisis electoral interno</p>
+          <WorkspaceSelector initialSelection={selection} />
           <SignOutForm />
         </div>
         <PrimaryNavigation />
@@ -74,6 +85,7 @@ export default async function AuthenticatedLayout({
         <div className="source-disclaimer">
           <SourceDisclaimer />
         </div>
+        {unresolvedCount === undefined ? <p className="review-alert" role="status">No se pudo verificar el estado de revisión.</p> : null}
         {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
           <p className="review-alert" role="alert">
                 <span className="status-label">Requiere revisión</span>

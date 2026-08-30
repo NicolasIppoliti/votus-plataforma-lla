@@ -12,6 +12,7 @@ per producer.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -64,6 +65,24 @@ def validate_review_item_kind(kind: str) -> None:
         )
 
 
+@dataclass(frozen=True, order=True)
+class ReviewItemSectionScope:
+    """One authoritative section identity, already normalized by its producer."""
+
+    distrito_code: str
+    seccion_code: str
+
+    def __post_init__(self) -> None:
+        if (
+            re.fullmatch(r"[0-9]{2}", self.distrito_code) is None
+            or re.fullmatch(r"[0-9]{3}", self.seccion_code) is None
+        ):
+            raise ValueError(
+                "review item scope must be an exact canonical section "
+                "(two-digit distrito, three-digit seccion)"
+            )
+
+
 @dataclass(frozen=True)
 class ReviewItemRecord:
     """One insert-ready `review_item` row (`detected_at`/`resolved_at` are
@@ -78,9 +97,17 @@ class ReviewItemRecord:
     severity: str
     subject_ref: str
     note: str | None
+    section_scopes: tuple[ReviewItemSectionScope, ...] = ()
 
     def __post_init__(self) -> None:
         validate_review_item_kind(self.kind)
+        canonical = tuple(sorted(set(self.section_scopes)))
+        if canonical != self.section_scopes:
+            raise ValueError("review item section scopes must be unique and canonically ordered")
+
+    @property
+    def tenant_scope_state(self) -> str:
+        return "section_scoped" if self.section_scopes else "platform_only"
 
 
 @dataclass(frozen=True)
@@ -228,6 +255,14 @@ def source_refetch_review_items(
             note=f"verified sha256 changed from {previous_sha} to {current_sha}",
         ),
     )
+
+
+def review_scope_breakdown(records: list[ReviewItemRecord]) -> dict[str, int]:
+    """Return both closed states, including an explicit zero count."""
+    return {
+        state: sum(record.tenant_scope_state == state for record in records)
+        for state in ("section_scoped", "platform_only")
+    }
 
 
 def review_item_draft_to_record(draft: ReviewItemDraft) -> ReviewItemRecord:

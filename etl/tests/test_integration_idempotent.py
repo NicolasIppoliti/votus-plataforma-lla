@@ -12,6 +12,7 @@ be down.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
@@ -32,7 +33,7 @@ from etl.db import (
 )
 from etl.ingest.national import NationalRow, load_national_rows
 from etl.jurisdiction import make_result_row
-from etl.review_item import ReviewItemRecord
+from etl.review_item import ReviewItemRecord, ReviewItemSectionScope
 
 TEST_DSN = os.environ.get(
     "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -371,6 +372,7 @@ class _AuthorityPauseCursor:
         self._authority_selected = authority_selected
         self._continue_replacement = continue_replacement
 
+    # pi-lens-ignore: python-sql-injection
     def execute(self, query, params=None):
         result = self._cursor.execute(query, params)
         if (
@@ -731,9 +733,23 @@ def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
         severity="warning",
         subject_ref="source:test",
         note=None,
+        section_scopes=(ReviewItemSectionScope("02", "027"),),
     )
 
     assert insert_review_items(conn, [record, record]) == 1
+    query, params = conn.statements[-1]
+    assert "workspace_private.record_review_item" in query
+    candidates = json.loads(params[0])
+    assert candidates == [
+        {
+            "kind": "content_drift",
+            "severity": "warning",
+            "subject_ref": "source:test",
+            "note": None,
+            "distrito_codes": ["02"],
+            "seccion_codes": ["027"],
+        }
+    ]
 
 
 def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:

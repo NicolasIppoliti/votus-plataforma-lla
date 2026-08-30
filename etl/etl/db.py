@@ -15,6 +15,7 @@ isolation between runs).
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
@@ -102,7 +103,6 @@ _JURISDICTION_NAME_FIELDS: tuple[tuple[str, str], ...] = (
     ("establecimiento", "establecimiento_name"),
 )
 _JURISDICTION_WRITER_LOCK_SQL = "LOCK TABLE jurisdiction IN SHARE ROW EXCLUSIVE MODE"
-_REVIEW_ITEM_WRITER_LOCK_ID = 2963544934623095067
 
 
 def _lock_jurisdiction_writer(conn, cur) -> None:
@@ -1310,9 +1310,9 @@ def load_crosswalk_rows(
 def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
     """Insert observations that are not already active and return the inserted count.
 
-    Active observation identity is the NULL-safe tuple
-    `(kind, severity, subject_ref, note)` with `resolved_at is null`. Replaying
-    an identical active observation is an explicitly idempotent, already-active
+    Active observation identity is the NULL-safe textual tuple plus its closed,
+    exact structured section scope, with `resolved_at is null`. Replaying an
+    identical active observation is an explicitly idempotent, already-active
     suppression, including duplicates inside one input batch. A resolved row is
     history, not active identity, so an identical recurrence inserts a new row.
 
@@ -1329,6 +1329,7 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
         return 0
     for record in records:
         validate_review_item_kind(record.kind)
+    records = tuple(dict.fromkeys(records))
     if getattr(conn, "autocommit", False):
         raise RuntimeError(
             "review item writers require a transaction; autocommit connections are unsupported"
@@ -1345,36 +1346,30 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 f"PostgreSQL reports {observed!r}; refusing without changing isolation"
             )
 
-        # This must be a separate statement. Under READ COMMITTED, a writer that
-        # waited here gets a fresh snapshot for the INSERT below and therefore sees
-        # the prior lock holder's commit.
-        cur.execute("select pg_advisory_xact_lock(%s)", (_REVIEW_ITEM_WRITER_LOCK_ID,))
+        candidates = [
+            {
+                "kind": record.kind,
+                "severity": record.severity,
+                "subject_ref": record.subject_ref,
+                "note": record.note,
+                "distrito_codes": [scope.distrito_code for scope in record.section_scopes],
+                "seccion_codes": [scope.seccion_code for scope in record.section_scopes],
+            }
+            for record in records
+        ]
         cur.execute(
             """
-            with candidates (kind, severity, subject_ref, note) as (
-                select distinct kind, severity, subject_ref, note
-                from unnest(%s::text[], %s::text[], %s::text[], %s::text[])
-                    as candidate(kind, severity, subject_ref, note)
+            with candidates as (
+                select distinct *
+                from jsonb_to_recordset(%s::jsonb) as candidate(
+                    kind text, severity text, subject_ref text, note text,
+                    distrito_codes text[], seccion_codes text[]
+                )
             )
-            insert into review_item (kind, severity, subject_ref, note)
-            select candidate.kind, candidate.severity, candidate.subject_ref, candidate.note
-            from candidates as candidate
-            where not exists (
-                select 1
-                from review_item as active
-                where active.resolved_at is null
-                  and active.kind = candidate.kind
-                  and active.severity = candidate.severity
-                  and active.subject_ref = candidate.subject_ref
-                  and active.note is not distinct from candidate.note
+            select 1 from candidates where workspace_private.record_review_item(
+                kind, severity, subject_ref, note, distrito_codes, seccion_codes
             )
-            returning 1
             """,
-            (
-                [record.kind for record in records],
-                [record.severity for record in records],
-                [record.subject_ref for record in records],
-                [record.note for record in records],
-            ),
+            (json.dumps(candidates),),
         )
         return len(cur.fetchall())

@@ -976,6 +976,26 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260829232200_bound_authorized_result_evidence.down.sql",
+        "\\ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql",
+        "\\ir ../migrations/down/20260827220000_authorized_school_party_lookup.down.sql",
+        "\\ir ../migrations/down/20260827200000_authorized_official_drilldown_facets.down.sql",
+        "\\ir ../migrations/down/20260827170000_authorized_fiscalizacion_facets.down.sql",
+        "\\ir ../migrations/down/20260827160000_platform_review_operator_access.down.sql",
+        "\\ir ../migrations/down/20260827130000_authorized_fiscal_result.down.sql",
+        "\\ir ../migrations/down/20260827112658_authorized_fiscal_coverage.down.sql",
+        "\\ir ../migrations/down/20260827040000_authorized_fiscal_review.down.sql",
+        "\\ir ../migrations/down/20260827000000_authorized_official_projections.down.sql",
+        "\\ir ../migrations/down/20260826200000_authorized_official_operations.down.sql",
+        "\\ir ../migrations/down/20260826160000_authorized_official_facets.down.sql",
+        "\\ir ../migrations/down/20260826120000_structured_review_scope.down.sql",
+        "\\ir ../migrations/down/20260826050000_workspace_context_selection.down.sql",
+        "\\ir ../migrations/down/20260826033130_session_bound_context_invalidation.down.sql",
+        "\\ir ../migrations/down/"
+        "20260825180048_organization_workspace_authorization_admin.down.sql",
+        "\\ir ../migrations/down/"
+        "20260825165116_organization_workspace_authorization_facts.down.sql",
+        "\\ir ../migrations/down/20260825144358_organization_workspace_expand.down.sql",
         "\\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0037_add_selector_name_canonical_fallback.down.sql",
         "\\ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql",
@@ -1006,6 +1026,24 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0036_map_pba_party_jurisdictions.sql",
         "\\ir ../migrations/0037_add_selector_name_canonical_fallback.sql",
         "\\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql",
+        "\\ir ../migrations/20260825144358_organization_workspace_expand.sql",
+        "\\ir ../migrations/20260825165116_organization_workspace_authorization_facts.sql",
+        "\\ir ../migrations/20260825180048_organization_workspace_authorization_admin.sql",
+        "\\ir ../migrations/20260826033130_session_bound_context_invalidation.sql",
+        "\\ir ../migrations/20260826050000_workspace_context_selection.sql",
+        "\\ir ../migrations/20260826120000_structured_review_scope.sql",
+        "\\ir ../migrations/20260826160000_authorized_official_facets.sql",
+        "\\ir ../migrations/20260826200000_authorized_official_operations.sql",
+        "\\ir ../migrations/20260827000000_authorized_official_projections.sql",
+        "\\ir ../migrations/20260827040000_authorized_fiscal_review.sql",
+        "\\ir ../migrations/20260827112658_authorized_fiscal_coverage.sql",
+        "\\ir ../migrations/20260827130000_authorized_fiscal_result.sql",
+        "\\ir ../migrations/20260827160000_platform_review_operator_access.sql",
+        "\\ir ../migrations/20260827170000_authorized_fiscalizacion_facets.sql",
+        "\\ir ../migrations/20260827200000_authorized_official_drilldown_facets.sql",
+        "\\ir ../migrations/20260827220000_authorized_school_party_lookup.sql",
+        "\\ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql",
+        "\\ir ../migrations/20260829232200_bound_authorized_result_evidence.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1020,8 +1058,9 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "38 as migration_inventory_count",
+        "57 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
+        "authenticated legacy public result access survived cutover",
         "dropping only its index",
     ):
         assert required in sql
@@ -1927,3 +1966,627 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     assert "index_scans between 1 and 4" in scale
     assert "index_scans >= jurisdiction_count" not in scale
     assert "table_scans = 0" in scale
+
+
+_WORKSPACE_ROLES = (
+    "workspace_bootstrap_owner workspace_bootstrap_caller workspace_context_owner "
+    "workspace_query_owner workspace_admin_owner workspace_review_ingest_owner "
+    "workspace_audit_owner workspace_platform_admin"
+).split()
+
+
+def _workspace_foundation_migrations() -> tuple[str, Path, str]:
+    matches = list(MIGRATIONS.glob("*_organization_workspace_expand.sql"))
+    assert len(matches) == 1
+    forward_path = matches[0]
+    version = forward_path.name.removesuffix("_organization_workspace_expand.sql")
+    assert version.isdigit() and len(version) == 14
+    down_path = MIGRATIONS / "down" / f"{version}_organization_workspace_expand.down.sql"
+    forward = forward_path.read_text(encoding="utf-8").lower()
+    assert forward.strip(), "the generated workspace migration must be implemented"
+    assert down_path.exists(), "the matching generated down migration is required"
+    return forward, down_path, down_path.read_text(encoding="utf-8").lower()
+
+
+def test_organization_workspace_foundation_is_additive_and_closed_by_default() -> None:
+    forward, _, _ = _workspace_foundation_migrations()
+    sql = " ".join(forward.split())
+    assert forward.startswith("begin;") and forward.rstrip().endswith("commit;")
+    for schema in ("workspace_private", "workspace_api"):
+        assert f"create schema {schema}" in sql
+        assert f"revoke all on schema {schema} from public" in sql
+    assert "foreach client_role in array array['anon', 'authenticated', 'service_role']" in sql
+    assert "if to_regrole(client_role) is not null" in sql
+    assert "revoke all on schema workspace_private from %i" in sql
+    assert "revoke all on schema workspace_api from %i" in sql
+    for role in _WORKSPACE_ROLES:
+        assert f"'{role}'" in sql
+    role_flags = "nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls"
+    assert role_flags in sql
+    api_usage = (
+        "grant usage on schema workspace_api to workspace_context_owner, workspace_query_owner"
+    )
+    assert api_usage in sql
+    assert "grant create on schema workspace" not in sql
+    assert "revoke create on schema public" in sql
+    assert "acldefault" in sql and "acl.grantee = 0" in sql
+    forbidden = (
+        "create table",
+        "create sequence",
+        "create function",
+        "security definer",
+        "enable row level security",
+        "create policy",
+        "auth.",
+        "password",
+        "revoke temp",
+    )
+    assert not any(token in sql for token in forbidden)
+
+
+def test_organization_workspace_defaults_and_down_are_bounded_and_fail_closed() -> None:
+    forward, down_path, down = _workspace_foundation_migrations()
+    sql = " ".join(forward.split())
+    rollback = " ".join(down.split())
+    global_function_revoke = (
+        "alter default privileges for role %i revoke execute on functions from public"
+    )
+    assert sql.count(global_function_revoke) == 1
+    assert "foreach owner_role in array workspace_roles" in sql
+    assert "default_owners" not in sql
+    assert "alter default privileges for role %i in schema" not in sql
+    assert "on tables" not in sql and "on sequences" not in sql
+    assert "foreach" in sql and "execute format" in sql and "pg_auth_members" in sql
+    assert "edge.admin_option and not edge.inherit_option and not edge.set_option" in sql
+
+    assert down_path.name == "20260825144358_organization_workspace_expand.down.sql"
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "migration_creator" not in rollback and "default_owners" not in rollback
+    assert "pg_depend" in rollback and "pg_describe_object" in rollback
+    default_acl_guard = rollback.split("select string_agg( pg_describe_object", 1)[0]
+    for required in (
+        "pg_default_acl",
+        "defaults.defaclnamespace = 0",
+        "owner.rolname = any(workspace_roles)",
+        "defaults.defaclobjtype <> 'f'",
+        "count(*)",
+        "count(distinct defaults.defaclrole)",
+        "cardinality(workspace_roles)",
+        "aclexplode",
+        "acl.grantor = defaults.defaclrole",
+        "acl.grantee = defaults.defaclrole",
+        "acl.privilege_type = 'execute'",
+        "not acl.is_grantable",
+        "unexpected schema-scoped entries",
+    ):
+        assert required in default_acl_guard
+    schema_default_guard = "namespace.nspname = any(array['workspace_private', 'workspace_api'])"
+    assert schema_default_guard in default_acl_guard
+    assert "raise exception" in rollback
+    assert rollback.count("for role %i grant execute on functions to public") == 1
+    assert "foreach owner_role in array workspace_roles" in rollback
+    assert "in schema %i revoke execute on functions from public" not in rollback
+    assert rollback.index("workspace rollback refused default acls") < rollback.index(
+        "select string_agg( pg_describe_object"
+    )
+    for schema in ("workspace_api", "workspace_private"):
+        assert f"drop schema {schema}" in rollback
+    for role in _WORKSPACE_ROLES:
+        assert f"drop role {role}" in rollback
+    assert not any(
+        token in rollback for token in ("cascade", "drop owned", "drop table", "drop function")
+    )
+
+
+def test_organization_workspace_authority_facts_are_closed_and_reversible() -> None:
+    version = "20260825165116"
+    forward_path = MIGRATIONS / f"{version}_organization_workspace_authorization_facts.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_facts.down.sql"
+    )
+    assert forward_path.read_text(encoding="utf-8").strip(), "authority-facts migration is empty"
+    assert down_path.exists(), "authority-facts down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+
+    tables = (
+        "organization organization_membership section_scope "
+        "organization_section_entitlement workspace_audit_event"
+    ).split()
+    for table in tables:
+        assert f"create table workspace_private.{table}" in forward
+        assert f"alter table workspace_private.{table} enable row level security" in forward
+        assert f"alter table workspace_private.{table} force row level security" in forward
+        assert f"revoke all on table workspace_private.{table} from public" in forward
+        assert f"drop table workspace_private.{table}" in down
+    assert forward.count("owner to workspace_admin_owner") == 5
+    assert forward.count("owner to workspace_audit_owner") == 1
+    assert forward.count("create policy workspace_admin_owner_") == 4
+    assert "function workspace_private.authorization_facts_status()" in forward
+    assert "security definer" in forward
+    assert "references auth." not in forward
+    assert "on delete restrict" in forward
+    assert "where revoked_at is null" in forward
+    assert "organization_section_entitlement_scope_idx" in forward
+    assert (
+        "workspace_private.organization_section_entitlement (distrito_code, seccion_code)"
+        in forward
+    )
+    assert "actor_ref is null or" in forward
+    assert "jsonb_typeof(detail) = 'object'" in forward
+    assert "create table public." not in forward
+    for value in (
+        "platform_operator",
+        "organization_user",
+        "system",
+        "etl",
+        "organization_created",
+        "organization_disabled",
+        "membership_granted",
+        "membership_revoked",
+        "section_scope_registered",
+        "section_entitlement_granted",
+        "section_entitlement_revoked",
+        "context_bootstrapped",
+        "context_switched",
+        "context_invalidated",
+        "context_revoked",
+        "authorization_denied",
+        "review_scope_recorded",
+        "review_visibility_denied",
+        "succeeded",
+        "denied",
+        "no_op",
+        "operator_request",
+        "same_state",
+        "scope_invalid",
+        "claims_mismatch",
+        "context_conflict",
+        "bearer_invalid",
+        "platform_only_review",
+        "organization_switched",
+    ):
+        assert f"'{value}'" in forward
+    for forbidden in ("email", "token", "password", "dsn", "cascade"):
+        assert forbidden not in forward
+    assert "raise exception 'authority-facts rollback refused" in down
+    assert "cascade" not in down
+    assert down.index("drop table workspace_private.workspace_audit_event") < down.index(
+        "drop table workspace_private.organization"
+    )
+
+
+def test_organization_workspace_section_scope_requires_canonical_national_codes() -> None:
+    migration = _sql("20260825165116_organization_workspace_authorization_facts.sql")
+    sql = " ".join(migration.split())
+    section_scope_codes = (
+        "constraint section_scope_codes_check check "
+        "(distrito_code = btrim(distrito_code) and distrito_code <> '' "
+        "and distrito_code ~ '^[0-9]{2}$' and seccion_code = btrim(seccion_code) "
+        "and seccion_code <> '' and seccion_code ~ '^[0-9]{3}$')"
+    )
+
+    assert section_scope_codes in sql
+
+
+def test_workspace_admin_boundary_is_private_rls_backed_and_reversible() -> None:
+    version = "20260825180048"
+    forward_path = MIGRATIONS / f"{version}_organization_workspace_authorization_admin.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_admin.down.sql"
+    )
+    assert forward_path.read_text(encoding="utf-8").strip(), "workspace admin migration is empty"
+    assert down_path.exists(), "workspace admin down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    functions = (
+        "append_audit_event create_organization disable_organization grant_membership "
+        "revoke_membership register_section_scope grant_section_entitlement "
+        "revoke_section_entitlement"
+    ).split()
+    for function in functions:
+        assert f"function workspace_private.{function}" in forward
+        assert "security definer set search_path=pg_catalog,workspace_private,pg_temp" in forward
+        assert f"revoke all on function workspace_private.{function}" in forward
+        assert f"drop function workspace_private.{function}" in down
+        assert "grant execute on function workspace_private.append_audit_event" in forward
+    assert "to workspace_admin_owner" in forward
+    assert forward.count("to workspace_platform_admin") == 7
+    for table in (
+        "organization organization_membership section_scope "
+        "organization_section_entitlement workspace_audit_event"
+    ).split():
+        assert "create policy workspace_" in forward
+        assert f"on workspace_private.{table}" in forward
+    assert "for delete" not in forward
+    assert "execute format" not in forward and "execute immediate" not in forward
+    assert "public.jurisdiction" in forward
+    assert "raise exception 'workspace-admin rollback refused" in down
+    assert "cascade" not in down
+    for forbidden in ("email", "token", "password", "dsn", "auth."):
+        assert forbidden not in forward
+
+
+def test_authority_facts_migrations_preserve_runner_owner_set_authority() -> None:
+    version = "20260825165116"
+    migrations = (
+        _sql(f"{version}_organization_workspace_authorization_facts.sql"),
+        (MIGRATIONS / "down" / f"{version}_organization_workspace_authorization_facts.down.sql")
+        .read_text(encoding="utf-8")
+        .lower(),
+    )
+
+    set_authority_capture = (
+        "select pg_has_role(current_user,'workspace_admin_owner','set'), "
+        "pg_has_role(current_user,'workspace_audit_owner','set') "
+        "into admin_could_set, audit_could_set;"
+    )
+    set_authority_variables = {
+        "workspace_admin_owner": "admin_could_set",
+        "workspace_audit_owner": "audit_could_set",
+    }
+
+    for migration in migrations:
+        sql = " ".join(migration.split())
+        assert set_authority_capture in sql
+        for role, authority_variable in set_authority_variables.items():
+            setting = f"votus_pr3a.{role}_could_set"
+            capture = f"set_config('{setting}', {authority_variable}::text, true)"
+            conditional_grant = (
+                f"if current_setting('{setting}', true) = 'false' then "
+                f"grant {role} to current_user; end if;"
+            )
+            conditional_revoke = (
+                f"if current_setting('{setting}', true) = 'false' then "
+                f"revoke {role} from current_user; end if;"
+            )
+            assert capture in sql
+            assert conditional_grant in sql
+            assert conditional_revoke in sql
+            assert sql.index(set_authority_capture) < sql.index(capture)
+            assert sql.index(capture) < sql.index(conditional_grant)
+            assert sql.index(conditional_grant) < sql.index(conditional_revoke)
+            assert sql.count(f"grant {role} to current_user;") == 1
+            assert sql.count(f"revoke {role} from current_user;") == 1
+
+
+def test_structured_review_scope_is_closed_typed_and_reversible() -> None:
+    version = "20260826120000"
+    forward_path = MIGRATIONS / f"{version}_structured_review_scope.sql"
+    down_path = MIGRATIONS / "down" / f"{version}_structured_review_scope.down.sql"
+
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    for required in (
+        "tenant_scope_state",
+        "platform_only",
+        "section_scoped",
+        "workspace_private.review_item_section_scope",
+        "foreign key (distrito_code, seccion_code)",
+        "workspace_private.record_review_item",
+        "p_distrito_codes text[]",
+        "p_seccion_codes text[]",
+        "to etl_writer",
+    ):
+        assert required in forward
+    assert "subject_ref" in forward and "regexp_matches" not in forward
+    assert "grant insert on workspace_private" not in forward
+    assert "workspace_private.section_scope" not in forward.split("insert into", 1)[1]
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "drop table workspace_private.review_item_section_scope" in down
+    assert "drop column tenant_scope_state" in down
+
+
+def test_authorized_official_facets_are_claims_bound_bounded_and_reversible() -> None:
+    version = "20260826160000"
+    forward = _sql(f"{version}_authorized_official_facets.sql")
+    down = (
+        (MIGRATIONS / "down" / f"{version}_authorized_official_facets.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    normalized = " ".join(forward.split())
+    assert "rr.granularity<>'distrito'" not in normalized
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_api.official_facets()",
+        "trusted_workspace_claims()",
+        "ctx.fixed_expires_at<=statement_timestamp()",
+        "org.entitlement_revision<>ctx.entitlement_revision",
+        "member.membership_revision<>ctx.membership_revision",
+        "rr.source_kind='official'",
+        "j.seccion_code is not null",
+        "result_row_authorized_official_facets_idx",
+        "limit 200",
+        "facet_total>200",
+    ):
+        assert required in normalized
+    assert normalized.index("trusted_workspace_claims()") < normalized.index(
+        "from workspace_private.workspace_context"
+    )
+    assert "service_role" in normalized and "to authenticated" in normalized
+    assert "alter table public.result_row" not in normalized
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "create " not in down and "drop function workspace_api.official_facets()" in down
+    assert "drop index public.result_row_authorized_official_facets_idx" in down
+
+
+def test_authorized_facet_names_are_exact_bounded_and_reversible() -> None:
+    version = "20260827170000"
+    forward = _sql(f"{version}_authorized_fiscalizacion_facets.sql")
+    down = _sql(f"down/{version}_authorized_fiscalizacion_facets.down.sql")
+    normalized = " ".join(forward.split())
+    for required in (
+        "create or replace function workspace_api.official_facets()",
+        "distrito_name",
+        "seccion_name",
+        "name_variant_count",
+        "rr.source_kind='official'",
+        "j.seccion_code is not null",
+        "facet_total>200",
+        "'facets','[]'::jsonb",
+        "'truncated',true",
+    ):
+        assert required in normalized
+    assert "workspace_private.authorized_section_scopes()" in normalized
+    assert "create or replace function workspace_api.official_facets()" in down
+    assert "distrito_name" not in down and "seccion_name" not in down
+
+
+def test_authorized_official_operations_are_independent_bounded_and_reversible() -> None:
+    version = "20260826200000"
+    forward = _sql(f"{version}_authorized_official_operations.sql")
+    down_path = MIGRATIONS / "down" / f"{version}_authorized_official_operations.down.sql"
+    down = down_path.read_text(encoding="utf-8").lower()
+    normalized = " ".join(forward.split())
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_api.official_result(",
+        "workspace_api.official_comparison(",
+        "public.results_exploration_official(",
+        "j.seccion_code is null",
+        "official_rows_without_section_identity",
+        "octet_length(payload::text)>120000",
+        "left_payload:=workspace_api.official_result",
+        "right_payload:=workspace_api.official_result",
+        "operation_unavailable",
+        "from public,anon,authenticated",
+        "to authenticated",
+        "to_regrole('service_role')",
+    ):
+        assert required in normalized
+    assert "source_kind='official'" in normalized and "update result_row" not in normalized
+    assert "'rows'" not in normalized and "'votes'" not in normalized
+    assert "set_config('votus_operations.'||r" in normalized and ",true)" in normalized
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "drop function workspace_api.official_comparison" in down
+    assert "drop function workspace_api.official_result" in down
+    proof_path = SQL_TESTS / "workspace_authorized_operations.sql"
+    proof = " ".join(proof_path.read_text(encoding="utf-8").lower().split())
+    for evidence in (
+        "select plan(10)",
+        "from pg_proc",
+        "prosecdef",
+        "proconfig",
+        "authorized_section_scopes",
+        "results_exploration_reporting_level",
+        "octet_length",
+        "result_row_authorized_official_facets_idx",
+    ):
+        assert evidence in proof
+    for semantic_fixture in ("insert into", "set local role", "request.jwt.claims"):
+        assert semantic_fixture not in proof
+
+
+def test_authorized_official_projections_are_bounded_source_honest_and_reversible() -> None:
+    version = "20260827000000"
+    forward = _sql(f"{version}_authorized_official_projections.sql")
+    down_path = MIGRATIONS / "down" / f"{version}_authorized_official_projections.down.sql"
+    down = down_path.read_text(encoding="utf-8").lower()
+    normalized = " ".join(forward.split())
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_api.official_schools(",
+        "workspace_api.official_provenance(",
+        "workspace_api.official_reference(",
+        "public.results_exploration_schools(",
+        "workspace_api.official_result(",
+        "source_unavailable",
+        "archive_entry_ids",
+        "source_audit",
+        "source_kind='official'",
+        "limit 100",
+        "octet_length(payload::text)>120000",
+        "to_regrole('service_role')",
+        "set_config('votus_projections.workspace_query_owner'",
+    ):
+        assert required in normalized
+    schools = normalized.split("create function workspace_api.official_schools", 1)[1]
+    schools = schools.split("create function workspace_api.official_provenance", 1)[0]
+    assert schools.index("authorized_section_scopes()") < schools.index(
+        "results_exploration_schools("
+    )
+    reference = normalized.split("create function workspace_api.official_reference", 1)[1]
+    reference = reference.split("create function workspace_api.official_provenance", 1)[0]
+    assert "rr.source_kind='official'" in reference and "limit 100" in reference
+    assert "j.seccion_code=p_seccion_code" in reference and "fiscalizacion" not in reference
+    provenance = normalized.split("create function workspace_api.official_provenance", 1)[1]
+    assert provenance.index("workspace_api.official_result(") < provenance.index(
+        "public.archive_entry"
+    )
+    for private_field in ("source_url", "archived_path", "notes"):
+        assert private_field not in provenance
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert (
+        down.index("drop function workspace_api.official_provenance")
+        < down.index("drop function workspace_api.official_reference")
+        < down.index("drop function workspace_api.official_schools")
+    )
+    proof_text = (SQL_TESTS / "workspace_authorized_projections.sql").read_text(encoding="utf-8")
+    proof = " ".join(proof_text.lower().split())
+    assert "select plan(15)" in proof and "from pg_proc" in proof and "archive_entry_pkey" in proof
+    for runtime_fixture in ("insert into", "set local role authenticated", "request.jwt.claims"):
+        assert runtime_fixture in proof
+    assert "authorized official schools succeeds through the query owner" in proof
+    assert "canonical_party_id" in proof
+
+
+def test_authorized_school_party_lookup_is_exact_least_privilege_and_reversible() -> None:
+    version = "20260827220000"
+    forward = " ".join(_sql(f"{version}_authorized_school_party_lookup.sql").split())
+    down = " ".join(
+        (MIGRATIONS / "down" / f"{version}_authorized_school_party_lookup.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert forward.startswith("begin;") and forward.endswith("commit;")
+    assert (
+        "grant select on public.party_mapping, public.party_canonical to workspace_query_owner"
+    ) in forward
+    for table in ("party_mapping", "party_canonical"):
+        policy = f"workspace_query_owner_{table}_select"
+        assert (
+            f"create policy {policy} on public.{table} for select "
+            "to workspace_query_owner using (true)"
+        ) in forward
+        assert f"drop policy {policy} on public.{table}" in down
+    assert "authenticated" not in forward
+    assert " to anon" not in forward and " from anon" not in forward
+    assert "service_role" not in forward
+    assert "alter table" not in forward and "owner to" not in forward
+    assert (
+        "revoke select on public.party_mapping, public.party_canonical from workspace_query_owner"
+    ) in down
+    assert down.startswith("begin;") and down.endswith("commit;")
+
+
+def test_authorized_review_facade_is_scope_shared_bounded_and_reversible() -> None:
+    version = "20260827040000"
+    forward = _sql(f"{version}_authorized_fiscal_review.sql")
+    down = (
+        (MIGRATIONS / "down" / f"{version}_authorized_fiscal_review.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    normalized = " ".join(forward.split())
+    for required in (
+        "workspace_private.authorized_section_scopes()",
+        "workspace_private.review_item_is_authorized(",
+        "workspace_api.review_items(",
+        "visible as materialized",
+        "limit p_limit offset p_offset",
+        "pagination_bound",
+        "security_invoker=true",
+        "review_item_authorized_unresolved_idx",
+        "to_regrole('service_role')",
+        "to authenticated",
+    ):
+        assert required in normalized
+    assert normalized.count("using(workspace_private.review_item_is_authorized(id))") == 2
+    api = normalized.split("create function workspace_api.review_items", 1)[1]
+    assert "resolved_at is null" in api and "octet_length(payload::text)>120000" in api
+    assert "subject_ref" not in api and "note" not in api and "source_kind" not in api
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert down.index("drop function workspace_api.review_items") < down.index(
+        "drop function workspace_private.review_item_is_authorized"
+    )
+    proof = (
+        (SQL_TESTS / "workspace_authorized_fiscal_review.sql").read_text(encoding="utf-8").lower()
+    )
+    assert "select plan(19)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
+    assert "insert into public.review_item" in proof
+    assert "set local role workspace_platform_admin" in proof
+    assert "request.jwt.claims" not in proof
+
+
+def test_platform_review_operator_access_is_closed_bounded_and_reversible() -> None:
+    version = "20260827160000"
+    forward = _sql(f"{version}_platform_review_operator_access.sql")
+    down = (
+        (MIGRATIONS / "down" / f"{version}_platform_review_operator_access.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    normalized = " ".join(forward.split())
+    for required in (
+        "revoke select on table public.review_item,public.review_item_unresolved_count",
+        "drop policy review_item_authenticated_read",
+        "workspace_private.platform_review_items(",
+        "tenant_scope_state='platform_only'",
+        "category_counts",
+        "reason_counts",
+        "pagination_bound",
+        "octet_length(payload::text)>8192",
+        "to workspace_platform_admin",
+        "review_item_platform_unresolved_idx",
+    ):
+        assert required in normalized
+    platform_function = normalized.split(
+        "create function workspace_private.platform_review_items", 1
+    )[1]
+    assert "subject_ref" not in platform_function
+    assert "workspace_api.review_items" not in normalized and "record_review_item" not in normalized
+    assert normalized.count("drop policy") == 1
+    assert down.startswith("begin;") and down.rstrip().endswith("commit;")
+    assert "drop function workspace_private.platform_review_items" in down
+    restored_select = (
+        "grant select on public.review_item,public.review_item_unresolved_count to authenticated"
+    )
+    assert restored_select in down
+    assert "using(workspace_private.review_item_is_authorized(id))" in "".join(down.split())
+
+
+def test_legacy_results_public_contract_cutover_is_exact_and_reversible() -> None:
+    forward_paths = tuple(MIGRATIONS.glob("*_revoke_legacy_results_public_contract.sql"))
+    down_paths = tuple(
+        (MIGRATIONS / "down").glob("*_revoke_legacy_results_public_contract.down.sql")
+    )
+    assert len(forward_paths) == 1, "the generated public-contract cutover migration is required"
+    assert len(down_paths) == 1, "the matching predecessor-only down migration is required"
+
+    forward = " ".join(forward_paths[0].read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_paths[0].read_text(encoding="utf-8").lower().split())
+    tables = (
+        "jurisdiction",
+        "election",
+        "category",
+        "result_row",
+        "jurisdiction_crosswalk",
+        "mesa_crosswalk",
+        "fiscalizacion_mesa_identity",
+        "archive_entry",
+        "party_canonical",
+        "list_identity",
+        "party_mapping",
+        "review_item",
+        "review_item_unresolved_count",
+    )
+    functions = (
+        "results_exploration_party_jurisdiction(text,integer,text,text,text,text)",
+        "results_exploration_reporting_level(text,text,text,text)",
+        "results_exploration_facets(uuid,uuid,text,text,text,text)",
+        "results_exploration_official(uuid,uuid,text,text,text,text,integer,text)",
+        "results_exploration_coverage(uuid,uuid,text,text)",
+        "results_exploration_schools(uuid,uuid,text,text)",
+    )
+    policies = tuple(f"{table}_authenticated_read" for table in tables[:11])
+
+    assert forward.startswith("begin;") and forward.endswith("commit;")
+    assert down.startswith("begin;") and down.endswith("commit;")
+    for table in tables:
+        assert table in forward
+    for policy in policies:
+        table = policy.removesuffix("_authenticated_read")
+        assert f"drop policy {policy} on public.{table}" in forward
+        assert f"create policy {policy}" in down
+    for function in functions:
+        assert function in forward
+        assert function in down
+    for preserved_role in ("etl_writer", "workspace_query_owner"):
+        assert f"from {preserved_role}" not in forward
+        assert f"to {preserved_role}" not in down
+    assert "to authenticated" in down
+    assert "to anon" not in down and "to service_role" not in down
+    assert "review_item_authenticated_read" not in down
+    assert "review_item_unresolved_count to authenticated" not in down

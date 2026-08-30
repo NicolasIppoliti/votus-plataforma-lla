@@ -174,11 +174,47 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 }
 
 const PBA_113_MIGRATION_VERSION = "20260824193650";
+const WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358";
+const WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116";
+const WORKSPACE_ADMIN_MIGRATION_VERSION = "20260825180048";
+const WORKSPACE_CONTEXT_MIGRATION_VERSION = "20260826033130";
+const WORKSPACE_SELECTION_MIGRATION_VERSION = "20260826050000";
+const STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION = "20260826120000";
+const AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION = "20260826160000";
+const AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION = "20260826200000";
+const AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION = "20260827000000";
+const AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION = "20260827040000";
+const AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION = "20260827112658";
+const AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION = "20260827130000";
+const PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION = "20260827160000";
+const AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION = "20260827170000";
+const AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION = "20260827200000";
+const AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION = "20260827220000";
+const LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION = "20260829032228";
+const BOUND_AUTHORIZED_RESULT_EVIDENCE_MIGRATION_VERSION = "20260829232200";
 const MIGRATION_VERSIONS = [
 	...Array.from({ length: 37 }, (_, index) =>
 		String(index + 1).padStart(4, "0"),
 	),
 	PBA_113_MIGRATION_VERSION,
+	WORKSPACE_FOUNDATION_MIGRATION_VERSION,
+	WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION,
+	WORKSPACE_ADMIN_MIGRATION_VERSION,
+	WORKSPACE_CONTEXT_MIGRATION_VERSION,
+	WORKSPACE_SELECTION_MIGRATION_VERSION,
+	STRUCTURED_REVIEW_SCOPE_MIGRATION_VERSION,
+	AUTHORIZED_OFFICIAL_FACETS_MIGRATION_VERSION,
+	AUTHORIZED_OFFICIAL_OPERATIONS_MIGRATION_VERSION,
+	AUTHORIZED_OFFICIAL_PROJECTIONS_MIGRATION_VERSION,
+	AUTHORIZED_FISCAL_REVIEW_MIGRATION_VERSION,
+	AUTHORIZED_FISCAL_COVERAGE_MIGRATION_VERSION,
+	AUTHORIZED_FISCAL_RESULT_MIGRATION_VERSION,
+	PLATFORM_REVIEW_OPERATOR_MIGRATION_VERSION,
+	AUTHORIZED_FISCALIZACION_FACETS_MIGRATION_VERSION,
+	AUTHORIZED_OFFICIAL_DRILLDOWN_FACETS_MIGRATION_VERSION,
+	AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION,
+	LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION,
+	BOUND_AUTHORIZED_RESULT_EVIDENCE_MIGRATION_VERSION,
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -261,6 +297,51 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/results_coverage_scope_binding.sql",
 		label: "disposable coverage-scope-binding pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_foundation.sql",
+		label: "disposable workspace-foundation pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_administration.sql",
+		label: "disposable workspace-administration pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_context_invalidation.sql",
+		label: "disposable workspace-context invalidation pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_review_scope.sql",
+		label: "disposable workspace-review-scope pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_facets.sql",
+		label: "disposable workspace-authorized-facets pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_operations.sql",
+		label: "disposable workspace-authorized-operations pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_projections.sql",
+		label: "disposable workspace-authorized-projections pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_fiscal_review.sql",
+		label: "disposable workspace-authorized-review pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_authorized_fiscal_coverage.sql",
+		label: "disposable workspace-authorized-coverage pgTAP",
 		timeoutMs: 120_000,
 	},
 ];

@@ -10,7 +10,8 @@ if (!storageState) throw new Error("VOTUS_E2E_STORAGE_STATE must be exported by 
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
-  fullyParallel: true,
+  fullyParallel: false,
+  workers: 1,
   reporter: [["list"], ["./e2e/release-gate-reporter.ts"]],
   globalSetup: "./e2e/global-setup.ts",
   globalTeardown: "./e2e/global-teardown.ts",

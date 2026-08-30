@@ -64,6 +64,51 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
   };
   return { scope, seed };
 }
+export function comparisonFixture(spec: DataScenarioSpec) {
+  const identity = resultScenarioIdentity(spec);
+  const party = identity.comparisonParty;
+  if (identity.scenario !== "comparison" || identity.electionIds.length !== 2 ||
+      identity.archiveEntryIds.length !== 2 || !party || party.listIds.length !== 2 ||
+      party.mappingIds.length !== 2) throw new Error("comparison scenario identity is incomplete");
+  const seed: ResultFixtureSeed = {
+    category: { id: identity.categoryId, name: identity.categoryName },
+    jurisdictions: [{
+      id: identity.jurisdictionId,
+      distrito_code: identity.distritoCode,
+      distrito_name: "Buenos Aires",
+      seccion_code: identity.seccionCode,
+      seccion_name: "Exact comparison section",
+    }],
+    elections: identity.electionIds.map((id, index) => ({
+      id,
+      year: identity.electionYears[index]!,
+      round: identity.electionRounds[index]!,
+    })),
+    archiveEntries: archiveEntries(identity.archiveEntryIds, -1),
+    partyCanonical: { id: party.canonicalPartyId, display_name: party.displayName },
+    partyMappings: identity.electionYears.map((year, index) => ({
+      id: party.mappingIds[index]!,
+      year,
+      jurisdiction: party.jurisdiction,
+      category: identity.categoryName,
+      list_id: party.listIds[index]!,
+      canonical_party_id: party.canonicalPartyId,
+      source: spec,
+    })),
+    rows: identity.electionIds.map((electionId, index) => ({
+      election_id: electionId,
+      jurisdiction_id: identity.jurisdictionId,
+      category_id: identity.categoryId,
+      granularity: "seccion",
+      list_id: party.listIds[index]!,
+      votes: index === 0 ? 10_000 : 12_000,
+      archive_entry_id: identity.archiveEntryIds[index]!,
+      source_row_index: 0,
+      source_kind: "official",
+    })),
+  };
+  return { identity, seed };
+}
 export function coverageFixture(spec: DataScenarioSpec) {
   const identity = resultScenarioIdentity(spec);
   if (identity.scenario !== "fiscalizacion" || identity.jurisdictionIds.length !== 2 ||

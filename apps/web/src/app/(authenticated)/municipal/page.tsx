@@ -1,27 +1,16 @@
 import type { ReactNode } from "react";
-import { redirect } from "next/navigation";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
-import { ProvenanceLink } from "@/components/ProvenanceLink";
 import {
-  createResultsRepository,
-  fetchSourceRefs,
-  type BaseQuery,
-  PartyMappingReadError,
-  type PartyMappingContext,
-  type OkResultsQueryResponse,
-  type ResultsRepository,
   describeExcluded,
-  fetchElectionYear,
   tallyByKind,
+  type ExcludedByKind,
+  type ResultRow,
   unmappedByListId,
   votesByParty,
-} from "@/lib/fiscalizacion/repository";
-import type { ExcludedByKind, YearLookup } from "@/lib/fiscalizacion/repository";
-import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+} from "@/lib/results/result-rows";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
-import type { SourceRef } from "@/lib/results/types";
 import {
   jurisdictionTotalLevel,
   mixedGranularityReason,
@@ -29,31 +18,20 @@ import {
   unrecognizedLevels,
 } from "@/lib/results/granularity";
 import {
-  PARTY_FAMILY,
-  pinnedCategoryId,
-  servedJurisdictionId,
-} from "@/lib/results/party-family";
+  loadMunicipalOfficialEvidence, MUNICIPAL_JURISDICTION_ID,
+  type MunicipalOfficialEvidence,
+  type OfficialProvenanceMetadata,
+} from "@/lib/workspace/official-evidence";
 
-/**
- * Phase 16c: `curated/party_map.yaml`'s `coronel_rosales_municipal`
- * mappings (2025 CONCEJALES, list 2206 = LLA+PRO alliance) were loaded
- * into `party_mapping` in Phase 15 but no route ever read them — only the
- * national DIPUTADO NACIONAL path (`/fiscalizacion`) was wired. Same
- * shape this change has hit eight times: shipped correct, tested,
- * unreachable code.
- */
-export const MUNICIPAL_PARTY_CONTEXT: PartyMappingContext = {
-  year: 2025,
-  jurisdiction: PARTY_FAMILY.MUNICIPAL,
-  category: "CONCEJALES",
-};
-
-export type MunicipalQuery = BaseQuery;
 export type MunicipalView =
-  // `OkResultsQueryResponse`, not the wider `ResultsQueryResponse`:
-  // `loadMunicipalView` only calls `queryOfficial`, which cannot refuse, so
-  // the opt-in variant was a status nothing here could produce.
-  | OkResultsQueryResponse
+  // The authorized adapter cannot produce an unofficial opt-in state.
+  | {
+      status: "ok";
+      rows: ResultRow[];
+      excluded: ExcludedByKind;
+      partyMappingConfigured: boolean;
+      sourceAudit?: ExcludedByKind;
+    }
   | {
       status: "read_failed";
       reason: string;
@@ -86,42 +64,22 @@ export type MunicipalView =
       /** Archive entries known before party mapping failed. */
       archiveEntryIds?: string[];
     };
+function auditByKind(entries: { kind: string; rows: number; votes: number }[]): ExcludedByKind { return entries.reduce<ExcludedByKind>((totals, { kind, rows, votes }) => ({ ...totals, [kind]: { rows: (totals[kind]?.rows ?? 0) + rows, votes: (totals[kind]?.votes ?? 0) + votes } }), {}); }
+export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOfficialEvidence, { status: "ok" }>, categoryId: string): MunicipalView {
+  const { result } = evidence; const excluded = auditByKind(result.sourceExclusions); const sourceAudit = auditByKind(result.sourceAudit);
+  if (result.sourceKind !== "official") return { status: "read_failed", reason: "la evidencia municipal no es de fuente oficial", excluded };
+  if (result.archiveEntryIds.length !== 1) return { status: "read_failed", reason: "la evidencia municipal no identifica una única entrada de archivo", archiveEntryIds: result.archiveEntryIds, excluded };
+  const archiveEntryId = result.archiveEntryIds[0]!;
+  return { status: "ok", rows: result.parties.map((party) => ({ jurisdictionId: MUNICIPAL_JURISDICTION_ID, categoryId,
+    listId: party.listId, votes: party.votes, sourceKind: "official", granularity: result.sourceGranularity,
+    requestedGranularity: result.level, archiveEntryId, partyName: party.displayName,
+    canonicalPartyId: party.canonicalPartyId })), excluded, sourceAudit, partyMappingConfigured: true };
+}
 
-/**
- * Reads through `ResultsRepository.queryOfficial` ONLY — never a second
- * query path that could bypass the `source_kind = 'official'` default
- * (D9.1 threat-matrix control). Municipal results are always official;
- * there is no fiscalización coverage opt-in on this route.
- */
-export async function loadMunicipalView(
-  repository: ResultsRepository,
-  query: MunicipalQuery,
-): Promise<MunicipalView> {
-  // A denied read RAISES: `SupabaseRowSource.fetchRows` throws on a Postgres
-  // error, so RLS denial never arrives as a non-ok status. `compare` and
-  // `drilldown` both catch it; this route let it escape into the framework's
-  // error boundary instead of the stated refusal.
-  try {
-    return await repository.queryOfficial(query, MUNICIPAL_PARTY_CONTEXT);
-  } catch (error) {
-    if (error instanceof PartyMappingReadError) {
-      return {
-        status: "read_failed",
-        reason: `No se pudo resolver el mapeo municipal de partidos: ${error.message}`,
-        excluded: error.excluded,
-        unsummable: mixedGranularityReason(error.rows),
-        totalRows: error.rows.length,
-        unrecognized: unrecognizedLevels(error.rows),
-        partyMappingConfigured: true,
-        withoutListId: tallyByKind(error.rows.filter((row) => row.listId === null)),
-        archiveEntryIds: [...new Set(error.rows.map((row) => row.archiveEntryId))],
-      };
-    }
-    return {
-      status: "read_failed",
-      reason: `No se pudo completar la lectura municipal: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+type MunicipalProvenance = Omit<OfficialProvenanceMetadata, "status"> & { status?: string; url?: string };
+function OfficialProvenance({ sources }: { sources: MunicipalProvenance[] }): ReactNode {
+  return <ul aria-label="procedencia">{sources.map((source) => <li key={source.archiveEntryId}><span>{source.archiveEntryId}</span>{" — sha256: "}
+    {source.sha256 ? <code>{source.sha256}</code> : <strong role="alert">sin hash — esta entrada no puede verificarse</strong>}{" — descargada el "}<time dateTime={source.fetchedAt}>{source.fetchedAt}</time>{source.status ? <> — estado: {source.status}</> : null}</li>)}</ul>;
 }
 
 /**
@@ -146,7 +104,7 @@ export async function loadMunicipalView(
  */
 export function renderMunicipalView(
   view: MunicipalView,
-  sources: Parameters<typeof ProvenanceLink>[0]["sources"] = [],
+  sources: MunicipalProvenance[] = [],
   /** Archive entries backing these figures that have no source record. */
   missingProvenance: string[] = [],
 ): ReactNode {
@@ -179,7 +137,7 @@ export function renderMunicipalView(
         {missingProvenance.length > 0 ? (
           <p role="alert">No se pudo verificar la procedencia de {missingProvenance.join(", ")}.</p>
         ) : null}
-        <ProvenanceLink sources={sources} />
+        <OfficialProvenance sources={sources} />
       </main>
     );
   }
@@ -196,6 +154,7 @@ export function renderMunicipalView(
         forman parte de ninguna cifra de esta página.
       </p>
     ) : null;
+  const sourceAudit = describeExcluded(view.sourceAudit ?? {}); const sourceAuditNote = sourceAudit ? <p role="note">Auditoría de fuente: {sourceAudit}.</p> : null;
 
   // PATH 3. See `drilldown`: unreachable while the repository filter holds,
   // live the moment it does not.
@@ -248,13 +207,9 @@ export function renderMunicipalView(
         />
         <UnorderableLevels entries={unrecognized} />
       {missingProvenance.length > 0 ? (
-        <p role="alert">
-          {missingProvenance.length} entrada(s) de archivo que respaldan estas
-          cifras no se resolvieron a un registro de fuente (
-          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
-        </p>
+        <p role="alert">{missingProvenance.length} entrada(s) sin fuente verificable: {missingProvenance.join(", ")}.</p>
       ) : null}
-      <ProvenanceLink sources={sources} />
+      <OfficialProvenance sources={sources} />
       </main>
     );
   }
@@ -272,13 +227,14 @@ export function renderMunicipalView(
         totalRows={rows.length} unsummable={unsummable} mappingConfigured={view.partyMappingConfigured} />
       <UnorderableLevels entries={unrecognized} />
       {missingProvenance.length > 0 ? <p role="alert">No se pudo verificar la procedencia de {missingProvenance.join(", ")}.</p> : null}
-      <ProvenanceLink sources={sources} />
+      <OfficialProvenance sources={sources} />
     </main>;
   }
 
   return (
     <main>
       <h1>Resultados municipales (Concejales)</h1>
+      {sourceAuditNote}
       {excludedNote}
       <UnmappedListIds
         entries={unmapped.entries}
@@ -331,7 +287,7 @@ export function renderMunicipalView(
             ))}
           </ul>
           )}
-          <ProvenanceLink sources={sources} />
+          <OfficialProvenance sources={sources} />
         </>
       )}
     </main>
@@ -350,10 +306,7 @@ interface MunicipalPageProps {
 
 /**
  * Authenticated operator route for PBA municipal (Concejales) results.
- * RSC, server-only reads — reaches data ONLY through
- * `repository.queryOfficial()` via `loadMunicipalView`. Its dashboard card
- * keeps the prepared route discoverable without presenting a context-dependent
- * request as a primary-navigation destination.
+ * Production figures come only from the workspace-authorized official bundle.
  */
 export default async function MunicipalPage({
   searchParams,
@@ -380,57 +333,15 @@ export default async function MunicipalPage({
   const legacyPartyFamily = stringParam(params, "partyJurisdiction");
   const legacyPartyCategory = stringParam(params, "partyCategory");
   const configuredElectionId = process.env["MUNICIPAL_ELECTION_ID"] || undefined;
-  const served = servedJurisdictionId(PARTY_FAMILY.MUNICIPAL);
-  const categoryId = pinnedCategoryId("MUNICIPAL");
+  const categoryId = process.env["MUNICIPAL_CATEGORY_ID"] || undefined;
 
-  if (served.status !== "ok" || !configuredElectionId || !categoryId) {
-    return (
-      <main>
-        <h1>Municipal (Concejales)</h1>
-        <p role="alert">
-          Se rechazó la solicitud: CORONEL_ROSALES_JURISDICTION_ID,
-          MUNICIPAL_ELECTION_ID y MUNICIPAL_CATEGORY_ID deben estar configurados.
-        </p>
-      </main>
-    );
+  if (!configuredElectionId || !categoryId) {
+    return municipalRefusal("MUNICIPAL_ELECTION_ID y MUNICIPAL_CATEGORY_ID deben estar configurados.");
   }
   if (electionId && electionId !== configuredElectionId)
     return municipalRefusal(<>esta ruta solo ofrece la elección municipal configurada; se recibió {electionId}.</>);
-  if (legacyJurisdictionId && legacyJurisdictionId !== served.jurisdictionId)
-    return municipalRefusal(<>la jurisdicción heredada {legacyJurisdictionId} no coincide con la configurada.</>);
-  if (legacyCategoryId && legacyCategoryId !== categoryId)
-    return municipalRefusal(<>la categoría heredada {legacyCategoryId} no coincide con CONCEJALES.</>);
-  if (legacyPartyFamily || legacyPartyCategory)
-    return municipalRefusal("la familia y la categoría del mapeo se derivan de esta ruta y no se aceptan como parámetros.");
-
-  // From the `election` ROW. Parsing the id string worked for a curated slug
-  // and never for the uuid the database stores, so this route refused every
-  // real request while the year sat in a column beside the id.
-  const supabaseForYear = await createSupabaseServerClient();
-  let year: YearLookup;
-  try {
-    year = await fetchElectionYear(supabaseForYear, configuredElectionId);
-  } catch (error) {
-    return (
-      <main>
-        <h1>Municipal (Concejales)</h1>
-        <p role="alert">
-          Se rechazó la solicitud: {error instanceof Error ? error.message : String(error)}
-        </p>
-      </main>
-    );
-  }
-  if (year.status !== "ok" || year.year !== MUNICIPAL_PARTY_CONTEXT.year) {
-    return (
-      <main>
-        <h1>Municipal (Concejales)</h1>
-        <p role="alert">
-          Se rechazó la solicitud: MUNICIPAL_ELECTION_ID no es de 2025 o no
-          identifica una elección legible. No se aplicará el mapeo CONCEJALES.
-        </p>
-      </main>
-    );
-  }
+  if (legacyJurisdictionId || legacyCategoryId || legacyPartyFamily || legacyPartyCategory)
+    return municipalRefusal(<>la sección 02/027, la categoría y la elección son fijas; no se aceptan parámetros de identidad o autorización: {legacyJurisdictionId} {legacyCategoryId}.</>);
 
   if (!electionId) {
     return <main className="page-shell"><div className="shell-container">
@@ -444,45 +355,22 @@ export default async function MunicipalPage({
       </form>
     </div></main>;
   }
-  if (legacyJurisdictionId || legacyCategoryId) {
-    redirect(`/municipal?electionId=${encodeURIComponent(configuredElectionId)}`);
-  }
 
-  const jurisdictionId = served.jurisdictionId;
-  const repository = await createResultsRepository();
-  const view = await loadMunicipalView(repository, { electionId, jurisdictionId, categoryId });
+  const evidence = await loadMunicipalOfficialEvidence();
+  if (evidence.status === "denied")
+    return municipalRefusal("El espacio de trabajo no autoriza esta sección municipal.");
+  if (evidence.status === "empty")
+    return <main><h1>Resultados municipales (Concejales)</h1><p>No hay resultados oficiales autorizados para esta sección.</p></main>;
+  if (evidence.status === "unavailable")
+    return municipalRefusal("La evidencia oficial autorizada no está disponible.");
+  if (evidence.status === "malformed")
+    return municipalRefusal("La evidencia oficial autorizada tiene un formato inválido.");
+  if (evidence.status === "truncated")
+    return municipalRefusal("La evidencia oficial autorizada fue truncada; no se muestran cifras parciales.");
+  if (evidence.status !== "ok") return municipalRefusal("La evidencia oficial autorizada no es utilizable.");
 
-  let sources: SourceRef[];
-  let missingProvenance: string[] = [];
-  try {
-    const archiveEntryIds = view.status === "ok"
-      ? [...new Set(view.rows.map((row) => row.archiveEntryId))]
-      : (view.archiveEntryIds ?? []);
-    if (archiveEntryIds.length === 0) {
-      sources = [];
-    } else {
-      const supabase = await createSupabaseServerClient();
-      const refs = await fetchSourceRefs(supabase, archiveEntryIds);
-      sources = refs.sources;
-      missingProvenance = refs.missing;
-    }
-  } catch (error) {
-    return renderMunicipalView({
-      ...(view.status === "ok"
-        ? {
-            excluded: view.excluded,
-            unmapped: unmappedByListId(view.rows).entries,
-            unsummable: mixedGranularityReason(view.rows),
-            totalRows: view.rows.length,
-            unrecognized: unrecognizedLevels(view.rows),
-            partyMappingConfigured: view.partyMappingConfigured,
-            withoutListId: unmappedByListId(view.rows).withoutListId,
-          }
-        : view),
-      status: "read_failed",
-      reason: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  return renderMunicipalView(view, sources, missingProvenance);
+  return renderMunicipalView(
+    municipalViewFromOfficialEvidence(evidence, categoryId),
+    evidence.provenance,
+  );
 }

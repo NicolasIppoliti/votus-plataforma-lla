@@ -79,6 +79,15 @@ describe("parallel scenario ownership", () => {
       ...party.mappingIds.map((id) => `party_mapping:${id}`),
       `party_canonical:${party.canonicalPartyId}`,
     ]);
+    expect(planResultCleanup(spec)).toEqual([
+      ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
+      ...party.mappingIds.map((id) => `party_mapping:${id}`),
+      `party_canonical:${party.canonicalPartyId}`,
+      ...identity.electionIds.map((id) => `election:${id}`),
+      ...identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
+      ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
+      `category:${identity.categoryId}`,
+    ]);
     for (const [index, archiveEntryId] of identity.archiveEntryIds.entries()) {
       expect(planResultNaturalKeys(spec)).toContain(
         resultNaturalKey({
