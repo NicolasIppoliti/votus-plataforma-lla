@@ -79,10 +79,22 @@ function sameFacet(left: FacetOption, right: FacetOption): boolean {
 
 function commonFacets(left: FacetOption[], right: FacetOption[]): FacetOption[] {
   const rightByCode = new Map(right.map((option) => [option.code, option]));
-  return left.filter((option) => {
+  const common: FacetOption[] = [];
+  for (const option of left) {
     const peer = rightByCode.get(option.code);
-    return peer !== undefined && sameFacet(option, peer);
-  });
+    if (peer === undefined) continue;
+    if (sameFacet(option, peer)) {
+      common.push(option);
+      continue;
+    }
+    common.push({
+      code: option.code,
+      name: null,
+      nameStatus: "conflict",
+      nameVariantCount: Math.max(2, option.nameVariantCount, peer.nameVariantCount),
+    });
+  }
+  return common;
 }
 
 function optionLabel(option: FacetOption): string {
