@@ -829,8 +829,8 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         for sql in (semantic_sql, plan_sql)
         for count in re.findall(r"select\s+plan\((\d+)\);", sql)
     ]
-    assert phase_plans == [16, 15]
-    assert sum(phase_plans) == 31
+    assert phase_plans == [16, 17]
+    assert sum(phase_plans) == 33
 
     for required in (
         "results_exploration_facets",
@@ -997,6 +997,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "20260825165116_organization_workspace_authorization_facts.down.sql",
         "\\ir ../migrations/down/20260825144358_organization_workspace_expand.down.sql",
         "\\ir ../migrations/down/20260824193650_map_pba_113_party_jurisdictions.down.sql",
+        "\\ir ../migrations/down/0038_optimize_results_exploration_schools.down.sql",
         "\\ir ../migrations/down/0037_add_selector_name_canonical_fallback.down.sql",
         "\\ir ../migrations/down/0036_map_pba_party_jurisdictions.down.sql",
         "\\ir ../migrations/down/0035_reject_partial_pba_district_totals.down.sql",
@@ -1025,6 +1026,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/0035_reject_partial_pba_district_totals.sql",
         "\\ir ../migrations/0036_map_pba_party_jurisdictions.sql",
         "\\ir ../migrations/0037_add_selector_name_canonical_fallback.sql",
+        "\\ir ../migrations/0038_optimize_results_exploration_schools.sql",
         "\\ir ../migrations/20260824193650_map_pba_113_party_jurisdictions.sql",
         "\\ir ../migrations/20260825144358_organization_workspace_expand.sql",
         "\\ir ../migrations/20260825165116_organization_workspace_authorization_facts.sql",
@@ -1058,7 +1060,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "57 as migration_inventory_count",
+        "58 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",
@@ -1136,6 +1138,55 @@ def test_0029_scopes_official_exploration_before_row_functions() -> None:
     assert "drop index" not in down
     assert "drop function results_exploration_official_0020" not in down
     assert len(down_path.read_text(encoding="utf-8").splitlines()) <= 15
+
+
+def test_0038_splits_school_sources_and_restores_the_exact_predecessor() -> None:
+    forward_path = MIGRATIONS / "0038_optimize_results_exploration_schools.sql"
+    down_path = MIGRATIONS / "down" / "0038_optimize_results_exploration_schools.down.sql"
+
+    assert forward_path.exists(), "0038 school-exploration optimization is required"
+    assert down_path.exists(), "0038 school-exploration down migration is required"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    assert "create index" not in forward
+    schools = forward.split("create or replace function results_exploration_schools", 1)[1]
+    official_scope = schools.split("with official_scoped as materialized", 1)[1].split(
+        "), exclusion_groups", 1
+    )[0]
+    assert "rr.source_kind = 'official'" in official_scope
+    assert "rr.source_kind is distinct from 'official'" not in official_scope
+    source_audit = schools.split("with non_official_scoped as materialized", 1)[1].split(
+        "if complete_school_count = 0", 1
+    )[0]
+    assert "rr.source_kind is distinct from 'official'" in source_audit
+    assert "rr.source_kind = 'official'" not in source_audit
+    payload_scope = schools.rsplit("with scoped as materialized", 1)[1].split(
+        "), identified as", 1
+    )[0]
+    for predicate in (
+        "rr.source_kind = 'official'",
+        "rr.granularity = 'mesa'",
+        "j.circuito_code is not null",
+        "j.establecimiento_code is not null",
+        "j.mesa_code is not null",
+    ):
+        assert predicate in payload_scope
+    identified = schools.split("), identified as", 1)[1].split("), party_groups", 1)[0]
+    assert "source_kind = 'official'" not in identified
+    assert "granularity = 'mesa'" not in identified
+
+    predecessor = (
+        _sql("0022_results_exploration_scale.sql")
+        .lower()
+        .split("create or replace function results_exploration_schools", 1)[1]
+        .split("revoke all on function results_exploration_schools", 1)[0]
+    )
+    restored = (
+        down_path.read_text(encoding="utf-8")
+        .lower()
+        .split("create or replace function results_exploration_schools", 1)[1]
+        .split("commit;", 1)[0]
+    )
+    assert " ".join(restored.split()) == " ".join(predecessor.split())
 
 
 def test_0027_adds_only_the_reversible_unknown_preserving_partial_index() -> None:
@@ -1417,7 +1468,7 @@ def test_0030_adds_geography_first_district_fast_path_and_safe_rollback() -> Non
             "results_exploration_reporting_level(",
         )
     )
-    assert "select plan(15)" in plan_proof
+    assert "select plan(17)" in plan_proof
     assert "selected_shapes<>1" in semantic_proof
 
 
@@ -1959,13 +2010,38 @@ def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -
     for replica in ("explain", "as materialized", "cross join lateral"):
         assert replica not in block
 
-    assert "select plan(15);" in scale
+    school_block = statements.split("do $$ declare target_jurisdictions", 1)[1].split("end $$;", 1)[
+        0
+    ]
+    school_call = school_block.index("results_exploration_schools(")
+    for before in (
+        "school_seq_before :=",
+        "school_official_before :=",
+        "school_non_official_before :=",
+    ):
+        assert school_block.index(before) < school_call
+    for after in (
+        "school_seq_after :=",
+        "school_official_after :=",
+        "school_non_official_after :=",
+    ):
+        assert school_block.index(after) > school_call
+    assert school_block.count("results_exploration_schools(") == 1
+    assert "result_row_official_district_scope_idx" in school_block
+    assert "result_row_non_official_scope_idx" in school_block
+
+    assert "select plan(17);" in scale
     # One public wrapper invocation dispatches once to the batched core. The small physical-scan
     # allowance accommodates planner/parallel shape while still rejecting both no access and the
     # old scan-per-jurisdiction algorithm.
     assert "index_scans between 1 and 4" in scale
     assert "index_scans >= jurisdiction_count" not in scale
     assert "table_scans = 0" in scale
+    assert "target_jurisdictions>0" in scale
+    assert "official_index_scans between 1 and target_jurisdictions*3" in scale
+    assert "non_official_index_scans between 1 and target_jurisdictions" in scale
+    assert "official_index_scans between 1 and 12" not in scale
+    assert "non_official_index_scans between 1 and 4" not in scale
 
 
 _WORKSPACE_ROLES = (
