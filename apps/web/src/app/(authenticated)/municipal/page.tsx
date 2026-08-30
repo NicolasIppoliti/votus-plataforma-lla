@@ -66,10 +66,21 @@ export type MunicipalView =
     };
 function auditByKind(entries: { kind: string; rows: number; votes: number }[]): ExcludedByKind { return entries.reduce<ExcludedByKind>((totals, { kind, rows, votes }) => ({ ...totals, [kind]: { rows: (totals[kind]?.rows ?? 0) + rows, votes: (totals[kind]?.votes ?? 0) + votes } }), {}); }
 export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOfficialEvidence, { status: "ok" }>, categoryId: string): MunicipalView {
-  const { result } = evidence; const excluded = auditByKind(result.sourceExclusions); const sourceAudit = auditByKind(result.sourceAudit);
+  const { result } = evidence;
+  const excluded = auditByKind(result.sourceExclusions);
   if (result.sourceKind !== "official") return { status: "read_failed", reason: "la evidencia municipal no es de fuente oficial", excluded };
+  const officialAudit = result.sourceAudit[0];
+  const partyVotes = result.parties.reduce((sum, party) => sum + party.votes, 0);
+  if (
+    result.sourceAudit.length !== 1 ||
+    officialAudit?.kind !== "official" ||
+    officialAudit.rows <= 0 ||
+    officialAudit.votes !== result.totalVotes ||
+    partyVotes !== result.totalVotes
+  ) return { status: "read_failed", reason: "la auditoría oficial municipal no coincide con las cifras autorizadas", excluded };
   if (result.archiveEntryIds.length !== 1) return { status: "read_failed", reason: "la evidencia municipal no identifica una única entrada de archivo", archiveEntryIds: result.archiveEntryIds, excluded };
   const archiveEntryId = result.archiveEntryIds[0]!;
+  const sourceAudit = auditByKind(result.sourceAudit);
   return { status: "ok", rows: result.parties.map((party) => ({ jurisdictionId: MUNICIPAL_JURISDICTION_ID, categoryId,
     listId: party.listId, votes: party.votes, sourceKind: "official", granularity: result.sourceGranularity,
     requestedGranularity: result.level, archiveEntryId, partyName: party.displayName,
@@ -105,8 +116,6 @@ function OfficialProvenance({ sources }: { sources: MunicipalProvenance[] }): Re
 export function renderMunicipalView(
   view: MunicipalView,
   sources: MunicipalProvenance[] = [],
-  /** Archive entries backing these figures that have no source record. */
-  missingProvenance: string[] = [],
 ): ReactNode {
   if (view.status !== "ok") {
     const carried = describeExcluded(
@@ -133,9 +142,6 @@ export function renderMunicipalView(
             {carried} se excluyeron por el filtro de fuente oficial antes de esta
             falla.
           </p>
-        ) : null}
-        {missingProvenance.length > 0 ? (
-          <p role="alert">No se pudo verificar la procedencia de {missingProvenance.join(", ")}.</p>
         ) : null}
         <OfficialProvenance sources={sources} />
       </main>
@@ -206,9 +212,6 @@ export function renderMunicipalView(
           mappingConfigured={view.partyMappingConfigured}
         />
         <UnorderableLevels entries={unrecognized} />
-      {missingProvenance.length > 0 ? (
-        <p role="alert">{missingProvenance.length} entrada(s) sin fuente verificable: {missingProvenance.join(", ")}.</p>
-      ) : null}
       <OfficialProvenance sources={sources} />
       </main>
     );
@@ -226,7 +229,6 @@ export function renderMunicipalView(
       <UnmappedListIds entries={unmapped.entries} withoutListId={unmapped.withoutListId}
         totalRows={rows.length} unsummable={unsummable} mappingConfigured={view.partyMappingConfigured} />
       <UnorderableLevels entries={unrecognized} />
-      {missingProvenance.length > 0 ? <p role="alert">No se pudo verificar la procedencia de {missingProvenance.join(", ")}.</p> : null}
       <OfficialProvenance sources={sources} />
     </main>;
   }
@@ -243,13 +245,6 @@ export function renderMunicipalView(
         unsummable={unsummable}
         mappingConfigured={view.partyMappingConfigured}
       />
-      {missingProvenance.length > 0 ? (
-        <p role="alert">
-          {missingProvenance.length} entrada(s) de archivo que respaldan estas
-          cifras no se resolvieron a un registro de fuente (
-          {missingProvenance.join(", ")}); esas cifras no se pueden rastrear.
-        </p>
-      ) : null}
       {unsummable !== null ? (
         <p role="alert">
           No hay cifras por partido: {unsummable}. Un total que duplica el
@@ -268,6 +263,9 @@ export function renderMunicipalView(
           granularity={totalLevel.granularity}
           {...(totalLevel.summedFrom !== undefined
             ? { summedFrom: totalLevel.summedFrom }
+            : {})}
+          {...(totalLevel.degradedFrom !== undefined
+            ? { degradedFrom: totalLevel.degradedFrom }
             : {})}
           {...(requestedLevel !== undefined && requestedLevel !== levels.granularity
             ? { requestedGranularity: requestedLevel }
