@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { WorkspaceSelection } from "@/lib/workspace/selection";
 
 interface WorkspaceSelectorProps { initialSelection: WorkspaceSelection; }
+interface WorkspaceSelectorSnapshot { activeOrganizationId: string | null; revision: number | null; status: WorkspaceSelection["status"]; }
 const messages: Record<string, string> = {
   conflict: "La organización cambió en otra pestaña. Actualizá la página e intentá de nuevo.",
   denied: "Ya no tenés acceso a esa organización.",
@@ -21,6 +22,14 @@ export function WorkspaceSelector({ initialSelection }: WorkspaceSelectorProps) 
   const [revision, setRevision] = useState(initialSelection.revision);
   const [message, setMessage] = useState(messages[initialSelection.status] ?? "");
   const [pending, startTransition] = useTransition();
+  const snapshot: WorkspaceSelectorSnapshot = { activeOrganizationId: initialSelection.activeOrganizationId, revision: initialSelection.revision, status: initialSelection.status };
+  const [previous, setPrevious] = useState(snapshot);
+  if (previous.activeOrganizationId !== snapshot.activeOrganizationId || previous.revision !== snapshot.revision || previous.status !== snapshot.status) {
+    setPrevious(snapshot);
+    if (previous.activeOrganizationId !== snapshot.activeOrganizationId) setSelected(snapshot.activeOrganizationId ?? "");
+    if (previous.revision !== snapshot.revision) setRevision(snapshot.revision);
+    if (previous.status !== snapshot.status) setMessage(messages[snapshot.status] ?? "");
+  }
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!selected || revision === null) return;

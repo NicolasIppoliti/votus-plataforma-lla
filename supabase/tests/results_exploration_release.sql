@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/20260829232200_bound_authorized_result_evidence.down.sql
 \ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql
 do $$ begin
   if not has_table_privilege('authenticated','public.jurisdiction','SELECT')
@@ -456,6 +457,7 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
   \quit 1
 \endif
 \ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql
+\ir ../migrations/20260829232200_bound_authorized_result_evidence.sql
 do $$ begin
   if exists(select from unnest(array['jurisdiction','election','category','result_row','jurisdiction_crosswalk','mesa_crosswalk','fiscalizacion_mesa_identity','archive_entry','party_canonical','list_identity','party_mapping','review_item','review_item_unresolved_count']) t, unnest(array['anon','authenticated','service_role']) r where to_regrole(r) is not null and has_table_privilege(r,'public.'||t,'SELECT'))
      or exists(select from pg_policies where schemaname='public' and policyname like '%_authenticated_read')
@@ -475,4 +477,4 @@ grant workspace_platform_admin to current_user;
 set local role workspace_platform_admin;
 \ir ../scripts/workspace_authority_status.sql
 rollback;
-select 'release-proof' as evidence, 56 as migration_inventory_count, '20260829032228-down,20260827220000-down,20260827200000-down,20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up,20260827200000-up,20260827220000-up,20260829032228-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;
+select 'release-proof' as evidence, 57 as migration_inventory_count, '20260829232200-down,20260829032228-down,20260827220000-down,20260827200000-down,20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up,20260827200000-up,20260827220000-up,20260829032228-up,20260829232200-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;

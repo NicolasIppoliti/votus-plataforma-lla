@@ -976,6 +976,7 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260829232200_bound_authorized_result_evidence.down.sql",
         "\\ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql",
         "\\ir ../migrations/down/20260827220000_authorized_school_party_lookup.down.sql",
         "\\ir ../migrations/down/20260827200000_authorized_official_drilldown_facets.down.sql",
@@ -1042,6 +1043,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827200000_authorized_official_drilldown_facets.sql",
         "\\ir ../migrations/20260827220000_authorized_school_party_lookup.sql",
         "\\ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql",
+        "\\ir ../migrations/20260829232200_bound_authorized_result_evidence.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1056,7 +1058,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "56 as migration_inventory_count",
+        "57 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",

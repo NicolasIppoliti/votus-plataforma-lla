@@ -29,6 +29,13 @@ function validBundle() {
   };
 }
 
+function resizeReference(bundle: ReturnType<typeof validBundle>, total: number): void {
+  const item = bundle.reference.items[0]!;
+  bundle.reference.items = Array.from({ length: Math.min(total, 200) }, (_, index) => ({ ...item, jurisdiction_id: `reference-${index + 1}`, mesa_code: index + 1 }));
+  bundle.reference.total = total;
+  bundle.reference.truncated = total > 200;
+}
+
 beforeEach(() => { mocks.client.mockReset().mockResolvedValue({});
   mocks.bundle.mockReset().mockResolvedValue(validBundle()); });
 
@@ -43,6 +50,14 @@ describe("loadAuthorizedOfficialDrilldownEvidence", () => {
     expect(evidence.status === "ok" ? [Object.keys(evidence.reference.sourceExclusions[0] ?? {}).sort(), Object.keys(evidence.provenance.sourceExclusions[0] ?? {}).sort()] : []).toEqual([["kind", "reason", "rows"], ["kind", "rows", "votes"]]);
     expect(evidence.status === "ok" ? Object.keys(evidence.provenance.items[0] ?? {}).sort() : []).toEqual(["archiveEntryId", "bytes", "capability", "fetchedAt", "mime", "sha256", "status"]);
     expect(mocks.bundle).toHaveBeenCalledWith({}, selection);
+  });
+
+  it("accepts 153 complete references and refuses the explicitly truncated 201st reference", async () => {
+    const complete = validBundle(); resizeReference(complete, 153); mocks.bundle.mockResolvedValueOnce(complete);
+    const evidence = await loadAuthorizedOfficialDrilldownEvidence(selection);
+    expect(evidence.status === "ok" ? evidence.reference.items.length : 0).toBe(153);
+    const oversized = validBundle(); resizeReference(oversized, 201); mocks.bundle.mockResolvedValueOnce(oversized);
+    await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({ status: "malformed" });
   });
 
   it.each([

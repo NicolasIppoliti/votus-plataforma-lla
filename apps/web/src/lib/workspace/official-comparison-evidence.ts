@@ -4,9 +4,11 @@ import { parseOfficialExploration, type ExplorationOk, type ExplorationParty, ty
 import { createSupabaseServerClient } from "../supabase/server-client";
 import { authorizedOfficialComparisonBundle } from "./context";
 
-const ITEM_LIMIT = 100, EXCLUSION_LIMIT = 20, SHA256 = /^[0-9a-f]{64}$/;
+const ITEM_LIMIT = 100, REFERENCE_LIMIT = 200, EXCLUSION_LIMIT = 20, SHA256 = /^[0-9a-f]{64}$/;
 const FORBIDDEN_PROVENANCE_KEYS = ["source", "source_url", "sourceUrl", "archived_path", "archivedPath", "notes", "url", "path"] as const;
-export const OFFICIAL_COMPARISON_EVIDENCE_STATUS = { OK: "ok", EMPTY: "empty", AUTHORIZATION_DENIED: "authorization_denied", UNAVAILABLE: "unavailable", PAYLOAD_TOO_LARGE: "payload_too_large", MALFORMED: "malformed" } as const;
+const OFFICIAL_COMPARISON_SIDE = { LEFT: "left", RIGHT: "right" } as const;
+type OfficialComparisonSide = (typeof OFFICIAL_COMPARISON_SIDE)[keyof typeof OFFICIAL_COMPARISON_SIDE];
+export const OFFICIAL_COMPARISON_EVIDENCE_STATUS = { OK: "ok", EMPTY: "empty", AUTHORIZATION_DENIED: "authorization_denied", UNAVAILABLE: "unavailable", PAYLOAD_TOO_LARGE: "payload_too_large", MALFORMED: "malformed", UNMAPPED_PARTIES: "unmapped_parties" } as const;
 type OfficialComparisonEvidenceStatus = (typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS)[keyof typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS];
 export interface OfficialComparisonReferenceItem { jurisdictionId: string; electionId: string; year: number; round: string; categoryId: string; categoryName: string; distritoCode: string; distritoName: string | null; seccionCode: string; seccionName: string | null; circuitoCode: string | null; circuitoName: string | null; establecimientoCode: string | null; establecimientoName: string | null; mesaCode: number | null; }
 export interface OfficialComparisonProvenanceItem { archiveEntryId: string; capability: string; mime: string; bytes: number | null; fetchedAt: string; status: "ok" | "error"; sha256: string | null; }
@@ -16,8 +18,10 @@ interface OfficialComparisonReferenceEvidence { items: OfficialComparisonReferen
 interface OfficialComparisonProvenanceEvidence { items: OfficialComparisonProvenanceItem[]; sourceExclusions: OfficialComparisonSourceExclusion[]; }
 export interface AuthorizedOfficialComparisonSideEvidence { result: ExplorationOk; reference: OfficialComparisonReferenceEvidence; provenance: OfficialComparisonProvenanceEvidence; }
 interface AuthorizedOfficialComparisonEvidenceOk { status: typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK; left: AuthorizedOfficialComparisonSideEvidence; right: AuthorizedOfficialComparisonSideEvidence; }
-interface AuthorizedOfficialComparisonEvidenceState { status: Exclude<OfficialComparisonEvidenceStatus, typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK>; }
-export type AuthorizedOfficialComparisonEvidence = AuthorizedOfficialComparisonEvidenceOk | AuthorizedOfficialComparisonEvidenceState;
+export interface OfficialComparisonUnmappedSide { side: OfficialComparisonSide; partyCount: number; totalVotes: number; }
+interface AuthorizedOfficialComparisonUnmapped { status: typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES; sides: OfficialComparisonUnmappedSide[]; }
+interface AuthorizedOfficialComparisonEvidenceState { status: Exclude<OfficialComparisonEvidenceStatus, typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK | typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES>; }
+export type AuthorizedOfficialComparisonEvidence = AuthorizedOfficialComparisonEvidenceOk | AuthorizedOfficialComparisonUnmapped | AuthorizedOfficialComparisonEvidenceState;
 type Raw = Record<string, unknown>;
 const record = (value: unknown): Raw | null => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Raw : null;
 const uint = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -29,10 +33,11 @@ function sameSet(left: readonly string[], right: readonly string[]): boolean { c
 function validSectionPair(left: OfficialSelection, right: OfficialSelection): boolean {
   return Boolean(left.seccionCode && right.seccionCode && left.distritoCode === right.distritoCode && left.seccionCode === right.seccionCode && left.requestedLevel === "seccion" && right.requestedLevel === "seccion" && left.circuitoCode === null && right.circuitoCode === null && left.establecimientoCode === null && right.establecimientoCode === null && left.mesaCode === null && right.mesaCode === null);
 }
-function canonicalParties(parties: ExplorationParty[]): boolean {
+function validPartyIdentities(parties: ExplorationParty[]): boolean {
   const ids = new Set<string>();
   for (const party of parties) {
-    if (party.identityStatus !== "canonical" || !party.canonicalPartyId || !text(party.canonicalPartyId) || !party.displayName || !text(party.displayName) || ids.has(party.canonicalPartyId)) return false;
+    if (party.identityStatus === "unmapped") continue;
+    if (!party.canonicalPartyId || !text(party.canonicalPartyId) || !party.displayName || !text(party.displayName) || ids.has(party.canonicalPartyId)) return false;
     ids.add(party.canonicalPartyId);
   }
   return parties.length > 0;
@@ -41,7 +46,7 @@ async function parseResult(value: Raw): Promise<ExplorationOk | null> {
   if (value["status"] !== "ok" || value["source_kind"] !== "official" || value["truncated"] !== false || !bounded(value["parties"], ITEM_LIMIT) || !bounded(value["source_audit"], 1) || !bounded(value["source_exclusions"], EXCLUSION_LIMIT) || !uniqueText(value["archive_entry_ids"])?.length) return null;
   try {
     const parsed = parseOfficialExploration(value);
-    return parsed.status === "ok" && parsed.level === "seccion" && canonicalParties(parsed.parties) ? parsed : null;
+    return parsed.status === "ok" && parsed.level === "seccion" && validPartyIdentities(parsed.parties) ? parsed : null;
   } catch { return null; }
 }
 function parseSourceExclusions(value: unknown): OfficialComparisonSourceExclusion[] | null {
@@ -55,7 +60,7 @@ function parseSourceExclusions(value: unknown): OfficialComparisonSourceExclusio
   return parsed;
 }
 function parseReference(value: Raw, selection: OfficialSelection, result: ExplorationOk): OfficialComparisonReferenceEvidence | null {
-  const items = bounded(value["items"], ITEM_LIMIT), rawExclusions = bounded(value["source_exclusions"], EXCLUSION_LIMIT);
+  const items = bounded(value["items"], REFERENCE_LIMIT), rawExclusions = bounded(value["source_exclusions"], EXCLUSION_LIMIT);
   if (value["status"] !== "ok" || value["authorization_status"] !== "authorized" || value["source_kind"] !== "official" || value["truncated"] !== false || !items?.length || !rawExclusions || !uint(value["total"]) || value["total"] !== items.length) return null;
   const sourceExclusions: OfficialComparisonReferenceExclusion[] = []; let previousKind = "";
   for (const item of rawExclusions) {
@@ -86,6 +91,10 @@ function parseProvenance(value: Raw, result: ExplorationOk): OfficialComparisonP
   }
   return { items: parsed, sourceExclusions };
 }
+function unmappedSummary(side: OfficialComparisonSide, result: ExplorationOk): OfficialComparisonUnmappedSide | null {
+  const parties = result.parties.filter((party) => party.identityStatus === "unmapped");
+  return parties.length === 0 ? null : { side, partyCount: parties.length, totalVotes: parties.reduce((total, party) => total + party.votes, 0) };
+}
 function failureStatus(bundle: Raw): AuthorizedOfficialComparisonEvidenceState | null {
   const parts = [record(bundle["comparison"]), record(bundle["leftReference"]), record(bundle["rightReference"]), record(bundle["leftProvenance"]), record(bundle["rightProvenance"])];
   if (parts.some((part) => part === null)) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
@@ -108,6 +117,9 @@ export async function loadAuthorizedOfficialComparisonEvidence(leftSelection: Of
     if (!leftReferenceRaw || !rightReferenceRaw || !leftProvenanceRaw || !rightProvenanceRaw) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
     const leftReference = parseReference(leftReferenceRaw, leftSelection, leftResult), rightReference = parseReference(rightReferenceRaw, rightSelection, rightResult), leftProvenance = parseProvenance(leftProvenanceRaw, leftResult), rightProvenance = parseProvenance(rightProvenanceRaw, rightResult);
     if (!leftReference || !rightReference || !leftProvenance || !rightProvenance) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
+    const unmappedSides = [unmappedSummary(OFFICIAL_COMPARISON_SIDE.LEFT, leftResult), unmappedSummary(OFFICIAL_COMPARISON_SIDE.RIGHT, rightResult)]
+      .filter((side): side is OfficialComparisonUnmappedSide => side !== null);
+    if (unmappedSides.length > 0) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES, sides: unmappedSides };
     return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK, left: { result: leftResult, reference: leftReference, provenance: leftProvenance }, right: { result: rightResult, reference: rightReference, provenance: rightProvenance } };
   } catch { return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNAVAILABLE }; }
 }

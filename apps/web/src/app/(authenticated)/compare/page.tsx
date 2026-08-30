@@ -9,6 +9,7 @@ import {
   OFFICIAL_COMPARISON_EVIDENCE_STATUS,
   loadAuthorizedOfficialComparisonEvidence,
   type AuthorizedOfficialComparisonSideEvidence,
+  type OfficialComparisonUnmappedSide,
 } from "@/lib/workspace/official-comparison-evidence";
 import {
   AuthorizedOfficialFacetsError,
@@ -202,6 +203,12 @@ function CompareSelector({
   );
 }
 
+function unmappedPartiesRefusal(sides: OfficialComparisonUnmappedSide[]): string {
+  const labels = { left: "lado izquierdo", right: "lado derecho" } as const;
+  const details = sides.map(({ side, partyCount, totalVotes }) => `${labels[side]}: ${partyCount} ${partyCount === 1 ? "partido" : "partidos"} sin mapear, ${totalVotes} votos`);
+  return `La comparación se rechazó porque contiene identidades partidarias sin mapear. ${details.join(". ")}. No se muestran cifras parciales.`;
+}
+
 function evidenceRefusal(status: string): string {
   if (status === OFFICIAL_COMPARISON_EVIDENCE_STATUS.AUTHORIZATION_DENIED) {
     return "No tiene autorización vigente para consultar toda la comparación.";
@@ -389,6 +396,9 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     categoryId: rightCategory.id,
   };
   const evidence = await loadAuthorizedOfficialComparisonEvidence(leftSelection, rightSelection);
+  if (evidence.status === OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES) {
+    return refusalPage(unmappedPartiesRefusal(evidence.sides));
+  }
   if (evidence.status !== OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK) {
     return refusalPage(evidenceRefusal(evidence.status));
   }

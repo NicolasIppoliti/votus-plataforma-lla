@@ -10,6 +10,7 @@ import { authorizedOfficialBundle } from "./context";
 import type { OfficialSelection } from "../../app/api/workspace/official/input";
 
 const ITEM_LIMIT = 100;
+const REFERENCE_LIMIT = 200;
 const SCHOOL_LIMIT = 500;
 const EXCLUSION_LIMIT = 20;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -159,7 +160,7 @@ async function parseDisplayedParts(result: Raw, schools: Raw, selection: Officia
 }
 
 function parseReference(value: Raw, selection: OfficialSelection): OfficialReferenceEvidence | null {
-  const items = bounded(value["items"], ITEM_LIMIT), exclusions = bounded(value["source_exclusions"], EXCLUSION_LIMIT), sourceExclusions: OfficialReferenceSourceExclusion[] = []; let previous = "";
+  const items = bounded(value["items"], REFERENCE_LIMIT), exclusions = bounded(value["source_exclusions"], EXCLUSION_LIMIT), sourceExclusions: OfficialReferenceSourceExclusion[] = []; let previous = "";
   if (!items?.length || !exclusions || !uint(value["total"]) || value["total"] !== items.length) return null;
   for (const item of exclusions) { const entry = raw(item), kind = entry?.["kind"];
     if (!entry || !text(kind) || kind === "official" || kind <= previous || entry["reason"] !== "non_official_source" || !uint(entry["rows"]) || entry["rows"] === 0) return null;
