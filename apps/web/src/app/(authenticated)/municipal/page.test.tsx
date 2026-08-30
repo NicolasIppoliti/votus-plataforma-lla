@@ -8,7 +8,12 @@ const { redirectMock } = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 import type { ResultRow } from "@/lib/results/result-rows";
 import type { SourceRef } from "@/lib/results/types";
-import { type MunicipalView, renderMunicipalView } from "./page";
+import type { MunicipalOfficialEvidence } from "@/lib/workspace/official-evidence";
+import {
+  municipalViewFromOfficialEvidence,
+  type MunicipalView,
+  renderMunicipalView,
+} from "./page";
 
 const MUNICIPAL_ROWS: ResultRow[] = [
   {
@@ -95,12 +100,16 @@ describe("municipal page — renderMunicipalView", () => {
 
 let entryPointRows: ResultRow[] = [];
 let entryPointSources: SourceRef[] = [];
-let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null; let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
+let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null;
+let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
+let authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
 
 afterEach(() => {
   entryPointRows = [];
   entryPointSources = [];
-  authorizedEvidenceState = null; authorizedEvidenceSource = "official";
+  authorizedEvidenceState = null;
+  authorizedEvidenceSource = "official";
+  authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
   redirectMock.mockClear();
   delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   delete process.env["MUNICIPAL_ELECTION_ID"];
@@ -108,6 +117,20 @@ afterEach(() => {
 });
 
 describe("municipal page — the badge describes the rows, not a memory of them", () => {
+  it("test_uniform_distrito_rows_disclose_degradation_not_summation", () => {
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "ok",
+        rows: [{ ...MUNICIPAL_ROWS[0]!, granularity: "distrito" }],
+        excluded: {},
+        partyMappingConfigured: true,
+      }),
+    );
+
+    expect(html).toContain("degradada desde distrito");
+    expect(html).not.toContain("sumado a partir de filas de nivel distrito");
+  });
+
   it("test_granularity_badge_reports_what_the_rows_actually_carry", () => {
     // Phase 17 changed what PBA ingestion WRITES: a partido total is a
     // seccion-level figure in the national scheme, so `resolve_pba_jurisdictions`
@@ -171,7 +194,7 @@ vi.mock("@/lib/supabase/server-client", () => ({
 vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
   loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
     status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
-    parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: [{ kind: "official", rows: 1, votes: 4200 }], sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
+    parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: authorizedEvidenceAudit, sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
   }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) })),
 }));
 
@@ -198,6 +221,22 @@ describe("municipal page — the real entry point", () => {
   });
 
   it("test_production_refuses_unofficial_evidence", async () => { authorizedEvidenceSource = "fiscalizacion"; entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }]; const { default: Page } = await import("./page"); const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement); expect(html).toContain("no es de fuente oficial"); expect(html).not.toContain("4200 voto(s)"); });
+
+  it("test_production_refuses_an_empty_official_source_audit", async () => {
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+    authorizedEvidenceAudit = [];
+    const { default: Page } = await import("./page");
+
+    const html = renderToStaticMarkup(
+      (await Page({
+        searchParams: Promise.resolve({ electionId: "2025-municipal" }),
+      })) as ReactElement,
+    );
+
+    expect(html).toContain("auditoría oficial");
+    expect(html).not.toContain("4200 voto(s)");
+    expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA");
+  });
 
   it("test_the_data_path_reaches_the_render_with_its_sources", async () => {
     // The missing-params branch was the only one driven. `sources` reaching
@@ -420,16 +459,74 @@ describe("municipal page — path 3 fires when the repository filter regresses",
       expect(html).not.toContain("8400 voto(s)");
     });
 
-describe("municipal page — an untraceable figure says so", () => {
-      it("test_an_archive_entry_with_no_source_record_is_named", () => {
-        const html = renderToStaticMarkup(renderMunicipalView(
-          { status: "ok", rows: MUNICIPAL_ROWS, excluded: {}, partyMappingConfigured: true }, [],
-          ["pba/2025-municipal-coronel-rosales"],
-        ));
-        expect(html).toContain("no se resolvieron a un registro de fuente");
-        expect(html).toContain("pba/2025-municipal-coronel-rosales");
-      });
-    });
+describe("municipal evidence — the rendered-page defense boundary", () => {
+  const validEvidence: Extract<MunicipalOfficialEvidence, { status: "ok" }> = {
+    status: "ok",
+    result: {
+      status: "ok",
+      sourceKind: "official",
+      level: "seccion",
+      sourceGranularity: "seccion",
+      electionYear: 2025,
+      electionRound: "legislativas",
+      totalVotes: 4200,
+      mesaCount: null,
+      parties: [{
+        identityStatus: "canonical",
+        canonicalPartyId: "lla",
+        displayName: "ALIANZA LA LIBERTAD AVANZA",
+        listId: null,
+        votes: 4200,
+        voteShare: "1",
+      }],
+      archiveEntryIds: ["pba/2025-municipal-coronel-rosales"],
+      sourceAudit: [{ kind: "official", rows: 1, votes: 4200 }],
+      sourceExclusions: [{ kind: "fiscalizacion", rows: 2, votes: 30 }],
+    },
+    provenance: [],
+  };
+
+  it.each([
+    ["empty audit", []],
+    ["mixed audit", [
+      { kind: "official", rows: 1, votes: 4200 },
+      { kind: "fiscalizacion", rows: 1, votes: 1 },
+    ]],
+    ["multiple official audits", [
+      { kind: "official", rows: 1, votes: 4200 },
+      { kind: "official", rows: 1, votes: 4200 },
+    ]],
+    ["non-official audit", [{ kind: "fiscalizacion", rows: 1, votes: 4200 }]],
+    ["zero-row audit", [{ kind: "official", rows: 0, votes: 4200 }]],
+    ["audit vote mismatch", [{ kind: "official", rows: 1, votes: 4199 }]],
+  ])("refuses %s before constructing rows", (_case, sourceAudit) => {
+    const view = municipalViewFromOfficialEvidence({
+      ...validEvidence,
+      result: {
+        ...validEvidence.result,
+        sourceAudit: sourceAudit as typeof validEvidence.result.sourceAudit,
+      },
+    }, "c-concejales");
+
+    expect(view.status).toBe("read_failed");
+    expect(view).not.toHaveProperty("rows");
+    expect(view).toHaveProperty("excluded.fiscalizacion", { rows: 2, votes: 30 });
+    expect(JSON.stringify(view)).not.toContain('"sourceKind":"official"');
+  });
+
+  it("refuses a party total that disagrees with the official total", () => {
+    const view = municipalViewFromOfficialEvidence({
+      ...validEvidence,
+      result: {
+        ...validEvidence.result,
+        parties: [{ ...validEvidence.result.parties[0]!, votes: 4199 }],
+      },
+    }, "c-concejales");
+
+    expect(view.status).toBe("read_failed");
+    expect(view).not.toHaveProperty("rows");
+  });
+});
 
     describe("municipal page — a repeated query param reaches the guard", () => {
   it("test_a_repeated_query_param_is_reported_not_treated_as_absent", async () => {
