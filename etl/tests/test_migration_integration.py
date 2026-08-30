@@ -17,7 +17,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 38))
+SUPPORTED_MIGRATION_NUMBERS = frozenset(range(1, 39))
 PBA_113_MIGRATION_VERSION = "20260824193650"
 WORKSPACE_FOUNDATION_MIGRATION_VERSION = "20260825144358"
 WORKSPACE_AUTHORITY_FACTS_MIGRATION_VERSION = "20260825165116"
@@ -61,7 +61,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
-    [*(f"{number:04d}" for number in range(1, 38)), *sorted(SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS)]
+    [*(f"{number:04d}" for number in range(1, 39)), *sorted(SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS)]
 )
 MIGRATION_FILE_PATTERN = re.compile(r"^(\d{4}|\d{14})_[^/]+\.sql$")
 
@@ -72,7 +72,7 @@ def _normalized_migration_version(version: int | str) -> str:
     if type(version) is str and version in SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS:
         return version
     raise ValueError(
-        "migration version must be an integer from 1 through 37 or one of the exact "
+        "migration version must be an integer from 1 through 38 or one of the exact "
         f"timestamps {sorted(SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS)}"
     )
 
@@ -142,10 +142,10 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
-    assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 38))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 56
+    assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 57
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
-    assert _available_migration_numbers() == list(range(1, 38))
+    assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
         "20260824193650_map_pba_113_party_jurisdictions.sql"
     )
@@ -270,14 +270,14 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         == "20260829032228_revoke_legacy_results_public_contract.down.sql"
     )
     for unsupported in (
-        38,
-        "0038",
+        39,
+        "0039",
         "20260824193651",
         "20260825165117",
         "20260825180049",
         "20260826033131",
     ):
-        with pytest.raises(ValueError, match="1 through 37"):
+        with pytest.raises(ValueError, match="1 through 38"):
             _validated_migration_path(unsupported)
 
 

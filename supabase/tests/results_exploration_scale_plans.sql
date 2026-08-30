@@ -2,7 +2,7 @@
 SET statement_timeout='120s';
 -- Disposable high-cardinality EXPLAIN/plan proof; fixture state is committed by setup.
 begin;
-select plan(15);
+select plan(17);
 create temporary table scale_plan_evidence (label text primary key,representative_result_rows bigint not null,plan jsonb not null) on commit drop;
 do $$ declare evidence jsonb; representative_result_rows constant bigint := 122295; begin
   execute $plan$explain (analyze, buffers, format json)
@@ -142,6 +142,36 @@ select diag(format('district_rpc_access table_scans=%s index_scans=%s',table_sca
 from district_scan_evidence where label='district_rpc_access';
 select ok((select table_scans = 0 from district_scan_evidence where label = 'district_rpc_access'),
   'production district RPC reaches result_row without a sequential scan');
+
+create temporary table school_scan_evidence (target_jurisdictions bigint not null,table_scans bigint not null,
+  official_index_scans bigint not null,non_official_index_scans bigint not null) on commit drop;
+do $$ declare target_jurisdictions bigint; school_seq_before bigint; school_official_before bigint; school_non_official_before bigint;
+  school_seq_after bigint; school_official_after bigint; school_non_official_after bigint;
+  official_index oid; non_official_index oid; school_payload jsonb; begin
+  official_index:=to_regclass('public.result_row_official_district_scope_idx');
+  non_official_index:=to_regclass('public.result_row_non_official_scope_idx');
+  if official_index is null or non_official_index is null then
+    raise exception 'school source-split indexes are absent, so access cannot be measured'; end if;
+  select count(*) into target_jurisdictions from jurisdiction where distrito_code='02' and seccion_code='028';
+  school_seq_before := pg_stat_get_xact_numscans('public.result_row'::regclass);
+  school_official_before := pg_stat_get_xact_numscans(official_index);
+  school_non_official_before := pg_stat_get_xact_numscans(non_official_index);
+  school_payload:=results_exploration_schools('30000000-0000-0000-0000-000000000001'::uuid,
+    '30000000-0000-0000-0000-000000000002'::uuid,'02','028');
+  school_seq_after := pg_stat_get_xact_numscans('public.result_row'::regclass);
+  school_official_after := pg_stat_get_xact_numscans(official_index);
+  school_non_official_after := pg_stat_get_xact_numscans(non_official_index);
+  if school_payload->>'status' is distinct from 'ok' then raise exception 'school RPC returned %',school_payload->>'status'; end if;
+  insert into school_scan_evidence values (target_jurisdictions,school_seq_after-school_seq_before,
+    school_official_after-school_official_before,school_non_official_after-school_non_official_before);
+end $$;
+select ok((select target_jurisdictions>0 and official_index_scans between 1 and target_jurisdictions*3
+    and non_official_index_scans between 1 and target_jurisdictions from school_scan_evidence),
+  'production school RPC bounds partial-index scans by the selected jurisdiction scope');
+select ok((select table_scans=0 from school_scan_evidence),
+  'production school RPC reaches result_row without a sequential scan');
+select diag(format('school_rpc_access target_jurisdictions=%s table_scans=%s official_index_scans=%s non_official_index_scans=%s',
+  target_jurisdictions,table_scans,official_index_scans,non_official_index_scans)) from school_scan_evidence;
 
 select ok((select label = 'coverage_production_rpc'
     and (plan->0->>'Execution Time')::numeric <= 15000
