@@ -68,8 +68,8 @@ function validatedInput(text: string): { spec: (typeof OPERATIONS)[Operation]; v
 function main(): void {
 	const environment = databaseEnvironment();
 	const { spec, values } = validatedInput(inputText(process.argv.slice(2)));
-	const args = ["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate", ...values.flatMap((value, index) => ["-v", `p${index + 1}=${value}`]), "-c", spec[0]];
-	const result = spawnSync("psql", args, { encoding: "utf8", env: environment, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000, maxBuffer: 16_384 });
+	const args = ["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate", ...values.flatMap((value, index) => ["-v", `p${index + 1}=${value}`])];
+	const result = spawnSync("psql", args, { input: spec[0], encoding: "utf8", env: environment, stdio: ["pipe", "pipe", "pipe"], timeout: 30_000, maxBuffer: 16_384 });
 	const output = result.stdout.trim();
 	if (result.error || result.status !== 0) fail(/(?:^|\n)ERROR:\s+42501(?:\n|$)/.test(result.stderr) ? "authorization_denied" : "database_unavailable");
 	try { const parsed: unknown = JSON.parse(output); if (output.length > 8192 || !parsed || typeof parsed !== "object" || Array.isArray(parsed)) fail("result_error"); } catch (error) { if (error instanceof CliError) throw error; return fail("result_error"); }
