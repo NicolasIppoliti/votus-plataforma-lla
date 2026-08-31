@@ -1028,9 +1028,48 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
     assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
 
 
+# fmt: off
+def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_grants() -> None:
+    forward = " ".join(_sql("20260831032044_record_review_item_v2.sql").split())
+    down = " ".join((MIGRATIONS / "down" / "20260831032044_record_review_item_v2.down.sql").read_text().lower().split())  # noqa: E501
+    combined = f"{forward} {down}"
+    bridge = "workspace_review_context_migrator"
+    bridge_lifecycle = f"create role {bridge} nologin noinherit;grant workspace_review_ingest_owner to {bridge} with inherit false, set true;grant {bridge} to current_user with inherit false, set true;revoke {bridge} from current_user;revoke workspace_review_ingest_owner from {bridge};drop role {bridge}".split(";")  # noqa: E501
+    forward_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create function workspace_private.record_review_item_core;create function workspace_private.record_review_item_v2;create or replace function workspace_private.record_review_item;reset role".split(";")  # noqa: E501
+    down_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create or replace function workspace_private.record_review_item;drop function workspace_private.record_review_item_v2;drop function workspace_private.record_review_item_core;reset role;revoke select on public.election,public.category,public.archive_entry".split(";")  # noqa: E501
+    signatures = "record_review_item_core(text,text,text,text,text[],text[]);record_review_item(text,text,text,text,text[],text[]);record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)".split(";")  # noqa: E501
+    revoked_roles = "public,anon,authenticated,etl_writer,workspace_query_owner,workspace_admin_owner,workspace_platform_admin"  # noqa: E501
+    assert "bypassrls" not in combined and "alter role workspace_review_ingest_owner" not in combined  # noqa: E501
+    assert combined.count("create role ") == 2 and set(re.findall(r"create role ([a-z0-9_]+) nologin noinherit", combined)) == {bridge}  # noqa: E501
+    for migration_sql, order in ((forward, forward_order), (down, down_order)):
+        assert all(token in migration_sql for token in bridge_lifecycle)
+        assert migration_sql.count(f"to_regrole('{bridge}')") >= 2
+        assert list(map(migration_sql.index, order)) == sorted(map(migration_sql.index, order))
+    assert forward.count("pg_advisory_xact_lock(2963544934623095067)") == 1
+    assert forward.count("candidate.resolved_at is null") == 1 and "votus_review_item_context." not in forward  # noqa: E501
+    for function in ("record_review_item_core", "record_review_item_v2"):
+        definition = forward.split(f"create function workspace_private.{function}", 1)[1]
+        assert "security definer set search_path=pg_catalog,workspace_private,public,pg_temp" in definition.split("end $$;", 1)[0]  # noqa: E501
+    legacy_definition = forward.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    assert "security definer set search_path=pg_catalog,workspace_private,pg_temp" in legacy_definition  # noqa: E501
+    assert f"revoke all on function {','.join(f'workspace_private.{signature}' for signature in signatures)} from {revoked_roles}" in forward  # noqa: E501
+    assert f"revoke all on function workspace_private.{signatures[1]} from {revoked_roles}" in down  # noqa: E501
+    assert all(forward.count(f"grant execute on function workspace_private.{signature} to etl_writer") == 1 for signature in signatures[1:])  # noqa: E501
+    assert "grant execute on function workspace_private.record_review_item_core" not in forward
+    select_acl = "select on public.election,public.category,public.archive_entry"
+    assert f"grant {select_acl} to workspace_review_ingest_owner" in forward and f"revoke {select_acl} from workspace_review_ingest_owner" in down  # noqa: E501
+    assert all(token not in down for token in ("revoke all on public.election", "delete from workspace_private.review_item_context", "truncate"))  # noqa: E501
+    assert all(f"drop function workspace_private.{signature}" in down for signature in (signatures[0], signatures[2]))  # noqa: E501
+    legacy = " ".join(_sql("20260826120000_structured_review_scope.sql").split()).split("create function workspace_private.record_review_item", 1)[1].split("alter table workspace_private.review_item_section_scope owner", 1)[0]  # noqa: E501
+    restored = down.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0] + "end $$; "  # noqa: E501
+    assert restored == legacy
+# fmt: on
+
+
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260831032044_record_review_item_v2.down.sql",
         "\\ir ../migrations/down/20260830203643_classify_historical_review_contexts.down.sql",
         "\\ir ../migrations/down/20260830180653_review_item_context_foundation.down.sql",
         "\\ir ../migrations/down/20260829232200_bound_authorized_result_evidence.down.sql",
@@ -1105,6 +1144,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260829232200_bound_authorized_result_evidence.sql",
         "\\ir ../migrations/20260830180653_review_item_context_foundation.sql",
         "\\ir ../migrations/20260830203643_classify_historical_review_contexts.sql",
+        "\\ir ../migrations/20260831032044_record_review_item_v2.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1119,7 +1159,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "60 as migration_inventory_count",
+        "61 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",

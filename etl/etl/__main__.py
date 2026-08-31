@@ -121,6 +121,7 @@ from .manifest import (
 from .numeric import parse_source_int
 from .party_map import PartyMappingTable, UnmappedListId, load_party_map
 from .review_item import (
+    ReviewItemContext,
     ReviewItemRecord,
     ReviewItemSectionScope,
     mesa_divergences_to_review_items,
@@ -978,7 +979,7 @@ def ingest_source(
 
             party_map = load_party_map(party_map_path)
             result = ingest_fiscalizacion(raw_bytes, archive_entry_id=source_id)
-            inserted, loader_review_items = load_fiscalizacion_rows(
+            load_result = load_fiscalizacion_rows(
                 conn,
                 result.rows,
                 year=year,
@@ -986,6 +987,8 @@ def ingest_source(
                 party_map=party_map,
                 archive_entry_id=source_id,
             )
+            inserted = load_result.inserted
+            loader_review_items = load_result.review_items
             # Every draft this ingestion produced is PERSISTED here. Producing
             # them in memory and returning is the "correct, tested,
             # unreachable" shape: `insert_review_items` had no production
@@ -1010,6 +1013,15 @@ def ingest_source(
                     subject_ref=f"{source_id} {year}-{round_} {draft.subject_ref}",
                     section_scopes=(
                         ReviewItemSectionScope(FISCALIZACION_DISTRITO, FISCALIZACION_SECCION),
+                    ),
+                    context=ReviewItemContext(
+                        "observed",
+                        "fiscalizacion",
+                        "available",
+                        registered_year,
+                        load_result.election_id,
+                        load_result.category_id,
+                        source_id,
                     ),
                 )
                 # BOTH producers. The parser's drafts and the LOADER's — a mesa
@@ -2660,6 +2672,8 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         fiscalizacion_bytes,
         archive_entry_id=args.source,
     )
+    # Explicitly deferred to PR4: this comparison command has no loader-resolved
+    # election/category IDs and must never invent or requery them for v2.
     parser_review_records = [
         replace(
             review_item_draft_to_record(draft),
