@@ -7,6 +7,9 @@ create temporary table record_review_item_v2_privileges(schema_create boolean no
 insert into record_review_item_v2_privileges values(has_schema_privilege('workspace_review_ingest_owner','workspace_private','CREATE'));
 do $$ begin if not (select schema_create from record_review_item_v2_privileges) then grant create on schema workspace_private to workspace_review_ingest_owner; end if; end $$;
 grant select on public.election,public.category,public.archive_entry to workspace_review_ingest_owner;
+create policy workspace_review_ingest_owner_context_election_select on public.election for select to workspace_review_ingest_owner using(true);
+create policy workspace_review_ingest_owner_context_category_select on public.category for select to workspace_review_ingest_owner using(true);
+create policy workspace_review_ingest_owner_context_archive_select on public.archive_entry for select to workspace_review_ingest_owner using(true);
 lock table public.review_item in share row exclusive mode;
 set role workspace_review_ingest_owner;
 lock table workspace_private.review_item_context in share row exclusive mode;

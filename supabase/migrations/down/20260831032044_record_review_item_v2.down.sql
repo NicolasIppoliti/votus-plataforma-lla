@@ -31,6 +31,9 @@ revoke all on function workspace_private.record_review_item(text,text,text,text,
 grant execute on function workspace_private.record_review_item(text,text,text,text,text[],text[]) to etl_writer;
 do $$ begin if to_regrole('service_role') is not null then revoke all on function workspace_private.record_review_item(text,text,text,text,text[],text[]) from service_role; end if; end $$;
 reset role;
+drop policy workspace_review_ingest_owner_context_election_select on public.election;
+drop policy workspace_review_ingest_owner_context_category_select on public.category;
+drop policy workspace_review_ingest_owner_context_archive_select on public.archive_entry;
 revoke select on public.election,public.category,public.archive_entry from workspace_review_ingest_owner;
 do $$ begin if not (select schema_create from record_review_item_v2_down_privileges) then revoke create on schema workspace_private from workspace_review_ingest_owner; end if; end $$;
 revoke workspace_review_context_migrator from current_user;

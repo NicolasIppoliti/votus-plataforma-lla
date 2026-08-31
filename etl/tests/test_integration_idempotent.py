@@ -752,8 +752,10 @@ def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
     ]
 
 
-def test_insert_review_items_routes_mixed_legacy_and_context_records_once_each() -> None:
+def test_insert_review_items_routes_mixed_legacy_and_uuid_context_records_once_each() -> None:
     conn = _RecordingConnection()
+    election_id = uuid.uuid4()
+    category_id = uuid.uuid4()
     legacy = ReviewItemRecord("content_drift", "warning", "legacy", None)
     fiscal = ReviewItemRecord(
         "blank_vote_cell",
@@ -765,8 +767,8 @@ def test_insert_review_items_routes_mixed_legacy_and_context_records_once_each()
             "fiscalizacion",
             "available",
             2025,
-            "election-id",
-            "category-id",
+            election_id,
+            category_id,
             "archive-id",
         ),
     )
@@ -775,6 +777,28 @@ def test_insert_review_items_routes_mixed_legacy_and_context_records_once_each()
     calls = "\n".join(query for query, _params in conn.statements)
     assert calls.count("workspace_private.record_review_item(") == 1
     assert calls.count("workspace_private.record_review_item_v2(") == 1
+    v2_payload = next(
+        params[0]
+        for query, params in conn.statements
+        if "workspace_private.record_review_item_v2(" in query
+    )
+    assert json.loads(v2_payload) == [
+        {
+            "kind": "blank_vote_cell",
+            "severity": "info",
+            "subject_ref": "fiscal",
+            "note": None,
+            "distrito_codes": [],
+            "seccion_codes": [],
+            "context_role": "observed",
+            "source_kind": "fiscalizacion",
+            "archive_availability": "available",
+            "election_year": 2025,
+            "election_id": str(election_id),
+            "category_id": str(category_id),
+            "archive_entry_id": "archive-id",
+        }
+    ]
 
 
 def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:
