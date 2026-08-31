@@ -38,12 +38,12 @@ select ok(not has_table_privilege('votus_workspace_admin_test',
   'workspace_private.organization','INSERT,UPDATE,DELETE'),
   'the caller cannot perform direct organization DML');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-  where n.nspname='workspace_private' and p.prosecdef),16::bigint,
-  'all sixteen private workspace functions are security definer');
+  where n.nspname='workspace_private' and p.prosecdef),18::bigint,
+  'all eighteen private workspace functions are security definer');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='workspace_private' and (p.proconfig @>
     array['search_path=pg_catalog, workspace_private, pg_temp'] or p.proconfig @>
-    array['search_path=pg_catalog, workspace_private, public, pg_temp'])),16::bigint,
+    array['search_path=pg_catalog, workspace_private, public, pg_temp'])),18::bigint,
   'all private functions have a fixed search path');
 select is((select array_agg(r.rolname order by r.rolname) from pg_proc p
   join pg_namespace n on n.oid=p.pronamespace join pg_roles r on r.oid=p.proowner
@@ -53,12 +53,13 @@ select is((select array_agg(r.rolname order by r.rolname) from pg_proc p
     'workspace_admin_owner','workspace_admin_owner','workspace_admin_owner',
     'workspace_audit_owner','workspace_context_owner',
     'workspace_query_owner','workspace_query_owner','workspace_review_ingest_owner',
+    'workspace_review_ingest_owner','workspace_review_ingest_owner',
     'workspace_review_ingest_owner','workspace_review_ingest_owner']::name[],
   'private function ownership is exact');
 select is((select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl
   where n.nspname='workspace_private' and p.proname<>'authorization_facts_status'
-    and acl.privilege_type='EXECUTE'),27::bigint,
+    and acl.privilege_type='EXECUTE'),30::bigint,
   'private functions expose only owner and intended caller execution');
 select is((select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
   where n.nspname='workspace_private' and c.relkind='r' and c.relforcerowsecurity),8::bigint,

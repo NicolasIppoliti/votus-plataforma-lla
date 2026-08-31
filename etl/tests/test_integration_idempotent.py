@@ -33,7 +33,7 @@ from etl.db import (
 )
 from etl.ingest.national import NationalRow, load_national_rows
 from etl.jurisdiction import make_result_row
-from etl.review_item import ReviewItemRecord, ReviewItemSectionScope
+from etl.review_item import ReviewItemContext, ReviewItemRecord, ReviewItemSectionScope
 
 TEST_DSN = os.environ.get(
     "ETL_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -750,6 +750,31 @@ def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
             "seccion_codes": ["027"],
         }
     ]
+
+
+def test_insert_review_items_routes_mixed_legacy_and_context_records_once_each() -> None:
+    conn = _RecordingConnection()
+    legacy = ReviewItemRecord("content_drift", "warning", "legacy", None)
+    fiscal = ReviewItemRecord(
+        "blank_vote_cell",
+        "info",
+        "fiscal",
+        None,
+        context=ReviewItemContext(
+            "observed",
+            "fiscalizacion",
+            "available",
+            2025,
+            "election-id",
+            "category-id",
+            "archive-id",
+        ),
+    )
+
+    assert insert_review_items(conn, [legacy, fiscal, fiscal]) == 2
+    calls = "\n".join(query for query, _params in conn.statements)
+    assert calls.count("workspace_private.record_review_item(") == 1
+    assert calls.count("workspace_private.record_review_item_v2(") == 1
 
 
 def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:

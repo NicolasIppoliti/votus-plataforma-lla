@@ -17,6 +17,7 @@ from etl.db import insert_review_items
 from etl.ingest.fiscalizacion import ReviewItemDraft
 from etl.review_item import (
     REVIEW_ITEM_KINDS,
+    ReviewItemContext,
     ReviewItemRecord,
     ReviewItemSectionScope,
     SourceArchiveIdentity,
@@ -106,6 +107,23 @@ def test_review_item_scope_accepts_only_exact_canonical_sections() -> None:
     for distrito, seccion in (("2", "027"), ("02", "27"), ("AA", "027")):
         with pytest.raises(ValueError, match="exact canonical section"):
             ReviewItemSectionScope(distrito_code=distrito, seccion_code=seccion)
+
+
+def test_review_item_record_accepts_frozen_explicit_fiscal_context() -> None:
+    context = ReviewItemContext(
+        context_role="observed",
+        source_kind="fiscalizacion",
+        archive_availability="available",
+        election_year=2025,
+        election_id="election-id",
+        category_id="category-id",
+        archive_entry_id="fiscalizacion/source",
+    )
+    record = ReviewItemRecord("blank_vote_cell", "info", "mesa 1", None, context=context)
+
+    assert record.context == context
+    with pytest.raises(Exception):
+        context.election_year = 2023  # type: ignore[misc]
 
 
 def test_review_item_draft_projects_verbatim() -> None:

@@ -62,6 +62,7 @@ from etl.db import (
 from etl.ingest.fiscalizacion import FiscalizacionSchemaError, ingest_fiscalizacion
 from etl.manifest import load_fetch_events, load_manifest, save_manifest
 from etl.party_map import PartyMappingTable, load_party_map
+from etl.review_item import ReviewItemContext
 from etl.storage import LocalArchiveStore
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -1077,7 +1078,12 @@ def test_ingest_fiscalizacion_reports_the_authoritative_recorded_count(
     )
     monkeypatch.setattr(
         "etl.ingest.fiscalizacion.load_fiscalizacion_rows",
-        lambda *_args, **_kwargs: (0, []),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            inserted=0,
+            review_items=[],
+            election_id="election-id",
+            category_id="category-id",
+        ),
     )
     monkeypatch.setattr(
         "etl.__main__.insert_review_items",
@@ -1095,10 +1101,11 @@ def test_ingest_fiscalizacion_reports_the_authoritative_recorded_count(
         party_map_path=tmp_path / "unused-party-map.yaml",
     )
 
+    # fmt: off
     assert len(candidates) == 1
-    assert [
-        (scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes
-    ] == [("02", "027")]
+    assert [(scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes] == [("02", "027")]  # noqa: E501
+    assert candidates[0].context == ReviewItemContext("observed", "fiscalizacion", "available", 2025, "election-id", "category-id", source_id)  # noqa: E501
+    # fmt: on
     report = capsys.readouterr().err
     assert "review scope: section_scoped=1, platform_only=0" in report
     assert "review items: 0 recorded, 1 not recorded" in report
@@ -1110,6 +1117,8 @@ def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
     capsys,
 ) -> None:
     from etl.db import insert_review_items as atomic_insert_review_items
+    from etl.db import upsert_category, upsert_election
+    from etl.ingest.fiscalizacion import FISCALIZACION_CATEGORY, FiscalizacionLoadResult
 
     _require_ephemeral_postgres()
     source_id = f"fiscalizacion/resolved-after-prefilter-{uuid.uuid4()}"
@@ -1160,8 +1169,10 @@ def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
             "values ('blank_vote_cell', 'info', %s, 'one candidate')",
             (subject_ref,),
         )
+        election_id = upsert_election(seed_conn, year=2025, round_="legislativas")
+        category_id = upsert_category(seed_conn, name=FISCALIZACION_CATEGORY)
+    load_result = FiscalizacionLoadResult(0, [], election_id, category_id)
 
-    monkeypatch.setattr("etl.__main__.project_archive_entry", lambda *_args: None)
     monkeypatch.setattr("etl.__main__.load_party_map", lambda _path: object())
     monkeypatch.setattr(
         "etl.__main__.ingest_fiscalizacion",
@@ -1169,7 +1180,7 @@ def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
     )
     monkeypatch.setattr(
         "etl.ingest.fiscalizacion.load_fiscalizacion_rows",
-        lambda *_args, **_kwargs: (0, []),
+        lambda *_args, **_kwargs: load_result,
     )
 
     def resolve_then_insert(conn, records) -> int:
@@ -1210,6 +1221,7 @@ def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
     finally:
         with psycopg.connect(TEST_DSN) as cleanup_conn, cleanup_conn.cursor() as cur:
             cur.execute("delete from review_item where subject_ref = %s", (subject_ref,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
 
 
 @pytest.mark.parametrize(

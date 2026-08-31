@@ -1346,8 +1346,8 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 f"PostgreSQL reports {observed!r}; refusing without changing isolation"
             )
 
-        candidates = [
-            {
+        def candidate(record: ReviewItemRecord) -> dict[str, object]:
+            projected: dict[str, object] = {
                 "kind": record.kind,
                 "severity": record.severity,
                 "subject_ref": record.subject_ref,
@@ -1355,21 +1355,47 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 "distrito_codes": [scope.distrito_code for scope in record.section_scopes],
                 "seccion_codes": [scope.seccion_code for scope in record.section_scopes],
             }
-            for record in records
-        ]
-        cur.execute(
-            """
-            with candidates as (
-                select distinct *
-                from jsonb_to_recordset(%s::jsonb) as candidate(
-                    kind text, severity text, subject_ref text, note text,
-                    distrito_codes text[], seccion_codes text[]
+            if record.context is not None:
+                projected.update(record.context.__dict__)
+            return projected
+
+        inserted = 0
+        for explicit_context, function, context_columns in (
+            (False, "record_review_item", ""),
+            (
+                True,
+                "record_review_item_v2",
+                ", context_role text, source_kind text, archive_availability text, "
+                "election_year integer, election_id uuid, category_id uuid, archive_entry_id text",
+            ),
+        ):
+            candidates = [
+                candidate(record)
+                for record in records
+                if (record.context is not None) is explicit_context
+            ]
+            if not candidates:
+                continue
+            context_arguments = (
+                ", context_role, source_kind, archive_availability, election_year, "
+                "election_id, category_id, archive_entry_id"
+                if explicit_context
+                else ""
+            )
+            cur.execute(
+                f"""
+                with candidates as (
+                    select distinct * from jsonb_to_recordset(%s::jsonb) as candidate(
+                        kind text, severity text, subject_ref text, note text,
+                        distrito_codes text[], seccion_codes text[]{context_columns}
+                    )
                 )
+                select 1 from candidates where workspace_private.{function}(
+                    kind, severity, subject_ref, note, distrito_codes, seccion_codes
+                    {context_arguments}
+                )
+                """,
+                (json.dumps(candidates),),
             )
-            select 1 from candidates where workspace_private.record_review_item(
-                kind, severity, subject_ref, note, distrito_codes, seccion_codes
-            )
-            """,
-            (json.dumps(candidates),),
-        )
-        return len(cur.fetchall())
+            inserted += len(cur.fetchall())
+        return inserted
