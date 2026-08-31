@@ -2496,10 +2496,11 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
     legacy, core, v2 = "workspace_private.record_review_item(text,text,text,text,text[],text[]);workspace_private.record_review_item_core(text,text,text,text,text[],text[]);workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)".split(";")  # noqa: E501
     call, legacy_call, context_sql = "select workspace_private.record_review_item_v2('blank_vote_cell','info',%s,null,array[]::text[],array[]::text[],'observed','fiscalizacion','available',%s,%s,%s,%s);select workspace_private.record_review_item('blank_vote_cell','info',%s,null,array[]::text[],array[]::text[]);select context_role,source_kind,archive_availability,election_year,election_id,category_id,archive_entry_id,unknown_reason from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where r.subject_ref=%s".split(";")  # noqa: E501
     applied = False
+    fixtures_committed = False
     try:
         _set_latest_review_context_level(admin_dsn, 2)
         with psycopg.connect(admin_dsn) as connection:
-            before = (_fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (legacy,))[0], _fetchone(connection, "select count(*) from workspace_private.review_item_context")[0])  # noqa: E501
+            before_context_count = _fetchone(connection, "select count(*) from workspace_private.review_item_context")[0]  # noqa: E501
         _apply_migration(admin_dsn, RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION)
         applied = True
         with psycopg.connect(admin_dsn) as connection:
@@ -2565,13 +2566,39 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
             for parameters in failures:
                 with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
                     connection.execute(call, parameters)
-            connection.rollback()
+            connection.commit()
+            fixtures_committed = True
     finally:
         try:
             if applied:
                 _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION)
                 with psycopg.connect(admin_dsn) as connection:
-                    assert _fetchone(connection, "select pg_get_functiondef(%s::regprocedure),(select count(*) from workspace_private.review_item_context),to_regprocedure(%s) is null,to_regprocedure(%s) is null", (legacy, core, v2)) == (*before, True, True)  # noqa: E501
+                    assert _fetchone(connection, "select to_regprocedure(%s) is null,to_regprocedure(%s) is null", (core, v2)) == (True, True)  # noqa: E501
+                    if not fixtures_committed:
+                        assert _fetchone(connection, "select count(*) from workspace_private.review_item_context") == (before_context_count,)  # noqa: E501
+                    if fixtures_committed:
+                        ambiguity_after_down = connection.execute(
+                            ambiguity_context_sql, (ambiguous_ids,)
+                        ).fetchall()
+                        item_count_after_down = _fetchone(connection, "select count(*) from public.review_item where subject_ref=%s", (ambiguous_subject,))  # noqa: E501
+                        assert ambiguity_after_down == ambiguity_before
+                        assert item_count_after_down == (2,)
+                        connection.execute("set role etl_writer")
+                        with pytest.raises(psycopg.errors.CheckViolation, match="active review identity is ambiguous"), connection.transaction():  # noqa: E501
+                            connection.execute(legacy_call, (ambiguous_subject,))
+                        connection.execute("reset role")
+                        assert connection.execute(
+                            ambiguity_context_sql, (ambiguous_ids,)
+                        ).fetchall() == ambiguity_after_down
+                        assert _fetchone(connection, "select count(*) from public.review_item where subject_ref=%s", (ambiguous_subject,)) == item_count_after_down  # noqa: E501
         finally:
-            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+            try:
+                if fixtures_committed:
+                    with psycopg.connect(admin_dsn) as connection:
+                        connection.execute("delete from public.review_item where subject_ref like %s", (prefix + "%",))  # noqa: E501
+                        connection.execute("delete from public.archive_entry where id=any(%s)", (archive_ids,))  # noqa: E501
+                        connection.execute("delete from public.category where id=any(%s)", (category_ids,))  # noqa: E501
+                        connection.execute("delete from public.election where id=%s", (election_id,))  # noqa: E501
+            finally:
+                _set_latest_review_context_level(admin_dsn, original_review_context_level)
 # fmt: on
