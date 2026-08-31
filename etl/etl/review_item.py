@@ -91,9 +91,10 @@ class ReviewItemContext:
     source_kind: str
     archive_availability: str
     election_year: int
-    election_id: str
-    category_id: str
-    archive_entry_id: str
+    election_id: str | None
+    category_id: str | None
+    archive_entry_id: str | None
+    unknown_reason: str | None = None
 
 
 @dataclass(frozen=True)

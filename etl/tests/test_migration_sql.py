@@ -1039,6 +1039,25 @@ def test_record_review_item_context_sets_are_strict_bounded_and_reversible() -> 
     assert all(token not in forward for token in ("current_setting", "set_config", "subject_ref like"))  # noqa: E501
 
 
+def test_year_level_review_contexts_are_one_exact_reversible_extension() -> None:
+    forward = " ".join(_sql("20260831150450_allow_year_level_review_contexts.sql").split())
+    down = " ".join((MIGRATIONS / "down" / "20260831150450_allow_year_level_review_contexts.down.sql").read_text().lower().split())  # noqa: E501
+    reason = "source_archive_not_attributable"
+    assert all(token in forward for token in (reason, "jsonb_typeof(ctx->'election_year') is not distinct from 'number'", "jsonb_typeof(ctx->'election_id') is not distinct from 'null'", "('observed','official','unknown')", "unknown_reason"))  # noqa: E501
+    assert all(token in down for token in ("count=", "categories=", "raise exception", "review_item_context_unknown_reason_check"))  # noqa: E501
+    assert down.index("raise exception") < down.index("alter table workspace_private.review_item_context drop constraint")  # noqa: E501
+    pr4 = " ".join(_sql("20260831055357_record_review_item_contexts.sql").split())
+    pr4_body = pr4.split("create function workspace_private.record_review_item_v2", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    restored = down.split("create or replace function workspace_private.record_review_item_v2", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    assert restored == pr4_body
+    assert reason not in down.split("alter table workspace_private.review_item_context add constraint", 1)[1]  # noqa: E501
+    bridge = "workspace_review_context_migrator"
+    lifecycle = f"create role {bridge} nologin noinherit;grant workspace_review_ingest_owner to {bridge} with inherit false, set true;grant {bridge} to current_user with inherit false, set true;revoke {bridge} from current_user;revoke workspace_review_ingest_owner from {bridge};drop role {bridge}".split(";")  # noqa: E501
+    for migration in (forward, down):
+        assert all(token in migration for token in (*lifecycle, "set role workspace_review_ingest_owner"))  # noqa: E501
+        assert all(token not in migration for token in ("bypassrls", "grant select", "grant references"))  # noqa: E501
+
+
 def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_grants() -> None:
     forward = " ".join(_sql("20260831032044_record_review_item_v2.sql").split())
     down = " ".join((MIGRATIONS / "down" / "20260831032044_record_review_item_v2.down.sql").read_text().lower().split())  # noqa: E501
@@ -1079,6 +1098,7 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260831150450_allow_year_level_review_contexts.down.sql",
         "\\ir ../migrations/down/20260831055357_record_review_item_contexts.down.sql",
         "\\ir ../migrations/down/20260831032044_record_review_item_v2.down.sql",
         "\\ir ../migrations/down/20260830203643_classify_historical_review_contexts.down.sql",
@@ -1157,6 +1177,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260830203643_classify_historical_review_contexts.sql",
         "\\ir ../migrations/20260831032044_record_review_item_v2.sql",
         "\\ir ../migrations/20260831055357_record_review_item_contexts.sql",
+        "\\ir ../migrations/20260831150450_allow_year_level_review_contexts.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1171,7 +1192,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "62 as migration_inventory_count",
+        "63 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",

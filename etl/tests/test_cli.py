@@ -3799,13 +3799,15 @@ def test_load_curated_records_raw_mesa_presence_before_vote_filters(
     assert stability.stable is True
 
 
-def test_load_curated_reports_the_authoritative_new_review_count(
+def test_load_curated_cli_records_year_level_contexts_in_deterministic_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
     manifest_path = tmp_path / "archive-manifest.json"
     manifest_path.write_text("[]\n", encoding="utf-8")
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text("{}\n", encoding="utf-8")
 
     class FakeConnection:
         def commit(self) -> None:
@@ -3836,23 +3838,55 @@ def test_load_curated_reports_the_authoritative_new_review_count(
         lambda *_args, year, **_kwargs: {("1", 1)} if year == 2023 else {("1", 1), ("1", 2)},
     )
     monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _url: FakeConnection())
-    monkeypatch.setattr("etl.__main__.load_party_map_rows", lambda *_args: object())
-    monkeypatch.setattr("etl.__main__.load_crosswalk_rows", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "etl.__main__.load_party_map_rows",
+        lambda *_args: PartyMapReplacementSummary(
+            party_canonical=TableReplacementCount(loaded=0, deleted=0),
+            list_identity=TableReplacementCount(loaded=0, deleted=0),
+            party_mapping=TableReplacementCount(loaded=0, deleted=0),
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.load_crosswalk_rows",
+        lambda *_args, **_kwargs: CrosswalkReplacementSummary(
+            jurisdiction_crosswalk=TableReplacementCount(loaded=1, deleted=0),
+            mesa_crosswalk=TableReplacementCount(loaded=2, deleted=0),
+        ),
+    )
     monkeypatch.setattr(
         "etl.__main__.insert_review_items",
         lambda _conn, records: candidates.extend(records) or 0,
     )
 
-    load_curated(
-        database_url="postgresql://not-opened/test",
-        sources={},
-        local_root=tmp_path / "archive",
-        manifest_path=manifest_path,
-        party_map_path=tmp_path / "unused-party-map.yaml",
-        crosswalk_path=tmp_path / "unused-crosswalk.yaml",
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["load-curated", "--database-url", "postgresql://not-opened/test"]
     )
 
+    assert exit_code == 0
     assert len(candidates) == 1
+    assert candidates[0].contexts == (
+        ReviewItemContext(
+            "observed",
+            "official",
+            "unknown",
+            2023,
+            None,
+            None,
+            None,
+            "source_archive_not_attributable",
+        ),
+        ReviewItemContext(
+            "observed",
+            "official",
+            "unknown",
+            2025,
+            None,
+            None,
+            None,
+            "source_archive_not_attributable",
+        ),
+    )
     assert "(0 new, 1 not recorded)" in capsys.readouterr().err
 
 
