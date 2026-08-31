@@ -752,29 +752,33 @@ def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
     ]
 
 
-def test_insert_review_items_routes_mixed_legacy_and_context_records_once_each() -> None:
+def test_insert_review_items_routes_mixed_legacy_and_context_sets_once_each() -> None:
     conn = _RecordingConnection()
     legacy = ReviewItemRecord("content_drift", "warning", "legacy", None)
-    fiscal = ReviewItemRecord(
-        "blank_vote_cell",
-        "info",
-        "fiscal",
-        None,
-        context=ReviewItemContext(
+    contexts = (
+        ReviewItemContext(
             "observed",
             "fiscalizacion",
             "available",
             2025,
             "election-id",
             "category-id",
-            "archive-id",
-        ),
+            "fiscal-id",
+        ),  # noqa: E501
+        ReviewItemContext(
+            "comparison", "official", "available", 2025, "election-id", "category-id", "official-id"
+        ),  # noqa: E501
+    )
+    divergence = ReviewItemRecord(
+        "mesa_tally_divergence", "info", "fiscal", None, contexts=contexts
     )
 
-    assert insert_review_items(conn, [legacy, fiscal, fiscal]) == 2
+    assert insert_review_items(conn, [legacy, divergence, divergence]) == 2
     calls = "\n".join(query for query, _params in conn.statements)
     assert calls.count("workspace_private.record_review_item(") == 1
     assert calls.count("workspace_private.record_review_item_v2(") == 1
+    candidates = json.loads(conn.statements[-1][1][0])
+    assert candidates[0]["contexts"] == [context.__dict__ for context in contexts]
 
 
 def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:

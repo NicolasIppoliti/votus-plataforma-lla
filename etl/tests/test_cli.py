@@ -1104,7 +1104,7 @@ def test_ingest_fiscalizacion_reports_the_authoritative_recorded_count(
     # fmt: off
     assert len(candidates) == 1
     assert [(scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes] == [("02", "027")]  # noqa: E501
-    assert candidates[0].context == ReviewItemContext("observed", "fiscalizacion", "available", 2025, "election-id", "category-id", source_id)  # noqa: E501
+    assert candidates[0].contexts == (ReviewItemContext("observed", "fiscalizacion", "available", 2025, "election-id", "category-id", source_id),)  # noqa: E501
     # fmt: on
     report = capsys.readouterr().err
     assert "review scope: section_scoped=1, platform_only=0" in report
@@ -2738,11 +2738,18 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
     )
 
     conn = psycopg.connect(TEST_DSN)
+    # fmt: off
     try:
+        with conn.cursor() as cur:
+            cur.execute("insert into election(year,round) values(2025,'legislativas') on conflict(year,round) do nothing")  # noqa: E501
+            cur.execute("insert into category(name) values(%s) on conflict(name) do nothing", ("DIPUTADO NACIONAL",))  # noqa: E501
+            archive_sql = "insert into archive_entry(id,capability,source,source_url,mime,fetched_at,status,source_kind,notes) values(%s,%s,'test','local://test','text/csv',now(),'ok',%s,'test')"  # noqa: E501
+            cur.executemany(archive_sql, [(fiscalizacion_id,"fiscalizacion","fiscalizacion"),(national_id,"national","official")])  # noqa: E501
+        conn.commit()
         exit_code = main(
             _main_args(sources_path, local_root, manifest_path)
-            + [
-                "validate-fiscalizacion",
+                + [
+                    "validate-fiscalizacion",
                 "--source",
                 fiscalizacion_id,
                 "--baseline",
@@ -2773,7 +2780,10 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                 (f"{fiscalizacion_id} ", f"{national_id} "),
             )
         conn.commit()
+        conn.execute("delete from archive_entry where id=any(%s)", ([fiscalizacion_id, national_id],))  # noqa: E501
+        conn.commit()
         conn.close()
+    # fmt: on
 
     assert exit_code == 0, "remaining unambiguous identities must still be compared"
     assert written, "divergence and official quarantine evidence must reach review_item"
@@ -2825,7 +2835,23 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
         ],
     }
 
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            pass
+
+        def execute(self, *_args) -> None:
+            pass
+
+        def fetchone(self):
+            return ("election-id", "category-id")
+
     class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
         def commit(self) -> None:
             pass
 
@@ -2926,6 +2952,20 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
     assert [
         (scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes
     ] == [("02", "027")]
+    assert candidates[0].contexts == (
+        ReviewItemContext(
+            "observed",
+            "fiscalizacion",
+            "available",
+            2025,
+            "election-id",
+            "category-id",
+            fiscalizacion_id,
+        ),  # noqa: E501
+        ReviewItemContext(
+            "comparison", "official", "available", 2025, "election-id", "category-id", baseline_id
+        ),  # noqa: E501
+    )
     assert (
         "expected exclusion: reason=expected_category_definition_difference "
         "column='En blanco' count=1"

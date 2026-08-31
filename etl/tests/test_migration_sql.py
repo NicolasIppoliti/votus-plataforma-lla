@@ -1024,6 +1024,21 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
 
 
 # fmt: off
+def test_record_review_item_context_sets_are_strict_bounded_and_reversible() -> None:
+    forward = " ".join(_sql("20260831055357_record_review_item_contexts.sql").split())
+    down = " ".join((MIGRATIONS / "down" / "20260831055357_record_review_item_contexts.down.sql").read_text().lower().split())  # noqa: E501
+    signature = "record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
+    scalar = "record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)"  # noqa: E501
+    assert all(token in forward for token in ("jsonb_typeof(p_contexts) is distinct from 'array'", "jsonb_array_length(p_contexts) between 1 and 4", "jsonb_object_keys", "archive_availability='available'", "is not distinct from"))  # noqa: E501
+    assert forward.count("record_review_item_core(p_kind,p_severity,p_subject_ref,p_note,p_distrito_codes,p_seccion_codes)") == 1  # noqa: E501
+    assert f"grant execute on function workspace_private.{signature} to etl_writer" in forward
+    assert f"drop function workspace_private.{scalar}" in forward
+    assert f"drop function workspace_private.{signature}" in down
+    assert "create function workspace_private.record_review_item_v2(p_kind" in down
+    assert f"grant execute on function workspace_private.{scalar} to etl_writer" in down
+    assert all(token not in forward for token in ("current_setting", "set_config", "subject_ref like"))  # noqa: E501
+
+
 def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_grants() -> None:
     forward = " ".join(_sql("20260831032044_record_review_item_v2.sql").split())
     down = " ".join((MIGRATIONS / "down" / "20260831032044_record_review_item_v2.down.sql").read_text().lower().split())  # noqa: E501
@@ -1064,6 +1079,7 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260831055357_record_review_item_contexts.down.sql",
         "\\ir ../migrations/down/20260831032044_record_review_item_v2.down.sql",
         "\\ir ../migrations/down/20260830203643_classify_historical_review_contexts.down.sql",
         "\\ir ../migrations/down/20260830180653_review_item_context_foundation.down.sql",
@@ -1140,6 +1156,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260830180653_review_item_context_foundation.sql",
         "\\ir ../migrations/20260830203643_classify_historical_review_contexts.sql",
         "\\ir ../migrations/20260831032044_record_review_item_v2.sql",
+        "\\ir ../migrations/20260831055357_record_review_item_contexts.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1154,7 +1171,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "61 as migration_inventory_count",
+        "62 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",

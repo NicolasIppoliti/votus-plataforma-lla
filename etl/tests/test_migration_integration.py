@@ -40,6 +40,7 @@ BOUND_AUTHORIZED_RESULT_EVIDENCE_MIGRATION_VERSION = "20260829232200"
 REVIEW_ITEM_CONTEXT_MIGRATION_VERSION = "20260830180653"
 REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION = "20260830203643"
 RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION = "20260831032044"
+RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION = "20260831055357"
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
         PBA_113_MIGRATION_VERSION,
@@ -64,6 +65,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
         REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
         RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION,
+        RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -159,7 +161,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 60
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 61
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -289,6 +291,7 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         (REVIEW_ITEM_CONTEXT_MIGRATION_VERSION, "review_item_context_foundation"),
         (REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION, "classify_historical_review_contexts"),
         (RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION, "record_review_item_v2"),
+        (RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION, "record_review_item_contexts"),
     ):  # noqa: E501
         for down, suffix in ((False, ".sql"), (True, ".down.sql")):
             assert _validated_migration_path(version, down=down).name == f"{version}_{stem}{suffix}"
@@ -2484,4 +2487,65 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
         finally:
             if originally_installed:
                 _apply_migration(admin_dsn, RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION)
+# fmt: on
+
+
+# fmt: off
+def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> None:
+    if not (database_dsn := os.environ.get("ETL_TEST_DATABASE_URL")):
+        pytest.skip("ETL_TEST_DATABASE_URL is required for review context-set coverage")
+    admin_dsn = make_conninfo(**(conninfo_to_dict(database_dsn) | {"user": "postgres"}))
+    scalar = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text" + ")"  # noqa: E501
+    vector = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
+    with psycopg.connect(admin_dsn) as connection:
+        if not _fetchone(connection, "select to_regprocedure(%s) is not null", (scalar,))[0]:
+            pytest.skip("PR3 scalar review writer is required")
+        originally_installed = _fetchone(connection, "select to_regprocedure(%s) is not null", (vector,))[0]  # noqa: E501
+    if originally_installed:
+        _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
+    prefix, applied = f"contexts-{uuid.uuid4()}", False
+    try:
+        with psycopg.connect(admin_dsn) as connection:
+            scalar_before = _fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (scalar,))[0]  # noqa: E501
+        _apply_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
+        applied = True
+        with psycopg.connect(admin_dsn) as connection:
+            election_id = _fetchone(connection, "insert into election(year,round) values(2096,%s) returning id", (prefix,))[0]  # noqa: E501
+            category_id = _fetchone(connection, "insert into category(name) values(%s) returning id", (prefix,))[0]  # noqa: E501
+            fiscal, official = prefix + "-fiscal", prefix + "-official"
+            archive_sql = "insert into archive_entry(id,capability,source,source_url,mime,fetched_at,status,source_kind,notes) values(%s,%s,'test','local://test','text/csv',now(),'ok',%s,'test')"  # noqa: E501
+            connection.cursor().executemany(archive_sql, [(fiscal,"fiscalizacion","fiscalizacion"),(official,"national","official")])  # noqa: E501
+            common = {"archive_availability":"available","election_year":2096,"election_id":str(election_id),"category_id":str(category_id)}  # noqa: E501
+            observed = common | {"context_role":"observed","source_kind":"fiscalizacion","archive_entry_id":fiscal}  # noqa: E501
+            comparison = common | {"context_role":"comparison","source_kind":"official","archive_entry_id":official}  # noqa: E501
+            call = "select workspace_private.record_review_item_v2(%s,'info',%s,null,array[]::text[],array[]::text[],%s::jsonb)"  # noqa: E501
+            connection.execute("set role etl_writer")
+            assert _fetchone(connection,call,("blank_vote_cell",prefix+"-one",json.dumps([observed]))) == (True,)  # noqa: E501
+            assert _fetchone(connection,call,("mesa_tally_divergence",prefix,json.dumps([observed,comparison]))) == (True,)  # noqa: E501
+            assert _fetchone(connection,call,("mesa_tally_divergence",prefix,json.dumps([comparison,observed]))) == (False,)  # noqa: E501
+            bad_sets = ([observed,observed],[observed | {"extra":1}],[observed | {"source_kind":"official","archive_entry_id":official}],[comparison | {"source_kind":"fiscalizacion","archive_entry_id":fiscal}],*([observed | {key:value}] for key,value in (("election_year","2096"),("archive_entry_id",2096))))  # noqa: E501
+            for bad in bad_sets:
+                with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+                    connection.execute(call,("mesa_tally_divergence",prefix+"-bad",json.dumps(bad)))  # noqa: E501
+            with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+                connection.execute(call,("mesa_tally_divergence",prefix,json.dumps([observed])))  # noqa: E501
+            context_count = "select count(*) from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where r.subject_ref=%s"  # noqa: E501
+            assert _fetchone(connection, context_count, (prefix,)) == (2,)
+            legacy = "select workspace_private.record_review_item('blank_vote_cell','info',%s,null,array[]::text[],array[]::text[])"  # noqa: E501
+            assert _fetchone(connection, legacy, (prefix + "-fallback",)) == (True,)
+            assert _fetchone(connection,call,("blank_vote_cell",prefix+"-fallback",json.dumps([observed,comparison]))) == (False,)  # noqa: E501
+            connection.commit()
+    finally:
+        if applied:
+            _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
+            with psycopg.connect(admin_dsn) as connection:
+                restored = _fetchone(connection,"select pg_get_functiondef(%s::regprocedure)",(scalar,))[0]  # noqa: E501
+                retained = _fetchone(connection,"select count(*) from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where starts_with(r.subject_ref,%s)",(prefix,))[0]  # noqa: E501
+                assert restored == scalar_before and retained >= 5
+                connection.execute("delete from review_item where starts_with(subject_ref,%s)",(prefix,))  # noqa: E501
+                connection.execute("delete from archive_entry where starts_with(id,%s)", (prefix,))
+                connection.execute("delete from category where name=%s", (prefix,))
+                connection.execute("delete from election where round=%s", (prefix,))
+        if originally_installed:
+            _apply_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
 # fmt: on
