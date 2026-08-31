@@ -1853,6 +1853,9 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         review_context_was_installed = _relation_installed(
             admin_dsn, "workspace_private.review_item_context"
         )
+        review_context_classified_was_installed = _review_context_classified(admin_dsn)
+        if review_context_classified_was_installed:
+            _apply_down_migration(admin_dsn, REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION)
         if review_context_was_installed:
             _apply_down_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
@@ -1986,6 +1989,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             admin_dsn, "workspace_private.review_item_context"
         ):
             _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
+        if review_context_classified_was_installed and not _review_context_classified(admin_dsn):
+            _apply_migration(admin_dsn, REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             connection.execute(
                 "with removed as (delete from workspace_private.workspace_audit_event "
@@ -2367,11 +2372,11 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
     snapshot_sql = "select coalesce(sum(n),0),jsonb_agg(jsonb_build_array(kind,severity,n) order by kind,severity) from(select kind,severity,count(*) n from public.review_item group by kind,severity)s"  # noqa: E501
     null_ids_sql = "select count(*) from workspace_private.review_item_context where review_item_id=any(%s) and (election_year is not null or election_id is not null or category_id is not null or archive_entry_id is not null)"  # noqa: E501
     counts_sql = "select count(*)=(select count(*)+(select count(*) from public.review_item where kind='mesa_tally_divergence') from public.review_item),count(distinct review_item_id)=(select count(*) from public.review_item) from workspace_private.review_item_context"  # noqa: E501
-    future_sql = "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) values(%s,'future_kind','warning',%s,'platform_only')"  # noqa: E501
+    future_sql = "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) values(%s,'content_drift','warning',%s,'platform_only')"  # noqa: E501
     future_context_sql = "select context_role,source_kind,archive_availability,unknown_reason,count(*) from workspace_private.review_item_context where review_item_id=%s group by 1,2,3,4"  # noqa: E501
     down_groups_sql = "select r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason,count(*) from public.review_item r join workspace_private.review_item_context c on c.review_item_id=r.id group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason order by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason"  # noqa: E501
     collapse_sql = "select count(*),count(distinct review_item_id),bool_and(context_state='unknown' and unknown_reason='historical_unclassified') from workspace_private.review_item_context"  # noqa: E501
-    columns_sql = "select array_agg(column_name order by ordinal_position) from information_schema.columns where table_schema='workspace_private' and table_name='review_item_context'"  # noqa: E501
+    columns_sql = "select to_jsonb(array_agg(column_name order by ordinal_position)) from information_schema.columns where table_schema='workspace_private' and table_name='review_item_context'"  # noqa: E501
     contexts = (
         "select count(*)from workspace_private.review_item_context where review_item_id=any(%s)"  # noqa: E501
     )
@@ -2416,7 +2421,7 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
             insert_duplicate = "insert into workspace_private.review_item_context(review_item_id,context_role,source_kind,archive_availability,unknown_reason) values(%s,'unknown','unknown','unknown','writer_context_not_provided')"  # noqa: E501
             for error, statement, parameters in (
                 (psycopg.errors.UniqueViolation, insert_duplicate, (direct_id,)),
-                (psycopg.errors.CheckViolation, "update workspace_private.review_item_context set unknown_reason=null where review_item_id=%s", (direct_id,)),  # noqa: E501
+                ((psycopg.errors.NotNullViolation, psycopg.errors.CheckViolation), "update workspace_private.review_item_context set unknown_reason=null where review_item_id=%s", (direct_id,)),  # noqa: E501
                 (psycopg.errors.ForeignKeyViolation, "update workspace_private.review_item_context set election_id=%s where review_item_id=%s", (uuid.uuid4(), direct_id)),  # noqa: E501
             ):
                 with pytest.raises(error), connection.transaction():
@@ -2433,7 +2438,7 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
             reported_counts = {tuple(group[key] for key in "kind context_role source_kind archive_availability unknown_reason".split()):group["rows"] for group in summary["groups"]}  # noqa: E501
             assert reported_counts == {row[:-1]:row[-1] for row in expected_down_groups}
             assert list(reported_counts) == [row[:-1] for row in expected_down_groups]
-            representatives = "mesa_tally_divergence|comparison|official|unknown|historical_archive_not_linked;mesa_tally_divergence|observed|fiscalizacion|unknown|historical_archive_not_linked;content_drift|unknown|unknown|unknown|historical_unclassified;future_kind|unknown|unknown|unknown|writer_context_not_provided".split(";")  # noqa: E501
+            representatives = "mesa_tally_divergence|comparison|official|unknown|historical_archive_not_linked;mesa_tally_divergence|observed|fiscalizacion|unknown|historical_archive_not_linked;content_drift|unknown|unknown|unknown|historical_unclassified;content_drift|unknown|unknown|unknown|writer_context_not_provided".split(";")  # noqa: E501
             assert all(reported_counts[tuple(identity.split("|"))] > 0 for identity in representatives)  # noqa: E501
             # fmt: on
             assert _fetchone(connection, collapse_sql) == (before[0] + 1, before[0] + 1, True)
