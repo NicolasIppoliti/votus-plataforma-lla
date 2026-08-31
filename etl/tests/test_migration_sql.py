@@ -1011,6 +1011,10 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
         )
     )  # noqa: E501
     assert "subject_ref" not in normalized
+    assert "unknown_reason is not null and unknown_reason in" in normalized
+    assert normalized.index("alter column unknown_reason drop not null") < normalized.index(
+        "add constraint review_item_context_unknown_reason_check"
+    )
     normalized_down = " ".join(down.lower().split())
     assert all(
         f"'{field}'" in normalized_down
@@ -1019,6 +1023,7 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
     # fmt: off
     assert "group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason" in normalized_down and "order by kind,context_role,source_kind,archive_availability,unknown_reason" in normalized_down  # noqa: E501
     assert normalized_down.index("raise notice") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
+    assert normalized_down.index("insert into workspace_private.review_item_context") < normalized_down.index("alter column unknown_reason set not null") < normalized_down.index("add constraint review_item_context_unknown_reason_check")  # noqa: E501
     # fmt: on
     assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
 

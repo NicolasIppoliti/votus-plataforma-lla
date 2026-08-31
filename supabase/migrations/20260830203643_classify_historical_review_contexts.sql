@@ -9,7 +9,8 @@ lock table public.review_item in share row exclusive mode; set role workspace_re
 create temporary table review_context_snapshot on commit drop as select coalesce(sum(n),0) review_count,
   coalesce(jsonb_agg(jsonb_build_array(kind,severity,n) order by kind,severity),'[]'::jsonb) kind_severity from (select kind,severity,count(*) n from public.review_item group by kind,severity) grouped;
 alter table workspace_private.review_item_context drop constraint review_item_context_review_item_key,
-  drop constraint review_item_context_state_check,drop constraint review_item_context_unknown_reason_check;
+  drop constraint review_item_context_state_check,drop constraint review_item_context_unknown_reason_check,
+  alter column unknown_reason drop not null;
 alter table workspace_private.review_item_context rename column context_state to context_role;
 alter table workspace_private.review_item_context add column source_kind text,add column archive_availability text,
   add column election_year integer,add column election_id uuid,add column category_id uuid,
@@ -40,7 +41,7 @@ alter table workspace_private.review_item_context
   add constraint review_item_context_unknown_reason_check check (
     (unknown_reason is null and context_role<>'unknown' and source_kind<>'unknown'
       and archive_availability<>'unknown') or
-    (unknown_reason in ('historical_archive_not_linked','historical_unclassified',
+    (unknown_reason is not null and unknown_reason in ('historical_archive_not_linked','historical_unclassified',
       'writer_context_not_provided') and (context_role='unknown' or source_kind='unknown'
       or archive_availability='unknown'))
   ),
