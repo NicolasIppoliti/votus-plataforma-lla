@@ -72,6 +72,29 @@ describe("workspace operator CLI", () => {
 		}
 	});
 
+	it("requests the safe review breakdown with exact bounded parameters", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "workspace-admin-breakdown-"));
+		const marker = path.join(directory, "call.json");
+		const fake = path.join(directory, "psql");
+		writeFileSync(fake, `#!/usr/bin/env node\nconst fs=require("fs"),stdin=fs.readFileSync(0,"utf8"),argv=process.argv.slice(2);fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify({argv,stdin}));process.stdout.write('{"status":"ok","total_items":4,"total_groups":6,"groups":[],"truncated":true,"exclusions":[{"reason":"pagination_bound","groups":6}]}')`);
+		chmodSync(fake, 0o700);
+		const environment = { PATH: `${directory}:${process.env.PATH}`, WORKSPACE_PLATFORM_ADMIN_DATABASE_URL: DATABASE_URL, WORKSPACE_PLATFORM_ADMIN_SSL_ROOT_CERT: "/operator/ca.pem" };
+		for (const input of [
+			{ operation: "review-breakdown", limit: 0, offset: 0 },
+			{ operation: "review-breakdown", limit: 101, offset: 0 },
+			{ operation: "review-breakdown", limit: 1, offset: -1 },
+			{ operation: "review-breakdown", limit: 1, offset: 2_000_000_001 },
+			{ operation: "review-breakdown", limit: "1;select current_user", offset: 0 },
+		]) expect(run(input, environment).stderr).toBe("workspace_admin_failed:input_error\n");
+		const result = run({ operation: "review-breakdown", limit: 17, offset: 23 }, environment);
+		expect(result).toMatchObject({ status: 0, stderr: "" });
+		const call = JSON.parse(readFileSync(marker, "utf8")) as { argv: string[]; stdin: string };
+		expect(call.stdin).toBe("select workspace_private.platform_review_breakdown(:'p1'::integer,:'p2'::integer)");
+		expect(call.argv).not.toContain("-c");
+		expect(call.argv.filter((value) => /^p\d+=/.test(value))).toEqual(["p1=17", "p2=23"]);
+		expect(`${call.argv.join(" ")} ${call.stdin}`).not.toContain("select current_user");
+	});
+
 	it("dispatches every mutating operation to its private function with bounded parameters", () => {
 		const directory = mkdtempSync(path.join(tmpdir(), "workspace-admin-"));
 		const marker = path.join(directory, "call.json");

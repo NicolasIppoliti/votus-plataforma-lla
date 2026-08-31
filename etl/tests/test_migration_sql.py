@@ -1098,6 +1098,7 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260831160422_platform_review_breakdown.down.sql",
         "\\ir ../migrations/down/20260831150450_allow_year_level_review_contexts.down.sql",
         "\\ir ../migrations/down/20260831055357_record_review_item_contexts.down.sql",
         "\\ir ../migrations/down/20260831032044_record_review_item_v2.down.sql",
@@ -1178,6 +1179,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260831032044_record_review_item_v2.sql",
         "\\ir ../migrations/20260831055357_record_review_item_contexts.sql",
         "\\ir ../migrations/20260831150450_allow_year_level_review_contexts.sql",
+        "\\ir ../migrations/20260831160422_platform_review_breakdown.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1192,7 +1194,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "63 as migration_inventory_count",
+        "64 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",
@@ -2702,10 +2704,108 @@ def test_authorized_review_facade_is_scope_shared_bounded_and_reversible() -> No
     proof = (
         (SQL_TESTS / "workspace_authorized_fiscal_review.sql").read_text(encoding="utf-8").lower()
     )
-    assert "select plan(19)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
+    assert "select plan(34)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
     assert "insert into public.review_item" in proof
     assert "set local role workspace_platform_admin" in proof
     assert "request.jwt.claims" not in proof
+
+
+def test_platform_review_breakdown_is_safe_grouped_and_reversible() -> None:
+    version = "20260831160422"
+    forward = " ".join(_sql(f"{version}_platform_review_breakdown.sql").split())
+    down = " ".join(
+        (MIGRATIONS / "down" / f"{version}_platform_review_breakdown.down.sql")
+        .read_text()
+        .lower()
+        .split()
+    )  # noqa: E501
+    signature = "workspace_private.platform_review_breakdown(integer,integer)"
+    for token in (
+        "security definer set search_path=pg_catalog,workspace_private,public,pg_temp",
+        "p_limit<1",
+        "p_limit>100",
+        "p_offset>2000000000",
+        "count(distinct review_item_id)",
+        "tenant_scope_state",
+        "context_role",
+        "source_kind",
+        "archive_availability",
+        "election_year",
+        "election_round",
+        "category_name",
+        "archive_linked",
+        "total_items",
+        "total_groups",
+        "resolved_at is not null",
+        "resolved_items",
+        "category_groups",
+        "categories_omitted",
+        "pagination_bound",
+        "payload_bound",
+        "octet_length(payload::text)>8192",
+        f"grant execute on function {signature} to workspace_platform_admin",
+        "workspace_review_ingest_owner_breakdown_election_select",
+        "workspace_review_ingest_owner_breakdown_category_select",
+        "set role workspace_review_ingest_owner",
+    ):
+        assert token in forward
+    function = forward.split("create function workspace_private.platform_review_breakdown", 1)[1]
+    secrets = (
+        "context_id",
+        "subject_ref",
+        "note",
+        "distrito_code",
+        "seccion_code",
+        "mesa_code",
+        "list_id",
+        "source_row_index",
+    )
+    assert all(secret not in function for secret in secrets)
+    roles = (
+        "public",
+        "anon",
+        "authenticated",
+        "etl_writer",
+        "workspace_query_owner",
+        "workspace_admin_owner",
+    )
+    revoked = forward.split(f"revoke all on function {signature} from", 1)[1].split(";", 1)[0]
+    assert all(role in revoked for role in roles)
+    nullable = (
+        "alter table workspace_private.review_item_context "
+        "alter column unknown_reason drop not null"
+    )
+    assert nullable in forward
+    assert forward.index("set role workspace_review_ingest_owner") < forward.index(nullable)
+    assert forward.index(nullable) < forward.index(
+        "create function workspace_private.platform_review_breakdown"
+    )
+    assert down.startswith("begin;") and down.endswith("commit;")
+    guard = down.split("create role workspace_review_breakdown_migrator", 1)[0]
+    for token in (
+        "where unknown_reason is null",
+        "context_role",
+        "source_kind",
+        "archive_availability",
+        "rows",
+        "count=%, categories=%",
+        "raise exception",
+    ):
+        assert token in guard
+    assert all(secret not in guard for secret in ("review_item_id", "subject_ref", "note"))
+    restore_not_null = (
+        "alter table workspace_private.review_item_context alter column unknown_reason set not null"
+    )
+    assert restore_not_null in down
+    assert down.index("raise exception") < down.index(
+        "create role workspace_review_breakdown_migrator"
+    )
+    assert down.index("set role workspace_review_ingest_owner") < down.index(restore_not_null)
+    assert down.index(restore_not_null) < down.index(f"drop function {signature}")
+    for relation in ("election", "category"):
+        policy = f"workspace_review_ingest_owner_breakdown_{relation}_select"
+        assert f"drop policy {policy} on public.{relation}" in down
+    assert "grant select" not in forward and "drop table" not in down
 
 
 def test_platform_review_operator_access_is_closed_bounded_and_reversible() -> None:
