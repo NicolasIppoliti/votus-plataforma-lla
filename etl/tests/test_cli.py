@@ -1499,7 +1499,9 @@ def test_an_id_registered_under_two_capabilities_is_refused() -> None:
         find_source_entry(sources, "shared/id")
 
 
-def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, capsys) -> None:
+def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
     """The disagreement was PRESERVED and provably nothing acted on it.
 
     The accumulator test asserted the set stays open at `{NATIVOS,
@@ -1514,9 +1516,10 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
         "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
         "votos_tipo,votos_cantidad,estado_final,mesa_tipo\n"
     )
-    row = "02,027,00001,4245,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,"
-    csv_a = header + row + "NATIVOS\n"
-    csv_b = header + row + "EXTRANJEROS\n"
+    later = "02,027,00002,5000,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,"
+    earlier = "01,001,00001,100,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,"
+    csv_a = header + later + "NATIVOS\n" + earlier + "EXTRANJEROS\n"
+    csv_b = header + earlier + "NATIVOS\n" + later + "EXTRANJEROS\n"
 
     local_root = tmp_path / "archive"
     store = LocalArchiveStore(root=local_root)
@@ -1570,6 +1573,17 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
         encoding="utf-8",
     )
 
+    mutation_calls = []
+
+    def record_mutation(*args, **kwargs):
+        mutation_calls.append((args, kwargs))
+        return 0, 0, [], []
+
+    monkeypatch.setattr(
+        psycopg, "connect", lambda *_args, **_kwargs: contextlib.nullcontext(object())
+    )
+    monkeypatch.setattr("etl.__main__.apply_mesa_tipo_mapping", record_mutation)
+
     exit_code = main(
         _main_args(sources_path, local_root, manifest_path)
         # A URL that could never connect. Passing `TEST_DSN` let the test
@@ -1585,9 +1599,13 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
     )
 
     reported = capsys.readouterr().err
-    assert "more than one mesa_tipo" in reported, (
-        f"the cross-source conflict must be the refusal that fired; got {reported!r}"
+    assert reported == (
+        "2 mesa(s) carry more than one mesa_tipo across the archived sources; "
+        "refusing to pick one.\n"
+        "  ('01', '001', '00001', 100) -> ['EXTRANJEROS', 'NATIVOS']\n"
+        "  ('02', '027', '00002', 5000) -> ['EXTRANJEROS', 'NATIVOS']\n"
     )
+    assert mutation_calls == [], "conflicts must refuse before any backfill mutation"
     assert exit_code == 1, "a disagreement across sources must refuse, not pick"
 
 

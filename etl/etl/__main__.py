@@ -3308,12 +3308,13 @@ def cmd_backfill_mesa_tipo(args: argparse.Namespace) -> int:
     # a per-file check cannot see.
     conflicts = {key: tipos for key, tipos in candidates.items() if len(tipos) > 1}
     if conflicts:
-        key, tipos = next(iter(conflicts.items()))
         print(
             f"{len(conflicts)} mesa(s) carry more than one mesa_tipo across the archived "
-            f"sources; refusing to pick one. First: {key} -> {sorted(tipos)}",
+            "sources; refusing to pick one.",
             file=sys.stderr,
         )
+        for key in sorted(conflicts):
+            print(f"  {key} -> {sorted(conflicts[key])}", file=sys.stderr)
         return 1
 
     mapping = {key: next(iter(tipos)) for key, tipos in candidates.items()}
