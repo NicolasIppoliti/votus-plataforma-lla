@@ -1046,6 +1046,9 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
         assert migration_sql.count(f"to_regrole('{bridge}')") >= 2
         assert list(map(migration_sql.index, order)) == sorted(map(migration_sql.index, order))
     assert forward.count("pg_advisory_xact_lock(2963544934623095067)") == 1
+    for relation in ("election", "category", "archive"):
+        assert f"create policy workspace_review_ingest_owner_context_{relation}_select" in forward
+        assert f"drop policy workspace_review_ingest_owner_context_{relation}_select" in down
     assert forward.count("candidate.resolved_at is null") == 1 and "votus_review_item_context." not in forward  # noqa: E501
     for function in ("record_review_item_core", "record_review_item_v2"):
         definition = forward.split(f"create function workspace_private.{function}", 1)[1]
