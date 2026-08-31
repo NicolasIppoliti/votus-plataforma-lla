@@ -64,6 +64,8 @@ from .db import (
     load_crosswalk_rows,
     load_party_map_rows,
     project_archive_entry,
+    upsert_category,
+    upsert_election,
 )
 from .http_client import (
     RequestsFetcher,
@@ -2883,6 +2885,18 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
         conn = psycopg.connect(database_url)
         try:
             if "mesa_tally_divergence" in records_by_kind:
+                for source_entry, source_id in (
+                    (fiscalizacion_entry, args.source),
+                    (baseline_entry, args.baseline),
+                ):
+                    archived = latest_ok_record(records, source_id)
+                    if archived is None:
+                        raise ValueError(f"divergence context archive {source_id!r} is unavailable")
+                    project_archive_entry(conn, archive_entry_from_evidence(archived, source_entry))
+                upsert_election(
+                    conn, year=fiscalizacion_election[0], round_=fiscalizacion_election[1]
+                )
+                upsert_category(conn, name=args.category)
                 contexts = available_divergence_contexts(
                     conn,
                     election_year=fiscalizacion_election[0],

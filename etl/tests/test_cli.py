@@ -936,6 +936,7 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
                 "mime": "text/csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
+                "source_kind": "fiscalizacion",
                 "notes": "CLI review-item fixture",
                 "filename": filename,
                 "upload": "never",
@@ -982,6 +983,15 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
             written = cur.fetchall()
             cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
             assert cur.fetchone() == ("fiscalizacion",)
+        with psycopg.connect(TEST_DSN, user="postgres") as admin_conn, admin_conn.cursor() as cur:
+            cur.execute(
+                "select r.kind,c.context_role,c.source_kind,c.archive_availability,"
+                "c.election_year,c.archive_entry_id,c.unknown_reason from review_item r "
+                "join workspace_private.review_item_context c on c.review_item_id=r.id "
+                "where starts_with(r.subject_ref,%s) order by r.kind",
+                (f"{source_id} ",),
+            )
+            written_contexts = cur.fetchall()
     finally:
         with conn.cursor() as cur:
             cur.execute(
@@ -1006,6 +1016,10 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
         "the ingestion's review item must reach `review_item`, scoped by source "
         f"id so two sources observing the same mesa number stay distinct; got {written}"
     )
+    assert written_contexts == [
+        (kind, "observed", "fiscalizacion", "available", 2025, source_id, None)
+        for kind in ("blank_vote_cell", "mesa_absent_from_official_import")
+    ]
     assert decoded
     captured = capsys.readouterr()
     output = captured.out + captured.err
@@ -1149,6 +1163,7 @@ def test_ingest_submits_a_candidate_that_resolves_after_prefilter_before_insert(
                 "mime": "text/csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
+                "source_kind": "fiscalizacion",
                 "notes": "stale prefilter fixture",
                 "filename": "fixture.csv",
                 "upload": "never",
@@ -2740,12 +2755,6 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
     conn = psycopg.connect(TEST_DSN)
     # fmt: off
     try:
-        with conn.cursor() as cur:
-            cur.execute("insert into election(year,round) values(2025,'legislativas') on conflict(year,round) do nothing")  # noqa: E501
-            cur.execute("insert into category(name) values(%s) on conflict(name) do nothing", ("DIPUTADO NACIONAL",))  # noqa: E501
-            archive_sql = "insert into archive_entry(id,capability,source,source_url,mime,fetched_at,status,source_kind,notes) values(%s,%s,'test','local://test','text/csv',now(),'ok',%s,'test')"  # noqa: E501
-            cur.executemany(archive_sql, [(fiscalizacion_id,"fiscalizacion","fiscalizacion"),(national_id,"national","official")])  # noqa: E501
-        conn.commit()
         exit_code = main(
             _main_args(sources_path, local_root, manifest_path)
                 + [
@@ -2871,6 +2880,8 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
             "id": source_id,
             "status": "ok",
             "archived_path": "archive/fixture.csv",
+            "fetched_at": "2026-01-01T00:00:00Z",
+            "sha256": "0" * 64,
         },
     )
     monkeypatch.setattr(
@@ -2926,6 +2937,9 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
         ),
     )
     monkeypatch.setattr(cli.psycopg, "connect", lambda _url: FakeConnection())
+    monkeypatch.setattr(cli, "project_archive_entry", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "upsert_election", lambda *_args, **_kwargs: "election-id")
+    monkeypatch.setattr(cli, "upsert_category", lambda *_args, **_kwargs: "category-id")
     monkeypatch.setattr(
         cli,
         "insert_review_items",
@@ -3044,12 +3058,14 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(
                     "status": "ok",
                     "archived_path": "archive/fiscalizacion/fisc.csv",
                     "sha256": hashlib.sha256(fiscalizacion_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
                 },
                 {
                     "id": national_id,
                     "status": "ok",
                     "archived_path": "archive/national/nat.csv",
                     "sha256": hashlib.sha256(national_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
                 },
             ]
         ),
@@ -5243,6 +5259,7 @@ def test_ingest_persists_the_review_items_the_LOADER_produced(tmp_path: Path) ->
                 "mime": "text/csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
+                "source_kind": "fiscalizacion",
                 "notes": "CLI loader-quarantine fixture",
                 "filename": filename,
                 "upload": "never",

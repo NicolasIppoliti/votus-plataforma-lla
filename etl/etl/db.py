@@ -20,6 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Literal, LiteralString, Protocol
+from uuid import UUID
 
 from psycopg import sql
 
@@ -1356,7 +1357,14 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 "seccion_codes": [scope.seccion_code for scope in record.section_scopes],
             }
             if record.contexts:
-                projected["contexts"] = [context.__dict__ for context in record.contexts]
+                contexts = []
+                for review_context in record.contexts:
+                    context = dict(review_context.__dict__)
+                    for identifier in ("election_id", "category_id"):
+                        if isinstance(context[identifier], UUID):
+                            context[identifier] = str(context[identifier])
+                    contexts.append(context)
+                projected["contexts"] = contexts
             return projected
 
         inserted = 0

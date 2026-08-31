@@ -752,8 +752,10 @@ def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
     ]
 
 
-def test_insert_review_items_routes_mixed_legacy_and_context_sets_once_each() -> None:
+def test_insert_review_items_routes_mixed_legacy_and_uuid_context_sets_once_each() -> None:
     conn = _RecordingConnection()
+    election_id = uuid.uuid4()
+    category_id = uuid.uuid4()
     legacy = ReviewItemRecord("content_drift", "warning", "legacy", None)
     contexts = (
         ReviewItemContext(
@@ -761,13 +763,19 @@ def test_insert_review_items_routes_mixed_legacy_and_context_sets_once_each() ->
             "fiscalizacion",
             "available",
             2025,
-            "election-id",
-            "category-id",
+            election_id,
+            category_id,
             "fiscal-id",
-        ),  # noqa: E501
+        ),
         ReviewItemContext(
-            "comparison", "official", "available", 2025, "election-id", "category-id", "official-id"
-        ),  # noqa: E501
+            "comparison",
+            "official",
+            "available",
+            2025,
+            election_id,
+            category_id,
+            "official-id",
+        ),
     )
     divergence = ReviewItemRecord(
         "mesa_tally_divergence", "info", "fiscal", None, contexts=contexts
@@ -777,8 +785,41 @@ def test_insert_review_items_routes_mixed_legacy_and_context_sets_once_each() ->
     calls = "\n".join(query for query, _params in conn.statements)
     assert calls.count("workspace_private.record_review_item(") == 1
     assert calls.count("workspace_private.record_review_item_v2(") == 1
-    candidates = json.loads(conn.statements[-1][1][0])
-    assert candidates[0]["contexts"] == [context.__dict__ for context in contexts]
+    v2_payload = next(
+        params[0]
+        for query, params in conn.statements
+        if "workspace_private.record_review_item_v2(" in query
+    )
+    assert json.loads(v2_payload) == [
+        {
+            "kind": "mesa_tally_divergence",
+            "severity": "info",
+            "subject_ref": "fiscal",
+            "note": None,
+            "distrito_codes": [],
+            "seccion_codes": [],
+            "contexts": [
+                {
+                    "context_role": "observed",
+                    "source_kind": "fiscalizacion",
+                    "archive_availability": "available",
+                    "election_year": 2025,
+                    "election_id": str(election_id),
+                    "category_id": str(category_id),
+                    "archive_entry_id": "fiscal-id",
+                },
+                {
+                    "context_role": "comparison",
+                    "source_kind": "official",
+                    "archive_availability": "available",
+                    "election_year": 2025,
+                    "election_id": str(election_id),
+                    "category_id": str(category_id),
+                    "archive_entry_id": "official-id",
+                },
+            ],
+        }
+    ]
 
 
 def test_insert_review_items_persists_mesa_tally_divergence(pg_conn: psycopg.Connection) -> None:
