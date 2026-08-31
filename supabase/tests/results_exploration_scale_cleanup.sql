@@ -11,7 +11,17 @@ do $$ begin
     raise exception 'scale cleanup refused non-fixture rows';
   end if;
 end $$;
-truncate table result_row, jurisdiction, category, election, party_mapping, party_canonical;
+do $$ begin if to_regrole('workspace_review_context_migrator') is not null then raise exception 'workspace_review_context_migrator already exists'; end if; end $$;
+create role workspace_review_context_migrator nologin noinherit;
+grant workspace_review_ingest_owner to workspace_review_context_migrator with inherit false, set true;
+grant workspace_review_context_migrator to current_user with inherit false, set true;
+lock table public.review_item in share row exclusive mode; set role workspace_review_ingest_owner; lock table workspace_private.review_item_context in share row exclusive mode; do $$ begin if exists(select 1 from workspace_private.review_item_context) then raise exception 'scale cleanup refused review contexts'; end if; end $$;
+truncate table workspace_private.review_item_context; reset role;
+truncate table result_row, jurisdiction, party_mapping, party_canonical; delete from category; delete from election;
+revoke workspace_review_context_migrator from current_user;
+revoke workspace_review_ingest_owner from workspace_review_context_migrator;
+drop role workspace_review_context_migrator;
+do $$ begin if to_regrole('workspace_review_context_migrator') is not null then raise exception 'workspace_review_context_migrator cleanup failed'; end if; end $$;
 -- The legacy/null fixture rows are gone, so restore the exact 0002 source-kind contract this
 -- proof relaxed. Leaving it dropped would hand every later proof in the same stack a schema
 -- whose DB-level source leakage guard is disarmed.

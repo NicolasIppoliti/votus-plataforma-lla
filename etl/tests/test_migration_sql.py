@@ -916,9 +916,15 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         "select 'scale fixture cleanup complete' as cleanup_status;"
     )
     assert "scale cleanup refused non-fixture rows" in cleanup_sql
-    assert "truncate table result_row, jurisdiction, category, election," in cleanup_sql
-    assert "party_mapping, party_canonical" in cleanup_sql
-    assert "delete from" not in cleanup_sql
+    context_guard = cleanup_sql.index("exists(select 1 from workspace_private.review_item_context)")
+    assert cleanup_sql.index("lock table workspace_private.review_item_context") < context_guard
+    assert context_guard < cleanup_sql.index("truncate table workspace_private.review_item_context")
+    assert "truncate table result_row, jurisdiction, party_mapping, party_canonical;" in cleanup_sql
+    assert "delete from category; delete from election;" in cleanup_sql
+    assert not any(
+        f"delete from {table}" in cleanup_sql
+        for table in ("result_row", "jurisdiction", "party_mapping", "party_canonical")
+    )
     assert "truncate table" not in plan_sql
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
     # Only the owned post-pgTAP cleanup phase may restore it after deleting the committed fixture.
@@ -992,9 +998,35 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
     )
 
 
+def test_historical_review_context_classification_sql_is_structured_and_reversible() -> None:
+    forward = (MIGRATIONS / "20260830203643_classify_historical_review_contexts.sql").read_text()
+    down = (
+        MIGRATIONS / "down" / "20260830203643_classify_historical_review_contexts.down.sql"
+    ).read_text()  # noqa: E501
+    normalized = " ".join(forward.lower().split())
+    assert all(
+        required in normalized
+        for required in "context_role;source_kind;archive_availability;election_year;foreign key (election_id);foreign key (category_id);foreign key (archive_entry_id);unique nulls not distinct;mesa_tally_divergence;historical_archive_not_linked;writer_context_not_provided".split(  # noqa: E501
+            ";"
+        )
+    )  # noqa: E501
+    assert "subject_ref" not in normalized
+    normalized_down = " ".join(down.lower().split())
+    assert all(
+        f"'{field}'" in normalized_down
+        for field in "structured_contexts review_items groups kind context_role source_kind archive_availability unknown_reason rows".split()  # noqa: E501
+    )  # noqa: E501
+    # fmt: off
+    assert "group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason" in normalized_down and "order by kind,context_role,source_kind,archive_availability,unknown_reason" in normalized_down  # noqa: E501
+    assert normalized_down.index("raise notice") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
+    # fmt: on
+    assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
+
+
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260830203643_classify_historical_review_contexts.down.sql",
         "\\ir ../migrations/down/20260830180653_review_item_context_foundation.down.sql",
         "\\ir ../migrations/down/20260829232200_bound_authorized_result_evidence.down.sql",
         "\\ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql",
@@ -1067,6 +1099,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql",
         "\\ir ../migrations/20260829232200_bound_authorized_result_evidence.sql",
         "\\ir ../migrations/20260830180653_review_item_context_foundation.sql",
+        "\\ir ../migrations/20260830203643_classify_historical_review_contexts.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1081,7 +1114,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "59 as migration_inventory_count",
+        "60 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",

@@ -28,8 +28,8 @@ grant workspace_context_owner,workspace_review_ingest_owner to workspace_admin_o
 set role workspace_admin_owner;
 do $$ begin
   begin
-    insert into workspace_private.review_item_context(review_item_id,context_state,unknown_reason)
-      values('00000000-0000-4000-8000-000000000099','unknown','writer_context_not_provided');
+    insert into workspace_private.review_item_context(review_item_id,context_role,source_kind,archive_availability,unknown_reason)
+      values('00000000-0000-4000-8000-000000000099','unknown','unknown','unknown','writer_context_not_provided');
   exception when insufficient_privilege then return;
   end;
   raise exception 'workspace admin inherited direct review context DML';
