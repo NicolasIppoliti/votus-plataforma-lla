@@ -18,7 +18,7 @@ end $$;
 alter table workspace_private.review_item_context drop constraint review_item_context_unknown_reason_check;
 alter table workspace_private.review_item_context add constraint review_item_context_unknown_reason_check check (
  (unknown_reason is null and context_role<>'unknown' and source_kind<>'unknown' and archive_availability<>'unknown') or
- (unknown_reason in ('historical_archive_not_linked','historical_unclassified','writer_context_not_provided') and (context_role='unknown' or source_kind='unknown' or archive_availability='unknown'))
+ (unknown_reason is not null and unknown_reason in ('historical_archive_not_linked','historical_unclassified','writer_context_not_provided') and (context_role='unknown' or source_kind='unknown' or archive_availability='unknown'))
 );
 create or replace function workspace_private.record_review_item_v2(p_kind text,p_severity text,p_subject_ref text,p_note text,p_distrito_codes text[],p_seccion_codes text[],p_contexts jsonb)
 returns boolean language plpgsql security definer set search_path=pg_catalog,workspace_private,public,pg_temp as $$

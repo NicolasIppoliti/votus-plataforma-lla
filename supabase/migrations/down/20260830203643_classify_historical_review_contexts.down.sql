@@ -19,6 +19,7 @@ delete from workspace_private.review_item_context;
 insert into workspace_private.review_item_context
   (review_item_id,context_role,source_kind,archive_availability,unknown_reason)
 select id,'unknown','unknown','unknown','historical_unclassified' from public.review_item;
+alter table workspace_private.review_item_context alter column unknown_reason set not null;
 alter table workspace_private.review_item_context
   drop constraint review_item_context_role_check,
   drop constraint review_item_context_source_kind_check,

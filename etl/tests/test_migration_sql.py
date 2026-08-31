@@ -1011,6 +1011,10 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
         )
     )  # noqa: E501
     assert "subject_ref" not in normalized
+    assert "unknown_reason is not null and unknown_reason in" in normalized
+    assert normalized.index("alter column unknown_reason drop not null") < normalized.index(
+        "add constraint review_item_context_unknown_reason_check"
+    )
     normalized_down = " ".join(down.lower().split())
     assert all(
         f"'{field}'" in normalized_down
@@ -1019,6 +1023,7 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
     # fmt: off
     assert "group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason" in normalized_down and "order by kind,context_role,source_kind,archive_availability,unknown_reason" in normalized_down  # noqa: E501
     assert normalized_down.index("raise notice") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
+    assert normalized_down.index("insert into workspace_private.review_item_context") < normalized_down.index("alter column unknown_reason set not null") < normalized_down.index("add constraint review_item_context_unknown_reason_check")  # noqa: E501
     # fmt: on
     assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
 
@@ -1074,8 +1079,16 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
         assert all(token in migration_sql for token in bridge_lifecycle)
         assert migration_sql.count(f"to_regrole('{bridge}')") >= 2
         assert list(map(migration_sql.index, order)) == sorted(map(migration_sql.index, order))
-    assert forward.count("pg_advisory_xact_lock(2963544934623095067)") == 1
+    assert all(sql.count("pg_advisory_xact_lock(2963544934623095067)") == 1 for sql in (forward, down))  # noqa: E501
+    for relation in ("election", "category", "archive"):
+        assert f"create policy workspace_review_ingest_owner_context_{relation}_select" in forward
+        assert f"drop policy workspace_review_ingest_owner_context_{relation}_select" in down
     assert forward.count("candidate.resolved_at is null") == 1 and "votus_review_item_context." not in forward  # noqa: E501
+    core_definition = forward.split("create function workspace_private.record_review_item_core", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    down_definition = down.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    for definition in (core_definition, down_definition):
+        assert "limit 1" not in definition
+        assert "if candidate_count>1 then raise exception 'active review identity is ambiguous' using errcode='23514'; end if;" in definition  # noqa: E501
     for function in ("record_review_item_core", "record_review_item_v2"):
         definition = forward.split(f"create function workspace_private.{function}", 1)[1]
         assert "security definer set search_path=pg_catalog,workspace_private,public,pg_temp" in definition.split("end $$;", 1)[0]  # noqa: E501
@@ -1089,9 +1102,6 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
     assert f"grant {select_acl} to workspace_review_ingest_owner" in forward and f"revoke {select_acl} from workspace_review_ingest_owner" in down  # noqa: E501
     assert all(token not in down for token in ("revoke all on public.election", "delete from workspace_private.review_item_context", "truncate"))  # noqa: E501
     assert all(f"drop function workspace_private.{signature}" in down for signature in (signatures[0], signatures[2]))  # noqa: E501
-    legacy = " ".join(_sql("20260826120000_structured_review_scope.sql").split()).split("create function workspace_private.record_review_item", 1)[1].split("alter table workspace_private.review_item_section_scope owner", 1)[0]  # noqa: E501
-    restored = down.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0] + "end $$; "  # noqa: E501
-    assert restored == legacy
 # fmt: on
 
 
