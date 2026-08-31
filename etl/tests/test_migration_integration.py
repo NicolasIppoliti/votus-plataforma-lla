@@ -132,6 +132,13 @@ def _review_context_classified(database_dsn: str) -> bool:
         return _fetchone(connection, statement) == (True,)
 
 
+def _relation_installed(database_dsn: str, relation: str) -> bool:
+    with psycopg.connect(database_dsn) as connection:
+        return connection.execute("select to_regclass(%s) is not null", (relation,)).fetchone() == (
+            True,
+        )
+
+
 def _available_migration_versions() -> list[str]:
     versions: list[str] = []
     for migration in MIGRATIONS.glob("*.sql"):
@@ -1605,6 +1612,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         "revoke_entitlement": ("select workspace_private.revoke_section_entitlement(%s,%s,%s,%s)"),
     }
     organization_id: uuid.UUID | None = None
+    review_context_was_installed = False
 
     try:
         with psycopg.connect(admin_dsn) as connection:
@@ -1842,6 +1850,11 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
+        review_context_was_installed = _relation_installed(
+            admin_dsn, "workspace_private.review_item_context"
+        )
+        if review_context_was_installed:
+            _apply_down_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         _apply_down_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(
@@ -1969,6 +1982,10 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         if not lookup_installed:
             _apply_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
+        if review_context_was_installed and not _relation_installed(
+            admin_dsn, "workspace_private.review_item_context"
+        ):
+            _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             connection.execute(
                 "with removed as (delete from workspace_private.workspace_audit_event "
@@ -2142,12 +2159,8 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
     context_version = REVIEW_ITEM_CONTEXT_MIGRATION_VERSION
     record_signature = "workspace_private.record_review_item(text,text,text,text,text[],text[])"
     facade_signature = "workspace_api.review_items(integer,integer)"
-
-    def context_table_installed() -> bool:
-        with psycopg.connect(admin_dsn) as connection:
-            return connection.execute(
-                "select to_regclass('workspace_private.review_item_context') is not null"
-            ).fetchone() == (True,)
+    context_was_installed = _relation_installed(admin_dsn, "workspace_private.review_item_context")
+    classification_was_installed = _review_context_classified(admin_dsn)
 
     def protected_definitions(connection: psycopg.Connection) -> tuple[str, str]:
         row = connection.execute(
@@ -2167,9 +2180,9 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
         "array[]::text[],array[]::text[])"
     )
     try:
-        if _review_context_classified(admin_dsn):
+        if classification_was_installed:
             _apply_down_migration(admin_dsn, REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION)
-        if context_table_installed():
+        if context_was_installed:
             _apply_down_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             before_definitions = protected_definitions(connection)
@@ -2318,14 +2331,22 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                 (prefix + "%",),
             ).fetchone() == (4, 4)
     finally:
-        if not context_table_installed():
+        context_is_installed = _relation_installed(
+            admin_dsn, "workspace_private.review_item_context"
+        )
+        if context_was_installed and not context_is_installed:
             _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
+        elif not context_was_installed and context_is_installed:
+            _apply_down_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             connection.execute(
                 "delete from public.review_item where subject_ref like %s", (prefix + "%",)
             )
-        if not _review_context_classified(admin_dsn):
+        classification_is_installed = _review_context_classified(admin_dsn)
+        if classification_was_installed and not classification_is_installed:
             _apply_migration(admin_dsn, REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION)
+        elif not classification_was_installed and classification_is_installed:
+            _apply_down_migration(admin_dsn, REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION)
 
 
 def test_historical_review_contexts_are_classified_by_kind_without_parsing_subject_ref() -> None:
