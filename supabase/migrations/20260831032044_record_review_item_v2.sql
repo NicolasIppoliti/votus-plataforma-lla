@@ -15,7 +15,7 @@ set role workspace_review_ingest_owner;
 lock table workspace_private.review_item_context in share row exclusive mode;
 create function workspace_private.record_review_item_core(p_kind text,p_severity text,p_subject_ref text,p_note text,p_distrito_codes text[],p_seccion_codes text[])
 returns table(inserted boolean,review_item_id uuid) language plpgsql security definer set search_path=pg_catalog,workspace_private,public,pg_temp as $$
-declare scope_count integer; distinct_count integer; state text; item_id uuid;
+declare scope_count integer; distinct_count integer; state text; item_id uuid; candidate_count integer; candidate_ids uuid[];
 begin
  if p_distrito_codes is null or p_seccion_codes is null or coalesce(array_ndims(p_distrito_codes),1)<>1 or coalesce(array_ndims(p_seccion_codes),1)<>1 or cardinality(p_distrito_codes)<>cardinality(p_seccion_codes) then raise exception 'review scope arrays must be aligned one-dimensional arrays' using errcode='23514'; end if;
  select count(*),count(distinct (distrito,seccion)) into scope_count,distinct_count from unnest(p_distrito_codes,p_seccion_codes) requested(distrito,seccion);
@@ -23,8 +23,9 @@ begin
  if exists(select 1 from unnest(p_distrito_codes,p_seccion_codes) requested(distrito,seccion) where not exists(select 1 from workspace_private.section_scope registered where registered.distrito_code=requested.distrito and registered.seccion_code=requested.seccion)) then raise exception 'review scope is not registered' using errcode='23503'; end if;
  state:=case when scope_count=0 then 'platform_only' else 'section_scoped' end;
  perform pg_catalog.pg_advisory_xact_lock(2963544934623095067);
- select candidate.id into item_id from public.review_item candidate where candidate.resolved_at is null and candidate.kind=p_kind and candidate.severity=p_severity and candidate.subject_ref=p_subject_ref and candidate.note is not distinct from p_note and candidate.tenant_scope_state=state and (select count(*) from workspace_private.review_item_section_scope existing where existing.review_item_id=candidate.id)=scope_count and not exists(select 1 from workspace_private.review_item_section_scope existing where existing.review_item_id=candidate.id and not exists(select 1 from unnest(p_distrito_codes,p_seccion_codes) requested(distrito,seccion) where requested.distrito=existing.distrito_code and requested.seccion=existing.seccion_code)) limit 1;
- if found then return query select false,item_id; return; end if;
+ select count(*),array_agg(candidate.id) into candidate_count,candidate_ids from public.review_item candidate where candidate.resolved_at is null and candidate.kind=p_kind and candidate.severity=p_severity and candidate.subject_ref=p_subject_ref and candidate.note is not distinct from p_note and candidate.tenant_scope_state=state and (select count(*) from workspace_private.review_item_section_scope existing where existing.review_item_id=candidate.id)=scope_count and not exists(select 1 from workspace_private.review_item_section_scope existing where existing.review_item_id=candidate.id and not exists(select 1 from unnest(p_distrito_codes,p_seccion_codes) requested(distrito,seccion) where requested.distrito=existing.distrito_code and requested.seccion=existing.seccion_code));
+ if candidate_count>1 then raise exception 'active review identity is ambiguous' using errcode='23514'; end if;
+ if candidate_count=1 then item_id:=candidate_ids[1]; return query select false,item_id; return; end if;
  insert into public.review_item(kind,severity,subject_ref,note,tenant_scope_state) values(p_kind,p_severity,p_subject_ref,p_note,state) returning id into item_id;
  insert into workspace_private.review_item_section_scope(review_item_id,distrito_code,seccion_code) select item_id,distrito,seccion from unnest(p_distrito_codes,p_seccion_codes) requested(distrito,seccion);
  return query select true,item_id;

@@ -2534,6 +2534,33 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
             with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
                 connection.execute(call, (metadata_subject, *exact[1:]))
             assert read_context(metadata_subject) == ("unknown", "unknown", "unknown", 2097, election_id, category_ids[0], None, "writer_context_not_provided")  # noqa: E501
+            ambiguous_subject = prefix + "-ambiguous"
+            ambiguous_ids = [uuid.uuid4(), uuid.uuid4()]
+            connection.execute("reset role")
+            connection.cursor().executemany(
+                "insert into public.review_item"
+                "(id,kind,severity,subject_ref,note,tenant_scope_state) "
+                "values(%s,'blank_vote_cell','info',%s,null,'platform_only')",
+                [(item_id, ambiguous_subject) for item_id in ambiguous_ids],
+            )
+            ambiguity_context_sql = "select review_item_id,context_role,source_kind,archive_availability,election_year,election_id,category_id,archive_entry_id,unknown_reason from workspace_private.review_item_context where review_item_id=any(%s) order by review_item_id"  # noqa: E501
+            ambiguity_before = connection.execute(
+                ambiguity_context_sql, (ambiguous_ids,)
+            ).fetchall()
+            assert len(ambiguity_before) == 2
+            connection.execute("set role etl_writer")
+            for statement, parameters in (
+                (call, (ambiguous_subject, *exact[1:])),
+                (legacy_call, (ambiguous_subject,)),
+            ):
+                with pytest.raises(psycopg.errors.CheckViolation, match="active review identity is ambiguous"), connection.transaction():  # noqa: E501
+                    connection.execute(statement, parameters)
+            connection.execute("reset role")
+            assert connection.execute(
+                ambiguity_context_sql, (ambiguous_ids,)
+            ).fetchall() == ambiguity_before
+            assert _fetchone(connection, "select count(*) from public.review_item where subject_ref=%s", (ambiguous_subject,)) == (2,)  # noqa: E501
+            connection.execute("set role etl_writer")
             failures = ((prefix + "-year", 2098, election_id, category_ids[0], archive_ids[0]), (prefix + "-status", 2097, election_id, category_ids[0], archive_ids[1]), (prefix + "-source", 2097, election_id, category_ids[0], archive_ids[2]), (prefix + "-category", 2097, election_id, uuid.uuid4(), archive_ids[0]), (prefix, 2097, election_id, category_ids[1], archive_ids[0]))  # noqa: E501
             for parameters in failures:
                 with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():

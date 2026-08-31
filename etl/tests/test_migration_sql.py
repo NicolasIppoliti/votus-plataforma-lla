@@ -1050,6 +1050,9 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
         assert f"create policy workspace_review_ingest_owner_context_{relation}_select" in forward
         assert f"drop policy workspace_review_ingest_owner_context_{relation}_select" in down
     assert forward.count("candidate.resolved_at is null") == 1 and "votus_review_item_context." not in forward  # noqa: E501
+    core_definition = forward.split("create function workspace_private.record_review_item_core", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    assert "limit 1" not in core_definition
+    assert "if candidate_count>1 then raise exception 'active review identity is ambiguous' using errcode='23514'; end if;" in core_definition  # noqa: E501
     for function in ("record_review_item_core", "record_review_item_v2"):
         definition = forward.split(f"create function workspace_private.{function}", 1)[1]
         assert "security definer set search_path=pg_catalog,workspace_private,public,pg_temp" in definition.split("end $$;", 1)[0]  # noqa: E501

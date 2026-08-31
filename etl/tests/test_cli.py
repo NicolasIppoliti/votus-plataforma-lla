@@ -983,6 +983,15 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
             written = cur.fetchall()
             cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
             assert cur.fetchone() == ("fiscalizacion",)
+        with psycopg.connect(TEST_DSN, user="postgres") as admin_conn, admin_conn.cursor() as cur:
+            cur.execute(
+                "select r.kind,c.context_role,c.source_kind,c.archive_availability,"
+                "c.election_year,c.archive_entry_id,c.unknown_reason from review_item r "
+                "join workspace_private.review_item_context c on c.review_item_id=r.id "
+                "where starts_with(r.subject_ref,%s) order by r.kind",
+                (f"{source_id} ",),
+            )
+            written_contexts = cur.fetchall()
     finally:
         with conn.cursor() as cur:
             cur.execute(
@@ -1007,6 +1016,10 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
         "the ingestion's review item must reach `review_item`, scoped by source "
         f"id so two sources observing the same mesa number stay distinct; got {written}"
     )
+    assert written_contexts == [
+        (kind, "observed", "fiscalizacion", "available", 2025, source_id, None)
+        for kind in ("blank_vote_cell", "mesa_absent_from_official_import")
+    ]
     assert decoded
     captured = capsys.readouterr()
     output = captured.out + captured.err
