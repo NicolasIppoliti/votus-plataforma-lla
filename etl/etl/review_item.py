@@ -91,9 +91,10 @@ class ReviewItemContext:
     source_kind: str
     archive_availability: str
     election_year: int
-    election_id: str
-    category_id: str
-    archive_entry_id: str
+    election_id: str | None
+    category_id: str | None
+    archive_entry_id: str | None
+    unknown_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -111,13 +112,15 @@ class ReviewItemRecord:
     subject_ref: str
     note: str | None
     section_scopes: tuple[ReviewItemSectionScope, ...] = ()
-    context: ReviewItemContext | None = None
+    contexts: tuple[ReviewItemContext, ...] = ()
 
     def __post_init__(self) -> None:
         validate_review_item_kind(self.kind)
         canonical = tuple(sorted(set(self.section_scopes)))
         if canonical != self.section_scopes:
             raise ValueError("review item section scopes must be unique and canonically ordered")
+        if not isinstance(self.contexts, tuple):
+            raise ValueError("review item contexts must be an immutable tuple")
 
     @property
     def tenant_scope_state(self) -> str:

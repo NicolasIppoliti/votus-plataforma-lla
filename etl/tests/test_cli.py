@@ -1118,7 +1118,7 @@ def test_ingest_fiscalizacion_reports_the_authoritative_recorded_count(
     # fmt: off
     assert len(candidates) == 1
     assert [(scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes] == [("02", "027")]  # noqa: E501
-    assert candidates[0].context == ReviewItemContext("observed", "fiscalizacion", "available", 2025, "election-id", "category-id", source_id)  # noqa: E501
+    assert candidates[0].contexts == (ReviewItemContext("observed", "fiscalizacion", "available", 2025, "election-id", "category-id", source_id),)  # noqa: E501
     # fmt: on
     report = capsys.readouterr().err
     assert "review scope: section_scoped=1, platform_only=0" in report
@@ -1514,7 +1514,9 @@ def test_an_id_registered_under_two_capabilities_is_refused() -> None:
         find_source_entry(sources, "shared/id")
 
 
-def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, capsys) -> None:
+def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
     """The disagreement was PRESERVED and provably nothing acted on it.
 
     The accumulator test asserted the set stays open at `{NATIVOS,
@@ -1529,9 +1531,10 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
         "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
         "votos_tipo,votos_cantidad,estado_final,mesa_tipo\n"
     )
-    row = "02,027,00001,4245,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,"
-    csv_a = header + row + "NATIVOS\n"
-    csv_b = header + row + "EXTRANJEROS\n"
+    later = "02,027,00002,5000,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,"
+    earlier = "01,001,00001,100,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,"
+    csv_a = header + later + "NATIVOS\n" + earlier + "EXTRANJEROS\n"
+    csv_b = header + earlier + "NATIVOS\n" + later + "EXTRANJEROS\n"
 
     local_root = tmp_path / "archive"
     store = LocalArchiveStore(root=local_root)
@@ -1585,6 +1588,17 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
         encoding="utf-8",
     )
 
+    mutation_calls = []
+
+    def record_mutation(*args, **kwargs):
+        mutation_calls.append((args, kwargs))
+        return 0, 0, [], []
+
+    monkeypatch.setattr(
+        psycopg, "connect", lambda *_args, **_kwargs: contextlib.nullcontext(object())
+    )
+    monkeypatch.setattr("etl.__main__.apply_mesa_tipo_mapping", record_mutation)
+
     exit_code = main(
         _main_args(sources_path, local_root, manifest_path)
         # A URL that could never connect. Passing `TEST_DSN` let the test
@@ -1600,9 +1614,13 @@ def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(tmp_path: Path, c
     )
 
     reported = capsys.readouterr().err
-    assert "more than one mesa_tipo" in reported, (
-        f"the cross-source conflict must be the refusal that fired; got {reported!r}"
+    assert reported == (
+        "2 mesa(s) carry more than one mesa_tipo across the archived sources; "
+        "refusing to pick one.\n"
+        "  ('01', '001', '00001', 100) -> ['EXTRANJEROS', 'NATIVOS']\n"
+        "  ('02', '027', '00002', 5000) -> ['EXTRANJEROS', 'NATIVOS']\n"
     )
+    assert mutation_calls == [], "conflicts must refuse before any backfill mutation"
     assert exit_code == 1, "a disagreement across sources must refuse, not pick"
 
 
@@ -2735,11 +2753,12 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
     )
 
     conn = psycopg.connect(TEST_DSN)
+    # fmt: off
     try:
         exit_code = main(
             _main_args(sources_path, local_root, manifest_path)
-            + [
-                "validate-fiscalizacion",
+                + [
+                    "validate-fiscalizacion",
                 "--source",
                 fiscalizacion_id,
                 "--baseline",
@@ -2770,7 +2789,10 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                 (f"{fiscalizacion_id} ", f"{national_id} "),
             )
         conn.commit()
+        conn.execute("delete from archive_entry where id=any(%s)", ([fiscalizacion_id, national_id],))  # noqa: E501
+        conn.commit()
         conn.close()
+    # fmt: on
 
     assert exit_code == 0, "remaining unambiguous identities must still be compared"
     assert written, "divergence and official quarantine evidence must reach review_item"
@@ -2822,7 +2844,23 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
         ],
     }
 
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            pass
+
+        def execute(self, *_args) -> None:
+            pass
+
+        def fetchone(self):
+            return ("election-id", "category-id")
+
     class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
         def commit(self) -> None:
             pass
 
@@ -2842,6 +2880,8 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
             "id": source_id,
             "status": "ok",
             "archived_path": "archive/fixture.csv",
+            "fetched_at": "2026-01-01T00:00:00Z",
+            "sha256": "0" * 64,
         },
     )
     monkeypatch.setattr(
@@ -2897,6 +2937,9 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
         ),
     )
     monkeypatch.setattr(cli.psycopg, "connect", lambda _url: FakeConnection())
+    monkeypatch.setattr(cli, "project_archive_entry", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "upsert_election", lambda *_args, **_kwargs: "election-id")
+    monkeypatch.setattr(cli, "upsert_category", lambda *_args, **_kwargs: "category-id")
     monkeypatch.setattr(
         cli,
         "insert_review_items",
@@ -2923,6 +2966,20 @@ def test_validate_fiscalizacion_reports_expected_exclusions_and_reconciled_total
     assert [
         (scope.distrito_code, scope.seccion_code) for scope in candidates[0].section_scopes
     ] == [("02", "027")]
+    assert candidates[0].contexts == (
+        ReviewItemContext(
+            "observed",
+            "fiscalizacion",
+            "available",
+            2025,
+            "election-id",
+            "category-id",
+            fiscalizacion_id,
+        ),  # noqa: E501
+        ReviewItemContext(
+            "comparison", "official", "available", 2025, "election-id", "category-id", baseline_id
+        ),  # noqa: E501
+    )
     assert (
         "expected exclusion: reason=expected_category_definition_difference "
         "column='En blanco' count=1"
@@ -3001,12 +3058,14 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(
                     "status": "ok",
                     "archived_path": "archive/fiscalizacion/fisc.csv",
                     "sha256": hashlib.sha256(fiscalizacion_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
                 },
                 {
                     "id": national_id,
                     "status": "ok",
                     "archived_path": "archive/national/nat.csv",
                     "sha256": hashlib.sha256(national_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
                 },
             ]
         ),
@@ -3756,13 +3815,15 @@ def test_load_curated_records_raw_mesa_presence_before_vote_filters(
     assert stability.stable is True
 
 
-def test_load_curated_reports_the_authoritative_new_review_count(
+def test_load_curated_cli_records_year_level_contexts_in_deterministic_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
     manifest_path = tmp_path / "archive-manifest.json"
     manifest_path.write_text("[]\n", encoding="utf-8")
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text("{}\n", encoding="utf-8")
 
     class FakeConnection:
         def commit(self) -> None:
@@ -3793,23 +3854,55 @@ def test_load_curated_reports_the_authoritative_new_review_count(
         lambda *_args, year, **_kwargs: {("1", 1)} if year == 2023 else {("1", 1), ("1", 2)},
     )
     monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _url: FakeConnection())
-    monkeypatch.setattr("etl.__main__.load_party_map_rows", lambda *_args: object())
-    monkeypatch.setattr("etl.__main__.load_crosswalk_rows", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "etl.__main__.load_party_map_rows",
+        lambda *_args: PartyMapReplacementSummary(
+            party_canonical=TableReplacementCount(loaded=0, deleted=0),
+            list_identity=TableReplacementCount(loaded=0, deleted=0),
+            party_mapping=TableReplacementCount(loaded=0, deleted=0),
+        ),
+    )
+    monkeypatch.setattr(
+        "etl.__main__.load_crosswalk_rows",
+        lambda *_args, **_kwargs: CrosswalkReplacementSummary(
+            jurisdiction_crosswalk=TableReplacementCount(loaded=1, deleted=0),
+            mesa_crosswalk=TableReplacementCount(loaded=2, deleted=0),
+        ),
+    )
     monkeypatch.setattr(
         "etl.__main__.insert_review_items",
         lambda _conn, records: candidates.extend(records) or 0,
     )
 
-    load_curated(
-        database_url="postgresql://not-opened/test",
-        sources={},
-        local_root=tmp_path / "archive",
-        manifest_path=manifest_path,
-        party_map_path=tmp_path / "unused-party-map.yaml",
-        crosswalk_path=tmp_path / "unused-crosswalk.yaml",
+    exit_code = main(
+        _main_args(sources_path, tmp_path / "archive", manifest_path)
+        + ["load-curated", "--database-url", "postgresql://not-opened/test"]
     )
 
+    assert exit_code == 0
     assert len(candidates) == 1
+    assert candidates[0].contexts == (
+        ReviewItemContext(
+            "observed",
+            "official",
+            "unknown",
+            2023,
+            None,
+            None,
+            None,
+            "source_archive_not_attributable",
+        ),
+        ReviewItemContext(
+            "observed",
+            "official",
+            "unknown",
+            2025,
+            None,
+            None,
+            None,
+            "source_archive_not_attributable",
+        ),
+    )
     assert "(0 new, 1 not recorded)" in capsys.readouterr().err
 
 

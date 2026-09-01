@@ -1356,37 +1356,34 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 "distrito_codes": [scope.distrito_code for scope in record.section_scopes],
                 "seccion_codes": [scope.seccion_code for scope in record.section_scopes],
             }
-            if record.context is not None:
-                context = dict(record.context.__dict__)
-                for identifier in ("election_id", "category_id"):
-                    if isinstance(context[identifier], UUID):
-                        context[identifier] = str(context[identifier])
-                projected.update(context)
+            if record.contexts:
+                contexts = []
+                for review_context in record.contexts:
+                    context = {
+                        key: value
+                        for key, value in review_context.__dict__.items()
+                        if key != "unknown_reason" or value is not None
+                    }
+                    for identifier in ("election_id", "category_id"):
+                        if isinstance(context[identifier], UUID):
+                            context[identifier] = str(context[identifier])
+                    contexts.append(context)
+                projected["contexts"] = contexts
             return projected
 
         inserted = 0
-        for explicit_context, function, context_columns in (
+        for explicit_contexts, function, context_columns in (
             (False, "record_review_item", ""),
-            (
-                True,
-                "record_review_item_v2",
-                ", context_role text, source_kind text, archive_availability text, "
-                "election_year integer, election_id uuid, category_id uuid, archive_entry_id text",
-            ),
+            (True, "record_review_item_v2", ", contexts jsonb"),
         ):
             candidates = [
                 candidate(record)
                 for record in records
-                if (record.context is not None) is explicit_context
+                if bool(record.contexts) is explicit_contexts
             ]
             if not candidates:
                 continue
-            context_arguments = (
-                ", context_role, source_kind, archive_availability, election_year, "
-                "election_id, category_id, archive_entry_id"
-                if explicit_context
-                else ""
-            )
+            context_arguments = ", contexts" if explicit_contexts else ""
             cur.execute(
                 f"""
                 with candidates as (
