@@ -1061,9 +1061,11 @@ def test_remaining_review_context_cleanup_boundaries_restore_postgres_owner() ->
         migration = " ".join((MIGRATIONS / relative_path).read_text().lower().split())
         assert migration.count("set role postgres;") == 1, relative_path
         assert "reset role;" not in migration, relative_path
-        assert migration.index("set role workspace_review_ingest_owner;") < migration.index(
-            "set role postgres;"
-        ) < migration.index(owner_cleanup), relative_path
+        assert (
+            migration.index("set role workspace_review_ingest_owner;")
+            < migration.index("set role postgres;")
+            < migration.index(owner_cleanup)
+        ), relative_path
 
 
 def test_historical_review_context_classification_sql_is_structured_and_reversible() -> None:
