@@ -933,6 +933,125 @@ def batch_upsert_jurisdictions(
     }
 
 
+@dataclass
+class ResultRowsReplacement:
+    """One transaction-scoped delete followed by any number of insert-only batches."""
+
+    conn: object
+    archive_entry_id: str
+    election_id: str
+    source_kind: str | None
+    inserted: int = 0
+
+    def insert(self, records: Sequence[ResultRowRecord]) -> int:
+        """Insert one bounded batch without repeating the replacement delete."""
+        _validate_result_row_records(
+            records,
+            archive_entry_id=self.archive_entry_id,
+            election_id=self.election_id,
+            expected_source_kind=self.source_kind,
+        )
+        if not records:
+            return 0
+        with self.conn.cursor() as cur:
+            cur.executemany(
+                """
+                insert into result_row (
+                    election_id, jurisdiction_id, category_id, granularity,
+                    requested_granularity,
+                    list_id, votes, source_kind,
+                    archive_entry_id, source_row_index, mesa_tipo
+                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    (
+                        record.election_id,
+                        record.jurisdiction_id,
+                        record.category_id,
+                        record.granularity,
+                        record.requested_granularity,
+                        record.list_id,
+                        record.votes,
+                        record.source_kind,
+                        record.archive_entry_id,
+                        record.source_row_index,
+                        record.mesa_tipo,
+                    )
+                    for record in records
+                ],
+            )
+        self.inserted += len(records)
+        return len(records)
+
+
+def _validate_result_row_records(
+    records: Sequence[ResultRowRecord],
+    *,
+    archive_entry_id: str,
+    election_id: str,
+    expected_source_kind: str | None = None,
+) -> str | None:
+    """Validate one replacement scope before it can mutate `result_row`."""
+    foreign = sorted({record.election_id for record in records} - {election_id})
+    if foreign:
+        raise ValueError(
+            f"load_result_rows was given election_id={election_id!r} but "
+            f"{len(foreign)} record(s) carry a different election "
+            f"({', '.join(foreign)}); refusing rather than widening the delete scope"
+        )
+
+    foreign_archive_entries = sorted(
+        {record.archive_entry_id for record in records} - {archive_entry_id}
+    )
+    if foreign_archive_entries:
+        raise ValueError(
+            f"load_result_rows expected archive_entry_id={archive_entry_id!r} but "
+            "record(s) carry offending archive_entry_id(s) "
+            f"{', '.join(repr(value) for value in foreign_archive_entries)}; "
+            "refusing before deleting or inserting rows"
+        )
+
+    source_kinds = sorted({record.source_kind for record in records})
+    if len(source_kinds) > 1:
+        raise MixedSourceKindBatchError(
+            "load_result_rows requires one source_kind per replacement batch; "
+            f"received {', '.join(source_kinds)}; refusing before deleting or inserting rows"
+        )
+    source_kind = source_kinds[0] if source_kinds else expected_source_kind
+    if expected_source_kind is not None and source_kind != expected_source_kind:
+        raise ArchiveEntrySourceKindMismatchError(
+            f"result-row replacement requires source_kind={expected_source_kind!r}, "
+            f"but the batch carries source_kind={source_kind!r}; refusing before inserting rows"
+        )
+    return source_kind
+
+
+def begin_result_rows_replacement(
+    conn,
+    *,
+    archive_entry_id: str,
+    election_id: str,
+    source_kind: str | None,
+) -> ResultRowsReplacement:
+    """Lock archive authority and perform the scoped replacement delete exactly once."""
+    authoritative_source_kind = lock_archive_entry_source_authority(
+        conn,
+        archive_entry_id=archive_entry_id,
+        expected_source_kind=source_kind,
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            "delete from result_row where archive_entry_id = %s and election_id = %s",
+            (archive_entry_id, election_id),
+        )
+    return ResultRowsReplacement(
+        conn=conn,
+        archive_entry_id=archive_entry_id,
+        election_id=election_id,
+        source_kind=source_kind or authoritative_source_kind,
+    )
+
+
 def load_result_rows(
     conn,
     *,
@@ -965,76 +1084,18 @@ def load_result_rows(
     # different election silently deleted that OTHER election's rows for this
     # archive entry. The scope a caller declares is the scope it gets, and a
     # record outside it is refused rather than quietly expanding it.
-    foreign = sorted({r.election_id for r in records} - {election_id})
-    if foreign:
-        raise ValueError(
-            f"load_result_rows was given election_id={election_id!r} but "
-            f"{len(foreign)} record(s) carry a different election "
-            f"({', '.join(foreign)}); refusing rather than widening the delete scope"
-        )
-
-    foreign_archive_entries = sorted(
-        {record.archive_entry_id for record in records} - {archive_entry_id}
+    source_kind = _validate_result_row_records(
+        records,
+        archive_entry_id=archive_entry_id,
+        election_id=election_id,
     )
-    if foreign_archive_entries:
-        raise ValueError(
-            f"load_result_rows expected archive_entry_id={archive_entry_id!r} but "
-            "record(s) carry offending archive_entry_id(s) "
-            f"{', '.join(repr(value) for value in foreign_archive_entries)}; "
-            "refusing before deleting or inserting rows"
-        )
-
-    source_kinds = sorted({record.source_kind for record in records})
-    if len(source_kinds) > 1:
-        raise MixedSourceKindBatchError(
-            "load_result_rows requires one source_kind per replacement batch; "
-            f"received {', '.join(source_kinds)}; refusing before deleting or inserting rows"
-        )
-
-    lock_archive_entry_source_authority(
+    replacement = begin_result_rows_replacement(
         conn,
         archive_entry_id=archive_entry_id,
-        expected_source_kind=source_kinds[0] if source_kinds else None,
+        election_id=election_id,
+        source_kind=source_kind,
     )
-
-    with conn.cursor() as cur:
-        # Scoped by election, not just by archive entry: one archived file may
-        # hold several elections (the PBA open-data catalogue publishes
-        # 2005-2023 in a single CSV), and an unscoped delete would wipe every
-        # other election's rows that share the entry. ALWAYS scoped now — there
-        # is no records-derived fallback to lose the scope in.
-        cur.execute(
-            "delete from result_row where archive_entry_id = %s and election_id = %s",
-            (archive_entry_id, election_id),
-        )
-        if records:
-            cur.executemany(
-                """
-                insert into result_row (
-                    election_id, jurisdiction_id, category_id, granularity,
-                    requested_granularity,
-                    list_id, votes, source_kind,
-                    archive_entry_id, source_row_index, mesa_tipo
-                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    (
-                        record.election_id,
-                        record.jurisdiction_id,
-                        record.category_id,
-                        record.granularity,
-                        record.requested_granularity,
-                        record.list_id,
-                        record.votes,
-                        record.source_kind,
-                        record.archive_entry_id,
-                        record.source_row_index,
-                        record.mesa_tipo,
-                    )
-                    for record in records
-                ],
-            )
-    return len(records)
+    return replacement.insert(records)
 
 
 def load_party_map_rows(conn, table: PartyMappingTable) -> PartyMapReplacementSummary:

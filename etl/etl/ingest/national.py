@@ -23,8 +23,10 @@ from __future__ import annotations
 import csv
 import io
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
+from typing import TextIO
 
 from etl import db
 from etl.jurisdiction import (
@@ -235,227 +237,6 @@ def extract_raw_mesa_identities_from_text(
     return identities
 
 
-def ingest_national(
-    csv_bytes: bytes,
-    *,
-    archive_entry_id: str,
-    election_year: int,
-    election_round: str,
-    establecimientos_csv_bytes: bytes | None = None,
-) -> list[NationalRow]:
-    """Parse one archived national results CSV into normalized rows.
-
-    Pure function of the source bytes, provenance, and explicit registered
-    election metadata: calling it twice
-    against the same bytes yields an identical list, which is the
-    precondition D8's later transactional (delete-by-archive_entry_id,
-    bulk insert) idempotency at the Postgres layer depends on.
-    """
-    # `utf-8-sig`, matching every other reader of these same bytes
-    # (`__main__.resolve_national_results_bytes`, `official_mesa_votes_from_
-    # national`, `cmd_backfill_mesa_tipo`). Plain `utf-8` left a BOM attached
-    # to the first field name, so a BOM-bearing export cleared the ZIP-member
-    # header probe and then died HERE as `NationalSchemaError: missing
-    # required column(s): distrito_id` -- an encoding failure reported as
-    # schema drift, which is exactly the misdiagnosis the probe refuses to
-    # make. `utf-8-sig` decodes BOM-less bytes unchanged.
-    reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
-    fieldnames = set(reader.fieldnames or ())
-    missing = [col for col in REQUIRED_COLUMNS if col not in fieldnames]
-    if missing:
-        raise NationalSchemaError(
-            "unrecognized national results structure — missing required "
-            f"column(s): {', '.join(missing)}"
-        )
-
-    establecimientos, conflicting_establecimientos = _parse_establecimientos(
-        establecimientos_csv_bytes,
-        source_label=archive_entry_id,
-    )
-    rows: list[NationalRow] = []
-    # Rule 3: an exclusion is reported PER REASON, in rows AND in votes.
-    # These two `continue`s used to be silent, and their plausibility is
-    # exactly what would let a destructive filter survive: "non-POSITIVO"
-    # sounds like nothing, but on the 2023 generales file it is every EN
-    # BLANCO/NULO/IMPUGNADO/RECURRIDO row across ten categories, and if the
-    # column ever drifted to `"Positivo"` the whole corpus would vanish
-    # behind the same reassuring word.
-    excluded_rows: dict[str, int] = {}
-    excluded_votes: dict[str, int] = {}
-    # A dropped row whose vote count will not parse is still a dropped row.
-    # It is counted in rows under its own reason, so the votes total is never
-    # quietly padded with a zero that stands in for a number nobody read.
-    excluded_unparseable: dict[str, int] = {}
-    circuits_by_companion_key: dict[tuple[int, int, int], set[str]] = {}
-
-    def exclude(reason: str, raw_votes: str | None) -> None:
-        excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
-        votes = parse_source_int(raw_votes)
-        if votes is None:
-            excluded_unparseable[reason] = excluded_unparseable.get(reason, 0) + 1
-            return
-        excluded_votes[reason] = excluded_votes.get(reason, 0) + votes
-
-    for index, raw in enumerate(reader):
-        if establecimientos_csv_bytes is not None:
-            distrito_identity = _parse_int(raw.get("distrito_id"))
-            seccion_identity = _parse_int(raw.get("seccion_id"))
-            mesa_identity = _parse_int(raw.get("mesa_id"))
-            raw_circuito = raw.get("circuito_id")
-            if (
-                distrito_identity is not None
-                and seccion_identity is not None
-                and mesa_identity is not None
-                and is_canonicalizable_circuito_code(raw_circuito)
-            ):
-                circuito_identity = normalize_circuito_code(raw_circuito)
-                assert circuito_identity is not None
-                circuits_by_companion_key.setdefault(
-                    (distrito_identity, seccion_identity, mesa_identity), set()
-                ).add(circuito_identity)
-
-        mesa_tipo = validate_mesa_tipo(
-            raw.get("mesa_tipo"),
-            source_label=archive_entry_id,
-            source_row_index=index,
-        )
-        agrupacion_id = (raw.get("agrupacion_id") or "").strip()
-        votos_tipo = raw["votos_tipo"]
-        if votos_tipo != "POSITIVO":
-            exclude(f"votos_tipo={votos_tipo!r}", raw.get("votos_cantidad"))
-            continue
-        if not agrupacion_id:
-            exclude("agrupacion_id empty", raw.get("votos_cantidad"))
-            continue
-        if agrupacion_id == "0":
-            exclude('agrupacion_id "0"', raw.get("votos_cantidad"))
-            continue
-
-        invalid_code_field = next(
-            (
-                field
-                for field, predicate in (
-                    ("distrito_id", is_canonicalizable_code),
-                    ("seccion_id", is_canonicalizable_code),
-                    ("circuito_id", is_canonicalizable_circuito_code),
-                )
-                if not predicate(raw.get(field))
-            ),
-            None,
-        )
-        if invalid_code_field is not None:
-            exclude(f"unreadable {invalid_code_field}", raw.get("votos_cantidad"))
-            continue
-
-        # A list's identity is (agrupación, lista) -- NOT the agrupación alone.
-        # In a PASO one agrupación fields several internal lists competing
-        # against each other in the same mesa and cargo (agrupación 134 runs
-        # `3005 A- CELESTE Y BLANCA` against `3006 B- JUSTA Y SOBERANA`), which
-        # is the point of a primary. `lista_numero` is empty throughout the 2023
-        # generales file, populated throughout the PASO, and empty on measured
-        # 2025 legislativas POSITIVO rows. Other explicit election combinations
-        # retain the general composite behavior without claiming a measured shape.
-        lista_numero = (raw.get("lista_numero") or "").strip()
-        election = (election_year, election_round)
-        requires_empty = election in {(2023, "generales"), (2025, "legislativas")}
-        requires_nonempty = election == (2023, "paso")
-        if (requires_empty and lista_numero) or (requires_nonempty and not lista_numero):
-            expected = "empty" if requires_empty else "nonempty"
-            raise NationalSchemaError(
-                f"{archive_entry_id}: election {election_year}/{election_round} source row "
-                f"{index} requires lista_numero to be {expected}; received {lista_numero!r}"
-            )
-        list_id = f"{agrupacion_id}-{lista_numero}" if lista_numero else agrupacion_id
-
-        mesa_id = _normalize_mesa_id(raw.get("mesa_id"))
-        if mesa_id is None:
-            exclude("unreadable mesa_id", raw.get("votos_cantidad"))
-            continue
-        votes = _parse_int(raw.get("votos_cantidad"))
-        if votes is None:
-            # A POSITIVO row whose vote count will not parse is EXCLUDED under
-            # its own reason, never coerced to zero: a zero is a claim that
-            # nobody voted for that list, which is not what an unreadable cell
-            # says. Same rule `ingest.fiscalizacion` applies to a blank cell.
-            exclude("unreadable votos_cantidad", None)
-            continue
-        establecimiento: str | None = None
-        establecimiento_name: str | None = None
-        if establecimientos_csv_bytes is not None:
-            distrito_id = _parse_int(raw.get("distrito_id"))
-            seccion_id = _parse_int(raw.get("seccion_id"))
-            assert distrito_id is not None and seccion_id is not None
-            mesa_key = (distrito_id, seccion_id, mesa_id)
-            if mesa_key in conflicting_establecimientos:
-                exclude(
-                    "conflicting establecimiento companion metadata",
-                    raw.get("votos_cantidad"),
-                )
-                continue
-            metadata = establecimientos.get(mesa_key)
-            if metadata is None:
-                exclude("missing establecimiento companion match", raw.get("votos_cantidad"))
-                continue
-            establecimiento, establecimiento_name = metadata
-        result = make_result_row(
-            granularity="mesa",
-            distrito=raw["distrito_id"],
-            seccion=raw["seccion_id"],
-            circuito=raw["circuito_id"],
-            establecimiento=establecimiento,
-            mesa=mesa_id,
-            category=raw["cargo_nombre"],
-            list_id=list_id,
-            votes=votes,
-        )
-        jurisdiction_names = JurisdictionNames(
-            distrito=raw["distrito_nombre"],
-            seccion=raw["seccion_nombre"],
-            circuito=normalize_circuito_name(
-                raw["circuito_nombre"],
-                raw["circuito_id"],
-            ),
-            establecimiento=establecimiento_name,
-        )
-        rows.append(
-            NationalRow(
-                result=result,
-                estado_final=raw.get("estado_final") or None,
-                # Phase 16a: `mesa_tipo` distinguishes a regular (`NATIVOS`)
-                # mesa from a foreign-resident (`EXTRANJEROS`) one — the
-                # latter votes in PBA provincial/municipal races but not
-                # national ones, a real electoral fact that per-mesa
-                # cross-year comparisons must be able to see. `.get()`
-                # mirrors `estado_final`'s absent-column tolerance.
-                mesa_tipo=mesa_tipo,
-                jurisdiction_names=jurisdiction_names,
-                archive_entry_id=archive_entry_id,
-                source_row_index=index,
-            )
-        )
-
-    ambiguous_companion_keys = {
-        key for key, circuits in circuits_by_companion_key.items() if len(circuits) > 1
-    }
-    if ambiguous_companion_keys:
-        unambiguous_rows: list[NationalRow] = []
-        for row in rows:
-            distrito = _parse_int(row.result.distrito)
-            seccion = _parse_int(row.result.seccion)
-            assert distrito is not None and seccion is not None and row.mesa is not None
-            if (distrito, seccion, row.mesa) in ambiguous_companion_keys:
-                exclude(
-                    "ambiguous result circuits for establecimiento companion",
-                    str(row.result.votes),
-                )
-            else:
-                unambiguous_rows.append(row)
-        rows = unambiguous_rows
-
-    _report_exclusions(excluded_rows, excluded_votes, excluded_unparseable)
-    return _quarantine_ambiguous_rows(rows)
-
-
 def _parse_establecimientos(
     csv_bytes: bytes | None,
     *,
@@ -537,8 +318,8 @@ def _report_exclusions(
 ) -> None:
     """Print the per-reason exclusion breakdown, in rows and in votes.
 
-    Same shape and destination as `_quarantine_ambiguous_rows`'s report, so
-    one ingest run reports every exclusion it made in one place.
+    Same shape and destination as duplicate-key quarantine reporting, so one
+    ingest run reports every exclusion it made in one place.
     """
     if not rows_by_reason:
         return
@@ -556,75 +337,316 @@ def _report_exclusions(
     )
 
 
-def _quarantine_ambiguous_rows(rows: list[NationalRow]) -> list[NationalRow]:
-    """Drop rows whose natural key repeats within one file, and say so.
+NaturalKey = tuple[str, str | None, str | None, int | None, str, str | None]
+CompanionKey = tuple[int, int, int]
 
-    The 2023 national file bundles ten categories, from PRESIDENTE Y VICE
-    down to MIEMBROS DE JUNTA COMUNAL, and for the two most local ones its
-    distrito/seccion/circuito/mesa lineage does not identify the municipio.
-    The result is rows that are byte-identical across every column except
-    `votos_cantidad`: measured on the real archived `2023-generales.zip`,
-    5.051 natural keys repeat, 2.379 under INTENDENTE and 2.672 under
-    MIEMBROS DE JUNTA COMUNAL. No national category is affected.
 
-    They are genuinely indistinguishable in the source, so there is no
-    correct way to pick one -- summing could double-count a mesa and
-    choosing the first is arbitrary. They are therefore excluded and
-    reported, never silently resolved.
+@dataclass(slots=True)
+class _NaturalKeyStats:
+    count: int
+    votes: int
 
-    Before this, one such row aborted the entire ingest on a raw psycopg
-    `UniqueViolation` against `result_row_natural_key`, discarding 2,7
-    million good national rows with it.
-    """
-    by_key: dict[tuple, list[NationalRow]] = {}
-    for row in rows:
-        by_key.setdefault(
-            (
-                row.result.distrito,
-                row.result.seccion,
-                row.result.circuito,
-                row.result.mesa,
-                row.category,
-                row.list_id,
-            ),
-            [],
-        ).append(row)
 
-    ambiguous = {k: v for k, v in by_key.items() if len(v) > 1}
-    if not ambiguous:
-        return rows
+def _national_reader(csv_text: TextIO) -> csv.DictReader:
+    reader = csv.DictReader(csv_text)
+    fieldnames = set(reader.fieldnames or ())
+    missing = [column for column in REQUIRED_COLUMNS if column not in fieldnames]
+    if missing:
+        raise NationalSchemaError(
+            "unrecognized national results structure — missing required "
+            f"column(s): {', '.join(missing)}"
+        )
+    return reader
 
-    dropped = sum(len(v) for v in ambiguous.values())
-    # ROWS per category, matching the `dropped` total. It counted KEYS while
-    # the headline counted rows, so a reader summing the breakdown got the
-    # same number and concluded each key dropped exactly one row -- false the
-    # moment a key repeats three times, and precisely the "large plausible
-    # total" rule 3 exists to catch. Keys are reported too, separately.
+
+def _candidate_from_raw(
+    raw: dict[str, str | None],
+    *,
+    index: int,
+    archive_entry_id: str,
+    election_year: int,
+    election_round: str,
+    establecimientos: dict[CompanionKey, tuple[str, str]],
+    conflicting_establecimientos: set[CompanionKey],
+    has_companion: bool,
+    exclude: Callable[[str, str | None], None],
+) -> NationalRow | None:
+    mesa_tipo = validate_mesa_tipo(
+        raw.get("mesa_tipo"),
+        source_label=archive_entry_id,
+        source_row_index=index,
+    )
+    agrupacion_id = (raw.get("agrupacion_id") or "").strip()
+    votos_tipo = raw["votos_tipo"]
+    if votos_tipo != "POSITIVO":
+        exclude(f"votos_tipo={votos_tipo!r}", raw.get("votos_cantidad"))
+        return None
+    if not agrupacion_id:
+        exclude("agrupacion_id empty", raw.get("votos_cantidad"))
+        return None
+    if agrupacion_id == "0":
+        exclude('agrupacion_id "0"', raw.get("votos_cantidad"))
+        return None
+
+    invalid_code_field = next(
+        (
+            field
+            for field, predicate in (
+                ("distrito_id", is_canonicalizable_code),
+                ("seccion_id", is_canonicalizable_code),
+                ("circuito_id", is_canonicalizable_circuito_code),
+            )
+            if not predicate(raw.get(field))
+        ),
+        None,
+    )
+    if invalid_code_field is not None:
+        exclude(f"unreadable {invalid_code_field}", raw.get("votos_cantidad"))
+        return None
+
+    lista_numero = (raw.get("lista_numero") or "").strip()
+    election = (election_year, election_round)
+    requires_empty = election in {(2023, "generales"), (2025, "legislativas")}
+    requires_nonempty = election == (2023, "paso")
+    if (requires_empty and lista_numero) or (requires_nonempty and not lista_numero):
+        expected = "empty" if requires_empty else "nonempty"
+        raise NationalSchemaError(
+            f"{archive_entry_id}: election {election_year}/{election_round} source row "
+            f"{index} requires lista_numero to be {expected}; received {lista_numero!r}"
+        )
+    list_id = f"{agrupacion_id}-{lista_numero}" if lista_numero else agrupacion_id
+
+    mesa_id = _normalize_mesa_id(raw.get("mesa_id"))
+    if mesa_id is None:
+        exclude("unreadable mesa_id", raw.get("votos_cantidad"))
+        return None
+    votes = _parse_int(raw.get("votos_cantidad"))
+    if votes is None:
+        exclude("unreadable votos_cantidad", None)
+        return None
+
+    establecimiento: str | None = None
+    establecimiento_name: str | None = None
+    if has_companion:
+        distrito_id = _parse_int(raw.get("distrito_id"))
+        seccion_id = _parse_int(raw.get("seccion_id"))
+        assert distrito_id is not None and seccion_id is not None
+        mesa_key = (distrito_id, seccion_id, mesa_id)
+        if mesa_key in conflicting_establecimientos:
+            exclude("conflicting establecimiento companion metadata", raw.get("votos_cantidad"))
+            return None
+        metadata = establecimientos.get(mesa_key)
+        if metadata is None:
+            exclude("missing establecimiento companion match", raw.get("votos_cantidad"))
+            return None
+        establecimiento, establecimiento_name = metadata
+
+    result = make_result_row(
+        granularity="mesa",
+        distrito=raw["distrito_id"],
+        seccion=raw["seccion_id"],
+        circuito=raw["circuito_id"],
+        establecimiento=establecimiento,
+        mesa=mesa_id,
+        category=raw["cargo_nombre"],
+        list_id=list_id,
+        votes=votes,
+    )
+    return NationalRow(
+        result=result,
+        estado_final=raw.get("estado_final") or None,
+        mesa_tipo=mesa_tipo,
+        jurisdiction_names=JurisdictionNames(
+            distrito=raw["distrito_nombre"],
+            seccion=raw["seccion_nombre"],
+            circuito=normalize_circuito_name(raw["circuito_nombre"], raw["circuito_id"]),
+            establecimiento=establecimiento_name,
+        ),
+        archive_entry_id=archive_entry_id,
+        source_row_index=index,
+    )
+
+
+def _natural_key(row: NationalRow) -> NaturalKey:
+    return (
+        row.result.distrito,
+        row.result.seccion,
+        row.result.circuito,
+        row.result.mesa,
+        row.category,
+        row.list_id,
+    )
+
+
+def _companion_key(row: NationalRow) -> CompanionKey:
+    distrito = _parse_int(row.result.distrito)
+    seccion = _parse_int(row.result.seccion)
+    assert distrito is not None and seccion is not None and row.mesa is not None
+    return distrito, seccion, row.mesa
+
+
+def _companion_key_from_natural_key(key: NaturalKey) -> CompanionKey:
+    distrito = _parse_int(key[0])
+    seccion = _parse_int(key[1])
+    assert distrito is not None and seccion is not None and key[3] is not None
+    return distrito, seccion, key[3]
+
+
+def _report_ambiguous_natural_keys(
+    stats_by_key: dict[NaturalKey, _NaturalKeyStats], ambiguous_keys: set[NaturalKey]
+) -> None:
+    if not ambiguous_keys:
+        return
     categories: dict[str, int] = {}
     keys_by_category: dict[str, int] = {}
-    # VOTES too, like `_report_exclusions` in this same module. A quarantine
-    # of 5.051 keys with unknown vote mass is the plausible-total shape rule 3
-    # exists for: the count tells you how many rows went, never how much.
     votes_by_category: dict[str, int] = {}
-    for key, group in ambiguous.items():
-        categories[key[4]] = categories.get(key[4], 0) + len(group)
-        keys_by_category[key[4]] = keys_by_category.get(key[4], 0) + 1
-        votes_by_category[key[4]] = votes_by_category.get(key[4], 0) + sum(
-            row.result.votes for row in group
-        )
+    for key, stats in stats_by_key.items():
+        if key not in ambiguous_keys:
+            continue
+        category = key[4]
+        categories[category] = categories.get(category, 0) + stats.count
+        keys_by_category[category] = keys_by_category.get(category, 0) + 1
+        votes_by_category[category] = votes_by_category.get(category, 0) + stats.votes
+    dropped = sum(categories.values())
     breakdown = ", ".join(
         f"{name} {count} rows / {votes_by_category[name]} votes "
         f"across {keys_by_category[name]} keys"
-        for name, count in sorted(categories.items(), key=lambda kv: -kv[1])
+        for name, count in sorted(categories.items(), key=lambda item: -item[1])
     )
     print(
-        f"quarantined {dropped} rows across {len(ambiguous)} ambiguous natural keys "
+        f"quarantined {dropped} rows across {len(ambiguous_keys)} ambiguous natural keys "
         f"({breakdown}) -- indistinguishable in the source except by vote count, "
         "so no row was loaded for them",
         file=sys.stderr,
     )
 
-    return [row for key, group in by_key.items() if len(group) == 1 for row in group]
+
+def iter_national_rows(
+    csv_text: TextIO,
+    *,
+    archive_entry_id: str,
+    election_year: int,
+    election_round: str,
+    establecimientos_csv_bytes: bytes | None = None,
+) -> Iterator[NationalRow]:
+    """Validate a seekable national CSV in pass one, then emit rows in pass two."""
+    establecimientos, conflicting_establecimientos = _parse_establecimientos(
+        establecimientos_csv_bytes,
+        source_label=archive_entry_id,
+    )
+    excluded_rows: dict[str, int] = {}
+    excluded_votes: dict[str, int] = {}
+    excluded_unparseable: dict[str, int] = {}
+
+    def exclude(reason: str, raw_votes: str | None) -> None:
+        excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
+        votes = parse_source_int(raw_votes)
+        if votes is None:
+            excluded_unparseable[reason] = excluded_unparseable.get(reason, 0) + 1
+        else:
+            excluded_votes[reason] = excluded_votes.get(reason, 0) + votes
+
+    csv_text.seek(0)
+    circuits_by_companion_key: dict[CompanionKey, set[str]] = {}
+    stats_by_key: dict[NaturalKey, _NaturalKeyStats] = {}
+    for index, raw in enumerate(_national_reader(csv_text)):
+        if establecimientos_csv_bytes is not None:
+            distrito = _parse_int(raw.get("distrito_id"))
+            seccion = _parse_int(raw.get("seccion_id"))
+            mesa = _parse_int(raw.get("mesa_id"))
+            raw_circuito = raw.get("circuito_id")
+            if (
+                distrito is not None
+                and seccion is not None
+                and mesa is not None
+                and is_canonicalizable_circuito_code(raw_circuito)
+            ):
+                circuito = normalize_circuito_code(raw_circuito)
+                assert circuito is not None
+                circuits_by_companion_key.setdefault((distrito, seccion, mesa), set()).add(circuito)
+        row = _candidate_from_raw(
+            raw,
+            index=index,
+            archive_entry_id=archive_entry_id,
+            election_year=election_year,
+            election_round=election_round,
+            establecimientos=establecimientos,
+            conflicting_establecimientos=conflicting_establecimientos,
+            has_companion=establecimientos_csv_bytes is not None,
+            exclude=exclude,
+        )
+        if row is None:
+            continue
+        key = _natural_key(row)
+        stats = stats_by_key.get(key)
+        if stats is None:
+            stats_by_key[key] = _NaturalKeyStats(count=1, votes=row.result.votes)
+        else:
+            stats.count += 1
+            stats.votes += row.result.votes
+
+    ambiguous_companion_keys = {
+        key for key, circuits in circuits_by_companion_key.items() if len(circuits) > 1
+    }
+    for key, stats in stats_by_key.items():
+        if _companion_key_from_natural_key(key) in ambiguous_companion_keys:
+            excluded_rows["ambiguous result circuits for establecimiento companion"] = (
+                excluded_rows.get("ambiguous result circuits for establecimiento companion", 0)
+                + stats.count
+            )
+            excluded_votes["ambiguous result circuits for establecimiento companion"] = (
+                excluded_votes.get("ambiguous result circuits for establecimiento companion", 0)
+                + stats.votes
+            )
+    ambiguous_natural_keys = {
+        key
+        for key, stats in stats_by_key.items()
+        if stats.count > 1 and _companion_key_from_natural_key(key) not in ambiguous_companion_keys
+    }
+    _report_exclusions(excluded_rows, excluded_votes, excluded_unparseable)
+    _report_ambiguous_natural_keys(stats_by_key, ambiguous_natural_keys)
+
+    csv_text.seek(0)
+    for index, raw in enumerate(_national_reader(csv_text)):
+        row = _candidate_from_raw(
+            raw,
+            index=index,
+            archive_entry_id=archive_entry_id,
+            election_year=election_year,
+            election_round=election_round,
+            establecimientos=establecimientos,
+            conflicting_establecimientos=conflicting_establecimientos,
+            has_companion=establecimientos_csv_bytes is not None,
+            exclude=lambda _reason, _votes: None,
+        )
+        if row is None:
+            continue
+        if _companion_key(row) in ambiguous_companion_keys:
+            continue
+        if _natural_key(row) in ambiguous_natural_keys:
+            continue
+        yield row
+
+
+def ingest_national(
+    csv_bytes: bytes,
+    *,
+    archive_entry_id: str,
+    election_year: int,
+    election_round: str,
+    establecimientos_csv_bytes: bytes | None = None,
+) -> list[NationalRow]:
+    """Compatibility bytes interface routed through the seekable streaming parser."""
+    with io.TextIOWrapper(io.BytesIO(csv_bytes), encoding="utf-8-sig", newline="") as text:
+        return list(
+            iter_national_rows(
+                text,
+                archive_entry_id=archive_entry_id,
+                election_year=election_year,
+                election_round=election_round,
+                establecimientos_csv_bytes=establecimientos_csv_bytes,
+            )
+        )
 
 
 # NO `resolve_jurisdictions` / `QuarantinedNationalRow` /
@@ -650,11 +672,39 @@ def _quarantine_ambiguous_rows(rows: list[NationalRow]) -> list[NationalRow]:
 
 
 def load_national_rows(
-    conn, rows: list[NationalRow], *, year: int, round_: str, archive_entry_id: str
+    conn,
+    rows: Iterable[NationalRow],
+    *,
+    year: int,
+    round_: str,
+    archive_entry_id: str,
+    batch_size: int = 1_000,
 ) -> int:
-    """Task 8.5 (D8): resolve each row's election/category/jurisdiction ids
-    and hand the batch to `db.load_result_rows`'s delete-by-
-    `archive_entry_id`-then-bulk-insert transaction wrapper.
+    """Atomically replace one archive scope while preserving lazy row streaming."""
+    transaction = conn.transaction() if hasattr(conn, "transaction") else nullcontext()
+    with transaction:
+        return _load_national_rows(
+            conn,
+            rows,
+            year=year,
+            round_=round_,
+            archive_entry_id=archive_entry_id,
+            batch_size=batch_size,
+        )
+
+
+def _load_national_rows(
+    conn,
+    rows: Iterable[NationalRow],
+    *,
+    year: int,
+    round_: str,
+    archive_entry_id: str,
+    batch_size: int = 1_000,
+) -> int:
+    """Resolve and insert national rows in bounded transaction-local batches.
+
+    The replacement scope is deleted once before the first insert-only batch.
 
     All `rows` MUST share one `archive_entry_id` -- D8's idempotency key is
     scoped per archive entry, not per mixed batch. `year`/`round_` are
@@ -674,10 +724,8 @@ def load_national_rows(
     # `archive_entry_id` is a REQUIRED argument rather than `rows[0]`'s,
     # because with zero rows the function cannot otherwise state its own
     # scope -- the same reason `load_fiscalizacion_rows` takes it.
-    if any(row.archive_entry_id != archive_entry_id for row in rows):
-        raise ValueError(
-            "load_national_rows requires every row to carry the archive_entry_id given"
-        )
+    if batch_size <= 0:
+        raise ValueError("national result-row batch_size must be positive")
 
     db.lock_archive_entry_source_authority(
         conn,
@@ -685,71 +733,75 @@ def load_national_rows(
         expected_source_kind="official",
     )
     election_id = db.upsert_election(conn, year=year, round_=round_)
-    category_cache: dict[str, str] = {}
-
-    # Batched jurisdiction resolution (task 14.5): one round trip to
-    # resolve every distinct mesa already in `jurisdiction`, one more to
-    # bulk-insert whatever is missing -- replacing the SELECT-then-INSERT
-    # per first-seen mesa `upsert_jurisdiction` cost here before (~109k
-    # round trips at real national 2025 scale, spikes/003).
-    jurisdiction_keys = [
-        (
-            row.result.distrito,
-            row.result.seccion,
-            row.result.circuito,
-            row.establecimiento,
-            row.result.mesa,
-        )
-        for row in rows
-    ]
-    jurisdiction_ids = db.batch_upsert_jurisdictions(
-        conn,
-        jurisdiction_keys,
-        names=[row.jurisdiction_names for row in rows],
-    )
-
-    records: list[db.ResultRowRecord] = []
-
-    for row in rows:
-        category_id = category_cache.get(row.category)
-        if category_id is None:
-            category_id = db.upsert_category(conn, name=row.category)
-            category_cache[row.category] = category_id
-
-        j_key = (
-            row.result.distrito,
-            row.result.seccion,
-            row.result.circuito,
-            row.establecimiento,
-            row.result.mesa,
-        )
-        jurisdiction_id = jurisdiction_ids[j_key]
-
-        records.append(
-            db.ResultRowRecord(
-                election_id=election_id,
-                jurisdiction_id=jurisdiction_id,
-                category_id=category_id,
-                granularity=row.granularity,
-                list_id=row.list_id,
-                votes=row.result.votes,
-                # HARDCODED, and no override parameter. It was
-                # `source_kind: str = "official"`, a caller-settable kwarg no
-                # caller ever set: a writable door into the one invariant
-                # rule 5 says must never be crossed, with nothing in the write
-                # path to refuse a fiscalización batch labelled official.
-                # `load_fiscalizacion_rows` hardcodes its own kind for the
-                # same reason.
-                source_kind="official",
-                archive_entry_id=row.archive_entry_id,
-                source_row_index=row.source_row_index,
-                mesa_tipo=row.mesa_tipo,
-            )
-        )
-
-    return db.load_result_rows(
+    replacement = db.begin_result_rows_replacement(
         conn,
         archive_entry_id=archive_entry_id,
-        records=records,
         election_id=election_id,
+        source_kind="official",
     )
+    category_cache: dict[str, str] = {}
+    iterator = iter(rows)
+
+    while True:
+        batch: list[NationalRow] = []
+        try:
+            for _ in range(batch_size):
+                batch.append(next(iterator))
+        except StopIteration:
+            pass
+        if not batch:
+            break
+        if any(row.archive_entry_id != archive_entry_id for row in batch):
+            raise ValueError(
+                "load_national_rows requires every row to carry the archive_entry_id given"
+            )
+
+        jurisdiction_keys = [
+            (
+                row.result.distrito,
+                row.result.seccion,
+                row.result.circuito,
+                row.establecimiento,
+                row.result.mesa,
+            )
+            for row in batch
+        ]
+        jurisdiction_ids = db.batch_upsert_jurisdictions(
+            conn,
+            jurisdiction_keys,
+            names=[row.jurisdiction_names for row in batch],
+        )
+        result_records: list[db.ResultRowRecord] = []
+        for row in batch:
+            category_id = category_cache.get(row.category)
+            if category_id is None:
+                category_id = db.upsert_category(conn, name=row.category)
+                category_cache[row.category] = category_id
+            jurisdiction_id = jurisdiction_ids[
+                (
+                    row.result.distrito,
+                    row.result.seccion,
+                    row.result.circuito,
+                    row.establecimiento,
+                    row.result.mesa,
+                )
+            ]
+            result_records.append(
+                db.ResultRowRecord(
+                    election_id=election_id,
+                    jurisdiction_id=jurisdiction_id,
+                    category_id=category_id,
+                    granularity=row.granularity,
+                    list_id=row.list_id,
+                    votes=row.result.votes,
+                    source_kind="official",
+                    archive_entry_id=row.archive_entry_id,
+                    source_row_index=row.source_row_index,
+                    mesa_tipo=row.mesa_tipo,
+                )
+            )
+        replacement.insert(result_records)
+        if len(batch) < batch_size:
+            break
+
+    return replacement.inserted

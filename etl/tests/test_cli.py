@@ -791,6 +791,133 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_ingest_cli_streams_selected_national_member_into_real_db_without_unbounded_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production CLI must keep the extracted results member file-backed."""
+    _require_ephemeral_postgres()
+
+    companion_csv = (
+        "distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+        "2,27,37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79,00001\n"
+    )
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("resultados2025.csv", NATIONAL_CSV)
+        archive.writestr("localesDeVotacionyMesas.csv", companion_csv)
+        archive.writestr("ambitosElectorales.csv", "not,the,results,file\n")
+
+    source_id = f"national/cli-stream-test-{uuid.uuid4()}"
+    filename = f"{uuid.uuid4().hex}.zip"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/cli-stream-test.zip",
+                "mime": "application/zip",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "CLI streaming integration fixture",
+                "filename": filename,
+            }
+        ]
+    }
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(sources), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=FakeFetcher(payload=archive_buffer.getvalue()),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+
+    class BoundedResultsText(io.TextIOBase):
+        def __init__(self, wrapped: io.TextIOBase) -> None:
+            self.wrapped = wrapped
+
+        def read(self, size: int = -1) -> str:
+            assert size >= 0, "selected results member was read without a bound"
+            return self.wrapped.read(size)
+
+        def readline(self, size: int = -1) -> str:
+            return self.wrapped.readline(size)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self) -> str:
+            return next(self.wrapped)
+
+        def seek(self, offset: int, whence: int = 0) -> int:
+            return self.wrapped.seek(offset, whence)
+
+        def tell(self) -> int:
+            return self.wrapped.tell()
+
+        def close(self) -> None:
+            self.wrapped.close()
+            super().close()
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        assert path.name != "resultados2025.csv", "selected results member used Path.read_bytes()"
+        return original_read_bytes(path)
+
+    def guarded_open(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path.name == "resultados2025.csv" and "b" not in mode:
+            return BoundedResultsText(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    monkeypatch.setattr(Path, "open", guarded_open)
+    args = _main_args(sources_path, local_root, manifest_path) + [
+        "ingest",
+        "--source",
+        source_id,
+        "--database-url",
+        TEST_DSN,
+        "--year",
+        "2025",
+        "--round",
+        "legislativas",
+    ]
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        assert main(args) == 0
+        assert main(args) == 0
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select rr.list_id, rr.votes, rr.source_kind, j.establecimiento_code
+                  from result_row rr
+                  join jurisdiction j on j.id = rr.jurisdiction_id
+                 where rr.archive_entry_id = %s
+                 order by rr.list_id
+                """,
+                (source_id,),
+            )
+            assert cur.fetchall() == [
+                ("134", 80, "official", "37974"),
+                ("135", 120, "official", "37974"),
+            ]
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
+        conn.commit()
+        conn.close()
+
+
 def test_ingest_refuses_conflicting_archive_projection_before_result_rows(tmp_path: Path) -> None:
     _require_ephemeral_postgres()
     source_id = f"national/cli-conflict-{uuid.uuid4()}"

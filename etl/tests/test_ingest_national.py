@@ -38,6 +38,7 @@ from etl.ingest.national import (
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
     ingest_national,
+    iter_national_rows,
     load_national_rows,
 )
 from etl.storage import extract_zip_safely
@@ -264,9 +265,18 @@ def test_load_national_rows_passes_all_names_to_the_batch_db_boundary(
         return {key: f"jurisdiction:{index}" for index, key in enumerate(dict.fromkeys(keys))}
 
     monkeypatch.setattr("etl.ingest.national.db.batch_upsert_jurisdictions", capture_batch)
+
+    class CapturingReplacement:
+        inserted = 0
+
+        def insert(self, records):
+            self.inserted += len(records)
+            return len(records)
+
+    replacement = CapturingReplacement()
     monkeypatch.setattr(
-        "etl.ingest.national.db.load_result_rows",
-        lambda _conn, **kwargs: len(kwargs["records"]),
+        "etl.ingest.national.db.begin_result_rows_replacement",
+        lambda *_args, **_kwargs: replacement,
     )
 
     inserted = load_national_rows(
@@ -460,6 +470,29 @@ def test_2025_bup_format_fails_loudly_on_missing_required_column() -> None:
             election_year=2025,
             election_round="legislativas",
         )
+
+
+def test_seekable_streaming_parser_matches_bytes_compatibility_and_reporting(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data = _read("national_2023_sample.csv")
+    streamed = list(
+        iter_national_rows(
+            _text_of(data),
+            archive_entry_id="national/streaming-parser",
+            election_year=2023,
+            election_round="paso",
+        )
+    )
+    streamed_report = capsys.readouterr().err
+    compatible = ingest_national(
+        data,
+        archive_entry_id="national/streaming-parser",
+        election_year=2023,
+        election_round="paso",
+    )
+    assert streamed == compatible
+    assert capsys.readouterr().err == streamed_report
 
 
 def test_idempotent_reingest_same_archive_entry() -> None:
