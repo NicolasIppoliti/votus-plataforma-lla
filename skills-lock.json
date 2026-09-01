@@ -12,6 +12,12 @@
       "sourceType": "github",
       "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
       "computedHash": "e14e276241805c97dbcfe40dcbea1a3035269cc7293cac4b1832dda41a835e60"
+    },
+    "impeccable": {
+      "source": "pbakaus/impeccable",
+      "sourceType": "github",
+      "skillPath": ".pi/skills/impeccable/SKILL.md",
+      "computedHash": "31029a52831c6967afcbd66e647d3c94767d7ed20f58dc9fefb98e61785d2164"
     }
   }
 }
