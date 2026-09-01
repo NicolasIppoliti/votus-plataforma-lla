@@ -48,6 +48,8 @@ LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS = (
     REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
     RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION,
     RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION,
+    YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION,
+    PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION,
 )
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
@@ -151,14 +153,18 @@ def _review_context_migration_level(database_dsn: str) -> int:
             "(text,text,text,text,text[],text[],text,text,text,integer,"
             "uuid,uuid,text)') is not null,"
             "to_regprocedure('workspace_private.record_review_item_v2"
-            "(text,text,text,text,text[],text[],jsonb)') is not null",  # noqa: E501
+            "(text,text,text,text,text[],text[],jsonb)') is not null,"
+            "coalesce(position('source_archive_not_attributable' in pg_get_functiondef(to_regprocedure('workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)')))>0,false),"  # noqa: E501
+            "to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') is not null",  # noqa: E501
         )
     chronological_states = (
-        (False, False, False, False),
-        (True, False, False, False),
-        (True, True, False, False),
-        (True, True, True, False),
-        (True, True, False, True),
+        (False, False, False, False, False, False),
+        (True, False, False, False, False, False),
+        (True, True, False, False, False, False),
+        (True, True, True, False, False, False),
+        (True, True, False, True, False, False),
+        (True, True, False, True, True, False),
+        (True, True, False, True, True, True),
     )
     if installed not in chronological_states:
         raise AssertionError(
@@ -188,6 +194,20 @@ def _set_latest_review_context_level(database_dsn: str, target_level: int) -> No
         _apply_down_migration(database_dsn, version)
     for version in up:
         _apply_migration(database_dsn, version)
+
+
+def test_review_context_migration_plan_covers_all_six_migrations() -> None:
+    assert LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS == (
+        REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
+        REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
+        RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION,
+        RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION,
+        YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION,
+        PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION,
+    )
+    assert _review_context_migration_plan(6, 0)[0] == tuple(
+        reversed(LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS)
+    )
 
 
 def _relation_installed(database_dsn: str, relation: str) -> bool:
@@ -1675,26 +1695,6 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
     }
     organization_id: uuid.UUID | None = None
     original_review_context_level = _review_context_migration_level(admin_dsn)
-    vector_signature = (
-        "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
-    )
-    breakdown_signature = "workspace_private.platform_review_breakdown(integer,integer)"
-    with psycopg.connect(admin_dsn) as connection:
-        vector_installed = _fetchone(
-            connection, "select to_regprocedure(%s) is not null", (vector_signature,)
-        )[0]  # noqa: E501
-        year_level_was_installed = (
-            vector_installed
-            and "source_archive_not_attributable"
-            in _fetchone(
-                connection, "select pg_get_functiondef(%s::regprocedure)", (vector_signature,)
-            )[0]
-        )  # noqa: E501
-        breakdown_was_installed = _fetchone(
-            connection, "select to_regprocedure(%s) is not null", (breakdown_signature,)
-        )[0]  # noqa: E501
-    year_level_rolled_back = False
-    breakdown_rolled_back = False
     rolled_back_workspace_versions: list[str] = []
 
     def roll_back_workspace(version: str) -> None:
@@ -1942,12 +1942,6 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ("workspace_audit_owner", True, False, False),
             ],
         )
-        if breakdown_was_installed:
-            _apply_down_migration(admin_dsn, PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION)
-            breakdown_rolled_back = True
-        if year_level_was_installed:
-            _apply_down_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
-            year_level_rolled_back = True
         _set_latest_review_context_level(admin_dsn, 0)
         roll_back_workspace(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
@@ -2042,10 +2036,6 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
     finally:
         restore_workspace()
         _set_latest_review_context_level(admin_dsn, original_review_context_level)
-        if year_level_rolled_back:
-            _apply_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
-        if breakdown_rolled_back:
-            _apply_migration(admin_dsn, PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             admin_installed, context_installed, selection_installed, lookup_installed = (
                 connection.execute(
@@ -2244,6 +2234,7 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
     direct_id, cascade_id = uuid.uuid4(), uuid.uuid4()
     context_version = REVIEW_ITEM_CONTEXT_MIGRATION_VERSION
     original_review_context_level = _review_context_migration_level(admin_dsn)
+    membership_sql = "select admin_option,inherit_option,set_option from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user)"  # noqa: E501
     record_signature = "workspace_private.record_review_item(text,text,text,text,text[],text[])"
     facade_signature = "workspace_api.review_items(integer,integer)"
 
@@ -2264,9 +2255,12 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
         "select workspace_private.record_review_item('content_drift','warning',%s,null,"
         "array[]::text[],array[]::text[])"
     )
+    with psycopg.connect(admin_dsn) as connection:
+        original_membership = _fetchone(connection, membership_sql)
     try:
         _set_latest_review_context_level(admin_dsn, 0)
         with psycopg.connect(admin_dsn) as connection:
+            connection.execute("grant workspace_review_ingest_owner to current_user with admin false,inherit true,set false")  # fmt: skip  # noqa: E501
             before_definitions = protected_definitions(connection)
             connection.cursor().executemany(
                 "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) "
@@ -2281,6 +2275,7 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
             total = total_row[0]
         _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
+            assert _fetchone(connection, membership_sql) == (False, True, False)
             assert connection.execute(
                 "select column_name,data_type from information_schema.columns "
                 "where table_schema='workspace_private' and table_name='review_item_context' "
@@ -2391,6 +2386,7 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                     connection.execute(down_sql)
         _apply_down_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
+            assert _fetchone(connection, membership_sql) == (False, True, False)
             assert connection.execute(
                 "select to_regclass('workspace_private.review_item_context'),"
                 "to_regprocedure('workspace_private.create_unknown_review_item_context()')"
@@ -2418,6 +2414,10 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                 connection.execute(
                     "delete from public.review_item where subject_ref like %s", (prefix + "%",)
                 )
+                if original_membership is None:
+                    connection.execute("revoke workspace_review_ingest_owner from current_user")
+                else:
+                    connection.execute("grant workspace_review_ingest_owner to current_user with admin {},inherit {},set {}".format(*map(str.lower, map(str, original_membership))))  # fmt: skip  # noqa: E501
         finally:
             _set_latest_review_context_level(admin_dsn, original_review_context_level)
 
@@ -2443,8 +2443,7 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
     counts_sql = "select count(*)=(select count(*)+(select count(*) from public.review_item where kind='mesa_tally_divergence') from public.review_item),count(distinct review_item_id)=(select count(*) from public.review_item) from workspace_private.review_item_context"  # noqa: E501
     future_sql = "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) values(%s,'content_drift','warning',%s,'platform_only')"  # noqa: E501
     future_context_sql = "select context_role,source_kind,archive_availability,unknown_reason,count(*) from workspace_private.review_item_context where review_item_id=%s group by 1,2,3,4"  # noqa: E501
-    down_groups_sql = "select r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason,count(*) from public.review_item r join workspace_private.review_item_context c on c.review_item_id=r.id group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason order by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason"  # noqa: E501
-    collapse_sql = "select count(*),count(distinct review_item_id),bool_and(context_state='unknown' and unknown_reason='historical_unclassified'),count(*) filter(where unknown_reason is null) from workspace_private.review_item_context"  # noqa: E501
+    collapse_sql = "select count(*),count(distinct review_item_id),count(*) filter(where unknown_reason='writer_context_not_provided'),count(*) filter(where unknown_reason is null) from workspace_private.review_item_context"  # noqa: E501
     columns_sql = "select to_jsonb(array_agg(column_name order by ordinal_position)) from information_schema.columns where table_schema='workspace_private' and table_name='review_item_context'"  # noqa: E501
     nullability_sql = "select is_nullable from information_schema.columns where table_schema='workspace_private' and table_name='review_item_context' and column_name='unknown_reason'"  # noqa: E501
     contexts = (
@@ -2502,22 +2501,16 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
             ):
                 with pytest.raises(error), connection.transaction():
                     connection.execute(statement, parameters)
-            expected_down_groups = connection.execute(down_groups_sql).fetchall()
-            notices: list[str] = []
+        down_sql = _validated_migration_path(version, down=True).read_bytes()
+        # fmt: off
+        with pytest.raises(psycopg.errors.CheckViolation, match="non_reconstructible_items=.*authoritative_identity_items="):  # noqa: E501
+            _apply_down_migration(admin_dsn, version)
         with psycopg.connect(admin_dsn) as connection:
-            connection.add_notice_handler(lambda n: notices.append(n.message_primary or ""))
-            connection.execute(_validated_migration_path(version, down=True).read_bytes())
-            # fmt: off
-            assert len(summary_notices := [notice for notice in notices if notice.startswith("review context degradation summary: ")]) == 1  # noqa: E501
-            summary = json.loads(summary_notices[0].removeprefix("review context degradation summary: "))  # noqa: E501
-            assert (summary["structured_contexts"],summary["review_items"]) == (sum(row[-1] for row in expected_down_groups),before[0]+1)  # noqa: E501
-            reported_counts = {tuple(group[key] for key in "kind context_role source_kind archive_availability unknown_reason".split()):group["rows"] for group in summary["groups"]}  # noqa: E501
-            assert reported_counts == {row[:-1]:row[-1] for row in expected_down_groups}
-            assert list(reported_counts) == [row[:-1] for row in expected_down_groups]
-            representatives = "mesa_tally_divergence|comparison|official|unknown|historical_archive_not_linked;mesa_tally_divergence|observed|fiscalizacion|unknown|historical_archive_not_linked;content_drift|unknown|unknown|unknown|historical_unclassified;content_drift|unknown|unknown|unknown|writer_context_not_provided".split(";")  # noqa: E501
-            assert all(reported_counts[tuple(identity.split("|"))] > 0 for identity in representatives)  # noqa: E501
+            assert _fetchone(connection, "select count(*) from workspace_private.review_item_context where review_item_id=%s", (direct_id,)) == (2,)  # noqa: E501
+            connection.execute("delete from workspace_private.review_item_context where review_item_id=%s and archive_entry_id=%s", (direct_id, archive_id))  # noqa: E501
             # fmt: on
-            assert _fetchone(connection, collapse_sql) == (before[0] + 1, before[0] + 1, True, 0)
+            connection.execute(down_sql)
+            assert _fetchone(connection, collapse_sql) == (before[0] + 1, before[0] + 1, 1, 0)
             assert _fetchone(connection, columns_sql) == (foundation_columns,)
             assert _fetchone(connection, nullability_sql) == ("NO",)
             assert _fetchone(connection, capability_sql) == capabilities_before
@@ -2661,11 +2654,6 @@ def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> 
     scalar = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text" + ")"  # noqa: E501
     vector = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
     original_review_context_level = _review_context_migration_level(admin_dsn)
-    with psycopg.connect(admin_dsn) as connection:
-        vector_installed = _fetchone(connection, "select to_regprocedure(%s) is not null", (vector,))[0]  # noqa: E501
-        year_level_installed = vector_installed and "source_archive_not_attributable" in _fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (vector,))[0]  # noqa: E501
-    if year_level_installed:
-        _apply_down_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
     prefix, applied = f"contexts-{uuid.uuid4()}", False
     try:
         _set_latest_review_context_level(admin_dsn, 3)
@@ -2704,6 +2692,11 @@ def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> 
     finally:
         try:
             if applied:
+                with pytest.raises(psycopg.errors.CheckViolation, match="multi_context_active_items="):  # noqa: E501
+                    _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
+                with psycopg.connect(admin_dsn) as connection:
+                    assert _fetchone(connection, "select to_regprocedure(%s) is not null", (vector,)) == (True,)  # noqa: E501
+                    connection.execute("update review_item set resolved_at=now() where starts_with(subject_ref,%s) and id in (select review_item_id from workspace_private.review_item_context group by review_item_id having count(*)>1)", (prefix,))  # noqa: E501
                 _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
                 with psycopg.connect(admin_dsn) as connection:
                     restored = _fetchone(connection,"select pg_get_functiondef(%s::regprocedure)",(scalar,))[0]  # noqa: E501
@@ -2717,8 +2710,6 @@ def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> 
                     connection.execute("delete from election where round=%s", (prefix,))
         finally:
             _set_latest_review_context_level(admin_dsn, original_review_context_level)
-            if year_level_installed:
-                _apply_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
 # fmt: on
 
 

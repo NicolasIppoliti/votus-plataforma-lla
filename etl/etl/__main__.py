@@ -2182,7 +2182,7 @@ def load_curated(
         # was delivered by nothing: `mesa_crosswalk.stable_across_years`
         # records the fact in a column nobody reports on.
         #
-        # Deduped against what is already there, like the fiscalización
+        # Production year-level context writer, deduped like the fiscalización
         # drafts: re-running `load-curated` must not append the same
         # observation again, and must not discard a genuinely new one.
         drafts = [

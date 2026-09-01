@@ -1,11 +1,11 @@
 begin;
+do $$ begin if to_regrole('workspace_review_context_foundation_migrator') is not null then raise exception 'workspace_review_context_foundation_migrator already exists'; end if; end $$;
+create role workspace_review_context_foundation_migrator nologin noinherit;
+grant workspace_review_ingest_owner to workspace_review_context_foundation_migrator with inherit false, set true;
+grant workspace_review_context_foundation_migrator to current_user with inherit false, set true;
 do $$
 begin
-  perform set_config('votus_review_context.owner_membership', pg_has_role(current_user, 'workspace_review_ingest_owner', 'SET')::text, true);
   perform set_config('votus_review_context.owner_schema_create', has_schema_privilege('workspace_review_ingest_owner', 'workspace_private', 'CREATE')::text, true);
-  if not pg_has_role(current_user, 'workspace_review_ingest_owner', 'SET') then
-    grant workspace_review_ingest_owner to current_user;
-  end if;
   if not has_schema_privilege('workspace_review_ingest_owner', 'workspace_private', 'CREATE') then
     grant create on schema workspace_private to workspace_review_ingest_owner;
   end if;
@@ -85,18 +85,21 @@ revoke all on function workspace_private.create_unknown_review_item_context()
     workspace_admin_owner, workspace_platform_admin;
 create trigger review_item_context_after_insert after insert on public.review_item
 for each row execute function workspace_private.create_unknown_review_item_context();
-reset role;
 do $$
 begin
   if to_regrole('service_role') is not null then
     revoke all on workspace_private.review_item_context from service_role;
     revoke all on function workspace_private.create_unknown_review_item_context() from service_role;
   end if;
+end $$;
+reset role;
+do $$ begin
   if current_setting('votus_review_context.owner_schema_create', true) = 'false' then
     revoke create on schema workspace_private from workspace_review_ingest_owner;
   end if;
-  if current_setting('votus_review_context.owner_membership', true) = 'false' then
-    revoke workspace_review_ingest_owner from current_user;
-  end if;
 end $$;
+revoke workspace_review_context_foundation_migrator from current_user;
+revoke workspace_review_ingest_owner from workspace_review_context_foundation_migrator;
+drop role workspace_review_context_foundation_migrator;
+do $$ begin if to_regrole('workspace_review_context_foundation_migrator') is not null then raise exception 'workspace_review_context_foundation_migrator cleanup failed'; end if; end $$;
 commit;

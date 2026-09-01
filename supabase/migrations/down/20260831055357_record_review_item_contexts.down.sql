@@ -9,6 +9,7 @@ do $$ begin if not (select schema_create from record_review_item_contexts_down_p
 lock table public.review_item in share row exclusive mode;
 set role workspace_review_ingest_owner;
 lock table workspace_private.review_item_context in share row exclusive mode;
+do $$ declare multi_context_active_items bigint; begin select count(*) into multi_context_active_items from (select c.review_item_id from workspace_private.review_item_context c join public.review_item r on r.id=c.review_item_id where r.resolved_at is null group by c.review_item_id having count(*)>1) unsafe; if multi_context_active_items>0 then raise exception 'review context writer rollback refused: multi_context_active_items=%',multi_context_active_items using errcode='23514'; end if; end $$;
 drop function workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb);
 create function workspace_private.record_review_item_v2(p_kind text,p_severity text,p_subject_ref text,p_note text,p_distrito_codes text[],p_seccion_codes text[],p_context_role text,p_source_kind text,p_archive_availability text,p_election_year integer,p_election_id uuid,p_category_id uuid,p_archive_entry_id text)
 returns boolean language plpgsql security definer set search_path=pg_catalog,workspace_private,public,pg_temp as $$

@@ -1016,13 +1016,11 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
         "add constraint review_item_context_unknown_reason_check"
     )
     normalized_down = " ".join(down.lower().split())
-    assert all(
-        f"'{field}'" in normalized_down
-        for field in "structured_contexts review_items groups kind context_role source_kind archive_availability unknown_reason rows".split()  # noqa: E501
-    )  # noqa: E501
+    guard = normalized_down.split("delete from workspace_private.review_item_context", 1)[0]
     # fmt: off
-    assert "group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason" in normalized_down and "order by kind,context_role,source_kind,archive_availability,unknown_reason" in normalized_down  # noqa: E501
-    assert normalized_down.index("raise notice") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
+    assert all(token in guard for token in ("non_reconstructible_items", "authoritative_identity_items", "year_level_items", "raise exception"))  # noqa: E501
+    assert all(secret not in guard for secret in ("context_id", "subject_ref", "note", "tenant_scope_state", "distrito_code", "seccion_code", "mesa_code", "votes"))  # noqa: E501
+    assert normalized_down.index("raise exception") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
     assert normalized_down.index("insert into workspace_private.review_item_context") < normalized_down.index("alter column unknown_reason set not null") < normalized_down.index("add constraint review_item_context_unknown_reason_check")  # noqa: E501
     # fmt: on
     assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
@@ -1041,6 +1039,9 @@ def test_record_review_item_context_sets_are_strict_bounded_and_reversible() -> 
     assert f"drop function workspace_private.{signature}" in down
     assert "create function workspace_private.record_review_item_v2(p_kind" in down
     assert f"grant execute on function workspace_private.{scalar} to etl_writer" in down
+    guard = down.split(f"drop function workspace_private.{signature}", 1)[0]
+    assert all(token in guard for token in ("resolved_at is null", "having count(*)>1", "multi_context_active_items", "raise exception"))  # noqa: E501
+    assert all(secret not in guard for secret in ("context_id", "subject_ref", "note", "tenant_scope_state", "distrito_code", "seccion_code", "mesa_code", "votes"))  # noqa: E501
     assert all(token not in forward for token in ("current_setting", "set_config", "subject_ref like"))  # noqa: E501
 
 
@@ -1048,7 +1049,7 @@ def test_year_level_review_contexts_are_one_exact_reversible_extension() -> None
     forward = " ".join(_sql("20260831150450_allow_year_level_review_contexts.sql").split())
     down = " ".join((MIGRATIONS / "down" / "20260831150450_allow_year_level_review_contexts.down.sql").read_text().lower().split())  # noqa: E501
     reason = "source_archive_not_attributable"
-    assert all(token in forward for token in (reason, "jsonb_typeof(ctx->'election_year') is not distinct from 'number'", "jsonb_typeof(ctx->'election_id') is not distinct from 'null'", "('observed','official','unknown')", "unknown_reason"))  # noqa: E501
+    assert all(token in forward for token in (reason, "jsonb_typeof(ctx->'election_year') is not distinct from 'number'", "jsonb_typeof(ctx->'election_id') is not distinct from 'null'", "('observed','official','unknown')", "unknown_reason is not null and unknown_reason in"))  # noqa: E501
     assert all(token in down for token in ("count=", "categories=", "raise exception", "review_item_context_unknown_reason_check"))  # noqa: E501
     assert down.index("raise exception") < down.index("alter table workspace_private.review_item_context drop constraint")  # noqa: E501
     pr4 = " ".join(_sql("20260831055357_record_review_item_contexts.sql").split())
