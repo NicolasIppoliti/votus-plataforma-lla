@@ -10,6 +10,8 @@ const OPERATIONS = {
 	"grant-section-entitlement": ["select workspace_private.grant_section_entitlement(:'p1'::uuid,:'p2'::text,:'p3'::text,:'p4'::text,:'p5'::text)", ["organization_id", "distrito_code", "seccion_code", "actor_ref", "reason_code"]],
 	"revoke-section-entitlement": ["select workspace_private.revoke_section_entitlement(:'p1'::uuid,:'p2'::text,:'p3'::text,:'p4'::text,:'p5'::text)", ["organization_id", "distrito_code", "seccion_code", "actor_ref", "reason_code"]],
 	"list-platform-review-items": ["select workspace_private.platform_review_items(:'p1'::integer,:'p2'::integer)", ["limit", "offset"]],
+	// Operator-only production entry point; the database function returns aggregate-safe output.
+	"review-breakdown": ["select workspace_private.platform_review_breakdown(:'p1'::integer,:'p2'::integer)", ["limit", "offset"]],
 } as const;
 type Operation = keyof typeof OPERATIONS;
 class CliError extends Error {}
@@ -57,7 +59,8 @@ function validatedInput(text: string): { spec: (typeof OPERATIONS)[Operation]; v
 		const item = input[field];
 		if (field === "limit" || field === "offset") {
 			const maximum = field === "limit" ? 100 : 2_000_000_000;
-			if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 0 || item > maximum) return fail("input_error");
+			const minimum = field === "limit" && input.operation === "review-breakdown" ? 1 : 0;
+			if (typeof item !== "number" || !Number.isSafeInteger(item) || item < minimum || item > maximum) return fail("input_error");
 			return String(item);
 		}
 		if (typeof item !== "string" || item.length > 160 || item.trim() !== item || (field === "display_name" ? !item || /[\x00-\x1f\x7f]/.test(item) : !patterns[field]!.test(item))) return fail("input_error");
