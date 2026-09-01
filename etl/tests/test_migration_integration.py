@@ -2221,6 +2221,111 @@ def test_authorized_review_facade_filters_platform_and_other_section_rows() -> N
             )
 
 
+def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for Supabase migration-runner coverage")
+    params = conninfo_to_dict(database_dsn)
+    params["user"] = "postgres"
+    params.pop("password", None)
+    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    runner_role = f"votus_supabase_cli_{uuid.uuid4().hex}"
+    bridge_role = "workspace_review_context_foundation_migrator"
+    original_review_context_level = _review_context_migration_level(admin_dsn)
+    runner_created = False
+
+    def authority_snapshot() -> tuple[str | None, list[tuple[object, ...]]]:
+        with psycopg.connect(admin_dsn) as connection:
+            schema_acl = connection.execute(
+                "select nspacl::text from pg_namespace where nspname='workspace_private'"
+            ).fetchone()
+            assert schema_acl is not None
+            memberships = connection.execute(
+                "select granted.rolname,member.rolname,grantor.rolname,"
+                "m.admin_option,m.inherit_option,m.set_option from pg_auth_members m "
+                "join pg_roles granted on granted.oid=m.roleid "
+                "join pg_roles member on member.oid=m.member "
+                "join pg_roles grantor on grantor.oid=m.grantor "
+                "order by 1,2,3,4,5,6"
+            ).fetchall()
+        return schema_acl[0], memberships
+
+    def assert_no_foundation_state() -> None:
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(
+                "select to_regclass('workspace_private.review_item_context'),"
+                "to_regprocedure('workspace_private.create_unknown_review_item_context()'),"
+                "exists(select from pg_trigger where tgrelid='public.review_item'::regclass "
+                "and tgname='review_item_context_after_insert'),to_regrole(%s)",
+                (bridge_role,),
+            ).fetchone() == (None, None, False, None)
+
+    def apply_as_supabase_runner(*, down: bool = False) -> None:
+        runner_params = conninfo_to_dict(admin_dsn)
+        runner_params["user"] = runner_role
+        runner_dsn = make_conninfo(**{key: str(value) for key, value in runner_params.items()})
+        migration = _validated_migration_path(
+            REVIEW_ITEM_CONTEXT_MIGRATION_VERSION, down=down
+        ).read_bytes()
+        with psycopg.connect(runner_dsn, autocommit=True) as connection:
+            connection.execute("set role postgres")
+            connection.execute(migration)
+
+    try:
+        _set_latest_review_context_level(admin_dsn, 0)
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(
+                "select pg_get_userbyid(nspowner),"
+                "has_schema_privilege('workspace_review_ingest_owner',oid,'CREATE') "
+                "from pg_namespace where nspname='workspace_private'"
+            ).fetchone() == ("postgres", False)
+            connection.execute(
+                sql.SQL("create role {} login noinherit").format(sql.Identifier(runner_role))
+            )
+            connection.execute(
+                sql.SQL("grant postgres to {} with inherit false, set true").format(
+                    sql.Identifier(runner_role)
+                )
+            )
+            assert connection.execute(
+                "select r.rolcanlogin,r.rolinherit,m.admin_option,m.inherit_option,m.set_option "
+                "from pg_roles r join pg_auth_members m on m.member=r.oid "
+                "where r.rolname=%s and m.roleid='postgres'::regrole",
+                (runner_role,),
+            ).fetchone() == (True, False, False, False, True)
+        runner_created = True
+        baseline_authority = authority_snapshot()
+
+        try:
+            apply_as_supabase_runner()
+        except psycopg.errors.InsufficientPrivilege:
+            assert_no_foundation_state()
+            assert authority_snapshot() == baseline_authority
+            raise
+
+        with psycopg.connect(admin_dsn) as connection:
+            assert connection.execute(
+                "select to_regclass('workspace_private.review_item_context') is not null,"
+                "to_regrole(%s) is null",
+                (bridge_role,),
+            ).fetchone() == (True, True)
+        assert authority_snapshot() == baseline_authority
+
+        apply_as_supabase_runner(down=True)
+        assert_no_foundation_state()
+        assert authority_snapshot() == baseline_authority
+    finally:
+        try:
+            if runner_created:
+                with psycopg.connect(admin_dsn) as connection:
+                    connection.execute(
+                        sql.SQL("revoke postgres from {}").format(sql.Identifier(runner_role))
+                    )
+                    connection.execute(sql.SQL("drop role {}").format(sql.Identifier(runner_role)))
+        finally:
+            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+
+
 def test_review_item_context_unknown_foundation_is_reachable_and_reversible() -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
