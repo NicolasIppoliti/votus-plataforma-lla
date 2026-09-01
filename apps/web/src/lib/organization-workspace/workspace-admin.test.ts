@@ -72,7 +72,7 @@ describe("workspace operator CLI", () => {
 		}
 	});
 
-	it("requests the safe review breakdown with exact bounded parameters", () => {
+	it("drives the production operator entry point with exact bounded breakdown parameters", () => {
 		const directory = mkdtempSync(path.join(tmpdir(), "workspace-admin-breakdown-"));
 		const marker = path.join(directory, "call.json");
 		const fake = path.join(directory, "psql");

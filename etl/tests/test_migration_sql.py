@@ -1011,6 +1011,10 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
         )
     )  # noqa: E501
     assert "subject_ref" not in normalized
+    assert "unknown_reason is not null and unknown_reason in" in normalized
+    assert normalized.index("alter column unknown_reason drop not null") < normalized.index(
+        "add constraint review_item_context_unknown_reason_check"
+    )
     normalized_down = " ".join(down.lower().split())
     assert all(
         f"'{field}'" in normalized_down
@@ -1019,6 +1023,7 @@ def test_historical_review_context_classification_sql_is_structured_and_reversib
     # fmt: off
     assert "group by r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason" in normalized_down and "order by kind,context_role,source_kind,archive_availability,unknown_reason" in normalized_down  # noqa: E501
     assert normalized_down.index("raise notice") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
+    assert normalized_down.index("insert into workspace_private.review_item_context") < normalized_down.index("alter column unknown_reason set not null") < normalized_down.index("add constraint review_item_context_unknown_reason_check")  # noqa: E501
     # fmt: on
     assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
 
@@ -1074,8 +1079,16 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
         assert all(token in migration_sql for token in bridge_lifecycle)
         assert migration_sql.count(f"to_regrole('{bridge}')") >= 2
         assert list(map(migration_sql.index, order)) == sorted(map(migration_sql.index, order))
-    assert forward.count("pg_advisory_xact_lock(2963544934623095067)") == 1
+    assert all(sql.count("pg_advisory_xact_lock(2963544934623095067)") == 1 for sql in (forward, down))  # noqa: E501
+    for relation in ("election", "category", "archive"):
+        assert f"create policy workspace_review_ingest_owner_context_{relation}_select" in forward
+        assert f"drop policy workspace_review_ingest_owner_context_{relation}_select" in down
     assert forward.count("candidate.resolved_at is null") == 1 and "votus_review_item_context." not in forward  # noqa: E501
+    core_definition = forward.split("create function workspace_private.record_review_item_core", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    down_definition = down.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    for definition in (core_definition, down_definition):
+        assert "limit 1" not in definition
+        assert "if candidate_count>1 then raise exception 'active review identity is ambiguous' using errcode='23514'; end if;" in definition  # noqa: E501
     for function in ("record_review_item_core", "record_review_item_v2"):
         definition = forward.split(f"create function workspace_private.{function}", 1)[1]
         assert "security definer set search_path=pg_catalog,workspace_private,public,pg_temp" in definition.split("end $$;", 1)[0]  # noqa: E501
@@ -1089,9 +1102,6 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
     assert f"grant {select_acl} to workspace_review_ingest_owner" in forward and f"revoke {select_acl} from workspace_review_ingest_owner" in down  # noqa: E501
     assert all(token not in down for token in ("revoke all on public.election", "delete from workspace_private.review_item_context", "truncate"))  # noqa: E501
     assert all(f"drop function workspace_private.{signature}" in down for signature in (signatures[0], signatures[2]))  # noqa: E501
-    legacy = " ".join(_sql("20260826120000_structured_review_scope.sql").split()).split("create function workspace_private.record_review_item", 1)[1].split("alter table workspace_private.review_item_section_scope owner", 1)[0]  # noqa: E501
-    restored = down.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0] + "end $$; "  # noqa: E501
-    assert restored == legacy
 # fmt: on
 
 
@@ -2771,40 +2781,46 @@ def test_platform_review_breakdown_is_safe_grouped_and_reversible() -> None:
     )
     revoked = forward.split(f"revoke all on function {signature} from", 1)[1].split(";", 1)[0]
     assert all(role in revoked for role in roles)
-    nullable = (
+    drop_not_null = (
         "alter table workspace_private.review_item_context "
         "alter column unknown_reason drop not null"
     )
-    assert nullable in forward
-    assert forward.index("set role workspace_review_ingest_owner") < forward.index(nullable)
-    assert forward.index(nullable) < forward.index(
-        "create function workspace_private.platform_review_breakdown"
-    )
-    assert down.startswith("begin;") and down.endswith("commit;")
-    guard = down.split("create role workspace_review_breakdown_migrator", 1)[0]
-    for token in (
-        "where unknown_reason is null",
-        "context_role",
-        "source_kind",
-        "archive_availability",
-        "rows",
-        "count=%, categories=%",
-        "raise exception",
-    ):
-        assert token in guard
-    assert all(secret not in guard for secret in ("review_item_id", "subject_ref", "note"))
-    restore_not_null = (
+    set_not_null = (
         "alter table workspace_private.review_item_context alter column unknown_reason set not null"
     )
-    assert restore_not_null in down
-    assert down.index("raise exception") < down.index(
-        "create role workspace_review_breakdown_migrator"
+    assert {
+        "breakdown_forward_drops_not_null": drop_not_null in forward,
+        "breakdown_down_sets_not_null": set_not_null in down,
+    } == {
+        "breakdown_forward_drops_not_null": False,
+        "breakdown_down_sets_not_null": False,
+    }
+    classification_forward = " ".join(
+        _sql("20260830203643_classify_historical_review_contexts.sql").split()
     )
-    assert down.index("set role workspace_review_ingest_owner") < down.index(restore_not_null)
-    assert down.index(restore_not_null) < down.index(f"drop function {signature}")
+    classification_down = " ".join(
+        (MIGRATIONS / "down" / "20260830203643_classify_historical_review_contexts.down.sql")
+        .read_text()
+        .lower()
+        .split()
+    )
+    assert "alter column unknown_reason drop not null" in classification_forward
+    assert set_not_null in classification_down
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert f"drop function {signature}" in down
+    assert down.count("drop function") == 1 and down.count("drop policy") == 2
     for relation in ("election", "category"):
         policy = f"workspace_review_ingest_owner_breakdown_{relation}_select"
         assert f"drop policy {policy} on public.{relation}" in down
+    assert all(
+        statement not in down
+        for statement in (
+            "delete from workspace_private.review_item_context",
+            "insert into workspace_private.review_item_context",
+            "update workspace_private.review_item_context",
+            "alter table workspace_private.review_item_context",
+        )
+    )
     assert "grant select" not in forward and "drop table" not in down
 
 

@@ -9,7 +9,6 @@ do $$ begin if not (select schema_create from platform_review_breakdown_privileg
 create policy workspace_review_ingest_owner_breakdown_election_select on public.election for select to workspace_review_ingest_owner using(true);
 create policy workspace_review_ingest_owner_breakdown_category_select on public.category for select to workspace_review_ingest_owner using(true);
 set role workspace_review_ingest_owner;
-alter table workspace_private.review_item_context alter column unknown_reason drop not null;
 create function workspace_private.platform_review_breakdown(p_limit integer default 50,p_offset integer default 0) returns jsonb language plpgsql stable security definer set search_path=pg_catalog,workspace_private,public,pg_temp as $$
 declare total_items bigint; total_groups bigint; page_groups bigint; resolved_items bigint; resolved_category_groups bigint; groups jsonb; resolved_categories jsonb; bounded_resolved_categories jsonb; resolved_exclusion jsonb; bounded_resolved_exclusion jsonb; exclusions jsonb; payload jsonb;
     begin
