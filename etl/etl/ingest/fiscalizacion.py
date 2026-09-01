@@ -867,6 +867,19 @@ def _resolve_official_mesa(
     return None
 
 
+@dataclass(frozen=True)
+class FiscalizacionLoadResult:
+    inserted: int
+    review_items: list[ReviewItemDraft]
+    election_id: str
+    category_id: str
+
+    def __iter__(self):
+        """Retain the legacy count/review-items unpacking interface."""
+        yield self.inserted
+        yield self.review_items
+
+
 def load_fiscalizacion_rows(
     conn,
     rows: Sequence[FiscalizacionRow],
@@ -879,7 +892,7 @@ def load_fiscalizacion_rows(
     category: str = FISCALIZACION_CATEGORY,
     distrito: str = FISCALIZACION_DISTRITO,
     seccion: str = FISCALIZACION_SECCION,
-) -> tuple[int, list[ReviewItemDraft]]:
+) -> FiscalizacionLoadResult:
     """Load merged/collapsed fiscalización rows into `result_row` (task
     12.12), turning each row's 17 WIDE vote columns into one LONG
     `result_row` per resolvable list.
@@ -1023,4 +1036,4 @@ def load_fiscalizacion_rows(
     # production CLI never passed, every ambiguous mesa's tally dropped with no
     # record — 8 of the 93, on every real ingest. A loader that returns only
     # "how many landed" hides how many did not, and why.
-    return inserted, review_items
+    return FiscalizacionLoadResult(inserted, review_items, election_id, category_id)
