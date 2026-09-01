@@ -1359,7 +1359,11 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
             if record.contexts:
                 contexts = []
                 for review_context in record.contexts:
-                    context = dict(review_context.__dict__)
+                    context = {
+                        key: value
+                        for key, value in review_context.__dict__.items()
+                        if key != "unknown_reason" or value is not None
+                    }
                     for identifier in ("election_id", "category_id"):
                         if isinstance(context[identifier], UUID):
                             context[identifier] = str(context[identifier])

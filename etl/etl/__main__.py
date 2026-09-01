@@ -2207,6 +2207,19 @@ def load_curated(
                     + ("2023 but not 2025" if stability.present_2023 else "2025 but not 2023")
                     + "; it is NOT stable across years and must not be compared as if it were"
                 ),
+                contexts=tuple(
+                    ReviewItemContext(
+                        "observed",
+                        "official",
+                        "unknown",
+                        year,
+                        None,
+                        None,
+                        None,
+                        "source_archive_not_attributable",
+                    )
+                    for year in (2023, 2025)
+                ),
             )
             for distrito, seccion, stability in mesa_stabilities
             if stability.discontinuous
