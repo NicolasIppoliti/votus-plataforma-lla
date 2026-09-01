@@ -94,7 +94,7 @@ begin
       using errcode='23514';
   end if;
 end $$;
-reset role;
+set role postgres;
 do $$ declare relation_name text; begin
   foreach relation_name in array array['election','category','archive_entry'] loop if current_setting('votus_review_context_classification.references_'||relation_name,true)='false' then execute format('revoke references on table public.%I from workspace_review_ingest_owner',relation_name); end if; end loop;
   if current_setting('votus_review_context_classification.schema_create',true)='false' then revoke create on schema workspace_private from workspace_review_ingest_owner; end if;

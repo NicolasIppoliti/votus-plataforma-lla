@@ -31,7 +31,7 @@ drop function workspace_private.record_review_item_core(text,text,text,text,text
 revoke all on function workspace_private.record_review_item(text,text,text,text,text[],text[]) from public,anon,authenticated,etl_writer,workspace_query_owner,workspace_admin_owner,workspace_platform_admin;
 grant execute on function workspace_private.record_review_item(text,text,text,text,text[],text[]) to etl_writer;
 do $$ begin if to_regrole('service_role') is not null then revoke all on function workspace_private.record_review_item(text,text,text,text,text[],text[]) from service_role; end if; end $$;
-reset role;
+set role postgres;
 drop policy workspace_review_ingest_owner_context_election_select on public.election;
 drop policy workspace_review_ingest_owner_context_category_select on public.category;
 drop policy workspace_review_ingest_owner_context_archive_select on public.archive_entry;

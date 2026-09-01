@@ -1012,6 +1012,60 @@ def test_review_item_context_foundation_restores_the_postgres_migration_owner() 
     assert "reset role;" not in down
 
 
+def test_remaining_review_context_cleanup_boundaries_restore_postgres_owner() -> None:
+    inventory = (
+        (
+            "20260830203643_classify_historical_review_contexts.sql",
+            "revoke references on table public.%i from workspace_review_ingest_owner",
+        ),
+        (
+            "20260831032044_record_review_item_v2.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "20260831055357_record_review_item_contexts.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "20260831150450_allow_year_level_review_contexts.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "20260831160422_platform_review_breakdown.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "down/20260830203643_classify_historical_review_contexts.down.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "down/20260831032044_record_review_item_v2.down.sql",
+            "drop policy workspace_review_ingest_owner_context_election_select",
+        ),
+        (
+            "down/20260831055357_record_review_item_contexts.down.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "down/20260831150450_allow_year_level_review_contexts.down.sql",
+            "revoke create on schema workspace_private from workspace_review_ingest_owner",
+        ),
+        (
+            "down/20260831160422_platform_review_breakdown.down.sql",
+            "drop policy workspace_review_ingest_owner_breakdown_election_select",
+        ),
+    )
+
+    assert len(inventory) == 10
+    for relative_path, owner_cleanup in inventory:
+        migration = " ".join((MIGRATIONS / relative_path).read_text().lower().split())
+        assert migration.count("set role postgres;") == 1, relative_path
+        assert "reset role;" not in migration, relative_path
+        assert migration.index("set role workspace_review_ingest_owner;") < migration.index(
+            "set role postgres;"
+        ) < migration.index(owner_cleanup), relative_path
+
+
 def test_historical_review_context_classification_sql_is_structured_and_reversible() -> None:
     forward = (MIGRATIONS / "20260830203643_classify_historical_review_contexts.sql").read_text()
     down = (
@@ -1084,8 +1138,8 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
     combined = f"{forward} {down}"
     bridge = "workspace_review_context_migrator"
     bridge_lifecycle = f"create role {bridge} nologin noinherit;grant workspace_review_ingest_owner to {bridge} with inherit false, set true;grant {bridge} to current_user with inherit false, set true;revoke {bridge} from current_user;revoke workspace_review_ingest_owner from {bridge};drop role {bridge}".split(";")  # noqa: E501
-    forward_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create function workspace_private.record_review_item_core;create function workspace_private.record_review_item_v2;create or replace function workspace_private.record_review_item;reset role".split(";")  # noqa: E501
-    down_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create or replace function workspace_private.record_review_item;drop function workspace_private.record_review_item_v2;drop function workspace_private.record_review_item_core;reset role;revoke select on public.election,public.category,public.archive_entry".split(";")  # noqa: E501
+    forward_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create function workspace_private.record_review_item_core;create function workspace_private.record_review_item_v2;create or replace function workspace_private.record_review_item;set role postgres".split(";")  # noqa: E501
+    down_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create or replace function workspace_private.record_review_item;drop function workspace_private.record_review_item_v2;drop function workspace_private.record_review_item_core;set role postgres;revoke select on public.election,public.category,public.archive_entry".split(";")  # noqa: E501
     signatures = "record_review_item_core(text,text,text,text,text[],text[]);record_review_item(text,text,text,text,text[],text[]);record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)".split(";")  # noqa: E501
     revoked_roles = "public,anon,authenticated,etl_writer,workspace_query_owner,workspace_admin_owner,workspace_platform_admin"  # noqa: E501
     assert "bypassrls" not in combined and "alter role workspace_review_ingest_owner" not in combined  # noqa: E501

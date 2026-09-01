@@ -8,7 +8,7 @@ insert into platform_review_breakdown_down_privileges values(has_schema_privileg
 do $$ begin if not (select schema_create from platform_review_breakdown_down_privileges) then grant create on schema workspace_private to workspace_review_ingest_owner; end if; end $$;
 set role workspace_review_ingest_owner;
 drop function workspace_private.platform_review_breakdown(integer,integer);
-reset role;
+set role postgres;
 drop policy workspace_review_ingest_owner_breakdown_election_select on public.election;
 drop policy workspace_review_ingest_owner_breakdown_category_select on public.category;
 do $$ begin if not (select schema_create from platform_review_breakdown_down_privileges) then revoke create on schema workspace_private from workspace_review_ingest_owner; end if; end $$;

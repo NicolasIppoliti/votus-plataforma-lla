@@ -28,7 +28,7 @@ end $$;
 revoke all on function workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text) from public,anon,authenticated,etl_writer,workspace_query_owner,workspace_admin_owner,workspace_platform_admin;
 grant execute on function workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text) to etl_writer;
 do $$ begin if to_regrole('service_role') is not null then revoke all on function workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text) from service_role; end if; end $$;
-reset role;
+set role postgres;
 do $$ begin if not (select schema_create from record_review_item_contexts_down_privileges) then revoke create on schema workspace_private from workspace_review_ingest_owner; end if; end $$;
 revoke workspace_review_context_migrator from current_user;
 revoke workspace_review_ingest_owner from workspace_review_context_migrator;
