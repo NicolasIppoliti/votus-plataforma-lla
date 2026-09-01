@@ -65,6 +65,6 @@ begin
     using errcode='23514';
   end if;
 end $$;
-reset role;
+set role postgres;
 do $$ begin if current_setting('votus_review_context_classification_down.schema_create',true)='false' then revoke create on schema workspace_private from workspace_review_ingest_owner; end if; end $$;
 revoke workspace_review_context_migrator from current_user; revoke workspace_review_ingest_owner from workspace_review_context_migrator; drop role workspace_review_context_migrator; do $$ begin if to_regrole('workspace_review_context_migrator') is not null then raise exception 'workspace_review_context_migrator cleanup failed'; end if; end $$; commit;

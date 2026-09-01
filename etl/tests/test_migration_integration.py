@@ -395,10 +395,13 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     forbidden_membership = r"(?:grant workspace_review_ingest_owner to|revoke workspace_review_ingest_owner from) (?:current_user|%i)"  # noqa: E501
     for migration_sql in privilege_sql:
         assert (positions := list(map(migration_sql.index, ordered_tokens))) == sorted(positions)
-        assert all(token in migration_sql for token in (*bridge_tokens, "reset role"))
+        assert all(token in migration_sql for token in bridge_tokens)
         assert migration_sql.count(f"to_regrole('{bridge}')") >= 2
         assert not re.search(forbidden_membership, migration_sql)
         assert "pg_has_role" not in migration_sql
+    for migration_sql in privilege_sql[:2]:
+        assert "set role postgres" in migration_sql and "reset role" not in migration_sql
+    assert "reset role" in privilege_sql[2]
     assert "['election','category','archive_entry']" in privilege_sql[0]
     assert "references_'||relation_name" in privilege_sql[0]
     assert "grant references" in privilege_sql[0] and "revoke references" in privilege_sql[0]
@@ -2314,6 +2317,158 @@ def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> No
         apply_as_supabase_runner(down=True)
         assert_no_foundation_state()
         assert authority_snapshot() == baseline_authority
+    finally:
+        try:
+            if runner_created:
+                with psycopg.connect(admin_dsn) as connection:
+                    connection.execute(
+                        sql.SQL("revoke postgres from {}").format(sql.Identifier(runner_role))
+                    )
+                    connection.execute(sql.SQL("drop role {}").format(sql.Identifier(runner_role)))
+        finally:
+            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+
+
+def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -> None:
+    database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
+    if not database_dsn:
+        pytest.skip("ETL_TEST_DATABASE_URL is required for Supabase migration-runner coverage")
+    params = conninfo_to_dict(database_dsn)
+    params["user"] = "postgres"
+    params.pop("password", None)
+    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    runner_role = f"votus_supabase_cli_{uuid.uuid4().hex}"
+    remaining_versions = LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS[1:]
+    context_policies = {
+        "workspace_review_ingest_owner_context_archive_select",
+        "workspace_review_ingest_owner_context_category_select",
+        "workspace_review_ingest_owner_context_election_select",
+    }
+    breakdown_policies = {
+        "workspace_review_ingest_owner_breakdown_category_select",
+        "workspace_review_ingest_owner_breakdown_election_select",
+    }
+    all_policies = sorted(context_policies | breakdown_policies)
+    original_review_context_level = _review_context_migration_level(admin_dsn)
+    runner_created = False
+
+    def stable_authority_snapshot() -> tuple[str | None, list[tuple[object, ...]]]:
+        with psycopg.connect(admin_dsn) as connection:
+            schema_acl = connection.execute(
+                "select nspacl::text from pg_namespace where nspname='workspace_private'"
+            ).fetchone()
+            assert schema_acl is not None
+            memberships = connection.execute(
+                "select granted.rolname,member.rolname,grantor.rolname,"
+                "m.admin_option,m.inherit_option,m.set_option from pg_auth_members m "
+                "join pg_roles granted on granted.oid=m.roleid "
+                "join pg_roles member on member.oid=m.member "
+                "join pg_roles grantor on grantor.oid=m.grantor "
+                "order by 1,2,3,4,5,6"
+            ).fetchall()
+        return schema_acl[0], memberships
+
+    def table_acl_snapshot() -> list[tuple[str, str | None]]:
+        with psycopg.connect(admin_dsn) as connection:
+            return connection.execute(
+                "select relname,relacl::text from pg_class "
+                "where oid=any(array['public.election'::regclass,'public.category'::regclass,"
+                "'public.archive_entry'::regclass]) order by relname"
+            ).fetchall()
+
+    def assert_level_state(level: int, stable_authority) -> None:
+        expected_select_count = 3 if level >= 3 else 0
+        expected_policies = set(context_policies) if level >= 3 else set()
+        if level == 6:
+            expected_policies |= breakdown_policies
+        expected_functions = {
+            1: (False, False, False),
+            2: (False, False, False),
+            3: (True, False, False),
+            4: (False, True, False),
+            5: (False, True, False),
+            6: (False, True, True),
+        }[level]
+        with psycopg.connect(admin_dsn) as connection:
+            authority = connection.execute(
+                "select to_regrole('workspace_review_context_migrator'),"
+                "to_regrole('workspace_review_breakdown_migrator'),"
+                "has_schema_privilege('workspace_review_ingest_owner','workspace_private','CREATE'),"
+                "has_table_privilege('workspace_review_ingest_owner','public.election','REFERENCES')::int+"
+                "has_table_privilege('workspace_review_ingest_owner','public.category','REFERENCES')::int+"
+                "has_table_privilege('workspace_review_ingest_owner','public.archive_entry','REFERENCES')::int,"
+                "has_table_privilege('workspace_review_ingest_owner','public.election','SELECT')::int+"
+                "has_table_privilege('workspace_review_ingest_owner','public.category','SELECT')::int+"
+                "has_table_privilege('workspace_review_ingest_owner','public.archive_entry','SELECT')::int"
+            ).fetchone()
+            assert authority == (None, None, False, 0, expected_select_count)
+            policies = connection.execute(
+                "select policyname from pg_policies where schemaname='public' "
+                "and policyname=any(%s) order by policyname",
+                (all_policies,),
+            ).fetchall()
+            assert tuple(name for (name,) in policies) == tuple(sorted(expected_policies))
+            functions = connection.execute(
+                "select to_regprocedure('workspace_private.record_review_item_v2"
+                "(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)') "
+                "is not null,to_regprocedure('workspace_private.record_review_item_v2"
+                "(text,text,text,text,text[],text[],jsonb)') is not null,"
+                "to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') "
+                "is not null"
+            ).fetchone()
+            assert functions == expected_functions
+        assert _review_context_migration_level(admin_dsn) == level
+        assert stable_authority_snapshot() == stable_authority
+
+    try:
+        _set_latest_review_context_level(admin_dsn, 0)
+        _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
+        assert _review_context_migration_level(admin_dsn) == 1
+        with psycopg.connect(admin_dsn) as connection:
+            connection.execute(
+                sql.SQL("create role {} login noinherit").format(sql.Identifier(runner_role))
+            )
+            connection.execute(
+                sql.SQL("grant postgres to {} with inherit false, set true").format(
+                    sql.Identifier(runner_role)
+                )
+            )
+        runner_created = True
+        stable_authority = stable_authority_snapshot()
+        baseline_table_acls = table_acl_snapshot()
+        assert_level_state(1, stable_authority)
+
+        runner_params = conninfo_to_dict(admin_dsn)
+        runner_params["user"] = runner_role
+        runner_dsn = make_conninfo(**{key: str(value) for key, value in runner_params.items()})
+        forward_levels: list[int] = []
+        down_levels: list[int] = []
+        with psycopg.connect(runner_dsn, autocommit=True) as connection:
+            connection.execute("set role postgres")
+            assert connection.execute("select session_user,current_user").fetchone() == (
+                runner_role,
+                "postgres",
+            )
+            for level, version in enumerate(remaining_versions, start=2):
+                connection.execute(_validated_migration_path(version).read_bytes())
+                assert connection.execute("select session_user,current_user").fetchone() == (
+                    runner_role,
+                    "postgres",
+                )
+                assert_level_state(level, stable_authority)
+                forward_levels.append(level)
+            for level, version in zip(range(5, 0, -1), reversed(remaining_versions), strict=True):
+                connection.execute(_validated_migration_path(version, down=True).read_bytes())
+                assert connection.execute("select session_user,current_user").fetchone() == (
+                    runner_role,
+                    "postgres",
+                )
+                assert_level_state(level, stable_authority)
+                down_levels.append(level)
+
+        assert forward_levels == [2, 3, 4, 5, 6]
+        assert down_levels == [5, 4, 3, 2, 1]
+        assert table_acl_snapshot() == baseline_table_acls
     finally:
         try:
             if runner_created:

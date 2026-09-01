@@ -10,7 +10,7 @@ const OPERATIONS = {
 	"grant-section-entitlement": ["select workspace_private.grant_section_entitlement(:'p1'::uuid,:'p2'::text,:'p3'::text,:'p4'::text,:'p5'::text)", ["organization_id", "distrito_code", "seccion_code", "actor_ref", "reason_code"]],
 	"revoke-section-entitlement": ["select workspace_private.revoke_section_entitlement(:'p1'::uuid,:'p2'::text,:'p3'::text,:'p4'::text,:'p5'::text)", ["organization_id", "distrito_code", "seccion_code", "actor_ref", "reason_code"]],
 	"list-platform-review-items": ["select workspace_private.platform_review_items(:'p1'::integer,:'p2'::integer)", ["limit", "offset"]],
-	// Operator-only production entry point; the database function returns aggregate-safe output.
+	// Production operator entry point; the database function returns aggregate-safe output.
 	"review-breakdown": ["select workspace_private.platform_review_breakdown(:'p1'::integer,:'p2'::integer)", ["limit", "offset"]],
 } as const;
 type Operation = keyof typeof OPERATIONS;
