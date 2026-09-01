@@ -89,6 +89,7 @@ from .ingest.national import (
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
     ingest_national,
+    iter_national_rows,
     load_national_rows,
     validate_mesa_tipo,
 )
@@ -910,17 +911,21 @@ def ingest_source(
     try:
         project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
-            csvs = national_archive_csvs(raw_bytes)
-            rows = ingest_national(
-                csvs.results,
-                archive_entry_id=source_id,
-                election_year=registered_year,
-                election_round=registered_round,
-                establecimientos_csv_bytes=csvs.establecimientos,
-            )
-            inserted = load_national_rows(
-                conn, rows, year=year, round_=round_, archive_entry_id=source_id
-            )
+            with national_results_text(raw_bytes) as results_text:
+                rows = iter_national_rows(
+                    results_text,
+                    archive_entry_id=source_id,
+                    election_year=registered_year,
+                    election_round=registered_round,
+                    establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
+                )
+                inserted = load_national_rows(
+                    conn,
+                    rows,
+                    year=year,
+                    round_=round_,
+                    archive_entry_id=source_id,
+                )
         elif capability == "pba":
             parse_result = ingest_pba(raw_bytes, archive_entry_id=source_id)
             # The CALLER's crosswalk, not a hardcoded default: validating
@@ -1315,8 +1320,31 @@ def national_csv_bytes(raw_bytes: bytes) -> bytes:
         return resolve_national_results_bytes(raw_bytes, extract_dir=Path(extract_dir))
 
 
+@dataclass
+class NationalResultsTextStream:
+    """Seekable result text plus the optional small companion from one selection."""
+
+    handle: TextIO
+    establecimientos_csv_bytes: bytes | None
+
+    def __iter__(self):
+        return iter(self.handle)
+
+    def read(self, size: int = -1) -> str:
+        return self.handle.read(size)
+
+    def readline(self, size: int = -1) -> str:
+        return self.handle.readline(size)
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self.handle.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self.handle.tell()
+
+
 @contextlib.contextmanager
-def national_results_text(raw_bytes: bytes) -> Iterator[TextIO]:
+def national_results_text(raw_bytes: bytes) -> Iterator[NationalResultsTextStream]:
     """The national results CSV as a text stream, never materialized.
 
     `national_csv_bytes` holds the whole decompressed member, which is the
@@ -1335,10 +1363,16 @@ def national_results_text(raw_bytes: bytes) -> Iterator[TextIO]:
         if paths.results is None:
             # Bare CSV (a test fixture, not a registered archive). Wrapping the
             # bytes we already hold adds no second copy; decoding them would.
-            yield io.TextIOWrapper(io.BytesIO(raw_bytes), encoding="utf-8-sig", newline="")
+            yield NationalResultsTextStream(
+                io.TextIOWrapper(io.BytesIO(raw_bytes), encoding="utf-8-sig", newline=""),
+                None,
+            )
             return
+        establecimientos_csv_bytes = (
+            paths.establecimientos.read_bytes() if paths.establecimientos is not None else None
+        )
         with paths.results.open("r", encoding="utf-8-sig", newline="") as handle:
-            yield handle
+            yield NationalResultsTextStream(handle, establecimientos_csv_bytes)
 
 
 def national_archive_csvs(raw_bytes: bytes) -> NationalArchiveCsvs:
