@@ -258,6 +258,17 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                 raise SourcesValidationError(
                     f"sources.yaml capability {capability!r} entry {index} notes must be a string"
                 )
+            if capability == "fiscalizacion":
+                if entry.get("source_kind") != "fiscalizacion":
+                    raise SourcesValidationError(
+                        f"sources.yaml capability {capability!r} entry {index} source_kind "
+                        "must be exactly 'fiscalizacion'"
+                    )
+                if entry.get("upload") != "never":
+                    raise SourcesValidationError(
+                        f"sources.yaml capability {capability!r} entry {index} upload "
+                        "must be exactly 'never'"
+                    )
             try:
                 registered_source_election(entry)
             except SourcesValidationError as exc:

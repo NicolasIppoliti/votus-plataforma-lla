@@ -187,6 +187,90 @@ def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
     assert fetcher.calls == []
 
 
+@pytest.mark.parametrize(
+    ("declaration", "expected_diagnostic"),
+    [
+        (
+            {"upload": "never"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 source_kind "
+            "must be exactly 'fiscalizacion'\n",
+        ),
+        (
+            {"source_kind": "official", "upload": "never"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 source_kind "
+            "must be exactly 'fiscalizacion'\n",
+        ),
+        (
+            {"source_kind": "fiscalizacion"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 upload "
+            "must be exactly 'never'\n",
+        ),
+        (
+            {"source_kind": "fiscalizacion", "upload": "r2"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 upload "
+            "must be exactly 'never'\n",
+        ),
+        (
+            {"source_kind": "official", "upload": "r2"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 source_kind "
+            "must be exactly 'fiscalizacion'\n",
+        ),
+    ],
+    ids=[
+        "missing-source-kind",
+        "official-source-kind",
+        "missing-upload",
+        "r2-upload",
+        "source-kind-precedes-upload",
+    ],
+)
+def test_fetch_rejects_invalid_fiscal_source_declarations_at_registry_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    declaration: dict[str, str],
+    expected_diagnostic: str,
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "fiscalizacion/invalid-declaration"
+    local_file = tmp_path / "fiscal.csv"
+    local_file.write_bytes(b"must not be archived")
+    sources_path = tmp_path / "sources.yaml"
+    entry = {
+        "id": source_id,
+        "source": "local-file",
+        "source_url": "local://fiscalizacion/fiscal.csv",
+        "mime": "text/csv",
+        "notes": "invalid declaration fixture",
+        "election_year": 2025,
+        "election_round": "legislativas",
+        "filename": "fiscal.csv",
+        **declaration,
+    }
+    sources_path.write_text(
+        yaml.safe_dump({"fiscalizacion": [entry]}),
+        encoding="utf-8",
+    )
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    original_manifest = b"[]\n"
+    manifest_path.write_bytes(original_manifest)
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["fetch", "--source", source_id, "--local-file", str(local_file)]
+    )
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == expected_diagnostic
+    assert fetcher.calls == []
+    assert not local_root.exists()
+    assert manifest_path.read_bytes() == original_manifest
+
+
 def test_fetch_cli_reports_changed_fiscalizacion_hash_per_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
@@ -2704,6 +2788,7 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
+                        "source_kind": "fiscalizacion",
                         "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
@@ -3024,6 +3109,7 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
+                        "source_kind": "fiscalizacion",
                         "mime": "text/csv",
                         "notes": "canonical source fixture",
                         "source_url": "local://fiscalizacion/fixture.csv",
@@ -3153,6 +3239,7 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
+                        "source_kind": "fiscalizacion",
                         "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
@@ -5687,6 +5774,7 @@ def test_validate_fiscalizacion_refuses_a_circuito_blind_baseline_before_review_
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
+                        "source_kind": "fiscalizacion",
                         "upload": "never",
                     }
                 ],
@@ -5804,6 +5892,7 @@ def test_validate_fiscalizacion_refuses_an_invalid_official_vector_before_any_wr
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
+                        "source_kind": "fiscalizacion",
                         "upload": "never",
                     }
                 ],
@@ -6323,6 +6412,8 @@ def test_validate_fiscalizacion_uses_registered_baseline_metadata_and_refuses_mi
                         "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
                     }
                 ],
                 "national": [
@@ -6389,6 +6480,8 @@ def test_validate_fiscalizacion_refuses_fiscal_source_election_mismatch_before_a
                         "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": fiscal_year,
                         "election_round": fiscal_round,
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
                     }
                 ],
                 "national": [
@@ -6799,6 +6892,8 @@ def test_sources_boundary_accepts_canonical_local_source_metadata(
                 "source_url": "local://fiscalizacion/fixture.csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
+                "source_kind": "fiscalizacion",
+                "upload": "never",
             }
         ]
     }
@@ -6827,6 +6922,8 @@ def test_sources_boundary_requires_complete_election_identity(
                         "mime": "text/csv",
                         "notes": "canonical source fixture",
                         "source_url": "local://fiscalizacion/test.csv",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
                         **election_fields,
                     }
                 ]
@@ -6857,6 +6954,7 @@ def test_loaded_fiscalizacion_identity_reaches_reexport_classification(tmp_path:
                         "source_url": source_url,
                         "mime": "text/csv",
                         "filename": "fiscal.csv",
+                        "source_kind": "fiscalizacion",
                         "upload": "never",
                         "election_year": 2025,
                         "election_round": "legislativas",
