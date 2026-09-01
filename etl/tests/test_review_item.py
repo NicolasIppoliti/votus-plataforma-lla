@@ -109,21 +109,32 @@ def test_review_item_scope_accepts_only_exact_canonical_sections() -> None:
             ReviewItemSectionScope(distrito_code=distrito, seccion_code=seccion)
 
 
-def test_review_item_record_accepts_frozen_explicit_fiscal_context() -> None:
-    context = ReviewItemContext(
-        context_role="observed",
-        source_kind="fiscalizacion",
-        archive_availability="available",
-        election_year=2025,
-        election_id="election-id",
-        category_id="category-id",
-        archive_entry_id="fiscalizacion/source",
+def test_review_item_record_accepts_immutable_explicit_contexts() -> None:
+    contexts = (
+        ReviewItemContext(
+            "observed",
+            "fiscalizacion",
+            "available",
+            2025,
+            "election-id",
+            "category-id",
+            "fiscalizacion/source",
+        ),
+        ReviewItemContext(
+            "comparison",
+            "official",
+            "available",
+            2025,
+            "election-id",
+            "category-id",
+            "national/source",
+        ),
     )
-    record = ReviewItemRecord("blank_vote_cell", "info", "mesa 1", None, context=context)
+    record = ReviewItemRecord("mesa_tally_divergence", "info", "mesa 1", None, contexts=contexts)
 
-    assert record.context == context
+    assert record.contexts == contexts
     with pytest.raises(Exception):
-        context.election_year = 2023  # type: ignore[misc]
+        contexts[0].election_year = 2023  # type: ignore[misc]
 
 
 def test_review_item_draft_projects_verbatim() -> None:

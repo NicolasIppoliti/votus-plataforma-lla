@@ -752,28 +752,36 @@ def test_insert_review_items_reports_actual_insert_count_at_boundary() -> None:
     ]
 
 
-def test_insert_review_items_routes_mixed_legacy_and_uuid_context_records_once_each() -> None:
+def test_insert_review_items_routes_mixed_legacy_and_uuid_context_sets_once_each() -> None:
     conn = _RecordingConnection()
     election_id = uuid.uuid4()
     category_id = uuid.uuid4()
     legacy = ReviewItemRecord("content_drift", "warning", "legacy", None)
-    fiscal = ReviewItemRecord(
-        "blank_vote_cell",
-        "info",
-        "fiscal",
-        None,
-        context=ReviewItemContext(
+    contexts = (
+        ReviewItemContext(
             "observed",
             "fiscalizacion",
             "available",
             2025,
             election_id,
             category_id,
-            "archive-id",
+            "fiscal-id",
+        ),
+        ReviewItemContext(
+            "comparison",
+            "official",
+            "available",
+            2025,
+            election_id,
+            category_id,
+            "official-id",
         ),
     )
+    divergence = ReviewItemRecord(
+        "mesa_tally_divergence", "info", "fiscal", None, contexts=contexts
+    )
 
-    assert insert_review_items(conn, [legacy, fiscal, fiscal]) == 2
+    assert insert_review_items(conn, [legacy, divergence, divergence]) == 2
     calls = "\n".join(query for query, _params in conn.statements)
     assert calls.count("workspace_private.record_review_item(") == 1
     assert calls.count("workspace_private.record_review_item_v2(") == 1
@@ -784,19 +792,32 @@ def test_insert_review_items_routes_mixed_legacy_and_uuid_context_records_once_e
     )
     assert json.loads(v2_payload) == [
         {
-            "kind": "blank_vote_cell",
+            "kind": "mesa_tally_divergence",
             "severity": "info",
             "subject_ref": "fiscal",
             "note": None,
             "distrito_codes": [],
             "seccion_codes": [],
-            "context_role": "observed",
-            "source_kind": "fiscalizacion",
-            "archive_availability": "available",
-            "election_year": 2025,
-            "election_id": str(election_id),
-            "category_id": str(category_id),
-            "archive_entry_id": "archive-id",
+            "contexts": [
+                {
+                    "context_role": "observed",
+                    "source_kind": "fiscalizacion",
+                    "archive_availability": "available",
+                    "election_year": 2025,
+                    "election_id": str(election_id),
+                    "category_id": str(category_id),
+                    "archive_entry_id": "fiscal-id",
+                },
+                {
+                    "context_role": "comparison",
+                    "source_kind": "official",
+                    "archive_availability": "available",
+                    "election_year": 2025,
+                    "election_id": str(election_id),
+                    "category_id": str(category_id),
+                    "archive_entry_id": "official-id",
+                },
+            ],
         }
     ]
 

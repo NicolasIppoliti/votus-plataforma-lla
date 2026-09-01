@@ -64,6 +64,8 @@ from .db import (
     load_crosswalk_rows,
     load_party_map_rows,
     project_archive_entry,
+    upsert_category,
+    upsert_election,
 )
 from .http_client import (
     RequestsFetcher,
@@ -1014,14 +1016,16 @@ def ingest_source(
                     section_scopes=(
                         ReviewItemSectionScope(FISCALIZACION_DISTRITO, FISCALIZACION_SECCION),
                     ),
-                    context=ReviewItemContext(
-                        "observed",
-                        "fiscalizacion",
-                        "available",
-                        registered_year,
-                        load_result.election_id,
-                        load_result.category_id,
-                        source_id,
+                    contexts=(
+                        ReviewItemContext(
+                            "observed",
+                            "fiscalizacion",
+                            "available",
+                            registered_year,
+                            load_result.election_id,
+                            load_result.category_id,
+                            source_id,
+                        ),
                     ),
                 )
                 # BOTH producers. The parser's drafts and the LOADER's — a mesa
@@ -2203,6 +2207,19 @@ def load_curated(
                     + ("2023 but not 2025" if stability.present_2023 else "2025 but not 2023")
                     + "; it is NOT stable across years and must not be compared as if it were"
                 ),
+                contexts=tuple(
+                    ReviewItemContext(
+                        "observed",
+                        "official",
+                        "unknown",
+                        year,
+                        None,
+                        None,
+                        None,
+                        "source_archive_not_attributable",
+                    )
+                    for year in (2023, 2025)
+                ),
             )
             for distrito, seccion, stability in mesa_stabilities
             if stability.discontinuous
@@ -2525,6 +2542,60 @@ def official_mesa_votes_from_national(
     )
 
 
+def available_divergence_contexts(
+    conn,
+    *,
+    election_year: int,
+    election_round: str,
+    category: str,
+    fiscal_archive_id: str,
+    official_archive_id: str,
+) -> tuple[ReviewItemContext, ReviewItemContext]:
+    """Resolve the one authoritative DB identity shared by both comparison sides."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select e.id, c.id from election e cross join category c
+            where e.year=%s and e.round=%s and c.name=%s
+              and exists(
+                select 1 from archive_entry
+                where id=%s and status='ok' and source_kind='fiscalizacion'
+              )
+              and exists(
+                select 1 from archive_entry
+                where id=%s and status='ok' and source_kind='official'
+              )
+            """,
+            (election_year, election_round, category, fiscal_archive_id, official_archive_id),
+        )
+        identity = cur.fetchone()
+    if identity is None:
+        raise ValueError(
+            "divergence contexts require authoritative election, category, and archives"
+        )
+    election_id, category_id = map(str, identity)
+    return (
+        ReviewItemContext(
+            "observed",
+            "fiscalizacion",
+            "available",
+            election_year,
+            election_id,
+            category_id,
+            fiscal_archive_id,
+        ),  # noqa: E501
+        ReviewItemContext(
+            "comparison",
+            "official",
+            "available",
+            election_year,
+            election_id,
+            category_id,
+            official_archive_id,
+        ),  # noqa: E501
+    )
+
+
 def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
     """Compare fiscalización and official tallies by mesa identity.
 
@@ -2826,6 +2897,31 @@ def cmd_validate_fiscalizacion(args: argparse.Namespace) -> int:
 
         conn = psycopg.connect(database_url)
         try:
+            if "mesa_tally_divergence" in records_by_kind:
+                for source_entry, source_id in (
+                    (fiscalizacion_entry, args.source),
+                    (baseline_entry, args.baseline),
+                ):
+                    archived = latest_ok_record(records, source_id)
+                    if archived is None:
+                        raise ValueError(f"divergence context archive {source_id!r} is unavailable")
+                    project_archive_entry(conn, archive_entry_from_evidence(archived, source_entry))
+                upsert_election(
+                    conn, year=fiscalizacion_election[0], round_=fiscalizacion_election[1]
+                )
+                upsert_category(conn, name=args.category)
+                contexts = available_divergence_contexts(
+                    conn,
+                    election_year=fiscalizacion_election[0],
+                    election_round=fiscalizacion_election[1],
+                    category=args.category,
+                    fiscal_archive_id=args.source,
+                    official_archive_id=args.baseline,
+                )
+                records_by_kind["mesa_tally_divergence"] = [
+                    replace(record, contexts=contexts)
+                    for record in records_by_kind["mesa_tally_divergence"]
+                ]
             recorded_by_kind: dict[str, int] = {}
             for kind, kind_records in records_by_kind.items():
                 recorded_by_kind[kind] = insert_review_items(conn, kind_records)
