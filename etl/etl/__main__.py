@@ -1445,6 +1445,78 @@ def collect_mesa_tipo_mapping(
     # source missing any of them is reported, not crashed on, because the two
     # national files already differ in shape and a third will differ again.
     required = ("distrito_id", "seccion_id", "circuito_id", "mesa_id", "mesa_tipo")
+    locator_sample_cap = 5
+    unknown_category = "(unknown category)"
+    # Finite labels measured across the 13-category `national/2023-generales`
+    # archive member `2023_Generales/ResultadoElectorales_2023_Generales.csv`.
+    # Repository-verified 2025 spellings are the included singular forms
+    # `DIPUTADO NACIONAL` and `SENADOR NACIONAL`; this claims no exact-string
+    # coverage for PASO or balotaje. Unknown source text is never echoed.
+    diagnostic_categories = frozenset(
+        {
+            "CONCEJAL",
+            "DIPUTADO NACIONAL",
+            "DIPUTADO PROVINCIAL",
+            "DIPUTADOS/AS DE LA CIUDAD AUTONOMA",
+            "GOBERNADOR Y VICE",
+            "INTENDENTE",
+            "JEFE/A DE GOBIERNO",
+            "MIEMBROS DE JUNTA COMUNAL",
+            "PARLAMENTO MERCOSUR NACIONAL",
+            "PARLAMENTO MERCOSUR REGIONAL",
+            "PRESIDENTE Y VICE",
+            "SENADOR NACIONAL",
+            "SENADOR PROVINCIAL",
+        }
+    )
+    reason_order = (
+        "skipped_missing_column",
+        "skipped_no_tipo",
+        "skipped_absent_mesa_id",
+        "skipped_bad_mesa_id",
+        "skipped_incomplete_lineage",
+        "skipped_uncanonical_code",
+    )
+
+    # Locators retain only field NAMES and the first five row positions in each
+    # bounded bucket. `cargo_nombre` is source-controlled too, so the finite
+    # vocabulary above is the only category text that can be exposed.
+    exclusion_totals: dict[tuple[str, str], int] = {}
+    exclusion_samples: dict[tuple[str, str], list[dict[str, object]]] = {}
+
+    def safe_category(raw_category: object) -> str:
+        if not isinstance(raw_category, str):
+            return unknown_category
+        category = " ".join(raw_category.split())
+        return category if category in diagnostic_categories else unknown_category
+
+    def record_exclusion(
+        raw: Mapping,
+        source_row_index: int,
+        reason: str,
+        *,
+        missing_fields: Iterable[str] = (),
+        invalid_fields: Iterable[str] = (),
+    ) -> None:
+        category = safe_category(raw.get("cargo_nombre"))
+        key = (category, reason)
+        exclusion_totals[key] = exclusion_totals.get(key, 0) + 1
+        samples = exclusion_samples.setdefault(key, [])
+        if len(samples) >= locator_sample_cap:
+            return
+        locator: dict[str, object] = {
+            "source_label": source_label,
+            "data_row_index": source_row_index,
+            "category": category,
+            "reason": reason,
+        }
+        missing_names = list(missing_fields)
+        invalid_names = list(invalid_fields)
+        if missing_names:
+            locator["missing_fields"] = missing_names
+        if invalid_names:
+            locator["invalid_fields"] = invalid_names
+        samples.append(locator)
 
     # Accumulates ACROSS sources when `into` is supplied. Merging per-file
     # results with `dict.update` afterwards is last-write-wins between the 2023
@@ -1467,6 +1539,12 @@ def collect_mesa_tipo_mapping(
         missing = [column for column in required if column not in raw]
         if missing:
             skipped_missing_column += 1
+            record_exclusion(
+                raw,
+                source_row_index,
+                "skipped_missing_column",
+                missing_fields=missing,
+            )
             continue
         tipo = validate_mesa_tipo(
             raw.get("mesa_tipo"),
@@ -1477,14 +1555,32 @@ def collect_mesa_tipo_mapping(
             # Counted, never silently dropped: a skip with no number looks
             # identical whether it discarded nothing or everything.
             skipped_no_tipo += 1
+            record_exclusion(
+                raw,
+                source_row_index,
+                "skipped_no_tipo",
+                missing_fields=("mesa_tipo",),
+            )
             continue
         raw_mesa = raw.get("mesa_id")
         if not isinstance(raw_mesa, str) or not raw_mesa.strip():
             skipped_absent_mesa_id += 1
+            record_exclusion(
+                raw,
+                source_row_index,
+                "skipped_absent_mesa_id",
+                missing_fields=("mesa_id",),
+            )
             continue
         mesa = parse_source_int(raw_mesa)
         if mesa is None:
             skipped_bad_mesa_id += 1
+            record_exclusion(
+                raw,
+                source_row_index,
+                "skipped_bad_mesa_id",
+                invalid_fields=("mesa_id",),
+            )
             continue
         # `required` proves the columns are PRESENT, not that they carry a
         # value. An empty `seccion_id` normalizes to `None`, and
@@ -1496,13 +1592,40 @@ def collect_mesa_tipo_mapping(
         circuito = normalize_circuito_code(raw["circuito_id"])
         if not distrito or not seccion or not circuito:
             skipped_incomplete_lineage += 1
+            missing_lineage_fields = [
+                field_name
+                for field_name, normalized in (
+                    ("distrito_id", distrito),
+                    ("seccion_id", seccion),
+                    ("circuito_id", circuito),
+                )
+                if not normalized
+            ]
+            record_exclusion(
+                raw,
+                source_row_index,
+                "skipped_incomplete_lineage",
+                missing_fields=missing_lineage_fields,
+            )
             continue
-        if not (
-            is_canonicalizable_code(raw["distrito_id"])
-            and is_canonicalizable_code(raw["seccion_id"])
-            and is_canonicalizable_circuito_code(raw["circuito_id"])
-        ):
+        canonicalizable = (
+            ("distrito_id", is_canonicalizable_code(raw["distrito_id"])),
+            ("seccion_id", is_canonicalizable_code(raw["seccion_id"])),
+            (
+                "circuito_id",
+                is_canonicalizable_circuito_code(raw["circuito_id"]),
+            ),
+        )
+        if not all(is_valid for _, is_valid in canonicalizable):
             skipped_uncanonical_code += 1
+            record_exclusion(
+                raw,
+                source_row_index,
+                "skipped_uncanonical_code",
+                invalid_fields=[
+                    field_name for field_name, is_valid in canonicalizable if not is_valid
+                ],
+            )
             continue
 
         key = (distrito, seccion, circuito, mesa)
@@ -1530,6 +1653,37 @@ def collect_mesa_tipo_mapping(
             "normalizers cannot canonicalize",
             file=sys.stderr,
         )
+        print(
+            f"  mesa_tipo exclusion diagnostics for {source_label}: "
+            f"locator_sample_cap={locator_sample_cap} "
+            f"category_vocabulary_size={len(diagnostic_categories)}",
+            file=sys.stderr,
+        )
+        reason_rank = {reason: index for index, reason in enumerate(reason_order)}
+        for category, reason in sorted(
+            exclusion_totals,
+            key=lambda bucket: (bucket[0], reason_rank[bucket[1]]),
+        ):
+            total = exclusion_totals[(category, reason)]
+            locators = exclusion_samples[(category, reason)]
+            print(
+                f"    category={category!r} reason={reason} total={total} "
+                f"omitted_locators={total - len(locators)}",
+                file=sys.stderr,
+            )
+            for locator in locators:
+                optional_fields = ""
+                if "missing_fields" in locator:
+                    optional_fields += f" missing_fields={locator['missing_fields']!r}"
+                if "invalid_fields" in locator:
+                    optional_fields += f" invalid_fields={locator['invalid_fields']!r}"
+                print(
+                    f"    locator source_label={locator['source_label']!r} "
+                    f"data_row_index={locator['data_row_index']} "
+                    f"category={locator['category']!r} reason={locator['reason']}"
+                    f"{optional_fields}",
+                    file=sys.stderr,
+                )
 
     return candidates
 

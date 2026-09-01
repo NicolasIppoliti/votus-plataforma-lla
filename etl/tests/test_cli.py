@@ -1598,6 +1598,208 @@ def test_an_id_registered_under_two_capabilities_is_refused() -> None:
         find_source_entry(sources, "shared/id")
 
 
+def test_backfill_mesa_tipo_reports_bounded_exclusion_locators_by_category_and_reason_through_main(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """The CLI reports safe row locators without retaining every excluded row.
+
+    The full-header fixtures model only repository-proven source shapes: archived
+    2023 generales and 2025 legislativas. The separate drift fixture exercises a
+    missing column; this test makes no PASO or balotaje shape claim.
+    """
+    full_header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        "votos_tipo,votos_cantidad,estado_final,mesa_tipo\n"
+    )
+    private_category_token = "PRIVATE_CATEGORY_TOKEN"
+    public_2023_generales_categories = (
+        "CONCEJAL",
+        "DIPUTADO NACIONAL",
+        "DIPUTADO PROVINCIAL",
+        "DIPUTADOS/AS DE LA CIUDAD AUTONOMA",
+        "GOBERNADOR Y VICE",
+        "INTENDENTE",
+        "JEFE/A DE GOBIERNO",
+        "MIEMBROS DE JUNTA COMUNAL",
+        "PARLAMENTO MERCOSUR NACIONAL",
+        "PARLAMENTO MERCOSUR REGIONAL",
+        "PRESIDENTE Y VICE",
+        "SENADOR NACIONAL",
+        "SENADOR PROVINCIAL",
+    )
+    csv_by_source = {
+        "national/2023-generales-locators": (
+            full_header
+            + "02,027,00001,1,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,\n"
+            + "".join(
+                f"02,027,00001,public-{index},{category},110,POSITIVO,10,definitivo,NATIVOS\n"
+                for index, category in enumerate(public_2023_generales_categories)
+            )
+        ),
+        "national/2024-drifted-locators": (
+            "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre\n"
+            "02,027,00001,2,DIPUTADO NACIONAL\n"
+        ),
+        "national/2025-legislativas-locators": full_header
+        + "02,027,00001,,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,NATIVOS\n"
+        + "".join(
+            f"02,027,00001,private-{index},DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,NATIVOS\n"
+            for index in range(6)
+        )
+        + f"02,027,00001,private-token,{private_category_token},110,"
+        "POSITIVO,10,definitivo,NATIVOS\n"
+        + ",027,00001,3,,110,POSITIVO,10,definitivo,NATIVOS\n"
+        + "2A,027,00001,4,SENADORES NACIONALES,110,POSITIVO,10,definitivo,NATIVOS\n",
+    }
+
+    local_root = tmp_path / "archive"
+    store = LocalArchiveStore(root=local_root)
+    source_entries = []
+    manifest_records = []
+    for source_id, csv_text in csv_by_source.items():
+        year = int(source_id.split("/")[1][:4])
+        filename = f"{year}.csv"
+        store.write("national", filename, csv_text.encode("utf-8"))
+        source_entries.append(
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": f"https://example.test/{filename}",
+                "election_year": year,
+                "election_round": (
+                    "generales"
+                    if year == 2023
+                    else "legislativas"
+                    if year == 2025
+                    else "synthetic-drift"
+                ),
+                "mime": "text/csv",
+                "notes": "bounded exclusion locator fixture",
+                "filename": filename,
+            }
+        )
+        manifest_records.append(
+            {
+                "id": source_id,
+                "status": "ok",
+                "archived_path": f"archive/national/{filename}",
+                "sha256": hashlib.sha256(csv_text.encode("utf-8")).hexdigest(),
+                "fetched_at": "2026-01-01T00:00:00Z",
+            }
+        )
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({"national": source_entries}), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(json.dumps(manifest_records), encoding="utf-8")
+    monkeypatch.setattr(
+        psycopg,
+        "connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an all-excluded corpus must not connect to PostgreSQL")
+        ),
+    )
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "backfill-mesa-tipo",
+            "--database-url",
+            "postgresql://all-excluded-must-not-connect/nowhere",
+        ]
+    )
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert (
+        "national/2023-generales-locators: 1 rows carried no mesa_tipo, "
+        "0 lacked a required column, 0 had an absent mesa_id, "
+        "13 had an unreadable mesa_id" in reported
+    )
+    assert (
+        "national/2024-drifted-locators: 0 rows carried no mesa_tipo, "
+        "1 lacked a required column" in reported
+    )
+    assert (
+        "national/2025-legislativas-locators: 0 rows carried no mesa_tipo, "
+        "0 lacked a required column, 1 had an absent mesa_id, "
+        "7 had an unreadable mesa_id, 1 had an incomplete lineage, "
+        "1 carried a non-numeric code" in reported
+    )
+    assert (
+        "category='PRESIDENTE Y VICE' reason=skipped_bad_mesa_id total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert (
+        "mesa_tipo exclusion diagnostics for national/2025-legislativas-locators: "
+        "locator_sample_cap=5 category_vocabulary_size=13" in reported
+    )
+    for category in public_2023_generales_categories:
+        assert (
+            f"category={category!r} reason=skipped_bad_mesa_id total=1 "
+            "omitted_locators=0" in reported
+        )
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_bad_mesa_id total=6 "
+        "omitted_locators=1\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=1 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=2 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=3 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=4 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=5 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']" in reported
+    )
+    assert (
+        "data_row_index=6 category='DIPUTADO NACIONAL' reason=skipped_bad_mesa_id" not in reported
+    )
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_missing_column total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert "missing_fields=['mesa_tipo']" in reported
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_no_tipo total=1 omitted_locators=0" in reported
+    )
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_absent_mesa_id total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert (
+        "data_row_index=0 category='DIPUTADO NACIONAL' "
+        "reason=skipped_absent_mesa_id missing_fields=['mesa_id']" in reported
+    )
+    assert "category='(unknown category)' reason=skipped_bad_mesa_id total=1" in reported
+    assert (
+        "data_row_index=7 category='(unknown category)' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']" in reported
+    )
+    assert "category='(unknown category)' reason=skipped_incomplete_lineage total=1" in reported
+    assert (
+        "data_row_index=8 category='(unknown category)' "
+        "reason=skipped_incomplete_lineage missing_fields=['distrito_id']" in reported
+    )
+    assert (
+        "category='(unknown category)' reason=skipped_uncanonical_code total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert (
+        "data_row_index=9 category='(unknown category)' "
+        "reason=skipped_uncanonical_code invalid_fields=['distrito_id']" in reported
+    )
+    assert "SENADORES NACIONALES" not in reported
+    assert private_category_token not in reported
+    assert "private-" not in reported, "raw invalid mesa IDs must never enter diagnostics"
+
+
 def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
@@ -5115,6 +5317,24 @@ def test_collect_mesa_tipo_mapping_rejects_malformed_ids_without_aliasing_a_mesa
         "1 had an absent mesa_id, 3 had an unreadable mesa_id, "
         "0 had an incomplete lineage, 0 carried a non-numeric code the "
         "normalizers cannot canonicalize\n"
+        "  mesa_tipo exclusion diagnostics for national/test: locator_sample_cap=5 "
+        "category_vocabulary_size=13\n"
+        "    category='(unknown category)' reason=skipped_absent_mesa_id total=1 "
+        "omitted_locators=0\n"
+        "    locator source_label='national/test' data_row_index=4 "
+        "category='(unknown category)' reason=skipped_absent_mesa_id "
+        "missing_fields=['mesa_id']\n"
+        "    category='(unknown category)' reason=skipped_bad_mesa_id total=3 "
+        "omitted_locators=0\n"
+        "    locator source_label='national/test' data_row_index=1 "
+        "category='(unknown category)' reason=skipped_bad_mesa_id "
+        "invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/test' data_row_index=2 "
+        "category='(unknown category)' reason=skipped_bad_mesa_id "
+        "invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/test' data_row_index=3 "
+        "category='(unknown category)' reason=skipped_bad_mesa_id "
+        "invalid_fields=['mesa_id']\n"
     )
 
 
