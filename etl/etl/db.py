@@ -20,6 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Literal, LiteralString, Protocol
+from uuid import UUID
 
 from psycopg import sql
 
@@ -1346,8 +1347,8 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 f"PostgreSQL reports {observed!r}; refusing without changing isolation"
             )
 
-        candidates = [
-            {
+        def candidate(record: ReviewItemRecord) -> dict[str, object]:
+            projected: dict[str, object] = {
                 "kind": record.kind,
                 "severity": record.severity,
                 "subject_ref": record.subject_ref,
@@ -1355,21 +1356,48 @@ def insert_review_items(conn, records: Sequence[ReviewItemRecord]) -> int:
                 "distrito_codes": [scope.distrito_code for scope in record.section_scopes],
                 "seccion_codes": [scope.seccion_code for scope in record.section_scopes],
             }
-            for record in records
-        ]
-        cur.execute(
-            """
-            with candidates as (
-                select distinct *
-                from jsonb_to_recordset(%s::jsonb) as candidate(
-                    kind text, severity text, subject_ref text, note text,
-                    distrito_codes text[], seccion_codes text[]
+            if record.contexts:
+                contexts = []
+                for review_context in record.contexts:
+                    context = {
+                        key: value
+                        for key, value in review_context.__dict__.items()
+                        if key != "unknown_reason" or value is not None
+                    }
+                    for identifier in ("election_id", "category_id"):
+                        if isinstance(context[identifier], UUID):
+                            context[identifier] = str(context[identifier])
+                    contexts.append(context)
+                projected["contexts"] = contexts
+            return projected
+
+        inserted = 0
+        for explicit_contexts, function, context_columns in (
+            (False, "record_review_item", ""),
+            (True, "record_review_item_v2", ", contexts jsonb"),
+        ):
+            candidates = [
+                candidate(record)
+                for record in records
+                if bool(record.contexts) is explicit_contexts
+            ]
+            if not candidates:
+                continue
+            context_arguments = ", contexts" if explicit_contexts else ""
+            cur.execute(
+                f"""
+                with candidates as (
+                    select distinct * from jsonb_to_recordset(%s::jsonb) as candidate(
+                        kind text, severity text, subject_ref text, note text,
+                        distrito_codes text[], seccion_codes text[]{context_columns}
+                    )
                 )
+                select 1 from candidates where workspace_private.{function}(
+                    kind, severity, subject_ref, note, distrito_codes, seccion_codes
+                    {context_arguments}
+                )
+                """,
+                (json.dumps(candidates),),
             )
-            select 1 from candidates where workspace_private.record_review_item(
-                kind, severity, subject_ref, note, distrito_codes, seccion_codes
-            )
-            """,
-            (json.dumps(candidates),),
-        )
-        return len(cur.fetchall())
+            inserted += len(cur.fetchall())
+        return inserted

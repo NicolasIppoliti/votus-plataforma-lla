@@ -916,9 +916,15 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         "select 'scale fixture cleanup complete' as cleanup_status;"
     )
     assert "scale cleanup refused non-fixture rows" in cleanup_sql
-    assert "truncate table result_row, jurisdiction, category, election," in cleanup_sql
-    assert "party_mapping, party_canonical" in cleanup_sql
-    assert "delete from" not in cleanup_sql
+    context_guard = cleanup_sql.index("exists(select 1 from workspace_private.review_item_context)")
+    assert cleanup_sql.index("lock table workspace_private.review_item_context") < context_guard
+    assert context_guard < cleanup_sql.index("truncate table workspace_private.review_item_context")
+    assert "truncate table result_row, jurisdiction, party_mapping, party_canonical;" in cleanup_sql
+    assert "delete from category; delete from election;" in cleanup_sql
+    assert not any(
+        f"delete from {table}" in cleanup_sql
+        for table in ("result_row", "jurisdiction", "party_mapping", "party_canonical")
+    )
     assert "truncate table" not in plan_sql
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
     # Only the owned post-pgTAP cleanup phase may restore it after deleting the committed fixture.
@@ -992,9 +998,123 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
     )
 
 
+def test_historical_review_context_classification_sql_is_structured_and_reversible() -> None:
+    forward = (MIGRATIONS / "20260830203643_classify_historical_review_contexts.sql").read_text()
+    down = (
+        MIGRATIONS / "down" / "20260830203643_classify_historical_review_contexts.down.sql"
+    ).read_text()  # noqa: E501
+    normalized = " ".join(forward.lower().split())
+    assert all(
+        required in normalized
+        for required in "context_role;source_kind;archive_availability;election_year;foreign key (election_id);foreign key (category_id);foreign key (archive_entry_id);unique nulls not distinct;mesa_tally_divergence;historical_archive_not_linked;writer_context_not_provided".split(  # noqa: E501
+            ";"
+        )
+    )  # noqa: E501
+    assert "subject_ref" not in normalized
+    assert "unknown_reason is not null and unknown_reason in" in normalized
+    assert normalized.index("alter column unknown_reason drop not null") < normalized.index(
+        "add constraint review_item_context_unknown_reason_check"
+    )
+    normalized_down = " ".join(down.lower().split())
+    guard = normalized_down.split("delete from workspace_private.review_item_context", 1)[0]
+    # fmt: off
+    assert all(token in guard for token in ("non_reconstructible_items", "authoritative_identity_items", "year_level_items", "raise exception"))  # noqa: E501
+    assert all(secret not in guard for secret in ("context_id", "subject_ref", "note", "tenant_scope_state", "distrito_code", "seccion_code", "mesa_code", "votes"))  # noqa: E501
+    assert normalized_down.index("raise exception") < normalized_down.index("delete from workspace_private.review_item_context")  # noqa: E501
+    assert normalized_down.index("insert into workspace_private.review_item_context") < normalized_down.index("alter column unknown_reason set not null") < normalized_down.index("add constraint review_item_context_unknown_reason_check")  # noqa: E501
+    # fmt: on
+    assert "context_state" in normalized_down and "historical_unclassified" in normalized_down
+
+
+# fmt: off
+def test_record_review_item_context_sets_are_strict_bounded_and_reversible() -> None:
+    forward = " ".join(_sql("20260831055357_record_review_item_contexts.sql").split())
+    down = " ".join((MIGRATIONS / "down" / "20260831055357_record_review_item_contexts.down.sql").read_text().lower().split())  # noqa: E501
+    signature = "record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
+    scalar = "record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)"  # noqa: E501
+    assert all(token in forward for token in ("jsonb_typeof(p_contexts) is distinct from 'array'", "jsonb_array_length(p_contexts) between 1 and 4", "jsonb_object_keys", "archive_availability='available'", "is not distinct from"))  # noqa: E501
+    assert forward.count("record_review_item_core(p_kind,p_severity,p_subject_ref,p_note,p_distrito_codes,p_seccion_codes)") == 1  # noqa: E501
+    assert f"grant execute on function workspace_private.{signature} to etl_writer" in forward
+    assert f"drop function workspace_private.{scalar}" in forward
+    assert f"drop function workspace_private.{signature}" in down
+    assert "create function workspace_private.record_review_item_v2(p_kind" in down
+    assert f"grant execute on function workspace_private.{scalar} to etl_writer" in down
+    guard = down.split(f"drop function workspace_private.{signature}", 1)[0]
+    assert all(token in guard for token in ("resolved_at is null", "having count(*)>1", "multi_context_active_items", "raise exception"))  # noqa: E501
+    assert all(secret not in guard for secret in ("context_id", "subject_ref", "note", "tenant_scope_state", "distrito_code", "seccion_code", "mesa_code", "votes"))  # noqa: E501
+    assert all(token not in forward for token in ("current_setting", "set_config", "subject_ref like"))  # noqa: E501
+
+
+def test_year_level_review_contexts_are_one_exact_reversible_extension() -> None:
+    forward = " ".join(_sql("20260831150450_allow_year_level_review_contexts.sql").split())
+    down = " ".join((MIGRATIONS / "down" / "20260831150450_allow_year_level_review_contexts.down.sql").read_text().lower().split())  # noqa: E501
+    reason = "source_archive_not_attributable"
+    assert all(token in forward for token in (reason, "jsonb_typeof(ctx->'election_year') is not distinct from 'number'", "jsonb_typeof(ctx->'election_id') is not distinct from 'null'", "('observed','official','unknown')", "unknown_reason is not null and unknown_reason in"))  # noqa: E501
+    assert all(token in down for token in ("count=", "categories=", "raise exception", "review_item_context_unknown_reason_check"))  # noqa: E501
+    assert down.index("raise exception") < down.index("alter table workspace_private.review_item_context drop constraint")  # noqa: E501
+    pr4 = " ".join(_sql("20260831055357_record_review_item_contexts.sql").split())
+    pr4_body = pr4.split("create function workspace_private.record_review_item_v2", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    restored = down.split("create or replace function workspace_private.record_review_item_v2", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    assert restored == pr4_body
+    assert reason not in down.split("alter table workspace_private.review_item_context add constraint", 1)[1]  # noqa: E501
+    bridge = "workspace_review_context_migrator"
+    lifecycle = f"create role {bridge} nologin noinherit;grant workspace_review_ingest_owner to {bridge} with inherit false, set true;grant {bridge} to current_user with inherit false, set true;revoke {bridge} from current_user;revoke workspace_review_ingest_owner from {bridge};drop role {bridge}".split(";")  # noqa: E501
+    for migration in (forward, down):
+        assert all(token in migration for token in (*lifecycle, "set role workspace_review_ingest_owner"))  # noqa: E501
+        assert all(token not in migration for token in ("bypassrls", "grant select", "grant references"))  # noqa: E501
+
+
+def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_grants() -> None:
+    forward = " ".join(_sql("20260831032044_record_review_item_v2.sql").split())
+    down = " ".join((MIGRATIONS / "down" / "20260831032044_record_review_item_v2.down.sql").read_text().lower().split())  # noqa: E501
+    combined = f"{forward} {down}"
+    bridge = "workspace_review_context_migrator"
+    bridge_lifecycle = f"create role {bridge} nologin noinherit;grant workspace_review_ingest_owner to {bridge} with inherit false, set true;grant {bridge} to current_user with inherit false, set true;revoke {bridge} from current_user;revoke workspace_review_ingest_owner from {bridge};drop role {bridge}".split(";")  # noqa: E501
+    forward_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create function workspace_private.record_review_item_core;create function workspace_private.record_review_item_v2;create or replace function workspace_private.record_review_item;reset role".split(";")  # noqa: E501
+    down_order = "lock table public.review_item;set role workspace_review_ingest_owner;lock table workspace_private.review_item_context;create or replace function workspace_private.record_review_item;drop function workspace_private.record_review_item_v2;drop function workspace_private.record_review_item_core;reset role;revoke select on public.election,public.category,public.archive_entry".split(";")  # noqa: E501
+    signatures = "record_review_item_core(text,text,text,text,text[],text[]);record_review_item(text,text,text,text,text[],text[]);record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)".split(";")  # noqa: E501
+    revoked_roles = "public,anon,authenticated,etl_writer,workspace_query_owner,workspace_admin_owner,workspace_platform_admin"  # noqa: E501
+    assert "bypassrls" not in combined and "alter role workspace_review_ingest_owner" not in combined  # noqa: E501
+    assert combined.count("create role ") == 2 and set(re.findall(r"create role ([a-z0-9_]+) nologin noinherit", combined)) == {bridge}  # noqa: E501
+    for migration_sql, order in ((forward, forward_order), (down, down_order)):
+        assert all(token in migration_sql for token in bridge_lifecycle)
+        assert migration_sql.count(f"to_regrole('{bridge}')") >= 2
+        assert list(map(migration_sql.index, order)) == sorted(map(migration_sql.index, order))
+    assert all(sql.count("pg_advisory_xact_lock(2963544934623095067)") == 1 for sql in (forward, down))  # noqa: E501
+    for relation in ("election", "category", "archive"):
+        assert f"create policy workspace_review_ingest_owner_context_{relation}_select" in forward
+        assert f"drop policy workspace_review_ingest_owner_context_{relation}_select" in down
+    assert forward.count("candidate.resolved_at is null") == 1 and "votus_review_item_context." not in forward  # noqa: E501
+    core_definition = forward.split("create function workspace_private.record_review_item_core", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    down_definition = down.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    for definition in (core_definition, down_definition):
+        assert "limit 1" not in definition
+        assert "if candidate_count>1 then raise exception 'active review identity is ambiguous' using errcode='23514'; end if;" in definition  # noqa: E501
+    for function in ("record_review_item_core", "record_review_item_v2"):
+        definition = forward.split(f"create function workspace_private.{function}", 1)[1]
+        assert "security definer set search_path=pg_catalog,workspace_private,public,pg_temp" in definition.split("end $$;", 1)[0]  # noqa: E501
+    legacy_definition = forward.split("create or replace function workspace_private.record_review_item", 1)[1].split("end $$;", 1)[0]  # noqa: E501
+    assert "security definer set search_path=pg_catalog,workspace_private,pg_temp" in legacy_definition  # noqa: E501
+    assert f"revoke all on function {','.join(f'workspace_private.{signature}' for signature in signatures)} from {revoked_roles}" in forward  # noqa: E501
+    assert f"revoke all on function workspace_private.{signatures[1]} from {revoked_roles}" in down  # noqa: E501
+    assert all(forward.count(f"grant execute on function workspace_private.{signature} to etl_writer") == 1 for signature in signatures[1:])  # noqa: E501
+    assert "grant execute on function workspace_private.record_review_item_core" not in forward
+    select_acl = "select on public.election,public.category,public.archive_entry"
+    assert f"grant {select_acl} to workspace_review_ingest_owner" in forward and f"revoke {select_acl} from workspace_review_ingest_owner" in down  # noqa: E501
+    assert all(token not in down for token in ("revoke all on public.election", "delete from workspace_private.review_item_context", "truncate"))  # noqa: E501
+    assert all(f"drop function workspace_private.{signature}" in down for signature in (signatures[0], signatures[2]))  # noqa: E501
+# fmt: on
+
+
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260831160422_platform_review_breakdown.down.sql",
+        "\\ir ../migrations/down/20260831150450_allow_year_level_review_contexts.down.sql",
+        "\\ir ../migrations/down/20260831055357_record_review_item_contexts.down.sql",
+        "\\ir ../migrations/down/20260831032044_record_review_item_v2.down.sql",
+        "\\ir ../migrations/down/20260830203643_classify_historical_review_contexts.down.sql",
+        "\\ir ../migrations/down/20260830180653_review_item_context_foundation.down.sql",
         "\\ir ../migrations/down/20260829232200_bound_authorized_result_evidence.down.sql",
         "\\ir ../migrations/down/20260829032228_revoke_legacy_results_public_contract.down.sql",
         "\\ir ../migrations/down/20260827220000_authorized_school_party_lookup.down.sql",
@@ -1065,6 +1185,12 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260827220000_authorized_school_party_lookup.sql",
         "\\ir ../migrations/20260829032228_revoke_legacy_results_public_contract.sql",
         "\\ir ../migrations/20260829232200_bound_authorized_result_evidence.sql",
+        "\\ir ../migrations/20260830180653_review_item_context_foundation.sql",
+        "\\ir ../migrations/20260830203643_classify_historical_review_contexts.sql",
+        "\\ir ../migrations/20260831032044_record_review_item_v2.sql",
+        "\\ir ../migrations/20260831055357_record_review_item_contexts.sql",
+        "\\ir ../migrations/20260831150450_allow_year_level_review_contexts.sql",
+        "\\ir ../migrations/20260831160422_platform_review_breakdown.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1079,7 +1205,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "58 as migration_inventory_count",
+        "64 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",
@@ -2589,10 +2715,114 @@ def test_authorized_review_facade_is_scope_shared_bounded_and_reversible() -> No
     proof = (
         (SQL_TESTS / "workspace_authorized_fiscal_review.sql").read_text(encoding="utf-8").lower()
     )
-    assert "select plan(19)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
+    assert "select plan(34)" in proof and "from pg_proc" in proof and "from pg_policies" in proof
     assert "insert into public.review_item" in proof
     assert "set local role workspace_platform_admin" in proof
     assert "request.jwt.claims" not in proof
+
+
+def test_platform_review_breakdown_is_safe_grouped_and_reversible() -> None:
+    version = "20260831160422"
+    forward = " ".join(_sql(f"{version}_platform_review_breakdown.sql").split())
+    down = " ".join(
+        (MIGRATIONS / "down" / f"{version}_platform_review_breakdown.down.sql")
+        .read_text()
+        .lower()
+        .split()
+    )  # noqa: E501
+    signature = "workspace_private.platform_review_breakdown(integer,integer)"
+    for token in (
+        "security definer set search_path=pg_catalog,workspace_private,public,pg_temp",
+        "p_limit<1",
+        "p_limit>100",
+        "p_offset>2000000000",
+        "count(distinct review_item_id)",
+        "tenant_scope_state",
+        "context_role",
+        "source_kind",
+        "archive_availability",
+        "election_year",
+        "election_round",
+        "category_name",
+        "archive_linked",
+        "total_items",
+        "total_groups",
+        "resolved_at is not null",
+        "resolved_items",
+        "category_groups",
+        "categories_omitted",
+        "pagination_bound",
+        "payload_bound",
+        "octet_length(payload::text)>8192",
+        f"grant execute on function {signature} to workspace_platform_admin",
+        "workspace_review_ingest_owner_breakdown_election_select",
+        "workspace_review_ingest_owner_breakdown_category_select",
+        "set role workspace_review_ingest_owner",
+    ):
+        assert token in forward
+    function = forward.split("create function workspace_private.platform_review_breakdown", 1)[1]
+    secrets = (
+        "context_id",
+        "subject_ref",
+        "note",
+        "distrito_code",
+        "seccion_code",
+        "mesa_code",
+        "list_id",
+        "source_row_index",
+    )
+    assert all(secret not in function for secret in secrets)
+    roles = (
+        "public",
+        "anon",
+        "authenticated",
+        "etl_writer",
+        "workspace_query_owner",
+        "workspace_admin_owner",
+    )
+    revoked = forward.split(f"revoke all on function {signature} from", 1)[1].split(";", 1)[0]
+    assert all(role in revoked for role in roles)
+    drop_not_null = (
+        "alter table workspace_private.review_item_context "
+        "alter column unknown_reason drop not null"
+    )
+    set_not_null = (
+        "alter table workspace_private.review_item_context alter column unknown_reason set not null"
+    )
+    assert {
+        "breakdown_forward_drops_not_null": drop_not_null in forward,
+        "breakdown_down_sets_not_null": set_not_null in down,
+    } == {
+        "breakdown_forward_drops_not_null": False,
+        "breakdown_down_sets_not_null": False,
+    }
+    classification_forward = " ".join(
+        _sql("20260830203643_classify_historical_review_contexts.sql").split()
+    )
+    classification_down = " ".join(
+        (MIGRATIONS / "down" / "20260830203643_classify_historical_review_contexts.down.sql")
+        .read_text()
+        .lower()
+        .split()
+    )
+    assert "alter column unknown_reason drop not null" in classification_forward
+    assert set_not_null in classification_down
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert f"drop function {signature}" in down
+    assert down.count("drop function") == 1 and down.count("drop policy") == 2
+    for relation in ("election", "category"):
+        policy = f"workspace_review_ingest_owner_breakdown_{relation}_select"
+        assert f"drop policy {policy} on public.{relation}" in down
+    assert all(
+        statement not in down
+        for statement in (
+            "delete from workspace_private.review_item_context",
+            "insert into workspace_private.review_item_context",
+            "update workspace_private.review_item_context",
+            "alter table workspace_private.review_item_context",
+        )
+    )
+    assert "grant select" not in forward and "drop table" not in down
 
 
 def test_platform_review_operator_access_is_closed_bounded_and_reversible() -> None:
