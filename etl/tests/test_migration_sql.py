@@ -998,6 +998,20 @@ def test_results_exploration_coverage_scale_proof_matches_production_shape() -> 
     )
 
 
+def test_review_item_context_foundation_restores_the_postgres_migration_owner() -> None:
+    forward = _sql("20260830180653_review_item_context_foundation.sql")
+    down = (
+        (MIGRATIONS / "down" / "20260830180653_review_item_context_foundation.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+
+    assert forward.count("set role postgres;") == 1
+    assert down.count("set role postgres;") == 2
+    assert "reset role;" not in forward
+    assert "reset role;" not in down
+
+
 def test_historical_review_context_classification_sql_is_structured_and_reversible() -> None:
     forward = (MIGRATIONS / "20260830203643_classify_historical_review_contexts.sql").read_text()
     down = (

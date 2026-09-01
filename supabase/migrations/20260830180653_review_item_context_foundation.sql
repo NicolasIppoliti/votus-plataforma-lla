@@ -92,7 +92,7 @@ begin
     revoke all on function workspace_private.create_unknown_review_item_context() from service_role;
   end if;
 end $$;
-reset role;
+set role postgres;
 do $$ begin
   if current_setting('votus_review_context.owner_schema_create', true) = 'false' then
     revoke create on schema workspace_private from workspace_review_ingest_owner;
