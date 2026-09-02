@@ -19,8 +19,15 @@ test.describe("the municipal route requires workspace-authorized official result
   test("test_route_is_reachable_and_fails_closed_without_workspace_entitlement", async ({ page }) => {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
-      await page.getByRole("link", { name: "Análisis de concejos municipales" }).click();
+      const municipalNavigationLink = page
+        .getByRole("navigation", { name: "principal" })
+        .getByRole("link", { name: "Municipal", exact: true });
+      await municipalNavigationLink.click();
       await expect(page).toHaveURL(/\/municipal$/);
+      await expect(municipalNavigationLink).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
       await page.getByLabel("Elección municipal").selectOption(MUNICIPAL_SCOPE.electionId);
       await page.getByRole("button", { name: "Ver resultados oficiales" }).click();
       const url = new URL(page.url());

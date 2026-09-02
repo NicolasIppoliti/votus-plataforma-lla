@@ -29,7 +29,8 @@ async function submitOptions(page: Page): Promise<void> { await page.getByRole("
 test.describe("authorized official comparison", () => {
   test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
-      await page.getByRole("link", { name: "Comparar resultados electorales" }).click(); await expect(page).toHaveURL(/\/compare$/);
+      const comparisonNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparar", exact: true });
+      await comparisonNavigationLink.click(); await expect(page).toHaveURL(/\/compare$/); await expect(comparisonNavigationLink).toHaveAttribute("aria-current", "page");
       await page.getByLabel("Elección izquierda (2023)").selectOption(identity.electionIds[0]!); await page.getByLabel("Elección derecha (2025)").selectOption(identity.electionIds[1]!); await submitOptions(page);
       await page.getByLabel("Categoría izquierda").selectOption(identity.categoryId); await page.getByLabel("Categoría derecha").selectOption(identity.categoryId); await submitOptions(page);
       await page.getByLabel("Distrito compartido").selectOption(identity.distritoCode); await submitOptions(page); await page.getByRole("combobox", { name: "Sección compartida", exact: true }).selectOption(identity.seccionCode); await submitOptions(page);

@@ -72,7 +72,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
       await expect(legacy).not.toContainText(`${OFFICIAL_VOTES} votos`);
 
-      await page.getByRole("link", { name: "Explorar resultados" }).click();
+      await page
+        .getByRole("navigation", { name: "principal" })
+        .getByRole("link", { name: "Explorar", exact: true })
+        .click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
       const coldUrl = page.url();
       let draftUrl = coldUrl;
