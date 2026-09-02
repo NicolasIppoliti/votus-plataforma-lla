@@ -922,6 +922,95 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
+	it("keeps independent release proofs parallel and aggregates their exact results", () => {
+		const workflow = readFileSync(
+			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
+			"utf8",
+		);
+		const jobs = workflow.slice(workflow.indexOf("jobs:\n"));
+		const jobIds = Array.from(
+			jobs.matchAll(/^  ([a-z][a-z0-9-]*):$/gm),
+			([, jobId]) => jobId,
+		);
+		const job = (jobId: string) => {
+			const start = jobs.indexOf(`  ${jobId}:\n`);
+			const nextStart = jobIds
+				.map((id) => jobs.indexOf(`  ${id}:\n`))
+				.find((position) => position > start);
+			return jobs.slice(start, nextStart);
+		};
+		const webStatic = job("web-static");
+		const etlRelease = job("etl-release");
+		const e2eRelease = job("e2e-release");
+		const verify = job("verify");
+
+		expect(jobIds).toEqual(["web-static", "etl-release", "e2e-release", "verify"]);
+		expect(workflow).toMatch(/^  pull_request:$/m);
+		expect(workflow).toMatch(/^  push:\n    branches: \[main\]$/m);
+		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
+		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
+		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
+			expect(releaseJob).not.toMatch(/\bif:|\bneeds:|\bstrategy:/);
+
+		expect(webStatic).toContain("timeout-minutes: 10");
+		expect(webStatic).toContain("persist-credentials: false");
+		expect(webStatic).toContain("version: 10.32.1");
+		expect(webStatic).toContain("node-version: 24");
+		expect(webStatic).toContain("pnpm/action-setup@");
+		expect(webStatic).toContain("actions/setup-node@");
+		expect(webStatic.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
+		expect(webStatic.match(/^\s*- run: pnpm lint$/gm)).toHaveLength(1);
+		expect(webStatic.match(/^\s*run: pnpm typecheck$/gm)).toHaveLength(1);
+		expect(webStatic.match(/^\s*- run: pnpm test$/gm)).toHaveLength(1);
+		expect(webStatic).not.toMatch(/services:|setup-uv|supabase\/setup-cli|playwright install|test:e2e:gate/);
+
+		expect(etlRelease).toContain("timeout-minutes: 15");
+		expect(etlRelease).toContain("services:");
+		expect(etlRelease).toContain("image: postgres:17");
+		expect(etlRelease).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
+		expect(etlRelease).toContain("postgresql://postgres@127.0.0.1:54322/template1");
+		expect(etlRelease).toContain("astral-sh/setup-uv@");
+		expect(etlRelease).toContain('version: "0.8.8"');
+		expect(etlRelease).toContain("persist-credentials: false");
+		expect(etlRelease).toContain("create role anon nologin");
+		expect(etlRelease).toContain("create role authenticated nologin");
+		expect(etlRelease).toContain("create role etl_writer login bypassrls password null");
+		expect(etlRelease.match(/uv run --project \. --frozen ruff check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project \. --frozen ruff format --check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(1);
+		expect(etlRelease).not.toMatch(/pnpm|setup-node|supabase\/setup-cli|playwright/);
+
+		expect(e2eRelease).toContain("timeout-minutes: 20");
+		expect(e2eRelease).toContain("pnpm/action-setup@");
+		expect(e2eRelease).toContain("actions/setup-node@");
+		expect(e2eRelease).toContain("supabase/setup-cli@");
+		expect(e2eRelease).toContain("version: 10.32.1");
+		expect(e2eRelease).toContain("node-version: 24");
+		expect(e2eRelease).toContain("version: 2.112.0");
+		expect(e2eRelease).toContain("persist-credentials: false");
+		expect(e2eRelease.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
+		expect(e2eRelease.match(/pnpm exec playwright install --with-deps chromium/g)).toHaveLength(1);
+		expect(e2eRelease.match(/^\s*- run: pnpm test:e2e:gate$/gm)).toHaveLength(1);
+		expect(e2eRelease).not.toMatch(/services:|setup-uv|uv run|postgres:17/);
+
+		expect(verify).toContain("name: verify");
+		expect(verify).toContain("timeout-minutes: 2");
+		expect(verify).toMatch(/needs:\n      - web-static\n      - etl-release\n      - e2e-release/);
+		expect(verify).toContain("if: ${{ always() }}");
+		expect(verify).toContain("${{ needs.web-static.result }}");
+		expect(verify).toContain("${{ needs.etl-release.result }}");
+		expect(verify).toContain("${{ needs.e2e-release.result }}");
+		expect(verify.match(/= "success"/g)).toHaveLength(3);
+
+		const actionReferences = Array.from(
+			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
+			([, revision]) => revision,
+		);
+		expect(actionReferences).toHaveLength(9);
+		for (const revision of actionReferences)
+			expect(revision).toMatch(/^[a-f0-9]{40}$/);
+	});
+
 	it("runs TypeScript 7 typechecking once across the release-gate builds", () => {
 		const packageManifest = JSON.parse(
 			readFileSync(new URL("../package.json", import.meta.url), "utf8"),
