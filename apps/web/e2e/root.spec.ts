@@ -59,7 +59,7 @@ test.describe("the production root preserves its authentication boundary", () =>
           .locator(".shell-container")
           .first()
           .boundingBox(),
-        primaryNavigation.getByRole("list").boundingBox(),
+        primaryNavigation.locator(":scope > ul.navigation-list").boundingBox(),
         page.locator("#main-content").boundingBox(),
       ]);
     expect(headerContainer).not.toBeNull();
@@ -81,17 +81,26 @@ test.describe("the production root preserves its authentication boundary", () =>
       primaryNavigation.locator('a[aria-current="page"]'),
     ).toHaveCount(1);
     await expect(
-      primaryNavigation.getByRole("link", { name: "Panel", exact: true }),
-    ).toHaveAttribute("aria-current", "page");
-    await expect(
-      primaryNavigation.getByRole("link", { name: "Comparar", exact: true }),
-    ).toHaveCount(0);
-    await expect(
       primaryNavigation.getByRole("link", {
-        name: "Municipal (Concejales)",
+        name: "Resumen operativo",
         exact: true,
       }),
-    ).toHaveCount(0);
+    ).toHaveAttribute("aria-current", "page");
+    for (const navigationLabel of [
+      "Explorar",
+      "Comparar",
+      "Municipal",
+      "Fiscalización (no oficial)",
+      "Simulación 2027",
+      "Revisión de datos",
+    ]) {
+      await expect(
+        primaryNavigation.getByRole("link", {
+          name: navigationLabel,
+          exact: true,
+        }),
+      ).toBeVisible();
+    }
 
     const preparedRoutes = page.getByRole("region", {
       name: "Rutas de análisis especializadas",

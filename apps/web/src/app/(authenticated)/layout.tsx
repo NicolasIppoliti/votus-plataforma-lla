@@ -30,12 +30,9 @@ import { PrimaryNavigation } from "./PrimaryNavigation";
  * closing the reachability gap `sdd-verify` found (fiscalizacion-analysis
  * spec, "An operator route reaches fiscalización through the opt-in path").
  *
- * Phase 16c: `/municipal` made the `coronel_rosales_municipal` party
- * mappings reachable. Because useful municipal and comparison requests require
- * prepared context, both routes remain discoverable from the dashboard's
- * prepared-route cards rather than the primary navigation. `/simulate` follows
- * the production reachability contract: an operator can enter the projection
- * workflow from this authenticated navigation.
+ * Phase 16c introduced the `/municipal` and `/compare` workflows. UI #78a
+ * makes both routes directly reachable from the shared primary-navigation
+ * contract while preserving `/simulate` as the projection workflow entry.
  */
 export default async function AuthenticatedLayout({
   children,

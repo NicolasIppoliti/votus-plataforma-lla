@@ -54,11 +54,15 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
 
-    await page
+    const simulationNavigationLink = page
       .getByRole("navigation", { name: "principal" })
-      .getByRole("link", { name: "Simulación de bancas", exact: true })
-      .click();
+      .getByRole("link", { name: "Simulación 2027", exact: true });
+    await simulationNavigationLink.click();
     await expect(page).toHaveURL(/\/simulate$/);
+    await expect(simulationNavigationLink).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     const form = page.getByRole("form", {
       name: "Formulario de simulación de bancas",

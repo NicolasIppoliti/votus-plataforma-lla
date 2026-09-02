@@ -1,5 +1,20 @@
+import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import type { ReactNode } from "react";
 import "./globals.css";
+
+const ibmPlexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-sans",
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-mono",
+});
 
 export const metadata = {
   title: "Votus | Análisis electoral interno",
@@ -14,7 +29,7 @@ export default function RootLayout({
 }): ReactNode {
   return (
     <html lang="es">
-      <body>
+      <body className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
         <a className="skip-link" href="#main-content">
           Ir al contenido principal
         </a>
