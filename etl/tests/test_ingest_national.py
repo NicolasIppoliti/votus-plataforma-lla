@@ -37,7 +37,6 @@ from etl import db
 from etl.ingest.national import (
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
-    ingest_national,
     iter_national_rows,
     load_national_rows,
 )
@@ -101,12 +100,13 @@ def _record_archive_authority(
 
 
 def test_2023_paso_fixture_keeps_internal_lists_one_row_per_mesa_list_combination() -> None:
-    rows = ingest_national(
-        _read("national_2023_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2023_sample.csv")),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
 
     # 2 mesas x 2 lists = 4 combinations, no more, no fewer — one normalized
     # row per (mesa, list, category). `list_id` is the (agrupación, lista)
@@ -134,12 +134,13 @@ def test_2023_paso_fixture_keeps_internal_lists_one_row_per_mesa_list_combinatio
 
 
 def test_real_national_fixture_preserves_authoritative_jurisdiction_names() -> None:
-    rows = ingest_national(
-        _read("national_2023_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2023_sample.csv")),
         archive_entry_id="national/2023-paso",
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
 
     assert rows
     assert {
@@ -173,12 +174,13 @@ def test_code_equivalent_circuito_names_collapse_across_categories_without_quara
         b"110,,POSITIVO,5\n"
     )
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="generales",
     )
+    rows = list(rows)
 
     assert len(rows) == 2
     assert {row.category for row in rows} == {"PRESIDENTE Y VICE", "DIPUTADO NACIONAL"}
@@ -208,12 +210,13 @@ def test_load_national_rows_refuses_invalid_archive_authority_before_any_upstrea
 ) -> None:
     conn = _require_ephemeral_postgres()
     archive_entry_id = f"national/loader-authority-{uuid.uuid4()}"
-    rows = ingest_national(
-        _read("national_2023_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2023_sample.csv")),
         archive_entry_id=archive_entry_id,
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
     try:
         if authoritative_source_kind is not None:
             _record_archive_authority(
@@ -241,12 +244,13 @@ def test_load_national_rows_refuses_invalid_archive_authority_before_any_upstrea
 def test_load_national_rows_passes_all_names_to_the_batch_db_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = ingest_national(
-        _read("national_2023_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2023_sample.csv")),
         archive_entry_id="national/name-boundary",
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
     captured_names = []
 
     monkeypatch.setattr(
@@ -299,12 +303,13 @@ def test_blank_outer_whitespace_jurisdiction_name_normalizes_to_none() -> None:
     source = _read("national_2023_sample.csv").decode("utf-8")
     source = source.replace(",Buenos Aires,6,", ",   ,6,", 1)
 
-    rows = ingest_national(
-        source.encode(),
+    rows = iter_national_rows(
+        _text_of(source.encode()),
         archive_entry_id="national/2023-paso",
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
 
     assert rows[0].jurisdiction_names.distrito is None
     assert rows[1].jurisdiction_names.distrito == "Buenos Aires"
@@ -317,13 +322,14 @@ def test_national_parser_requires_authoritative_jurisdiction_name_columns() -> N
         b"02,027,00248,1,DIPUTADO NACIONAL,135,POSITIVO,90\n"
     )
 
+    rows = iter_national_rows(
+        _text_of(missing_names),
+        archive_entry_id="national/missing-names",
+        election_year=2025,
+        election_round="legislativas",
+    )
     with pytest.raises(NationalSchemaError) as excinfo:
-        ingest_national(
-            missing_names,
-            archive_entry_id="national/missing-names",
-            election_year=2025,
-            election_round="legislativas",
-        )
+        list(rows)
 
     message = str(excinfo.value)
     assert "distrito_nombre" in message
@@ -332,13 +338,14 @@ def test_national_parser_requires_authoritative_jurisdiction_name_columns() -> N
 
 
 def test_2025_companion_enriches_mesas_across_source_zero_padding() -> None:
-    rows = ingest_national(
-        _read("national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
         establecimientos_csv_bytes=_read("national_2025_establecimientos_sample.csv"),
     )
+    rows = list(rows)
 
     assert len(rows) == 2
     assert {(row.mesa, row.establecimiento, row.establecimiento_name) for row in rows} == {
@@ -354,13 +361,14 @@ def test_companion_quarantines_a_mesa_present_under_multiple_result_circuits(
     header, mesa_1, mesa_2 = results.splitlines()
     same_mesa_different_circuit = mesa_2.replace("00248,00248,2", "00999,00999,1")
 
-    rows = ingest_national(
-        f"{header}\n{mesa_1}\n{same_mesa_different_circuit}\n".encode(),
+    rows = iter_national_rows(
+        _text_of(f"{header}\n{mesa_1}\n{same_mesa_different_circuit}\n".encode()),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
         establecimientos_csv_bytes=_read("national_2025_establecimientos_sample.csv"),
     )
+    rows = list(rows)
 
     assert rows == [], "a companion with no circuito_id cannot choose between result circuits"
     assert "ambiguous result circuits for establecimiento companion: 2 rows / 175 votes" in (
@@ -374,13 +382,14 @@ def test_present_companion_quarantines_unmatched_mesas_with_vote_breakdown(
     companion = _read("national_2025_establecimientos_sample.csv").decode("utf-8")
     header, mesa_1, _mesa_2 = companion.splitlines()
 
-    rows = ingest_national(
-        _read("national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
         establecimientos_csv_bytes=f"{header}\n{mesa_1}\n".encode(),
     )
+    rows = list(rows)
 
     assert [row.mesa for row in rows] == [1]
     assert "missing establecimiento companion match: 1 rows / 85 votes" in capsys.readouterr().err
@@ -396,8 +405,8 @@ def test_present_companion_quarantines_conflicting_mesa_metadata_without_picking
         "99999,OTRO ESTABLECIMIENTO",
     )
 
-    rows = ingest_national(
-        _read("national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
@@ -405,6 +414,7 @@ def test_present_companion_quarantines_conflicting_mesa_metadata_without_picking
             f"{header}\n{mesa_1}\n{conflicting_mesa_1}\n{mesa_2}\n"
         ).encode(),
     )
+    rows = list(rows)
 
     assert [row.mesa for row in rows] == [2]
     assert "conflicting establecimiento companion metadata: 1 rows / 90 votes" in (
@@ -422,13 +432,14 @@ def test_present_companion_quarantines_one_code_with_conflicting_names(
         "OTRO ESTABLECIMIENTO",
     )
 
-    rows = ingest_national(
-        _read("national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
         establecimientos_csv_bytes=(f"{header}\n{mesa_1}\n{conflicting_mesa_2}\n").encode(),
     )
+    rows = list(rows)
 
     assert rows == []
     assert "conflicting establecimiento companion metadata: 2 rows / 175 votes" in (
@@ -437,14 +448,15 @@ def test_present_companion_quarantines_one_code_with_conflicting_names(
 
 
 def test_2025_bup_format_parsed_or_fails_loudly() -> None:
-    rows = ingest_national(
-        _read("national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         # This reconstructed legacy fixture carries populated lista_numero values;
         # it is not evidence for the measured legislativas export invariant.
         election_round="fixture-legacy",
     )
+    rows = list(rows)
 
     assert len(rows) == 2
     for row in rows:
@@ -463,53 +475,56 @@ def test_2025_bup_format_fails_loudly_on_missing_required_column() -> None:
         b"135,POSITIVO,90\n"
     )  # missing `mesa_id` entirely — an unrecognized structure, not partial data.
 
+    rows = iter_national_rows(
+        _text_of(malformed),
+        archive_entry_id="national/2025-legislativas",
+        election_year=2025,
+        election_round="legislativas",
+    )
     with pytest.raises(NationalSchemaError, match="mesa_id"):
-        ingest_national(
-            malformed,
-            archive_entry_id="national/2025-legislativas",
-            election_year=2025,
-            election_round="legislativas",
-        )
+        list(rows)
 
 
-def test_seekable_streaming_parser_matches_bytes_compatibility_and_reporting(
+def test_seekable_streaming_parser_is_repeatable_with_identical_reporting(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     data = _read("national_2023_sample.csv")
-    streamed = list(
-        iter_national_rows(
-            _text_of(data),
-            archive_entry_id="national/streaming-parser",
-            election_year=2023,
-            election_round="paso",
-        )
-    )
-    streamed_report = capsys.readouterr().err
-    compatible = ingest_national(
-        data,
+    first = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/streaming-parser",
         election_year=2023,
         election_round="paso",
     )
-    assert streamed == compatible
-    assert capsys.readouterr().err == streamed_report
+    first = list(first)
+    first_report = capsys.readouterr().err
+    second = iter_national_rows(
+        _text_of(data),
+        archive_entry_id="national/streaming-parser",
+        election_year=2023,
+        election_round="paso",
+    )
+    second = list(second)
+    assert first == second
+    assert capsys.readouterr().err == first_report
 
 
-def test_idempotent_reingest_same_archive_entry() -> None:
+def test_reparsing_same_archive_bytes_produces_identical_rows_and_unique_lineage() -> None:
     data = _read("national_2023_sample.csv")
 
-    first = ingest_national(
-        data,
+    first = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
-    second = ingest_national(
-        data,
+    first = list(first)
+    second = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
+    second = list(second)
 
     assert first == second
     # The FULL lineage, which is what `_quarantine_ambiguous_rows` and the
@@ -526,41 +541,42 @@ def test_idempotent_reingest_same_archive_entry() -> None:
         )
         for r in first
     ]
-    assert len(lineage) == len(set(lineage)), "no duplicate rows on re-ingest"
+    assert len(lineage) == len(set(lineage)), "the parser must not emit duplicate lineage"
 
 
-def test_full_rebuild_from_archive_is_identical() -> None:
+def test_reparsing_archive_bytes_after_discarding_projection_is_identical() -> None:
     data = _read("national_2023_sample.csv")
 
-    built = ingest_national(
-        data,
+    built = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
-    # "Drop and rebuild": discard the in-memory projection entirely and
-    # re-derive it from the same archived bytes, exactly as a real rebuild
-    # would re-run ingestion against the immutable archive (D8) with no
-    # normalized-layer state carried across the drop.
+    built = list(built)
+    # Discard the first in-memory parser result, then derive it again from the
+    # same archived bytes with no parser result carried across the reparse.
     del built
-    rebuilt = ingest_national(
-        data,
+    rebuilt = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
+    rebuilt = list(rebuilt)
 
-    assert rebuilt == ingest_national(
-        data,
+    repeated = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
+    assert rebuilt == list(repeated)
 
 
-def test_idempotent_reingest_via_real_fixture_zip(tmp_path: Path) -> None:
-    # Task 3.8 REFACTOR: confirm idempotency through the same
-    # extract-then-parse path a real archive entry would take, using
+def test_reparsing_extracted_fixture_zip_bytes_produces_identical_rows(tmp_path: Path) -> None:
+    # Confirm parser repeatability through the same extract-then-parse path a
+    # real archive entry would take, using
     # `national_2023_sample.zip` — a ZIP built directly from the real bytes
     # sliced out of the archived 2023 PASO source (see module docstring),
     # not a bare CSV.
@@ -569,24 +585,28 @@ def test_idempotent_reingest_via_real_fixture_zip(tmp_path: Path) -> None:
     (csv_path,) = [p for p in extracted if p.name == "ResultadosElectorales.csv"]
     data = csv_path.read_bytes()
 
-    first = ingest_national(
-        data,
+    first = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
-    second = ingest_national(
-        data,
+    first = list(first)
+    second = iter_national_rows(
+        _text_of(data),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
+    second = list(second)
 
     assert first == second
     assert len(first) == 4
 
 
-def test_ambiguous_duplicate_natural_keys_are_quarantined_not_crashed() -> None:
+def test_ambiguous_duplicate_natural_keys_are_quarantined_not_crashed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """The 2023 national file contains rows that are byte-identical across
     every column except `votos_cantidad`.
 
@@ -619,13 +639,20 @@ def test_ambiguous_duplicate_natural_keys_are_quarantined_not_crashed() -> None:
         "135,LLA,3016,L,POSITIVO,42\n"
     )
 
-    rows = ingest_national(
-        csv_text.encode("utf-8"),
+    rows = iter_national_rows(
+        _text_of(csv_text.encode("utf-8")),
         archive_entry_id="test/ambiguous",
         election_year=2024,
         election_round="other",
     )
+    rows = list(rows)
 
+    assert capsys.readouterr().err == (
+        "quarantined 2 rows across 1 ambiguous natural keys "
+        "(INTENDENTE 2 rows / 142 votes across 1 keys) -- "
+        "indistinguishable in the source except by vote count, "
+        "so no row was loaded for them\n"
+    )
     keys = [(r.result.distrito, r.result.mesa, r.category, r.list_id) for r in rows]
     assert len(keys) == len(set(keys)), (
         "ingest must not emit two rows sharing one natural key; the ambiguous "
@@ -645,12 +672,13 @@ def test_mesa_tipo_is_captured_from_the_source() -> None:
     mesa is handled (that is `test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa`
     below).
     """
-    rows = ingest_national(
-        _read("national_2023_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("national_2023_sample.csv")),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
 
     assert len(rows) == 4
     for row in rows:
@@ -668,13 +696,14 @@ def test_unsupported_mesa_tipo_fails_before_any_rows_are_returned(mesa_tipo: str
         "DIPUTADO NACIONAL,135,POSITIVO,12\n"
     )
 
+    rows = iter_national_rows(
+        _text_of(csv_text.encode()),
+        archive_entry_id="national/mesa-tipo-contract",
+        election_year=2025,
+        election_round="legislativas",
+    )
     with pytest.raises(NationalSchemaError) as excinfo:
-        ingest_national(
-            csv_text.encode(),
-            archive_entry_id="national/mesa-tipo-contract",
-            election_year=2025,
-            election_round="legislativas",
-        )
+        list(rows)
 
     message = str(excinfo.value)
     assert repr(mesa_tipo) in message
@@ -690,12 +719,13 @@ def test_supported_mesa_tipo_values_pass_exactly(mesa_tipo: str) -> None:
         "DIPUTADO NACIONAL,135,POSITIVO,90\n"
     )
 
-    rows = ingest_national(
-        csv_text.encode(),
+    rows = iter_national_rows(
+        _text_of(csv_text.encode()),
         archive_entry_id="national/mesa-tipo-contract",
         election_year=2025,
         election_round="legislativas",
     )
+    rows = list(rows)
 
     assert [row.mesa_tipo for row in rows] == [mesa_tipo]
 
@@ -715,14 +745,14 @@ def test_empty_or_missing_mesa_tipo_remains_absent() -> None:
     )
 
     rows = [
-        *ingest_national(
-            with_column,
+        *iter_national_rows(
+            _text_of(with_column),
             archive_entry_id="national/mesa-tipo-empty",
             election_year=2025,
             election_round="legislativas",
         ),
-        *ingest_national(
-            without_column,
+        *iter_national_rows(
+            _text_of(without_column),
             archive_entry_id="national/mesa-tipo-missing",
             election_year=2025,
             election_round="legislativas",
@@ -752,12 +782,13 @@ def test_extranjeros_mesa_is_distinguishable_from_a_regular_mesa() -> None:
         "DIPUTADO NACIONAL,135,LLA,3016,L,POSITIVO,12\n"
     )
 
-    rows = ingest_national(
-        csv_text.encode("utf-8"),
+    rows = iter_national_rows(
+        _text_of(csv_text.encode("utf-8")),
         archive_entry_id="test/extranjeros",
         election_year=2024,
         election_round="other",
     )
+    rows = list(rows)
 
     assert len(rows) == 2
     by_mesa = {row.mesa: row.mesa_tipo for row in rows}
@@ -788,12 +819,13 @@ def test_measured_elections_accept_their_observed_lista_numero_shape(
         f"110,{lista_numero},POSITIVO,7\n"
     ).encode()
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/measured-shape",
         election_year=election_year,
         election_round=election_round,
     )
+    rows = list(rows)
 
     assert [row.list_id for row in rows] == [expected_list_id]
 
@@ -816,13 +848,14 @@ def test_measured_elections_reject_unobserved_lista_numero_shape(
         f"110,{lista_numero},POSITIVO,7\n"
     ).encode()
 
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
+        archive_entry_id="national/measured-shape",
+        election_year=election_year,
+        election_round=election_round,
+    )
     with pytest.raises(NationalSchemaError) as excinfo:
-        ingest_national(
-            csv_bytes,
-            archive_entry_id="national/measured-shape",
-            election_year=election_year,
-            election_round=election_round,
-        )
+        list(rows)
 
     message = str(excinfo.value)
     assert f"{election_year}/{election_round}" in message
@@ -859,12 +892,13 @@ def test_internal_primary_lists_are_distinct_rows_not_quarantined() -> None:
         "134,UXP,3006,B- JUSTA Y SOBERANA,POSITIVO,25\n"
     )
 
-    rows = ingest_national(
-        csv_text.encode("utf-8"),
+    rows = iter_national_rows(
+        _text_of(csv_text.encode("utf-8")),
         archive_entry_id="test/paso",
         election_year=2023,
         election_round="paso",
     )
+    rows = list(rows)
 
     assert len(rows) == 2, (
         f"both internal lists of the same agrupación must survive as distinct rows; got {len(rows)}"
@@ -902,12 +936,13 @@ def test_each_out_of_scope_reason_is_counted_separately_in_rows_and_votes(capsys
         b"0,POSITIVO,13\n"
     )
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/test",
         election_year=2025,
         election_round="legislativas",
     )
+    rows = list(rows)
 
     assert len(rows) == 1
     report = capsys.readouterr().err
@@ -931,12 +966,13 @@ def test_an_excluded_row_with_an_unreadable_vote_count_is_not_summed_as_zero(cap
         b"110,EN BLANCO,cuatro\n"
     )
 
-    ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/test",
         election_year=2025,
         election_round="legislativas",
     )
+    list(rows)
 
     report = capsys.readouterr().err
     assert "'EN BLANCO': 2 rows / 4 votes" in report
@@ -962,12 +998,13 @@ def test_an_unreadable_kept_row_is_excluded_by_reason_not_a_dead_run(capsys) -> 
         b"110,EN BLANCO,4\n"
     )
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/test",
         election_year=2025,
         election_round="legislativas",
     )
+    rows = list(rows)
 
     assert [row.mesa for row in rows] == [9001]
     report = capsys.readouterr().err
@@ -1014,12 +1051,13 @@ def test_malformed_administrative_codes_are_excluded_per_field_with_vote_counts(
         ",".join(columns) + "\n" + ",".join(values[column] for column in columns) + "\n"
     ).encode()
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/test",
         election_year=2025,
         election_round="legislativas",
     )
+    rows = list(rows)
 
     assert rows == []
     assert capsys.readouterr().err == (
@@ -1046,12 +1084,13 @@ def test_padded_and_unpadded_numeric_administrative_codes_are_accepted(
         "9001,DIPUTADO NACIONAL,110,POSITIVO,7\n".encode()
     )
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/test",
         election_year=2025,
         election_round="legislativas",
     )
+    rows = list(rows)
 
     assert len(rows) == 1
     result = rows[0].result
@@ -1066,12 +1105,13 @@ def test_alphanumeric_circuito_survives_ingest_and_raw_identity_extraction() -> 
         b"DIPUTADO NACIONAL,110,POSITIVO,7\n"
     )
 
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
         archive_entry_id="national/test-circuito-suffix",
         election_year=2025,
         election_round="legislativas",
     )
+    rows = list(rows)
 
     assert len(rows) == 1
     assert rows[0].result.circuito == "0249A"
@@ -1090,15 +1130,13 @@ def test_malformed_alphanumeric_circuitos_remain_reported(capsys, bad_circuito: 
         "DIPUTADO NACIONAL,110,POSITIVO,7\n".encode()
     )
 
-    assert (
-        ingest_national(
-            csv_bytes,
-            archive_entry_id="national/test-circuito-suffix",
-            election_year=2025,
-            election_round="legislativas",
-        )
-        == []
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
+        archive_entry_id="national/test-circuito-suffix",
+        election_year=2025,
+        election_round="legislativas",
     )
+    assert list(rows) == []
     assert "unreadable circuito_id: 1 rows / 7 votes" in capsys.readouterr().err
 
 
@@ -1190,15 +1228,13 @@ def test_signed_and_permissive_python_integer_forms_are_excluded_by_source_field
         ",".join(columns) + "\n" + ",".join(values[column] for column in columns) + "\n"
     ).encode()
 
-    assert (
-        ingest_national(
-            csv_bytes,
-            archive_entry_id="national/test",
-            election_year=2025,
-            election_round="legislativas",
-        )
-        == []
+    rows = iter_national_rows(
+        _text_of(csv_bytes),
+        archive_entry_id="national/test",
+        election_year=2025,
+        election_round="legislativas",
     )
+    assert list(rows) == []
     vote_summary = (
         "12 votes"
         if field == "mesa_id"

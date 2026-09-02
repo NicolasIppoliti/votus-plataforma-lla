@@ -10,6 +10,7 @@ municipal's 22xx family is a scheme unrelated to national ids.
 from __future__ import annotations
 
 import csv
+import io
 import json
 import os
 import re
@@ -21,7 +22,7 @@ import pytest
 import yaml
 
 from etl.db import load_party_map_rows
-from etl.ingest.national import ingest_national
+from etl.ingest.national import iter_national_rows
 from etl.ingest.pba import ingest_pba
 from etl.jurisdiction import make_result_row
 from etl.party_map import (
@@ -816,8 +817,8 @@ def test_empty_lista_numero_in_2025_is_not_treated_as_missing_data() -> None:
     assert {row["lista_numero"] for row in positive_rows} == {""}
 
     csv_bytes = fixture_path.read_bytes()
-    rows = ingest_national(
-        csv_bytes,
+    rows = iter_national_rows(
+        io.TextIOWrapper(io.BytesIO(csv_bytes), encoding="utf-8-sig", newline=""),
         archive_entry_id="national-2025-diputados-027",
         election_year=2025,
         election_round="legislativas",

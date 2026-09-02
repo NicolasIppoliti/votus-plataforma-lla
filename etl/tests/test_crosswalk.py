@@ -34,6 +34,7 @@ Fixtures, all derived from real data, never from a live network fetch:
 
 from __future__ import annotations
 
+import io
 import os
 import uuid
 from pathlib import Path
@@ -58,7 +59,7 @@ from etl.crosswalk import (
     load_crosswalk,
 )
 from etl.db import load_crosswalk_rows
-from etl.ingest.national import ingest_national
+from etl.ingest.national import iter_national_rows
 from etl.jurisdiction import QuarantinedPbaDistrito, resolve_pba_distrito_code
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -67,6 +68,10 @@ CURATED = Path(__file__).parent.parent.parent / "curated"
 
 def _read(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+def _text_of(csv_bytes: bytes) -> io.TextIOWrapper:
+    return io.TextIOWrapper(io.BytesIO(csv_bytes), encoding="utf-8-sig", newline="")
 
 
 def _load_crosswalk_table() -> CrosswalkTable:
@@ -508,18 +513,20 @@ def test_same_mesa_number_in_different_circuitos_is_two_discontinuities() -> Non
 
 
 def test_mesa_code_stable_across_years() -> None:
-    rows_2023 = ingest_national(
-        _read("crosswalk_national_2023_sample.csv"),
+    rows_2023 = iter_national_rows(
+        _text_of(_read("crosswalk_national_2023_sample.csv")),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
-    rows_2025 = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"),
+    rows_2023 = list(rows_2023)
+    rows_2025 = iter_national_rows(
+        _text_of(_read("crosswalk_national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
     )
+    rows_2025 = list(rows_2025)
     assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2023)
     assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2025)
     mesas_2023: set[tuple[str, int]] = {
@@ -543,18 +550,20 @@ def test_mesa_code_stable_across_years() -> None:
 
 
 def test_mesa_code_absent_in_one_year_reported_as_discontinuity() -> None:
-    rows_2023 = ingest_national(
-        _read("crosswalk_national_2023_sample.csv"),
+    rows_2023 = iter_national_rows(
+        _text_of(_read("crosswalk_national_2023_sample.csv")),
         archive_entry_id="national/2023-generales",
         election_year=2023,
         election_round="paso",
     )
-    rows_2025 = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"),
+    rows_2023 = list(rows_2023)
+    rows_2025 = iter_national_rows(
+        _text_of(_read("crosswalk_national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
     )
+    rows_2025 = list(rows_2025)
     assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2023)
     assert all(r.mesa is not None and r.result.circuito is not None for r in rows_2025)
     mesas_2023: set[tuple[str, int]] = {
@@ -580,20 +589,19 @@ def test_mesa_code_absent_in_one_year_reported_as_discontinuity() -> None:
     assert by_mesa[3].stable is False
 
 
-def test_a_national_code_absent_from_the_crosswalk_is_reported_not_passed() -> None:
-    """The national crosswalk guard is `validate-crosswalk`, not a quarantine
-    inside the loader.
+def test_parsed_national_codes_absent_from_crosswalk_are_reported_by_domain_validator() -> None:
+    """The parser/domain seam reports national codes without curated mappings.
 
     `resolve_jurisdictions` used to quarantine a national row whose
     (distrito, seccion) had no curated entry. It had no production caller,
     and wiring it in would have discarded the corpus: `crosswalk.yaml` holds
     only reviewed PBA-to-national translations, because PBA is the only source
     writing codes in a foreign scheme. National codes are already national, so
-    uncurated national pairs resolve to nothing.
-    What the codes are checked against instead is this command.
+    uncurated national pairs resolve to nothing. This test passes parser output
+    directly to `find_unmapped_jurisdictions`; it does not drive the CLI.
     """
-    rows = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("crosswalk_national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
@@ -609,8 +617,8 @@ def test_a_national_code_absent_from_the_crosswalk_is_reported_not_passed() -> N
 
 
 def test_a_curated_national_code_resolves_through_the_crosswalk() -> None:
-    rows = ingest_national(
-        _read("crosswalk_national_2025_sample.csv"),
+    rows = iter_national_rows(
+        _text_of(_read("crosswalk_national_2025_sample.csv")),
         archive_entry_id="national/2025-legislativas",
         election_year=2025,
         election_round="fixture-legacy",
