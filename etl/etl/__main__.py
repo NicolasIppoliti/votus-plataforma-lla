@@ -88,7 +88,6 @@ from .ingest.national import (
     REQUIRED_ESTABLECIMIENTO_COLUMNS,
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
-    ingest_national,
     iter_national_rows,
     load_national_rows,
     validate_mesa_tipo,
@@ -702,7 +701,7 @@ def resolve_national_archive_paths(raw_bytes: bytes, *, extract_dir: Path) -> Na
     this extracts the whole archive (`storage.extract_zip_safely`, the
     same safe-extraction path `tests/test_ingest_national.py` already
     exercises) and picks the one CSV member whose header declares every
-    column `ingest_national.REQUIRED_COLUMNS` needs, plus at most one member
+    column `ingest.national.REQUIRED_COLUMNS` needs, plus at most one member
     matching the measured 2025 establecimiento companion shape.
 
     `raw_bytes` that is not a ZIP at all (a bare CSV, e.g. a test fixture)
@@ -1234,7 +1233,7 @@ def find_unmapped_jurisdictions(
         if normalized_seccion is None:
             # WHY A ROW REACHES HERE, corrected. This said "the coarse rows of
             # the ten-category 2023 file", which is a data-shape claim the
-            # corpus does not support: `ingest_national` builds every row at
+            # corpus does not support: `iter_national_rows` builds every row at
             # `granularity="mesa"` from the required `seccion_id` column, and
             # all 18.170.843 loaded rows resolve to a jurisdiction with a
             # non-null `seccion_code` -- zero coarse rows, measured.
@@ -1375,12 +1374,6 @@ def national_results_text(raw_bytes: bytes) -> Iterator[NationalResultsTextStrea
             yield NationalResultsTextStream(handle, establecimientos_csv_bytes)
 
 
-def national_archive_csvs(raw_bytes: bytes) -> NationalArchiveCsvs:
-    """Materialize the results and optional establecimiento companion together."""
-    with tempfile.TemporaryDirectory(prefix="votus-etl-national-") as extract_dir:
-        return resolve_national_archive_csvs(raw_bytes, extract_dir=Path(extract_dir))
-
-
 def collect_national_jurisdiction_codes(
     sources: dict[str, list[dict]], *, local_root: Path, manifest_path: Path
 ) -> list[tuple[str, str | None]]:
@@ -1413,23 +1406,23 @@ def collect_national_jurisdiction_codes(
             local_store=local_store,
             filename=filename,
         )
-        csv_bytes = national_csv_bytes(raw_bytes)
         election_year, election_round = registered_source_election(entry)
-        for row in ingest_national(
-            csv_bytes,
-            archive_entry_id=entry["id"],
-            election_year=election_year,
-            election_round=election_round,
-        ):
-            distrito = row.result.distrito
-            if distrito is None:
-                raise NationalSchemaError(
-                    f"{entry['id']}: parser invariant violated: national source row "
-                    f"{row.source_row_index} has no distrito"
-                )
-            # `seccion` stays `None` for coarser-than-seccion rows: absence is
-            # not the empty string. See `find_unmapped_jurisdictions`.
-            codes.add((distrito, row.result.seccion))
+        with national_results_text(raw_bytes) as results_text:
+            for row in iter_national_rows(
+                results_text,
+                archive_entry_id=entry["id"],
+                election_year=election_year,
+                election_round=election_round,
+            ):
+                distrito = row.result.distrito
+                if distrito is None:
+                    raise NationalSchemaError(
+                        f"{entry['id']}: parser invariant violated: national source row "
+                        f"{row.source_row_index} has no distrito"
+                    )
+                # `seccion` stays `None` for coarser-than-seccion rows: absence is
+                # not the empty string. See `find_unmapped_jurisdictions`.
+                codes.add((distrito, row.result.seccion))
     if skipped_not_archived:
         print(
             f"  {skipped_not_archived} of {sources_seen} registered source(s) have "
@@ -1870,7 +1863,7 @@ def cmd_validate_crosswalk(args: argparse.Namespace) -> int:
     ) as exc:
         # The module contract is "non-zero on any validation failure". A ZIP
         # whose schema drifted is a validation failure, not a crash — and
-        # `ingest_national` raises `NationalSchemaError` for a header that
+        # `iter_national_rows` raises `NationalSchemaError` for a header that
         # drifted a different way.
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1930,13 +1923,13 @@ def collect_national_party_keys(
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
     # NEW keys contributed by each source. This counted rows "carrying no
-    # list_id", a branch that could never fire: `ingest_national` excludes
+    # list_id", a branch that could never fire: `iter_national_rows` excludes
     # every row whose `agrupacion_id` is empty or `"0"` BEFORE building
     # `list_id`, so `row.list_id` is never falsy and the counter was always
     # zero and its report never printed. The comment justifying it was also
     # wrong about the file -- `lista_numero` is empty throughout the 2023
     # generales export, but `list_id` is not: it degrades to the bare
-    # `agrupacion_id`, which `ingest_national` documents.
+    # `agrupacion_id`, which `iter_national_rows` documents.
     #
     # What the report was reaching for IS real and IS reachable: a source
     # contributing ZERO keys while `sources_read > 0` suppresses the
@@ -1967,7 +1960,6 @@ def collect_national_party_keys(
             local_store=local_store,
             filename=filename,
         )
-        csv_bytes = national_csv_bytes(raw_bytes)
         # What this source YIELDED, not what was new to the shared
         # accumulator. `len(keys)` deltas counted zero for a source whose
         # every key another source had already contributed -- and 2023 PASO
@@ -1976,20 +1968,21 @@ def collect_national_party_keys(
         # is missing it" about a file read in full. A manufactured warning is
         # the same broken distribution as a hidden one.
         contributed: set[tuple[int, str, str, str]] = set()
-        for row in ingest_national(
-            csv_bytes,
-            archive_entry_id=entry["id"],
-            election_year=year,
-            election_round=election_round,
-        ):
-            list_id = row.list_id
+        with national_results_text(raw_bytes) as results_text:
+            for row in iter_national_rows(
+                results_text,
+                archive_entry_id=entry["id"],
+                election_year=year,
+                election_round=election_round,
+            ):
+                list_id = row.list_id
 
-            if list_id is None:
-                raise NationalSchemaError(
-                    f"{entry['id']}: parser invariant violated: national source row "
-                    f"{row.source_row_index} has no list_id"
-                )
-            contributed.add((year, "national", row.category, list_id))
+                if list_id is None:
+                    raise NationalSchemaError(
+                        f"{entry['id']}: parser invariant violated: national source row "
+                        f"{row.source_row_index} has no list_id"
+                    )
+                contributed.add((year, "national", row.category, list_id))
         keys.update(contributed)
         keys_by_source[entry["id"]] = len(contributed)
         sources_read += 1
