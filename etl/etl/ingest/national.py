@@ -628,27 +628,6 @@ def iter_national_rows(
         yield row
 
 
-def ingest_national(
-    csv_bytes: bytes,
-    *,
-    archive_entry_id: str,
-    election_year: int,
-    election_round: str,
-    establecimientos_csv_bytes: bytes | None = None,
-) -> list[NationalRow]:
-    """Compatibility bytes interface routed through the seekable streaming parser."""
-    with io.TextIOWrapper(io.BytesIO(csv_bytes), encoding="utf-8-sig", newline="") as text:
-        return list(
-            iter_national_rows(
-                text,
-                archive_entry_id=archive_entry_id,
-                election_year=election_year,
-                election_round=election_round,
-                establecimientos_csv_bytes=establecimientos_csv_bytes,
-            )
-        )
-
-
 # NO `resolve_jurisdictions` / `QuarantinedNationalRow` /
 # `CrosswalkResolutionResult`, and no `resolve_national_party`. They were
 # correct and tested and had no production caller, and wiring them in is not

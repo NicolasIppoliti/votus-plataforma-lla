@@ -987,7 +987,7 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
 ) -> None:
     """A real registered national source is a ZIP (per `sources.yaml`), not
     a bare CSV -- `ingest` must extract the results member before parsing,
-    the same `extract_zip_safely`-then-`ingest_national` path
+    the same `extract_zip_safely`-then-`iter_national_rows` path
     `tests/test_ingest_national.py::test_idempotent_reingest_via_real_fixture_zip`
     already proves at the parser level, exercised here end to end through
     the CLI (task 12d's real-pipeline proof needs exactly this path).
@@ -3704,6 +3704,107 @@ def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> lis
     ]
 
 
+def _archived_national_zip_corpus(
+    tmp_path: Path,
+    *,
+    election_year: int,
+    election_round: str,
+    member_name: str,
+    lista_numero: str,
+    agrupacion_id: str,
+) -> tuple[Path, Path, Path]:
+    source_id = f"national/{election_year}-{election_round}-{uuid.uuid4()}"
+    filename = f"{uuid.uuid4().hex}.zip"
+    csv_text = (
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,cargo_nombre,agrupacion_id,lista_numero,votos_tipo,votos_cantidad,estado_final\n"
+        f"02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+        f"{agrupacion_id},{lista_numero},POSITIVO,120,definitivo\n"
+        "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+        "0,,EN BLANCO,4,definitivo\n"
+    )
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(member_name, csv_text)
+        archive.writestr("ambitosElectorales.csv", "not,the,results,file\n")
+    archive_bytes = archive_buffer.getvalue()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("national", filename, archive_bytes)
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": source_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/results.zip",
+                        "notes": "streaming validator fixture",
+                        "mime": "application/zip",
+                        "election_year": election_year,
+                        "election_round": election_round,
+                        "filename": filename,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": f"archive/national/{filename}",
+                    "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return sources_path, local_root, manifest_path
+
+
+def _guard_selected_member_reads(monkeypatch: pytest.MonkeyPatch, *, member_name: str) -> None:
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+
+    class BoundedResultsText(io.TextIOBase):
+        def __init__(self, wrapped: io.TextIOBase) -> None:
+            self.wrapped = wrapped
+
+        def read(self, size: int = -1) -> str:
+            assert size >= 0, "selected results member was read without a bound"
+            return self.wrapped.read(size)
+
+        def __next__(self) -> str:
+            return next(self.wrapped)
+
+        def seek(self, offset: int, whence: int = 0) -> int:
+            return self.wrapped.seek(offset, whence)
+
+        def close(self) -> None:
+            self.wrapped.close()
+            super().close()
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        assert path.name != member_name, "selected results member used Path.read_bytes()"
+        return original_read_bytes(path)
+
+    def guarded_open(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path.name == member_name and "b" not in mode:
+            return BoundedResultsText(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    monkeypatch.setattr(Path, "open", guarded_open)
+
+
 def test_archive_history_cli_lists_order_and_status_classification_counts(
     tmp_path: Path, capsys
 ) -> None:
@@ -4332,7 +4433,7 @@ def test_validate_crosswalk_refuses_a_parser_row_without_distrito(
         list_id="110",
         source_row_index=7,
     )
-    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [malformed])
+    monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [malformed])
 
     exit_code = main(_main_args(sources_path, local_root, manifest_path) + ["validate-crosswalk"])
 
@@ -4352,7 +4453,7 @@ def test_validate_curated_refuses_a_parser_row_without_list_id(
         list_id=None,
         source_row_index=7,
     )
-    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [malformed])
+    monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [malformed])
 
     exit_code = main(_main_args(sources_path, local_root, manifest_path) + ["validate-curated"])
 
@@ -4580,6 +4681,36 @@ def test_validate_commands_report_each_unavailable_source_reason_before_exit(
     assert "national/2025-missing-file" in reported
 
 
+def test_validate_crosswalk_streams_selected_results_member_through_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    member_name = "ResultadosElectorales.csv"
+    sources_path, local_root, manifest_path = _archived_national_zip_corpus(
+        tmp_path,
+        election_year=2023,
+        election_round="paso",
+        member_name=member_name,
+        lista_numero="A",
+        agrupacion_id="900",
+    )
+    crosswalk_path = tmp_path / "crosswalk.yaml"
+    crosswalk_path.write_text(yaml.safe_dump({"jurisdictions": []}), encoding="utf-8")
+    _guard_selected_member_reads(monkeypatch, member_name=member_name)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["validate-crosswalk", "--crosswalk-path", str(crosswalk_path)]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "unmapped jurisdiction: 02/027" in reported
+    assert (
+        "excluded 1 row(s) as out of scope for normalized list votes -- "
+        "votos_tipo='EN BLANCO': 1 rows / 4 votes"
+    ) in reported
+
+
 def test_validate_crosswalk_is_reachable_through_main(tmp_path: Path, capsys) -> None:
     """Drives `main(["validate-crosswalk", ...])`, not `find_unmapped_*`.
 
@@ -4648,6 +4779,53 @@ def test_duplicate_curated_keys_exit_cleanly_through_main(
     assert "error:" in reported
     assert "duplicate" in reported
     assert "Traceback" not in reported
+
+
+@pytest.mark.parametrize(
+    ("election_year", "election_round", "member_name", "lista_numero", "agrupacion_id", "list_id"),
+    [
+        (2023, "generales", "ResultadosElectorales.csv", "", "901", "901"),
+        (2025, "legislativas", "resultados2025.csv", "", "902", "902"),
+    ],
+)
+def test_validate_curated_streams_selected_results_member_through_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    election_year: int,
+    election_round: str,
+    member_name: str,
+    lista_numero: str,
+    agrupacion_id: str,
+    list_id: str,
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_zip_corpus(
+        tmp_path,
+        election_year=election_year,
+        election_round=election_round,
+        member_name=member_name,
+        lista_numero=lista_numero,
+        agrupacion_id=agrupacion_id,
+    )
+    party_map_path = tmp_path / "party_map.yaml"
+    party_map_path.write_text(
+        yaml.safe_dump({"canonical_parties": [], "mappings": []}), encoding="utf-8"
+    )
+    _guard_selected_member_reads(monkeypatch, member_name=member_name)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["validate-curated", "--party-map-path", str(party_map_path)]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert f"unmapped party: year={election_year}" in reported
+    assert f"list_id={list_id}" in reported
+    assert (
+        "excluded 1 row(s) as out of scope for normalized list votes -- "
+        "votos_tipo='EN BLANCO': 1 rows / 4 votes"
+    ) in reported
 
 
 def test_validate_curated_is_reachable_through_main(tmp_path: Path, capsys) -> None:
@@ -4823,8 +5001,8 @@ def test_collect_functions_read_a_real_zipped_archive_entry(tmp_path) -> None:
     """`validate-crosswalk` and `validate-curated` must read a ZIP archive
     entry the same way `ingest` does.
 
-    Both collect helpers handed the archived bytes straight to
-    `ingest_national`, which expects decoded CSV. Every registered national
+    Both collect helpers handed the archived bytes straight to the former
+    bytes parser, which expected decoded CSV. Every registered national
     source is archived as a ZIP, so on real data both commands died with
     `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80`. `cmd_ingest`
     routes through `resolve_national_results_bytes` first; these two did not.
