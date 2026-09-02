@@ -46,14 +46,125 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(
       page.getByRole("heading", { level: 1, name: "Panel de Votus" }),
     ).toBeVisible();
-    const primaryNavigation = page.getByRole("navigation", {
+    const topbar = page.locator("header.workspace-topbar");
+    const desktopSidebar = page.locator(".app-shell > aside.situation-sidebar");
+    const desktopNavigation = desktopSidebar.locator(
+      'nav[aria-label="principal"]',
+    );
+    const drawerTrigger = topbar.getByRole("button", {
+      name: "Abrir navegación",
+    });
+
+    await expect(desktopSidebar).toBeHidden();
+    await expect(desktopNavigation).toBeHidden();
+    await expect(drawerTrigger).toBeVisible();
+    await expect(drawerTrigger).toHaveAttribute(
+      "aria-controls",
+      "mobile-navigation-drawer",
+    );
+    await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
+    const overflowBeforeOpen = await page.evaluate(() => document.body.style.overflow);
+    await drawerTrigger.click();
+
+    const drawer = page.getByRole("dialog", {
+      name: "Navegación principal",
+    });
+    const closeDrawer = drawer.getByRole("button", {
+      name: "Cerrar navegación",
+    });
+    const drawerNavigation = drawer.getByRole("navigation", {
       name: "principal",
     });
-    await expect(primaryNavigation).toBeVisible();
-    const topbar = page.locator("header.workspace-topbar");
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveAttribute("id", "mobile-navigation-drawer");
+    await expect(drawerTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe("hidden");
+    await expect(closeDrawer).toBeFocused();
+    await expect(drawer).toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    for (const groupLabel of [
+      "Situación",
+      "Resultados oficiales",
+      "Fiscalización",
+      "Escenarios",
+      "Operaciones",
+    ]) {
+      await expect(
+        drawerNavigation.getByRole("heading", { name: groupLabel, exact: true }),
+      ).toBeVisible();
+    }
+    for (const [label, href] of [
+      ["Resumen operativo", "/dashboard"],
+      ["Explorar", "/drilldown"],
+      ["Comparar", "/compare"],
+      ["Municipal", "/municipal"],
+      ["Fiscalización (no oficial)", "/fiscalizacion"],
+      ["Simulación 2027", "/simulate"],
+      ["Revisión de datos", "/review"],
+    ] as const) {
+      await expect(
+        drawerNavigation.getByRole("link", { name: label, exact: true }),
+      ).toHaveAttribute("href", href);
+    }
+    await expect(
+      drawerNavigation.locator('a[aria-current="page"]'),
+    ).toHaveCount(1);
+    await expect(
+      drawerNavigation.getByRole("link", {
+        name: "Resumen operativo",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-current", "page");
+
+    await page.keyboard.press("Shift+Tab");
+    await expect(
+      drawerNavigation.getByRole("link", {
+        name: "Revisión de datos",
+        exact: true,
+      }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(closeDrawer).toBeFocused();
+
+    const comparisonDrawerLink = drawerNavigation.getByRole("link", {
+      name: "Comparar",
+      exact: true,
+    });
+    const municipalDrawerLink = drawerNavigation.getByRole("link", {
+      name: "Municipal",
+      exact: true,
+    });
+    await comparisonDrawerLink.focus();
+    await page.keyboard.press("Tab");
+    await expect(municipalDrawerLink).toBeFocused();
+    await page.evaluate(() => {
+      const main = document.querySelector<HTMLElement>("#main-content");
+      if (!main) throw new Error("main content is missing");
+      main.focus();
+    });
+    await expect(municipalDrawerLink).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+    await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe(
+      overflowBeforeOpen,
+    );
+    await expect(drawerTrigger).toBeFocused();
+
+    await drawerTrigger.click();
+    await closeDrawer.click();
+    await expect(drawer).toBeHidden();
+    await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(drawerTrigger).toBeFocused();
+
+    await drawerTrigger.click();
+    await drawerNavigation.getByRole("link", { name: "Comparar", exact: true }).click();
+    await expect(page).toHaveURL(/\/compare$/);
+    await expect(drawer).toBeHidden();
 
     await page.setViewportSize({ width: 320, height: 844 });
-    await expect(primaryNavigation).toBeVisible();
     await expect(topbar).toBeVisible();
     await expect(
       topbar.getByRole("status").filter({
@@ -77,8 +188,11 @@ test.describe("the production root preserves its authentication boundary", () =>
       ),
     ).toBe(true);
 
+    await page.goto("/dashboard");
     await page.setViewportSize({ width: 1440, height: 1000 });
-    const sidebar = page.locator("aside.situation-sidebar");
+    await expect(drawerTrigger).toBeHidden();
+    await expect(desktopNavigation).toBeVisible();
+    const sidebar = page.locator(".app-shell > aside.situation-sidebar");
     const [sidebarBox, topbarBox, topbarContainer, contentContainer] =
       await Promise.all([
         sidebar.boundingBox(),
@@ -103,10 +217,10 @@ test.describe("the production root preserves its authentication boundary", () =>
       "Esta herramienta no es una fuente electoral oficial.",
     );
     await expect(
-      primaryNavigation.locator('a[aria-current="page"]'),
+      desktopNavigation.locator('a[aria-current="page"]'),
     ).toHaveCount(1);
     await expect(
-      primaryNavigation.getByRole("link", {
+      desktopNavigation.getByRole("link", {
         name: "Resumen operativo",
         exact: true,
       }),
@@ -120,7 +234,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       "Revisión de datos",
     ]) {
       await expect(
-        primaryNavigation.getByRole("link", {
+        desktopNavigation.getByRole("link", {
           name: navigationLabel,
           exact: true,
         }),

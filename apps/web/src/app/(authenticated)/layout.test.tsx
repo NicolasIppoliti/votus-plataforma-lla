@@ -68,6 +68,36 @@ it.each([
   for (const message of messages) expect(markup).toContain(message);
 });
 
+it("renders a closed mobile drawer from the shared navigation contract", async () => {
+  const markup = await renderLayout("/dashboard");
+  const drawerMarkup = mobileDrawer(markup);
+
+  expect(markup).toContain(
+    'aria-controls="mobile-navigation-drawer" aria-expanded="false"',
+  );
+  expect(drawerMarkup).not.toMatch(/<dialog[^>]*\sopen(?:\s|=|>)/);
+  expect(drawerMarkup).toContain('<aside class="situation-sidebar">');
+  expect(drawerMarkup).toContain(
+    "Esta herramienta no es una fuente electoral oficial.",
+  );
+  expect(drawerMarkup.match(/<nav aria-label="principal"/g) ?? []).toHaveLength(1);
+  const drawerNavigation = drawerMarkup.match(
+    /<nav aria-label="principal"[\s\S]*?<\/nav>/,
+  )?.[0] ?? "";
+  expect([...drawerNavigation.matchAll(/<a ([^>]*)>/g)]
+    .map(([, attributes]) => attributes?.match(/href="([^"]+)"/)?.[1])
+    .filter((href): href is string => typeof href === "string"))
+    .toEqual([
+      "/dashboard",
+      "/drilldown",
+      "/compare",
+      "/municipal",
+      "/fiscalizacion",
+      "/simulate",
+      "/review",
+    ]);
+});
+
 it("renders exactly one keyboard-accessible sign-out form action", async () => {
   const markup = await renderLayout("/dashboard");
   const signOutForms =
@@ -78,6 +108,14 @@ it("renders exactly one keyboard-accessible sign-out form action", async () => {
   expect(signOutForms).toHaveLength(1);
   expect(signOutForms[0]).toMatch(/<form[^>]*\saction=/);
 });
+
+function mobileDrawer(markup: string): string {
+  const drawerMarkup = markup.match(
+    /<dialog[^>]*id="mobile-navigation-drawer"[\s\S]*?<\/dialog>/,
+  )?.[0];
+  expect(drawerMarkup).toBeDefined();
+  return drawerMarkup ?? "";
+}
 
 function primaryNavigation(markup: string): string {
   const navigationMarkup = markup.match(

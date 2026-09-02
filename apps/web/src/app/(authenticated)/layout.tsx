@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { ApplicationShell } from "./ApplicationShell";
+import { MobileNavigation } from "./MobileNavigation";
 import { SituationSidebar } from "./SituationSidebar";
 import { WorkspaceTopbar } from "./WorkspaceTopbar";
 
@@ -69,6 +70,7 @@ export default async function AuthenticatedLayout({
         <WorkspaceTopbar
           selection={selection}
           unresolvedCount={unresolvedCount}
+          mobileNavigation={<MobileNavigation sidebar={<SituationSidebar />} />}
         />
       }
     >

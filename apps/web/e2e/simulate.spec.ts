@@ -54,15 +54,38 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
 
-    const simulationNavigationLink = page
-      .getByRole("navigation", { name: "principal" })
-      .getByRole("link", { name: "Simulación 2027", exact: true });
+    const drawerTrigger = page.getByRole("button", {
+      name: "Abrir navegación",
+    });
+    await expect(drawerTrigger).toBeVisible();
+    await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
+    await drawerTrigger.click();
+
+    const drawer = page.getByRole("dialog", {
+      name: "Navegación principal",
+    });
+    const simulationNavigationLink = drawer.getByRole("link", {
+      name: "Simulación 2027",
+      exact: true,
+    });
+    await expect(drawer).toBeVisible();
     await simulationNavigationLink.click();
     await expect(page).toHaveURL(/\/simulate$/);
-    await expect(simulationNavigationLink).toHaveAttribute(
+    await expect(drawer).toBeHidden();
+    await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
+
+    await drawerTrigger.click();
+    await expect(drawer).toBeVisible();
+    const currentSimulationNavigationLink = drawer.getByRole("link", {
+      name: "Simulación 2027",
+      exact: true,
+    });
+    await expect(currentSimulationNavigationLink).toHaveAttribute(
       "aria-current",
       "page",
     );
+    await drawer.getByRole("button", { name: "Cerrar navegación" }).click();
+    await expect(drawer).toBeHidden();
 
     const form = page.getByRole("form", {
       name: "Formulario de simulación de bancas",
