@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
 	FullConfig,
 	FullResult,
@@ -9,7 +9,15 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
-import { assertSourceInventory } from "../scripts/e2e-release-gate";
+import {
+	assertSourceInventory,
+	releaseGateMain,
+} from "../scripts/e2e-release-gate";
+import {
+	RELEASE_GATE_TIMING_PHASE,
+	RELEASE_GATE_TIMING_PREFIX,
+	createReleaseGateTiming,
+} from "../scripts/e2e-gate-timing";
 import {
 	EXPECTED_E2E_SPECS,
 	assertE2eEnvironment,
@@ -45,6 +53,13 @@ import {
 	type ReleaseGateCleanupDependencies,
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
+const { spawnSync } = vi.hoisted(() => ({ spawnSync: vi.fn() }));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:child_process")>()),
+	spawnSync,
+}));
+
 const OWNERSHIP: GateOwnership = {
 	workdir: "/private/tmp/votus-e2e-owned",
 	projectId: "votus-e2e-project",
@@ -87,6 +102,93 @@ const STALE_EVIDENCE = {
 	ownerProcessActive: false,
 	projectResourcesActive: false,
 } as const;
+describe("release-gate phase timing", () => {
+	it("emits deterministic phase durations from the injected clock", async () => {
+		let now = 100;
+		const output: string[] = [];
+		const timing = createReleaseGateTiming({
+			now: () => now,
+			writeOutput: (chunk) => output.push(chunk),
+		});
+
+		await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+			now = 112;
+		});
+		await timing.measure(RELEASE_GATE_TIMING_PHASE.PGTAP, async () => {
+			now = 137;
+		});
+		timing.emit();
+
+		expect(output[0]).toContain("preflight/ports=12ms completed");
+		expect(output[0]).toContain("pgTAP=25ms completed");
+		expect(output[1]).toBe(
+			`${RELEASE_GATE_TIMING_PREFIX}${JSON.stringify({
+				schemaVersion: 1,
+				phases: [
+					{ name: "preflight_ports", durationMs: 12, status: "completed" },
+					{ name: "supabase_startup", durationMs: 0, status: "not_started" },
+					{ name: "migrations", durationMs: 0, status: "not_started" },
+					{ name: "pgtap", durationMs: 25, status: "completed" },
+					{ name: "rollback_reapply", durationMs: 0, status: "not_started" },
+					{ name: "production_build", durationMs: 0, status: "not_started" },
+					{ name: "next_server_lifecycle", durationMs: 0, status: "not_started" },
+					{ name: "playwright", durationMs: 0, status: "not_started" },
+					{ name: "cleanup", durationMs: 0, status: "not_started" },
+				],
+			})}\n`,
+		);
+	});
+
+	it("records a failed phase without changing its causal error or exposing it", async () => {
+		let now = 200;
+		const output: string[] = [];
+		const timing = createReleaseGateTiming({
+			now: () => now,
+			writeOutput: (chunk) => output.push(chunk),
+		});
+		const failure = new Error("private credential value at /private/path");
+
+		await expect(
+			timing.measure(RELEASE_GATE_TIMING_PHASE.PLAYWRIGHT, async () => {
+				now = 209;
+				throw failure;
+			}),
+		).rejects.toBe(failure);
+		timing.emit();
+
+		expect(output[1]).toContain(
+			'{"name":"playwright","durationMs":9,"status":"failed"}',
+		);
+		expect(output.join("")).not.toContain("private credential");
+		expect(output.join("")).not.toContain("/private/path");
+	});
+
+	it("keeps the gate failure authoritative when timing output fails", async () => {
+		const timingOutputFailure = new Error("timing output unavailable");
+		spawnSync.mockReturnValueOnce({
+			error: new Error("pnpm preflight unavailable"),
+			status: null,
+			stdout: "",
+		});
+		const writeOutput = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => {
+				throw timingOutputFailure;
+			});
+
+		try {
+			await expect(releaseGateMain([])).rejects.toThrow(
+				"pnpm is unavailable or failed its preflight check",
+			);
+			expect(spawnSync).toHaveBeenCalledOnce();
+			expect(writeOutput).toHaveBeenCalledOnce();
+		} finally {
+			writeOutput.mockRestore();
+			spawnSync.mockReset();
+		}
+	});
+});
+
 async function inspectReleaseGatePlan(
 	options: readonly string[] = [],
 ): Promise<ReleaseGatePlan> {
