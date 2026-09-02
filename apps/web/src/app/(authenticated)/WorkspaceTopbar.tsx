@@ -7,15 +7,18 @@ import type { WorkspaceSelection } from "@/lib/workspace/selection";
 interface WorkspaceTopbarProps {
   selection: WorkspaceSelection;
   unresolvedCount: number | undefined;
+  mobileNavigation: ReactNode;
 }
 
 export function WorkspaceTopbar({
   selection,
   unresolvedCount,
+  mobileNavigation,
 }: WorkspaceTopbarProps): ReactNode {
   return (
     <header className="workspace-topbar">
       <div className="shell-container workspace-topbar__inner">
+        {mobileNavigation}
         <WorkspaceSelector initialSelection={selection} />
         {unresolvedCount === undefined ? (
           <p className="review-alert" role="status">

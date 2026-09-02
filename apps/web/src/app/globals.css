@@ -227,6 +227,81 @@ select option {
   min-width: 0;
 }
 
+.app-shell > .situation-sidebar {
+  display: none;
+}
+
+.mobile-navigation__trigger,
+.mobile-navigation__close {
+  display: inline-flex;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--color-accent-dark);
+  border-radius: 0.15rem;
+  background: var(--color-surface);
+  color: var(--color-accent-dark);
+  font-weight: 700;
+}
+
+.mobile-navigation__dialog {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: min(100%, 20rem);
+  max-width: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--shell);
+  box-shadow: 0 0 2rem rgb(0 0 0 / 0.35);
+}
+
+.mobile-navigation__dialog::backdrop {
+  background: rgb(18 27 30 / 0.6);
+}
+
+.mobile-navigation__panel {
+  min-height: 100%;
+}
+
+.mobile-navigation__header {
+  display: flex;
+  min-height: 4rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-block-end: 1px solid rgb(255 255 255 / 0.24);
+  color: var(--surface);
+}
+
+.mobile-navigation__header p {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-navigation__close {
+  border-color: var(--surface-muted);
+  background: transparent;
+  color: var(--surface);
+}
+
+.mobile-navigation__dialog .situation-sidebar {
+  min-height: calc(100vh - 4rem);
+  min-height: calc(100svh - 4rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem;
+}
+
 .situation-sidebar {
   display: grid;
   gap: 1rem;
@@ -904,6 +979,15 @@ select option {
 }
 
 @media (min-width: 64rem) {
+  .app-shell > .situation-sidebar {
+    display: grid;
+  }
+
+  .mobile-navigation__trigger,
+  .mobile-navigation__dialog {
+    display: none;
+  }
+
   .situation-sidebar {
     position: fixed;
     z-index: 1;
