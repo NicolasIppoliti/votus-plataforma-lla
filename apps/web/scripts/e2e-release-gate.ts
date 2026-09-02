@@ -51,6 +51,10 @@ import {
 	type ReleaseGatePlan,
 	type ReleaseGateSyntheticMigration,
 } from "./e2e-gate-runtime.ts";
+import {
+	RELEASE_GATE_TIMING_PHASE,
+	createReleaseGateTiming,
+} from "./e2e-gate-timing.ts";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REQUIRE = createRequire(import.meta.url);
 const NEXT_CLI = REQUIRE.resolve("next/dist/bin/next");
@@ -710,16 +714,31 @@ function productEnvironment(
 async function executeGate(
 	state: GateState,
 	plan: ReleaseGatePlan,
+	timing: ReturnType<typeof createReleaseGateTiming>,
 ): Promise<void> {
-	const migrationNames = await assertSourceInventory(
-		plan.migrationVersions,
-		plan.syntheticMigration,
+	const migrationNames = await timing.measure(
+		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+		async () =>
+			await assertSourceInventory(
+				plan.migrationVersions,
+				plan.syntheticMigration,
+			),
 	);
-	assertIsolationCapabilities(plan.requireBrowserCapability);
-	await reapStaleOwnedWorkdirs(plan.migrationVersions, plan.syntheticMigration);
-	const reservations = await reserveUniquePorts(
-		10 + SERVER_SCENARIOS.length,
-		reservePort,
+	await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+		assertIsolationCapabilities(plan.requireBrowserCapability);
+	});
+	await timing.measure(
+		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+		async () =>
+			await reapStaleOwnedWorkdirs(
+				plan.migrationVersions,
+				plan.syntheticMigration,
+			),
+	);
+	const reservations = await timing.measure(
+		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+		async () =>
+			await reserveUniquePorts(10 + SERVER_SCENARIOS.length, reservePort),
 	);
 	state.reservations = reservations;
 	const nextReservations = reservations.slice(0, SERVER_SCENARIOS.length);
@@ -734,45 +753,59 @@ async function executeGate(
 	);
 	const nextPort = serverPlan[0]!.port;
 	const supabasePorts = supabaseReservations.map(({ port }) => port);
-	await createIsolatedWorkdir(nextPort, supabasePorts, migrationNames, state);
+	await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+		await createIsolatedWorkdir(nextPort, supabasePorts, migrationNames, state);
+	});
 	const ownership = state.ownership;
 	if (!ownership) throw new Error("disposable ownership was not established");
 	for (const reservation of supabaseReservations) await reservation.release();
 	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
 	state.stackMutationAttempted = true;
-	runChecked(
-		"supabase",
-		[
-			"start",
-			"--workdir",
-			ownership.workdir,
-			"--exclude",
-			EXCLUDED_SERVICES,
-			"--ignore-health-check",
-			"--yes",
-		],
-		"disposable Supabase start",
-		REPO_ROOT,
-		process.env,
-		SUPABASE_START_TIMEOUT_MS,
-	);
+	await timing.measure(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
+		runChecked(
+			"supabase",
+			[
+				"start",
+				"--workdir",
+				ownership.workdir,
+				"--exclude",
+				EXCLUDED_SERVICES,
+				"--ignore-health-check",
+				"--yes",
+			],
+			"disposable Supabase start",
+			REPO_ROOT,
+			process.env,
+			SUPABASE_START_TIMEOUT_MS,
+		);
+	});
+	const timed =
+		<TArgs extends unknown[], TResult>(
+			phase: (typeof RELEASE_GATE_TIMING_PHASE)[keyof typeof RELEASE_GATE_TIMING_PHASE],
+			action: (...args: TArgs) => Promise<TResult>,
+		) =>
+		async (...args: TArgs): Promise<TResult> =>
+			await timing.measure(phase, async () => await action(...args));
 	const stack = await runProductionReleasePhases(plan, {
-		runProductionMigrations: async () => {
-			await installProductionMigrations(ownership.workdir, migrationNames);
-			runChecked(
-				"supabase",
-				[
-					"migration",
-					"up",
-					"--local",
-					"--include-all",
-					"--workdir",
-					ownership.workdir,
-					"--yes",
-				],
-				"disposable Supabase incremental migrations",
-			);
-		},
+		runProductionMigrations: timed(
+			RELEASE_GATE_TIMING_PHASE.MIGRATIONS,
+			async () => {
+				await installProductionMigrations(ownership.workdir, migrationNames);
+				runChecked(
+					"supabase",
+					[
+						"migration",
+						"up",
+						"--local",
+						"--include-all",
+						"--workdir",
+						ownership.workdir,
+						"--yes",
+					],
+					"disposable Supabase incremental migrations",
+				);
+			},
+		),
 		validateStackStatus: async () => {
 			const statusOutput = requireCommand(
 				"supabase",
@@ -785,15 +818,15 @@ async function executeGate(
 				supabasePorts[1]!,
 			);
 		},
-		runSetupProof: async (proof) => {
+		runSetupProof: timed(RELEASE_GATE_TIMING_PHASE.PGTAP, async (proof) => {
 			runOwnedSqlEvidence(
 				ownership.projectId,
 				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
 				proof.label,
 				proof.timeoutMs,
 			);
-		},
-		runPgTapProof: async (proof) => {
+		}),
+		runPgTapProof: timed(RELEASE_GATE_TIMING_PHASE.PGTAP, async (proof) => {
 			runEvidence(
 				"supabase",
 				[
@@ -808,38 +841,47 @@ async function executeGate(
 				REPO_ROOT,
 				proof.timeoutMs,
 			);
-		},
-		runPostPgTapCleanupProof: async (proof) => {
-			runOwnedSqlEvidence(
-				ownership.projectId,
-				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
-				proof.label,
-				proof.timeoutMs,
-			);
-		},
-		runRollbackReapplyProof: async (proof) => {
-			runOwnedSqlEvidence(
-				ownership.projectId,
-				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
-				proof.label,
-			);
-		},
-		installSyntheticMigration: async (migration) => {
-			await installSyntheticMigration(ownership.workdir, migration);
-			runChecked(
-				"supabase",
-				[
-					"migration",
-					"up",
-					"--local",
-					"--include-all",
-					"--workdir",
-					ownership.workdir,
-					"--yes",
-				],
-				"disposable Supabase synthetic migration",
-			);
-		},
+		}),
+		runPostPgTapCleanupProof: timed(
+			RELEASE_GATE_TIMING_PHASE.PGTAP,
+			async (proof) => {
+				runOwnedSqlEvidence(
+					ownership.projectId,
+					await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+					proof.label,
+					proof.timeoutMs,
+				);
+			},
+		),
+		runRollbackReapplyProof: timed(
+			RELEASE_GATE_TIMING_PHASE.ROLLBACK_REAPPLY,
+			async (proof) => {
+				runOwnedSqlEvidence(
+					ownership.projectId,
+					await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+					proof.label,
+				);
+			},
+		),
+		installSyntheticMigration: timed(
+			RELEASE_GATE_TIMING_PHASE.ROLLBACK_REAPPLY,
+			async (migration) => {
+				await installSyntheticMigration(ownership.workdir, migration);
+				runChecked(
+					"supabase",
+					[
+						"migration",
+						"up",
+						"--local",
+						"--include-all",
+						"--workdir",
+						ownership.workdir,
+						"--yes",
+					],
+					"disposable Supabase synthetic migration",
+				);
+			},
+		),
 	});
 	if (!plan.runBrowser) return;
 	const baseURLs = Object.fromEntries(
@@ -866,33 +908,50 @@ async function executeGate(
 		),
 		VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
 	};
-	runChecked(
-		"pnpm",
-		["build"],
-		"production Next build",
-		WEB_ROOT,
-		productEnvironment(environment, "shared"),
-	);
-	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
-	state.servers = [];
-	for (const [index, server] of serverPlan.entries()) {
-		await nextReservations[index]!.release();
-		const child = spawn(
-			process.execPath,
-			[NEXT_CLI, "start", "-H", "127.0.0.1", "-p", String(server.port)],
-			{
-				cwd: WEB_ROOT,
-				env: productEnvironment(environment, server.scenario),
-				stdio: "ignore",
-			},
+	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {
+		runChecked(
+			"pnpm",
+			["build"],
+			"production Next build",
+			WEB_ROOT,
+			productEnvironment(environment, "shared"),
 		);
-		state.servers.push({ ...server, child });
-		await waitForServer(`${baseURLs[server.scenario]}/login`, child);
-	}
-	await runPlaywright(environment, environment.VOTUS_E2E_RESULT_FILE!);
+	})();
+	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
+	await timed(RELEASE_GATE_TIMING_PHASE.NEXT_SERVER_LIFECYCLE, async () => {
+		state.servers = [];
+		for (const [index, server] of serverPlan.entries()) {
+			await nextReservations[index]!.release();
+			const child = spawn(
+				process.execPath,
+				[NEXT_CLI, "start", "-H", "127.0.0.1", "-p", String(server.port)],
+				{
+					cwd: WEB_ROOT,
+					env: productEnvironment(environment, server.scenario),
+					stdio: "ignore",
+				},
+			);
+			state.servers.push({ ...server, child });
+			await waitForServer(`${baseURLs[server.scenario]}/login`, child);
+		}
+	})();
+	await timed(RELEASE_GATE_TIMING_PHASE.PLAYWRIGHT, async () => {
+		await runPlaywright(environment, environment.VOTUS_E2E_RESULT_FILE!);
+	})();
 }
 async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 	const state: GateState = { stackMutationAttempted: false };
+	const timing = createReleaseGateTiming({
+		now: () => Date.now(),
+		writeOutput: (chunk) => process.stdout.write(chunk),
+	});
+	const emitTiming = () => {
+		try {
+			timing.emit();
+		} catch {
+			/* Timing output must not replace a gate result. */
+		}
+	};
 	let cleanupPromise: Promise<void> | undefined;
 	const cleanOnce = () =>
 		(cleanupPromise ??= cleanupReleaseGate(
@@ -903,7 +962,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 		process.once(signal, () => {
 			state.interrupted = signal;
 			void Promise.race([
-				cleanOnce(),
+				timing.measure(RELEASE_GATE_TIMING_PHASE.CLEANUP, cleanOnce),
 				new Promise<never>((_, reject) =>
 					setTimeout(() => reject(new Error("signal cleanup timed out")), 120_000),
 				),
@@ -913,17 +972,20 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 						`E2E signal cleanup failed: ${error instanceof Error ? error.message : "unknown"}\n`,
 					),
 				)
-				.finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
+				.finally(() => {
+					emitTiming();
+					process.exit(signal === "SIGINT" ? 130 : 143);
+				});
 		});
 	}
 	let failure: unknown;
 	try {
-		await executeGate(state, plan);
+		await executeGate(state, plan, timing);
 	} catch (error) {
 		failure = error;
 	}
 	try {
-		await cleanOnce();
+		await timing.measure(RELEASE_GATE_TIMING_PHASE.CLEANUP, cleanOnce);
 	} catch (error) {
 		failure = failure
 			? new AggregateError(
@@ -932,6 +994,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 				)
 			: error;
 	}
+	emitTiming();
 	if (failure) throw failure;
 	process.stdout.write(
 		plan.mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY
