@@ -911,7 +911,7 @@ async function executeGate(
 	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {
 		runChecked(
 			"pnpm",
-			["build"],
+			["build:next"],
 			"production Next build",
 			WEB_ROOT,
 			productEnvironment(environment, "shared"),

@@ -922,6 +922,34 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
+	it("runs TypeScript 7 typechecking once across the release-gate builds", () => {
+		const packageManifest = JSON.parse(
+			readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+		) as { scripts: Record<string, string> };
+		const workflow = readFileSync(
+			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
+			"utf8",
+		);
+		const e2eGate = readFileSync(
+			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
+			"utf8",
+		);
+
+		expect(packageManifest.scripts.build).toBe("pnpm typecheck && pnpm build:next");
+		expect(packageManifest.scripts["build:next"]).toBe(
+			"node --experimental-strip-types ./scripts/production-build.ts",
+		);
+		expect(packageManifest.scripts["build:next"]).not.toContain("typecheck");
+		expect(workflow.match(/^\s*run: pnpm typecheck\s*$/gm)).toHaveLength(1);
+		expect(workflow).not.toMatch(
+			/^\s*- run: pnpm build(?::next)?\s*$/gm,
+		);
+		expect(e2eGate.match(/\["build:next"\]/g)).toHaveLength(1);
+		expect(e2eGate).toMatch(
+			/RELEASE_GATE_TIMING_PHASE\.PRODUCTION_BUILD,\s*async \(\) => \s*\{\s*runChecked\(\s*"pnpm",\s*\["build:next"\]/s,
+		);
+		expect(e2eGate).not.toMatch(/\["(?:build|typecheck)"\]/);
+	});
 	it("runs owned setup SQL with in-container cancellation before the host fallback", () => {
 		expect(planOwnedSqlInvocation(OWNERSHIP.projectId, 600_000)).toEqual({
 			command: "docker",
