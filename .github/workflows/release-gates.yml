@@ -75,10 +75,5 @@ jobs:
             create role etl_writer login bypassrls password null; \
             grant etl_writer to postgres;"
           uv run --project etl etl-verify
-      - run: pnpm build
-        working-directory: apps/web
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-only-placeholder
       - run: pnpm test:e2e:gate
         working-directory: apps/web
