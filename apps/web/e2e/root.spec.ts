@@ -50,33 +50,58 @@ test.describe("the production root preserves its authentication boundary", () =>
       name: "principal",
     });
     await expect(primaryNavigation).toBeVisible();
+    const topbar = page.locator("header.workspace-topbar");
+
+    await page.setViewportSize({ width: 320, height: 844 });
+    await expect(primaryNavigation).toBeVisible();
+    await expect(topbar).toBeVisible();
+    await expect(
+      topbar.getByRole("status").filter({
+        hasText: "Seleccioná una organización para continuar.",
+      }),
+    ).toBeVisible();
+    await expect(
+      topbar.getByRole("status").filter({
+        hasText: "No se pudo verificar el estado de revisión.",
+      }),
+    ).toBeVisible();
+    await expect(
+      topbar.getByRole("combobox", { name: "Organización" }),
+    ).toBeVisible();
+    await expect(topbar.getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
 
     await page.setViewportSize({ width: 1440, height: 1000 });
-    const [headerContainer, navigationContainer, contentContainer] =
+    const sidebar = page.locator("aside.situation-sidebar");
+    const [sidebarBox, topbarBox, topbarContainer, contentContainer] =
       await Promise.all([
-        page
-          .getByRole("banner")
-          .locator(".shell-container")
-          .first()
-          .boundingBox(),
-        primaryNavigation.locator(":scope > ul.navigation-list").boundingBox(),
+        sidebar.boundingBox(),
+        topbar.boundingBox(),
+        topbar.locator(".workspace-topbar__inner").boundingBox(),
         page.locator("#main-content").boundingBox(),
       ]);
-    expect(headerContainer).not.toBeNull();
-    expect(navigationContainer).not.toBeNull();
+    expect(sidebarBox).not.toBeNull();
+    expect(topbarBox).not.toBeNull();
+    expect(topbarContainer).not.toBeNull();
     expect(contentContainer).not.toBeNull();
+    expect(sidebarBox!.x).toBe(0);
+    expect(sidebarBox!.width).toBe(240);
+    expect(topbarBox!.height).toBe(64);
+    expect(contentContainer!.x).toBeGreaterThanOrEqual(
+      sidebarBox!.x + sidebarBox!.width,
+    );
     expect(
-      Math.abs(navigationContainer!.x - headerContainer!.x),
+      Math.abs(topbarContainer!.x - contentContainer!.x),
     ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(navigationContainer!.x - contentContainer!.x),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(navigationContainer!.width - headerContainer!.width),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(navigationContainer!.width - contentContainer!.width),
-    ).toBeLessThanOrEqual(1);
+    await expect(sidebar).toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
     await expect(
       primaryNavigation.locator('a[aria-current="page"]'),
     ).toHaveCount(1);

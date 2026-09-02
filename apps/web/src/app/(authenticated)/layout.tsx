@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { SignOutForm } from "@/components/SignOutForm";
-import { SourceDisclaimer } from "@/components/SourceDisclaimer";
-import { WorkspaceSelector } from "@/components/WorkspaceSelector";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";
-import { PrimaryNavigation } from "./PrimaryNavigation";
+import { ApplicationShell } from "./ApplicationShell";
+import { SituationSidebar } from "./SituationSidebar";
+import { WorkspaceTopbar } from "./WorkspaceTopbar";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -65,34 +63,16 @@ export default async function AuthenticatedLayout({
   }
 
   return (
-    <div className="app-shell">
-      <header className="site-header">
-        <div className="shell-container site-header__inner">
-          <Link className="site-brand" href="/dashboard" aria-label="Panel de Votus">
-            <span className="site-brand__name">Votus</span>
-            <span className="site-brand__descriptor">espacio de evidencia</span>
-          </Link>
-          <p className="site-context">Análisis electoral interno</p>
-          <WorkspaceSelector initialSelection={selection} />
-          <SignOutForm />
-        </div>
-        <PrimaryNavigation />
-      </header>
-      <div className="shell-container app-content" id="main-content" tabIndex={-1}>
-        <div className="source-disclaimer">
-          <SourceDisclaimer />
-        </div>
-        {unresolvedCount === undefined ? <p className="review-alert" role="status">No se pudo verificar el estado de revisión.</p> : null}
-        {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
-          <p className="review-alert" role="alert">
-                <span className="status-label">Requiere revisión</span>
-                <Link href="/review">
-                  {unresolvedCount} elemento(s) de revisión pendiente(s)
-                </Link>
-          </p>
-        ) : null}
-        {children}
-      </div>
-    </div>
+    <ApplicationShell
+      sidebar={<SituationSidebar />}
+      topbar={
+        <WorkspaceTopbar
+          selection={selection}
+          unresolvedCount={unresolvedCount}
+        />
+      }
+    >
+      {children}
+    </ApplicationShell>
   );
 }
