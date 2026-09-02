@@ -17,7 +17,7 @@ export function PrimaryNavigation() {
 
   return (
     <nav aria-label="principal" className="main-navigation">
-      <ul className="shell-container navigation-list">
+      <ul className="navigation-list">
         {navigationGroups.map(([groupId, group]) => {
           const { label, items } = group;
           const description =
