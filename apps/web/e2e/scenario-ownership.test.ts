@@ -14,6 +14,11 @@ import {
   resultScenarioIdentity,
 } from "./scenario-ownership";
 import { runOwnedServerCleanup } from "../scripts/e2e-gate-runtime";
+import {
+  assertResultFixtureOwnership,
+  comparisonFixture,
+  sourceIsolationFixture,
+} from "./result-fixture";
 
 describe("parallel scenario ownership", () => {
   it("keeps every mutable identity and cleanup target pairwise disjoint", () => {
@@ -109,6 +114,147 @@ describe("parallel scenario ownership", () => {
     }
   });
 
+  it("accepts every comparison result archive entry owned by its production fixture", () => {
+    const spec = "e2e/comparison.spec.ts";
+    const { identity, seed } = comparisonFixture(spec);
+    const leftOnlySection = identity.comparisonLeftOnlySection;
+    if (!leftOnlySection)
+      throw new Error("comparison left-only section identity is missing");
+
+    expect(assertResultFixtureOwnership(spec, seed)).toEqual(
+      [...identity.archiveEntryIds, leftOnlySection.archiveEntryId].sort(),
+    );
+  });
+
+  it("derives a distinct lowercase SHA-256 digest for every comparison archive entry", () => {
+    const archiveEntries = comparisonFixture("e2e/comparison.spec.ts").seed
+      .archiveEntries ?? [];
+    const sha256 = archiveEntries.map((entry) => entry["sha256"]);
+
+    expect(
+      sha256.every(
+        (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value),
+      ),
+    ).toBe(true);
+    expect(new Set(archiveEntries.map((entry) => entry["id"])).size).toBe(
+      archiveEntries.length,
+    );
+    expect(new Set(sha256).size).toBe(archiveEntries.length);
+  });
+
+  it("derives the same SHA-256 digest for the same comparison archive entry ID", () => {
+    const first = comparisonFixture("e2e/comparison.spec.ts").seed
+      .archiveEntries ?? [];
+    const second = comparisonFixture("e2e/comparison.spec.ts").seed
+      .archiveEntries ?? [];
+
+    expect(second.map((entry) => entry["sha256"])).toEqual(
+      first.map((entry) => entry["sha256"]),
+    );
+  });
+
+  it("accepts municipal rows with distinct natural keys that share an archive cleanup target", () => {
+    const spec = "e2e/municipal.spec.ts";
+    const identity = resultScenarioIdentity(spec);
+    const { seed } = sourceIsolationFixture(spec);
+    seed.rows[1]!["archive_entry_id"] = identity.archiveEntryIds[0]!;
+
+    expect(assertResultFixtureOwnership(spec, seed)).toEqual(
+      [identity.archiveEntryIds[0]!, identity.archiveEntryIds[2]!].sort(),
+    );
+  });
+
+  it("rejects duplicate municipal result natural keys before seeding", () => {
+    const spec = "e2e/municipal.spec.ts";
+    const { seed } = sourceIsolationFixture(spec);
+    seed.rows[1] = {
+      ...seed.rows[0]!,
+      votes: 9_999,
+      source_row_index: 99,
+    };
+
+    expect(() => assertResultFixtureOwnership(spec, seed)).toThrow(
+      "duplicate result natural key",
+    );
+  });
+
+  it("rejects missing, unknown, and out-of-scope result ownership before seeding", () => {
+    const spec = "e2e/municipal.spec.ts";
+    const missing = sourceIsolationFixture(spec).seed;
+    delete missing.rows[0]!["archive_entry_id"];
+    expect(() => assertResultFixtureOwnership(spec, missing)).toThrow(
+      "missing result archive entry",
+    );
+
+    const unknown = sourceIsolationFixture(spec).seed;
+    unknown.rows[0]!["archive_entry_id"] = "unowned-archive-entry";
+    expect(() => assertResultFixtureOwnership(spec, unknown)).toThrow(
+      "unowned result archive entry",
+    );
+
+    for (const [field, value] of [
+      ["election_id", "outside-scenario-election"],
+      ["jurisdiction_id", "outside-scenario-jurisdiction"],
+      ["category_id", "outside-scenario-category"],
+      ["source_kind", "outside-scenario-source"],
+    ] as const) {
+      const outsideScope = sourceIsolationFixture(spec).seed;
+      outsideScope.rows[0]![field] = value;
+      expect(() => assertResultFixtureOwnership(spec, outsideScope)).toThrow(
+        "fixture seed does not exactly match owned identity",
+      );
+    }
+  });
+
+  it("plans municipal archive ownership by full result natural key", () => {
+    const spec = "e2e/municipal.spec.ts";
+    const identity = resultScenarioIdentity(spec);
+    const resultKeys = planResultNaturalKeys(spec).filter((key) =>
+      key.startsWith("result:"),
+    );
+
+    expect(resultKeys).toEqual([
+      resultNaturalKey({
+        archiveEntryId: identity.archiveEntryIds[0]!,
+        electionId: identity.electionIds[0]!,
+        jurisdictionId: identity.jurisdictionId,
+        categoryId: identity.categoryId,
+        listId: "2206",
+        sourceKind: "official",
+      }),
+      resultNaturalKey({
+        archiveEntryId: identity.archiveEntryIds[0]!,
+        electionId: identity.electionIds[0]!,
+        jurisdictionId: identity.jurisdictionId,
+        categoryId: identity.categoryId,
+        listId: "110",
+        sourceKind: "official",
+      }),
+      resultNaturalKey({
+        archiveEntryId: identity.archiveEntryIds[2]!,
+        electionId: identity.electionIds[0]!,
+        jurisdictionId: identity.jurisdictionId,
+        categoryId: identity.categoryId,
+        listId: "2206",
+        sourceKind: "fiscalizacion",
+      }),
+    ]);
+  });
+
+  it("cleans each municipal result archive once while retaining every owned archive entry", () => {
+    const spec = "e2e/municipal.spec.ts";
+    const identity = resultScenarioIdentity(spec);
+    const cleanup = planResultCleanup(spec);
+
+    expect(cleanup.filter((target) => target.startsWith("result_row:"))).toEqual([
+      `result_row:${identity.archiveEntryIds[0]}`,
+      `result_row:${identity.archiveEntryIds[2]}`,
+    ]);
+    expect(cleanup.filter((target) => target.startsWith("archive_entry:"))).toEqual(
+      identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
+    );
+  });
+
   it("keeps otherwise identical result rows disjoint across elections", () => {
     const row = {
       archiveEntryId: "shared-entry",
@@ -153,7 +299,9 @@ describe("parallel scenario ownership", () => {
     expect(runtime).toMatch(/CORONEL_ROSALES_JURISDICTION_ID[\s\S]*MUNICIPAL_ELECTION_ID[\s\S]*MUNICIPAL_CATEGORY_ID/);
     expect(runtime).not.toMatch(/NATIONAL_JURISDICTION_ID|MUNICIPAL_JURISDICTION_ID/);
     expect(planResultCleanup(spec)).toEqual([
-      ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
+      ...[identity.archiveEntryIds[0]!, identity.archiveEntryIds[2]!].map(
+        (id) => `result_row:${id}`,
+      ),
       ...identity.comparisonParty!.mappingIds.map((id) => `party_mapping:${id}`),
       `party_canonical:${identity.comparisonParty!.canonicalPartyId}`,
       ...identity.electionIds.map((id) => `election:${id}`),
