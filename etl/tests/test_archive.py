@@ -820,15 +820,26 @@ def test_matching_failed_prior_produces_no_false_hash_classification(tmp_path) -
 def test_repeated_production_fetches_write_manifest_for_every_capability(tmp_path) -> None:
     fiscal_url = "https://example.test/fiscalizacion.csv"
     sources = {
-        "national": [{**ENTRY, "filename": "2023-generales.zip"}],
+        "national": [
+            {
+                **ENTRY,
+                "election_year": 2023,
+                "election_round": "generales",
+                "filename": "2023-generales.zip",
+                "source_kind": "official",
+            }
+        ],
         "fiscalizacion": [
             {
                 "id": "fiscalizacion/2025-test",
+                "election_year": 2025,
+                "election_round": "legislativas",
                 "source": "internal",
                 "source_url": fiscal_url,
                 "mime": "text/csv",
                 "notes": "",
                 "filename": "fiscalizacion.csv",
+                "source_kind": "fiscalizacion",
                 "upload": "never",
             }
         ],
@@ -854,6 +865,19 @@ def test_repeated_production_fetches_write_manifest_for_every_capability(tmp_pat
     records = load_manifest(manifest_path)
     by_id = {str(record["id"]): record for record in records}
     assert set(by_id) == {"national/2023-generales", "fiscalizacion/2025-test"}
+    assert by_id["fiscalizacion/2025-test"]["source_kind"] == "fiscalizacion"
+    assert by_id["national/2023-generales"]["source_kind"] == "official"
+
+    events = load_fetch_events(manifest_path)
+    assert [event["source_id"] for event in events] == [
+        "national/2023-generales",
+        "fiscalizacion/2025-test",
+    ]
+    assert [event["record"]["source_kind"] for event in events] == [
+        "official",
+        "fiscalizacion",
+    ]
+
     for source_id, capability in (
         ("national/2023-generales", "national"),
         ("fiscalizacion/2025-test", "fiscalizacion"),
