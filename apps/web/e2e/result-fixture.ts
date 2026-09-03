@@ -67,9 +67,11 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
 export function comparisonFixture(spec: DataScenarioSpec) {
   const identity = resultScenarioIdentity(spec);
   const party = identity.comparisonParty;
+  const leftOnlySection = identity.comparisonLeftOnlySection;
   if (identity.scenario !== "comparison" || identity.electionIds.length !== 2 ||
       identity.archiveEntryIds.length !== 2 || !party || party.listIds.length !== 2 ||
-      party.mappingIds.length !== 2) throw new Error("comparison scenario identity is incomplete");
+      party.mappingIds.length !== 2 || !leftOnlySection || identity.jurisdictionIds.length !== 2)
+    throw new Error("comparison scenario identity is incomplete");
   const seed: ResultFixtureSeed = {
     category: { id: identity.categoryId, name: identity.categoryName },
     jurisdictions: [{
@@ -78,13 +80,22 @@ export function comparisonFixture(spec: DataScenarioSpec) {
       distrito_name: "Buenos Aires",
       seccion_code: identity.seccionCode,
       seccion_name: "Exact comparison section",
+    }, {
+      id: leftOnlySection.jurisdictionId,
+      distrito_code: leftOnlySection.distritoCode,
+      distrito_name: "Buenos Aires",
+      seccion_code: leftOnlySection.seccionCode,
+      seccion_name: "Synthetic left-election-only section",
     }],
     elections: identity.electionIds.map((id, index) => ({
       id,
       year: identity.electionYears[index]!,
       round: identity.electionRounds[index]!,
     })),
-    archiveEntries: archiveEntries(identity.archiveEntryIds, -1),
+    archiveEntries: [
+      ...archiveEntries(identity.archiveEntryIds, -1),
+      ...archiveEntries([leftOnlySection.archiveEntryId], -1),
+    ],
     partyCanonical: { id: party.canonicalPartyId, display_name: party.displayName },
     partyMappings: identity.electionYears.map((year, index) => ({
       id: party.mappingIds[index]!,
@@ -95,17 +106,30 @@ export function comparisonFixture(spec: DataScenarioSpec) {
       canonical_party_id: party.canonicalPartyId,
       source: spec,
     })),
-    rows: identity.electionIds.map((electionId, index) => ({
-      election_id: electionId,
-      jurisdiction_id: identity.jurisdictionId,
-      category_id: identity.categoryId,
-      granularity: "seccion",
-      list_id: party.listIds[index]!,
-      votes: index === 0 ? 10_000 : 12_000,
-      archive_entry_id: identity.archiveEntryIds[index]!,
-      source_row_index: 0,
-      source_kind: "official",
-    })),
+    rows: [
+      ...identity.electionIds.map((electionId, index) => ({
+        election_id: electionId,
+        jurisdiction_id: identity.jurisdictionId,
+        category_id: identity.categoryId,
+        granularity: "seccion",
+        list_id: party.listIds[index]!,
+        votes: index === 0 ? 10_000 : 12_000,
+        archive_entry_id: identity.archiveEntryIds[index]!,
+        source_row_index: 0,
+        source_kind: "official",
+      })),
+      {
+        election_id: identity.electionIds[0]!,
+        jurisdiction_id: leftOnlySection.jurisdictionId,
+        category_id: identity.categoryId,
+        granularity: "seccion",
+        list_id: party.listIds[0]!,
+        votes: 5_000,
+        archive_entry_id: leftOnlySection.archiveEntryId,
+        source_row_index: 0,
+        source_kind: "official",
+      },
+    ],
   };
   return { identity, seed };
 }

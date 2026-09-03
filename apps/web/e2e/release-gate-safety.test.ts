@@ -87,6 +87,11 @@ const STALE_EVIDENCE = {
 	ownerProcessActive: false,
 	projectResourcesActive: false,
 } as const;
+function fixtureFunctionBody(fixtureSql: string, name: string) {
+	const match = fixtureSql.match(new RegExp(`create function public\\.${name}\\([\\s\\S]*?as \\$\\$([\\s\\S]*?)end \\$\\$;`));
+	expect(match, `fixture function ${name}`).not.toBeNull();
+	return match![1]!;
+}
 async function inspectReleaseGatePlan(
 	options: readonly string[] = [],
 ): Promise<ReleaseGatePlan> {
@@ -780,10 +785,28 @@ describe("base contracts", () => {
 			"create function public.e2e_cleanup_authorized_review_fixture(p_fixture jsonb) returns jsonb",
 		);
 		expect(fixtureSql).toContain("create function public.e2e_setup_authorized_fiscal_fixture(p_user_id uuid, p_distrito_code text, p_seccion_code text) returns jsonb"); expect(fixtureSql).toContain("'e2e-authorized-fiscal-browser-'||organization_id");
+		expect(fixtureSql).toContain("create function public.e2e_extend_authorized_fiscal_fixture(p_fixture jsonb, p_distrito_code text, p_seccion_code text) returns jsonb");
 		expect(fixtureSql).toContain("create function public.e2e_cleanup_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
 		expect(fixtureSql).toContain("create function public.e2e_revoke_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
 		expect(fixtureSql).toContain("update workspace_private.organization set entitlement_revision = entitlement_revision + 1");
-		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g)).toHaveLength(5);
+		expect(fixtureSql).toContain("'extra_distrito_code'");
+		expect(fixtureSql).toContain("'extra_seccion_code'");
+		expect(fixtureSql).toContain("'owns_extra_section_scope'");
+		expect(fixtureSql).toContain("fixture_has_extra");
+		expect(fixtureSql).toContain("'revoked_scope_count', revoked_scope_count");
+		expect(fixtureSql).toContain("delete from workspace_private.organization_section_entitlement where organization_id = fixture_organization_id");
+		expect(fixtureSql.match(/security definer set search_path = ''/g)).toHaveLength(6);
+		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g) ?? []).toHaveLength(0);
+		const extension = fixtureFunctionBody(fixtureSql, "e2e_extend_authorized_fiscal_fixture");
+		expect(extension).toMatch(/join workspace_private\.organization_membership membership on membership\.organization_id\s*=\s*organization\.id/);
+		expect(extension).toMatch(/where\s+organization\.id\s*=\s*fixture_organization_id\s+and\s+organization\.slug\s*=\s*'e2e-authorized-fiscal-browser-'\|\|fixture_organization_id[\s\S]*?membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null[\s\S]*?\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+entitlement\.revoked_at\s+is\s+null[\s\S]*?not exists\s*\(select 1 from workspace_private\.organization_section_entitlement other\s+where other\.organization_id\s*=\s*organization\.id\s+and\s+\(other\.distrito_code,\s*other\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\)[\s\S]*?for update of organization, membership, entitlement;[\s\S]*?insert into workspace_private\.section_scope/);
+		const cleanup = fixtureFunctionBody(fixtureSql, "e2e_cleanup_authorized_fiscal_fixture");
+		for (const predicate of [/membership\.organization_id\s*=\s*fixture_organization_id\s+and\s+membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null/, /not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\)/, /fixture_has_extra and not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)/, /exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+\(not fixture_has_extra or \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)/]) expect(cleanup).toMatch(predicate);
+		expect(cleanup).toMatch(/delete from workspace_private\.organization_membership where organization_id\s*=\s*fixture_organization_id\s+and\s+user_id\s*=\s*fixture_user_id;[\s\S]*?delete from workspace_private\.organization where id\s*=\s*fixture_organization_id\s+and\s+slug\s*=\s*'e2e-authorized-fiscal-browser-'\|\|fixture_organization_id;/);
+		for (const guard of [/if fixture_owns_section_scope then[\s\S]*?delete from workspace_private\.section_scope scope\s+where \(scope\.distrito_code,\s*scope\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.review_item_section_scope review_scope\s+where \(review_scope\.distrito_code,\s*review_scope\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)/, /if fixture_has_extra and fixture_owns_extra_section_scope then[\s\S]*?delete from workspace_private\.section_scope scope\s+where \(scope\.distrito_code,\s*scope\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.review_item_section_scope review_scope\s+where \(review_scope\.distrito_code,\s*review_scope\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)/]) expect(cleanup).toMatch(guard);
+		const revoke = fixtureFunctionBody(fixtureSql, "e2e_revoke_authorized_fiscal_fixture");
+		for (const predicate of [/join workspace_private\.organization_membership membership on membership\.organization_id\s*=\s*organization\.id\s+where organization\.id\s*=\s*fixture_organization_id[\s\S]*?membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null/, /not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+entitlement\.revoked_at\s+is\s+null\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)/, /fixture_has_extra and not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+entitlement\.revoked_at\s+is\s+null\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)/, /exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+\(not fixture_has_extra or \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)/]) expect(revoke).toMatch(predicate);
+		expect(revoke).toMatch(/update workspace_private\.organization_section_entitlement set revoked_at\s*=\s*statement_timestamp\(\)\s+where organization_id\s*=\s*fixture_organization_id\s+and\s+revoked_at\s+is\s+null\s+and\s+\(\(distrito_code,\s*seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+or\s+\(fixture_has_extra\s+and\s+\(distrito_code,\s*seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)\);\s+get diagnostics revoked_scope_count = row_count;\s+if revoked_scope_count <> \(case when fixture_has_extra then 2 else 1 end\)/);
 		expect(fixtureSql).toContain(
 			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated",
 		);
@@ -796,7 +819,7 @@ describe("base contracts", () => {
 		expect(fixtureSql).toContain(
 			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
 		);
-		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)", "e2e_revoke_authorized_fiscal_fixture(jsonb)"]) {
+		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_extend_authorized_fiscal_fixture(jsonb,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)", "e2e_revoke_authorized_fiscal_fixture(jsonb)"]) {
 			expect(fixtureSql).toContain(`revoke all on function public.${signature} from public, anon, authenticated`); expect(fixtureSql).toContain(`grant execute on function public.${signature} to service_role`);
 		}
 		expect(fixtureSql).toContain("select pg_notify('pgrst','reload schema')");
@@ -804,6 +827,21 @@ describe("base contracts", () => {
 		expect(fixtureSql).toContain("delete from public.review_item");
 		expect(fixtureSql).toContain("delete from workspace_private.organization");
 		expect(fixtureSql).toContain("'owns_section_scope'");
+	});
+	it("grants the audit owner the four fixture cleanup DELETE policies", () => {
+		const fixtureSql = readFileSync(
+			new URL("./service-role-grants.sql", import.meta.url),
+			"utf8",
+		);
+		for (const [policy, table] of [
+			["e2e_workspace_audit_organization_delete", "workspace_private.organization"],
+			["e2e_workspace_audit_membership_delete", "workspace_private.organization_membership"],
+			["e2e_workspace_audit_entitlement_delete", "workspace_private.organization_section_entitlement"],
+			["e2e_workspace_audit_section_scope_delete", "workspace_private.section_scope"],
+		])
+			expect(fixtureSql).toContain(
+				`create policy ${policy} on ${table} for delete to workspace_audit_owner using(true);`,
+			);
 	});
 	it("keeps the isolated CI Postgres service passwordless", () => {
 		const workflow = readFileSync(

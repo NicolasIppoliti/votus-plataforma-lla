@@ -1012,7 +1012,8 @@ select option {
     flex-wrap: nowrap;
   }
 
-  .workspace-topbar__inner > form p {
+  .workspace-topbar__inner > form p,
+  .workspace-topbar__inner > div p {
     margin: 0;
     font-size: 0.8125rem;
     line-height: 1.2;
