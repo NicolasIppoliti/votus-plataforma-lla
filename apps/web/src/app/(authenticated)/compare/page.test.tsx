@@ -32,4 +32,20 @@ describe("authorized comparison page", () => {
   it.each([["authorization_denied", "No tiene autorización"], ["payload_too_large", "excede el límite seguro"], ["malformed", "no superó la validación"], ["unavailable", "no está disponible"]] as const)("renders no figures for %s evidence", async (status, message) => { mocks.evidence.mockResolvedValue({ status }); const markup = await render(PARAMS); expect(markup).toContain(message); expect(markup).not.toContain("puntos porcentuales"); expect(markup).not.toContain("official/archive"); });
   it.each([["repeated", { ...PARAMS, leftElectionId: [IDS.leftElection, IDS.rightElection] }], ["legacy", { ...PARAMS, election2023: IDS.leftElection }], ["unknown", { ...PARAMS, debug: "true" }]])("rejects %s query keys before authorized reads", async (_case, params) => { const markup = await render(params); expect(markup).toContain("Se rechazó la solicitud"); expect(mocks.facets).not.toHaveBeenCalled(); expect(mocks.evidence).not.toHaveBeenCalled(); });
   it("hides authorized facet provider failures", async () => { mocks.facets.mockRejectedValue(new Error("private provider detail")); const markup = await render({}); expect(markup).toContain("No se pudieron cargar las opciones autorizadas"); expect(markup).not.toContain("private provider detail"); });
+  it("presents two owned sides, shared scope, and exact official evidence as one ledger", async () => {
+    const markup = await render(PARAMS);
+    for (const text of ["Lado A", "Lado B", "Jurisdicción compartida", "Resultados exactos", "Evidencia oficial por lado"]) expect(markup).toContain(text);
+    expect(markup).toContain('aria-labelledby="compare-side-a-heading"');
+    expect(markup).toContain('aria-labelledby="compare-side-b-heading"');
+    expect(markup).toContain('aria-label="Tabla exacta de participación y variación por partido en 02/027" tabindex="0"');
+    expect(markup).toContain("Referencia oficial — Lado A");
+    expect(markup).toContain("Procedencia oficial — Lado B");
+  });
+  it("keeps the selector context while a denied comparison removes both sides of evidence", async () => {
+    mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
+    const markup = await render(PARAMS);
+    expect(markup).toContain("Elección izquierda (2023)");
+    expect(markup).toContain("Elección derecha (2025)");
+    expect(markup).not.toMatch(/PARTIDO A|official\/archive|puntos porcentuales|100 votos/);
+  });
 });
