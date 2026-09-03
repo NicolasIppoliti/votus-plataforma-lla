@@ -1,7 +1,7 @@
 export const NAVIGATION_GROUPS = {
   situation: {
     label: "Situación",
-    items: [{ label: "Resumen operativo", href: "/dashboard" }],
+    items: [{ label: "Resumen operativo", href: "/" }],
   },
   officialResults: {
     label: "Resultados oficiales",
@@ -37,5 +37,5 @@ export function isRouteActive(
   pathname: string,
   href: NavigationItem["href"],
 ): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 }

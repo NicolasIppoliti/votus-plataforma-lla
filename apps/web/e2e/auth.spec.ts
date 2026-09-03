@@ -22,7 +22,7 @@ const TEST_USER_PASSWORD = environment.VOTUS_E2E_TEST_USER_PASSWORD;
 test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOTUS_E2E_STORAGE_STATE) });
 
 // The in-scope content marker rendered only inside `(authenticated)/`
-// routes (see `src/app/(authenticated)/dashboard/page.tsx`). No anonymous
+// routes (see `src/app/(authenticated)/page.tsx`). No anonymous
 // response, cached or otherwise, may ever contain it.
 const IN_SCOPE_MARKER = "Panel de Votus";
 const PROTECTED_ROUTES = [
@@ -171,7 +171,7 @@ test.describe("no anonymous read path", () => {
     await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
     await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
-    await expect(page).toHaveURL(/\/dashboard/);
+    await expect(page).toHaveURL(/\/$/);
     expect(await page.content()).toContain(IN_SCOPE_MARKER);
 
     const sessionCookies = assertLoopbackSessionCookieDelta(
@@ -188,9 +188,8 @@ test.describe("no anonymous read path", () => {
     for (const sessionCookie of sessionCookies)
       expect(scriptVisibleCookieNames).not.toContain(sessionCookie.name);
 
-    // 5. Every protected page exposes the same native submit control. Root
-    //    lives outside the authenticated route-group layout, so it is checked
-    //    explicitly alongside every grouped route.
+    // 5. Every protected page, including the canonical root briefing, exposes
+    //    the same native submit control.
     for (const route of PROTECTED_ROUTES) {
       await page.goto(route);
       const signOutControl = page.getByRole("button", {

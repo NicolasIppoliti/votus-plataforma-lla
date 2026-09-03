@@ -78,14 +78,14 @@ describe("signIn server action module", () => {
       expect(mocks.redirect).not.toHaveBeenCalled();
     });
 
-    it("redirects to the dashboard only after one successful password sign-in", async () => {
+    it("redirects to the root operational briefing only after one successful password sign-in", async () => {
       mocks.signInWithPassword.mockResolvedValue({ error: null });
 
       await signIn(INITIAL_SIGN_IN_STATE, validCredentials());
 
       expect(mocks.signInWithPassword).toHaveBeenCalledOnce();
       expect(mocks.redirect).toHaveBeenCalledOnce();
-      expect(mocks.redirect).toHaveBeenCalledWith("/dashboard");
+      expect(mocks.redirect).toHaveBeenCalledWith("/");
       expect(mocks.signInWithPassword.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.redirect.mock.invocationCallOrder[0]!,
       );

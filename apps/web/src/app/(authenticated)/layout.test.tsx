@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import AuthenticatedLayout from "./layout";
 
-const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
+const navigation = vi.hoisted(() => ({ pathname: "/" }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
@@ -88,7 +88,7 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
     .map(([, attributes]) => attributes?.match(/href="([^"]+)"/)?.[1])
     .filter((href): href is string => typeof href === "string"))
     .toEqual([
-      "/dashboard",
+      "/",
       "/drilldown",
       "/compare",
       "/municipal",
@@ -132,7 +132,7 @@ function currentPrimaryHrefs(markup: string): string[] {
 }
 
 it.each([
-  ["/dashboard", "/dashboard"],
+  ["/", "/"],
   ["/drilldown", "/drilldown"],
   ["/compare", "/compare"],
   ["/municipal", "/municipal"],
@@ -193,7 +193,7 @@ it("renders all seven shared destinations in contract order with explicit source
 
   expect(markup).toContain("Esta herramienta no es una fuente electoral oficial.");
   expect(hrefs).toEqual([
-    "/dashboard",
+    "/",
     "/drilldown",
     "/compare",
     "/municipal",

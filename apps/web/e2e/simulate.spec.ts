@@ -52,7 +52,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 800 });
     await page.goto("/dashboard");
-    await expect(page).toHaveURL(/\/dashboard/);
+    await expect(page).toHaveURL(new URL("/", page.url()).toString());
 
     const drawerTrigger = page.getByRole("button", {
       name: "Abrir navegación",

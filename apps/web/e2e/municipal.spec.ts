@@ -18,7 +18,7 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 test.describe("the municipal route requires workspace-authorized official results", () => {
   test("test_route_is_reachable_and_fails_closed_without_workspace_entitlement", async ({ page }) => {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
-      await page.goto(new URL("/dashboard", baseURL).toString());
+      await page.goto(new URL("/", baseURL).toString());
       const municipalNavigationLink = page
         .getByRole("navigation", { name: "principal" })
         .getByRole("link", { name: "Municipal", exact: true });

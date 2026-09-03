@@ -41,7 +41,7 @@ async function withAuthorizedFiscalWorkspace<T>(page: Page, run: () => Promise<T
 test.describe("the fiscalizacion route explores coverage", () => {
   test("test_route_reaches_only_authorized_fiscalizacion_evidence", async ({ page }) => {
     await withResultFixture(SPEC, COVERAGE_FIXTURE, async () => withAuthorizedFiscalWorkspace(page, async () => {
-      await expect(page).toHaveURL(/\/dashboard/);
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
       await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
       await expect(page.getByRole("main")).not.toContainText("No tiene autorización");

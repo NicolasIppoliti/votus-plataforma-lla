@@ -20,7 +20,7 @@ it("defines every current route in grouped operational navigation", () => {
     "Operaciones",
   ]);
   expect(items.map((item) => item.href)).toEqual([
-    "/dashboard",
+    "/",
     "/drilldown",
     "/compare",
     "/municipal",
@@ -38,7 +38,7 @@ it("defines every current route in grouped operational navigation", () => {
     "Revisión de datos",
   ]);
   expect(NAVIGATION_GROUPS.situation.items).toEqual([
-    { label: "Resumen operativo", href: "/dashboard" },
+    { label: "Resumen operativo", href: "/" },
   ]);
   expect(NAVIGATION_GROUPS.fiscalizacion.description).toMatch(/no oficial/i);
   expect(NAVIGATION_GROUPS.fiscalizacion.description).toMatch(
@@ -53,4 +53,11 @@ it("matches exact and descendant routes without matching shared prefixes", () =>
   expect(isRouteActive("/review-history", "/review")).toBe(false);
   expect(isRouteActive("/reviewer", "/review")).toBe(false);
   expect(isRouteActive("/compare", "/review")).toBe(false);
+});
+
+it("treats the operational summary root as active only at the exact root", () => {
+  expect(isRouteActive("/", "/")).toBe(true);
+  expect(isRouteActive("/dashboard", "/")).toBe(false);
+  expect(isRouteActive("/review", "/")).toBe(false);
+  expect(isRouteActive("/review/history", "/")).toBe(false);
 });
