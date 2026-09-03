@@ -59,6 +59,7 @@ const FACET_EXCLUSION_LABELS = {
 
 type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
+type EvidenceRefusalWithDetails = Exclude<EvidenceRefusal, { status: "authorization_denied" }>;
 
 function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
   const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, {
@@ -213,7 +214,7 @@ function schoolExclusionNotes(
   );
 }
 
-function RefusalEvidence({ evidence }: { evidence: EvidenceRefusal["evidence"] | undefined }): ReactNode {
+function RefusalEvidence({ evidence }: { evidence: EvidenceRefusalWithDetails["evidence"] | undefined }): ReactNode {
   if (!evidence?.length) return null;
   return evidence.map((part) => (
     <section key={part.part} aria-label={`Evidencia de rechazo: ${part.part}`}>
@@ -463,7 +464,9 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     return (
       <PageShell form={form}>
         <p role="alert">{refusalMessage(evidence.status)}</p>
-        <RefusalEvidence evidence={evidence.evidence} />
+        {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED
+          ? null
+          : <RefusalEvidence evidence={evidence.evidence} />}
       </PageShell>
     );
   }
