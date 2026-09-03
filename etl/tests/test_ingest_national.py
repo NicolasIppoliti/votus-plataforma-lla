@@ -34,12 +34,14 @@ import psycopg
 import pytest
 
 from etl import db
+from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.ingest.national import (
     NationalSchemaError,
     extract_raw_mesa_identities_from_text,
     iter_national_rows,
     load_national_rows,
 )
+from etl.jurisdiction import resolve_pba_distrito_code
 from etl.storage import extract_zip_safely
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -337,6 +339,144 @@ def test_national_parser_requires_authoritative_jurisdiction_name_columns() -> N
     assert "circuito_nombre" in message
 
 
+# Characterization: these tests describe pre-issue-207 behavior that must survive.
+def test_companion_join_accepts_unpadded_national_result_codes() -> None:
+    results = (
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"2,Buenos Aires,27,Coronel Rosales,1,Circuito 1,1,DIPUTADO NACIONAL,110,POSITIVO,7\n"
+    )
+    companion = (
+        b"distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+        b"02,027,37974,INSTITUTO 79,00001\n"
+    )
+
+    rows = list(
+        iter_national_rows(
+            _text_of(results),
+            archive_entry_id="national/companion-characterization",
+            election_year=2025,
+            election_round="legislativas",
+            establecimientos_csv_bytes=companion,
+        )
+    )
+
+    assert [
+        (row.result.distrito, row.result.seccion, row.mesa, row.establecimiento) for row in rows
+    ] == [("2", "27", 1, "37974")]
+
+
+def test_2023_national_results_characterization_have_no_companion_metadata() -> None:
+    rows = list(
+        iter_national_rows(
+            _text_of(_read("national_2023_sample.csv")),
+            archive_entry_id="national/2023-paso-characterization",
+            election_year=2023,
+            election_round="paso",
+        )
+    )
+
+    assert rows
+    assert all(row.establecimiento is None and row.establecimiento_name is None for row in rows)
+
+
+def test_pba_distrito_characterization_requires_the_curated_crosswalk() -> None:
+    crosswalk = CrosswalkTable(
+        [
+            JurisdictionCrosswalkEntry(
+                pba_distrito_code="027",
+                national_distrito_code="02",
+                national_seccion_code="027",
+                name="Coronel Rosales",
+            )
+        ]
+    )
+
+    assert resolve_pba_distrito_code("027", crosswalk) == ("02", "027")
+
+
+# RED: issue #207 conflict classifications are independently observable.
+def test_companion_conflict_classes_report_their_own_unique_key_counts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = (
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,1,DIPUTADO NACIONAL,110,POSITIVO,90\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,2,DIPUTADO NACIONAL,110,POSITIVO,85\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,4,DIPUTADO NACIONAL,110,POSITIVO,5\n"
+    )
+    companion = (
+        b"distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+        b"02,027,A,ONE,00001\n"
+        b"02,027,B,TWO,00001\n"
+        b"02,027,C,THREE,00002\n"
+        b"02,027,C,FOUR,00003\n"
+        b"02,027,D,FIVE,00004\n"
+    )
+
+    rows = list(
+        iter_national_rows(
+            _text_of(results),
+            archive_entry_id="national/companion-conflict-classes",
+            election_year=2025,
+            election_round="legislativas",
+            establecimientos_csv_bytes=companion,
+        )
+    )
+
+    assert [(row.mesa, row.result.votes) for row in rows] == [(4, 5)]
+    assert capsys.readouterr().err == (
+        "quarantined 3 unique establecimiento companion mesa key(s) — "
+        "establishment_code_multiple_names: 2 unique key(s); "
+        "mesa_metadata_conflict: 1 unique key(s)\n"
+        "quarantined 2 result row(s) / 175 votes across 2 conflicted establecimiento "
+        "companion mesa key(s) — establishment_code_multiple_names: 1 row(s) / 85 votes; "
+        "mesa_metadata_conflict: 1 row(s) / 90 votes\n"
+    )
+
+
+def test_overlapping_companion_conflicts_quarantine_each_result_once_in_stable_order(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = (
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,1,DIPUTADO NACIONAL,110,POSITIVO,90\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,2,DIPUTADO NACIONAL,110,POSITIVO,85\n"
+    )
+    header = "distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+    companion_rows = [
+        "02,027,A,ONE,00001\n",
+        "02,027,A,TWO,00001\n",
+        "02,027,B,THREE,00002\n",
+    ]
+
+    observed = []
+    for ordered_rows in (companion_rows, list(reversed(companion_rows))):
+        rows = list(
+            iter_national_rows(
+                _text_of(results),
+                archive_entry_id="national/companion-conflict-overlap",
+                election_year=2025,
+                election_round="legislativas",
+                establecimientos_csv_bytes=(header + "".join(ordered_rows)).encode(),
+            )
+        )
+        observed.append((rows, capsys.readouterr().err))
+
+    assert observed[0] == observed[1]
+    assert [(row.mesa, row.result.votes) for row in observed[0][0]] == [(2, 85)]
+    assert observed[0][1] == (
+        "quarantined 1 unique establecimiento companion mesa key(s) — "
+        "establishment_code_multiple_names: 1 unique key(s); "
+        "mesa_metadata_conflict: 1 unique key(s); overlap: 1 unique key(s)\n"
+        "quarantined 1 result row(s) / 90 votes across 1 conflicted establecimiento "
+        "companion mesa key(s) — establishment_code_multiple_names: 1 row(s) / 90 votes; "
+        "mesa_metadata_conflict: 1 row(s) / 90 votes; overlap: 1 row(s) / 90 votes\n"
+    )
+
+
 def test_2025_companion_enriches_mesas_across_source_zero_padding() -> None:
     rows = iter_national_rows(
         _text_of(_read("national_2025_sample.csv")),
@@ -417,9 +557,7 @@ def test_present_companion_quarantines_conflicting_mesa_metadata_without_picking
     rows = list(rows)
 
     assert [row.mesa for row in rows] == [2]
-    assert "conflicting establecimiento companion metadata: 1 rows / 90 votes" in (
-        capsys.readouterr().err
-    )
+    assert "mesa_metadata_conflict: 1 row(s) / 90 votes" in (capsys.readouterr().err)
 
 
 def test_present_companion_quarantines_one_code_with_conflicting_names(
@@ -442,9 +580,7 @@ def test_present_companion_quarantines_one_code_with_conflicting_names(
     rows = list(rows)
 
     assert rows == []
-    assert "conflicting establecimiento companion metadata: 2 rows / 175 votes" in (
-        capsys.readouterr().err
-    )
+    assert "establishment_code_multiple_names: 2 row(s) / 175 votes" in (capsys.readouterr().err)
 
 
 def test_2025_bup_format_parsed_or_fails_loudly() -> None:

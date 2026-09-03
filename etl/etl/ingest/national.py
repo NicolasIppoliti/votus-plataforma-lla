@@ -37,6 +37,8 @@ from etl.jurisdiction import (
     make_result_row,
     normalize_circuito_code,
     normalize_circuito_name,
+    normalize_distrito_code,
+    normalize_seccion_code,
 )
 from etl.numeric import parse_source_int
 
@@ -237,11 +239,33 @@ def extract_raw_mesa_identities_from_text(
     return identities
 
 
+CompanionKey = tuple[str, str, int]
+
+
+def _national_companion_key(
+    distrito_id: object,
+    seccion_id: object,
+    mesa_id: object,
+) -> CompanionKey | None:
+    """Return the canonical national key shared by every companion operation."""
+    if not is_canonicalizable_code(distrito_id) or not is_canonicalizable_code(seccion_id):
+        return None
+    if not isinstance(distrito_id, str) or not isinstance(seccion_id, str):
+        return None
+    mesa = _normalize_mesa_id(str(mesa_id)) if isinstance(mesa_id, (str, int)) else None
+    if mesa is None:
+        return None
+    distrito = normalize_distrito_code(distrito_id)
+    seccion = normalize_seccion_code(seccion_id)
+    assert distrito is not None and seccion is not None
+    return distrito, seccion, mesa
+
+
 def _parse_establecimientos(
     csv_bytes: bytes | None,
     *,
     source_label: str,
-) -> tuple[dict[tuple[int, int, int], tuple[str, str]], set[tuple[int, int, int]]]:
+) -> tuple[dict[CompanionKey, tuple[str, str]], dict[CompanionKey, frozenset[str]]]:
     """Read the optional companion using its measured distrito/seccion/mesa key.
 
     The hash-matching 2025 source has 108,992 unique normalized mesa keys and
@@ -260,16 +284,16 @@ def _parse_establecimientos(
             f"required column(s): {', '.join(missing)}"
         )
 
-    by_mesa: dict[tuple[int, int, int], tuple[str, str]] = {}
-    conflicts: set[tuple[int, int, int]] = set()
+    by_mesa: dict[CompanionKey, tuple[str, str]] = {}
+    metadata_by_key: dict[CompanionKey, set[tuple[str, str]]] = {}
     names_by_code: dict[str, set[str]] = {}
-    keys_by_code: dict[str, set[tuple[int, int, int]]] = {}
+    keys_by_code: dict[str, set[CompanionKey]] = {}
     excluded: dict[str, int] = {}
     for raw in reader:
-        distrito = _parse_int(raw.get("distrito_id"))
-        seccion = _parse_int(raw.get("seccion_id"))
-        mesa = _parse_int(raw.get("mesa_id"))
-        if distrito is None or seccion is None or mesa is None:
+        key = _national_companion_key(
+            raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
+        )
+        if key is None:
             reason = "unreadable distrito/seccion/mesa identity"
             excluded[reason] = excluded.get(reason, 0) + 1
             continue
@@ -280,19 +304,20 @@ def _parse_establecimientos(
             excluded[reason] = excluded.get(reason, 0) + 1
             continue
 
-        key = (distrito, seccion, mesa)
         metadata = (code, name)
+        by_mesa.setdefault(key, metadata)
+        metadata_by_key.setdefault(key, set()).add(metadata)
         names_by_code.setdefault(code, set()).add(name)
         keys_by_code.setdefault(code, set()).add(key)
-        existing = by_mesa.get(key)
-        if existing is not None and existing != metadata:
-            conflicts.add(key)
-        else:
-            by_mesa[key] = metadata
 
+    conflict_reasons: dict[CompanionKey, set[str]] = {}
+    for key, metadata in metadata_by_key.items():
+        if len(metadata) > 1:
+            conflict_reasons.setdefault(key, set()).add("mesa_metadata_conflict")
     for code, names in names_by_code.items():
         if len(names) > 1:
-            conflicts.update(keys_by_code[code])
+            for key in keys_by_code[code]:
+                conflict_reasons.setdefault(key, set()).add("establishment_code_multiple_names")
 
     if excluded:
         breakdown = "; ".join(
@@ -302,13 +327,24 @@ def _parse_establecimientos(
             f"excluded {sum(excluded.values())} establecimiento companion row(s) — {breakdown}",
             file=sys.stderr,
         )
-    if conflicts:
+    frozen_conflict_reasons = {key: frozenset(reasons) for key, reasons in conflict_reasons.items()}
+    if frozen_conflict_reasons:
+        counts = {
+            reason: sum(reason in reasons for reasons in frozen_conflict_reasons.values())
+            for reason in sorted(
+                {reason for reasons in frozen_conflict_reasons.values() for reason in reasons}
+            )
+        }
+        parts = [f"{reason}: {count} unique key(s)" for reason, count in counts.items()]
+        overlap = sum(len(reasons) > 1 for reasons in frozen_conflict_reasons.values())
+        if overlap:
+            parts.append(f"overlap: {overlap} unique key(s)")
         print(
-            f"quarantined {len(conflicts)} establecimiento companion mesa key(s) — "
-            "conflicting metadata",
+            f"quarantined {len(frozen_conflict_reasons)} unique establecimiento companion "
+            f"mesa key(s) — {'; '.join(parts)}",
             file=sys.stderr,
         )
-    return by_mesa, conflicts
+    return by_mesa, frozen_conflict_reasons
 
 
 def _report_exclusions(
@@ -338,7 +374,6 @@ def _report_exclusions(
 
 
 NaturalKey = tuple[str, str | None, str | None, int | None, str, str | None]
-CompanionKey = tuple[int, int, int]
 
 
 @dataclass(slots=True)
@@ -367,9 +402,10 @@ def _candidate_from_raw(
     election_year: int,
     election_round: str,
     establecimientos: dict[CompanionKey, tuple[str, str]],
-    conflicting_establecimientos: set[CompanionKey],
+    conflicting_establecimientos: dict[CompanionKey, frozenset[str]],
     has_companion: bool,
     exclude: Callable[[str, str | None], None],
+    record_companion_conflict: Callable[[CompanionKey, frozenset[str], int], None],
 ) -> NationalRow | None:
     mesa_tipo = validate_mesa_tipo(
         raw.get("mesa_tipo"),
@@ -428,12 +464,11 @@ def _candidate_from_raw(
     establecimiento: str | None = None
     establecimiento_name: str | None = None
     if has_companion:
-        distrito_id = _parse_int(raw.get("distrito_id"))
-        seccion_id = _parse_int(raw.get("seccion_id"))
-        assert distrito_id is not None and seccion_id is not None
-        mesa_key = (distrito_id, seccion_id, mesa_id)
-        if mesa_key in conflicting_establecimientos:
-            exclude("conflicting establecimiento companion metadata", raw.get("votos_cantidad"))
+        mesa_key = _national_companion_key(raw.get("distrito_id"), raw.get("seccion_id"), mesa_id)
+        assert mesa_key is not None
+        conflict_reasons = conflicting_establecimientos.get(mesa_key)
+        if conflict_reasons is not None:
+            record_companion_conflict(mesa_key, conflict_reasons, votes)
             return None
         metadata = establecimientos.get(mesa_key)
         if metadata is None:
@@ -478,18 +513,44 @@ def _natural_key(row: NationalRow) -> NaturalKey:
     )
 
 
-def _companion_key(row: NationalRow) -> CompanionKey:
-    distrito = _parse_int(row.result.distrito)
-    seccion = _parse_int(row.result.seccion)
-    assert distrito is not None and seccion is not None and row.mesa is not None
-    return distrito, seccion, row.mesa
-
-
 def _companion_key_from_natural_key(key: NaturalKey) -> CompanionKey:
-    distrito = _parse_int(key[0])
-    seccion = _parse_int(key[1])
-    assert distrito is not None and seccion is not None and key[3] is not None
-    return distrito, seccion, key[3]
+    companion_key = _national_companion_key(key[0], key[1], key[3])
+    assert companion_key is not None
+    return companion_key
+
+
+def _report_companion_result_conflicts(
+    stats_by_key: dict[CompanionKey, _NaturalKeyStats],
+    conflict_reasons_by_key: dict[CompanionKey, frozenset[str]],
+) -> None:
+    if not stats_by_key:
+        return
+    total_rows = sum(stats.count for stats in stats_by_key.values())
+    total_votes = sum(stats.votes for stats in stats_by_key.values())
+    reason_rows: dict[str, int] = {}
+    reason_votes: dict[str, int] = {}
+    overlap_rows = 0
+    overlap_votes = 0
+    for key, stats in stats_by_key.items():
+        reasons = conflict_reasons_by_key[key]
+        for reason in reasons:
+            reason_rows[reason] = reason_rows.get(reason, 0) + stats.count
+            reason_votes[reason] = reason_votes.get(reason, 0) + stats.votes
+        if len(reasons) > 1:
+            overlap_rows += stats.count
+            overlap_votes += stats.votes
+    parts = [
+        f"{reason}: {reason_rows[reason]} row(s) / {reason_votes[reason]} votes"
+        for reason in sorted(reason_rows)
+    ]
+    if overlap_rows:
+        parts.append(f"overlap: {overlap_rows} row(s) / {overlap_votes} votes")
+    print(
+        f"quarantined {total_rows} result row(s) / {total_votes} votes across "
+        f"{len(stats_by_key)} conflicted establecimiento companion mesa key(s) — "
+        f"{'; '.join(parts)}",
+        file=sys.stderr,
+    )
 
 
 def _report_ambiguous_natural_keys(
@@ -537,6 +598,7 @@ def iter_national_rows(
     excluded_rows: dict[str, int] = {}
     excluded_votes: dict[str, int] = {}
     excluded_unparseable: dict[str, int] = {}
+    companion_conflict_stats: dict[CompanionKey, _NaturalKeyStats] = {}
 
     def exclude(reason: str, raw_votes: str | None) -> None:
         excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
@@ -546,24 +608,27 @@ def iter_national_rows(
         else:
             excluded_votes[reason] = excluded_votes.get(reason, 0) + votes
 
+    def record_companion_conflict(key: CompanionKey, _reasons: frozenset[str], votes: int) -> None:
+        stats = companion_conflict_stats.get(key)
+        if stats is None:
+            companion_conflict_stats[key] = _NaturalKeyStats(count=1, votes=votes)
+        else:
+            stats.count += 1
+            stats.votes += votes
+
     csv_text.seek(0)
     circuits_by_companion_key: dict[CompanionKey, set[str]] = {}
     stats_by_key: dict[NaturalKey, _NaturalKeyStats] = {}
     for index, raw in enumerate(_national_reader(csv_text)):
         if establecimientos_csv_bytes is not None:
-            distrito = _parse_int(raw.get("distrito_id"))
-            seccion = _parse_int(raw.get("seccion_id"))
-            mesa = _parse_int(raw.get("mesa_id"))
+            companion_key = _national_companion_key(
+                raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
+            )
             raw_circuito = raw.get("circuito_id")
-            if (
-                distrito is not None
-                and seccion is not None
-                and mesa is not None
-                and is_canonicalizable_circuito_code(raw_circuito)
-            ):
+            if companion_key is not None and is_canonicalizable_circuito_code(raw_circuito):
                 circuito = normalize_circuito_code(raw_circuito)
                 assert circuito is not None
-                circuits_by_companion_key.setdefault((distrito, seccion, mesa), set()).add(circuito)
+                circuits_by_companion_key.setdefault(companion_key, set()).add(circuito)
         row = _candidate_from_raw(
             raw,
             index=index,
@@ -574,6 +639,7 @@ def iter_national_rows(
             conflicting_establecimientos=conflicting_establecimientos,
             has_companion=establecimientos_csv_bytes is not None,
             exclude=exclude,
+            record_companion_conflict=record_companion_conflict,
         )
         if row is None:
             continue
@@ -604,6 +670,7 @@ def iter_national_rows(
         if stats.count > 1 and _companion_key_from_natural_key(key) not in ambiguous_companion_keys
     }
     _report_exclusions(excluded_rows, excluded_votes, excluded_unparseable)
+    _report_companion_result_conflicts(companion_conflict_stats, conflicting_establecimientos)
     _report_ambiguous_natural_keys(stats_by_key, ambiguous_natural_keys)
 
     csv_text.seek(0)
@@ -618,10 +685,13 @@ def iter_national_rows(
             conflicting_establecimientos=conflicting_establecimientos,
             has_companion=establecimientos_csv_bytes is not None,
             exclude=lambda _reason, _votes: None,
+            record_companion_conflict=lambda _key, _reasons, _votes: None,
         )
         if row is None:
             continue
-        if _companion_key(row) in ambiguous_companion_keys:
+        companion_key = _national_companion_key(row.result.distrito, row.result.seccion, row.mesa)
+        assert companion_key is not None
+        if companion_key in ambiguous_companion_keys:
             continue
         if _natural_key(row) in ambiguous_natural_keys:
             continue
