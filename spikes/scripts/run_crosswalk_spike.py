@@ -23,8 +23,9 @@ import argparse
 import csv
 import json
 from collections import OrderedDict
+from collections.abc import Sequence
 
-from vote_vector_match import match_vote_vectors
+from vote_vector_match import VectorShapeError, match_vote_vectors
 
 # Ordered so index i of the fiscalización vector lines up with index i of
 # the official vector built by `_official_vectors_from_rows`.
@@ -190,11 +191,11 @@ def load_official_vectors(rows_json_path: str) -> dict[str, tuple[int, ...]]:
     return vectors
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fiscalizacion", required=True)
     parser.add_argument("--official-json", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     local_vectors, notes = load_fiscalizacion_vectors(args.fiscalizacion)
     official_vectors = load_official_vectors(args.official_json)
@@ -205,10 +206,6 @@ def main() -> None:
     for n in notes:
         print(" ", n)
 
-    # (i) identity hypothesis: local N == DINE mesa_id N within the district.
-    # NOTE: resultados2025.csv's mesa_id is unpadded ("1", not "00001") while
-    # localesDeVotacionyMesas.csv zero-pads ("00057") — a real cross-file
-    # schema inconsistency, recorded in the SPIKE findings (task 0.3/0.9).
     identity_hits = 0
     identity_same_id_present = 0
     for local_id in local_vectors:
@@ -221,23 +218,41 @@ def main() -> None:
         f"have a same-numbered official counterpart; {identity_hits} of those match EXACTLY"
     )
 
-    # (ii) independent vector-distance matching.
-    result = match_vote_vectors(local_vectors, official_vectors)
+    try:
+        result = match_vote_vectors(local_vectors, official_vectors)
+    except VectorShapeError as error:
+        print("\n(ii) vector-distance matching:")
+        print(f"  vector shape refusal: {error}")
+        print("  terminal verdict: REFUSED")
+        return 2
+
     print("\n(ii) vector-distance matching:")
-    print(
-        f"  exact matches: {result.exact_match_count}/{len(local_vectors)} ({result.exact_match_rate:.1%})"
-    )
+    print(f"  ambiguities: {len(result.ambiguities)}")
+    for ambiguity in result.ambiguities:
+        print(f"    {ambiguity}")
+    print(f"  exact-claim conflicts: {len(result.conflicts)}")
+    for conflict in result.conflicts:
+        print(f"    {conflict}")
+    print(f"  unmappable local mesas: {len(result.unmappable_local_ids)}")
+    for local_id in result.unmappable_local_ids:
+        print(f"    {local_id}")
+    print(f"  exact numerator: {result.exact_match_count}")
+    print(f"  exact denominator: {result.exact_match_denominator}")
+    print(f"  exact matches: {result.exact_match_rate:.1%}")
     print(f"  injective: {result.injective}")
-    print(f"  conflicts: {result.conflicts}")
-    print(f"  passes >=90% threshold: {result.passes_threshold(0.9)}")
 
     dist_counts: dict[int, int] = {}
-    for d in result.best_match_distance.values():
-        dist_counts[d] = dist_counts.get(d, 0) + 1
-    print("\n  best-match-distance distribution (distance -> count of local mesas):")
-    for d in sorted(dist_counts):
-        print(f"    {d}: {dist_counts[d]}")
+    for distance in result.best_match_distance.values():
+        dist_counts[distance] = dist_counts.get(distance, 0) + 1
+    print("  candidate-only distance distribution (distance -> local mesa count):")
+    for distance in sorted(dist_counts):
+        print(f"    {distance}: {dist_counts[distance]}")
+
+    passes = result.passes_threshold(0.9)
+    print(f"  passes >=90% threshold: {passes}")
+    print(f"  terminal verdict: {'PASS' if passes else 'BLOCKED'}")
+    return 0 if passes else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
