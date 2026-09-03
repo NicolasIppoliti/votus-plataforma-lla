@@ -545,9 +545,105 @@ export async function runReleaseGateCli(
 	await dependencies.execute(plan);
 }
 
+export const CLEANUP_CATEGORY = {
+	SERVER_STOP: "SERVER_STOP",
+	SERVER_VERIFICATION: "SERVER_VERIFICATION",
+	RESERVATION_RELEASE: "RESERVATION_RELEASE",
+	OWNERSHIP_MARKER: "OWNERSHIP_MARKER",
+	STACK_STOP: "STACK_STOP",
+	OWNED_CONTAINER_CLEANUP: "OWNED_CONTAINER_CLEANUP",
+	OWNED_VOLUME_CLEANUP: "OWNED_VOLUME_CLEANUP",
+	WORKDIR_REMOVE: "WORKDIR_REMOVE",
+	CONTAINER_RESIDUAL_CHECK: "CONTAINER_RESIDUAL_CHECK",
+	VOLUME_RESIDUAL_CHECK: "VOLUME_RESIDUAL_CHECK",
+	WORKDIR_RESIDUAL_CHECK: "WORKDIR_RESIDUAL_CHECK",
+} as const;
+
+export type CleanupCategory =
+	(typeof CLEANUP_CATEGORY)[keyof typeof CLEANUP_CATEGORY];
+
+export interface CleanupDiagnosticFailure {
+	readonly category: CleanupCategory;
+	readonly failureCount: number;
+}
+
+export interface CleanupDiagnostics {
+	readonly schemaVersion: 1;
+	readonly failures: readonly CleanupDiagnosticFailure[];
+}
+
+interface CleanupFailure {
+	category: CleanupCategory;
+	error: unknown;
+}
+
+const CLEANUP_CATEGORIES = Object.values(CLEANUP_CATEGORY);
+const CLEANUP_DIAGNOSTICS_PREFIX = "E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS ";
+
+function flattenErrors(error: unknown, flattened: unknown[] = []): unknown[] {
+	if (error instanceof AggregateError)
+		for (const nested of error.errors) flattenErrors(nested, flattened);
+	else flattened.push(error);
+	return flattened;
+}
+
+export class ReleaseGateCleanupError extends AggregateError {
+	readonly diagnostics: CleanupDiagnostics;
+
+	constructor(failures: readonly CleanupFailure[], message = "cleanup failed") {
+		super(
+			failures.flatMap(({ error }) => flattenErrors(error)),
+			message,
+		);
+		this.name = "ReleaseGateCleanupError";
+		this.diagnostics = {
+			schemaVersion: 1,
+			failures: CLEANUP_CATEGORIES.flatMap((category) => {
+				const failureCount = failures.reduce(
+					(count, failure) =>
+						failure.category === category
+							? count + flattenErrors(failure.error).length
+							: count,
+					0,
+				);
+				return failureCount === 0 ? [] : [{ category, failureCount }];
+			}),
+		};
+	}
+}
+
+function findCleanupError(error: unknown): ReleaseGateCleanupError | undefined {
+	if (error instanceof ReleaseGateCleanupError) return error;
+	if (error instanceof AggregateError)
+		for (const nested of error.errors) {
+			const cleanupError = findCleanupError(nested);
+			if (cleanupError) return cleanupError;
+		}
+	if (error instanceof Error && "cause" in error)
+		return findCleanupError(
+			(error as Error & { cause?: unknown }).cause,
+		);
+	return undefined;
+}
+
+export function cleanupDiagnosticsLine(error: unknown): string | undefined {
+	const cleanupError = findCleanupError(error);
+	return cleanupError
+		? `${CLEANUP_DIAGNOSTICS_PREFIX}${JSON.stringify(cleanupError.diagnostics)}`
+		: undefined;
+}
+
 function collect(errors: unknown[], error: unknown): void {
 	if (error instanceof AggregateError) errors.push(...error.errors);
 	else errors.push(error);
+}
+
+function recordCleanupFailure(
+	failures: CleanupFailure[],
+	category: CleanupCategory,
+	error: unknown,
+): void {
+	failures.push({ category, error });
 }
 
 export async function runOwnedCleanup(
@@ -624,55 +720,72 @@ function removeOwnedVolumes<TServer>(
 async function verifyCleanupResiduals<TServer>(
 	ownership: GateOwnership,
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
+	failures: CleanupFailure[],
 ): Promise<void> {
-	const errors: unknown[] = [];
-	for (const listResources of [
-		dependencies.listOwnedContainers,
-		dependencies.listOwnedVolumes,
-	])
+	for (const [category, listResources] of [
+		[CLEANUP_CATEGORY.CONTAINER_RESIDUAL_CHECK, dependencies.listOwnedContainers],
+		[CLEANUP_CATEGORY.VOLUME_RESIDUAL_CHECK, dependencies.listOwnedVolumes],
+	] as const)
 		try {
 			if (listResources(ownership.projectId).length > 0)
-				errors.push(
+				recordCleanupFailure(
+					failures,
+					category,
 					new Error("disposable Supabase cleanup left owned Docker state"),
 				);
-		} catch {
-			errors.push(
-				new Error("disposable Supabase cleanup left owned Docker state"),
-			);
+		} catch (error) {
+			recordCleanupFailure(failures, category, error);
 		}
 	try {
 		if (dependencies.workdirExists(ownership.workdir))
-			errors.push(new Error("disposable workdir still exists"));
+			recordCleanupFailure(
+				failures,
+				CLEANUP_CATEGORY.WORKDIR_RESIDUAL_CHECK,
+				new Error("disposable workdir still exists"),
+			);
 	} catch (error) {
-		collect(errors, error);
+		recordCleanupFailure(
+			failures,
+			CLEANUP_CATEGORY.WORKDIR_RESIDUAL_CHECK,
+			error,
+		);
 	}
-	if (errors.length > 0)
-		throw new AggregateError(errors, "residual cleanup verification failed");
 }
 
 export async function cleanupReleaseGate<TServer>(
 	state: ReleaseGateCleanupState<TServer>,
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
 ): Promise<void> {
-	const errors: unknown[] = [];
-	if (state.servers)
-		try {
-			await runOwnedServerCleanup(
-				state.servers,
-				dependencies.stopServer,
-				dependencies.verifyServerStopped,
-			);
-		} catch (error) {
-			collect(errors, error);
-		}
+	const failures: CleanupFailure[] = [];
+	await runOwnedServerCleanup(
+		state.servers ?? [],
+		async (server) => {
+			try {
+				await dependencies.stopServer(server);
+			} catch (error) {
+				recordCleanupFailure(failures, CLEANUP_CATEGORY.SERVER_STOP, error);
+			}
+		},
+		async (server) => {
+			try {
+				await dependencies.verifyServerStopped(server);
+			} catch (error) {
+				recordCleanupFailure(
+					failures,
+					CLEANUP_CATEGORY.SERVER_VERIFICATION,
+					error,
+				);
+			}
+		},
+	);
 	for (const reservation of state.reservations ?? [])
 		try {
 			await reservation.release();
 		} catch (error) {
-			collect(errors, error);
+			recordCleanupFailure(failures, CLEANUP_CATEGORY.RESERVATION_RELEASE, error);
 		}
 	if (!state.ownership) {
-		if (errors.length > 0) throw new AggregateError(errors, "cleanup failed");
+		if (failures.length > 0) throw new ReleaseGateCleanupError(failures);
 		return;
 	}
 	const ownership = state.ownership;
@@ -688,12 +801,12 @@ export async function cleanupReleaseGate<TServer>(
 			marker,
 		);
 	} catch (error) {
-		collect(errors, error);
+		recordCleanupFailure(failures, CLEANUP_CATEGORY.OWNERSHIP_MARKER, error);
 	}
-	try {
-		await runOwnedCleanup(
-			actions,
-			async (action) => {
+	await runOwnedCleanup(
+		actions,
+		async (action) => {
+			try {
 				if (action.kind === "stop-stack" && state.stackMutationAttempted)
 					await dependencies.stopStack(ownership.workdir, action.projectId);
 				else if (
@@ -708,13 +821,21 @@ export async function cleanupReleaseGate<TServer>(
 					await removeOwnedVolumes(action.projectId, dependencies);
 				else if (action.kind === "remove-workdir")
 					await dependencies.removeWorkdir(action.workdir);
-			},
-			() => verifyCleanupResiduals(ownership, dependencies),
-		);
-	} catch (error) {
-		collect(errors, error);
-	}
-	if (errors.length > 0) throw new AggregateError(errors, "cleanup failed");
+			} catch (error) {
+				const category =
+					action.kind === "stop-stack"
+						? CLEANUP_CATEGORY.STACK_STOP
+						: action.kind === "remove-owned-containers"
+							? CLEANUP_CATEGORY.OWNED_CONTAINER_CLEANUP
+							: action.kind === "remove-owned-volumes"
+								? CLEANUP_CATEGORY.OWNED_VOLUME_CLEANUP
+								: CLEANUP_CATEGORY.WORKDIR_REMOVE;
+				recordCleanupFailure(failures, category, error);
+			}
+		},
+		() => verifyCleanupResiduals(ownership, dependencies, failures),
+	);
+	if (failures.length > 0) throw new ReleaseGateCleanupError(failures);
 }
 
 export function establishOwnership(

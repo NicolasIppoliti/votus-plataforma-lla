@@ -37,6 +37,7 @@ import {
 	assertSyntheticMigrationDoesNotCollide,
 	assertTs7Version,
 	migrationVersionFromFileName,
+	cleanupDiagnosticsLine,
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
@@ -976,9 +977,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 				),
 			])
 				.catch((error: unknown) =>
-					process.stderr.write(
-						`E2E signal cleanup failed: ${error instanceof Error ? error.message : "unknown"}\n`,
-					),
+					reportReleaseGateFailure("E2E signal cleanup failed", error),
 				)
 				.finally(() => {
 					emitTiming();
@@ -1016,6 +1015,16 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 						: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
 	);
 }
+export function reportReleaseGateFailure(
+	label: string,
+	error: unknown,
+	writeError: (chunk: string) => void = (chunk) => process.stderr.write(chunk),
+): void {
+	writeError(`${label}: details redacted\n`);
+	const diagnostics = cleanupDiagnosticsLine(error);
+	if (diagnostics) writeError(`${diagnostics}\n`);
+}
+
 export interface ReleaseGateMainDependencies {
 	executePlan?(plan: ReleaseGatePlan): Promise<void>;
 	writeOutput?(chunk: string): void;
@@ -1037,7 +1046,6 @@ export async function releaseGateMain(
 const directEntry = process.argv[1];
 if (directEntry && path.resolve(directEntry) === fileURLToPath(import.meta.url))
 	void releaseGateMain().catch((error: unknown) => {
-		const message = error instanceof Error ? error.message : "unknown failure";
-		process.stderr.write(`E2E release gate failed: ${message}\n`);
+		reportReleaseGateFailure("E2E release gate failed", error);
 		process.exitCode = 1;
 	});
