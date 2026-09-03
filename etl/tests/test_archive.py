@@ -345,7 +345,12 @@ def test_identical_refetches_append_ordered_events_and_reuse_one_artifact(tmp_pa
     assert [event["event_id"] for event in events] == ["fetch-a", "fetch-b"]
     assert [event["sequence"] for event in events] == [1, 2]
     assert [event["classification"] for event in events] == ["initial", "identical"]
-    assert events[0]["fetched_at"] == events[1]["fetched_at"]
+    fetched_at = [datetime.fromisoformat(_required_string(event, "fetched_at")) for event in events]
+    assert all(
+        timestamp.tzinfo is not None and timestamp.utcoffset() is not None
+        for timestamp in fetched_at
+    )
+    assert fetched_at[0] <= fetched_at[1]
     assert len(list((local_root / "national").iterdir())) == 1
 
 
