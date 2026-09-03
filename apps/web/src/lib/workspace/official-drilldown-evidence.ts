@@ -45,10 +45,14 @@ interface OfficialDrilldownEvidenceOk {
   reference: OfficialReferenceEvidence; provenance: OfficialProvenanceEvidence;
 }
 interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
-interface OfficialDrilldownEvidenceState {
-  status: Exclude<OfficialDrilldownEvidenceStatus, typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK>; evidence?: OfficialRefusalPartEvidence[];
+interface OfficialDrilldownEvidenceAuthorizationDenied {
+  status: typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED;
 }
-export type OfficialDrilldownEvidence = OfficialDrilldownEvidenceOk | OfficialDrilldownEvidenceState;
+interface OfficialDrilldownEvidenceState {
+  status: Exclude<OfficialDrilldownEvidenceStatus, typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK | typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED>;
+  evidence?: OfficialRefusalPartEvidence[];
+}
+export type OfficialDrilldownEvidence = OfficialDrilldownEvidenceOk | OfficialDrilldownEvidenceAuthorizationDenied | OfficialDrilldownEvidenceState;
 
 type Raw = Record<string, unknown>;
 const raw = (value: unknown): Raw | null =>
@@ -93,7 +97,7 @@ function refusalEvidence(part: Raw, name: string): OfficialRefusalPartEvidence |
   if (!("counts" in part ? validCounts(part["counts"]) : true) || "total" in part && !uint(part["total"]) || "reason" in part && !text(part["reason"]) || !exclusions || !sourceExclusions) return null;
   const counts = raw(part["counts"]); return { part: name, ...(text(part["reason"]) ? { reason: part["reason"] } : {}), ...(counts && Object.keys(counts).length ? { counts: { ...counts } as Record<string, number> } : {}), ...(exclusions.length ? { exclusions } : {}), ...(sourceExclusions.length ? { sourceExclusions } : {}) };
 }
-function coherentState(parts: Raw[]): OfficialDrilldownEvidenceState | null {
+function coherentState(parts: Raw[]): OfficialDrilldownEvidenceState | OfficialDrilldownEvidenceAuthorizationDenied | null {
   const statuses = parts.map((part) => part["status"]);
   if (!statuses.every((status) => status === statuses[0])) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
   const status = statuses[0];
@@ -103,7 +107,7 @@ function coherentState(parts: Raw[]): OfficialDrilldownEvidenceState | null {
   if (status === "authorization_denied") {
     const authorization = parts[0]?.["authorization_status"];
     return parts.every((part) => text(part["authorization_status"]) && part["authorization_status"] === authorization && authorization !== "authorized" && part["truncated"] === false)
-      ? state(OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED)
+      ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED }
       : { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
   }
   if (status === "payload_too_large") return parts.every((part) => part["authorization_status"] === "authorized" && part["truncated"] === true)
