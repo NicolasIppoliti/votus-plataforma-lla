@@ -36,7 +36,28 @@ from etl.crosswalk import (
     OFFICIAL_VOTOS_TIPO_BY_COLUMN,
 )
 from etl.ingest.fiscalizacion import FiscalizacionSchemaError, ingest_fiscalizacion
+from etl.jurisdiction import normalize_distrito_code, normalize_seccion_code
 from vote_vector_match import VectorShapeError, match_vote_vectors
+
+OFFICIAL_REQUIRED_FIELDS = frozenset(
+    {
+        "año",
+        "eleccion_tipo",
+        "distrito_id",
+        "seccion_id",
+        "mesa_id",
+        "cargo_nombre",
+        "agrupacion_nombre",
+        "votos_tipo",
+        "votos_cantidad",
+    }
+)
+OFFICIAL_DIMENSION_BY_AGRUPACION = {
+    value: key for key, value in OFFICIAL_AGRUPACION_NAME_BY_COLUMN.items()
+}
+OFFICIAL_DIMENSION_BY_VOTOS_TIPO = {
+    value: key for key, value in OFFICIAL_VOTOS_TIPO_BY_COLUMN.items()
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -81,8 +102,8 @@ def load_fiscalizacion_vectors(path: str | Path) -> LoaderResult:
     return LoaderResult(tuple(vectors), tuple(problems))
 
 
-def _report(problems: tuple[InputProblem, ...]) -> None:
-    print("--- local input problems ---")
+def _report(problems: tuple[InputProblem, ...], heading: str = "local") -> None:
+    print(f"--- {heading} input problems ---")
     grouped: dict[str, list[InputProblem]] = defaultdict(list)
     for problem in sorted(
         problems,
@@ -92,42 +113,120 @@ def _report(problems: tuple[InputProblem, ...]) -> None:
     for reason, entries in grouped.items():
         print(f"{reason}: {len(entries)} problem(s)")
         for problem in entries[:5]:
-            mesa = (
-                f"mesa {problem.mesa_id}"
-                if problem.mesa_id is not None
-                else "unknown mesa"
+            mesa = f"mesa {problem.mesa_id}" if problem.mesa_id else "unknown mesa"
+            row = (
+                f", source row {problem.source_row_index}"
+                if problem.source_row_index >= 0
+                else ""
             )
-            print(f"  {mesa}, source row {problem.source_row_index}")
+            print(f"  {mesa}{row}")
         if (omitted := len(entries) - 5) > 0:
             print(f"  omitted {omitted} additional problem(s)")
 
 
-def load_official_vectors(rows_json_path: str) -> dict[str, tuple[int, ...]]:
-    with open(rows_json_path, encoding="utf-8") as f:
-        rows = json.load(f)
+def _official_quantity(value: object) -> tuple[int | None, str | None]:
+    if value is None or isinstance(value, str) and not value.strip():
+        return None, "missing_official_quantity"
+    if isinstance(value, (bool, float)):
+        return None, "malformed_official_quantity"
+    if isinstance(value, int):
+        return (value, "negative_official_quantity") if value < 0 else (value, None)
+    if not isinstance(value, str):
+        return None, "malformed_official_quantity"
+    if value.startswith("-") and value[1:].isascii() and value[1:].isdecimal():
+        return None, "negative_official_quantity"
+    if not value.isascii() or not value.isdecimal():
+        return None, "malformed_official_quantity"
+    if len(value) > 19:
+        return None, "malformed_official_quantity"
+    return int(value), None
+
+
+def _official_dimension(row: dict[str, object]) -> str | None:
+    votos_tipo = row["votos_tipo"]
+    mapping, value = (
+        (OFFICIAL_DIMENSION_BY_AGRUPACION, row["agrupacion_nombre"])
+        if votos_tipo == "POSITIVO"
+        else (OFFICIAL_DIMENSION_BY_VOTOS_TIPO, votos_tipo)
+    )
+    return mapping.get(value) if isinstance(value, str) else None
+
+
+def load_official_vectors(rows_json_path: str | Path) -> LoaderResult:
+    try:
+        with Path(rows_json_path).open(encoding="utf-8") as source:
+            rows = json.load(source)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return LoaderResult((), (InputProblem("official_schema_refusal", None, -1),))
+    if not isinstance(rows, list):
+        return LoaderResult((), (InputProblem("official_schema_refusal", None, -1),))
 
     by_mesa: dict[str, dict[str, int]] = {}
-    for row in rows:
-        mesa_id = row["mesa_id"]
-        agrupacion = row["agrupacion_nombre"]
-        votos_tipo = row["votos_tipo"]
-        cantidad = int(row["votos_cantidad"] or 0)
-        bucket = by_mesa.setdefault(mesa_id, {})
-        if votos_tipo == "POSITIVO":
-            bucket[agrupacion] = bucket.get(agrupacion, 0) + cantidad
-        elif votos_tipo in ("EN BLANCO", "IMPUGNADO"):
-            bucket[votos_tipo] = bucket.get(votos_tipo, 0) + cantidad
+    invalid_mesas: set[str] = set()
+    problems: list[InputProblem] = []
+    for raw_row in rows:
+        if (
+            not isinstance(raw_row, dict)
+            or not OFFICIAL_REQUIRED_FIELDS <= raw_row.keys()
+        ):
+            problems.append(InputProblem("official_schema_refusal", None, -1))
+            continue
+        mesa = raw_row["mesa_id"]
+        if (
+            not isinstance(mesa, str)
+            or not 1 <= len(mesa) <= 5
+            or not mesa.isascii()
+            or not mesa.isdecimal()
+            or not any(character != "0" for character in mesa)
+        ):
+            problems.append(InputProblem("malformed_official_mesa_id", None, -1))
+            continue
+        if (
+            raw_row["año"] != 2025
+            or raw_row["eleccion_tipo"] != "GENERALES"
+            or not isinstance(raw_row["distrito_id"], str)
+            or normalize_distrito_code(raw_row["distrito_id"]) != "02"
+            or not isinstance(raw_row["seccion_id"], str)
+            or normalize_seccion_code(raw_row["seccion_id"]) != "027"
+            or raw_row["cargo_nombre"] != "DIPUTADO NACIONAL"
+        ):
+            problems.append(InputProblem("official_scope_mismatch", mesa, -1))
+            invalid_mesas.add(mesa)
+            by_mesa.setdefault(mesa, {})
+            continue
+        quantity, quantity_problem = _official_quantity(raw_row["votos_cantidad"])
+        if quantity_problem:
+            problems.append(InputProblem(quantity_problem, mesa, -1))
+            invalid_mesas.add(mesa)
+            by_mesa.setdefault(mesa, {})
+            continue
+        dimension = _official_dimension(raw_row)
+        if dimension is None:
+            problems.append(InputProblem("unmappable_official_row", mesa, -1))
+            invalid_mesas.add(mesa)
+            by_mesa.setdefault(mesa, {})
+            continue
+        bucket = by_mesa.setdefault(mesa, {})
+        if dimension in bucket:
+            problems.append(
+                InputProblem("duplicate_official_dimension_conflict", mesa, -1)
+            )
+            invalid_mesas.add(mesa)
+            continue
+        assert quantity is not None
+        bucket[dimension] = quantity
 
-    vectors: dict[str, tuple[int, ...]] = {}
-    for mesa_id, bucket in by_mesa.items():
-        values = []
-        for col in FISCALIZACION_VOTE_COLUMNS:
-            if col in OFFICIAL_AGRUPACION_NAME_BY_COLUMN:
-                values.append(bucket.get(OFFICIAL_AGRUPACION_NAME_BY_COLUMN[col], 0))
-            else:
-                values.append(bucket.get(OFFICIAL_VOTOS_TIPO_BY_COLUMN[col], 0))
-        vectors[mesa_id] = tuple(values)
-    return vectors
+    vectors = []
+    dimensions = set(FISCALIZACION_VOTE_COLUMNS)
+    for mesa, bucket in sorted(by_mesa.items()):
+        if set(bucket) != dimensions:
+            problems.append(InputProblem("incomplete_official_vector", mesa, -1))
+            invalid_mesas.add(mesa)
+        if mesa not in invalid_mesas:
+            vectors.append(
+                (mesa, tuple(bucket[column] for column in FISCALIZACION_VOTE_COLUMNS))
+            )
+    return LoaderResult(tuple(vectors), tuple(problems))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -144,8 +243,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("terminal verdict: REFUSED")
         return 1
 
-    official_vectors = load_official_vectors(args.official_json)
-    print(f"official mesas: {len(official_vectors)}")
+    official = load_official_vectors(args.official_json)
+    official_vectors = dict(official.vectors)
+    print(f"official mesas parsed (usable): {len(official_vectors)}")
+    if official.problems:
+        _report(official.problems, "official")
+        print("terminal verdict: REFUSED")
+        return 2
 
     identity_hits = 0
     identity_same_id_present = 0
@@ -164,7 +268,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except VectorShapeError as error:
         print("\n(ii) vector-distance matching (NON-AUTHORITATIVE):")
         print(f"  vector shape refusal: {error}")
-        print("  official validation pending PR2b")
         print("  terminal verdict: REFUSED")
         return 2
 
@@ -190,10 +293,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     for distance in sorted(dist_counts):
         print(f"    {distance}: {dist_counts[distance]}")
 
-    print(f"  diagnostic passes >=90% threshold: {result.passes_threshold(0.9)}")
-    print("  official validation pending PR2b")
-    print("  terminal verdict: REFUSED")
-    return 2
+    passes_threshold = result.passes_threshold(0.9)
+    print(f"  diagnostic passes >=90% threshold: {passes_threshold}")
+    print(f"  terminal verdict: {'PASS' if passes_threshold else 'BLOCKED'}")
+    return 0 if passes_threshold else 1
 
 
 if __name__ == "__main__":

@@ -8,13 +8,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from etl.crosswalk import (
     FISCALIZACION_VOTE_COLUMNS,
     OFFICIAL_AGRUPACION_NAME_BY_COLUMN,
     OFFICIAL_VOTOS_TIPO_BY_COLUMN,
 )
+from run_crosswalk_spike import load_official_vectors
 
 SCRIPT = Path(__file__).with_name("run_crosswalk_spike.py")
+OFFICIAL_SCOPE = {
+    "año": 2025,
+    "eleccion_tipo": "GENERALES",
+    "distrito_id": "02",
+    "seccion_id": "027",
+    "cargo_nombre": "DIPUTADO NACIONAL",
+}
 
 
 def _local_csv(path: Path, rows: list[dict[str, str | int]]) -> None:
@@ -42,6 +51,7 @@ def _complete_official_rows(mesa_order: tuple[str, ...]) -> list[dict[str, str |
     for mesa_id in mesa_order:
         rows.extend(
             {
+                **OFFICIAL_SCOPE,
                 "mesa_id": mesa_id,
                 "agrupacion_nombre": agrupacion,
                 "votos_tipo": "POSITIVO",
@@ -51,6 +61,7 @@ def _complete_official_rows(mesa_order: tuple[str, ...]) -> list[dict[str, str |
         )
         rows.extend(
             {
+                **OFFICIAL_SCOPE,
                 "mesa_id": mesa_id,
                 "agrupacion_nombre": OFFICIAL_AGRUPACION_NAME_BY_COLUMN[
                     "La Libertad Avanza"
@@ -61,6 +72,23 @@ def _complete_official_rows(mesa_order: tuple[str, ...]) -> list[dict[str, str |
             for votos_tipo in OFFICIAL_VOTOS_TIPO_BY_COLUMN.values()
         )
     return rows
+
+
+def _official_row(**overrides: object) -> dict[str, object]:
+    return {
+        **OFFICIAL_SCOPE,
+        "mesa_id": "1",
+        "agrupacion_nombre": OFFICIAL_AGRUPACION_NAME_BY_COLUMN["La Libertad Avanza"],
+        "votos_tipo": "POSITIVO",
+        "votos_cantidad": 0,
+        **overrides,
+    }
+
+
+def _load_official(tmp_path: Path, payload: object):
+    official = tmp_path / "official.json"
+    official.write_text(json.dumps(payload), encoding="utf-8")
+    return load_official_vectors(official)
 
 
 def _run(fiscalizacion: Path, official: Path) -> subprocess.CompletedProcess[str]:
@@ -77,6 +105,37 @@ def _run(fiscalizacion: Path, official: Path) -> subprocess.CompletedProcess[str
         check=False,
         text=True,
     )
+
+
+def test_cli_refuses_invalid_utf8_official_input(tmp_path):
+    fiscalizacion = tmp_path / "local.csv"
+    _local_csv(fiscalizacion, [{"Escuela": "A", "Mesa": "Mesa 1", **_votes()}])
+    official = tmp_path / "official.json"
+    official.write_bytes(b"RAW_BYTES_SENTINEL\xff")
+
+    result = _run(fiscalizacion, official)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 2
+    assert "official_schema_refusal" in output
+    assert "Traceback" not in output
+    assert "RAW_BYTES_SENTINEL" not in output
+
+
+def test_cli_refuses_oversized_official_mesa_without_echo(tmp_path):
+    fiscalizacion = tmp_path / "local.csv"
+    _local_csv(fiscalizacion, [{"Escuela": "A", "Mesa": "Mesa 1", **_votes()}])
+    sentinel = "9" * 100_000
+    official = tmp_path / "official.json"
+    official.write_text(json.dumps([_official_row(mesa_id=sentinel)]), encoding="utf-8")
+
+    result = _run(fiscalizacion, official)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 2
+    assert "malformed_official_mesa_id" in output
+    assert sentinel not in output
+    assert len(output) < 2_000
 
 
 def test_loader_projects_personal_columns_before_public_result(tmp_path, capsys):
@@ -223,27 +282,160 @@ def test_cli_reports_bounded_duplicate_problems_from_production_parser(tmp_path)
     assert "PRIVATE_RAW_SENTINEL" not in result.stdout
 
 
-def test_cli_reports_deterministic_ambiguity_but_refuses_pending_official_validation(
-    tmp_path,
-):
+def test_cli_reports_deterministic_ambiguity_from_trusted_official_input(tmp_path):
     fiscalizacion = tmp_path / "local.csv"
     _local_csv(fiscalizacion, [{"Escuela": "A", "Mesa": "Mesa 1", **_votes()}])
 
     outputs = []
-    for mesa_order in (("z", "a"), ("a", "z")):
+    for mesa_order in (("2", "3"), ("3", "2")):
         official = tmp_path / f"official-{'-'.join(mesa_order)}.json"
         official.write_text(
             json.dumps(_complete_official_rows(mesa_order)), encoding="utf-8"
         )
         result = _run(fiscalizacion, official)
 
+        assert result.returncode == 1
+        outputs.append(result.stdout)
+
+    assert outputs[0] == outputs[1]
+    assert "  ambiguities: 1\n    ('1', ('2', '3'))\n" in outputs[0]
+    assert "official validation pending PR2b" not in outputs[0]
+    assert "  terminal verdict: BLOCKED" in outputs[0]
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("año", 2024),
+        ("eleccion_tipo", "PASO"),
+        ("distrito_id", "03"),
+        ("seccion_id", "026"),
+        ("cargo_nombre", "SENADOR NACIONAL"),
+    ],
+)
+def test_cli_refuses_each_official_scope_mismatch(tmp_path, field, bad_value):
+    fiscalizacion = tmp_path / "local.csv"
+    _local_csv(fiscalizacion, [{"Escuela": "A", "Mesa": "Mesa 1", **_votes()}])
+    rows = _complete_official_rows(("1",))
+    for row in rows:
+        row[field] = bad_value
+    official = tmp_path / "official.json"
+    official.write_text(json.dumps(rows), encoding="utf-8")
+
+    result = _run(fiscalizacion, official)
+
+    assert result.returncode == 2
+    assert "official_scope_mismatch: 17 problem(s)" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({}, "official_schema_refusal"),
+        ([{"mesa_id": "1"}], "official_schema_refusal"),
+        *[
+            ([_official_row(mesa_id=value)], "malformed_official_mesa_id")
+            for value in (1, 1.5, True, None, " ", " 1", "١", "1A", "00000")
+        ],
+    ],
+)
+def test_official_loader_refuses_schema_and_nontext_mesa_ids(tmp_path, payload, reason):
+    result = _load_official(tmp_path, payload)
+
+    assert result.vectors == ()
+    assert result.problems[0].reason == reason
+    assert result.problems[0].mesa_id is None
+
+
+def test_official_loader_accepts_maximum_textual_mesa_id(tmp_path):
+    result = _load_official(tmp_path, _complete_official_rows(("99999",)))
+
+    assert result.vectors == (("99999", (0,) * len(FISCALIZACION_VOTE_COLUMNS)),)
+    assert result.problems == ()
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (None, "missing_official_quantity"),
+        ("", "missing_official_quantity"),
+        (True, "malformed_official_quantity"),
+        (1.5, "malformed_official_quantity"),
+        ("nope", "malformed_official_quantity"),
+        (-1, "negative_official_quantity"),
+        (0, None),
+        ("0", None),
+    ],
+)
+def test_official_loader_classifies_quantities_without_coercion(
+    tmp_path, value, reason
+):
+    result = _load_official(tmp_path, [_official_row(votos_cantidad=value)])
+
+    assert {problem.reason for problem in result.problems} == (
+        {reason, "incomplete_official_vector"}
+        if reason
+        else {"incomplete_official_vector"}
+    )
+
+
+def test_official_loader_refuses_unmappable_duplicate_and_incomplete_rows(tmp_path):
+    rows = _complete_official_rows(("1",))
+    rows.extend(
+        [
+            _official_row(agrupacion_nombre="PRIVATE_UNEXPECTED_PARTY"),
+            _official_row(votos_tipo="INVALID_TYPE"),
+            _official_row(),
+        ]
+    )
+    rows.pop(1)
+    result = _load_official(tmp_path, rows)
+
+    assert result.vectors == ()
+    assert {problem.reason for problem in result.problems} == {
+        "duplicate_official_dimension_conflict",
+        "incomplete_official_vector",
+        "unmappable_official_row",
+    }
+
+
+def test_cli_bounds_and_stabilizes_official_refusal_output(tmp_path):
+    fiscalizacion = tmp_path / "local.csv"
+    _local_csv(fiscalizacion, [{"Escuela": "A", "Mesa": "Mesa 1", **_votes()}])
+    quantity_sentinel = "9" * 100_000
+    rows = [
+        _official_row(mesa_id=str(index), agrupacion_nombre="PRIVATE_SENTINEL")
+        for index in range(1, 8)
+    ]
+    rows.append(_official_row(mesa_id="8", votos_cantidad=quantity_sentinel))
+    outputs = []
+    for ordered in (rows, list(reversed(rows))):
+        official = tmp_path / f"official-{len(outputs)}.json"
+        official.write_text(json.dumps(ordered), encoding="utf-8")
+        result = _run(fiscalizacion, official)
         assert result.returncode == 2
         outputs.append(result.stdout)
 
     assert outputs[0] == outputs[1]
-    assert "  ambiguities: 1\n    ('1', ('a', 'z'))\n" in outputs[0]
-    assert "official validation pending PR2b" in outputs[0]
-    assert "  terminal verdict: REFUSED" in outputs[0]
+    assert "unmappable_official_row: 7 problem(s)" in outputs[0]
+    assert "malformed_official_quantity: 1 problem(s)" in outputs[0]
+    assert "omitted 2 additional problem(s)" in outputs[0]
+    assert "PRIVATE_SENTINEL" not in outputs[0]
+    assert quantity_sentinel not in outputs[0]
+    assert "Traceback" not in outputs[0]
+    assert len(outputs[0]) < 2_000
+
+
+def test_cli_passes_only_complete_unambiguous_trusted_vectors(tmp_path):
+    fiscalizacion = tmp_path / "local.csv"
+    _local_csv(fiscalizacion, [{"Escuela": "A", "Mesa": "Mesa 1", **_votes()}])
+    official = tmp_path / "official.json"
+    official.write_text(json.dumps(_complete_official_rows(("1",))), encoding="utf-8")
+
+    result = _run(fiscalizacion, official)
+
+    assert result.returncode == 0
+    assert "terminal verdict: PASS" in result.stdout
 
 
 def test_cli_refuses_local_problems_without_matcher_verdict(tmp_path):
