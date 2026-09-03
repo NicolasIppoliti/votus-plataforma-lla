@@ -939,18 +939,34 @@ describe("base contracts", () => {
 				.find((position) => position > start);
 			return jobs.slice(start, nextStart);
 		};
+		const scope = job("scope");
 		const webStatic = job("web-static");
 		const etlRelease = job("etl-release");
 		const e2eRelease = job("e2e-release");
 		const verify = job("verify");
 
-		expect(jobIds).toEqual(["web-static", "etl-release", "e2e-release", "verify"]);
+		expect(jobIds).toEqual([
+			"scope",
+			"web-static",
+			"etl-release",
+			"e2e-release",
+			"verify",
+		]);
 		expect(workflow).toMatch(/^  pull_request:$/m);
 		expect(workflow).toMatch(/^  push:\n    branches: \[main\]$/m);
 		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
 		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
 		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
 			expect(releaseJob).not.toMatch(/\bif:|\bneeds:|\bstrategy:/);
+
+		expect(scope).toContain("name: scope");
+		expect(scope).toContain("timeout-minutes: 2");
+		expect(scope).toContain("persist-credentials: false");
+		expect(scope).toContain("fetch-depth: 0");
+		expect(scope).toContain("node-version: 24");
+		expect(scope).toContain("--all");
+		expect(scope).toContain("--base \"${{ github.event.pull_request.base.sha }}\"");
+		expect(scope).toContain("--head \"${{ github.sha }}\"");
 
 		expect(webStatic).toContain("timeout-minutes: 10");
 		expect(webStatic).toContain("persist-credentials: false");
@@ -995,18 +1011,21 @@ describe("base contracts", () => {
 
 		expect(verify).toContain("name: verify");
 		expect(verify).toContain("timeout-minutes: 2");
-		expect(verify).toMatch(/needs:\n      - web-static\n      - etl-release\n      - e2e-release/);
+		expect(verify).toMatch(
+			/needs:\n      - scope\n      - web-static\n      - etl-release\n      - e2e-release/,
+		);
 		expect(verify).toContain("if: ${{ always() }}");
+		expect(verify).toContain("${{ needs.scope.result }}");
 		expect(verify).toContain("${{ needs.web-static.result }}");
 		expect(verify).toContain("${{ needs.etl-release.result }}");
 		expect(verify).toContain("${{ needs.e2e-release.result }}");
-		expect(verify.match(/= "success"/g)).toHaveLength(3);
+		expect(verify.match(/= "success"/g)).toHaveLength(4);
 
 		const actionReferences = Array.from(
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(9);
+		expect(actionReferences).toHaveLength(11);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});

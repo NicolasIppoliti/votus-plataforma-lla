@@ -6,6 +6,30 @@ on:
 permissions:
   contents: read
 jobs:
+  scope:
+    name: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+      - name: Classify changed paths
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            node --experimental-strip-types apps/web/scripts/ci-path-scope.ts --all
+          else
+            node --experimental-strip-types apps/web/scripts/ci-path-scope.ts \
+              --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.sha }}"
+          fi
+
   web-static:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -111,6 +135,7 @@ jobs:
   verify:
     name: verify
     needs:
+      - scope
       - web-static
       - etl-release
       - e2e-release
@@ -118,6 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:
+      SCOPE_RESULT: ${{ needs.scope.result }}
       WEB_STATIC_RESULT: ${{ needs.web-static.result }}
       ETL_RELEASE_RESULT: ${{ needs.etl-release.result }}
       E2E_RELEASE_RESULT: ${{ needs.e2e-release.result }}
@@ -125,6 +151,7 @@ jobs:
       - name: Require all release gates
         shell: bash
         run: |
+          test "$SCOPE_RESULT" = "success"
           test "$WEB_STATIC_RESULT" = "success"
           test "$ETL_RELEASE_RESULT" = "success"
           test "$E2E_RELEASE_RESULT" = "success"
