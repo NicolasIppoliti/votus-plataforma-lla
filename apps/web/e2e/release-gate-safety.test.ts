@@ -11,6 +11,9 @@ import type {
 import ReleaseGateReporter from "./release-gate-reporter";
 import {
 	assertSourceInventory,
+	matchingProjectResourcesActive,
+	listOwnedNetworks,
+	removeOwnedNetworks,
 	releaseGateMain,
 } from "../scripts/e2e-release-gate";
 import {
@@ -71,6 +74,7 @@ const ACTIONS: CleanupAction[] = [
 	{ kind: "stop-stack", projectId: OWNERSHIP.projectId },
 	{ kind: "remove-owned-containers", projectId: OWNERSHIP.projectId },
 	{ kind: "remove-owned-volumes", projectId: OWNERSHIP.projectId },
+	{ kind: "remove-owned-networks", projectId: OWNERSHIP.projectId },
 	{ kind: "remove-workdir", workdir: OWNERSHIP.workdir },
 ];
 const ENV = {
@@ -1151,10 +1155,23 @@ describe("base contracts", () => {
 			}),
 		).toThrow("marker mismatch");
 	});
+	it("runs production Docker network adapters with argv-only redaction", () => {
+		const network = `supabase_network_${OWNERSHIP.projectId}`;
+		spawnSync.mockReturnValueOnce({ status: 0, stdout: `${network}\n` });
+		expect(listOwnedNetworks(OWNERSHIP.projectId)).toEqual([network]);
+		expect(spawnSync).toHaveBeenLastCalledWith("docker", ["network", "ls", "--filter", `name=supabase_network_${OWNERSHIP.projectId}`, "--format", "{{.Name}}"], expect.any(Object));
+		spawnSync.mockReturnValueOnce({ status: 0, stdout: "" });
+		removeOwnedNetworks([network, `--force_${OWNERSHIP.projectId}`]);
+		expect(spawnSync).toHaveBeenLastCalledWith("docker", ["network", "rm", "--", network, `--force_${OWNERSHIP.projectId}`], expect.any(Object));
+		spawnSync.mockReturnValueOnce({ status: 1, stdout: "network-enumeration-secret", stderr: "network-enumeration-secret" });
+		expect(() => listOwnedNetworks(OWNERSHIP.projectId)).toThrowError(new Error("failed to enumerate disposable Supabase networks"));
+	});
 	it("runs production cleanup in exact-owned order and verifies residuals", async () => {
 		const events: string[] = [];
 		let containers = [`supabase_db_${OWNERSHIP.projectId}`];
 		let volumes = [`supabase_db_${OWNERSHIP.projectId}`];
+		let networks = [`supabase_network_${OWNERSHIP.projectId}`];
+		let networkProjectId: string | undefined;
 		let workdirExists = true;
 		const dependencies: ReleaseGateCleanupDependencies<never> = {
 			tempRoot: () => "/private/tmp",
@@ -1180,6 +1197,15 @@ describe("base contracts", () => {
 				events.push(`remove-volumes:${names.join(",")}`);
 				volumes = [];
 			},
+			listOwnedNetworks: (projectId) => {
+				networkProjectId = projectId;
+				events.push("list-networks");
+				return networks;
+			},
+			removeNetworks: async (names) => {
+				events.push(`remove-networks:${names.join(",")}`);
+				networks = [];
+			},
 			removeWorkdir: async () => {
 				events.push("remove-workdir");
 				workdirExists = false;
@@ -1199,11 +1225,15 @@ describe("base contracts", () => {
 			`remove-containers:supabase_db_${OWNERSHIP.projectId}`,
 			"list-volumes",
 			`remove-volumes:supabase_db_${OWNERSHIP.projectId}`,
+			"list-networks",
+			`remove-networks:supabase_network_${OWNERSHIP.projectId}`,
 			"remove-workdir",
 			"list-containers",
 			"list-volumes",
+			"list-networks",
 			"verify-workdir",
 		]);
+		expect(networkProjectId).toBe(OWNERSHIP.projectId);
 	});
 	it("reaches container cleanup through production cleanup and refuses foreign names", async () => {
 		const events: string[] = [];
@@ -1224,6 +1254,8 @@ describe("base contracts", () => {
 			},
 			listOwnedVolumes: () => [],
 			removeVolumes: async () => undefined,
+			listOwnedNetworks: () => [],
+			removeNetworks: async () => undefined,
 			removeWorkdir: async () => {
 				events.push("remove-workdir");
 			},
@@ -1260,6 +1292,8 @@ describe("base contracts", () => {
 			removeContainers: async () => undefined,
 			listOwnedVolumes: () => [],
 			removeVolumes: async () => undefined,
+			listOwnedNetworks: () => [],
+			removeNetworks: async () => undefined,
 			removeWorkdir: async () => undefined,
 			workdirExists: () => false,
 		};
@@ -1351,6 +1385,7 @@ describe("base contracts", () => {
 				assertLoopbackSessionCookieDelta([], [invalidCookie], baseUrl),
 			).toThrow("session cookie");
 	});
+	it("keeps stale workdirs live while their canonical network remains", () => { spawnSync.mockReturnValueOnce({ status: 0, stdout: "" }).mockReturnValueOnce({ status: 0, stdout: "" }).mockReturnValueOnce({ status: 0, stdout: `supabase_network_${STALE_EVIDENCE.marker.projectId}\n` }); const active = matchingProjectResourcesActive(STALE_EVIDENCE.marker.projectId); expect(classifyStaleOwnership({ ...STALE_EVIDENCE, projectResourcesActive: active })).toBe("live"); expect(spawnSync).toHaveBeenLastCalledWith("docker", ["network", "ls", "--filter", `name=supabase_network_${STALE_EVIDENCE.marker.projectId}`, "--format", "{{.Name}}"], expect.any(Object)); spawnSync.mockReset(); });
 	it("classifies and plans only proven stale owned workdirs", () => {
 		expect(classifyStaleOwnership(STALE_EVIDENCE)).toBe("reap");
 		expect(planStaleWorkdirReap(STALE_EVIDENCE)).toEqual([
@@ -1397,11 +1432,12 @@ it("continues every cleanup step, verifies residuals, and aggregates failures", 
 				throw new Error("residual state");
 			},
 		),
-	).rejects.toSatisfy((error: AggregateError) => error.errors.length === 4);
+	).rejects.toSatisfy((error: AggregateError) => error.errors.length === 5);
 	expect(reached).toEqual([
 		"stop-stack",
 		"remove-owned-containers",
 		"remove-owned-volumes",
+		"remove-owned-networks",
 		"remove-workdir",
 		"verify",
 	]);
@@ -1720,6 +1756,8 @@ describe("release-gate cleanup diagnostics", () => {
 		removeContainers: async () => undefined,
 		listOwnedVolumes: () => [],
 		removeVolumes: async () => undefined,
+		listOwnedNetworks: () => [],
+		removeNetworks: async () => undefined,
 		removeWorkdir: async () => undefined,
 		workdirExists: () => false,
 		...overrides,
@@ -1782,6 +1820,77 @@ describe("release-gate cleanup diagnostics", () => {
 		expect(reached).toEqual(["workdir"]);
 	});
 
+	it("continues after owned network cleanup and network residual failures", async () => {
+		const network = `supabase_network_${OWNERSHIP.projectId}`, reached: string[] = [];
+		let networkLists = 0;
+		await expect(cleanupReleaseGate(
+			{ ownership: OWNERSHIP, stackMutationAttempted: true },
+			dependencies({
+				removeNetworks: async () => { reached.push("remove-network"); throw new Error(network); },
+				listOwnedContainers: () => (reached.push("container-residual"), []),
+				listOwnedVolumes: () => (reached.push("volume-residual"), []),
+				listOwnedNetworks: () => {
+					if (networkLists++ === 0) return [network];
+					reached.push("network-residual"); throw new Error(network);
+				},
+				removeWorkdir: async () => { reached.push("workdir"); },
+				workdirExists: () => (reached.push("workdir-residual"), false),
+			}),
+		)).rejects.toSatisfy((error) => {
+			const diagnostics = cleanupDiagnosticsLine(error);
+			expect(diagnostics).toContain('"category":"OWNED_NETWORK_CLEANUP","failureCount":1');
+			expect(diagnostics).toContain('"category":"NETWORK_RESIDUAL_CHECK","failureCount":1');
+			expect(diagnostics).not.toContain(network); return true;
+		});
+		expect(reached).toEqual(["container-residual", "volume-residual", "remove-network", "workdir", "container-residual", "volume-residual", "network-residual", "workdir-residual"]);
+	});
+
+	it("categorizes nonempty network residuals without exposing their names", async () => {
+		const network = `supabase_network_${OWNERSHIP.projectId}`;
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies({
+					listOwnedNetworks: () => [network],
+					removeNetworks: async () => undefined,
+				}),
+			),
+		).rejects.toSatisfy((error) => {
+			const diagnostics = cleanupDiagnosticsLine(error);
+			expect(diagnostics).toContain('"category":"NETWORK_RESIDUAL_CHECK","failureCount":1');
+			expect(diagnostics).not.toContain(network);
+			return true;
+		});
+	});
+
+	it.each([
+		"default",
+		"markerless-network",
+		`unrelated_${OWNERSHIP.projectId}`,
+		`prefix_${OWNERSHIP.projectId}_suffix`,
+	])("refuses network candidates without the exact owned network name: %s",
+		async (candidate) => {
+			let removed = false;
+			await expect(
+				cleanupReleaseGate(
+					{ ownership: OWNERSHIP, stackMutationAttempted: true },
+					dependencies({
+						listOwnedNetworks: () => [candidate],
+						removeNetworks: async () => { removed = true; },
+					}),
+				),
+			).rejects.toSatisfy((error: AggregateError) =>
+				error.errors.some(
+					(item) =>
+						item instanceof Error &&
+						item.message ===
+							"refusing to remove a network without the exact owned network name",
+				),
+			);
+			expect(removed).toBe(false);
+		},
+	);
+
 	it.each([
 		["read", async (): Promise<string> => { throw new Error("marker read failed"); }],
 		["parse", async (): Promise<string> => "{"],
@@ -1802,11 +1911,15 @@ describe("release-gate cleanup diagnostics", () => {
 					removeVolumes: async () => {
 						reached.push("volumes");
 					},
+					removeNetworks: async () => {
+						reached.push("networks");
+					},
 					removeWorkdir: async () => {
 						reached.push("workdir");
 					},
 					listOwnedContainers: () => { reached.push("container-residual"); return []; },
 					listOwnedVolumes: () => { reached.push("volume-residual"); return []; },
+					listOwnedNetworks: () => { reached.push("network-residual"); return []; },
 					workdirExists: () => { reached.push("workdir-residual"); return false; },
 				}),
 			),
@@ -1816,7 +1929,7 @@ describe("release-gate cleanup diagnostics", () => {
 					'"category":"OWNERSHIP_MARKER"',
 				) ?? false,
 		);
-		expect(reached).toEqual(["container-residual", "volume-residual", "workdir-residual"]);
+		expect(reached).toEqual(["container-residual", "volume-residual", "network-residual", "workdir-residual"]);
 	});
 
 	it("has no cleanup diagnostics on success", async () => {

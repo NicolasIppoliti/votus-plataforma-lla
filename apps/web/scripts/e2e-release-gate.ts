@@ -510,6 +510,19 @@ function listOwnedVolumes(projectId: string): readonly string[] {
 		throw new Error("failed to enumerate disposable Supabase volumes");
 	return result.stdout.split("\n").filter(Boolean);
 }
+export function listOwnedNetworks(projectId: string): readonly string[] {
+	const result = commandResult("docker", [
+		"network",
+		"ls",
+		"--filter",
+		`name=supabase_network_${projectId}`,
+		"--format",
+		"{{.Name}}",
+	]);
+	if (result.error || result.status !== 0)
+		throw new Error("failed to enumerate disposable Supabase networks");
+	return result.stdout.split("\n").filter(Boolean);
+}
 const RELEASE_GATE_CLEANUP_DEPENDENCIES: ReleaseGateCleanupDependencies<OwnedNextServer> =
 	{
 		tempRoot: () => os.tmpdir(),
@@ -560,9 +573,22 @@ const RELEASE_GATE_CLEANUP_DEPENDENCIES: ReleaseGateCleanupDependencies<OwnedNex
 			);
 			return Promise.resolve();
 		},
+		listOwnedNetworks,
+		removeNetworks: removeOwnedNetworks,
 		removeWorkdir: (workdir) => rm(workdir, { recursive: true }),
 		workdirExists: existsSync,
 	};
+export function removeOwnedNetworks(networks: readonly string[]): Promise<void> {
+	runChecked(
+		"docker",
+		["network", "rm", "--", ...networks],
+		"owned Supabase network cleanup",
+		REPO_ROOT,
+		process.env,
+		15_000,
+	);
+	return Promise.resolve();
+}
 function markerStrings(
 	marker: unknown,
 ): { workdir: string; projectId: string } | undefined {
@@ -621,12 +647,13 @@ function matchingProcessActive(
 		.split("\n")
 		.some((line) => line.includes(workdir) || line.includes(projectId));
 }
-function matchingProjectResourcesActive(
+export function matchingProjectResourcesActive(
 	projectId: string,
 ): boolean | undefined {
 	const checks = [
 		["ps", "-a", "--filter", `name=${projectId}`, "--format", "{{.Names}}"],
 		["volume", "ls", "--filter", `name=${projectId}`, "--format", "{{.Name}}"],
+		["network", "ls", "--filter", `name=supabase_network_${projectId}`, "--format", "{{.Name}}"],
 	] as const;
 	let active = false;
 	for (const args of checks) {

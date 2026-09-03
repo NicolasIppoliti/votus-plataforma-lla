@@ -174,6 +174,8 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	removeContainers(names: readonly string[]): Promise<void>;
 	listOwnedVolumes(projectId: string): readonly string[];
 	removeVolumes(names: readonly string[]): Promise<void>;
+	listOwnedNetworks(projectId: string): readonly string[];
+	removeNetworks(names: readonly string[]): Promise<void>;
 	removeWorkdir(workdir: string): Promise<void>;
 	workdirExists(workdir: string): boolean;
 }
@@ -553,9 +555,11 @@ export const CLEANUP_CATEGORY = {
 	STACK_STOP: "STACK_STOP",
 	OWNED_CONTAINER_CLEANUP: "OWNED_CONTAINER_CLEANUP",
 	OWNED_VOLUME_CLEANUP: "OWNED_VOLUME_CLEANUP",
+	OWNED_NETWORK_CLEANUP: "OWNED_NETWORK_CLEANUP",
 	WORKDIR_REMOVE: "WORKDIR_REMOVE",
 	CONTAINER_RESIDUAL_CHECK: "CONTAINER_RESIDUAL_CHECK",
 	VOLUME_RESIDUAL_CHECK: "VOLUME_RESIDUAL_CHECK",
+	NETWORK_RESIDUAL_CHECK: "NETWORK_RESIDUAL_CHECK",
 	WORKDIR_RESIDUAL_CHECK: "WORKDIR_RESIDUAL_CHECK",
 } as const;
 
@@ -717,6 +721,20 @@ function removeOwnedVolumes<TServer>(
 		: Promise.resolve();
 }
 
+function removeOwnedNetworks<TServer>(
+	projectId: string,
+	dependencies: ReleaseGateCleanupDependencies<TServer>,
+): Promise<void> {
+	const networks = dependencies.listOwnedNetworks(projectId);
+	if (networks.some((name) => name !== `supabase_network_${projectId}`))
+		throw new Error(
+			"refusing to remove a network without the exact owned network name",
+		);
+	return networks.length > 0
+		? dependencies.removeNetworks(networks)
+		: Promise.resolve();
+}
+
 async function verifyCleanupResiduals<TServer>(
 	ownership: GateOwnership,
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
@@ -725,6 +743,7 @@ async function verifyCleanupResiduals<TServer>(
 	for (const [category, listResources] of [
 		[CLEANUP_CATEGORY.CONTAINER_RESIDUAL_CHECK, dependencies.listOwnedContainers],
 		[CLEANUP_CATEGORY.VOLUME_RESIDUAL_CHECK, dependencies.listOwnedVolumes],
+		[CLEANUP_CATEGORY.NETWORK_RESIDUAL_CHECK, dependencies.listOwnedNetworks],
 	] as const)
 		try {
 			if (listResources(ownership.projectId).length > 0)
@@ -819,6 +838,11 @@ export async function cleanupReleaseGate<TServer>(
 					state.stackMutationAttempted
 				)
 					await removeOwnedVolumes(action.projectId, dependencies);
+				else if (
+					action.kind === "remove-owned-networks" &&
+					state.stackMutationAttempted
+				)
+					await removeOwnedNetworks(action.projectId, dependencies);
 				else if (action.kind === "remove-workdir")
 					await dependencies.removeWorkdir(action.workdir);
 			} catch (error) {
@@ -829,7 +853,9 @@ export async function cleanupReleaseGate<TServer>(
 							? CLEANUP_CATEGORY.OWNED_CONTAINER_CLEANUP
 							: action.kind === "remove-owned-volumes"
 								? CLEANUP_CATEGORY.OWNED_VOLUME_CLEANUP
-								: CLEANUP_CATEGORY.WORKDIR_REMOVE;
+								: action.kind === "remove-owned-networks"
+									? CLEANUP_CATEGORY.OWNED_NETWORK_CLEANUP
+									: CLEANUP_CATEGORY.WORKDIR_REMOVE;
 				recordCleanupFailure(failures, category, error);
 			}
 		},
