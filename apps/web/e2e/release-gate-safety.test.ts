@@ -39,6 +39,7 @@ import {
 	assertStackStatus,
 	assertSyntheticMigrationDoesNotCollide,
 	assertTs7Version,
+	cleanupDiagnosticsLine,
 	formatPgTapFailure,
 	cleanupReleaseGate,
 	migrationVersionFromFileName,
@@ -53,6 +54,7 @@ import {
 	type ReleaseGateCleanupDependencies,
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
+import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
 const { spawnSync } = vi.hoisted(() => ({ spawnSync: vi.fn() }));
 
 vi.mock("node:child_process", async (importOriginal) => ({
@@ -1702,5 +1704,144 @@ describe("ReleaseGateReporter", () => {
 		expect(JSON.parse(receipt).results[0]).toMatchObject({
 			status: "interrupted",
 		});
+	});
+});
+
+describe("release-gate cleanup diagnostics", () => {
+	const dependencies = (
+		overrides: Partial<ReleaseGateCleanupDependencies<never>> = {},
+	): ReleaseGateCleanupDependencies<never> => ({
+		tempRoot: () => "/private/tmp",
+		readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
+		stopServer: async () => undefined,
+		verifyServerStopped: async () => undefined,
+		stopStack: async () => undefined,
+		listOwnedContainers: () => [],
+		removeContainers: async () => undefined,
+		listOwnedVolumes: () => [],
+		removeVolumes: async () => undefined,
+		removeWorkdir: async () => undefined,
+		workdirExists: () => false,
+		...overrides,
+	});
+
+	it("continues cleanup after a failure and preserves its diagnostic category", async () => {
+		const reached: string[] = [];
+		const original = new Error("private stop failure");
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies({
+					stopStack: async () => {
+						reached.push("stack");
+						throw original;
+					},
+					removeWorkdir: async () => {
+						reached.push("workdir");
+					},
+				}),
+			),
+		).rejects.toSatisfy((error) => {
+			expect(error).toBeInstanceOf(AggregateError);
+			expect((error as AggregateError).errors).toContain(original);
+			expect(cleanupDiagnosticsLine(error)).toBe(
+				'E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS {"schemaVersion":1,"failures":[{"category":"STACK_STOP","failureCount":1}]}',
+			);
+			return true;
+		});
+		expect(reached).toEqual(["stack", "workdir"]);
+	});
+
+	it("flattens nested failures into canonical category counts without stopping", async () => {
+		const nested = new AggregateError([
+			new Error("first"),
+			new AggregateError([new Error("second")], "nested"),
+		], "outer");
+		const reached: string[] = [];
+		await expect(
+			cleanupReleaseGate(
+				{
+					ownership: OWNERSHIP,
+					stackMutationAttempted: true,
+					reservations: [{ port: 1, release: async () => { throw new Error("port"); } }],
+				},
+				dependencies({
+					stopStack: async () => { throw nested; },
+					removeWorkdir: async () => {
+						reached.push("workdir");
+					},
+				}),
+			),
+		).rejects.toSatisfy((error: AggregateError) => {
+			expect(error.errors).toHaveLength(3);
+			expect(cleanupDiagnosticsLine(error)).toBe(
+				'E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS {"schemaVersion":1,"failures":[{"category":"RESERVATION_RELEASE","failureCount":1},{"category":"STACK_STOP","failureCount":2}]}',
+			);
+			return true;
+		});
+		expect(reached).toEqual(["workdir"]);
+	});
+
+	it.each([
+		["read", async (): Promise<string> => { throw new Error("marker read failed"); }],
+		["parse", async (): Promise<string> => "{"],
+		["mismatch", async (): Promise<string> => JSON.stringify({ ...OWNERSHIP, token: "other" })],
+	] as const)("blocks destructive ownership actions after marker %s failures while reading residuals", async (_kind, readOwnershipMarker) => {
+		const reached: string[] = [];
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies({
+					readOwnershipMarker,
+					stopStack: async () => {
+						reached.push("stack");
+					},
+					removeContainers: async () => {
+						reached.push("containers");
+					},
+					removeVolumes: async () => {
+						reached.push("volumes");
+					},
+					removeWorkdir: async () => {
+						reached.push("workdir");
+					},
+					listOwnedContainers: () => { reached.push("container-residual"); return []; },
+					listOwnedVolumes: () => { reached.push("volume-residual"); return []; },
+					workdirExists: () => { reached.push("workdir-residual"); return false; },
+				}),
+			),
+		).rejects.toSatisfy(
+			(error) =>
+				cleanupDiagnosticsLine(error)?.includes(
+					'"category":"OWNERSHIP_MARKER"',
+				) ?? false,
+		);
+		expect(reached).toEqual(["container-residual", "volume-residual", "workdir-residual"]);
+	});
+
+	it("has no cleanup diagnostics on success", async () => {
+		await expect(cleanupReleaseGate({ ownership: OWNERSHIP, stackMutationAttempted: true }, dependencies())).resolves.toBeUndefined();
+		expect(cleanupDiagnosticsLine(undefined)).toBeUndefined();
+	});
+
+	it("reports one redacted diagnostics line for direct and signal cleanup failures", async () => {
+		const sensitive = new Error("password=secret /private/path token argv host.test:54321 project-id");
+		let cleanup: unknown;
+		try {
+			await cleanupReleaseGate({ stackMutationAttempted: false, reservations: [{ port: 1, release: async () => { throw sensitive; } }] }, dependencies());
+		} catch (error) {
+			cleanup = error;
+		}
+		expect((cleanup as AggregateError).errors).toContain(sensitive);
+		const direct: string[] = [];
+		const signal: string[] = [];
+		reportReleaseGateFailure("E2E release gate failed", new AggregateError([new Error("execution"), cleanup]), (line) => direct.push(line));
+		reportReleaseGateFailure("E2E signal cleanup failed", cleanup, (line) => signal.push(line));
+		for (const value of ["secret", "/private/path", "token", "argv", "host.test", "54321", "project-id"])
+			expect([...direct, ...signal].join("")).not.toContain(value);
+		for (const output of [direct, signal])
+			expect(output.filter((line) => line.startsWith("E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS"))).toHaveLength(1);
+		expect(direct[0]).toBe("E2E release gate failed: details redacted\n");
+		expect(signal[0]).toBe("E2E signal cleanup failed: details redacted\n");
 	});
 });
