@@ -30,7 +30,9 @@ def test_matching_is_injective_two_locals_never_map_to_same_official():
     result = match_vote_vectors(local, official)
 
     claimed = [v for v in result.assignments.values() if v is not None]
-    assert len(claimed) == len(set(claimed)), "injective: no official mesa claimed twice"
+    assert len(claimed) == len(set(claimed)), (
+        "injective: no official mesa claimed twice"
+    )
     assert result.injective is False
     assert len(result.conflicts) == 1
 
@@ -60,7 +62,9 @@ def test_distance_distribution_is_reported_for_every_local_mesa():
 
 def test_pass_threshold_helper_reports_exact_match_rate():
     local = {str(i): (i, 0, 0) for i in range(10)}
-    official = {f"{i:04d}": (i, 0, 0) for i in range(9)}  # mesa 9 has no official counterpart
+    official = {
+        f"{i:04d}": (i, 0, 0) for i in range(9)
+    }  # mesa 9 has no official counterpart
 
     result = match_vote_vectors(local, official)
 
