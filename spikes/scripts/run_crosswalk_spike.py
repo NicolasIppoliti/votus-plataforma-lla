@@ -2,14 +2,14 @@
 
 Reads the real fiscalización CSV directly from its external, uncommitted
 path (never copied into the repo by this script) and the extracted national
-2025 results CSV (also external, gitignored under archive/), applies the
-D9.4 merge-then-validate + collapse rule to get 93 per-mesa vote vectors,
-then calls the tested `match_vote_vectors` against the official DINE
-per-mesa vote vectors for distrito 02 / seccion 027 (Coronel Rosales).
+2025 results CSV (also external, gitignored under archive/). It delegates
+D9.4 parsing to production ingestion before projecting only safe per-mesa
+vote vectors, then runs a non-authoritative `match_vote_vectors` diagnostic
+against the official DINE per-mesa vote vectors for distrito 02 / seccion 027
+(Coronel Rosales).
 
-This script never writes personal data (Nombre/Apellido) anywhere — it
-reads them only to perform the merge (a name-continuity check) and discards
-them immediately after building the vote vector.
+Production ingestion strips Nombre/Apellido from raw bytes before it creates
+any downstream row; this script receives no personal-data values.
 
 Usage:
     uv run --with pytest python run_crosswalk_spike.py \
@@ -20,147 +20,86 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-from collections import OrderedDict
+import sys
+from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
+if __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "etl"))
+
+from etl.crosswalk import (
+    FISCALIZACION_VOTE_COLUMNS,
+    OFFICIAL_AGRUPACION_NAME_BY_COLUMN,
+    OFFICIAL_VOTOS_TIPO_BY_COLUMN,
+)
+from etl.ingest.fiscalizacion import FiscalizacionSchemaError, ingest_fiscalizacion
 from vote_vector_match import VectorShapeError, match_vote_vectors
 
-# Ordered so index i of the fiscalización vector lines up with index i of
-# the official vector built by `_official_vectors_from_rows`.
-FISCALIZACION_VOTE_COLUMNS = [
-    "La Libertad Avanza",
-    "Nuevo Buenos Aires",
-    "Liber.AR",
-    "Frente de Izquierda",
-    "Frente Patriota Federal",
-    "Union Liberal",
-    "Fuerza Patria",
-    "Coalicion Civica",
-    "Proyecto Sur",
-    "Propuesta Federal",
-    "Provincias Unidas",
-    "Potencia",
-    "Union Federal",
-    "Nuevos Aires",
-    "Movimiento Socialista",
-    "En blanco",
-    "Impugnado",
-]
 
-# Curated by inspecting the real DINE `agrupacion_nombre` / `votos_tipo`
-# values for distrito 02 / seccion 027, cargo DIPUTADO NACIONAL (task 0.9
-# evidence). Order matches FISCALIZACION_VOTE_COLUMNS above.
-OFFICIAL_AGRUPACION_BY_COLUMN = {
-    "La Libertad Avanza": "ALIANZA LA LIBERTAD AVANZA",
-    "Nuevo Buenos Aires": "PARTIDO NUEVO BUENOS AIRES",
-    "Liber.AR": "LIBER.AR",
-    "Frente de Izquierda": "FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD",
-    "Frente Patriota Federal": "FRENTE PATRIOTA FEDERAL",
-    "Union Liberal": "UNIÓN LIBERAL",
-    "Fuerza Patria": "ALIANZA FUERZA PATRIA",
-    "Coalicion Civica": "COALICIÓN CÍVICA - A.R.I.",
-    "Proyecto Sur": "MOVIMIENTO POLÍTICO SOCIAL Y CULTURAL PROYECTO SUR",
-    "Propuesta Federal": "PROPUESTA FEDERAL PARA EL CAMBIO",
-    "Provincias Unidas": "ALIANZA PROVINCIAS UNIDAS",
-    "Potencia": "ALIANZA POTENCIA",
-    "Union Federal": "ALIANZA UNIÓN FEDERAL",
-    "Nuevos Aires": "ALIANZA NUEVOS AIRES",
-    "Movimiento Socialista": "MOVIMIENTO AVANZADA SOCIALISTA",
-}
-# "En blanco" / "Impugnado" are matched on votos_tipo, not agrupacion_nombre.
-OFFICIAL_VOTOS_TIPO_BY_COLUMN = {
-    "En blanco": "EN BLANCO",
-    "Impugnado": "IMPUGNADO",
-}
+@dataclass(frozen=True, order=True)
+class InputProblem:
+    reason: str
+    mesa_id: str | None
+    source_row_index: int
 
 
-def _parse_local_mesa_number(raw_mesa: str) -> int | None:
-    # e.g. "Mesa 52" -> 52
-    digits = "".join(ch for ch in raw_mesa if ch.isdigit())
-    return int(digits) if digits else None
+@dataclass(frozen=True)
+class LoaderResult:
+    vectors: tuple[tuple[str, tuple[int, ...]], ...]
+    problems: tuple[InputProblem, ...]
 
 
-def load_fiscalizacion_vectors(
-    path: str,
-) -> tuple[dict[str, tuple[int, ...]], list[str]]:
-    """Apply D9.4 merge-then-validate + collapse, return {local_mesa_id: vector}.
+def load_fiscalizacion_vectors(path: str | Path) -> LoaderResult:
+    """Project production parser output onto privacy-safe diagnostic inputs."""
+    try:
+        parsed = ingest_fiscalizacion(Path(path).read_bytes(), archive_entry_id="spike")
+    except FiscalizacionSchemaError:
+        return LoaderResult((), (InputProblem("local_parser_refused", None, -1),))
 
-    Returns (vectors, notes) — notes records merges/collapses/quarantines for
-    the SPIKE findings doc, never any name.
-    """
-    with open(path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-
-    notes: list[str] = []
-    merged: list[dict[str, str]] = []
-    pending: dict[str, str] | None = None
-
-    for row in rows:
-        mesa_raw = (row.get("Mesa") or "").strip()
-        if mesa_raw:
-            if pending is not None:
-                merged.append(pending)
-            pending = dict(row)
-        else:
-            # Continuation row: merge non-empty trailing columns into pending.
-            if pending is None:
-                notes.append(
-                    "quarantined: empty-Mesa row with no preceding row to merge into"
-                )
-                continue
-            for col in FISCALIZACION_VOTE_COLUMNS:
-                if (row.get(col) or "").strip() and not (
-                    pending.get(col) or ""
-                ).strip():
-                    pending[col] = row[col]
-            notes.append(f"merged continuation row into Mesa {pending.get('Mesa')}")
-    if pending is not None:
-        merged.append(pending)
-
-    # Collapse identical duplicate Mesa rows; quarantine conflicting ones.
-    by_mesa: OrderedDict[int, list[dict[str, str]]] = OrderedDict()
-    for row in merged:
-        mesa_num = _parse_local_mesa_number(row.get("Mesa") or "")
-        if mesa_num is None:
-            notes.append("quarantined: unparseable Mesa value")
-            continue
-        by_mesa.setdefault(mesa_num, []).append(row)
-
-    vectors: dict[str, tuple[int, ...]] = {}
-    for mesa_num, mesa_rows in by_mesa.items():
-        vecs = []
-        has_blank_cell = False
-        for row in mesa_rows:
-            values = []
-            for col in FISCALIZACION_VOTE_COLUMNS:
-                cell = (row.get(col) or "").strip()
-                if cell == "":
-                    has_blank_cell = True
-                    values.append(None)
-                else:
-                    values.append(int(cell))
-            vecs.append(tuple(values))
-        distinct = {v for v in vecs if None not in v}
-        if len(vecs) > 1:
-            if len(distinct) <= 1 and not has_blank_cell:
-                notes.append(
-                    f"collapsed {len(vecs)} identical duplicate rows for Mesa {mesa_num}"
-                )
-            elif len(distinct) > 1:
-                notes.append(
-                    f"quarantined: conflicting duplicate rows for Mesa {mesa_num}"
-                )
-                continue
-        if has_blank_cell:
-            notes.append(
-                f"Mesa {mesa_num}: blank vote cell present, excluded from exact-match vector"
+    problems = [
+        InputProblem(
+            quarantine.reason, str(quarantine.mesa) if quarantine.mesa else None, index
+        )
+        for quarantine in parsed.quarantined
+        for index in quarantine.source_row_indices
+    ]
+    vectors = []
+    for row in parsed.rows:
+        mesa_id = str(row.mesa)
+        source_row_index = row.source_row_indices[0]
+        if any(row.votes[column] is None for column in FISCALIZACION_VOTE_COLUMNS):
+            problems.append(
+                InputProblem("incomplete_local_vector", mesa_id, source_row_index)
             )
             continue
-        vectors[str(mesa_num)] = vecs[0]
+        vectors.append(
+            (mesa_id, tuple(row.votes[column] for column in FISCALIZACION_VOTE_COLUMNS))
+        )
+    return LoaderResult(tuple(vectors), tuple(problems))
 
-    return vectors, notes
+
+def _report(problems: tuple[InputProblem, ...]) -> None:
+    print("--- local input problems ---")
+    grouped: dict[str, list[InputProblem]] = defaultdict(list)
+    for problem in sorted(
+        problems,
+        key=lambda item: (item.reason, item.mesa_id or "", item.source_row_index),
+    ):
+        grouped[problem.reason].append(problem)
+    for reason, entries in grouped.items():
+        print(f"{reason}: {len(entries)} problem(s)")
+        for problem in entries[:5]:
+            mesa = (
+                f"mesa {problem.mesa_id}"
+                if problem.mesa_id is not None
+                else "unknown mesa"
+            )
+            print(f"  {mesa}, source row {problem.source_row_index}")
+        if (omitted := len(entries) - 5) > 0:
+            print(f"  omitted {omitted} additional problem(s)")
 
 
 def load_official_vectors(rows_json_path: str) -> dict[str, tuple[int, ...]]:
@@ -183,8 +122,8 @@ def load_official_vectors(rows_json_path: str) -> dict[str, tuple[int, ...]]:
     for mesa_id, bucket in by_mesa.items():
         values = []
         for col in FISCALIZACION_VOTE_COLUMNS:
-            if col in OFFICIAL_AGRUPACION_BY_COLUMN:
-                values.append(bucket.get(OFFICIAL_AGRUPACION_BY_COLUMN[col], 0))
+            if col in OFFICIAL_AGRUPACION_NAME_BY_COLUMN:
+                values.append(bucket.get(OFFICIAL_AGRUPACION_NAME_BY_COLUMN[col], 0))
             else:
                 values.append(bucket.get(OFFICIAL_VOTOS_TIPO_BY_COLUMN[col], 0))
         vectors[mesa_id] = tuple(values)
@@ -197,21 +136,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--official-json", required=True)
     args = parser.parse_args(argv)
 
-    local_vectors, notes = load_fiscalizacion_vectors(args.fiscalizacion)
-    official_vectors = load_official_vectors(args.official_json)
+    local = load_fiscalizacion_vectors(args.fiscalizacion)
+    local_vectors = dict(local.vectors)
+    print(f"local mesas parsed (usable): {len(local_vectors)}")
+    if local.problems:
+        _report(local.problems)
+        print("terminal verdict: REFUSED")
+        return 1
 
-    print(f"local mesas parsed (usable, no blank cells): {len(local_vectors)}")
+    official_vectors = load_official_vectors(args.official_json)
     print(f"official mesas: {len(official_vectors)}")
-    print("--- parse notes (no personal data) ---")
-    for n in notes:
-        print(" ", n)
 
     identity_hits = 0
     identity_same_id_present = 0
-    for local_id in local_vectors:
+    for local_id, local_vector in local_vectors.items():
         if local_id in official_vectors:
             identity_same_id_present += 1
-            if official_vectors[local_id] == local_vectors[local_id]:
+            if official_vectors[local_id] == local_vector:
                 identity_hits += 1
     print(
         f"\n(i) identity hypothesis: {identity_same_id_present}/{len(local_vectors)} local mesas "
@@ -221,12 +162,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = match_vote_vectors(local_vectors, official_vectors)
     except VectorShapeError as error:
-        print("\n(ii) vector-distance matching:")
+        print("\n(ii) vector-distance matching (NON-AUTHORITATIVE):")
         print(f"  vector shape refusal: {error}")
+        print("  official validation pending PR2b")
         print("  terminal verdict: REFUSED")
         return 2
 
-    print("\n(ii) vector-distance matching:")
+    print("\n(ii) vector-distance matching (NON-AUTHORITATIVE):")
     print(f"  ambiguities: {len(result.ambiguities)}")
     for ambiguity in result.ambiguities:
         print(f"    {ambiguity}")
@@ -248,10 +190,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     for distance in sorted(dist_counts):
         print(f"    {distance}: {dist_counts[distance]}")
 
-    passes = result.passes_threshold(0.9)
-    print(f"  passes >=90% threshold: {passes}")
-    print(f"  terminal verdict: {'PASS' if passes else 'BLOCKED'}")
-    return 0 if passes else 1
+    print(f"  diagnostic passes >=90% threshold: {result.passes_threshold(0.9)}")
+    print("  official validation pending PR2b")
+    print("  terminal verdict: REFUSED")
+    return 2
 
 
 if __name__ == "__main__":
