@@ -259,6 +259,21 @@ function unmappedPartiesRefusal(sides: OfficialComparisonUnmappedSide[]): string
   return `La comparación se rechazó porque contiene identidades partidarias sin mapear. ${details.join(". ")}. No se muestran cifras parciales.`;
 }
 
+function hasOnlyOfficialRenderedEvidence(side: unknown): boolean {
+  if (typeof side !== "object" || side === null || Array.isArray(side)) return false;
+  const result = (side as Record<string, unknown>)["result"];
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
+  const sourceAudit = (result as Record<string, unknown>)["sourceAudit"];
+  return (result as Record<string, unknown>)["sourceKind"] === "official" &&
+    Array.isArray(sourceAudit) &&
+    sourceAudit.every((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+      const audit = entry as Record<string, unknown>;
+      const rows = audit["rows"], votes = audit["votes"];
+      return audit["kind"] === "official" && typeof rows === "number" && Number.isSafeInteger(rows) && rows >= 0 && typeof votes === "number" && Number.isSafeInteger(votes) && votes >= 0;
+    });
+}
+
 function evidenceRefusal(status: string): string {
   if (status === OFFICIAL_COMPARISON_EVIDENCE_STATUS.AUTHORIZATION_DENIED) {
     return "No tiene autorización vigente para consultar toda la comparación.";
@@ -484,6 +499,9 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   }
   if (evidence.status !== OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK) {
     return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} message={evidenceRefusal(evidence.status)} alert />;
+  }
+  if (!hasOnlyOfficialRenderedEvidence(evidence.left) || !hasOnlyOfficialRenderedEvidence(evidence.right)) {
+    return refusalPage("La evidencia oficial autorizada no superó la validación integral y no se muestran cifras.");
   }
 
   const unitId = `${selectedDistrito.code}/${selectedSeccion.code}`;
