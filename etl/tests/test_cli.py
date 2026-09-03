@@ -794,17 +794,24 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
 def test_ingest_cli_streams_selected_national_member_into_real_db_without_unbounded_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The production CLI must keep the extracted results member file-backed."""
     _require_ephemeral_postgres()
 
+    results_csv = NATIONAL_CSV + (
+        "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,2,DIPUTADO NACIONAL,"
+        "136,POSITIVO,70,definitivo\n"
+    )
     companion_csv = (
         "distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
         "2,27,37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79,00001\n"
+        "2,27,37974,OTRO ESTABLECIMIENTO,00003\n"
+        "2,27,88888,ESCUELA DOS,00002\n"
     )
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("resultados2025.csv", NATIONAL_CSV)
+        archive.writestr("resultados2025.csv", results_csv)
         archive.writestr("localesDeVotacionyMesas.csv", companion_csv)
         archive.writestr("ambitosElectorales.csv", "not,the,results,file\n")
 
@@ -906,10 +913,9 @@ def test_ingest_cli_streams_selected_national_member_into_real_db_without_unboun
                 """,
                 (source_id,),
             )
-            assert cur.fetchall() == [
-                ("134", 80, "official", "37974"),
-                ("135", 120, "official", "37974"),
-            ]
+            assert cur.fetchall() == [("136", 70, "official", "88888")]
+        report = capsys.readouterr().err
+        assert "establishment_code_multiple_names: 2 unique key(s)" in report
     finally:
         with conn.cursor() as cur:
             cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
