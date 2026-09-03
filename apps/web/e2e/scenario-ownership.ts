@@ -166,6 +166,27 @@ export function resultNaturalKey(row: ResultNaturalKeyInput): string {
   return `result:${row.archiveEntryId}|${row.electionId}|${row.jurisdictionId}|${row.categoryId}|${row.listId ?? "null"}|${row.sourceKind}`;
 }
 
+export function ownedResultArchiveEntryIds(
+  identity: ResultScenarioIdentity,
+): string[] {
+  return [...new Set([
+    ...identity.archiveEntryIds,
+    ...(identity.comparisonLeftOnlySection
+      ? [identity.comparisonLeftOnlySection.archiveEntryId]
+      : []),
+  ])];
+}
+
+function plannedResultArchiveEntryIds(identity: ResultScenarioIdentity): string[] {
+  return identity.scenario === "municipal"
+    ? [
+        identity.archiveEntryIds[0]!,
+        identity.archiveEntryIds[0]!,
+        identity.archiveEntryIds[2]!,
+      ]
+    : identity.archiveEntryIds;
+}
+
 export function planResultNaturalKeys(spec: string): string[] {
   const identity = resultScenarioIdentity(spec);
   const sourceKinds =
@@ -176,6 +197,7 @@ export function planResultNaturalKeys(spec: string): string[] {
         : identity.scenario === "municipal"
           ? ["official", "official", "fiscalizacion"]
           : ["official", "fiscalizacion"];
+  const resultArchiveEntryIds = plannedResultArchiveEntryIds(identity);
   const resultJurisdictions =
     identity.scenario === "fiscalizacion"
       ? [
@@ -183,7 +205,7 @@ export function planResultNaturalKeys(spec: string): string[] {
           identity.jurisdictionIds[0]!,
           identity.jurisdictionIds[1]!,
         ]
-      : identity.archiveEntryIds.map(() => identity.jurisdictionId);
+      : resultArchiveEntryIds.map(() => identity.jurisdictionId);
   return [
     `category:${identity.categoryName}`,
     ...identity.jurisdictionIds.map((_, index) =>
@@ -198,7 +220,7 @@ export function planResultNaturalKeys(spec: string): string[] {
     ...identity.electionYears.map(
       (year, index) => `election:${year}|${identity.electionRounds[index]}`,
     ),
-        ...identity.archiveEntryIds.map((archiveEntryId, index) =>
+        ...resultArchiveEntryIds.map((archiveEntryId, index) =>
           resultNaturalKey({
             archiveEntryId,
             electionId: identity.scenario === "comparison"
@@ -252,19 +274,19 @@ export function planScenarioPartyCleanup(spec: string): string[] {
 
 export function planResultCleanup(spec: string): string[] {
   const identity = resultScenarioIdentity(spec);
-  return [
-    ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
+  const resultRowArchiveEntryIds = [
+    ...plannedResultArchiveEntryIds(identity),
     ...(identity.comparisonLeftOnlySection
-      ? [`result_row:${identity.comparisonLeftOnlySection.archiveEntryId}`]
+      ? [identity.comparisonLeftOnlySection.archiveEntryId]
       : []),
+  ];
+  return [
+    ...[...new Set(resultRowArchiveEntryIds)].map((id) => `result_row:${id}`),
     ...(identity.scenario === "municipal" || identity.scenario === "comparison"
       ? planScenarioPartyCleanup(spec)
       : []),
     ...identity.electionIds.map((id) => `election:${id}`),
-    ...identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
-    ...(identity.comparisonLeftOnlySection
-      ? [`archive_entry:${identity.comparisonLeftOnlySection.archiveEntryId}`]
-      : []),
+    ...ownedResultArchiveEntryIds(identity).map((id) => `archive_entry:${id}`),
     ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
     `category:${identity.categoryId}`,
   ];

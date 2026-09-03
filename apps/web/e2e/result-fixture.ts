@@ -1,13 +1,13 @@
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
-import { planResultCleanup, planResultNaturalKeys, resultNaturalKey, resultScenarioIdentity,
-  type DataScenarioSpec } from "./scenario-ownership";
+import { ownedResultArchiveEntryIds, planResultCleanup, planResultNaturalKeys,
+  resultNaturalKey, resultScenarioIdentity, type DataScenarioSpec } from "./scenario-ownership";
 type SeedRow = Record<string, string | number | null>;
 export interface ResultFixtureSeed { category: SeedRow; jurisdictions: SeedRow[];
   elections: SeedRow[]; archiveEntries?: SeedRow[]; partyCanonical?: { id: string; display_name: string };
   partyMappings?: Array<{ id: string; year: number; jurisdiction: string; category: string; list_id: string; canonical_party_id: string; source: string }>; rows: SeedRow[]; }
 interface SupabaseOperation { error: { message: string } | null; }
-const environment = assertE2eEnvironment(process.env);
 export const OFFICIAL_VOTES = 11_111;
 export const FISCALIZACION_VOTES = 22_222;
 function archiveEntries(ids: readonly string[], fiscalizacionIndex: number,
@@ -15,7 +15,7 @@ function archiveEntries(ids: readonly string[], fiscalizacionIndex: number,
   return ids.map((id, index) => ({ id,
     capability: index === fiscalizacionIndex ? "fiscalizacion" : officialCapability,
     source: "example.test", source_url: `https://example.test/${id}`,
-    sha256: String(index + 1).repeat(64), mime: "text/csv",
+    sha256: createHash("sha256").update(id).digest("hex"), mime: "text/csv",
     fetched_at: "2026-08-10T00:00:00Z", status: "ok",
     source_kind: index === fiscalizacionIndex ? "fiscalizacion" : "official" }));
 }
@@ -52,7 +52,7 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
       { ...base, list_id: "2206", votes: OFFICIAL_VOTES, source_kind: "official",
         source_row_index: 0, archive_entry_id: identity.archiveEntryIds[0]! },
       { ...base, list_id: "110", votes: 3_333, source_kind: "official",
-        source_row_index: 1, archive_entry_id: identity.archiveEntryIds[1]! },
+        source_row_index: 1, archive_entry_id: identity.archiveEntryIds[0]! },
       { ...base, list_id: "2206", votes: FISCALIZACION_VOTES, source_kind: "fiscalizacion",
         source_row_index: 2, archive_entry_id: identity.archiveEntryIds[2]! },
     ] : [
@@ -177,15 +177,37 @@ function assertOperation(operation: SupabaseOperation, label: string): void {
 function exactStrings(rows: SeedRow[], key: string): string[] {
   return rows.map((row) => row[key]).filter((value): value is string => typeof value === "string").sort();
 }
-function assertSeedOwnership(spec: DataScenarioSpec, seed: ResultFixtureSeed): string[] {
+export function assertResultFixtureOwnership(
+  spec: DataScenarioSpec,
+  seed: ResultFixtureSeed,
+): string[] {
   const identity = resultScenarioIdentity(spec);
-  const archiveEntryIds = exactStrings(seed.rows, "archive_entry_id");
+  const ownedArchiveEntryIds = ownedResultArchiveEntryIds(identity);
+  const rawArchiveEntryIds = seed.rows.map((row) => {
+    const archiveEntryId = row["archive_entry_id"];
+    if (typeof archiveEntryId !== "string")
+      throw new Error(`missing result archive entry: ${spec}`);
+    if (!ownedArchiveEntryIds.includes(archiveEntryId))
+      throw new Error(`unowned result archive entry: ${spec}`);
+    return archiveEntryId;
+  });
+  const rowNaturalKeys = seed.rows.map((row) => resultNaturalKey({
+    archiveEntryId: String(row["archive_entry_id"]),
+    electionId: String(row["election_id"]),
+    jurisdictionId: String(row["jurisdiction_id"]),
+    categoryId: String(row["category_id"]),
+    listId: typeof row["list_id"] === "string" ? row["list_id"] : null,
+    sourceKind: String(row["source_kind"]),
+  }));
+  if (new Set(rowNaturalKeys).size !== rowNaturalKeys.length)
+    throw new Error(`duplicate result natural key: ${spec}`);
+  const cleanupArchiveEntryIds = [...new Set(rawArchiveEntryIds)].sort();
   const actualCleanup = [
     `category:${seed.category["id"]}`,
     ...seed.jurisdictions.map((row) => `jurisdiction:${row["id"]}`),
     ...exactStrings(seed.elections, "id").map((id) => `election:${id}`),
     ...exactStrings(seed.archiveEntries ?? [], "id").map((id) => `archive_entry:${id}`),
-    ...archiveEntryIds.map((id) => `result_row:${id}`),
+    ...cleanupArchiveEntryIds.map((id) => `result_row:${id}`),
     ...(seed.partyMappings ?? []).map(({ id }) => `party_mapping:${id}`),
     ...(seed.partyCanonical ? [`party_canonical:${seed.partyCanonical.id}`] : []),
   ].sort();
@@ -197,12 +219,7 @@ function assertSeedOwnership(spec: DataScenarioSpec, seed: ResultFixtureSeed): s
         ...(seed.partyCanonical ? [`party_canonical:${seed.partyCanonical.id}`] : []),
         ...(seed.partyMappings ?? []).map((row) =>
           `party_mapping:${row.year}|${row.jurisdiction}|${row.category}|${row.list_id}`),
-        ...seed.rows.map((row) => resultNaturalKey({
-      archiveEntryId: String(row["archive_entry_id"]), electionId: String(row["election_id"]),
-      jurisdictionId: String(row["jurisdiction_id"]), categoryId: String(row["category_id"]),
-      listId: typeof row["list_id"] === "string" ? row["list_id"] : null,
-      sourceKind: String(row["source_kind"]),
-    })),
+        ...rowNaturalKeys,
   ].sort();
   if (JSON.stringify(actualCleanup) !== JSON.stringify(planResultCleanup(spec).sort()) ||
       JSON.stringify(actualNaturalKeys) !== JSON.stringify(planResultNaturalKeys(spec).sort()) ||
@@ -210,13 +227,12 @@ function assertSeedOwnership(spec: DataScenarioSpec, seed: ResultFixtureSeed): s
         row["category_id"] !== identity.categoryId ||
         !identity.electionIds.includes(String(row["election_id"]))))
     throw new Error(`fixture seed does not exactly match owned identity: ${spec}`);
-  if (new Set(archiveEntryIds).size !== seed.rows.length)
-    throw new Error(`fixture seed contains duplicate or missing result identity: ${spec}`);
-  return archiveEntryIds;
+  return cleanupArchiveEntryIds;
 }
 export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultFixtureSeed,
   run: () => Promise<T>): Promise<T> {
-  const archiveEntryIds = assertSeedOwnership(spec, seed);
+  const archiveEntryIds = assertResultFixtureOwnership(spec, seed);
+  const environment = assertE2eEnvironment(process.env);
   const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL,
     environment.SUPABASE_SERVICE_ROLE_KEY);
   let outcome: { value: T } | { error: unknown };
