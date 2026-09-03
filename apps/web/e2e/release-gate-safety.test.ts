@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type {
 	FullConfig,
@@ -1401,29 +1402,137 @@ describe("release-gate version and endpoint validation", () => {
 	});
 });
 describe("ReleaseGateReporter", () => {
-	const cases = EXPECTED_E2E_SPECS.map(
-		(spec, index) =>
-			({ id: String(index), location: { file: `/repo/${spec}` } }) as TestCase,
+	const testCaseFor = (spec: string, id: string, title: string) =>
+		({
+			id,
+			title,
+			location: { file: fileURLToPath(new URL(spec.startsWith("e2e/") ? `./${spec.slice(4)}` : spec, import.meta.url)) },
+		}) as TestCase;
+	const cases = EXPECTED_E2E_SPECS.map((spec, index) =>
+		testCaseFor(spec, String(index), `${spec} passing case`),
 	);
-	const suite = { allTests: () => cases } as Suite;
+	const suiteFor = (testCases: TestCase[]) =>
+		({ allTests: () => testCases }) as Suite;
+	const suite = suiteFor(cases);
 	const fullResult = { status: "passed" } as FullResult;
-	const makeReporter = (capture: (content: string) => void) =>
+	const makeReporter = (
+		capture: (content: string) => void,
+		writeError: (message: string) => void = () => undefined,
+	) =>
 		new ReleaseGateReporter({
 			receiptPath: "/receipt.json",
 			writeReceipt: (_path, content) => capture(content),
-			writeError: () => undefined,
+			writeError,
 		});
-	it("is directly driven through the exact passing inventory", async () => {
+	it("uses the final valid callback outcome for a retry", async () => {
 		let receipt = "";
 		const reporter = makeReporter((content) => {
 			receipt = content;
 		});
 		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, {
+			status: "failed",
+			errors: [{ location: { file: "/private/failure.spec.ts", line: 42, column: 9 } }],
+		} as TestResult);
 		for (const testCase of cases)
 			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
 		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
-		expect(JSON.parse(receipt).results).toHaveLength(8);
+		expect(JSON.parse(receipt)).toEqual({ suiteStatus: "passed", results: PASSED });
 	});
+	it("aggregates nine passing test cases into the exact eight-spec receipt", async () => {
+		let receipt = "";
+		const errors: string[] = [];
+		const reporter = makeReporter(
+			(content) => {
+				receipt = content;
+			},
+			(message) => errors.push(message.trim()),
+		);
+		const testCases = EXPECTED_E2E_SPECS.flatMap((spec, index) =>
+			spec === "e2e/municipal.spec.ts"
+				? [
+					testCaseFor(spec, `${index}-first`, "municipal first case"),
+					testCaseFor(spec, `${index}-second`, "municipal second case"),
+				]
+				: [testCaseFor(spec, `${index}-only`, `${spec} only case`)],
+		);
+		reporter.onBegin({} as FullConfig, suiteFor(testCases));
+		for (const testCase of testCases)
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+		const outcome = await reporter.onEnd(fullResult);
+
+		expect(outcome, errors.join("\n")).toBeUndefined();
+		const report = JSON.parse(receipt) as {
+			suiteStatus: string;
+			results: GateTestResult[];
+		};
+		expect(report).toEqual({
+			suiteStatus: "passed",
+			results: EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+		});
+	});
+	it("fails closed when an expected spec has no discovered test IDs", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => {
+			receipt = content;
+		});
+		const missingSpec = EXPECTED_E2E_SPECS.at(-1)!;
+		const testCases = cases.slice(0, -1);
+		reporter.onBegin({} as FullConfig, suiteFor(testCases));
+		for (const testCase of testCases)
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(receipt)).toEqual({
+			suiteStatus: "failed",
+			results: EXPECTED_E2E_SPECS.map((spec) =>
+				spec === missingSpec ? { spec, status: "interrupted" } : { spec, status: "passed" },
+			),
+		});
+	});
+	it.each(["failed", "timedOut", "interrupted", "skipped"] as const)(
+		"fails the municipal spec when a later case is %s",
+		async (status) => {
+			let receipt = "";
+			const reporter = makeReporter((content) => {
+				receipt = content;
+			});
+			const municipal = "e2e/municipal.spec.ts";
+			const testCases = EXPECTED_E2E_SPECS.flatMap((spec, index) =>
+				spec === municipal
+					? [
+						testCaseFor(spec, `${index}-passed`, "municipal first passing case"),
+						testCaseFor(spec, `${index}-${status}`, `municipal later ${status} case`),
+					]
+					: [testCaseFor(spec, `${index}-only`, `${spec} only case`)],
+			);
+			reporter.onBegin({} as FullConfig, suiteFor(testCases));
+			for (const testCase of testCases)
+				reporter.onTestEnd(
+					testCase,
+					testCase.id.endsWith(`-${status}`)
+						? ({
+								status,
+								errors: [
+									{ location: { file: "/private/failure.spec.ts", line: 42, column: 9 } },
+								],
+							} as TestResult)
+						: ({ status: "passed" } as TestResult),
+				);
+
+			await expect(reporter.onEnd(fullResult)).resolves.toEqual({
+				status: "failed",
+			});
+			const results = (JSON.parse(receipt) as { results: GateTestResult[] }).results;
+			expect(results).toHaveLength(EXPECTED_E2E_SPECS.length);
+			expect(results.find(({ spec }) => spec === municipal)).toEqual({
+				spec: municipal,
+				status,
+				failureLine: 42,
+			});
+		},
+	);
 	it("records only a valid failure line for non-passing tests", async () => {
 		let receipt = "";
 		const reporter = makeReporter((content) => {
@@ -1499,8 +1608,74 @@ describe("ReleaseGateReporter", () => {
 		await expect(reporter.onEnd(fullResult)).resolves.toEqual({
 			status: "failed",
 		});
+		expect(JSON.parse(receipt).suiteStatus).toBe("failed");
 		expect(JSON.parse(receipt).results[0]).toMatchObject({
 			status: "interrupted",
 		});
 	});
+	it("does not count a known ID from outside e2e as completed", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => (receipt = content));
+		reporter.onBegin({} as FullConfig, suite);
+		for (const testCase of cases.slice(1))
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+		reporter.onTestEnd(
+			testCaseFor("../outside/auth.spec.ts", cases[0]!.id, "mismatched case"), { status: "passed" } as TestResult,
+		);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(receipt).results[0]).toEqual({
+			spec: EXPECTED_E2E_SPECS[0], status: "interrupted",
+		});
+	});
+	it("preserves a failure when an outside callback reuses its ID", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => (receipt = content));
+		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, {
+			status: "failed",
+			errors: [{ location: { file: "/private/failure.spec.ts", line: 42, column: 9 } }],
+		} as TestResult);
+		reporter.onTestEnd(
+			testCaseFor("../outside/auth.spec.ts", cases[0]!.id, "mismatched case"), { status: "passed" } as TestResult,
+		);
+		for (const testCase of cases.slice(1))
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(receipt).results[0]).toEqual({
+			spec: EXPECTED_E2E_SPECS[0], status: "failed", failureLine: 42,
+		});
+	});
+	it.each(["suite", "result"] as const)(
+		"fails closed for an unexpected spec from the %s while retaining the bounded receipt",
+		async (source) => {
+			let receipt = "";
+			const reporter = makeReporter((content) => {
+				receipt = content;
+			});
+			const unexpected = testCaseFor(
+				"e2e/unexpected.spec.ts",
+				"unexpected",
+				"unexpected test case",
+			);
+			reporter.onBegin(
+				{} as FullConfig,
+				suiteFor(source === "suite" ? [...cases, unexpected] : cases),
+			);
+			for (const testCase of [...cases, unexpected])
+				reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+			await expect(reporter.onEnd(fullResult)).resolves.toEqual({
+				status: "failed",
+			});
+			const report = JSON.parse(receipt) as {
+				suiteStatus: string;
+				results: GateTestResult[];
+			};
+			expect(report.suiteStatus).toBe("failed");
+			expect(report.results).toHaveLength(EXPECTED_E2E_SPECS.length);
+			expect(report.results).toEqual(
+				EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+			);
+		},
+	);
 });
