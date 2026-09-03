@@ -29,7 +29,9 @@ class MatchResult:
     conflicts: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
 
     def passes_threshold(self, threshold: float) -> bool:
-        return self.injective and not self.conflicts and self.exact_match_rate >= threshold
+        return (
+            self.injective and not self.conflicts and self.exact_match_rate >= threshold
+        )
 
 
 def match_vote_vectors(
@@ -57,9 +59,14 @@ def match_vote_vectors(
             if best_distance is None or d < best_distance:
                 best_distance = d
                 best_official_id = official_id
-        raw_best[local_id] = (best_official_id, best_distance if best_distance is not None else -1)
+        raw_best[local_id] = (
+            best_official_id,
+            best_distance if best_distance is not None else -1,
+        )
 
-    best_match_distance = {local_id: dist for local_id, (_official_id, dist) in raw_best.items()}
+    best_match_distance = {
+        local_id: dist for local_id, (_official_id, dist) in raw_best.items()
+    }
 
     exact_claims: dict[str, list[str]] = {}
     for local_id, (official_id, dist) in raw_best.items():

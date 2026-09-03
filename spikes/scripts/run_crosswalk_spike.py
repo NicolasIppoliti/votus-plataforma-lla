@@ -81,7 +81,9 @@ def _parse_local_mesa_number(raw_mesa: str) -> int | None:
     return int(digits) if digits else None
 
 
-def load_fiscalizacion_vectors(path: str) -> tuple[dict[str, tuple[int, ...]], list[str]]:
+def load_fiscalizacion_vectors(
+    path: str,
+) -> tuple[dict[str, tuple[int, ...]], list[str]]:
     """Apply D9.4 merge-then-validate + collapse, return {local_mesa_id: vector}.
 
     Returns (vectors, notes) — notes records merges/collapses/quarantines for
@@ -103,17 +105,21 @@ def load_fiscalizacion_vectors(path: str) -> tuple[dict[str, tuple[int, ...]], l
         else:
             # Continuation row: merge non-empty trailing columns into pending.
             if pending is None:
-                notes.append("quarantined: empty-Mesa row with no preceding row to merge into")
+                notes.append(
+                    "quarantined: empty-Mesa row with no preceding row to merge into"
+                )
                 continue
             for col in FISCALIZACION_VOTE_COLUMNS:
-                if (row.get(col) or "").strip() and not (pending.get(col) or "").strip():
+                if (row.get(col) or "").strip() and not (
+                    pending.get(col) or ""
+                ).strip():
                     pending[col] = row[col]
             notes.append(f"merged continuation row into Mesa {pending.get('Mesa')}")
     if pending is not None:
         merged.append(pending)
 
     # Collapse identical duplicate Mesa rows; quarantine conflicting ones.
-    by_mesa: "OrderedDict[int, list[dict[str, str]]]" = OrderedDict()
+    by_mesa: OrderedDict[int, list[dict[str, str]]] = OrderedDict()
     for row in merged:
         mesa_num = _parse_local_mesa_number(row.get("Mesa") or "")
         if mesa_num is None:
@@ -138,12 +144,18 @@ def load_fiscalizacion_vectors(path: str) -> tuple[dict[str, tuple[int, ...]], l
         distinct = {v for v in vecs if None not in v}
         if len(vecs) > 1:
             if len(distinct) <= 1 and not has_blank_cell:
-                notes.append(f"collapsed {len(vecs)} identical duplicate rows for Mesa {mesa_num}")
+                notes.append(
+                    f"collapsed {len(vecs)} identical duplicate rows for Mesa {mesa_num}"
+                )
             elif len(distinct) > 1:
-                notes.append(f"quarantined: conflicting duplicate rows for Mesa {mesa_num}")
+                notes.append(
+                    f"quarantined: conflicting duplicate rows for Mesa {mesa_num}"
+                )
                 continue
         if has_blank_cell:
-            notes.append(f"Mesa {mesa_num}: blank vote cell present, excluded from exact-match vector")
+            notes.append(
+                f"Mesa {mesa_num}: blank vote cell present, excluded from exact-match vector"
+            )
             continue
         vectors[str(mesa_num)] = vecs[0]
 
@@ -211,8 +223,10 @@ def main() -> None:
 
     # (ii) independent vector-distance matching.
     result = match_vote_vectors(local_vectors, official_vectors)
-    print(f"\n(ii) vector-distance matching:")
-    print(f"  exact matches: {result.exact_match_count}/{len(local_vectors)} ({result.exact_match_rate:.1%})")
+    print("\n(ii) vector-distance matching:")
+    print(
+        f"  exact matches: {result.exact_match_count}/{len(local_vectors)} ({result.exact_match_rate:.1%})"
+    )
     print(f"  injective: {result.injective}")
     print(f"  conflicts: {result.conflicts}")
     print(f"  passes >=90% threshold: {result.passes_threshold(0.9)}")
