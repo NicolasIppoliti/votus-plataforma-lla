@@ -238,4 +238,32 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("https://");
     expect(markup).not.toContain("href=");
   });
+
+  it("presents the official explorer hierarchy with adjacent labelled evidence tables", async () => {
+    const markup = await render();
+
+    for (const text of [
+      "<h1>Explorador oficial</h1>",
+      "Definir el alcance",
+      "Resultados y evidencia",
+      "Evidencia y archivo",
+      'role="region" aria-label="Votos oficiales y porcentaje por partido" tabindex="0"',
+      'role="region" aria-label="Votos oficiales por circuito y establecimiento" tabindex="0"',
+      'role="region" aria-label="Referencia electoral autorizada" tabindex="0"',
+    ]) expect(markup).toContain(text);
+    expect(markup).toContain('aria-labelledby="official-results-heading"');
+    expect(markup).toContain('aria-labelledby="official-evidence-heading"');
+  });
+
+  it("keeps a denied result status-only inside the explorer state region", async () => {
+    mocks.bundle.mockResolvedValueOnce(stateBundle({ status: "authorization_denied", authorization_status: "scope_denied", truncated: false }));
+
+    const markup = await render();
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("la selección no pertenece al alcance autorizado");
+    expect(markup).not.toContain("Resultados y evidencia");
+    expect(markup).not.toContain("Evidencia y archivo");
+    expect(markup).not.toContain("300 votos a nivel seccion");
+  });
 });
