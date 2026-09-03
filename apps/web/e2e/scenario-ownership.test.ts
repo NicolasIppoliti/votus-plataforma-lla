@@ -60,8 +60,12 @@ describe("parallel scenario ownership", () => {
     const spec = "e2e/comparison.spec.ts";
     const identity = resultScenarioIdentity(spec);
     const party = identity.comparisonParty;
+    const leftOnlySection = identity.comparisonLeftOnlySection;
     expect(party).toBeDefined();
+    expect(leftOnlySection).toBeDefined();
     if (!party) throw new Error("comparison party identity is missing");
+    if (!leftOnlySection)
+      throw new Error("comparison left-only section identity is missing");
 
     expect(new Set(party.listIds).size).toBe(2);
     expect(party.mappingIds.every((id) => /^[0-9a-f-]{36}$/.test(id))).toBe(
@@ -81,11 +85,14 @@ describe("parallel scenario ownership", () => {
     ]);
     expect(planResultCleanup(spec)).toEqual([
       ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
+      `result_row:${leftOnlySection.archiveEntryId}`,
       ...party.mappingIds.map((id) => `party_mapping:${id}`),
       `party_canonical:${party.canonicalPartyId}`,
       ...identity.electionIds.map((id) => `election:${id}`),
       ...identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
-      ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
+      `archive_entry:${leftOnlySection.archiveEntryId}`,
+      `jurisdiction:${identity.jurisdictionId}`,
+      `jurisdiction:${leftOnlySection.jurisdictionId}`,
       `category:${identity.categoryId}`,
     ]);
     for (const [index, archiveEntryId] of identity.archiveEntryIds.entries()) {

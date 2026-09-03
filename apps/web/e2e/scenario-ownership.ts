@@ -26,9 +26,17 @@ export interface ComparisonPartyIdentity {
   mappingIds: string[];
 }
 
+export interface ComparisonLeftOnlySectionIdentity {
+  jurisdictionId: string;
+  distritoCode: string;
+  seccionCode: string;
+  archiveEntryId: string;
+}
+
 export interface ResultScenarioIdentity {
   scenario: Exclude<ServerScenario, "shared">;
   comparisonParty?: ComparisonPartyIdentity;
+  comparisonLeftOnlySection?: ComparisonLeftOnlySectionIdentity;
   categoryId: string;
   categoryName: string;
   jurisdictionId: string;
@@ -122,13 +130,25 @@ export function resultScenarioIdentity(spec: string): ResultScenarioIdentity {
           ),
         }
       : undefined;
+  const comparisonLeftOnlySection =
+    scenario === "comparison"
+      ? {
+          jurisdictionId: deterministicUuid(`${prefix}-left-only-jurisdiction`),
+          distritoCode: "84",
+          seccionCode: "848",
+          archiveEntryId: `national/${prefix}-left-only-result-2023`,
+        }
+      : undefined;
   const jurisdictionIds =
     scenario === "fiscalizacion"
       ? [jurisdictionId, deterministicUuid(`${prefix}-jurisdiction-uncovered`)]
-      : [jurisdictionId];
+      : comparisonLeftOnlySection
+        ? [jurisdictionId, comparisonLeftOnlySection.jurisdictionId]
+        : [jurisdictionId];
   return {
     scenario,
     ...(comparisonParty ? { comparisonParty } : {}),
+    ...(comparisonLeftOnlySection ? { comparisonLeftOnlySection } : {}),
     categoryId: deterministicUuid(`${prefix}-category`),
     categoryName: scenario === "municipal" ? "CONCEJALES" : `${prefix}-synthetic-category`,
     jurisdictionId,
@@ -171,7 +191,9 @@ export function planResultNaturalKeys(spec: string): string[] {
         ? `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|0000${index + 1}|E1|${index + 1}`
         : identity.scenario === "provenance"
           ? `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|00001|E1|1`
-          : `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|null|null|null`,
+          : identity.comparisonLeftOnlySection && index === 1
+            ? `jurisdiction:${identity.comparisonLeftOnlySection.distritoCode}|${identity.comparisonLeftOnlySection.seccionCode}|null|null|null`
+            : `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|null|null|null`,
     ),
     ...identity.electionYears.map(
       (year, index) => `election:${year}|${identity.electionRounds[index]}`,
@@ -190,6 +212,16 @@ export function planResultNaturalKeys(spec: string): string[] {
             sourceKind: sourceKinds[index]!,
           }),
         ),
+        ...(identity.comparisonLeftOnlySection
+          ? [resultNaturalKey({
+              archiveEntryId: identity.comparisonLeftOnlySection.archiveEntryId,
+              electionId: identity.electionIds[0]!,
+              jurisdictionId: identity.comparisonLeftOnlySection.jurisdictionId,
+              categoryId: identity.categoryId,
+              listId: identity.comparisonParty!.listIds[0]!,
+              sourceKind: "official",
+            })]
+          : []),
          ...(identity.scenario === "municipal" || identity.scenario === "comparison"
            ? planScenarioPartyNaturalKeys(spec)
            : []),
@@ -222,11 +254,17 @@ export function planResultCleanup(spec: string): string[] {
   const identity = resultScenarioIdentity(spec);
   return [
     ...identity.archiveEntryIds.map((id) => `result_row:${id}`),
+    ...(identity.comparisonLeftOnlySection
+      ? [`result_row:${identity.comparisonLeftOnlySection.archiveEntryId}`]
+      : []),
     ...(identity.scenario === "municipal" || identity.scenario === "comparison"
       ? planScenarioPartyCleanup(spec)
       : []),
     ...identity.electionIds.map((id) => `election:${id}`),
     ...identity.archiveEntryIds.map((id) => `archive_entry:${id}`),
+    ...(identity.comparisonLeftOnlySection
+      ? [`archive_entry:${identity.comparisonLeftOnlySection.archiveEntryId}`]
+      : []),
     ...identity.jurisdictionIds.map((id) => `jurisdiction:${id}`),
     `category:${identity.categoryId}`,
   ];

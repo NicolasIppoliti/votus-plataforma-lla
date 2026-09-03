@@ -177,8 +177,13 @@ test.describe("the production root preserves its authentication boundary", () =>
       }),
     ).toBeVisible();
     await expect(
-      topbar.getByRole("combobox", { name: "Organización" }),
+      topbar.getByRole("status").filter({
+        hasText: /^No hay organizaciones disponibles\.$/,
+      }),
     ).toBeVisible();
+    await expect(
+      topbar.getByRole("combobox", { name: "Organización" }),
+    ).toHaveCount(0);
     await expect(topbar.getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
     expect(
       await page.evaluate(
