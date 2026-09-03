@@ -33,7 +33,7 @@ async function withReviewItem<T>(page: Page, run: () => Promise<T>): Promise<T> 
 
   let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
   try {
-    await page.goto("/dashboard");
+    await page.goto("/");
     const organizationSelector = page.getByLabel("Organización");
     await expect(organizationSelector).toBeVisible();
     await organizationSelector.selectOption(fixture.organization_id);
@@ -159,8 +159,8 @@ test.describe("the review route reflects the disposable database", () => {
   }) => {
     await withReviewItem(page, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.goto("/dashboard");
-      await expect(page).toHaveURL(/\/dashboard/);
+      await page.goto("/");
+      await expect(page).toHaveURL(/\/$/);
 
       const dashboardMain = page.getByRole("main");
       await dashboardMain

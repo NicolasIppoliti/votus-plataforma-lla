@@ -35,5 +35,5 @@ export async function signIn(
     return GENERIC_SIGN_IN_ERROR;
   }
 
-  redirect("/dashboard");
+  redirect("/");
 }

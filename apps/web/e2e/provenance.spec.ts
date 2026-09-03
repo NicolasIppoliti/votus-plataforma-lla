@@ -58,7 +58,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
-      await expect(page).toHaveURL(/\/dashboard/);
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
 
       await page.goto(new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}` +

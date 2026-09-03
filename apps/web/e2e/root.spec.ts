@@ -3,11 +3,10 @@ import { expect, request, test } from "@playwright/test";
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 
 const environment = assertE2eEnvironment(process.env);
-const ROOT_CONTENT =
-  "Un espacio de evidencia cívica para examinar resultados electorales";
+const ROOT_CONTENT = "Panel de Votus";
 
 test.describe("the production root preserves its authentication boundary", () => {
-  test("test_root_redirects_anonymous_and_renders_landing_when_authenticated", async ({
+  test("test_root_redirects_anonymous_and_renders_briefing_when_authenticated", async ({
     page,
   }) => {
     const anonymousContext = await request.newContext({
@@ -43,6 +42,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     ).toBe(true);
 
     await page.goto("/dashboard");
+    await expect(page).toHaveURL(/\/$/);
     await expect(
       page.getByRole("heading", { level: 1, name: "Panel de Votus" }),
     ).toBeVisible();
@@ -95,7 +95,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       ).toBeVisible();
     }
     for (const [label, href] of [
-      ["Resumen operativo", "/dashboard"],
+      ["Resumen operativo", "/"],
       ["Explorar", "/drilldown"],
       ["Comparar", "/compare"],
       ["Municipal", "/municipal"],

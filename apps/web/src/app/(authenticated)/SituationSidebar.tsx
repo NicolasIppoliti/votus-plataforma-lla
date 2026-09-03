@@ -6,7 +6,7 @@ import { PrimaryNavigation } from "./PrimaryNavigation";
 export function SituationSidebar(): ReactNode {
   return (
     <aside className="situation-sidebar">
-      <Link className="site-brand" href="/dashboard" aria-label="Panel de Votus">
+      <Link className="site-brand" href="/" aria-label="Panel de Votus">
         <span className="site-brand__name">Votus</span>
         <span className="site-brand__descriptor">espacio de evidencia</span>
       </Link>
