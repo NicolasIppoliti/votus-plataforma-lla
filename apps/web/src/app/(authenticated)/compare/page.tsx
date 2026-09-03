@@ -77,24 +77,46 @@ function sameFacet(left: FacetOption, right: FacetOption): boolean {
     left.nameVariantCount === right.nameVariantCount;
 }
 
-function commonFacets(left: FacetOption[], right: FacetOption[]): FacetOption[] {
+interface SideCounts {
+  leftOnly: number;
+  rightOnly: number;
+}
+
+interface CommonFacetResult {
+  options: FacetOption[];
+  unique: SideCounts;
+}
+
+interface LoadedFacetUniqueCounts {
+  distrito?: SideCounts;
+  seccion?: SideCounts;
+}
+
+function commonFacets(left: FacetOption[], right: FacetOption[]): CommonFacetResult {
+  const leftByCode = new Map(left.map((option) => [option.code, option]));
   const rightByCode = new Map(right.map((option) => [option.code, option]));
-  const common: FacetOption[] = [];
+  const options: FacetOption[] = [];
   for (const option of left) {
     const peer = rightByCode.get(option.code);
     if (peer === undefined) continue;
     if (sameFacet(option, peer)) {
-      common.push(option);
+      options.push(option);
       continue;
     }
-    common.push({
+    options.push({
       code: option.code,
       name: null,
       nameStatus: "conflict",
       nameVariantCount: Math.max(2, option.nameVariantCount, peer.nameVariantCount),
     });
   }
-  return common;
+  return {
+    options,
+    unique: {
+      leftOnly: [...leftByCode.keys()].filter((code) => !rightByCode.has(code)).length,
+      rightOnly: [...rightByCode.keys()].filter((code) => !leftByCode.has(code)).length,
+    },
+  };
 }
 
 function optionLabel(option: FacetOption): string {
@@ -110,6 +132,7 @@ interface CompareSelectorProps {
   distritos: FacetOption[];
   secciones: FacetOption[];
   selected: Partial<Record<(typeof QUERY_KEY)[keyof typeof QUERY_KEY], string>>;
+  unique?: LoadedFacetUniqueCounts;
   message: string;
   alert?: boolean;
 }
@@ -121,6 +144,7 @@ function CompareSelector({
   distritos,
   secciones,
   selected,
+  unique,
   message,
   alert = false,
 }: CompareSelectorProps): ReactNode {
@@ -216,6 +240,12 @@ function CompareSelector({
               </button>
             </div>
           </form>
+              {!alert && unique && (
+                <aside aria-label="Opciones no compartidas">
+                  {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
+                  {unique.seccion && <p>Opciones no compartidas — Sección: {unique.seccion.leftOnly} Lado A / {unique.seccion.rightOnly} Lado B (disponibles solo en ese lado).</p>}
+                </aside>
+              )}
         </section>
         <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
       </div>
@@ -387,13 +417,16 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   }
 
   let distritos: FacetOption[] = [];
+    const unique: LoadedFacetUniqueCounts = {};
   if (selectedLeftElection && selectedRightElection && leftCategory && rightCategory) {
     try {
       const [leftScope, rightScope] = await Promise.all([
         repository.facets({ electionId: selectedLeftElection.id, categoryId: leftCategory.id }),
         repository.facets({ electionId: selectedRightElection.id, categoryId: rightCategory.id }),
       ]);
-      distritos = commonFacets(leftScope.distritos, rightScope.distritos);
+      const common = commonFacets(leftScope.distritos, rightScope.distritos);
+      distritos = common.options;
+      unique.distrito = common.unique;
     } catch {
       return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar los distritos compartidos autorizados." alert />;
     }
@@ -410,7 +443,9 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         repository.facets({ electionId: selectedLeftElection.id, categoryId: leftCategory.id, distritoCode: selectedDistrito.code }),
         repository.facets({ electionId: selectedRightElection.id, categoryId: rightCategory.id, distritoCode: selectedDistrito.code }),
       ]);
-      secciones = commonFacets(leftScope.secciones, rightScope.secciones);
+      const common = commonFacets(leftScope.secciones, rightScope.secciones);
+      secciones = common.options;
+      unique.seccion = common.unique;
     } catch {
       return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={[]} selected={selected} message="No se pudieron cargar las secciones compartidas autorizadas." alert />;
     }
@@ -422,7 +457,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
 
   const ready = selectedLeftElection && selectedRightElection && leftCategory && rightCategory && selectedDistrito && selectedSeccion;
   if (!ready) {
-    return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} message="Complete ambas selecciones y una sección exacta compartida para comparar." />;
+    return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} unique={unique} message="Complete ambas selecciones y una sección exacta compartida para comparar." />;
   }
 
   const sectionSelection = {
