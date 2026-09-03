@@ -266,7 +266,8 @@ function hasOnlyOfficialRenderedEvidence(side: unknown): boolean {
   const sourceAudit = (result as Record<string, unknown>)["sourceAudit"];
   return (result as Record<string, unknown>)["sourceKind"] === "official" &&
     Array.isArray(sourceAudit) &&
-    sourceAudit.every((entry) => {
+    sourceAudit.length > 0 &&
+      sourceAudit.every((entry) => {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
       const audit = entry as Record<string, unknown>;
       const rows = audit["rows"], votes = audit["votes"];
