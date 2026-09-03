@@ -41,6 +41,7 @@ import {
 	formatPgTapFailure,
 	establishOwnership,
 	planOwnedSqlInvocation,
+	playwrightCommandArgs,
 	reserveUniquePorts,
 	runProductionReleasePhases,
 	runReleaseGateCli,
@@ -424,11 +425,12 @@ async function waitForServer(url: string, child: ChildProcess): Promise<void> {
 		"production Next server did not become ready within 60 seconds",
 	);
 }
-async function runPlaywright(
+export async function runPlaywright(
 	environment: NodeJS.ProcessEnv,
 	receiptPath: string,
+	selectedSpecs: readonly string[],
 ): Promise<void> {
-	const result = spawnSync("pnpm", ["exec", "playwright", "test"], {
+	const result = spawnSync("pnpm", playwrightCommandArgs(selectedSpecs), {
 		cwd: WEB_ROOT,
 		env: environment,
 		encoding: "utf8",
@@ -907,6 +909,8 @@ async function executeGate(
 			"authenticated-state.json",
 		),
 		VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
+		VOTUS_E2E_GATE_MODE: plan.mode,
+		VOTUS_E2E_SELECTED_SPECS: JSON.stringify(plan.selectedSpecs),
 	};
 	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {
 		runChecked(
@@ -936,7 +940,11 @@ async function executeGate(
 		}
 	})();
 	await timed(RELEASE_GATE_TIMING_PHASE.PLAYWRIGHT, async () => {
-		await runPlaywright(environment, environment.VOTUS_E2E_RESULT_FILE!);
+		await runPlaywright(
+			environment,
+			environment.VOTUS_E2E_RESULT_FILE!,
+			plan.selectedSpecs,
+		);
 	})();
 }
 async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
@@ -1003,17 +1011,27 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 				? "Scale proof passed: fixture setup, pgTAP/EXPLAIN, and cleanup complete\n"
 				: plan.mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY
 					? "Release proof passed: coverage scope binding, rollback/reapply, scale, pgTAP, and cleanup complete\n"
-					: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
+					: plan.mode === RELEASE_GATE_MODE.FOCUSED
+						? `Focused E2E diagnostic passed: selected=${plan.selectedSpecs.length}, discovered=${plan.selectedSpecs.length}, excluded=${EXPECTED_E2E_SPECS.length - plan.selectedSpecs.length}, skipped=0, disposable stack cleaned\n`
+						: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
 	);
 }
+export interface ReleaseGateMainDependencies {
+	executePlan?(plan: ReleaseGatePlan): Promise<void>;
+	writeOutput?(chunk: string): void;
+}
+
 export async function releaseGateMain(
 	argv: readonly string[] = process.argv.slice(2),
+	dependencies: ReleaseGateMainDependencies = {},
 ): Promise<void> {
 	await runReleaseGateCli(argv, {
-		execute: executeReleaseGatePlan,
-		writeOutput: (chunk) => {
-			process.stdout.write(chunk);
-		},
+		execute: dependencies.executePlan ?? executeReleaseGatePlan,
+		writeOutput:
+			dependencies.writeOutput ??
+			((chunk) => {
+				process.stdout.write(chunk);
+			}),
 	});
 }
 const directEntry = process.argv[1];
