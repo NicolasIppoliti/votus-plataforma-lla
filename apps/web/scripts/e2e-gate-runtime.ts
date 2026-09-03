@@ -1,4 +1,7 @@
+import path from "node:path";
+
 import {
+	EXPECTED_E2E_SPECS,
 	planOwnedCleanup,
 	type CleanupAction,
 	type GateOwnership,
@@ -60,6 +63,7 @@ export function planOwnedSqlInvocation(
 
 export const RELEASE_GATE_MODE = {
 	FULL: "full",
+	FOCUSED: "focused",
 	RELEASE_PROOF_ONLY: "release-proof-only",
 	SCALE_PROOF_ONLY: "scale-proof-only",
 	ROLLBACK_PROOFS_ONLY: "rollback-proofs-only",
@@ -123,6 +127,7 @@ export interface ReleaseGateSqlProof {
 
 export interface ReleaseGatePlan {
 	mode: ReleaseGateMode;
+	selectedSpecs: readonly string[];
 	migrationVersions: readonly string[];
 	syntheticMigration: ReleaseGateSyntheticMigration;
 	setupProofs: readonly ReleaseGateSetupProof[];
@@ -379,6 +384,7 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 ];
 
 function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
+	const focused = argv.includes("--focused");
 	const releaseProofOnly = argv.includes("--release-proof-only");
 	const scaleProofOnly = argv.includes("--scale-proof-only");
 	const rollbackProofsOnly = argv.includes("--rollback-proofs-only");
@@ -387,17 +393,70 @@ function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
 			.length > 1
 	)
 		throw new Error("reduced proof modes cannot be combined");
+	if (focused && (releaseProofOnly || scaleProofOnly || rollbackProofsOnly))
+		throw new Error("focused mode cannot be combined with reduced proof modes");
+	if (focused) return RELEASE_GATE_MODE.FOCUSED;
 	if (rollbackProofsOnly) return RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
 	if (scaleProofOnly) return RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	if (releaseProofOnly) return RELEASE_GATE_MODE.RELEASE_PROOF_ONLY;
 	return RELEASE_GATE_MODE.FULL;
 }
 
-export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
+const FOCUSED_E2E_SPEC_PATTERN = /^e2e\/[a-z][a-z0-9-]*\.spec\.ts$/;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F]/;
+
+export function parseFocusedE2eSelection(
+	selection: readonly string[],
+): readonly string[] {
+	if (selection.length === 0)
+		throw new Error("focused E2E selection requires one or more canonical spec paths");
+	const seen = new Set<string>();
+	for (const spec of selection) {
+		if (!spec || CONTROL_CHARACTER_PATTERN.test(spec))
+			throw new Error("focused E2E selection contains an invalid path");
+		if (spec.startsWith("-") || path.isAbsolute(spec) || spec.split("/").includes(".."))
+			throw new Error("focused E2E selection contains an unsafe path");
+		if (!FOCUSED_E2E_SPEC_PATTERN.test(spec))
+			throw new Error("focused E2E selection requires e2e/<name>.spec.ts paths");
+		if (!EXPECTED_E2E_SPECS.includes(spec as (typeof EXPECTED_E2E_SPECS)[number]))
+			throw new Error(`focused E2E selection contains a noncanonical spec: ${spec}`);
+		if (seen.has(spec))
+			throw new Error(
+				`focused E2E selection: duplicate focused E2E spec: ${spec}`,
+			);
+		seen.add(spec);
+	}
+	return [...selection];
+}
+
+function parseFocusedE2eCliSelection(argv: readonly string[]): readonly string[] {
+	if (argv[0] !== "--focused")
+		throw new Error("focused E2E arguments must begin with --focused");
+	const selection = argv.slice(1);
+	return parseFocusedE2eSelection(
+		selection[0] === "--" ? selection.slice(1) : selection,
+	);
+}
+
+export function playwrightCommandArgs(
+	selectedSpecs: readonly string[],
+): readonly string[] {
+	return ["exec", "playwright", "test", ...selectedSpecs];
+}
+
+export function createReleaseGatePlan(
+	mode: ReleaseGateMode,
+	selectedSpecs: readonly string[] = EXPECTED_E2E_SPECS,
+): ReleaseGatePlan {
+	const resolvedSelectedSpecs =
+		mode === RELEASE_GATE_MODE.FOCUSED
+			? parseFocusedE2eSelection(selectedSpecs)
+			: [...EXPECTED_E2E_SPECS];
 	const rollbackProofsOnly = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
 	const scaleProofOnly = mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	return {
 		mode,
+		selectedSpecs: resolvedSelectedSpecs,
 		migrationVersions: [...MIGRATION_VERSIONS],
 		syntheticMigration: { ...SYNTHETIC_MIGRATION },
 		setupProofs: rollbackProofsOnly
@@ -423,8 +482,10 @@ export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
 		requireBrowserCapability:
 			mode === RELEASE_GATE_MODE.FULL ||
+			mode === RELEASE_GATE_MODE.FOCUSED ||
 			mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY,
-		runBrowser: mode === RELEASE_GATE_MODE.FULL,
+		runBrowser:
+			mode === RELEASE_GATE_MODE.FULL || mode === RELEASE_GATE_MODE.FOCUSED,
 	};
 }
 
@@ -463,10 +524,23 @@ export async function runReleaseGateCli(
 	argv: readonly string[],
 	dependencies: ReleaseGateCliDependencies,
 ): Promise<void> {
-	const plan = createReleaseGatePlan(releaseGateMode(argv));
+	const mode = releaseGateMode(argv);
+	const selectedSpecs =
+		mode === RELEASE_GATE_MODE.FOCUSED
+			? parseFocusedE2eCliSelection(argv)
+			: EXPECTED_E2E_SPECS;
+	const plan = createReleaseGatePlan(mode, selectedSpecs);
 	if (argv.includes("--inspect-plan")) {
 		dependencies.writeOutput(`${JSON.stringify(plan, null, 2)}\n`);
 		return;
+	}
+	if (mode === RELEASE_GATE_MODE.FOCUSED) {
+		const excluded = EXPECTED_E2E_SPECS.filter(
+			(spec) => !plan.selectedSpecs.includes(spec),
+		);
+		dependencies.writeOutput(
+			`E2E selection: mode=focused selected=${plan.selectedSpecs.length} [${plan.selectedSpecs.join(", ")}] excluded=${excluded.length} [${excluded.join(", ")}]\n`,
+		);
 	}
 	await dependencies.execute(plan);
 }

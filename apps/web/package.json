@@ -12,7 +12,8 @@
     "typecheck": "node -e \"const v=require('@typescript/native').version;if(!/^7\\./.test(v))throw new Error('TypeScript 7.x required')\" && tsc --version && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:gate": "node --experimental-strip-types ./scripts/e2e-release-gate.ts"
+    "test:e2e:gate": "node --experimental-strip-types ./scripts/e2e-release-gate.ts",
+    "test:e2e:focused": "node --experimental-strip-types ./scripts/e2e-release-gate.ts --focused"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
