@@ -61,10 +61,12 @@ test.describe("the fiscalizacion route explores coverage", () => {
       const form = page.locator('form[action="/fiscalizacion"]'); await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
       const draft = async (label: string, value: string, dependent: string): Promise<void> => {
         const control = page.getByLabel(label), child = page.getByLabel(dependent);
-        const scopeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fiscalizacion/scope-options", { timeout: 2_000 }).catch(() => null);
+        const scopeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
         await control.focus(); await control.selectOption(value);
         expect(page.url()).toBe(coldUrl); await expect(child).toHaveValue("");
-        const response = await scopeResponse; if (response && !response.ok()) throw new Error(`scope options failed: ${response.status()} ${await response.text()}`);
+        const response = await scopeResponse;
+        expect(response.ok()).toBe(true);
+        expect(await response.json()).toMatchObject({ capability: "coverage-scope-options", meaning: "scope-options-only" });
         await expect(child).toBeEnabled(); await expect(form).not.toHaveAttribute("aria-busy", "true"); await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
       await draft("Elección", COVERAGE_SCOPE.electionId, "Categoría");
@@ -89,6 +91,22 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(main).toContainText("Mesa 2");
       await expect(main).toContainText("Estado del resultado: ok"); await expect(main).toContainText("Fuente: fiscalización; no es una muestra aleatoria"); await expect(main).toContainText("denominador 2");
       await expect(main).toContainText("22222 votos"); await expect(main).not.toContainText(/11111|33333/); await expect(main).toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[1]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[0]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[2]?.["id"]));
+      const tableRegion = page.getByRole("region", { name: "Resultados de fiscalización" });
+      await tableRegion.focus(); await expect(tableRegion).toBeFocused();
+      const submitBounds = await page.getByRole("button", { name: "Mostrar cobertura" }).boundingBox();
+      if (!submitBounds) throw new Error("coverage submit button has no rendered bounds");
+      expect(submitBounds.width).toBeGreaterThanOrEqual(44);
+      expect(submitBounds.height).toBeGreaterThanOrEqual(44);
+      for (const width of [320, 1440]) {
+        await page.setViewportSize({ width, height: 800 });
+        expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      }
+      await page.setViewportSize({ width: 320, height: 800 });
+      expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const transitionDuration = await tableRegion.evaluate((element) => getComputedStyle(element).transitionDuration);
+      const transitionMilliseconds = transitionDuration.endsWith("ms") ? Number.parseFloat(transitionDuration) : Number.parseFloat(transitionDuration) * 1_000;
+      expect(transitionMilliseconds).toBeLessThanOrEqual(0.01);
       const reusableUrl = page.url();
       await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
       await expect(page).toHaveURL(reusableUrl);

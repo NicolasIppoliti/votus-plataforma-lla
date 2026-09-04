@@ -23,6 +23,8 @@ vi.mock("@/lib/workspace/fiscalizacion-evidence", () => ({
 
 const { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR } = await import("@/lib/workspace/official-facets");
 const { default: FiscalizacionPage } = await import("./page");
+const { default: FiscalizacionLoading } = await import("./loading");
+const { default: FiscalizacionError } = await import("./error");
 
 const COMPLETE_SELECTION = {
   electionId: "50000000-0000-0000-0000-000000000001",
@@ -142,6 +144,16 @@ const AUTHORIZED_RESULT = {
   truncated: true,
 };
 
+const AUTHORIZED_NO_ROWS_RESULT = {
+  ...AUTHORIZED_RESULT,
+  status: "no_rows",
+  rows: { items: [], total: 0, truncated: false },
+  unmapped: { items: [], total: 0, truncated: false },
+  exclusions: { items: [], total: 0, truncated: false },
+  provenance: { items: [], total: 0, truncated: false },
+  truncated: false,
+};
+
 const FIGURE_SENTINELS = [
   "7 unidades observadas de 8",
   "South school",
@@ -236,8 +248,8 @@ describe("FiscalizacionPage", () => {
 
       expect(mocks.coverage).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
       expect(mocks.result).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
-      expect(markup).toContain("Evidencia no disponible");
-      expect(markup).toContain("Estado de evidencia: unavailable");
+      expect(markup).toContain("Error técnico de evidencia");
+      expect(markup).not.toContain("Evidencia no disponible");
       expectFigureFree(markup);
     },
   );
@@ -333,7 +345,6 @@ describe("FiscalizacionPage", () => {
     ["coverage", "source_inconsistent"],
     ["coverage", "authorization_denied"],
     ["coverage", "payload_too_large"],
-    ["result", "no_rows"],
     ["result", "opt_in_required"],
     ["result", "source_inconsistent"],
     ["result", "authorization_denied"],
@@ -366,16 +377,7 @@ describe("FiscalizacionPage", () => {
                 vote_data: "not_included",
                 truncated: true,
               }
-            : side === "result" && status === "no_rows"
-              ? {
-                  ...AUTHORIZED_RESULT,
-                  status,
-                  rows: { items: [], total: 0, truncated: false },
-                  unmapped: { items: [], total: 0, truncated: false },
-                  provenance: { items: [], total: 0, truncated: false },
-                  truncated: false,
-                }
-              : side === "result" && status === "payload_too_large"
+            : side === "result" && status === "payload_too_large"
                 ? {
                     status,
                     authorization_status: "authorized",
@@ -397,6 +399,72 @@ describe("FiscalizacionPage", () => {
 
     expect(markup).toContain("Evidencia no disponible");
     expect(markup).toContain("Estado de evidencia:");
+    expectFigureFree(markup);
+  });
+
+  it.each([
+    ["rows", { items: [{ list_id: "A", canonical_party_id: "party-a", party_name: "Party A", granularity: "mesa", votes: 1, rows: 1 }], total: 1, truncated: false }],
+    ["unmapped", { items: [{ list_id: "777", votes: 1, rows: 1 }], total: 1, truncated: false }],
+    ["exclusions", { items: [{ reason: "missing_identity", rows: 1 }], total: 1, truncated: false }],
+    ["provenance", { items: [{ id: "fiscal/a", sha256: "a".repeat(64), fetched_at: "2026-01-01T00:00:00Z", status: "ok" }], total: 1, truncated: false }],
+  ] as const)("refuses contradictory no_rows %s before figures", async (collection, value) => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue({ ...AUTHORIZED_NO_ROWS_RESULT, [collection]: value });
+
+    const markup = await renderComplete();
+
+    expect(markup).toContain("Evidencia no disponible");
+    expect(markup).toContain("Estado de evidencia: invalid");
+    expect(markup).not.toContain("Evidencia sin filas");
+    expectFigureFree(markup);
+  });
+
+  it("renders valid no_rows as an explicit figure-free empty state", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue(AUTHORIZED_NO_ROWS_RESULT);
+
+    const markup = await renderComplete();
+
+    expect(markup).toContain("Evidencia sin filas");
+    expect(markup).toContain("La consulta autorizada no devolvió resultados de fiscalización.");
+    expect(markup).not.toContain("Evidencia no disponible");
+    expectFigureFree(markup);
+  });
+
+  it("renders a figure-free technical error when an evidence loader rejects", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockRejectedValue(new Error("coverage failure"));
+    mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+
+    const markup = await renderComplete();
+
+    expect(markup).toContain("Error técnico de evidencia");
+    expect(markup).not.toContain("Evidencia no disponible");
+    expectFigureFree(markup);
+  });
+
+  it("renders stable labelled loading geometry", () => {
+    const markup = renderToStaticMarkup(<FiscalizacionLoading />);
+
+    expect(markup).toContain('aria-label="Cargando fiscalización"');
+    expect(markup).toContain("Cargando el espacio de fiscalización");
+    expect(markup).toContain("fiscalizacion-loading__block");
+  });
+
+  it("renders a safe keyboard-operable retry without error or evidence contents", () => {
+    const markup = renderToStaticMarkup(
+      <FiscalizacionError
+        error={Object.assign(new Error("Guardian Party 999"), { digest: "unsafe" })}
+        reset={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('type="button"');
+    expect(markup).toContain("Reintentar carga");
+    expect(markup).not.toContain("Guardian Party");
+    expect(markup).not.toContain("unsafe");
     expectFigureFree(markup);
   });
 
