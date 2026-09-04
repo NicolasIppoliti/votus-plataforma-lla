@@ -1854,10 +1854,10 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "results_exploration_official_wrapper_0034(",
         "p_requested_level=>'distrito'",
         "public_elapsed_ms<=3000",
-        "new public district wrapper exactly preserves the real 0034 public wrapper jsonb payload",
+        "new public district wrapper adds category identity while preserving the exact 0034 public payload",
         "0035 district core exactly preserves the full realistic 0034 jsonb payload",
         "null and literal chr(1) sections preserve the full reference core jsonb payload",
-        "null and literal chr(1) sections preserve the full reference public jsonb payload",
+        "null and literal chr(1) sections add category identity and preserve the reference public payload",
         "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
     ):
         assert evidence in scale_proof
