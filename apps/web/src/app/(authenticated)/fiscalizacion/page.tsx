@@ -232,29 +232,35 @@ function evidenceRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function exactClaimFailures(
-  label: string,
-  value: unknown,
-  evidenceKey: "observed_units" | "reference",
-): string[] {
-  const evidence = evidenceRecord(value);
-  if (!evidence || !(evidenceKey in evidence)) return [];
+const PRESENTATION_KIND = {
+  READY: "ready",
+  REFUSED: "refused",
+} as const;
 
-  const expectedClaims: Record<string, unknown> = {
-    authorization_status: "authorized",
-    source_kind: "fiscalizacion",
-    is_random_sample: false,
-  };
-  if (evidenceKey === "observed_units") {
-    expectedClaims["vote_data"] = "not_included";
-  }
+const PRESENTATION_REASON = {
+  UNAVAILABLE: "unavailable",
+  INVALID: "invalid",
+  DENIED: "denied",
+  OVERSIZED: "oversized",
+} as const;
 
-  return Object.entries(expectedClaims).flatMap(([claim, expected]) =>
-    evidence[claim] === expected
-      ? []
-      : [`${label}: ${claim} debe declarar ${String(expected)}.`],
-  );
+type PresentationReason =
+  (typeof PRESENTATION_REASON)[keyof typeof PRESENTATION_REASON];
+
+interface ReadyFiscalizacionPresentation {
+  kind: typeof PRESENTATION_KIND.READY;
+  coverage: AuthorizedFiscalizacionCoverage;
+  result: AuthorizedFiscalizacionResult;
 }
+
+interface RefusedFiscalizacionPresentation {
+  kind: typeof PRESENTATION_KIND.REFUSED;
+  reason: PresentationReason;
+}
+
+type FiscalizacionPresentation =
+  | ReadyFiscalizacionPresentation
+  | RefusedFiscalizacionPresentation;
 
 function settledValue<T>(result: PromiseSettledResult<T>): T | null {
   return result.status === "fulfilled" ? result.value : null;
@@ -266,6 +272,79 @@ function settledStatus<T>(result: PromiseSettledResult<T>): string {
   return typeof value?.["status"] === "string"
     ? value["status"]
     : "unavailable (invalid)";
+}
+
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function hasExactClaims(
+  value: unknown,
+  evidenceKey: "observed_units" | "reference",
+): boolean {
+  const evidence = evidenceRecord(value);
+  if (
+    !evidence ||
+    evidence["status"] !== "ok" ||
+    evidence["authorization_status"] !== "authorized" ||
+    evidence["source_kind"] !== "fiscalizacion" ||
+    evidence["is_random_sample"] !== false
+  ) {
+    return false;
+  }
+  if (evidenceKey === "observed_units") {
+    return (
+      evidence["vote_data"] === "not_included" &&
+      isNonnegativeSafeInteger(evidence["observed_units"]) &&
+      isNonnegativeSafeInteger(evidence["denominator_units"]) &&
+      evidence["denominator_units"] >= evidence["observed_units"]
+    );
+  }
+  const reference = evidenceRecord(evidence["reference"]);
+  return (
+    reference !== null &&
+    Object.getPrototypeOf(reference) === Object.prototype &&
+    isNonnegativeSafeInteger(reference["denominator_units"])
+  );
+}
+
+function refusalReason(
+  coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>,
+  result: PromiseSettledResult<AuthorizedFiscalizacionResult>,
+): PresentationReason {
+  const statuses = [settledStatus(coverage), settledStatus(result)];
+  if (statuses.includes("authorization_denied")) return PRESENTATION_REASON.DENIED;
+  if (statuses.includes("payload_too_large")) return PRESENTATION_REASON.OVERSIZED;
+  const coverageValue = settledValue(coverage);
+  const resultValue = settledValue(result);
+  if (
+    statuses.includes("selection_invalid") ||
+    statuses.includes("source_inconsistent") ||
+    (evidenceRecord(coverageValue)?.["status"] === "ok" &&
+      !hasExactClaims(coverageValue, "observed_units")) ||
+    (evidenceRecord(resultValue)?.["status"] === "ok" &&
+      !hasExactClaims(resultValue, "reference"))
+  ) {
+    return PRESENTATION_REASON.INVALID;
+  }
+  return PRESENTATION_REASON.UNAVAILABLE;
+}
+
+function fiscalizacionPresentation(
+  coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>,
+  result: PromiseSettledResult<AuthorizedFiscalizacionResult>,
+): FiscalizacionPresentation {
+  const coverageValue = settledValue(coverage);
+  const resultValue = settledValue(result);
+  if (
+    coverageValue &&
+    resultValue &&
+    hasExactClaims(coverageValue, "observed_units") &&
+    hasExactClaims(resultValue, "reference")
+  ) {
+    return { kind: PRESENTATION_KIND.READY, coverage: coverageValue, result: resultValue };
+  }
+  return { kind: PRESENTATION_KIND.REFUSED, reason: refusalReason(coverage, result) };
 }
 
 function CoverageEvidence({
@@ -407,12 +486,9 @@ function AuthorizedEvidence({
   coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>;
   result: PromiseSettledResult<AuthorizedFiscalizacionResult>;
 }): ReactNode {
-  const failures = [
-    ...exactClaimFailures("Cobertura", settledValue(coverage), "observed_units"),
-    ...exactClaimFailures("Resultado", settledValue(result), "reference"),
-  ];
+  const presentation = fiscalizacionPresentation(coverage, result);
 
-  if (failures.length > 0) {
+  if (presentation.kind === PRESENTATION_KIND.REFUSED) {
     return (
       <main className="page-shell">
         <div className="shell-container">
@@ -421,18 +497,10 @@ function AuthorizedEvidence({
           <section
             className="panel"
             role="alert"
-            aria-labelledby="workspace-source-refusal"
+            aria-labelledby="workspace-evidence-refusal"
           >
-            <h2 id="workspace-source-refusal">Evidencia rechazada</h2>
-            <p>
-              Se rechazó la evidencia autorizada: no superó la verificación
-              independiente de fuente de la página.
-            </p>
-            <ul aria-label="Fallas de fuente de la evidencia">
-              {failures.map((failure) => (
-                <li key={failure}>{failure}</li>
-              ))}
-            </ul>
+            <h2 id="workspace-evidence-refusal">Evidencia no disponible</h2>
+            <p>Estado de evidencia: {presentation.reason}.</p>
           </section>
         </div>
       </main>
@@ -444,8 +512,10 @@ function AuthorizedEvidence({
       <div className="shell-container">
         <PageHeader />
         {form}
-        <CoverageEvidence result={coverage} />
-        <ResultEvidence result={result} />
+        <CoverageEvidence
+          result={{ status: "fulfilled", value: presentation.coverage }}
+        />
+        <ResultEvidence result={{ status: "fulfilled", value: presentation.result }} />
       </div>
     </main>
   );
