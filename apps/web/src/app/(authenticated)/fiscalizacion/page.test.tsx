@@ -142,7 +142,24 @@ const AUTHORIZED_RESULT = {
   truncated: true,
 };
 
+const FIGURE_SENTINELS = [
+  "7 unidades observadas de 8",
+  "South school",
+  "missing_identity: 1 filas",
+  "Guardian Party",
+  "999",
+  "Sin mapeo: 777; 5 votos, 1 filas",
+  "mixed_granularity: 2 filas",
+  "fiscal/a",
+];
+
 type PageParams = Record<string, string | string[] | undefined>;
+
+function expectFigureFree(markup: string): void {
+  for (const sentinel of FIGURE_SENTINELS) {
+    expect(markup).not.toContain(sentinel);
+  }
+}
 
 function copyWithout(
   value: Record<string, unknown>,
@@ -203,17 +220,45 @@ describe("FiscalizacionPage", () => {
     expect(mocks.coverage).not.toHaveBeenCalled(); expect(mocks.result).not.toHaveBeenCalled();
   });
 
-  it("loads coverage and result independently with explicit opt-in", async () => {
+  it.each(["coverage", "result"] as const)(
+    "suppresses both regions when the independently settled %s loader throws",
+    async (side) => {
+      mocks.facets.mockResolvedValue(FACETS);
+      if (side === "coverage") {
+        mocks.coverage.mockRejectedValue(new Error("coverage denied"));
+        mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+      } else {
+        mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+        mocks.result.mockRejectedValue(new Error("result denied"));
+      }
+
+      const markup = await renderComplete();
+
+      expect(mocks.coverage).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
+      expect(mocks.result).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
+      expect(markup).toContain("Evidencia no disponible");
+      expect(markup).toContain("Estado de evidencia: unavailable");
+      expectFigureFree(markup);
+    },
+  );
+
+  it.each([
+    ["coverage unavailable", "coverage", { status: "unavailable" }],
+    ["coverage malformed", "coverage", {}],
+    ["result unavailable", "result", { status: "unavailable" }],
+    ["result malformed", "result", {}],
+  ] as const)("suppresses both regions for %s loader output", async (_name, side, payload) => {
     mocks.facets.mockResolvedValue(FACETS);
-    mocks.coverage.mockRejectedValue(new Error("coverage denied"));
-    mocks.result.mockResolvedValue({ status: "authorization_denied" });
+    mocks.coverage.mockResolvedValue(
+      side === "coverage" ? payload : AUTHORIZED_COVERAGE,
+    );
+    mocks.result.mockResolvedValue(side === "result" ? payload : AUTHORIZED_RESULT);
 
     const markup = await renderComplete();
 
-    expect(mocks.coverage).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
-    expect(mocks.result).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
-    expect(markup).toContain("Estado de cobertura: unavailable (thrown)");
-    expect(markup).toContain("Estado del resultado: authorization_denied");
+    expect(markup).toContain("Evidencia no disponible");
+    expect(markup).toContain("Estado de evidencia: unavailable");
+    expectFigureFree(markup);
   });
 
   it("renders authorized bounded coverage, results, exclusions, unmapped rows, and provenance", async () => {
@@ -225,7 +270,8 @@ describe("FiscalizacionPage", () => {
 
     for (const evidence of [
       "Estado de cobertura: ok",
-      "7 unidades observadas de 8",
+      "Fuente: fiscalización; no es una muestra aleatoria; datos de votos no incluidos.",
+      "7 unidades observadas de 8 del denominador oficial",
       "South school",
       "missing_identity: 1 filas",
       "Unidades sin cobertura: se muestran 100 de 101; respuesta truncada",
@@ -245,6 +291,41 @@ describe("FiscalizacionPage", () => {
   });
 
   it.each([
+    ["coverage denominator missing", (value: Record<string, unknown>) => copyWithout(value, "denominator_units")],
+    ["coverage denominator unsafe", (value: Record<string, unknown>) => ({ ...value, denominator_units: Number.MAX_SAFE_INTEGER + 1 })],
+    ["coverage denominator noninteger", (value: Record<string, unknown>) => ({ ...value, denominator_units: 7.5 })],
+    ["coverage denominator below observed", (value: Record<string, unknown>) => ({ ...value, denominator_units: 6 })],
+  ] as const)("refuses before figures when %s", async (_name, mutate) => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(mutate(AUTHORIZED_COVERAGE));
+    mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+
+    const markup = await renderComplete();
+
+    expect(markup).toContain("Evidencia no disponible");
+    expect(markup).toContain("Estado de evidencia: invalid");
+    expectFigureFree(markup);
+  });
+
+  it.each([
+    ["result reference non-object", (value: Record<string, unknown>) => ({ ...value, reference: null })],
+    ["result reference denominator missing", (value: Record<string, unknown>) => ({ ...value, reference: copyWithout(value.reference as Record<string, unknown>, "denominator_units") })],
+    ["result reference denominator negative", (value: Record<string, unknown>) => ({ ...value, reference: { ...(value.reference as Record<string, unknown>), denominator_units: -1 } })],
+    ["result reference denominator noninteger", (value: Record<string, unknown>) => ({ ...value, reference: { ...(value.reference as Record<string, unknown>), denominator_units: 7.5 } })],
+    ["result reference denominator unsafe", (value: Record<string, unknown>) => ({ ...value, reference: { ...(value.reference as Record<string, unknown>), denominator_units: Number.MAX_SAFE_INTEGER + 1 } })],
+  ] as const)("refuses before figures when %s", async (_name, mutate) => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue(mutate(AUTHORIZED_RESULT));
+
+    const markup = await renderComplete();
+
+    expect(markup).toContain("Evidencia no disponible");
+    expect(markup).toContain("Estado de evidencia: invalid");
+    expectFigureFree(markup);
+  });
+
+  it.each([
     ["coverage", "denominator_unavailable"],
     ["coverage", "selection_invalid"],
     ["coverage", "source_unavailable"],
@@ -257,7 +338,7 @@ describe("FiscalizacionPage", () => {
     ["result", "source_inconsistent"],
     ["result", "authorization_denied"],
     ["result", "payload_too_large"],
-  ] as const)("renders the %s status %s", async (side, status) => {
+  ] as const)("refuses disclosure when the %s side returns %s", async (side, status) => {
     mocks.facets.mockResolvedValue(FACETS);
     const payload =
       status === "source_inconsistent"
@@ -306,20 +387,17 @@ describe("FiscalizacionPage", () => {
                   ? { status, authorization_status: null }
                   : { status };
     mocks.coverage.mockResolvedValue(
-      side === "coverage" ? payload : { status: "opt_in_required" },
+      side === "coverage" ? payload : AUTHORIZED_COVERAGE,
     );
     mocks.result.mockResolvedValue(
-      side === "result" ? payload : { status: "opt_in_required" },
+      side === "result" ? payload : AUTHORIZED_RESULT,
     );
 
     const markup = await renderComplete();
 
-    expect(markup).toContain(
-      `Estado ${side === "coverage" ? "de cobertura" : "del resultado"}: ${status}`,
-    );
-    if (status === "source_inconsistent") {
-      expect(markup).toContain("guarded_reason: 2 filas");
-    }
+    expect(markup).toContain("Evidencia no disponible");
+    expect(markup).toContain("Estado de evidencia:");
+    expectFigureFree(markup);
   });
 
   it.each([
@@ -352,13 +430,9 @@ describe("FiscalizacionPage", () => {
 
       const markup = await renderComplete();
 
-      expect(markup).toContain("Evidencia rechazada");
-      expect(markup).toContain(
-        "no superó la verificación independiente de fuente de la página",
-      );
-      expect(markup).not.toContain("7 unidades observadas de 8");
-      expect(markup).not.toContain("Guardian Party");
-      expect(markup).not.toContain("999");
+      expect(markup).toContain("Evidencia no disponible");
+      expect(markup).toContain("Estado de evidencia: invalid");
+      expectFigureFree(markup);
     },
   );
 
