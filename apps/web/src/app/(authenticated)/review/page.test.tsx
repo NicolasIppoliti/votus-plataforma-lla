@@ -5,6 +5,10 @@ import ReviewPage from "./page";
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
+const AUTHORIZATION_DENIED = "No se pudo autorizar la cola de revisión.";
+const PAYLOAD_TOO_LARGE = "La respuesta de la cola de revisión supera el límite seguro.";
+const UNAVAILABLE = "La cola de revisión no está disponible por el momento.";
+const AUTHORIZED_EMPTY = "No hay elementos de revisión pendientes.";
 
 const reviewState = vi.hoisted(() => ({
   status: "ok",
@@ -15,7 +19,7 @@ const reviewState = vi.hoisted(() => ({
     kind: string;
 severity: string;
     subject_ref?: string;
-    detected_at: string;
+    detectedAt: string;
     note?: string | null;
   }>,
 }));
@@ -37,10 +41,10 @@ describe("review page — responsive review evidence", () => {
     reviewState.items = [
       {
         id: "review-1",
-        kind: "provider_defect",
+        kind: "fetch_failure",
         severity: "warning",
         subject_ref: longSubjectRef,
-        detected_at: "2026-02-01T12:00:00Z",
+        detectedAt: "2026-02-01T12:00:00Z",
         note: longNote,
       },
     ];
@@ -64,7 +68,7 @@ describe("review page — responsive review evidence", () => {
     );
     expect(markup).toMatch(/<col[^>]+class="review-column review-column--subject"/);
     expect(markup).toMatch(/<col[^>]+class="review-column review-column--note"/);
-    expect(markup).toContain('class="table-cell--short">provider_defect');
+    expect(markup).toContain('class="table-cell--short">fetch_failure');
     expect(markup).toContain('class="table-cell--short">warning');
     expect(markup).toContain(
       'class="table-cell--timestamp">2026-02-01T12:00:00Z',
@@ -90,13 +94,83 @@ describe("review page — responsive review evidence", () => {
     expect(markup).not.toContain("<table");
   });
 
-  it("renders authorization denial distinctly from an empty queue", async () => {
+  it("renders authorization denial distinctly from every other safe state", async () => {
     reviewState.status = "authorization_denied";
     reviewState.total = 0;
     reviewState.truncated = false;
     reviewState.items = [];
+
     const markup = renderToStaticMarkup((await ReviewPage({ searchParams: Promise.resolve({}) })) as ReactElement);
-    expect(markup).toContain("No se pudo autorizar la cola de revisión.");
-    expect(markup).not.toContain("No hay elementos de revisión pendientes.");
+
+    expect(markup).toContain(AUTHORIZATION_DENIED);
+    expect(markup).not.toContain(AUTHORIZED_EMPTY);
+    expect(markup).not.toContain(PAYLOAD_TOO_LARGE);
+    expect(markup).not.toContain(UNAVAILABLE);
+    expect(markup).not.toContain("<table");
+  });
+
+  it("renders an oversized response refusal without payload figures or exclusions", async () => {
+    reviewState.status = "payload_too_large";
+    reviewState.total = 8675309;
+    reviewState.truncated = true;
+    reviewState.items = [{
+      id: "payload-item-sentinel",
+      kind: "payload-exclusion-reason-sentinel",
+      severity: "warning",
+      detectedAt: "2026-02-01T12:00:00Z",
+    }];
+
+    const markup = renderToStaticMarkup((await ReviewPage({ searchParams: Promise.resolve({}) })) as ReactElement);
+
+    expect(markup).toContain(PAYLOAD_TOO_LARGE);
+    expect(markup).not.toContain(AUTHORIZATION_DENIED);
+    expect(markup).not.toContain("8675309");
+    expect(markup).not.toContain("payload-item-sentinel");
+    expect(markup).not.toContain("payload-exclusion-reason-sentinel");
+    expect(markup).not.toContain("<table");
+  });
+
+  it("renders a generic unavailable refusal without payload figures or exclusions", async () => {
+    reviewState.status = "unavailable";
+    reviewState.total = 246801357;
+    reviewState.truncated = true;
+    reviewState.items = [{
+      id: "unavailable-item-sentinel",
+      kind: "unavailable-exclusion-reason-sentinel",
+      severity: "error",
+      detectedAt: "2026-02-01T12:00:00Z",
+    }];
+
+    const markup = renderToStaticMarkup((await ReviewPage({ searchParams: Promise.resolve({}) })) as ReactElement);
+
+    expect(markup).toContain(UNAVAILABLE);
+    expect(markup).not.toContain(AUTHORIZATION_DENIED);
+    expect(markup).not.toContain("246801357");
+    expect(markup).not.toContain("unavailable-item-sentinel");
+    expect(markup).not.toContain("unavailable-exclusion-reason-sentinel");
+    expect(markup).not.toContain("<table");
+  });
+
+  it("keeps authorized empty distinct from every refusal", async () => {
+    reviewState.status = "authorized_empty";
+    reviewState.total = 8675309;
+    reviewState.truncated = true;
+    reviewState.items = [{
+      id: "authorized-empty-item-sentinel",
+      kind: "authorized-empty-exclusion-reason-sentinel",
+      severity: "warning",
+      detectedAt: "2026-02-01T12:00:00Z",
+    }];
+
+    const markup = renderToStaticMarkup((await ReviewPage({ searchParams: Promise.resolve({}) })) as ReactElement);
+
+    expect(markup).toContain(AUTHORIZED_EMPTY);
+    expect(markup).not.toContain(AUTHORIZATION_DENIED);
+    expect(markup).not.toContain(PAYLOAD_TOO_LARGE);
+    expect(markup).not.toContain(UNAVAILABLE);
+    expect(markup).not.toContain("8675309");
+    expect(markup).not.toContain("authorized-empty-item-sentinel");
+    expect(markup).not.toContain("authorized-empty-exclusion-reason-sentinel");
+    expect(markup).not.toContain("<table");
   });
 });
