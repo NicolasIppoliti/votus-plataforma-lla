@@ -6,10 +6,11 @@ import {
 } from "./exploration-contract";
 
 describe("official results exploration contract", () => {
-  it("returns exact figures, actual granularity, election shape, and explicit unmapped identity", () => {
+  it("returns exact figures, official category identity, actual granularity, election shape, and explicit unmapped identity", () => {
     const result = parseOfficialExploration({
-      status: "ok", source_kind: "official", level: "seccion", source_granularity: "mesa",
-      election_year: 2025, election_round: "legislativas", total_votes: 300, mesa_count: 2,
+      status: "ok", source_kind: "official", category_name: "DIPUTADO NACIONAL",
+      level: "seccion", source_granularity: "mesa", election_year: 2025,
+      election_round: "legislativas", total_votes: 300, mesa_count: 2,
       source_audit: [{ kind: "official", rows: 4, votes: 300 }],
       source_exclusions: [{ kind: "fiscalizacion", rows: 2, votes: 1776 },
         { kind: "unknown", rows: 1, votes: 9 }],
@@ -24,8 +25,9 @@ describe("official results exploration contract", () => {
       archive_entry_ids: ["national/2025-legislativas"],
     });
     expect(result).toMatchObject({
-      status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
-      electionYear: 2025, electionRound: "legislativas", totalVotes: 300, mesaCount: 2,
+      status: "ok", sourceKind: "official", categoryName: "DIPUTADO NACIONAL",
+      level: "seccion", sourceGranularity: "mesa", electionYear: 2025,
+      electionRound: "legislativas", totalVotes: 300, mesaCount: 2,
       sourceAudit: [{ kind: "official", rows: 4, votes: 300 }],
       sourceExclusions: [{ kind: "fiscalizacion", rows: 2, votes: 1776 },
         { kind: "unknown", rows: 1, votes: 9 }],
@@ -34,7 +36,22 @@ describe("official results exploration contract", () => {
     });
   });
 
-  it("parses a bounded official section-wide school breakdown without merging circuit identities", () => {
+  it.each([undefined, null, 1, "", "  "])(
+      "fails closed when the category_name is malformed: %#", (categoryName) => {
+        expect(() => parseOfficialExploration({
+          status: "ok", source_kind: "official", category_name: categoryName,
+          level: "distrito", source_granularity: "distrito", election_year: 2025,
+          election_round: "provinciales", total_votes: 23, mesa_count: null,
+          source_audit: [{ kind: "official", rows: 1, votes: 23 }], source_exclusions: [],
+          parties: [{ identity_status: "unmapped", canonical_party_id: null, display_name: null,
+            list_id: "77", votes: 23, vote_share: "1" }],
+          archive_entry_ids: ["pba/2025-distrito-027"],
+        })).toThrow(new ResultsExplorationContractError(
+          "results_exploration_official_contract", "malformed success payload"));
+      },
+    );
+
+    it("parses a bounded official section-wide school breakdown without merging circuit identities", () => {
     const result = parseSchoolBreakdown({
       status: "ok", source_kind: "official", level: "seccion",
       source_audit: [{ kind: "official", rows: 3, votes: 350 }], source_exclusions: [], exclusions: [],
@@ -60,8 +77,9 @@ describe("official results exploration contract", () => {
 
   it("keeps mesa count unavailable when the source did not publish mesa rows", () => {
     expect(parseOfficialExploration({
-      status: "ok", source_kind: "official", level: "distrito", source_granularity: "distrito",
-      election_year: 2025, election_round: "provinciales", total_votes: 23,
+      status: "ok", source_kind: "official", category_name: "DIPUTADO NACIONAL",
+      level: "distrito", source_granularity: "distrito", election_year: 2025,
+      election_round: "provinciales", total_votes: 23,
       source_audit: [{ kind: "official", rows: 1, votes: 23 }],
       source_exclusions: [], mesa_count: null, parties: [{ identity_status: "unmapped",
         canonical_party_id: null, display_name: null, list_id: "77", votes: 23, vote_share: "1" }],
@@ -73,8 +91,9 @@ describe("official results exploration contract", () => {
     ["party votes", 23, 22, "1"], ["party share", 23, 23, "0.5"], ["zero-total share", 0, 0, "0"],
   ])("refuses inconsistent %s", (_case, totalVotes, votes, voteShare) => {
     expect(() => parseOfficialExploration({
-      status: "ok", source_kind: "official", level: "distrito", source_granularity: "distrito",
-      election_year: 2025, election_round: "provinciales", total_votes: totalVotes, mesa_count: null,
+      status: "ok", source_kind: "official", category_name: "DIPUTADO NACIONAL",
+      level: "distrito", source_granularity: "distrito", election_year: 2025,
+      election_round: "provinciales", total_votes: totalVotes, mesa_count: null,
       source_audit: [{ kind: "official", rows: 1, votes: totalVotes }], source_exclusions: [],
       parties: [{ identity_status: "unmapped",
         canonical_party_id: null, display_name: null, list_id: "77", votes, vote_share: voteShare }],
@@ -84,7 +103,8 @@ describe("official results exploration contract", () => {
 
   it("accepts the SQL zero-total contract", () => {
     expect(parseOfficialExploration({ status: "ok", source_kind: "official",
-      level: "distrito", source_granularity: "distrito", election_year: 2025, election_round: "provinciales",
+      category_name: "DIPUTADO NACIONAL", level: "distrito", source_granularity: "distrito",
+      election_year: 2025, election_round: "provinciales",
       total_votes: 0, mesa_count: null, source_audit: [{ kind: "official", rows: 1, votes: 0 }],
       source_exclusions: [],
       parties: [{ identity_status: "unmapped", canonical_party_id: null, display_name: null, list_id: "77",
@@ -94,10 +114,11 @@ describe("official results exploration contract", () => {
 
   it("refuses an aggregate whose row-derived audit includes fiscalizacion", () => {
     expect(() => parseOfficialExploration({
-      status: "ok", source_kind: "official", level: "seccion", source_granularity: "mesa",
-      election_year: 2025, election_round: "legislativas", total_votes: 360, mesa_count: 2,
-      source_audit: [{ kind: "official", rows: 4, votes: 300 },
-        { kind: "fiscalizacion", rows: 1, votes: 60 }],
+      status: "ok", source_kind: "official", category_name: "DIPUTADO NACIONAL",
+      level: "seccion", source_granularity: "mesa", election_year: 2025,
+      election_round: "legislativas", total_votes: 360, mesa_count: 2,
+      source_audit: [{ kind: "fiscalizacion", rows: 1, votes: 60 },
+        { kind: "official", rows: 4, votes: 300 }],
       source_exclusions: [], parties: [],
       archive_entry_ids: ["national/2025-legislativas", "fiscalizacion/leaked"],
     })).toThrow(new ResultsExplorationContractError(

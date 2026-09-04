@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(147);
+select plan(148);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -317,11 +317,11 @@ select is(results_exploration_official('20000000-0000-0000-0000-000000000001',
   '20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito')->>'status','ok',
   'national mesa-backed source remains eligible for district aggregation');
 select is(results_exploration_official('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  results_exploration_official_wrapper_0034('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  'public district wrapper preserves exact 0034 public JSONB payload outside PBA');
+  results_exploration_official_wrapper_0034('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito') || jsonb_build_object('category_name','DIPUTADO NACIONAL'),
+  'public district wrapper preserves category extension and exact prior 0034 public fields outside PBA');
 select is(results_exploration_official('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito')-'source_exclusions',
-  results_exploration_official_0029('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito'),
-  'district fast path preserves mapped, unmapped, archive, mesa identity, audit, shares, and totals');
+  results_exploration_official_0029('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','02',p_requested_level=>'distrito') || jsonb_build_object('category_name','DIPUTADO NACIONAL'),
+  'district fast path preserves exact prior fields with category extension for mapped, unmapped, archive, mesa identity, audit, shares, and totals');
 select ok(jsonb_build_array(public_payload-'source_exclusions',fast_payload)=jsonb_build_array(preserved_payload,preserved_payload)
   and preserved_payload->>'status'='selection_invalid' and preserved_payload->'counts'->>'missing_selector'='1',
   'missing required selector delegates to 0029 without no_rows: '||label) from (values
@@ -346,14 +346,16 @@ insert into jurisdiction(id,distrito_code) values ('20000000-0000-0000-0000-0000
 insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index) values
 ('20000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000036','20000000-0000-0000-0000-000000000003','distrito','mixed',1,'official','national/mixed',26),
 ('20000000-0000-0000-0000-000000000005','20000000-0000-0000-0000-000000000037','20000000-0000-0000-0000-000000000007','distrito','zero',0,'official','national/zero',27);
-select is(results_exploration_official(election_id,category_id,distrito,p_requested_level=>'distrito')-
-    'source_exclusions',results_exploration_official_0029(election_id,category_id,distrito,
-    p_requested_level=>'distrito'),'district edge payload matches 0029: '||label) from (values
-  ('mixed','20000000-0000-0000-0000-000000000001'::uuid,'20000000-0000-0000-0000-000000000003'::uuid,'02'),
-  ('district source','20000000-0000-0000-0000-000000000005'::uuid,'20000000-0000-0000-0000-000000000003'::uuid,'03'),
-  ('zero votes','20000000-0000-0000-0000-000000000005'::uuid,'20000000-0000-0000-0000-000000000007'::uuid,'04'),
-  ('no rows','20000000-0000-0000-0000-000000000005'::uuid,'20000000-0000-0000-0000-000000000007'::uuid,'99')
-) cases(label,election_id,category_id,distrito);
+select is(public_payload-'source_exclusions',core_payload || case when core_payload->>'status'='ok'
+    then jsonb_build_object('category_name',expected_category) else '{}'::jsonb end,
+    'district edge preserves exact prior fields with conditional category extension: '||label) from (values
+  ('mixed','20000000-0000-0000-0000-000000000001'::uuid,'20000000-0000-0000-0000-000000000003'::uuid,'02',null::text),
+  ('district source','20000000-0000-0000-0000-000000000005'::uuid,'20000000-0000-0000-0000-000000000003'::uuid,'03','DIPUTADO NACIONAL'),
+  ('zero votes','20000000-0000-0000-0000-000000000005'::uuid,'20000000-0000-0000-0000-000000000007'::uuid,'04','MESA IDENTITY FIXTURE'),
+  ('no rows','20000000-0000-0000-0000-000000000005'::uuid,'20000000-0000-0000-0000-000000000007'::uuid,'99',null)
+) cases(label,election_id,category_id,distrito,expected_category)
+cross join lateral (select results_exploration_official(election_id,category_id,distrito,p_requested_level=>'distrito') public_payload,
+  results_exploration_official_0029(election_id,category_id,distrito,p_requested_level=>'distrito') core_payload) payloads;
 rollback to savepoint district_fast_path_edges;
 select is((select (party->>'votes')::bigint from jsonb_array_elements(
   results_exploration_official(
@@ -465,6 +467,11 @@ select is(results_exploration_official(
   '20000000-0000-0000-0000-000000000002',
   '20000000-0000-0000-0000-000000000003', '02', '027'
 )->>'election_round', 'generales', '2023 generales keeps its exact election round');
+  select is(results_exploration_official(
+    '20000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000003', '02', '027'
+  )->>'category_name', 'DIPUTADO NACIONAL',
+    'success payload carries the exact authoritative category name');
 select is(results_exploration_official(
   '20000000-0000-0000-0000-000000000004',
   '20000000-0000-0000-0000-000000000003', '02', '027'
@@ -595,8 +602,8 @@ select is(results_exploration_official(
     '20000000-0000-0000-0000-000000000006', '02', '027') - 'source_exclusions',
   results_exploration_official_0035(
     '20000000-0000-0000-0000-000000000005',
-    '20000000-0000-0000-0000-000000000006', '02', '027'),
-  'generic public RPC preserves exact core payload parity for PBA municipal results');
+    '20000000-0000-0000-0000-000000000006', '02', '027') || jsonb_build_object('category_name','CONCEJALES'),
+  'generic public RPC preserves exact 0035 core fields with CONCEJALES category extension for PBA municipal results');
 select is((select party->>'canonical_party_id' from jsonb_array_elements(
     results_exploration_official('20000000-0000-0000-0000-000000000005',
       '20000000-0000-0000-0000-000000000006', '02', '027')->'parties') party),
@@ -606,8 +613,8 @@ select is(results_exploration_official(
     '20000000-0000-0000-0000-000000000008', '02', '027') - 'source_exclusions',
   results_exploration_official_0035(
     '20000000-0000-0000-0000-000000000005',
-    '20000000-0000-0000-0000-000000000008', '02', '027'),
-  'generic public RPC preserves exact core payload parity for PBA provincial results');
+    '20000000-0000-0000-0000-000000000008', '02', '027') || jsonb_build_object('category_name','DIPUTADOS PROVINCIALES'),
+  'generic public RPC preserves exact 0035 core fields with DIPUTADOS PROVINCIALES category extension for PBA provincial results');
 select is((select party->>'canonical_party_id' from jsonb_array_elements(
     results_exploration_official('20000000-0000-0000-0000-000000000005',
       '20000000-0000-0000-0000-000000000008', '02', '027')->'parties') party),

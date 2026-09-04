@@ -1177,8 +1177,11 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
 
 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
+    official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        f"\\ir ../migrations/down/{official_category_name_migration_version}"
+        "_add_official_category_name.down.sql",
         "\\ir ../migrations/down/20260831160422_platform_review_breakdown.down.sql",
         "\\ir ../migrations/down/20260831150450_allow_year_level_review_contexts.down.sql",
         "\\ir ../migrations/down/20260831055357_record_review_item_contexts.down.sql",
@@ -1261,6 +1264,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260831055357_record_review_item_contexts.sql",
         "\\ir ../migrations/20260831150450_allow_year_level_review_contexts.sql",
         "\\ir ../migrations/20260831160422_platform_review_breakdown.sql",
+        f"\\ir ../migrations/{official_category_name_migration_version}"
+        "_add_official_category_name.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1275,7 +1280,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "64 as migration_inventory_count",
+        "65 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         "authenticated legacy public result access survived cutover",
         "dropping only its index",
@@ -1849,10 +1854,12 @@ def test_0032_preaggregates_district_classification_and_metadata_with_safe_rollb
         "results_exploration_official_wrapper_0034(",
         "p_requested_level=>'distrito'",
         "public_elapsed_ms<=3000",
-        "new public district wrapper exactly preserves the real 0034 public wrapper jsonb payload",
+        "new public district wrapper adds category identity while preserving "
+        "the exact 0034 public payload",
         "0035 district core exactly preserves the full realistic 0034 jsonb payload",
         "null and literal chr(1) sections preserve the full reference core jsonb payload",
-        "null and literal chr(1) sections preserve the full reference public jsonb payload",
+        "null and literal chr(1) sections add category identity and preserve "
+        "the reference public payload",
         "null and literal chr(1) sections retain explicit two-row and 24-vote diagnostics",
     ):
         assert evidence in scale_proof
@@ -2185,6 +2192,44 @@ def test_0035_rejects_pba_section_sources_for_district_requests_by_provenance() 
         "normalized 02/027 pba total is reachable as a section result",
     ):
         assert evidence in functional
+
+
+def test_official_category_name_wrapper_preserves_the_closed_public_reachability() -> None:
+    version = "20260904035355"
+    predecessor = f"results_exploration_official_wrapper_{version}"
+    forward_path = MIGRATIONS / f"{version}_add_official_category_name.sql"
+    down_path = MIGRATIONS / "down" / f"{version}_add_official_category_name.down.sql"
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    signature = "results_exploration_official(uuid,uuid,text,text,text,text,integer,text)"
+
+    assert forward.startswith("begin;") and forward.endswith("commit;")
+    assert f"alter function public.{signature} rename to {predecessor}" in forward
+    assert "create function public.results_exploration_official(" in forward
+    wrapper = forward.split("create function public.results_exploration_official(", 1)[1]
+    assert f"payload:={predecessor}(" in wrapper
+    assert "if payload->>'status'<>'ok' then return payload; end if;" in wrapper
+    assert "from category c where c.id=p_category_id and length(btrim(c.name))>0" in wrapper
+    assert "if category_count<>1 then" in wrapper
+    assert "'status','selection_invalid'" in wrapper
+    assert "return payload||jsonb_build_object('category_name',category_name)" in wrapper
+    assert "language plpgsql stable security definer set search_path=public,pg_temp" in wrapper
+    assert "owner to results_exploration_executor" in forward
+    assert f"revoke all on function public.{signature} from public,anon,authenticated" in forward
+    assert "to_regrole('service_role')" in forward
+    assert f"grant execute on function public.{signature} to workspace_query_owner" in forward
+    assert f"revoke all on function public.{predecessor}" not in forward
+    assert f"grant execute on function public.{predecessor}" not in forward
+
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert f"drop function public.{signature}" in down
+    assert (
+        f"alter function public.{predecessor}"
+        "(uuid,uuid,text,text,text,text,integer,text) "
+        "rename to results_exploration_official"
+    ) in down
+    assert "create function" not in down
+    assert predecessor not in down.split("rename to results_exploration_official", 1)[1]
 
 
 def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -> None:

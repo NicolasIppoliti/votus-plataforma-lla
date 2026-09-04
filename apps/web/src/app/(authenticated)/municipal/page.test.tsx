@@ -193,7 +193,7 @@ vi.mock("@/lib/supabase/server-client", () => ({
 
 vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
   loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
-    status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
+    status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", categoryName: "CONCEJALES", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
     parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: authorizedEvidenceAudit, sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
   }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) })),
 }));
@@ -465,6 +465,7 @@ describe("municipal evidence — the rendered-page defense boundary", () => {
     result: {
       status: "ok",
       sourceKind: "official",
+      categoryName: "CONCEJALES",
       level: "seccion",
       sourceGranularity: "seccion",
       electionYear: 2025,

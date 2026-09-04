@@ -14,6 +14,7 @@ function validBundle() {
     result: {
       status: "ok",
       source_kind: "official",
+      category_name: "CONCEJALES",
       level: "seccion",
       source_granularity: "seccion",
       election_year: 2025,
