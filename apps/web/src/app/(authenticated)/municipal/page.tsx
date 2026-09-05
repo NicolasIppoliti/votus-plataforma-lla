@@ -64,27 +64,34 @@ export type MunicipalView =
       /** Archive entries known before party mapping failed. */
       archiveEntryIds?: string[];
     };
+const MUNICIPAL_EVIDENCE_IDENTITY = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" } as const;
 function auditByKind(entries: { kind: string; rows: number; votes: number }[]): ExcludedByKind { return entries.reduce<ExcludedByKind>((totals, { kind, rows, votes }) => ({ ...totals, [kind]: { rows: (totals[kind]?.rows ?? 0) + rows, votes: (totals[kind]?.votes ?? 0) + votes } }), {}); }
+function hasValidOfficialSourceAudit(rows: ResultRow[], sourceAudit: ExcludedByKind | undefined): boolean {
+  if (!sourceAudit || typeof sourceAudit !== "object") return false;
+  const sourceKinds = Object.keys(sourceAudit);
+  if (sourceKinds.length !== 1 || sourceKinds[0] !== "official" || !Object.hasOwn(sourceAudit, "official")) return false;
+  const officialAudit = sourceAudit.official;
+  if (!officialAudit || !Number.isSafeInteger(officialAudit.rows) || officialAudit.rows <= 0 || !Number.isSafeInteger(officialAudit.votes) || officialAudit.votes < 0) return false;
+  let renderedVotes = 0;
+  for (const row of rows) {
+    if (row.sourceKind !== "official" || !Number.isSafeInteger(row.votes) || row.votes < 0) return false;
+    renderedVotes += row.votes;
+    if (!Number.isSafeInteger(renderedVotes)) return false;
+  }
+  return officialAudit.votes === renderedVotes;
+}
 export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOfficialEvidence, { status: "ok" }>, categoryId: string): MunicipalView {
   const { result } = evidence;
-  const excluded = auditByKind(result.sourceExclusions);
-  if (result.sourceKind !== "official") return { status: "read_failed", reason: "la evidencia municipal no es de fuente oficial", excluded };
+  if (result.electionYear !== MUNICIPAL_EVIDENCE_IDENTITY.year || result.electionRound !== MUNICIPAL_EVIDENCE_IDENTITY.round || result.categoryName !== MUNICIPAL_EVIDENCE_IDENTITY.categoryName) return { status: "read_failed", reason: "No se pudo leer la evidencia municipal autorizada." };
+  if (result.sourceKind !== "official") return { status: "read_failed", reason: "la evidencia municipal no es de fuente oficial" };
   const officialAudit = result.sourceAudit[0];
   const partyVotes = result.parties.reduce((sum, party) => sum + party.votes, 0);
-  if (
-    result.sourceAudit.length !== 1 ||
-    officialAudit?.kind !== "official" ||
-    officialAudit.rows <= 0 ||
-    officialAudit.votes !== result.totalVotes ||
-    partyVotes !== result.totalVotes
-  ) return { status: "read_failed", reason: "la auditoría oficial municipal no coincide con las cifras autorizadas", excluded };
-  if (result.archiveEntryIds.length !== 1) return { status: "read_failed", reason: "la evidencia municipal no identifica una única entrada de archivo", archiveEntryIds: result.archiveEntryIds, excluded };
+  if (result.sourceAudit.length !== 1 || officialAudit?.kind !== "official" || !Number.isSafeInteger(officialAudit.rows) || officialAudit.rows <= 0 || !Number.isSafeInteger(officialAudit.votes) || officialAudit.votes < 0 || !Number.isSafeInteger(result.totalVotes) || result.totalVotes < 0 || result.parties.some((party) => !Number.isSafeInteger(party.votes) || party.votes < 0) || !Number.isSafeInteger(partyVotes) || officialAudit.votes !== result.totalVotes || partyVotes !== result.totalVotes || result.sourceExclusions.some((entry) => !Number.isSafeInteger(entry.rows) || entry.rows < 0 || !Number.isSafeInteger(entry.votes) || entry.votes < 0) || result.archiveEntryIds.length !== 1) return { status: "read_failed", reason: "la auditoría oficial municipal no coincide con las cifras autorizadas" };
   const archiveEntryId = result.archiveEntryIds[0]!;
-  const sourceAudit = auditByKind(result.sourceAudit);
   return { status: "ok", rows: result.parties.map((party) => ({ jurisdictionId: MUNICIPAL_JURISDICTION_ID, categoryId,
     listId: party.listId, votes: party.votes, sourceKind: "official", granularity: result.sourceGranularity,
     requestedGranularity: result.level, archiveEntryId, partyName: party.displayName,
-    canonicalPartyId: party.canonicalPartyId })), excluded, sourceAudit, partyMappingConfigured: true };
+    canonicalPartyId: party.canonicalPartyId })), excluded: auditByKind(result.sourceExclusions), sourceAudit: auditByKind(result.sourceAudit), partyMappingConfigured: true };
 }
 
 type MunicipalProvenance = Omit<OfficialProvenanceMetadata, "status"> & { status?: string; url?: string };
@@ -149,6 +156,7 @@ export function renderMunicipalView(
   }
 
   const { rows } = view;
+  if (!hasValidOfficialSourceAudit(rows, view.sourceAudit)) return municipalRefusal("la auditoría de fuente oficial no es válida.");
   // Computed BEFORE the path-3 guard, for the same reason it is carried
   // through `read_failed`: a drop already counted must not vanish behind a
   // refusal about something else.
@@ -367,8 +375,6 @@ export default async function MunicipalPage({
     return municipalRefusal("La evidencia oficial autorizada fue truncada; no se muestran cifras parciales.");
   if (evidence.status !== "ok") return municipalRefusal("La evidencia oficial autorizada no es utilizable.");
 
-  return renderMunicipalView(
-    municipalViewFromOfficialEvidence(evidence, categoryId),
-    evidence.provenance,
-  );
+  const view = municipalViewFromOfficialEvidence(evidence, categoryId);
+  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : []);
 }
