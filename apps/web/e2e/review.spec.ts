@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
+import { durationInMilliseconds } from "./css-duration";
 import { createReviewStateHandler } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
 
@@ -16,6 +17,15 @@ const REVIEW_ITEM = {
   detected_at: "2026-08-13T12:34:56.789Z",
   note: `The official mesa identity needs manual review because ${"the source lineage remains ambiguous; ".repeat(6)}`,
 } as const;
+
+async function expectReducedMotion(page: Page, target: Locator): Promise<void> {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const durations = await target.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return [...styles.animationDuration.split(","), ...styles.transitionDuration.split(",")];
+  });
+  expect(durations.map(durationInMilliseconds).every((duration) => duration <= 0.01)).toBe(true);
+}
 
 async function withReviewItem<T>(page: Page, run: () => Promise<T>): Promise<T> {
   const environment = assertE2eEnvironment(process.env);
@@ -119,21 +129,41 @@ async function expectPopulatedReviewLayout(
     await document.fonts.ready;
   });
 
+  const main = page.getByRole("main");
+  await expect(main.getByText("Operaciones · revisión", { exact: true })).toBeVisible();
+  const attention = main.getByRole("status");
+  await expect(attention).toContainText("Atención operativa");
+  await expect(attention).toContainText("Esta pantalla es solo de consulta.");
+  const results = main.locator('section[aria-labelledby="review-results-heading"]');
+  await expect(results.getByRole("heading", { name: "Elementos pendientes" })).toBeVisible();
+
   const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
   await expect(region).toBeVisible();
   await expect(region).toHaveAttribute("tabindex", "0");
+  const regionBox = await region.boundingBox();
+  if (!regionBox) throw new Error("review table scroll region has no box");
+  expect(regionBox.height).toBeGreaterThanOrEqual(44);
+  await page.touchscreen.tap(regionBox.x + 22, regionBox.y + 22);
   await region.focus();
   await expect(region).toBeFocused();
+  await expectReducedMotion(page, region);
   await expectDocumentNotToOverflow(page);
 
   const scrollDimensions = await region.evaluate((element) => ({
     clientWidth: element.clientWidth,
+    scrollLeft: element.scrollLeft,
     scrollWidth: element.scrollWidth,
   }));
   if (expectTableOverflow) {
     expect(scrollDimensions.scrollWidth).toBeGreaterThan(
       scrollDimensions.clientWidth,
     );
+    await page.keyboard.press("Shift+Tab");
+    await expect(region).not.toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(region).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(scrollDimensions.scrollLeft);
   } else {
     expect(scrollDimensions.scrollWidth).toBeLessThanOrEqual(
       scrollDimensions.clientWidth,
@@ -156,6 +186,8 @@ async function expectPopulatedReviewLayout(
 }
 
 test.describe("the review route reflects the disposable database", () => {
+  test.use({ hasTouch: true });
+
   test("test_controlled_review_denial_is_presentation_evidence_only", async ({ page, next }) => {
     let matched = 0;
     next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL, () => { matched += 1; }));
@@ -196,7 +228,12 @@ test.describe("the review route reflects the disposable database", () => {
       );
       await expectPopulatedReviewLayout(
         page,
-        { width: 1280, height: 900 },
+        { width: 320, height: 844 },
+        true,
+      );
+      await expectPopulatedReviewLayout(
+        page,
+        { width: 1440, height: 900 },
         false,
       );
     });

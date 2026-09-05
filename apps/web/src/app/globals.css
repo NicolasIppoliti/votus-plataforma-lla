@@ -1627,3 +1627,97 @@ select option {
   .official-municipal__header { padding-block-end: 1rem; }
   .official-municipal__selection, .official-municipal__results, .official-municipal__evidence, .official-municipal__state { padding: 0.9rem; }
 }
+
+.review-queue {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.review-queue__header {
+  display: grid;
+  gap: 0.55rem;
+  padding-block-end: 1.25rem;
+  border-block-end: 1px solid var(--border);
+}
+
+.review-queue__header h1 {
+  font-size: clamp(2rem, 6vw, 3rem);
+}
+
+.review-queue__lede,
+.review-queue__results-heading p,
+.review-queue__attention > p:last-child {
+  color: var(--muted-ink);
+}
+
+.review-queue__attention,
+.review-queue__results {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.review-queue__attention {
+  border-block-start: 3px solid var(--accent);
+  background: var(--surface-muted);
+}
+
+.review-queue__attention > p:nth-child(2) {
+  color: var(--ink);
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.review-queue__results {
+  border-block-start: 3px solid var(--accent);
+}
+
+.review-queue__results-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.review-queue__results .table-scroll {
+  max-width: 100%;
+  padding-block: 0.25rem 0.6rem;
+}
+
+.review-queue__pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding-block-start: 0.25rem;
+  border-block-start: 1px solid var(--border);
+}
+
+.review-queue__pagination .button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+@media (max-width: 47.999rem) {
+  .review-queue__header {
+    padding-block-end: 1rem;
+  }
+
+  .review-queue__attention,
+  .review-queue__results {
+    padding: 0.9rem;
+  }
+
+  .review-queue__results-heading {
+    display: grid;
+  }
+
+  .review-queue__pagination .button {
+    flex: 1 1 auto;
+  }
+}
