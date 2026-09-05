@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
+import { TableScroll } from "@/components/TableScroll";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
 import {
@@ -241,68 +242,121 @@ export function renderMunicipalView(
     </main>;
   }
 
+  if (rows.length === 0) {
+    return municipalState(
+      "No se encontraron resultados municipales para esta jurisdicción, categoría y elección.",
+      "status",
+    );
+  }
+
   return (
-    <main>
-      <h1>Resultados municipales (Concejales)</h1>
-      {sourceAuditNote}
-      {excludedNote}
-      <UnmappedListIds
-        entries={unmapped.entries}
-        withoutListId={unmapped.withoutListId}
-        totalRows={rows.length}
-        unsummable={unsummable}
-        mappingConfigured={view.partyMappingConfigured}
-      />
-      {unsummable !== null ? (
-        <p role="alert">
-          No hay cifras por partido: {unsummable}. Un total que duplica el
-          conteo es peor que no tener total.
-        </p>
-      ) : null}
-      <UnorderableLevels entries={unrecognized} />
-      {/* No rows, no granularity claim: `readGranularity([])` answers
-          `distrito` so the fold cannot upgrade, but rendering that as a badge
-          asserts a level for data that does not exist. Withheld with the
-          figure too: `readGranularity` folds to the COARSEST level, so a badge
-          beside a refusal names one of the mixed levels as if it were the
-          set's — hiding the mix the refusal exists to announce. */}
-      {rows.length === 0 || unsummable !== null ? null : (
-        <GranularityBadge
-          granularity={totalLevel.granularity}
-          {...(totalLevel.summedFrom !== undefined
-            ? { summedFrom: totalLevel.summedFrom }
-            : {})}
-          {...(totalLevel.degradedFrom !== undefined
-            ? { degradedFrom: totalLevel.degradedFrom }
-            : {})}
-          {...(requestedLevel !== undefined && requestedLevel !== levels.granularity
-            ? { requestedGranularity: requestedLevel }
-            : {})}
-        />
-      )}
-      {rows.length === 0 ? (
-        <p>No se encontraron resultados municipales para esta jurisdicción, categoría y elección.</p>
-      ) : (
-        <>
-          {unsummable !== null ? null : (
-          <ul>
-            {partyTotals.map((entry) => (
-              <li key={entry.label}>
-                {entry.label}: {entry.votes} voto(s)
-              </li>
-            ))}
-          </ul>
+    <main className="page-shell official-municipal">
+      <div className="shell-container official-municipal__layout">
+        <header className="page-header official-municipal__header">
+          <p className="official-municipal__section-label">Resultados oficiales / municipal autorizado</p>
+          <h1>Resultados municipales (Concejales)</h1>
+          <p className="official-municipal__context">
+            Cifras oficiales exactas para la sección fija 02/027. La fiscalización no forma parte de estos resultados.
+          </p>
+        </header>
+        <section className="official-municipal__selection" aria-labelledby="municipal-context-heading">
+          <h2 id="municipal-context-heading">Contexto de la consulta</h2>
+          <dl className="official-municipal__context-list">
+            <div><dt>Alcance autorizado</dt><dd>Distrito 02 / sección 027</dd></div>
+            <div><dt>Categoría</dt><dd>Concejales</dd></div>
+            <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
+          </dl>
+        </section>
+        <section className="official-municipal__results" aria-labelledby="municipal-results-heading">
+          <div className="official-municipal__section-heading">
+            <h2 id="municipal-results-heading">Resultados exactos</h2>
+            <p role="status">Resultados oficiales autorizados por partido.</p>
+          </div>
+          {unsummable !== null ? (
+            <p role="alert">
+              No hay cifras por partido: {unsummable}. Un total que duplica el
+              conteo es peor que no tener total.
+            </p>
+          ) : (
+            <>
+              <GranularityBadge
+                granularity={totalLevel.granularity}
+                {...(totalLevel.summedFrom !== undefined
+                  ? { summedFrom: totalLevel.summedFrom }
+                  : {})}
+                {...(totalLevel.degradedFrom !== undefined
+                  ? { degradedFrom: totalLevel.degradedFrom }
+                  : {})}
+                {...(requestedLevel !== undefined && requestedLevel !== levels.granularity
+                  ? { requestedGranularity: requestedLevel }
+                  : {})}
+              />
+              <TableScroll label="Tabla de resultados oficiales exactos por partido">
+                <table className="data-table official-municipal__table">
+                  <caption>Resultados oficiales exactos por partido y votos</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Partido</th>
+                      <th scope="col" className="table-cell--number">Votos exactos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {partyTotals.map((entry) => (
+                      <tr key={entry.label}>
+                        <th scope="row">{entry.label}</th>
+                        <td className="table-cell--number">{entry.votes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableScroll>
+            </>
           )}
-          <OfficialProvenance sources={sources} />
-        </>
-      )}
+        </section>
+        <aside className="official-municipal__evidence" aria-labelledby="municipal-evidence-heading">
+          <h2 id="municipal-evidence-heading">Evidencia oficial</h2>
+          <section aria-labelledby="municipal-coverage-heading">
+            <h3 id="municipal-coverage-heading">Cobertura y exclusiones</h3>
+            {sourceAuditNote}
+            {excludedNote}
+            <UnmappedListIds
+              entries={unmapped.entries}
+              withoutListId={unmapped.withoutListId}
+              totalRows={rows.length}
+              unsummable={unsummable}
+              mappingConfigured={view.partyMappingConfigured}
+            />
+            <UnorderableLevels entries={unrecognized} />
+          </section>
+          <section aria-labelledby="municipal-provenance-heading">
+            <h3 id="municipal-provenance-heading">Archivo y procedencia</h3>
+            <OfficialProvenance sources={sources} />
+          </section>
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode {
+  return (
+    <main className="page-shell official-municipal">
+      <div className="shell-container official-municipal__layout">
+        <header className="page-header official-municipal__header">
+          <p className="official-municipal__section-label">Resultados oficiales / municipal autorizado</p>
+          <h1>Municipal (Concejales)</h1>
+        </header>
+        <section className="official-municipal__state" role={role} aria-labelledby="municipal-state-heading">
+          <h2 id="municipal-state-heading">Estado de la evidencia</h2>
+          <p>{message}</p>
+        </section>
+      </div>
     </main>
   );
 }
 
 function municipalRefusal(reason: ReactNode): ReactNode {
-  return <main><h1>Municipal (Concejales)</h1>
-<p role="alert">Se rechazó la solicitud: {reason}</p></main>;
+  return municipalState(<>Se rechazó la solicitud: {reason}</>, "alert");
 }
 
 interface MunicipalPageProps {
@@ -333,6 +387,7 @@ export default async function MunicipalPage({
       </main>
     );
   }
+  const suppliedKeys = Object.keys(params);
   const electionId = stringParam(params, "electionId");
   const legacyJurisdictionId = stringParam(params, "jurisdictionId");
   const legacyCategoryId = stringParam(params, "categoryId");
@@ -346,19 +401,34 @@ export default async function MunicipalPage({
   }
   if (electionId && electionId !== configuredElectionId)
     return municipalRefusal(<>esta ruta solo ofrece la elección municipal configurada; se recibió {electionId}.</>);
-  if (legacyJurisdictionId || legacyCategoryId || legacyPartyFamily || legacyPartyCategory)
-    return municipalRefusal(<>la sección 02/027, la categoría y la elección son fijas; no se aceptan parámetros de identidad o autorización: {legacyJurisdictionId} {legacyCategoryId}.</>);
+  if (legacyJurisdictionId || legacyCategoryId || legacyPartyFamily || legacyPartyCategory) {
+    return municipalRefusal(<>la sección 02/027, la categoría y la elección son fijas; no se aceptan parámetros de identidad o autorización: {legacyJurisdictionId} {legacyCategoryId} {legacyPartyFamily} {legacyPartyCategory}.</>);
+  }
+  const unknownKeys = suppliedKeys.filter((key) => key !== "electionId");
+  if (unknownKeys.length > 0) {
+    return municipalRefusal(<>parámetros de consulta no admitidos: {unknownKeys.join(", ")}.</>);
+  }
 
   if (!electionId) {
-    return <main className="page-shell"><div className="shell-container">
-      <h1>Resultados municipales (Concejales)</h1>
-      <form method="get" action="/municipal">
-        <label htmlFor="municipal-election">Elección municipal</label>
-        <select id="municipal-election" name="electionId" defaultValue={configuredElectionId}>
-          <option value={configuredElectionId}>Elección municipal 2025 — Concejales</option>
-        </select>
-        <button type="submit">Ver resultados oficiales</button>
-      </form>
+    return <main className="page-shell official-municipal"><div className="shell-container official-municipal__layout">
+      <header className="page-header official-municipal__header">
+        <p className="official-municipal__section-label">Resultados oficiales / municipal autorizado</p>
+        <h1>Resultados municipales (Concejales)</h1>
+        <p className="official-municipal__context">Seleccione la elección municipal configurada para consultar la sección fija 02/027.</p>
+      </header>
+      <section className="official-municipal__selection" aria-labelledby="municipal-selection-heading">
+        <h2 id="municipal-selection-heading">Selección oficial</h2>
+        <form method="get" action="/municipal" className="official-municipal__form">
+          <div className="field">
+            <label htmlFor="municipal-election">Elección municipal</label>
+            <select id="municipal-election" name="electionId" defaultValue={configuredElectionId}>
+              <option value={configuredElectionId}>Elección municipal 2025 — Concejales</option>
+            </select>
+          </div>
+          <button className="button button--primary" type="submit">Ver resultados oficiales</button>
+        </form>
+      </section>
+      <p className="official-municipal__state" role="status">La consulta muestra solo resultados oficiales autorizados.</p>
     </div></main>;
   }
 
@@ -366,7 +436,7 @@ export default async function MunicipalPage({
   if (evidence.status === "denied")
     return municipalRefusal("El espacio de trabajo no autoriza esta sección municipal.");
   if (evidence.status === "empty")
-    return <main><h1>Resultados municipales (Concejales)</h1><p>No hay resultados oficiales autorizados para esta sección.</p></main>;
+    return municipalState("No hay resultados oficiales autorizados para esta sección.", "status");
   if (evidence.status === "unavailable")
     return municipalRefusal("La evidencia oficial autorizada no está disponible.");
   if (evidence.status === "malformed")

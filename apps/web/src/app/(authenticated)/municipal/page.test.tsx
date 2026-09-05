@@ -100,7 +100,7 @@ describe("municipal page — renderMunicipalView", () => {
 
 let entryPointRows: ResultRow[] = [];
 let entryPointSources: SourceRef[] = [];
-let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null;
+let authorizedEvidenceState: Exclude<MunicipalOfficialEvidence, { status: "ok" }> | null = null;
 let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
 let authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
 let authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
@@ -299,10 +299,60 @@ describe("municipal page — the real entry point", () => {
         expect(markup).not.toContain("https://example.test/pba-2023.html");
       });
 
+      it("test_authorized_page_renders_a_route_local_exact_results_table_with_adjacent_evidence", async () => {
+        const { default: MunicipalPage } = await import("./page");
+        entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+        entryPointSources = [{
+          archiveEntryId: "pba/2025-municipal-coronel-rosales",
+          sha256: "aaaabbbbccccdddd0000111122223333444455556666777788889999aaaabbbb",
+          url: "https://example.test/pba-2023.html",
+          fetchedAt: "2026-01-01T00:00:00Z",
+        }];
+
+        const markup = renderToStaticMarkup(
+          (await MunicipalPage({
+            searchParams: Promise.resolve({ electionId: "2025-municipal" }),
+          })) as ReactElement,
+        );
+
+        expect(markup).toContain('class="page-shell official-municipal"');
+        expect(markup).toContain('class="official-municipal__results"');
+        expect(markup).toContain('role="region" aria-label="Tabla de resultados oficiales exactos por partido" tabindex="0"');
+        expect(markup).toContain("<caption>Resultados oficiales exactos por partido y votos</caption>");
+        expect(markup).toContain('<th scope="col">Partido</th>');
+        expect(markup).toContain('<th scope="col" class="table-cell--number">Votos exactos</th>');
+        expect(markup).toContain('<th scope="row">ALIANZA LA LIBERTAD AVANZA</th>');
+        expect(markup).toContain('<td class="table-cell--number">4200</td>');
+        expect(markup).not.toContain("ALIANZA LA LIBERTAD AVANZA: 4200 voto(s)");
+        expect(markup).toContain('class="official-municipal__evidence"');
+        expect(markup).toContain("aaaabbbbccccdddd");
+      });
+
       it("test_malformed_authorized_evidence_hides_figures", async () => {
         const { default: Page } = await import("./page"); authorizedEvidenceState = { status: "malformed" };
         const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement);
         expect(html).toContain("formato inválido"); expect(html).not.toContain("4200 voto(s)");
+      });
+
+      it("test_refusal_and_empty_states_hide_the_exact_figure_and_evidence", async () => {
+        const { default: Page } = await import("./page");
+        const sentinels = ["Resultados exactos", "ALIANZA LA LIBERTAD AVANZA", "4200", "Archivo y procedencia", "procedencia"];
+        for (const [state, message] of [
+          [{ status: "denied" }, "no autoriza"], [{ status: "unavailable" }, "no está disponible"],
+          [{ status: "malformed" }, "formato inválido"], [{ status: "truncated" }, "truncada"],
+          [{ status: "empty" }, "No hay resultados oficiales"],
+        ] as const) {
+          authorizedEvidenceState = state;
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement);
+          expect(html).toContain(message);
+          for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+        }
+        for (const searchParams of [{ unexpected: "x" }, { jurisdictionId: "j-027" }, { categoryId: "c-otro" }, { partyCategory: "CONCEJALES" }, { electionId: ["2025-municipal", "2025-municipal"] }]) {
+          authorizedEvidenceState = null;
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve(searchParams) }) as ReactElement));
+          expect(html).toContain("Se rechazó la solicitud");
+          for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+        }
       });
 
       it("test_bare_route_renders_one_accessible_configured_election_selector", async () => {
