@@ -1,7 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
+import { createReviewStateHandler } from "./review-state-control";
+import { expect, test } from "./review-test-fixture";
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -154,6 +156,17 @@ async function expectPopulatedReviewLayout(
 }
 
 test.describe("the review route reflects the disposable database", () => {
+  test("test_controlled_review_denial_is_presentation_evidence_only", async ({ page, next }) => {
+    let matched = 0;
+    next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL, () => { matched += 1; }));
+    await withReviewItem(page, async () => {
+      await page.goto("/review");
+      await expect(page.getByRole("main")).toContainText("No se pudo autorizar la cola de revisión.");
+      await expect(page.getByRole("table")).toHaveCount(0);
+      expect(matched).toBe(1);
+    });
+  });
+
   test("test_authenticated_route_projects_review_summary_without_page_overflow", async ({
     page,
   }) => {
