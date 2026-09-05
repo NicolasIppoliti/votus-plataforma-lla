@@ -103,7 +103,7 @@ export function resultScenarioIdentity(spec: string): ResultScenarioIdentity {
         ]
       : [deterministicUuid(`${prefix}-election`)];
   const electionYears = scenario === "comparison" ? [2023, 2025] : [2025];
-  const electionRounds = electionYears.map((year) => `${prefix}-round-${year}`);
+  const electionRounds = scenario === "municipal" ? ["provinciales"] : electionYears.map((year) => `${prefix}-round-${year}`);
   const archiveEntryIds =
     scenario === "comparison"
       ? [`national/${prefix}-result-2023`, `national/${prefix}-result-2025`]
@@ -114,7 +114,7 @@ export function resultScenarioIdentity(spec: string): ResultScenarioIdentity {
             `${prefix}-result-official-uncovered`,
           ]
         : scenario === "municipal"
-          ? [`${prefix}-result-official-mapped`, `${prefix}-result-official-unmapped`,
+          ? ["pba/2025-distrito-027", `${prefix}-result-official-unmapped`,
               `${prefix}-result-fiscalizacion`]
           : [`${prefix}-result-official`, `${prefix}-result-fiscalizacion`];
   const jurisdictionId = deterministicUuid(`${prefix}-jurisdiction`);
