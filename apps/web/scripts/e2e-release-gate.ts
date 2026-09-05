@@ -677,7 +677,7 @@ const DATA_SPEC_BY_SCENARIO = {
 	municipal: "e2e/municipal.spec.ts",
 	provenance: "e2e/provenance.spec.ts",
 } as const;
-function productEnvironment(
+export function productEnvironment(
 	common: NodeJS.ProcessEnv,
 	scenario: ServerScenario,
 ): NodeJS.ProcessEnv {
@@ -687,6 +687,7 @@ function productEnvironment(
 	const prefix = `e2e-${scenario}`;
 	return {
 		...common,
+		VOTUS_E2E_TEST_PROXY: "1",
 		CORONEL_ROSALES_JURISDICTION_ID:
 			identity?.jurisdictionId ?? `${prefix}-unused-jurisdiction`,
 		MUNICIPAL_ELECTION_ID:

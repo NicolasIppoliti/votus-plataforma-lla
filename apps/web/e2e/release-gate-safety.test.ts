@@ -10,7 +10,10 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
-import { assertSourceInventory } from "../scripts/e2e-release-gate";
+import {
+	assertSourceInventory,
+	productEnvironment,
+} from "../scripts/e2e-release-gate";
 import {
 	EXPECTED_E2E_SPECS,
 	assertE2eEnvironment,
@@ -907,6 +910,25 @@ describe("base contracts", () => {
 	);
 	it("allows a cold CI runner to pull and start Supabase", () => {
 		expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
+	});
+	it("enables Next's test proxy only in every gate-owned product child environment", () => {
+		const initialGateSignal = process.env.VOTUS_E2E_TEST_PROXY;
+		const parentEnvironment: NodeJS.ProcessEnv = {
+			NODE_ENV: "test",
+			VOTUS_E2E_TEST_PROXY: "unrecognized",
+		};
+		for (const scenario of [
+			"shared",
+			"comparison",
+			"fiscalizacion",
+			"municipal",
+			"provenance",
+		] as const)
+			expect(productEnvironment(parentEnvironment, scenario)).toMatchObject({
+				VOTUS_E2E_TEST_PROXY: "1",
+			});
+		expect(parentEnvironment.VOTUS_E2E_TEST_PROXY).toBe("unrecognized");
+		expect(process.env.VOTUS_E2E_TEST_PROXY).toBe(initialGateSignal);
 	});
 	it("requires and returns every generated environment value", () => {
 		expect(assertE2eEnvironment(ENV)).toEqual(ENV);
