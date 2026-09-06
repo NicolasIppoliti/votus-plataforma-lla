@@ -79,6 +79,33 @@ describe("review page — responsive review evidence", () => {
     expect(markup).not.toContain(longNote);
   });
 
+  it("groups an authorized queue under operational attention and labelled pagination", async () => {
+    reviewState.status = "ok";
+    reviewState.total = 51;
+    reviewState.truncated = true;
+    reviewState.items = [{
+      id: "review-hierarchy",
+      kind: "fetch_failure",
+      severity: "warning",
+      detectedAt: "2026-02-01T12:00:00Z",
+    }];
+
+    const markup = renderToStaticMarkup(
+      (await ReviewPage({ searchParams: Promise.resolve({}) })) as ReactElement,
+    );
+
+    expect(markup).toContain('<main class="review-queue page-shell">');
+    expect(markup).toContain("Operaciones · revisión");
+    expect(markup).toContain("Atención operativa sobre señales pendientes.");
+    expect(markup).toMatch(/<aside[^>]+role="status"[^>]*>/);
+    expect(markup).toContain("Atención operativa");
+    expect(markup).toContain("51 elementos requieren revisión.");
+    expect(markup).toMatch(/<section[^>]+aria-labelledby="review-results-heading"/);
+    expect(markup).toContain('<h2 id="review-results-heading">Elementos pendientes</h2>');
+    expect(markup).toMatch(/<nav[^>]+aria-label="Paginación de la cola de revisión"/);
+    expect(markup).toContain('aria-label="Página siguiente de la cola de revisión"');
+  });
+
   it("keeps the exact empty state without rendering a table", async () => {
     reviewState.status = "ok";
     reviewState.total = 0;
@@ -92,6 +119,22 @@ describe("review page — responsive review evidence", () => {
     expect(markup).toContain(READ_ONLY_NOTICE);
     expect(markup).toContain("No hay elementos de revisión pendientes.");
     expect(markup).not.toContain("<table");
+  });
+
+  it("keeps the previous link within bounds on an empty final page", async () => {
+    reviewState.status = "ok";
+    reviewState.total = 51;
+    reviewState.truncated = false;
+    reviewState.items = [];
+
+    const markup = renderToStaticMarkup(
+      (await ReviewPage({ searchParams: Promise.resolve({ offset: "100" }) })) as ReactElement,
+    );
+
+    expect(markup).toContain("No hay elementos de revisión en esta página.");
+    expect(markup).toContain('href="/review?offset=50"');
+    expect(markup).toContain('aria-label="Página anterior de la cola de revisión"');
+    expect(markup).not.toContain('href="/review?offset=150"');
   });
 
   it("renders authorization denial distinctly from every other safe state", async () => {
