@@ -1,4 +1,7 @@
+import path from "node:path";
+
 import {
+	EXPECTED_E2E_SPECS,
 	planOwnedCleanup,
 	type CleanupAction,
 	type GateOwnership,
@@ -60,6 +63,7 @@ export function planOwnedSqlInvocation(
 
 export const RELEASE_GATE_MODE = {
 	FULL: "full",
+	FOCUSED: "focused",
 	RELEASE_PROOF_ONLY: "release-proof-only",
 	SCALE_PROOF_ONLY: "scale-proof-only",
 	ROLLBACK_PROOFS_ONLY: "rollback-proofs-only",
@@ -123,6 +127,7 @@ export interface ReleaseGateSqlProof {
 
 export interface ReleaseGatePlan {
 	mode: ReleaseGateMode;
+	selectedSpecs: readonly string[];
 	migrationVersions: readonly string[];
 	syntheticMigration: ReleaseGateSyntheticMigration;
 	setupProofs: readonly ReleaseGateSetupProof[];
@@ -169,6 +174,8 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	removeContainers(names: readonly string[]): Promise<void>;
 	listOwnedVolumes(projectId: string): readonly string[];
 	removeVolumes(names: readonly string[]): Promise<void>;
+	listOwnedNetworks(projectId: string): readonly string[];
+	removeNetworks(names: readonly string[]): Promise<void>;
 	removeWorkdir(workdir: string): Promise<void>;
 	workdirExists(workdir: string): boolean;
 }
@@ -381,6 +388,7 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 ];
 
 function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
+	const focused = argv.includes("--focused");
 	const releaseProofOnly = argv.includes("--release-proof-only");
 	const scaleProofOnly = argv.includes("--scale-proof-only");
 	const rollbackProofsOnly = argv.includes("--rollback-proofs-only");
@@ -389,17 +397,70 @@ function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
 			.length > 1
 	)
 		throw new Error("reduced proof modes cannot be combined");
+	if (focused && (releaseProofOnly || scaleProofOnly || rollbackProofsOnly))
+		throw new Error("focused mode cannot be combined with reduced proof modes");
+	if (focused) return RELEASE_GATE_MODE.FOCUSED;
 	if (rollbackProofsOnly) return RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
 	if (scaleProofOnly) return RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	if (releaseProofOnly) return RELEASE_GATE_MODE.RELEASE_PROOF_ONLY;
 	return RELEASE_GATE_MODE.FULL;
 }
 
-export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
+const FOCUSED_E2E_SPEC_PATTERN = /^e2e\/[a-z][a-z0-9-]*\.spec\.ts$/;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F]/;
+
+export function parseFocusedE2eSelection(
+	selection: readonly string[],
+): readonly string[] {
+	if (selection.length === 0)
+		throw new Error("focused E2E selection requires one or more canonical spec paths");
+	const seen = new Set<string>();
+	for (const spec of selection) {
+		if (!spec || CONTROL_CHARACTER_PATTERN.test(spec))
+			throw new Error("focused E2E selection contains an invalid path");
+		if (spec.startsWith("-") || path.isAbsolute(spec) || spec.split("/").includes(".."))
+			throw new Error("focused E2E selection contains an unsafe path");
+		if (!FOCUSED_E2E_SPEC_PATTERN.test(spec))
+			throw new Error("focused E2E selection requires e2e/<name>.spec.ts paths");
+		if (!EXPECTED_E2E_SPECS.includes(spec as (typeof EXPECTED_E2E_SPECS)[number]))
+			throw new Error(`focused E2E selection contains a noncanonical spec: ${spec}`);
+		if (seen.has(spec))
+			throw new Error(
+				`focused E2E selection: duplicate focused E2E spec: ${spec}`,
+			);
+		seen.add(spec);
+	}
+	return [...selection];
+}
+
+function parseFocusedE2eCliSelection(argv: readonly string[]): readonly string[] {
+	if (argv[0] !== "--focused")
+		throw new Error("focused E2E arguments must begin with --focused");
+	const selection = argv.slice(1);
+	return parseFocusedE2eSelection(
+		selection[0] === "--" ? selection.slice(1) : selection,
+	);
+}
+
+export function playwrightCommandArgs(
+	selectedSpecs: readonly string[],
+): readonly string[] {
+	return ["exec", "playwright", "test", ...selectedSpecs];
+}
+
+export function createReleaseGatePlan(
+	mode: ReleaseGateMode,
+	selectedSpecs: readonly string[] = EXPECTED_E2E_SPECS,
+): ReleaseGatePlan {
+	const resolvedSelectedSpecs =
+		mode === RELEASE_GATE_MODE.FOCUSED
+			? parseFocusedE2eSelection(selectedSpecs)
+			: [...EXPECTED_E2E_SPECS];
 	const rollbackProofsOnly = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
 	const scaleProofOnly = mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	return {
 		mode,
+		selectedSpecs: resolvedSelectedSpecs,
 		migrationVersions: [...MIGRATION_VERSIONS],
 		syntheticMigration: { ...SYNTHETIC_MIGRATION },
 		setupProofs: rollbackProofsOnly
@@ -425,8 +486,10 @@ export function createReleaseGatePlan(mode: ReleaseGateMode): ReleaseGatePlan {
 			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
 		requireBrowserCapability:
 			mode === RELEASE_GATE_MODE.FULL ||
+			mode === RELEASE_GATE_MODE.FOCUSED ||
 			mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY,
-		runBrowser: mode === RELEASE_GATE_MODE.FULL,
+		runBrowser:
+			mode === RELEASE_GATE_MODE.FULL || mode === RELEASE_GATE_MODE.FOCUSED,
 	};
 }
 
@@ -465,17 +528,128 @@ export async function runReleaseGateCli(
 	argv: readonly string[],
 	dependencies: ReleaseGateCliDependencies,
 ): Promise<void> {
-	const plan = createReleaseGatePlan(releaseGateMode(argv));
+	const mode = releaseGateMode(argv);
+	const selectedSpecs =
+		mode === RELEASE_GATE_MODE.FOCUSED
+			? parseFocusedE2eCliSelection(argv)
+			: EXPECTED_E2E_SPECS;
+	const plan = createReleaseGatePlan(mode, selectedSpecs);
 	if (argv.includes("--inspect-plan")) {
 		dependencies.writeOutput(`${JSON.stringify(plan, null, 2)}\n`);
 		return;
 	}
+	if (mode === RELEASE_GATE_MODE.FOCUSED) {
+		const excluded = EXPECTED_E2E_SPECS.filter(
+			(spec) => !plan.selectedSpecs.includes(spec),
+		);
+		dependencies.writeOutput(
+			`E2E selection: mode=focused selected=${plan.selectedSpecs.length} [${plan.selectedSpecs.join(", ")}] excluded=${excluded.length} [${excluded.join(", ")}]\n`,
+		);
+	}
 	await dependencies.execute(plan);
+}
+
+export const CLEANUP_CATEGORY = {
+	SERVER_STOP: "SERVER_STOP",
+	SERVER_VERIFICATION: "SERVER_VERIFICATION",
+	RESERVATION_RELEASE: "RESERVATION_RELEASE",
+	OWNERSHIP_MARKER: "OWNERSHIP_MARKER",
+	STACK_STOP: "STACK_STOP",
+	OWNED_CONTAINER_CLEANUP: "OWNED_CONTAINER_CLEANUP",
+	OWNED_VOLUME_CLEANUP: "OWNED_VOLUME_CLEANUP",
+	OWNED_NETWORK_CLEANUP: "OWNED_NETWORK_CLEANUP",
+	WORKDIR_REMOVE: "WORKDIR_REMOVE",
+	CONTAINER_RESIDUAL_CHECK: "CONTAINER_RESIDUAL_CHECK",
+	VOLUME_RESIDUAL_CHECK: "VOLUME_RESIDUAL_CHECK",
+	NETWORK_RESIDUAL_CHECK: "NETWORK_RESIDUAL_CHECK",
+	WORKDIR_RESIDUAL_CHECK: "WORKDIR_RESIDUAL_CHECK",
+} as const;
+
+export type CleanupCategory =
+	(typeof CLEANUP_CATEGORY)[keyof typeof CLEANUP_CATEGORY];
+
+export interface CleanupDiagnosticFailure {
+	readonly category: CleanupCategory;
+	readonly failureCount: number;
+}
+
+export interface CleanupDiagnostics {
+	readonly schemaVersion: 1;
+	readonly failures: readonly CleanupDiagnosticFailure[];
+}
+
+interface CleanupFailure {
+	category: CleanupCategory;
+	error: unknown;
+}
+
+const CLEANUP_CATEGORIES = Object.values(CLEANUP_CATEGORY);
+const CLEANUP_DIAGNOSTICS_PREFIX = "E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS ";
+
+function flattenErrors(error: unknown, flattened: unknown[] = []): unknown[] {
+	if (error instanceof AggregateError)
+		for (const nested of error.errors) flattenErrors(nested, flattened);
+	else flattened.push(error);
+	return flattened;
+}
+
+export class ReleaseGateCleanupError extends AggregateError {
+	readonly diagnostics: CleanupDiagnostics;
+
+	constructor(failures: readonly CleanupFailure[], message = "cleanup failed") {
+		super(
+			failures.flatMap(({ error }) => flattenErrors(error)),
+			message,
+		);
+		this.name = "ReleaseGateCleanupError";
+		this.diagnostics = {
+			schemaVersion: 1,
+			failures: CLEANUP_CATEGORIES.flatMap((category) => {
+				const failureCount = failures.reduce(
+					(count, failure) =>
+						failure.category === category
+							? count + flattenErrors(failure.error).length
+							: count,
+					0,
+				);
+				return failureCount === 0 ? [] : [{ category, failureCount }];
+			}),
+		};
+	}
+}
+
+function findCleanupError(error: unknown): ReleaseGateCleanupError | undefined {
+	if (error instanceof ReleaseGateCleanupError) return error;
+	if (error instanceof AggregateError)
+		for (const nested of error.errors) {
+			const cleanupError = findCleanupError(nested);
+			if (cleanupError) return cleanupError;
+		}
+	if (error instanceof Error && "cause" in error)
+		return findCleanupError(
+			(error as Error & { cause?: unknown }).cause,
+		);
+	return undefined;
+}
+
+export function cleanupDiagnosticsLine(error: unknown): string | undefined {
+	const cleanupError = findCleanupError(error);
+	return cleanupError
+		? `${CLEANUP_DIAGNOSTICS_PREFIX}${JSON.stringify(cleanupError.diagnostics)}`
+		: undefined;
 }
 
 function collect(errors: unknown[], error: unknown): void {
 	if (error instanceof AggregateError) errors.push(...error.errors);
 	else errors.push(error);
+}
+
+function recordCleanupFailure(
+	failures: CleanupFailure[],
+	category: CleanupCategory,
+	error: unknown,
+): void {
+	failures.push({ category, error });
 }
 
 export async function runOwnedCleanup(
@@ -549,58 +723,90 @@ function removeOwnedVolumes<TServer>(
 		: Promise.resolve();
 }
 
+function removeOwnedNetworks<TServer>(
+	projectId: string,
+	dependencies: ReleaseGateCleanupDependencies<TServer>,
+): Promise<void> {
+	const networks = dependencies.listOwnedNetworks(projectId);
+	if (networks.some((name) => name !== `supabase_network_${projectId}`))
+		throw new Error(
+			"refusing to remove a network without the exact owned network name",
+		);
+	return networks.length > 0
+		? dependencies.removeNetworks(networks)
+		: Promise.resolve();
+}
+
 async function verifyCleanupResiduals<TServer>(
 	ownership: GateOwnership,
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
+	failures: CleanupFailure[],
 ): Promise<void> {
-	const errors: unknown[] = [];
-	for (const listResources of [
-		dependencies.listOwnedContainers,
-		dependencies.listOwnedVolumes,
-	])
+	for (const [category, listResources] of [
+		[CLEANUP_CATEGORY.CONTAINER_RESIDUAL_CHECK, dependencies.listOwnedContainers],
+		[CLEANUP_CATEGORY.VOLUME_RESIDUAL_CHECK, dependencies.listOwnedVolumes],
+		[CLEANUP_CATEGORY.NETWORK_RESIDUAL_CHECK, dependencies.listOwnedNetworks],
+	] as const)
 		try {
 			if (listResources(ownership.projectId).length > 0)
-				errors.push(
+				recordCleanupFailure(
+					failures,
+					category,
 					new Error("disposable Supabase cleanup left owned Docker state"),
 				);
-		} catch {
-			errors.push(
-				new Error("disposable Supabase cleanup left owned Docker state"),
-			);
+		} catch (error) {
+			recordCleanupFailure(failures, category, error);
 		}
 	try {
 		if (dependencies.workdirExists(ownership.workdir))
-			errors.push(new Error("disposable workdir still exists"));
+			recordCleanupFailure(
+				failures,
+				CLEANUP_CATEGORY.WORKDIR_RESIDUAL_CHECK,
+				new Error("disposable workdir still exists"),
+			);
 	} catch (error) {
-		collect(errors, error);
+		recordCleanupFailure(
+			failures,
+			CLEANUP_CATEGORY.WORKDIR_RESIDUAL_CHECK,
+			error,
+		);
 	}
-	if (errors.length > 0)
-		throw new AggregateError(errors, "residual cleanup verification failed");
 }
 
 export async function cleanupReleaseGate<TServer>(
 	state: ReleaseGateCleanupState<TServer>,
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
 ): Promise<void> {
-	const errors: unknown[] = [];
-	if (state.servers)
-		try {
-			await runOwnedServerCleanup(
-				state.servers,
-				dependencies.stopServer,
-				dependencies.verifyServerStopped,
-			);
-		} catch (error) {
-			collect(errors, error);
-		}
+	const failures: CleanupFailure[] = [];
+	await runOwnedServerCleanup(
+		state.servers ?? [],
+		async (server) => {
+			try {
+				await dependencies.stopServer(server);
+			} catch (error) {
+				recordCleanupFailure(failures, CLEANUP_CATEGORY.SERVER_STOP, error);
+			}
+		},
+		async (server) => {
+			try {
+				await dependencies.verifyServerStopped(server);
+			} catch (error) {
+				recordCleanupFailure(
+					failures,
+					CLEANUP_CATEGORY.SERVER_VERIFICATION,
+					error,
+				);
+			}
+		},
+	);
 	for (const reservation of state.reservations ?? [])
 		try {
 			await reservation.release();
 		} catch (error) {
-			collect(errors, error);
+			recordCleanupFailure(failures, CLEANUP_CATEGORY.RESERVATION_RELEASE, error);
 		}
 	if (!state.ownership) {
-		if (errors.length > 0) throw new AggregateError(errors, "cleanup failed");
+		if (failures.length > 0) throw new ReleaseGateCleanupError(failures);
 		return;
 	}
 	const ownership = state.ownership;
@@ -616,12 +822,12 @@ export async function cleanupReleaseGate<TServer>(
 			marker,
 		);
 	} catch (error) {
-		collect(errors, error);
+		recordCleanupFailure(failures, CLEANUP_CATEGORY.OWNERSHIP_MARKER, error);
 	}
-	try {
-		await runOwnedCleanup(
-			actions,
-			async (action) => {
+	await runOwnedCleanup(
+		actions,
+		async (action) => {
+			try {
 				if (action.kind === "stop-stack" && state.stackMutationAttempted)
 					await dependencies.stopStack(ownership.workdir, action.projectId);
 				else if (
@@ -634,15 +840,30 @@ export async function cleanupReleaseGate<TServer>(
 					state.stackMutationAttempted
 				)
 					await removeOwnedVolumes(action.projectId, dependencies);
+				else if (
+					action.kind === "remove-owned-networks" &&
+					state.stackMutationAttempted
+				)
+					await removeOwnedNetworks(action.projectId, dependencies);
 				else if (action.kind === "remove-workdir")
 					await dependencies.removeWorkdir(action.workdir);
-			},
-			() => verifyCleanupResiduals(ownership, dependencies),
-		);
-	} catch (error) {
-		collect(errors, error);
-	}
-	if (errors.length > 0) throw new AggregateError(errors, "cleanup failed");
+			} catch (error) {
+				const category =
+					action.kind === "stop-stack"
+						? CLEANUP_CATEGORY.STACK_STOP
+						: action.kind === "remove-owned-containers"
+							? CLEANUP_CATEGORY.OWNED_CONTAINER_CLEANUP
+							: action.kind === "remove-owned-volumes"
+								? CLEANUP_CATEGORY.OWNED_VOLUME_CLEANUP
+								: action.kind === "remove-owned-networks"
+									? CLEANUP_CATEGORY.OWNED_NETWORK_CLEANUP
+									: CLEANUP_CATEGORY.WORKDIR_REMOVE;
+				recordCleanupFailure(failures, category, error);
+			}
+		},
+		() => verifyCleanupResiduals(ownership, dependencies, failures),
+	);
+	if (failures.length > 0) throw new ReleaseGateCleanupError(failures);
 }
 
 export function establishOwnership(

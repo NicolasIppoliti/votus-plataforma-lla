@@ -1,0 +1,61 @@
+name: Engineering task
+description: Propose implementation, tooling, or maintenance work.
+title: "[Engineering] "
+labels:
+  - "type:chore"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for implementation, tooling, or maintenance work.
+  - type: textarea
+    id: problem-opportunity
+    attributes:
+      label: Problem or opportunity
+      description: Describe the problem to solve or the opportunity to pursue.
+      placeholder: What should change, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: current-evidence-reproduction
+    attributes:
+      label: Current evidence or reproduction
+      description: Provide observable evidence, reproduction steps, or relevant context.
+      placeholder: Include commands, logs, links, or steps when applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-outcome
+    attributes:
+      label: Expected outcome
+      description: Describe the intended result after this work is complete.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List verifiable conditions that define completion.
+      placeholder: "- [ ] Criterion"
+    validations:
+      required: true
+  - type: textarea
+    id: scope-non-goals
+    attributes:
+      label: Scope and non-goals
+      description: Define what is included and explicitly excluded.
+    validations:
+      required: true
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Select the primary area affected by this work.
+      options:
+        - Web application
+        - ETL
+        - Database
+        - Developer tooling
+        - Documentation
+    validations:
+      required: true

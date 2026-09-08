@@ -98,6 +98,7 @@ export type CleanupAction =
   | { kind: "stop-stack"; projectId: string }
 	| { kind: "remove-owned-containers"; projectId: string }
   | { kind: "remove-owned-volumes"; projectId: string }
+  | { kind: "remove-owned-networks"; projectId: string }
   | { kind: "remove-workdir"; workdir: string };
 export function assertE2eEnvironment(
 	environment: Readonly<Record<string, string | undefined>>,
@@ -283,6 +284,7 @@ export function planOwnedCleanup(
     { kind: "stop-stack", projectId: expected.projectId },
 		{ kind: "remove-owned-containers", projectId: expected.projectId },
     { kind: "remove-owned-volumes", projectId: expected.projectId },
+    { kind: "remove-owned-networks", projectId: expected.projectId },
     { kind: "remove-workdir", workdir: resolvedWorkdir },
   ];
 }

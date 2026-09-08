@@ -306,7 +306,7 @@ def test_ingest_source_projects_archive_before_any_result_loader(
     calls: list[str] = []
     projected_notes: list[str] = []
     monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _dsn: connection)
-    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [])
 
     def project_archive(_conn, record: db.ArchiveEntryRecord) -> None:
         calls.append("archive")
@@ -341,7 +341,7 @@ def test_projection_refusal_happens_before_result_loader_and_rolls_back(
     connection = _Connection()
     result_loader_called = False
     monkeypatch.setattr("etl.__main__.psycopg.connect", lambda _dsn: connection)
-    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [])
 
     def refuse(*_args, **_kwargs) -> None:
         raise ValueError("archive metadata conflict")

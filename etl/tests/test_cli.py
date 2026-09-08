@@ -187,6 +187,90 @@ def test_fetch_local_fiscal_source_archives_without_network_and_is_idempotent(
     assert fetcher.calls == []
 
 
+@pytest.mark.parametrize(
+    ("declaration", "expected_diagnostic"),
+    [
+        (
+            {"upload": "never"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 source_kind "
+            "must be exactly 'fiscalizacion'\n",
+        ),
+        (
+            {"source_kind": "official", "upload": "never"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 source_kind "
+            "must be exactly 'fiscalizacion'\n",
+        ),
+        (
+            {"source_kind": "fiscalizacion"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 upload "
+            "must be exactly 'never'\n",
+        ),
+        (
+            {"source_kind": "fiscalizacion", "upload": "r2"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 upload "
+            "must be exactly 'never'\n",
+        ),
+        (
+            {"source_kind": "official", "upload": "r2"},
+            "error: sources.yaml capability 'fiscalizacion' entry 0 source_kind "
+            "must be exactly 'fiscalizacion'\n",
+        ),
+    ],
+    ids=[
+        "missing-source-kind",
+        "official-source-kind",
+        "missing-upload",
+        "r2-upload",
+        "source-kind-precedes-upload",
+    ],
+)
+def test_fetch_rejects_invalid_fiscal_source_declarations_at_registry_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    declaration: dict[str, str],
+    expected_diagnostic: str,
+) -> None:
+    import etl.__main__ as cli
+
+    source_id = "fiscalizacion/invalid-declaration"
+    local_file = tmp_path / "fiscal.csv"
+    local_file.write_bytes(b"must not be archived")
+    sources_path = tmp_path / "sources.yaml"
+    entry = {
+        "id": source_id,
+        "source": "local-file",
+        "source_url": "local://fiscalizacion/fiscal.csv",
+        "mime": "text/csv",
+        "notes": "invalid declaration fixture",
+        "election_year": 2025,
+        "election_round": "legislativas",
+        "filename": "fiscal.csv",
+        **declaration,
+    }
+    sources_path.write_text(
+        yaml.safe_dump({"fiscalizacion": [entry]}),
+        encoding="utf-8",
+    )
+    local_root = tmp_path / "archive"
+    manifest_path = tmp_path / "archive-manifest.json"
+    original_manifest = b"[]\n"
+    manifest_path.write_bytes(original_manifest)
+    fetcher = FakeFetcher()
+    monkeypatch.setattr(cli, "RequestsFetcher", lambda: fetcher)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["fetch", "--source", source_id, "--local-file", str(local_file)]
+    )
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == expected_diagnostic
+    assert fetcher.calls == []
+    assert not local_root.exists()
+    assert manifest_path.read_bytes() == original_manifest
+
+
 def test_fetch_cli_reports_changed_fiscalizacion_hash_per_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
@@ -707,6 +791,139 @@ def test_ingest_subcommand_loads_rows_into_result_row(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_ingest_cli_streams_selected_national_member_into_real_db_without_unbounded_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The production CLI must keep the extracted results member file-backed."""
+    _require_ephemeral_postgres()
+
+    results_csv = NATIONAL_CSV + (
+        "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,2,DIPUTADO NACIONAL,"
+        "136,POSITIVO,70,definitivo\n"
+    )
+    companion_csv = (
+        "distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+        "2,27,37974,INSTITUTO SUPERIOR DE FORM.DOCENTE N°79,00001\n"
+        "2,27,37974,OTRO ESTABLECIMIENTO,00003\n"
+        "2,27,88888,ESCUELA DOS,00002\n"
+    )
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("resultados2025.csv", results_csv)
+        archive.writestr("localesDeVotacionyMesas.csv", companion_csv)
+        archive.writestr("ambitosElectorales.csv", "not,the,results,file\n")
+
+    source_id = f"national/cli-stream-test-{uuid.uuid4()}"
+    filename = f"{uuid.uuid4().hex}.zip"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/cli-stream-test.zip",
+                "mime": "application/zip",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "CLI streaming integration fixture",
+                "filename": filename,
+            }
+        ]
+    }
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(sources), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=FakeFetcher(payload=archive_buffer.getvalue()),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+
+    class BoundedResultsText(io.TextIOBase):
+        def __init__(self, wrapped: io.TextIOBase) -> None:
+            self.wrapped = wrapped
+
+        def read(self, size: int = -1) -> str:
+            assert size >= 0, "selected results member was read without a bound"
+            return self.wrapped.read(size)
+
+        def readline(self, size: int = -1) -> str:
+            return self.wrapped.readline(size)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self) -> str:
+            return next(self.wrapped)
+
+        def seek(self, offset: int, whence: int = 0) -> int:
+            return self.wrapped.seek(offset, whence)
+
+        def tell(self) -> int:
+            return self.wrapped.tell()
+
+        def close(self) -> None:
+            self.wrapped.close()
+            super().close()
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        assert path.name != "resultados2025.csv", "selected results member used Path.read_bytes()"
+        return original_read_bytes(path)
+
+    def guarded_open(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path.name == "resultados2025.csv" and "b" not in mode:
+            return BoundedResultsText(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    monkeypatch.setattr(Path, "open", guarded_open)
+    args = _main_args(sources_path, local_root, manifest_path) + [
+        "ingest",
+        "--source",
+        source_id,
+        "--database-url",
+        TEST_DSN,
+        "--year",
+        "2025",
+        "--round",
+        "legislativas",
+    ]
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        assert main(args) == 0
+        assert main(args) == 0
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select rr.list_id, rr.votes, rr.source_kind, j.establecimiento_code
+                  from result_row rr
+                  join jurisdiction j on j.id = rr.jurisdiction_id
+                 where rr.archive_entry_id = %s
+                 order by rr.list_id
+                """,
+                (source_id,),
+            )
+            assert cur.fetchall() == [("136", 70, "official", "88888")]
+        report = capsys.readouterr().err
+        assert "establishment_code_multiple_names: 2 unique key(s)" in report
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
+        conn.commit()
+        conn.close()
+
+
 def test_ingest_refuses_conflicting_archive_projection_before_result_rows(tmp_path: Path) -> None:
     _require_ephemeral_postgres()
     source_id = f"national/cli-conflict-{uuid.uuid4()}"
@@ -776,7 +993,7 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
 ) -> None:
     """A real registered national source is a ZIP (per `sources.yaml`), not
     a bare CSV -- `ingest` must extract the results member before parsing,
-    the same `extract_zip_safely`-then-`ingest_national` path
+    the same `extract_zip_safely`-then-`iter_national_rows` path
     `tests/test_ingest_national.py::test_idempotent_reingest_via_real_fixture_zip`
     already proves at the parser level, exercised here end to end through
     the CLI (task 12d's real-pipeline proof needs exactly this path).
@@ -1512,6 +1729,208 @@ def test_an_id_registered_under_two_capabilities_is_refused() -> None:
 
     with pytest.raises(AmbiguousSourceError, match="refusing to pick one"):
         find_source_entry(sources, "shared/id")
+
+
+def test_backfill_mesa_tipo_reports_bounded_exclusion_locators_by_category_and_reason_through_main(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """The CLI reports safe row locators without retaining every excluded row.
+
+    The full-header fixtures model only repository-proven source shapes: archived
+    2023 generales and 2025 legislativas. The separate drift fixture exercises a
+    missing column; this test makes no PASO or balotaje shape claim.
+    """
+    full_header = (
+        "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre,agrupacion_id,"
+        "votos_tipo,votos_cantidad,estado_final,mesa_tipo\n"
+    )
+    private_category_token = "PRIVATE_CATEGORY_TOKEN"
+    public_2023_generales_categories = (
+        "CONCEJAL",
+        "DIPUTADO NACIONAL",
+        "DIPUTADO PROVINCIAL",
+        "DIPUTADOS/AS DE LA CIUDAD AUTONOMA",
+        "GOBERNADOR Y VICE",
+        "INTENDENTE",
+        "JEFE/A DE GOBIERNO",
+        "MIEMBROS DE JUNTA COMUNAL",
+        "PARLAMENTO MERCOSUR NACIONAL",
+        "PARLAMENTO MERCOSUR REGIONAL",
+        "PRESIDENTE Y VICE",
+        "SENADOR NACIONAL",
+        "SENADOR PROVINCIAL",
+    )
+    csv_by_source = {
+        "national/2023-generales-locators": (
+            full_header
+            + "02,027,00001,1,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,\n"
+            + "".join(
+                f"02,027,00001,public-{index},{category},110,POSITIVO,10,definitivo,NATIVOS\n"
+                for index, category in enumerate(public_2023_generales_categories)
+            )
+        ),
+        "national/2024-drifted-locators": (
+            "distrito_id,seccion_id,circuito_id,mesa_id,cargo_nombre\n"
+            "02,027,00001,2,DIPUTADO NACIONAL\n"
+        ),
+        "national/2025-legislativas-locators": full_header
+        + "02,027,00001,,DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,NATIVOS\n"
+        + "".join(
+            f"02,027,00001,private-{index},DIPUTADO NACIONAL,110,POSITIVO,10,definitivo,NATIVOS\n"
+            for index in range(6)
+        )
+        + f"02,027,00001,private-token,{private_category_token},110,"
+        "POSITIVO,10,definitivo,NATIVOS\n"
+        + ",027,00001,3,,110,POSITIVO,10,definitivo,NATIVOS\n"
+        + "2A,027,00001,4,SENADORES NACIONALES,110,POSITIVO,10,definitivo,NATIVOS\n",
+    }
+
+    local_root = tmp_path / "archive"
+    store = LocalArchiveStore(root=local_root)
+    source_entries = []
+    manifest_records = []
+    for source_id, csv_text in csv_by_source.items():
+        year = int(source_id.split("/")[1][:4])
+        filename = f"{year}.csv"
+        store.write("national", filename, csv_text.encode("utf-8"))
+        source_entries.append(
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": f"https://example.test/{filename}",
+                "election_year": year,
+                "election_round": (
+                    "generales"
+                    if year == 2023
+                    else "legislativas"
+                    if year == 2025
+                    else "synthetic-drift"
+                ),
+                "mime": "text/csv",
+                "notes": "bounded exclusion locator fixture",
+                "filename": filename,
+            }
+        )
+        manifest_records.append(
+            {
+                "id": source_id,
+                "status": "ok",
+                "archived_path": f"archive/national/{filename}",
+                "sha256": hashlib.sha256(csv_text.encode("utf-8")).hexdigest(),
+                "fetched_at": "2026-01-01T00:00:00Z",
+            }
+        )
+
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump({"national": source_entries}), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(json.dumps(manifest_records), encoding="utf-8")
+    monkeypatch.setattr(
+        psycopg,
+        "connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an all-excluded corpus must not connect to PostgreSQL")
+        ),
+    )
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + [
+            "backfill-mesa-tipo",
+            "--database-url",
+            "postgresql://all-excluded-must-not-connect/nowhere",
+        ]
+    )
+
+    reported = capsys.readouterr().err
+    assert exit_code == 1
+    assert (
+        "national/2023-generales-locators: 1 rows carried no mesa_tipo, "
+        "0 lacked a required column, 0 had an absent mesa_id, "
+        "13 had an unreadable mesa_id" in reported
+    )
+    assert (
+        "national/2024-drifted-locators: 0 rows carried no mesa_tipo, "
+        "1 lacked a required column" in reported
+    )
+    assert (
+        "national/2025-legislativas-locators: 0 rows carried no mesa_tipo, "
+        "0 lacked a required column, 1 had an absent mesa_id, "
+        "7 had an unreadable mesa_id, 1 had an incomplete lineage, "
+        "1 carried a non-numeric code" in reported
+    )
+    assert (
+        "category='PRESIDENTE Y VICE' reason=skipped_bad_mesa_id total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert (
+        "mesa_tipo exclusion diagnostics for national/2025-legislativas-locators: "
+        "locator_sample_cap=5 category_vocabulary_size=13" in reported
+    )
+    for category in public_2023_generales_categories:
+        assert (
+            f"category={category!r} reason=skipped_bad_mesa_id total=1 "
+            "omitted_locators=0" in reported
+        )
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_bad_mesa_id total=6 "
+        "omitted_locators=1\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=1 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=2 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=3 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=4 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/2025-legislativas-locators' "
+        "data_row_index=5 category='DIPUTADO NACIONAL' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']" in reported
+    )
+    assert (
+        "data_row_index=6 category='DIPUTADO NACIONAL' reason=skipped_bad_mesa_id" not in reported
+    )
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_missing_column total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert "missing_fields=['mesa_tipo']" in reported
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_no_tipo total=1 omitted_locators=0" in reported
+    )
+    assert (
+        "category='DIPUTADO NACIONAL' reason=skipped_absent_mesa_id total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert (
+        "data_row_index=0 category='DIPUTADO NACIONAL' "
+        "reason=skipped_absent_mesa_id missing_fields=['mesa_id']" in reported
+    )
+    assert "category='(unknown category)' reason=skipped_bad_mesa_id total=1" in reported
+    assert (
+        "data_row_index=7 category='(unknown category)' "
+        "reason=skipped_bad_mesa_id invalid_fields=['mesa_id']" in reported
+    )
+    assert "category='(unknown category)' reason=skipped_incomplete_lineage total=1" in reported
+    assert (
+        "data_row_index=8 category='(unknown category)' "
+        "reason=skipped_incomplete_lineage missing_fields=['distrito_id']" in reported
+    )
+    assert (
+        "category='(unknown category)' reason=skipped_uncanonical_code total=1 "
+        "omitted_locators=0" in reported
+    )
+    assert (
+        "data_row_index=9 category='(unknown category)' "
+        "reason=skipped_uncanonical_code invalid_fields=['distrito_id']" in reported
+    )
+    assert "SENADORES NACIONALES" not in reported
+    assert private_category_token not in reported
+    assert "private-" not in reported, "raw invalid mesa IDs must never enter diagnostics"
 
 
 def test_a_mesa_tipo_disagreement_across_sources_exits_nonzero(
@@ -2704,6 +3123,7 @@ def test_validate_fiscalizacion_persists_the_divergences_it_finds(tmp_path: Path
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
+                        "source_kind": "fiscalizacion",
                         "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
@@ -3024,6 +3444,7 @@ def test_validate_fiscalizacion_persists_duplicate_collapsed_once(
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
+                        "source_kind": "fiscalizacion",
                         "mime": "text/csv",
                         "notes": "canonical source fixture",
                         "source_url": "local://fiscalizacion/fixture.csv",
@@ -3153,6 +3574,7 @@ def test_validate_fiscalizacion_refuses_a_baseline_scope_with_no_rows(
                     {
                         "id": fiscalizacion_id,
                         "source": "internal",
+                        "source_kind": "fiscalizacion",
                         "source_url": "local://fiscalizacion/fisc.csv",
                         "mime": "text/csv",
                         "election_year": 2025,
@@ -3286,6 +3708,107 @@ def _main_args(sources_path: Path, local_root: Path, manifest_path: Path) -> lis
         "--manifest-path",
         str(manifest_path),
     ]
+
+
+def _archived_national_zip_corpus(
+    tmp_path: Path,
+    *,
+    election_year: int,
+    election_round: str,
+    member_name: str,
+    lista_numero: str,
+    agrupacion_id: str,
+) -> tuple[Path, Path, Path]:
+    source_id = f"national/{election_year}-{election_round}-{uuid.uuid4()}"
+    filename = f"{uuid.uuid4().hex}.zip"
+    csv_text = (
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,cargo_nombre,agrupacion_id,lista_numero,votos_tipo,votos_cantidad,estado_final\n"
+        f"02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+        f"{agrupacion_id},{lista_numero},POSITIVO,120,definitivo\n"
+        "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+        "0,,EN BLANCO,4,definitivo\n"
+    )
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(member_name, csv_text)
+        archive.writestr("ambitosElectorales.csv", "not,the,results,file\n")
+    archive_bytes = archive_buffer.getvalue()
+    local_root = tmp_path / "archive"
+    LocalArchiveStore(root=local_root).write("national", filename, archive_bytes)
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "national": [
+                    {
+                        "id": source_id,
+                        "source": "example.test",
+                        "source_url": "https://example.test/results.zip",
+                        "notes": "streaming validator fixture",
+                        "mime": "application/zip",
+                        "election_year": election_year,
+                        "election_round": election_round,
+                        "filename": filename,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "archive-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": source_id,
+                    "status": "ok",
+                    "archived_path": f"archive/national/{filename}",
+                    "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return sources_path, local_root, manifest_path
+
+
+def _guard_selected_member_reads(monkeypatch: pytest.MonkeyPatch, *, member_name: str) -> None:
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+
+    class BoundedResultsText(io.TextIOBase):
+        def __init__(self, wrapped: io.TextIOBase) -> None:
+            self.wrapped = wrapped
+
+        def read(self, size: int = -1) -> str:
+            assert size >= 0, "selected results member was read without a bound"
+            return self.wrapped.read(size)
+
+        def __next__(self) -> str:
+            return next(self.wrapped)
+
+        def seek(self, offset: int, whence: int = 0) -> int:
+            return self.wrapped.seek(offset, whence)
+
+        def close(self) -> None:
+            self.wrapped.close()
+            super().close()
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        assert path.name != member_name, "selected results member used Path.read_bytes()"
+        return original_read_bytes(path)
+
+    def guarded_open(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path.name == member_name and "b" not in mode:
+            return BoundedResultsText(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    monkeypatch.setattr(Path, "open", guarded_open)
 
 
 def test_archive_history_cli_lists_order_and_status_classification_counts(
@@ -3916,7 +4439,7 @@ def test_validate_crosswalk_refuses_a_parser_row_without_distrito(
         list_id="110",
         source_row_index=7,
     )
-    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [malformed])
+    monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [malformed])
 
     exit_code = main(_main_args(sources_path, local_root, manifest_path) + ["validate-crosswalk"])
 
@@ -3936,7 +4459,7 @@ def test_validate_curated_refuses_a_parser_row_without_list_id(
         list_id=None,
         source_row_index=7,
     )
-    monkeypatch.setattr("etl.__main__.ingest_national", lambda *_args, **_kwargs: [malformed])
+    monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [malformed])
 
     exit_code = main(_main_args(sources_path, local_root, manifest_path) + ["validate-curated"])
 
@@ -4164,6 +4687,36 @@ def test_validate_commands_report_each_unavailable_source_reason_before_exit(
     assert "national/2025-missing-file" in reported
 
 
+def test_validate_crosswalk_streams_selected_results_member_through_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    member_name = "ResultadosElectorales.csv"
+    sources_path, local_root, manifest_path = _archived_national_zip_corpus(
+        tmp_path,
+        election_year=2023,
+        election_round="paso",
+        member_name=member_name,
+        lista_numero="A",
+        agrupacion_id="900",
+    )
+    crosswalk_path = tmp_path / "crosswalk.yaml"
+    crosswalk_path.write_text(yaml.safe_dump({"jurisdictions": []}), encoding="utf-8")
+    _guard_selected_member_reads(monkeypatch, member_name=member_name)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["validate-crosswalk", "--crosswalk-path", str(crosswalk_path)]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert "unmapped jurisdiction: 02/027" in reported
+    assert (
+        "excluded 1 row(s) as out of scope for normalized list votes -- "
+        "votos_tipo='EN BLANCO': 1 rows / 4 votes"
+    ) in reported
+
+
 def test_validate_crosswalk_is_reachable_through_main(tmp_path: Path, capsys) -> None:
     """Drives `main(["validate-crosswalk", ...])`, not `find_unmapped_*`.
 
@@ -4232,6 +4785,53 @@ def test_duplicate_curated_keys_exit_cleanly_through_main(
     assert "error:" in reported
     assert "duplicate" in reported
     assert "Traceback" not in reported
+
+
+@pytest.mark.parametrize(
+    ("election_year", "election_round", "member_name", "lista_numero", "agrupacion_id", "list_id"),
+    [
+        (2023, "generales", "ResultadosElectorales.csv", "", "901", "901"),
+        (2025, "legislativas", "resultados2025.csv", "", "902", "902"),
+    ],
+)
+def test_validate_curated_streams_selected_results_member_through_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    election_year: int,
+    election_round: str,
+    member_name: str,
+    lista_numero: str,
+    agrupacion_id: str,
+    list_id: str,
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_zip_corpus(
+        tmp_path,
+        election_year=election_year,
+        election_round=election_round,
+        member_name=member_name,
+        lista_numero=lista_numero,
+        agrupacion_id=agrupacion_id,
+    )
+    party_map_path = tmp_path / "party_map.yaml"
+    party_map_path.write_text(
+        yaml.safe_dump({"canonical_parties": [], "mappings": []}), encoding="utf-8"
+    )
+    _guard_selected_member_reads(monkeypatch, member_name=member_name)
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["validate-curated", "--party-map-path", str(party_map_path)]
+    )
+
+    assert exit_code == 1
+    reported = capsys.readouterr().err
+    assert f"unmapped party: year={election_year}" in reported
+    assert f"list_id={list_id}" in reported
+    assert (
+        "excluded 1 row(s) as out of scope for normalized list votes -- "
+        "votos_tipo='EN BLANCO': 1 rows / 4 votes"
+    ) in reported
 
 
 def test_validate_curated_is_reachable_through_main(tmp_path: Path, capsys) -> None:
@@ -4407,8 +5007,8 @@ def test_collect_functions_read_a_real_zipped_archive_entry(tmp_path) -> None:
     """`validate-crosswalk` and `validate-curated` must read a ZIP archive
     entry the same way `ingest` does.
 
-    Both collect helpers handed the archived bytes straight to
-    `ingest_national`, which expects decoded CSV. Every registered national
+    Both collect helpers handed the archived bytes straight to the former
+    bytes parser, which expected decoded CSV. Every registered national
     source is archived as a ZIP, so on real data both commands died with
     `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80`. `cmd_ingest`
     routes through `resolve_national_results_bytes` first; these two did not.
@@ -5028,6 +5628,24 @@ def test_collect_mesa_tipo_mapping_rejects_malformed_ids_without_aliasing_a_mesa
         "1 had an absent mesa_id, 3 had an unreadable mesa_id, "
         "0 had an incomplete lineage, 0 carried a non-numeric code the "
         "normalizers cannot canonicalize\n"
+        "  mesa_tipo exclusion diagnostics for national/test: locator_sample_cap=5 "
+        "category_vocabulary_size=13\n"
+        "    category='(unknown category)' reason=skipped_absent_mesa_id total=1 "
+        "omitted_locators=0\n"
+        "    locator source_label='national/test' data_row_index=4 "
+        "category='(unknown category)' reason=skipped_absent_mesa_id "
+        "missing_fields=['mesa_id']\n"
+        "    category='(unknown category)' reason=skipped_bad_mesa_id total=3 "
+        "omitted_locators=0\n"
+        "    locator source_label='national/test' data_row_index=1 "
+        "category='(unknown category)' reason=skipped_bad_mesa_id "
+        "invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/test' data_row_index=2 "
+        "category='(unknown category)' reason=skipped_bad_mesa_id "
+        "invalid_fields=['mesa_id']\n"
+        "    locator source_label='national/test' data_row_index=3 "
+        "category='(unknown category)' reason=skipped_bad_mesa_id "
+        "invalid_fields=['mesa_id']\n"
     )
 
 
@@ -5687,6 +6305,7 @@ def test_validate_fiscalizacion_refuses_a_circuito_blind_baseline_before_review_
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
+                        "source_kind": "fiscalizacion",
                         "upload": "never",
                     }
                 ],
@@ -5804,6 +6423,7 @@ def test_validate_fiscalizacion_refuses_an_invalid_official_vector_before_any_wr
                         "election_year": 2025,
                         "election_round": "legislativas",
                         "filename": "fisc.csv",
+                        "source_kind": "fiscalizacion",
                         "upload": "never",
                     }
                 ],
@@ -6323,6 +6943,8 @@ def test_validate_fiscalizacion_uses_registered_baseline_metadata_and_refuses_mi
                         "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": 2025,
                         "election_round": "legislativas",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
                     }
                 ],
                 "national": [
@@ -6389,6 +7011,8 @@ def test_validate_fiscalizacion_refuses_fiscal_source_election_mismatch_before_a
                         "source_url": "local://fiscalizacion/fixture.csv",
                         "election_year": fiscal_year,
                         "election_round": fiscal_round,
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
                     }
                 ],
                 "national": [
@@ -6799,6 +7423,8 @@ def test_sources_boundary_accepts_canonical_local_source_metadata(
                 "source_url": "local://fiscalizacion/fixture.csv",
                 "election_year": 2025,
                 "election_round": "legislativas",
+                "source_kind": "fiscalizacion",
+                "upload": "never",
             }
         ]
     }
@@ -6827,6 +7453,8 @@ def test_sources_boundary_requires_complete_election_identity(
                         "mime": "text/csv",
                         "notes": "canonical source fixture",
                         "source_url": "local://fiscalizacion/test.csv",
+                        "source_kind": "fiscalizacion",
+                        "upload": "never",
                         **election_fields,
                     }
                 ]
@@ -6857,6 +7485,7 @@ def test_loaded_fiscalizacion_identity_reaches_reexport_classification(tmp_path:
                         "source_url": source_url,
                         "mime": "text/csv",
                         "filename": "fiscal.csv",
+                        "source_kind": "fiscalizacion",
                         "upload": "never",
                         "election_year": 2025,
                         "election_round": "legislativas",

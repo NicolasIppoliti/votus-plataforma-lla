@@ -659,6 +659,96 @@ def test_load_result_rows_rejects_missing_archive_entry_without_inserting(
     assert _stored_result_records(pg_conn, seed_archive_entry_id) == seed_records
 
 
+def test_national_insert_batches_do_not_repeat_the_scoped_delete(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"national/batched-delete-once-{uuid.uuid4()}"
+    rows = _fixture_rows(archive_entry_id)
+    _record_archive_entry(pg_conn, archive_entry_id)
+
+    assert load_national_rows(
+        pg_conn,
+        iter(rows),
+        year=2025,
+        round_="legislativas",
+        archive_entry_id=archive_entry_id,
+        batch_size=1,
+    ) == len(rows)
+    assert len(_snapshot(pg_conn, archive_entry_id)) == len(rows), (
+        "a later insert batch must not erase rows inserted by an earlier batch"
+    )
+
+
+def test_later_national_batch_failure_rolls_back_delete_and_earlier_insert(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"national/batched-rollback-{uuid.uuid4()}"
+    rows = _fixture_rows(archive_entry_id)
+    _record_archive_entry(pg_conn, archive_entry_id)
+    load_national_rows(
+        pg_conn,
+        rows,
+        year=2025,
+        round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
+    before = _snapshot(pg_conn, archive_entry_id)
+    with pg_conn.cursor() as cur:
+        cur.execute("savepoint before_failed_replacement")
+
+    duplicate_later_batch = replace(rows[0], source_row_index=999)
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        load_national_rows(
+            pg_conn,
+            iter((rows[0], duplicate_later_batch)),
+            year=2025,
+            round_="legislativas",
+            archive_entry_id=archive_entry_id,
+            batch_size=1,
+        )
+    with pg_conn.cursor() as cur:
+        cur.execute("rollback to savepoint before_failed_replacement")
+    assert _snapshot(pg_conn, archive_entry_id) == before
+
+
+def test_late_national_validation_failure_is_atomic_when_caller_commits(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"national/late-validation-atomic-{uuid.uuid4()}"
+    rows = _fixture_rows(archive_entry_id)
+    _record_archive_entry(pg_conn, archive_entry_id)
+
+    try:
+        load_national_rows(
+            pg_conn,
+            rows,
+            year=2025,
+            round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
+        before = _snapshot(pg_conn, archive_entry_id)
+        changed_first = replace(rows[0], result=replace(rows[0].result, votes=999))
+        mismatched_later = replace(rows[1], archive_entry_id=f"{archive_entry_id}/mismatch")
+
+        with pytest.raises(ValueError, match="every row.*archive_entry_id"):
+            load_national_rows(
+                pg_conn,
+                iter((changed_first, mismatched_later)),
+                year=2025,
+                round_="legislativas",
+                archive_entry_id=archive_entry_id,
+                batch_size=1,
+            )
+        pg_conn.commit()
+
+        assert _snapshot(pg_conn, archive_entry_id) == before
+    finally:
+        with pg_conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
+            cur.execute("delete from archive_entry where id = %s", (archive_entry_id,))
+        pg_conn.commit()
+
+
 def test_ephemeral_postgres_reingest_matches_original(pg_conn: psycopg.Connection) -> None:
     """Task 8.2: re-running `load_national_rows` for the SAME archive entry
     with the SAME rows leaves `result_row` identical -- D8's
