@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
 	FullConfig,
 	FullResult,
@@ -13,7 +14,16 @@ import ReleaseGateReporter from "./release-gate-reporter";
 import {
 	assertSourceInventory,
 	productEnvironment,
+	matchingProjectResourcesActive,
+	listOwnedNetworks,
+	removeOwnedNetworks,
+	releaseGateMain,
 } from "../scripts/e2e-release-gate";
+import {
+	RELEASE_GATE_TIMING_PHASE,
+	RELEASE_GATE_TIMING_PREFIX,
+	createReleaseGateTiming,
+} from "../scripts/e2e-gate-timing";
 import {
 	EXPECTED_E2E_SPECS,
 	assertE2eEnvironment,
@@ -35,6 +45,7 @@ import {
 	assertStackStatus,
 	assertSyntheticMigrationDoesNotCollide,
 	assertTs7Version,
+	cleanupDiagnosticsLine,
 	formatPgTapFailure,
 	cleanupReleaseGate,
 	migrationVersionFromFileName,
@@ -49,6 +60,28 @@ import {
 	type ReleaseGateCleanupDependencies,
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
+import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
+const { createServer, randomUUID, spawnSync, tmpdir } = vi.hoisted(() => ({
+	createServer: vi.fn(),
+	randomUUID: vi.fn(),
+	spawnSync: vi.fn(),
+	tmpdir: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:child_process")>()),
+	spawnSync,
+}));
+vi.mock("node:crypto", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:crypto")>()),
+	randomUUID,
+}));
+vi.mock("node:net", () => ({ default: { createServer } }));
+vi.mock("node:os", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:os")>();
+	return { ...actual, default: { ...actual, tmpdir }, tmpdir };
+});
+
 const OWNERSHIP: GateOwnership = {
 	workdir: "/private/tmp/votus-e2e-owned",
 	projectId: "votus-e2e-project",
@@ -58,6 +91,7 @@ const ACTIONS: CleanupAction[] = [
 	{ kind: "stop-stack", projectId: OWNERSHIP.projectId },
 	{ kind: "remove-owned-containers", projectId: OWNERSHIP.projectId },
 	{ kind: "remove-owned-volumes", projectId: OWNERSHIP.projectId },
+	{ kind: "remove-owned-networks", projectId: OWNERSHIP.projectId },
 	{ kind: "remove-workdir", workdir: OWNERSHIP.workdir },
 ];
 const ENV = {
@@ -96,6 +130,93 @@ function fixtureFunctionBody(fixtureSql: string, name: string) {
 	expect(match, `fixture function ${name}`).not.toBeNull();
 	return match![1]!;
 }
+describe("release-gate phase timing", () => {
+	it("emits deterministic phase durations from the injected clock", async () => {
+		let now = 100;
+		const output: string[] = [];
+		const timing = createReleaseGateTiming({
+			now: () => now,
+			writeOutput: (chunk) => output.push(chunk),
+		});
+
+		await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+			now = 112;
+		});
+		await timing.measure(RELEASE_GATE_TIMING_PHASE.PGTAP, async () => {
+			now = 137;
+		});
+		timing.emit();
+
+		expect(output[0]).toContain("preflight/ports=12ms completed");
+		expect(output[0]).toContain("pgTAP=25ms completed");
+		expect(output[1]).toBe(
+			`${RELEASE_GATE_TIMING_PREFIX}${JSON.stringify({
+				schemaVersion: 1,
+				phases: [
+					{ name: "preflight_ports", durationMs: 12, status: "completed" },
+					{ name: "supabase_startup", durationMs: 0, status: "not_started" },
+					{ name: "migrations", durationMs: 0, status: "not_started" },
+					{ name: "pgtap", durationMs: 25, status: "completed" },
+					{ name: "rollback_reapply", durationMs: 0, status: "not_started" },
+					{ name: "production_build", durationMs: 0, status: "not_started" },
+					{ name: "next_server_lifecycle", durationMs: 0, status: "not_started" },
+					{ name: "playwright", durationMs: 0, status: "not_started" },
+					{ name: "cleanup", durationMs: 0, status: "not_started" },
+				],
+			})}\n`,
+		);
+	});
+
+	it("records a failed phase without changing its causal error or exposing it", async () => {
+		let now = 200;
+		const output: string[] = [];
+		const timing = createReleaseGateTiming({
+			now: () => now,
+			writeOutput: (chunk) => output.push(chunk),
+		});
+		const failure = new Error("private credential value at /private/path");
+
+		await expect(
+			timing.measure(RELEASE_GATE_TIMING_PHASE.PLAYWRIGHT, async () => {
+				now = 209;
+				throw failure;
+			}),
+		).rejects.toBe(failure);
+		timing.emit();
+
+		expect(output[1]).toContain(
+			'{"name":"playwright","durationMs":9,"status":"failed"}',
+		);
+		expect(output.join("")).not.toContain("private credential");
+		expect(output.join("")).not.toContain("/private/path");
+	});
+
+	it("keeps the gate failure authoritative when timing output fails", async () => {
+		const timingOutputFailure = new Error("timing output unavailable");
+		spawnSync.mockReturnValueOnce({
+			error: new Error("pnpm preflight unavailable"),
+			status: null,
+			stdout: "",
+		});
+		const writeOutput = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => {
+				throw timingOutputFailure;
+			});
+
+		try {
+			await expect(releaseGateMain([])).rejects.toThrow(
+				"pnpm is unavailable or failed its preflight check",
+			);
+			expect(spawnSync).toHaveBeenCalledOnce();
+			expect(writeOutput).toHaveBeenCalledOnce();
+		} finally {
+			writeOutput.mockRestore();
+			spawnSync.mockReset();
+		}
+	});
+});
+
 async function inspectReleaseGatePlan(
 	options: readonly string[] = [],
 ): Promise<ReleaseGatePlan> {
@@ -780,6 +901,13 @@ describe("migration release-gate integration", () => {
 	});
 });
 describe("base contracts", () => {
+	it("keeps the canonical runner compatible with native strip-only mode", () => {
+		const source = readFileSync(
+			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
+			"utf8",
+		);
+		expect(() => stripTypeScriptTypes(source, { mode: "strip" })).not.toThrow();
+	});
 	it("keeps the authorized review browser fixture service-role-only and self-cleaning", () => {
 		const fixtureSql = readFileSync(
 			new URL("./service-role-grants.sql", import.meta.url),
@@ -864,6 +992,142 @@ describe("base contracts", () => {
 		expect(workflow).not.toContain(`${["POSTGRES", "PASSWORD"].join("_")}:`);
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
+	});
+	it("keeps independent release proofs parallel and aggregates their exact results", () => {
+		const workflow = readFileSync(
+			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
+			"utf8",
+		);
+		const jobs = workflow.slice(workflow.indexOf("jobs:\n"));
+		const jobIds = Array.from(
+			jobs.matchAll(/^  ([a-z][a-z0-9-]*):$/gm),
+			([, jobId]) => jobId,
+		);
+		const job = (jobId: string) => {
+			const start = jobs.indexOf(`  ${jobId}:\n`);
+			const nextStart = jobIds
+				.map((id) => jobs.indexOf(`  ${id}:\n`))
+				.find((position) => position > start);
+			return jobs.slice(start, nextStart);
+		};
+		const scope = job("scope");
+		const webStatic = job("web-static");
+		const etlRelease = job("etl-release");
+		const e2eRelease = job("e2e-release");
+		const verify = job("verify");
+
+		expect(jobIds).toEqual([
+			"scope",
+			"web-static",
+			"etl-release",
+			"e2e-release",
+			"verify",
+		]);
+		expect(workflow).toMatch(/^  pull_request:$/m);
+		expect(workflow).toMatch(/^  push:\n    branches: \[main\]$/m);
+		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
+		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
+		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
+			expect(releaseJob).not.toMatch(/\bif:|\bneeds:|\bstrategy:/);
+
+		expect(scope).toContain("name: scope");
+		expect(scope).toContain("timeout-minutes: 2");
+		expect(scope).toContain("persist-credentials: false");
+		expect(scope).toContain("fetch-depth: 0");
+		expect(scope).toContain("node-version: 24");
+		expect(scope).toContain("--all");
+		expect(scope).toContain("--base \"${{ github.event.pull_request.base.sha }}\"");
+		expect(scope).toContain("--head \"${{ github.sha }}\"");
+
+		expect(webStatic).toContain("timeout-minutes: 10");
+		expect(webStatic).toContain("persist-credentials: false");
+		expect(webStatic).toContain("version: 10.32.1");
+		expect(webStatic).toContain("node-version: 24");
+		expect(webStatic).toContain("pnpm/action-setup@");
+		expect(webStatic).toContain("actions/setup-node@");
+		expect(webStatic.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
+		expect(webStatic.match(/^\s*- run: pnpm lint$/gm)).toHaveLength(1);
+		expect(webStatic.match(/^\s*run: pnpm typecheck$/gm)).toHaveLength(1);
+		expect(webStatic.match(/^\s*- run: pnpm test$/gm)).toHaveLength(1);
+		expect(webStatic).not.toMatch(/services:|setup-uv|supabase\/setup-cli|playwright install|test:e2e:gate/);
+
+		expect(etlRelease).toContain("timeout-minutes: 15");
+		expect(etlRelease).toContain("services:");
+		expect(etlRelease).toContain("image: postgres:17");
+		expect(etlRelease).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
+		expect(etlRelease).toContain("postgresql://postgres@127.0.0.1:54322/template1");
+		expect(etlRelease).toContain("astral-sh/setup-uv@");
+		expect(etlRelease).toContain('version: "0.8.8"');
+		expect(etlRelease).toContain("persist-credentials: false");
+		expect(etlRelease).toContain("create role anon nologin");
+		expect(etlRelease).toContain("create role authenticated nologin");
+		expect(etlRelease).toContain("create role etl_writer login bypassrls password null");
+		expect(etlRelease.match(/uv run --project \. --frozen ruff check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project \. --frozen ruff format --check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(1);
+		expect(etlRelease).not.toMatch(/pnpm|setup-node|supabase\/setup-cli|playwright/);
+
+		expect(e2eRelease).toContain("timeout-minutes: 20");
+		expect(e2eRelease).toContain("pnpm/action-setup@");
+		expect(e2eRelease).toContain("actions/setup-node@");
+		expect(e2eRelease).toContain("supabase/setup-cli@");
+		expect(e2eRelease).toContain("version: 10.32.1");
+		expect(e2eRelease).toContain("node-version: 24");
+		expect(e2eRelease).toContain("version: 2.112.0");
+		expect(e2eRelease).toContain("persist-credentials: false");
+		expect(e2eRelease.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
+		expect(e2eRelease.match(/pnpm exec playwright install --with-deps chromium/g)).toHaveLength(1);
+		expect(e2eRelease.match(/^\s*- run: pnpm test:e2e:gate$/gm)).toHaveLength(1);
+		expect(e2eRelease).not.toMatch(/services:|setup-uv|uv run|postgres:17/);
+
+		expect(verify).toContain("name: verify");
+		expect(verify).toContain("timeout-minutes: 2");
+		expect(verify).toMatch(
+			/needs:\n      - scope\n      - web-static\n      - etl-release\n      - e2e-release/,
+		);
+		expect(verify).toContain("if: ${{ always() }}");
+		expect(verify).toContain("${{ needs.scope.result }}");
+		expect(verify).toContain("${{ needs.web-static.result }}");
+		expect(verify).toContain("${{ needs.etl-release.result }}");
+		expect(verify).toContain("${{ needs.e2e-release.result }}");
+		expect(verify.match(/= "success"/g)).toHaveLength(4);
+
+		const actionReferences = Array.from(
+			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
+			([, revision]) => revision,
+		);
+		expect(actionReferences).toHaveLength(11);
+		for (const revision of actionReferences)
+			expect(revision).toMatch(/^[a-f0-9]{40}$/);
+	});
+
+	it("runs TypeScript 7 typechecking once across the release-gate builds", () => {
+		const packageManifest = JSON.parse(
+			readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+		) as { scripts: Record<string, string> };
+		const workflow = readFileSync(
+			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
+			"utf8",
+		);
+		const e2eGate = readFileSync(
+			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
+			"utf8",
+		);
+
+		expect(packageManifest.scripts.build).toBe("pnpm typecheck && pnpm build:next");
+		expect(packageManifest.scripts["build:next"]).toBe(
+			"node --experimental-strip-types ./scripts/production-build.ts",
+		);
+		expect(packageManifest.scripts["build:next"]).not.toContain("typecheck");
+		expect(workflow.match(/^\s*run: pnpm typecheck\s*$/gm)).toHaveLength(1);
+		expect(workflow).not.toMatch(
+			/^\s*- run: pnpm build(?::next)?\s*$/gm,
+		);
+		expect(e2eGate.match(/\["build:next"\]/g)).toHaveLength(1);
+		expect(e2eGate).toMatch(
+			/RELEASE_GATE_TIMING_PHASE\.PRODUCTION_BUILD,\s*async \(\) => \s*\{\s*runChecked\(\s*"pnpm",\s*\["build:next"\]/s,
+		);
+		expect(e2eGate).not.toMatch(/\["(?:build|typecheck)"\]/);
 	});
 	it("runs owned setup SQL with in-container cancellation before the host fallback", () => {
 		expect(planOwnedSqlInvocation(OWNERSHIP.projectId, 600_000)).toEqual({
@@ -975,10 +1239,381 @@ describe("base contracts", () => {
 			}),
 		).toThrow("marker mismatch");
 	});
+	it("runs production Docker network adapters with argv-only redaction", () => {
+		const network = `supabase_network_${OWNERSHIP.projectId}`;
+		spawnSync.mockReturnValueOnce({ status: 0, stdout: `${network}\n` });
+		expect(listOwnedNetworks(OWNERSHIP.projectId)).toEqual([network]);
+		expect(spawnSync).toHaveBeenLastCalledWith("docker", ["network", "ls", "--filter", `name=supabase_network_${OWNERSHIP.projectId}`, "--format", "{{.Name}}"], expect.any(Object));
+		spawnSync.mockReturnValueOnce({ status: 0, stdout: "" });
+		removeOwnedNetworks([network, `--force_${OWNERSHIP.projectId}`]);
+		expect(spawnSync).toHaveBeenLastCalledWith("docker", ["network", "rm", "--", network, `--force_${OWNERSHIP.projectId}`], expect.any(Object));
+		spawnSync.mockReturnValueOnce({ status: 1, stdout: "network-enumeration-secret", stderr: "network-enumeration-secret" });
+		expect(() => listOwnedNetworks(OWNERSHIP.projectId)).toThrowError(new Error("failed to enumerate disposable Supabase networks"));
+	});
+	const successfulCommand = (stdout = "") => ({ status: 0, stdout });
+	const loopbackPublication = (hostIp: string) =>
+		["5432/tcp", "8000/tcp"].map((port) =>
+			JSON.stringify({ [port]: [{ HostIp: hostIp, HostPort: "46000" }] }),
+		).join("\n");
+	const MALFORMED_PORT_PUBLICATION = [
+		JSON.stringify({ "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "46000" }] }),
+		JSON.stringify({
+			"8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "46000" }],
+			"8443/tcp": { HostIp: "127.0.0.1", HostPort: "46000" },
+		}),
+	].join("\n");
+	const PUBLICATION_DIAGNOSTIC_PORT_MAPS = [
+		JSON.stringify({ "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "0" }] }),
+		JSON.stringify({
+			PRIVATE_OUTPUT_MARKER: [
+				{ HostIp: "0.0.0.0", HostPort: "46000" },
+				{ HostIp: "0.0.0.0", HostPort: "46000" },
+			],
+		}),
+	].join("\n");
+	const SINGLE_PUBLICATION_RECORD = JSON.stringify({
+		"5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "46000" }],
+	});
+	const THREE_PUBLICATION_RECORDS = [
+		SINGLE_PUBLICATION_RECORD,
+		JSON.stringify({ "8000/tcp": [{ HostIp: "::1", HostPort: "46001" }] }),
+		JSON.stringify({ "8443/tcp": [{ HostIp: "127.0.0.1", HostPort: "46002" }] }),
+	].join("\n");
+	const STRUCTURAL_PUBLICATION_RECORDS = [
+		JSON.stringify(null),
+		JSON.stringify({
+			PRIVATE_OUTPUT_MARKER: { HostIp: "127.0.0.1", HostPort: "46000" },
+			HostIp: [null],
+			"8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "0" }],
+		}),
+	].join("\n");
+	const UNPUBLISHED_RECORDS = [
+		JSON.stringify({ "5432/tcp": null, "5433/tcp": [] }),
+		JSON.stringify({ "8000/tcp": [], "8443/tcp": null }),
+	].join("\n");
+	const EXPECTED_PUBLICATION_DIAGNOSTICS = new Map([
+		["missing host publication proof", { stage: "json", issues: [] }],
+		["publication diagnostic malformed JSON", { stage: "json", issues: [] }],
+		["publication diagnostic unexpected error", { stage: "unexpected", issues: [] }],
+		["publication diagnostic schema SyntaxError", { stage: "unexpected", issues: [] }],
+		["publication diagnostic empty ZodError", { stage: "unexpected", issues: [] }],
+		["publication diagnostic unknown issue", { stage: "schema", issues: ["host_port", "unclassified"] }],
+		["publication diagnostic schema classes", { stage: "schema", issues: ["host_ip", "host_port"] }],
+		["publication diagnostic single record", { stage: "schema", issues: ["record_count"] }],
+		["publication diagnostic three records", { stage: "schema", issues: ["record_count"] }],
+		["publication diagnostic structural levels", { stage: "schema", issues: ["shape", "host_port"] }],
+		["publication diagnostic unpublished bindings", { stage: "schema", issues: ["unpublished"] }],
+	]);
+	const EXPECTED_PHASE_TRACE = {
+		network: ["network", "cleanup"],
+		startup: ["network", "startup", "cleanup"],
+		publication: ["network", "startup", "publication", "cleanup"],
+		migration: ["network", "startup", "publication", "migration", "cleanup"],
+	} as const;
+	const EXPECTED_FAILURE_RECORD = {
+		NETWORK_CREATE: {
+			schemaVersion: 1,
+			operation: "supabase_network_create",
+			reason: "command_failed",
+			exitCode: 1,
+		},
+		SUPABASE_START: {
+			schemaVersion: 1,
+			operation: "supabase_start",
+			reason: "command_failed",
+			exitCode: 1,
+		},
+		SUPABASE_START_UNAVAILABLE: {
+			schemaVersion: 1,
+			operation: "supabase_start",
+			reason: "command_failed",
+			exitCode: null,
+		},
+		PUBLICATION_INSPECT: {
+			schemaVersion: 1,
+			operation: "supabase_publication_inspect",
+			reason: "command_failed",
+			exitCode: 7,
+		},
+		PUBLICATION_VALIDATE: {
+			schemaVersion: 1,
+			operation: "supabase_publication_validate",
+			reason: "invalid_publication",
+			exitCode: null,
+		},
+	} as const;
+	const INVALID_STARTUP_STATUSES = [-1, 256, 1.5] as const;
+	const REJECTION_CASES = [
+		...["malformed JSON", "unexpected error", "schema SyntaxError", "empty ZodError", "unknown issue"].map(
+			(variant) => [
+				`publication diagnostic ${variant}`, "publication",
+				"Supabase host publication proof is absent or invalid", 0,
+				variant === "malformed JSON"
+					? `${SINGLE_PUBLICATION_RECORD}\nPRIVATE_OUTPUT_MARKER`
+					: PUBLICATION_DIAGNOSTIC_PORT_MAPS,
+				EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+			] as const,
+		),
+		["network creation failure", "network", "disposable Supabase network create", 0, undefined, EXPECTED_FAILURE_RECORD.NETWORK_CREATE, 0],
+		["startup failure", "startup", "disposable Supabase start failed", 1, undefined, EXPECTED_FAILURE_RECORD.SUPABASE_START, 0],
+		["startup diagnostics", "startup", "disposable Supabase start failed", 1, undefined, EXPECTED_FAILURE_RECORD.SUPABASE_START, 0],
+		["startup failure with null status", "startup", "disposable Supabase start failed", null, undefined, EXPECTED_FAILURE_RECORD.SUPABASE_START_UNAVAILABLE, 0],
+		...INVALID_STARTUP_STATUSES.map(
+			(status) =>
+				[
+					`startup failure with status ${status}`,
+					"startup",
+					"disposable Supabase start failed",
+					status,
+					undefined,
+					EXPECTED_FAILURE_RECORD.SUPABASE_START_UNAVAILABLE,
+					0,
+				] as const,
+		),
+		["publication inspection command failure", "publication", "disposable Supabase host publication is unavailable or failed its preflight check", 0, loopbackPublication("127.0.0.1"), EXPECTED_FAILURE_RECORD.PUBLICATION_INSPECT, 7],
+		["missing host publication proof", "publication", "Supabase host publication proof is absent or invalid", 0, undefined, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["malformed host publication", "publication", "Supabase host publication proof is absent or invalid", 0, MALFORMED_PORT_PUBLICATION, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["publication diagnostic schema classes", "publication", "Supabase host publication proof is absent or invalid", 0, PUBLICATION_DIAGNOSTIC_PORT_MAPS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		[
+			"publication diagnostic single record", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			SINGLE_PUBLICATION_RECORD, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		[
+			"publication diagnostic three records", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			THREE_PUBLICATION_RECORDS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		[
+			"publication diagnostic structural levels", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			STRUCTURAL_PUBLICATION_RECORDS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		[
+			"publication diagnostic unpublished bindings", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			UNPUBLISHED_RECORDS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		["IPv4 wildcard host publication", "publication", "Supabase host publication proof is absent or invalid", 0, loopbackPublication("0.0.0.0"), EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["IPv6 wildcard host publication", "publication", "Supabase host publication proof is absent or invalid", 0, loopbackPublication("::"), EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["IPv4 loopback host publication", "migration", "disposable Supabase incremental migrations failed", 0, loopbackPublication("127.0.0.1"), undefined, 0],
+		["IPv6 loopback host publication", "migration", "disposable Supabase incremental migrations failed", 0, loopbackPublication("::1"), undefined, 0],
+	] as const;
+	it.each(REJECTION_CASES)(
+		"creates the exact owned loopback bridge before canonical Supabase startup and rejects %s",
+		async (_scenario, phase, failure, startStatus, publication, expectedRecord, publicationStatus) => {
+			const { z } = await import("zod");
+			const { releaseGateMain, reportReleaseGateFailure } = await import("../scripts/e2e-release-gate");
+			const config = z.config();
+			const priorCustomError = Object.getOwnPropertyDescriptor(config, "customError");
+			const restoreCustomError = () => {
+				if (priorCustomError) Object.defineProperty(config, "customError", priorCustomError);
+				else Reflect.deleteProperty(config, "customError");
+			};
+			const fault = new Map<string, Error>([
+				["publication diagnostic unexpected error", new Error("PRIVATE_OUTPUT_MARKER")],
+				["publication diagnostic schema SyntaxError", new SyntaxError("PRIVATE_OUTPUT_MARKER")],
+				["publication diagnostic empty ZodError", new z.ZodError([])],
+				["publication diagnostic unknown issue", new z.ZodError([
+					{ code: "unrecognized_keys", keys: ["PRIVATE_OUTPUT_MARKER"], path: [], message: "PRIVATE_OUTPUT_MARKER" },
+					{ code: "custom", path: [0, "PRIVATE_OUTPUT_MARKER", 0, "HostPort"], message: "PRIVATE_OUTPUT_MARKER" },
+				])],
+			]).get(_scenario);
+			const formattingFault = vi.fn(() => {
+				restoreCustomError();
+				throw fault;
+			});
+			const token = "12345678-1234-4123-8123-123456789abc";
+			const projectId = "votus-e2e-12345678123441238123";
+			const network = `supabase_network_${projectId}`;
+			const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
+			let port = 46000;
+			let networkPresent = false;
+			let selectedNetwork: string | undefined;
+			const trace: string[] = [];
+			tmpdir.mockReturnValue(tempRoot);
+			randomUUID.mockReturnValue(token);
+			createServer.mockImplementation(() => ({
+				once: vi.fn(),
+				listen: vi.fn((_port, _host, listening) => listening()),
+				address: () => ({ port: port++ }),
+				close: vi.fn((done) => done()),
+			}));
+			spawnSync.mockImplementation((command, args) => {
+				if (command === "pnpm")
+					return successfulCommand(
+						args[0] === "--version" ? "10.0.0\n" : "Version 7.0.0\n",
+					);
+				if (command === "docker" && args[0] === "info")
+					return successfulCommand("29.7.2\n");
+				if (command === "docker" && args[0] === "network") {
+					if (args[1] === "create") {
+						trace.push("network");
+						networkPresent = true;
+						return phase === "network"
+							? { status: 1, stdout: "", stderr: "" }
+							: successfulCommand();
+					}
+					if (args[1] === "rm") {
+						trace.push("cleanup");
+						networkPresent = false;
+					}
+					if (args[1] === "ls")
+						return successfulCommand(networkPresent ? `${network}\n` : "");
+					return successfulCommand();
+				}
+				if (command === "docker" && args[0] === "inspect") {
+					trace.push("publication");
+					if (fault) z.config({ customError: formattingFault });
+					return publicationStatus === 0
+						? successfulCommand(publication ?? "")
+						: {
+							status: publicationStatus,
+							stdout: "PRIVATE_OUTPUT_MARKER",
+							stderr: "PRIVATE_OUTPUT_MARKER",
+						};
+				}
+				if (command === "supabase" && args[0] === "start") {
+					if (args[1] === "--help")
+						return successfulCommand("--workdir --ignore-health-check --network-id\n");
+					trace.push("startup");
+					selectedNetwork = args[args.indexOf("--network-id") + 1];
+					return {
+						status: startStatus,
+						stdout: "",
+						stderr: _scenario === "startup diagnostics" ? "PRIVATE_OUTPUT_MARKER" : "",
+					};
+				}
+				if (command === "supabase" && args[0] === "migration") {
+					trace.push("migration");
+					return { status: 1, stdout: "", stderr: "" };
+				}
+				if (command === "supabase" && args[0] === "--version")
+					return successfulCommand("2.115.0\n");
+				if (command === "supabase" && args[0] === "stop")
+					return successfulCommand("--project-id --no-backup\n");
+				return successfulCommand();
+			});
+			const writeOutput = vi
+				.spyOn(process.stdout, "write")
+				.mockImplementation(() => true);
+			const originalOnce = process.once.bind(process);
+			const signalOnce = vi
+				.spyOn(process, "once")
+				.mockImplementation((event, listener) =>
+					event === "SIGINT" || event === "SIGTERM"
+						? process
+						: originalOnce(event, listener),
+				);
+			try {
+				let rejection: unknown;
+				await expect(
+					releaseGateMain(["--scale-proof-only"]).catch((error: unknown) => {
+						rejection = error;
+						throw error;
+					}),
+				).rejects.toThrow(failure);
+				if (fault) expect(formattingFault).toHaveBeenCalledOnce();
+				if (expectedRecord || phase === "migration") {
+					const reported: string[] = [];
+					const diagnosticCase = EXPECTED_PUBLICATION_DIAGNOSTICS.get(_scenario);
+					const writeError = diagnosticCase
+						? vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+							reported.push(String(chunk));
+							return true;
+						})
+						: undefined;
+					try {
+						reportReleaseGateFailure(
+							"E2E release gate failed",
+							rejection,
+							diagnosticCase ? undefined : (line) => reported.push(line),
+						);
+					} finally {
+						writeError?.mockRestore();
+					}
+					const failureRecords = reported.filter((line) =>
+						line.startsWith("E2E_RELEASE_GATE_FAILURE "),
+					);
+					expect(failureRecords).toHaveLength(expectedRecord ? 1 : 0);
+					if (expectedRecord) expect(
+						JSON.parse(
+							failureRecords[0]!.slice("E2E_RELEASE_GATE_FAILURE ".length),
+						),
+					).toEqual(expectedRecord);
+					if (diagnosticCase) {
+						expect(spawnSync).toHaveBeenCalledWith(
+							"docker",
+							[
+								"inspect",
+								"--format",
+								"{{json .NetworkSettings.Ports}}",
+								"supabase_db_votus-e2e-12345678123441238123",
+								"supabase_kong_votus-e2e-12345678123441238123",
+							],
+							expect.any(Object),
+						);
+						const prefix = "E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ";
+						const diagnostics = reported.join("").split("\n").filter((line) =>
+							line.startsWith(prefix),
+						);
+						expect(diagnostics).toHaveLength(1);
+						expect(JSON.parse(diagnostics[0]!.slice(prefix.length))).toEqual({
+							schemaVersion: 1,
+							...diagnosticCase,
+						});
+						expect(reported.join("")).not.toContain("PRIVATE_OUTPUT_MARKER");
+					}
+					if (expectedRecord?.reason === "command_failed" || phase === "migration")
+						expect(reported.join("")).not.toContain("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ");
+					if (
+						_scenario === "startup diagnostics" ||
+						_scenario === "publication inspection command failure"
+					)
+						expect(reported.join("")).not.toContain("PRIVATE_OUTPUT_MARKER");
+				}
+				expect(spawnSync).toHaveBeenCalledWith(
+					"docker",
+					[
+						"network",
+						"create",
+						"--driver",
+						"bridge",
+						"--label",
+						`com.supabase.cli.project=${projectId}`,
+						"--label",
+						`com.docker.compose.project=${projectId}`,
+						"--opt",
+						"com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+						network,
+					],
+					expect.any(Object),
+				);
+				expect(trace).toEqual(EXPECTED_PHASE_TRACE[phase]);
+				expect(selectedNetwork).toBe(
+					phase === "network" ? undefined : network,
+				);
+				expect(networkPresent).toBe(false);
+				expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
+			} finally {
+				restoreCustomError();
+				signalOnce.mockRestore();
+				writeOutput.mockRestore();
+				spawnSync.mockReset();
+				createServer.mockReset();
+				randomUUID.mockReset();
+				tmpdir.mockReset();
+				rmSync(tempRoot, { force: true, recursive: true });
+			}
+		},
+	);
+
 	it("runs production cleanup in exact-owned order and verifies residuals", async () => {
 		const events: string[] = [];
 		let containers = [`supabase_db_${OWNERSHIP.projectId}`];
 		let volumes = [`supabase_db_${OWNERSHIP.projectId}`];
+		let networks = [`supabase_network_${OWNERSHIP.projectId}`];
+		let networkProjectId: string | undefined;
 		let workdirExists = true;
 		const dependencies: ReleaseGateCleanupDependencies<never> = {
 			tempRoot: () => "/private/tmp",
@@ -1004,6 +1639,15 @@ describe("base contracts", () => {
 				events.push(`remove-volumes:${names.join(",")}`);
 				volumes = [];
 			},
+			listOwnedNetworks: (projectId) => {
+				networkProjectId = projectId;
+				events.push("list-networks");
+				return networks;
+			},
+			removeNetworks: async (names) => {
+				events.push(`remove-networks:${names.join(",")}`);
+				networks = [];
+			},
 			removeWorkdir: async () => {
 				events.push("remove-workdir");
 				workdirExists = false;
@@ -1023,11 +1667,15 @@ describe("base contracts", () => {
 			`remove-containers:supabase_db_${OWNERSHIP.projectId}`,
 			"list-volumes",
 			`remove-volumes:supabase_db_${OWNERSHIP.projectId}`,
+			"list-networks",
+			`remove-networks:supabase_network_${OWNERSHIP.projectId}`,
 			"remove-workdir",
 			"list-containers",
 			"list-volumes",
+			"list-networks",
 			"verify-workdir",
 		]);
+		expect(networkProjectId).toBe(OWNERSHIP.projectId);
 	});
 	it("reaches container cleanup through production cleanup and refuses foreign names", async () => {
 		const events: string[] = [];
@@ -1048,6 +1696,8 @@ describe("base contracts", () => {
 			},
 			listOwnedVolumes: () => [],
 			removeVolumes: async () => undefined,
+			listOwnedNetworks: () => [],
+			removeNetworks: async () => undefined,
 			removeWorkdir: async () => {
 				events.push("remove-workdir");
 			},
@@ -1084,6 +1734,8 @@ describe("base contracts", () => {
 			removeContainers: async () => undefined,
 			listOwnedVolumes: () => [],
 			removeVolumes: async () => undefined,
+			listOwnedNetworks: () => [],
+			removeNetworks: async () => undefined,
 			removeWorkdir: async () => undefined,
 			workdirExists: () => false,
 		};
@@ -1175,6 +1827,7 @@ describe("base contracts", () => {
 				assertLoopbackSessionCookieDelta([], [invalidCookie], baseUrl),
 			).toThrow("session cookie");
 	});
+	it("keeps stale workdirs live while their canonical network remains", () => { spawnSync.mockReturnValueOnce({ status: 0, stdout: "" }).mockReturnValueOnce({ status: 0, stdout: "" }).mockReturnValueOnce({ status: 0, stdout: `supabase_network_${STALE_EVIDENCE.marker.projectId}\n` }); const active = matchingProjectResourcesActive(STALE_EVIDENCE.marker.projectId); expect(classifyStaleOwnership({ ...STALE_EVIDENCE, projectResourcesActive: active })).toBe("live"); expect(spawnSync).toHaveBeenLastCalledWith("docker", ["network", "ls", "--filter", `name=supabase_network_${STALE_EVIDENCE.marker.projectId}`, "--format", "{{.Name}}"], expect.any(Object)); spawnSync.mockReset(); });
 	it("classifies and plans only proven stale owned workdirs", () => {
 		expect(classifyStaleOwnership(STALE_EVIDENCE)).toBe("reap");
 		expect(planStaleWorkdirReap(STALE_EVIDENCE)).toEqual([
@@ -1221,11 +1874,12 @@ it("continues every cleanup step, verifies residuals, and aggregates failures", 
 				throw new Error("residual state");
 			},
 		),
-	).rejects.toSatisfy((error: AggregateError) => error.errors.length === 4);
+	).rejects.toSatisfy((error: AggregateError) => error.errors.length === 5);
 	expect(reached).toEqual([
 		"stop-stack",
 		"remove-owned-containers",
 		"remove-owned-volumes",
+		"remove-owned-networks",
 		"remove-workdir",
 		"verify",
 	]);
@@ -1462,7 +2116,62 @@ describe("ReleaseGateReporter", () => {
 		for (const testCase of cases)
 			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
 		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
-		expect(JSON.parse(receipt)).toEqual({ suiteStatus: "passed", results: PASSED });
+		expect(JSON.parse(receipt)).toEqual({
+			suiteStatus: "passed",
+			results: PASSED,
+			selection: {
+				mode: "full",
+				selectedCount: EXPECTED_E2E_SPECS.length,
+				selected: EXPECTED_E2E_SPECS,
+				excludedCount: 0,
+				excluded: [],
+			},
+		});
+	});
+	it("aggregates multiple cases into one selected-spec receipt in focused mode", async () => {
+		const selected = "e2e/municipal.spec.ts";
+		const previousMode = process.env["VOTUS_E2E_GATE_MODE"];
+		const previousSelected = process.env["VOTUS_E2E_SELECTED_SPECS"];
+		process.env["VOTUS_E2E_GATE_MODE"] = "focused";
+		process.env["VOTUS_E2E_SELECTED_SPECS"] = JSON.stringify([selected]);
+		try {
+			let receipt = "";
+			const errors: string[] = [];
+			const reporter = makeReporter(
+				(content) => {
+					receipt = content;
+				},
+				(message) => errors.push(message.trim()),
+			);
+			const testCases = [
+				testCaseFor(selected, "municipal-first", "municipal first case"),
+				testCaseFor(selected, "municipal-second", "municipal second case"),
+			];
+			reporter.onBegin({} as FullConfig, suiteFor(testCases));
+			for (const testCase of testCases)
+				reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+			const outcome = await reporter.onEnd(fullResult);
+
+			expect(outcome, errors.join("\n")).toBeUndefined();
+			expect(JSON.parse(receipt)).toEqual({
+				suiteStatus: "passed",
+				results: [{ spec: selected, status: "passed" }],
+				selection: {
+					mode: "focused",
+					selectedCount: 1,
+					selected: [selected],
+					excludedCount: 7,
+					excluded: EXPECTED_E2E_SPECS.filter((spec) => spec !== selected),
+				},
+			});
+		} finally {
+			if (previousMode === undefined) delete process.env["VOTUS_E2E_GATE_MODE"];
+			else process.env["VOTUS_E2E_GATE_MODE"] = previousMode;
+			if (previousSelected === undefined)
+				delete process.env["VOTUS_E2E_SELECTED_SPECS"];
+			else process.env["VOTUS_E2E_SELECTED_SPECS"] = previousSelected;
+		}
 	});
 	it("aggregates nine passing test cases into the exact eight-spec receipt", async () => {
 		let receipt = "";
@@ -1495,6 +2204,13 @@ describe("ReleaseGateReporter", () => {
 		expect(report).toEqual({
 			suiteStatus: "passed",
 			results: EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+			selection: {
+				mode: "full",
+				selectedCount: EXPECTED_E2E_SPECS.length,
+				selected: EXPECTED_E2E_SPECS,
+				excludedCount: 0,
+				excluded: [],
+			},
 		});
 	});
 	it("fails closed when an expected spec has no discovered test IDs", async () => {
@@ -1514,6 +2230,13 @@ describe("ReleaseGateReporter", () => {
 			results: EXPECTED_E2E_SPECS.map((spec) =>
 				spec === missingSpec ? { spec, status: "interrupted" } : { spec, status: "passed" },
 			),
+			selection: {
+				mode: "full",
+				selectedCount: EXPECTED_E2E_SPECS.length,
+				selected: EXPECTED_E2E_SPECS,
+				excludedCount: 0,
+				excluded: [],
+			},
 		});
 	});
 	it.each(["failed", "timedOut", "interrupted", "skipped"] as const)(
@@ -1703,4 +2426,220 @@ describe("ReleaseGateReporter", () => {
 			);
 		},
 	);
+});
+
+describe("release-gate cleanup diagnostics", () => {
+	const dependencies = (
+		overrides: Partial<ReleaseGateCleanupDependencies<never>> = {},
+	): ReleaseGateCleanupDependencies<never> => ({
+		tempRoot: () => "/private/tmp",
+		readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
+		stopServer: async () => undefined,
+		verifyServerStopped: async () => undefined,
+		stopStack: async () => undefined,
+		listOwnedContainers: () => [],
+		removeContainers: async () => undefined,
+		listOwnedVolumes: () => [],
+		removeVolumes: async () => undefined,
+		listOwnedNetworks: () => [],
+		removeNetworks: async () => undefined,
+		removeWorkdir: async () => undefined,
+		workdirExists: () => false,
+		...overrides,
+	});
+
+	it("continues cleanup after a failure and preserves its diagnostic category", async () => {
+		const reached: string[] = [];
+		const original = new Error("private stop failure");
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies({
+					stopStack: async () => {
+						reached.push("stack");
+						throw original;
+					},
+					removeWorkdir: async () => {
+						reached.push("workdir");
+					},
+				}),
+			),
+		).rejects.toSatisfy((error) => {
+			expect(error).toBeInstanceOf(AggregateError);
+			expect((error as AggregateError).errors).toContain(original);
+			expect(cleanupDiagnosticsLine(error)).toBe(
+				'E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS {"schemaVersion":1,"failures":[{"category":"STACK_STOP","failureCount":1}]}',
+			);
+			return true;
+		});
+		expect(reached).toEqual(["stack", "workdir"]);
+	});
+
+	it("flattens nested failures into canonical category counts without stopping", async () => {
+		const nested = new AggregateError([
+			new Error("first"),
+			new AggregateError([new Error("second")], "nested"),
+		], "outer");
+		const reached: string[] = [];
+		await expect(
+			cleanupReleaseGate(
+				{
+					ownership: OWNERSHIP,
+					stackMutationAttempted: true,
+					reservations: [{ port: 1, release: async () => { throw new Error("port"); } }],
+				},
+				dependencies({
+					stopStack: async () => { throw nested; },
+					removeWorkdir: async () => {
+						reached.push("workdir");
+					},
+				}),
+			),
+		).rejects.toSatisfy((error: AggregateError) => {
+			expect(error.errors).toHaveLength(3);
+			expect(cleanupDiagnosticsLine(error)).toBe(
+				'E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS {"schemaVersion":1,"failures":[{"category":"RESERVATION_RELEASE","failureCount":1},{"category":"STACK_STOP","failureCount":2}]}',
+			);
+			return true;
+		});
+		expect(reached).toEqual(["workdir"]);
+	});
+
+	it("continues after owned network cleanup and network residual failures", async () => {
+		const network = `supabase_network_${OWNERSHIP.projectId}`, reached: string[] = [];
+		let networkLists = 0;
+		await expect(cleanupReleaseGate(
+			{ ownership: OWNERSHIP, stackMutationAttempted: true },
+			dependencies({
+				removeNetworks: async () => { reached.push("remove-network"); throw new Error(network); },
+				listOwnedContainers: () => (reached.push("container-residual"), []),
+				listOwnedVolumes: () => (reached.push("volume-residual"), []),
+				listOwnedNetworks: () => {
+					if (networkLists++ === 0) return [network];
+					reached.push("network-residual"); throw new Error(network);
+				},
+				removeWorkdir: async () => { reached.push("workdir"); },
+				workdirExists: () => (reached.push("workdir-residual"), false),
+			}),
+		)).rejects.toSatisfy((error) => {
+			const diagnostics = cleanupDiagnosticsLine(error);
+			expect(diagnostics).toContain('"category":"OWNED_NETWORK_CLEANUP","failureCount":1');
+			expect(diagnostics).toContain('"category":"NETWORK_RESIDUAL_CHECK","failureCount":1');
+			expect(diagnostics).not.toContain(network); return true;
+		});
+		expect(reached).toEqual(["container-residual", "volume-residual", "remove-network", "workdir", "container-residual", "volume-residual", "network-residual", "workdir-residual"]);
+	});
+
+	it("categorizes nonempty network residuals without exposing their names", async () => {
+		const network = `supabase_network_${OWNERSHIP.projectId}`;
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies({
+					listOwnedNetworks: () => [network],
+					removeNetworks: async () => undefined,
+				}),
+			),
+		).rejects.toSatisfy((error) => {
+			const diagnostics = cleanupDiagnosticsLine(error);
+			expect(diagnostics).toContain('"category":"NETWORK_RESIDUAL_CHECK","failureCount":1');
+			expect(diagnostics).not.toContain(network);
+			return true;
+		});
+	});
+
+	it.each([
+		"default",
+		"markerless-network",
+		`unrelated_${OWNERSHIP.projectId}`,
+		`prefix_${OWNERSHIP.projectId}_suffix`,
+	])("refuses network candidates without the exact owned network name: %s",
+		async (candidate) => {
+			let removed = false;
+			await expect(
+				cleanupReleaseGate(
+					{ ownership: OWNERSHIP, stackMutationAttempted: true },
+					dependencies({
+						listOwnedNetworks: () => [candidate],
+						removeNetworks: async () => { removed = true; },
+					}),
+				),
+			).rejects.toSatisfy((error: AggregateError) =>
+				error.errors.some(
+					(item) =>
+						item instanceof Error &&
+						item.message ===
+							"refusing to remove a network without the exact owned network name",
+				),
+			);
+			expect(removed).toBe(false);
+		},
+	);
+
+	it.each([
+		["read", async (): Promise<string> => { throw new Error("marker read failed"); }],
+		["parse", async (): Promise<string> => "{"],
+		["mismatch", async (): Promise<string> => JSON.stringify({ ...OWNERSHIP, token: "other" })],
+	] as const)("blocks destructive ownership actions after marker %s failures while reading residuals", async (_kind, readOwnershipMarker) => {
+		const reached: string[] = [];
+		await expect(
+			cleanupReleaseGate(
+				{ ownership: OWNERSHIP, stackMutationAttempted: true },
+				dependencies({
+					readOwnershipMarker,
+					stopStack: async () => {
+						reached.push("stack");
+					},
+					removeContainers: async () => {
+						reached.push("containers");
+					},
+					removeVolumes: async () => {
+						reached.push("volumes");
+					},
+					removeNetworks: async () => {
+						reached.push("networks");
+					},
+					removeWorkdir: async () => {
+						reached.push("workdir");
+					},
+					listOwnedContainers: () => { reached.push("container-residual"); return []; },
+					listOwnedVolumes: () => { reached.push("volume-residual"); return []; },
+					listOwnedNetworks: () => { reached.push("network-residual"); return []; },
+					workdirExists: () => { reached.push("workdir-residual"); return false; },
+				}),
+			),
+		).rejects.toSatisfy(
+			(error) =>
+				cleanupDiagnosticsLine(error)?.includes(
+					'"category":"OWNERSHIP_MARKER"',
+				) ?? false,
+		);
+		expect(reached).toEqual(["container-residual", "volume-residual", "network-residual", "workdir-residual"]);
+	});
+
+	it("has no cleanup diagnostics on success", async () => {
+		await expect(cleanupReleaseGate({ ownership: OWNERSHIP, stackMutationAttempted: true }, dependencies())).resolves.toBeUndefined();
+		expect(cleanupDiagnosticsLine(undefined)).toBeUndefined();
+	});
+
+	it("reports one redacted diagnostics line for direct and signal cleanup failures", async () => {
+		const sensitive = new Error("password=secret /private/path token argv host.test:54321 project-id");
+		let cleanup: unknown;
+		try {
+			await cleanupReleaseGate({ stackMutationAttempted: false, reservations: [{ port: 1, release: async () => { throw sensitive; } }] }, dependencies());
+		} catch (error) {
+			cleanup = error;
+		}
+		expect((cleanup as AggregateError).errors).toContain(sensitive);
+		const direct: string[] = [];
+		const signal: string[] = [];
+		reportReleaseGateFailure("E2E release gate failed", new AggregateError([new Error("execution"), cleanup]), (line) => direct.push(line));
+		reportReleaseGateFailure("E2E signal cleanup failed", cleanup, (line) => signal.push(line));
+		for (const value of ["secret", "/private/path", "token", "argv", "host.test", "54321", "project-id"])
+			expect([...direct, ...signal].join("")).not.toContain(value);
+		for (const output of [direct, signal])
+			expect(output.filter((line) => line.startsWith("E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS"))).toHaveLength(1);
+		expect(direct[0]).toBe("E2E release gate failed: details redacted\n");
+		expect(signal[0]).toBe("E2E signal cleanup failed: details redacted\n");
+	});
 });

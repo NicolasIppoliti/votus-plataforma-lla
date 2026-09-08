@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
+import { z } from "zod";
 import {
 	EXPECTED_E2E_SPECS,
 	classifyStaleOwnership,
@@ -37,10 +38,12 @@ import {
 	assertSyntheticMigrationDoesNotCollide,
 	assertTs7Version,
 	migrationVersionFromFileName,
+	cleanupDiagnosticsLine,
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
 	planOwnedSqlInvocation,
+	playwrightCommandArgs,
 	reserveUniquePorts,
 	runProductionReleasePhases,
 	runReleaseGateCli,
@@ -51,6 +54,10 @@ import {
 	type ReleaseGatePlan,
 	type ReleaseGateSyntheticMigration,
 } from "./e2e-gate-runtime.ts";
+import {
+	RELEASE_GATE_TIMING_PHASE,
+	createReleaseGateTiming,
+} from "./e2e-gate-timing.ts";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REQUIRE = createRequire(import.meta.url);
 const NEXT_CLI = REQUIRE.resolve("next/dist/bin/next");
@@ -68,6 +75,47 @@ interface GateState extends ReleaseGateCleanupState<OwnedNextServer> {
 	servers?: OwnedNextServer[];
 	reservations?: PortReservation[];
 	interrupted?: string;
+}
+const RELEASE_GATE_FAILURE_OPERATION = {
+	SUPABASE_START: "supabase_start",
+	SUPABASE_NETWORK_CREATE: "supabase_network_create",
+	SUPABASE_PUBLICATION_INSPECT: "supabase_publication_inspect",
+	SUPABASE_PUBLICATION_VALIDATE: "supabase_publication_validate",
+} as const;
+type ReleaseGateFailureOperation =
+	(typeof RELEASE_GATE_FAILURE_OPERATION)[keyof typeof RELEASE_GATE_FAILURE_OPERATION];
+const RELEASE_GATE_FAILURE_REASON = {
+	COMMAND_FAILED: "command_failed",
+	INVALID_PUBLICATION: "invalid_publication",
+} as const;
+type ReleaseGateFailureReason =
+	(typeof RELEASE_GATE_FAILURE_REASON)[keyof typeof RELEASE_GATE_FAILURE_REASON];
+const PUBLICATION_ISSUE = {
+	RECORD_COUNT: "record_count",
+	SHAPE: "shape",
+	UNPUBLISHED: "unpublished",
+	HOST_IP: "host_ip",
+	HOST_PORT: "host_port",
+	UNCLASSIFIED: "unclassified",
+} as const;
+type PublicationIssue = (typeof PUBLICATION_ISSUE)[keyof typeof PUBLICATION_ISSUE];
+interface PublicationDiagnostic {
+	stage: "json" | "schema" | "unexpected";
+	issues: readonly PublicationIssue[];
+}
+interface ReleaseGateFailureMetadata {
+	operation: ReleaseGateFailureOperation;
+	reason: ReleaseGateFailureReason;
+	exitCode: number | null;
+	publicationDiagnostic?: PublicationDiagnostic;
+}
+class ReleaseGateFailure extends Error {
+	readonly metadata: ReleaseGateFailureMetadata;
+
+	constructor(message: string, metadata: ReleaseGateFailureMetadata) {
+		super(message);
+		this.metadata = metadata;
+	}
 }
 interface PlaywrightReceipt {
 	suiteStatus: string;
@@ -91,10 +139,19 @@ function requireCommand(
 	args: readonly string[],
 	label: string,
 	cwd = REPO_ROOT,
+	operation?: ReleaseGateFailureOperation,
 ): string {
 	const result = commandResult(command, args, cwd);
-	if (result.error || result.status !== 0)
-		throw new Error(`${label} is unavailable or failed its preflight check`);
+	if (result.error || result.status !== 0) {
+		const message = `${label} is unavailable or failed its preflight check`;
+		if (operation)
+			throw new ReleaseGateFailure(message, {
+				operation,
+				reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+				exitCode: result.status,
+			});
+		throw new Error(message);
+	}
 	return result.stdout;
 }
 function runChecked(
@@ -104,6 +161,7 @@ function runChecked(
 	cwd = REPO_ROOT,
 	environment: NodeJS.ProcessEnv = process.env,
 	timeout = 120_000,
+	operation?: ReleaseGateFailureOperation,
 ): void {
 	const result = spawnSync(command, args, {
 		cwd,
@@ -112,10 +170,16 @@ function runChecked(
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout,
 	});
-	if (result.error || result.status !== 0)
-		throw new Error(
-			`${label} failed (exit ${result.status ?? "unavailable"}); output redacted`,
-		);
+	if (result.error || result.status !== 0) {
+		const message = `${label} failed (exit ${result.status ?? "unavailable"}); output redacted`;
+		if (operation)
+			throw new ReleaseGateFailure(message, {
+				operation,
+				reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+				exitCode: result.status,
+			});
+		throw new Error(message);
+	}
 }
 function runEvidence(
 	command: string,
@@ -287,6 +351,7 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 	if (
 		!startHelp.includes("--workdir") ||
 		!startHelp.includes("--ignore-health-check") ||
+		!startHelp.includes("--network-id") ||
 		!stopHelp.includes("--project-id") ||
 		!stopHelp.includes("--no-backup")
 	)
@@ -420,11 +485,12 @@ async function waitForServer(url: string, child: ChildProcess): Promise<void> {
 		"production Next server did not become ready within 60 seconds",
 	);
 }
-async function runPlaywright(
+export async function runPlaywright(
 	environment: NodeJS.ProcessEnv,
 	receiptPath: string,
+	selectedSpecs: readonly string[],
 ): Promise<void> {
-	const result = spawnSync("pnpm", ["exec", "playwright", "test"], {
+	const result = spawnSync("pnpm", playwrightCommandArgs(selectedSpecs), {
 		cwd: WEB_ROOT,
 		env: environment,
 		encoding: "utf8",
@@ -503,6 +569,19 @@ function listOwnedVolumes(projectId: string): readonly string[] {
 		throw new Error("failed to enumerate disposable Supabase volumes");
 	return result.stdout.split("\n").filter(Boolean);
 }
+export function listOwnedNetworks(projectId: string): readonly string[] {
+	const result = commandResult("docker", [
+		"network",
+		"ls",
+		"--filter",
+		`name=supabase_network_${projectId}`,
+		"--format",
+		"{{.Name}}",
+	]);
+	if (result.error || result.status !== 0)
+		throw new Error("failed to enumerate disposable Supabase networks");
+	return result.stdout.split("\n").filter(Boolean);
+}
 const RELEASE_GATE_CLEANUP_DEPENDENCIES: ReleaseGateCleanupDependencies<OwnedNextServer> =
 	{
 		tempRoot: () => os.tmpdir(),
@@ -553,9 +632,126 @@ const RELEASE_GATE_CLEANUP_DEPENDENCIES: ReleaseGateCleanupDependencies<OwnedNex
 			);
 			return Promise.resolve();
 		},
+		listOwnedNetworks,
+		removeNetworks: removeOwnedNetworks,
 		removeWorkdir: (workdir) => rm(workdir, { recursive: true }),
 		workdirExists: existsSync,
 	};
+const HOST_BINDING_SCHEMA = z.object({
+	HostIp: z.enum(["127.0.0.1", "::1"]),
+	HostPort: z
+		.string()
+		.regex(/^\d+$/)
+		.refine((port) => Number(port) >= 1 && Number(port) <= 65_535),
+});
+const PORT_MAP_SCHEMA = z
+	.record(z.string(), z.array(HOST_BINDING_SCHEMA).nullable())
+	.refine((ports) => Object.values(ports).some((bindings) => bindings?.length));
+const LOOPBACK_HOST_PUBLICATION_SCHEMA = z.array(PORT_MAP_SCHEMA).length(2);
+
+function publicationSchemaDiagnostic(
+	error: z.ZodError,
+): PublicationDiagnostic | undefined {
+	if (error.issues.length === 0) return undefined;
+	const present = new Set<PublicationIssue>();
+	for (const issue of error.issues) {
+		const [mapIndex, portKey, bindingIndex, field] = issue.path;
+		const mapPath =
+			typeof mapIndex === "number" &&
+			Number.isSafeInteger(mapIndex) &&
+			mapIndex >= 0;
+		const portPath = mapPath && typeof portKey === "string";
+		const bindingPath =
+			portPath &&
+			typeof bindingIndex === "number" &&
+			Number.isSafeInteger(bindingIndex) &&
+			bindingIndex >= 0;
+		const bindingField = issue.path.length === 4 && bindingPath;
+		if (
+			issue.path.length === 0 &&
+			(issue.code === "too_small" || issue.code === "too_big") &&
+			issue.origin === "array"
+		)
+			present.add(PUBLICATION_ISSUE.RECORD_COUNT);
+		else if (
+			issue.code === "invalid_type" &&
+			((issue.path.length === 1 && mapPath && issue.expected === "record") ||
+				(issue.path.length === 2 && portPath && issue.expected === "array") ||
+				(issue.path.length === 3 && bindingPath && issue.expected === "object"))
+		)
+			present.add(PUBLICATION_ISSUE.SHAPE);
+		else if (issue.path.length === 1 && mapPath && issue.code === "custom")
+			present.add(PUBLICATION_ISSUE.UNPUBLISHED);
+		else if (bindingField && field === "HostIp" && issue.code === "invalid_value")
+			present.add(PUBLICATION_ISSUE.HOST_IP);
+		else if (
+			bindingField &&
+			field === "HostPort" &&
+			((issue.code === "invalid_type" && issue.expected === "string") ||
+				(issue.code === "invalid_format" && issue.format === "regex") ||
+				issue.code === "custom")
+		)
+			present.add(PUBLICATION_ISSUE.HOST_PORT);
+		else
+			present.add(PUBLICATION_ISSUE.UNCLASSIFIED);
+	}
+	return {
+		stage: "schema",
+		issues: Object.values(PUBLICATION_ISSUE).filter((issue) => present.has(issue)),
+	};
+}
+
+function assertLoopbackHostPublication(projectId: string): void {
+	const output = requireCommand(
+		"docker",
+		[
+			"inspect",
+			"--format",
+			"{{json .NetworkSettings.Ports}}",
+			`supabase_db_${projectId}`,
+			`supabase_kong_${projectId}`,
+		],
+		"disposable Supabase host publication",
+		REPO_ROOT,
+		RELEASE_GATE_FAILURE_OPERATION.SUPABASE_PUBLICATION_INSPECT,
+	);
+	let decoded = false;
+	try {
+		const publications = output.trim().split("\n").map((publication) => JSON.parse(publication));
+		decoded = true;
+		LOOPBACK_HOST_PUBLICATION_SCHEMA.parse(publications);
+	} catch (error) {
+		const fallback: PublicationDiagnostic = {
+			stage: !decoded && error instanceof SyntaxError ? "json" : "unexpected",
+			issues: [],
+		};
+		const publicationDiagnostic =
+			decoded && error instanceof z.ZodError
+				? publicationSchemaDiagnostic(error) ?? fallback
+				: fallback;
+		throw new ReleaseGateFailure(
+			"Supabase host publication proof is absent or invalid",
+			{
+				operation: RELEASE_GATE_FAILURE_OPERATION.SUPABASE_PUBLICATION_VALIDATE,
+				reason: RELEASE_GATE_FAILURE_REASON.INVALID_PUBLICATION,
+				exitCode: null,
+				publicationDiagnostic,
+			},
+		);
+	}
+}
+
+export function removeOwnedNetworks(networks: readonly string[]): Promise<void> {
+	runChecked(
+		"docker",
+		["network", "rm", "--", ...networks],
+		"owned Supabase network cleanup",
+		REPO_ROOT,
+		process.env,
+		15_000,
+	);
+	return Promise.resolve();
+}
 function markerStrings(
 	marker: unknown,
 ): { workdir: string; projectId: string } | undefined {
@@ -614,12 +810,13 @@ function matchingProcessActive(
 		.split("\n")
 		.some((line) => line.includes(workdir) || line.includes(projectId));
 }
-function matchingProjectResourcesActive(
+export function matchingProjectResourcesActive(
 	projectId: string,
 ): boolean | undefined {
 	const checks = [
 		["ps", "-a", "--filter", `name=${projectId}`, "--format", "{{.Names}}"],
 		["volume", "ls", "--filter", `name=${projectId}`, "--format", "{{.Name}}"],
+		["network", "ls", "--filter", `name=supabase_network_${projectId}`, "--format", "{{.Name}}"],
 	] as const;
 	let active = false;
 	for (const args of checks) {
@@ -711,16 +908,31 @@ export function productEnvironment(
 async function executeGate(
 	state: GateState,
 	plan: ReleaseGatePlan,
+	timing: ReturnType<typeof createReleaseGateTiming>,
 ): Promise<void> {
-	const migrationNames = await assertSourceInventory(
-		plan.migrationVersions,
-		plan.syntheticMigration,
+	const migrationNames = await timing.measure(
+		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+		async () =>
+			await assertSourceInventory(
+				plan.migrationVersions,
+				plan.syntheticMigration,
+			),
 	);
-	assertIsolationCapabilities(plan.requireBrowserCapability);
-	await reapStaleOwnedWorkdirs(plan.migrationVersions, plan.syntheticMigration);
-	const reservations = await reserveUniquePorts(
-		10 + SERVER_SCENARIOS.length,
-		reservePort,
+	await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+		assertIsolationCapabilities(plan.requireBrowserCapability);
+	});
+	await timing.measure(
+		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+		async () =>
+			await reapStaleOwnedWorkdirs(
+				plan.migrationVersions,
+				plan.syntheticMigration,
+			),
+	);
+	const reservations = await timing.measure(
+		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+		async () =>
+			await reserveUniquePorts(10 + SERVER_SCENARIOS.length, reservePort),
 	);
 	state.reservations = reservations;
 	const nextReservations = reservations.slice(0, SERVER_SCENARIOS.length);
@@ -735,45 +947,86 @@ async function executeGate(
 	);
 	const nextPort = serverPlan[0]!.port;
 	const supabasePorts = supabaseReservations.map(({ port }) => port);
-	await createIsolatedWorkdir(nextPort, supabasePorts, migrationNames, state);
+	await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+		await createIsolatedWorkdir(nextPort, supabasePorts, migrationNames, state);
+	});
 	const ownership = state.ownership;
 	if (!ownership) throw new Error("disposable ownership was not established");
 	for (const reservation of supabaseReservations) await reservation.release();
 	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
 	state.stackMutationAttempted = true;
-	runChecked(
-		"supabase",
-		[
-			"start",
-			"--workdir",
-			ownership.workdir,
-			"--exclude",
-			EXCLUDED_SERVICES,
-			"--ignore-health-check",
-			"--yes",
-		],
-		"disposable Supabase start",
-		REPO_ROOT,
-		process.env,
-		SUPABASE_START_TIMEOUT_MS,
-	);
-	const stack = await runProductionReleasePhases(plan, {
-		runProductionMigrations: async () => {
-			await installProductionMigrations(ownership.workdir, migrationNames);
-			runChecked(
-				"supabase",
-				[
-					"migration",
-					"up",
-					"--local",
-					"--include-all",
-					"--workdir",
-					ownership.workdir,
-					"--yes",
-				],
-				"disposable Supabase incremental migrations",
+	const network = `supabase_network_${ownership.projectId}`;
+	await timing.measure(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
+		const networkResult = commandResult("docker", [
+			"network",
+			"create",
+			"--driver",
+			"bridge",
+			"--label",
+			`com.supabase.cli.project=${ownership.projectId}`,
+			"--label",
+			`com.docker.compose.project=${ownership.projectId}`,
+			"--opt",
+			"com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+			network,
+		]);
+		if (networkResult.error || networkResult.status !== 0)
+			throw new ReleaseGateFailure(
+				`disposable Supabase network create failed (exit ${networkResult.status ?? "unavailable"}); output redacted`,
+				{
+					operation: RELEASE_GATE_FAILURE_OPERATION.SUPABASE_NETWORK_CREATE,
+					reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+					exitCode: networkResult.status,
+				},
 			);
-		},
+		runChecked(
+			"supabase",
+			[
+				"start",
+				"--workdir",
+				ownership.workdir,
+				"--exclude",
+				EXCLUDED_SERVICES,
+				"--ignore-health-check",
+				"--network-id",
+				network,
+				"--yes",
+			],
+			"disposable Supabase start",
+			REPO_ROOT,
+			process.env,
+			SUPABASE_START_TIMEOUT_MS,
+			RELEASE_GATE_FAILURE_OPERATION.SUPABASE_START,
+		);
+		assertLoopbackHostPublication(ownership.projectId);
+	});
+	const timed =
+		<TArgs extends unknown[], TResult>(
+			phase: (typeof RELEASE_GATE_TIMING_PHASE)[keyof typeof RELEASE_GATE_TIMING_PHASE],
+			action: (...args: TArgs) => Promise<TResult>,
+		) =>
+		async (...args: TArgs): Promise<TResult> =>
+			await timing.measure(phase, async () => await action(...args));
+	const stack = await runProductionReleasePhases(plan, {
+		runProductionMigrations: timed(
+			RELEASE_GATE_TIMING_PHASE.MIGRATIONS,
+			async () => {
+				await installProductionMigrations(ownership.workdir, migrationNames);
+				runChecked(
+					"supabase",
+					[
+						"migration",
+						"up",
+						"--local",
+						"--include-all",
+						"--workdir",
+						ownership.workdir,
+						"--yes",
+					],
+					"disposable Supabase incremental migrations",
+				);
+			},
+		),
 		validateStackStatus: async () => {
 			const statusOutput = requireCommand(
 				"supabase",
@@ -786,15 +1039,15 @@ async function executeGate(
 				supabasePorts[1]!,
 			);
 		},
-		runSetupProof: async (proof) => {
+		runSetupProof: timed(RELEASE_GATE_TIMING_PHASE.PGTAP, async (proof) => {
 			runOwnedSqlEvidence(
 				ownership.projectId,
 				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
 				proof.label,
 				proof.timeoutMs,
 			);
-		},
-		runPgTapProof: async (proof) => {
+		}),
+		runPgTapProof: timed(RELEASE_GATE_TIMING_PHASE.PGTAP, async (proof) => {
 			runEvidence(
 				"supabase",
 				[
@@ -809,38 +1062,47 @@ async function executeGate(
 				REPO_ROOT,
 				proof.timeoutMs,
 			);
-		},
-		runPostPgTapCleanupProof: async (proof) => {
-			runOwnedSqlEvidence(
-				ownership.projectId,
-				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
-				proof.label,
-				proof.timeoutMs,
-			);
-		},
-		runRollbackReapplyProof: async (proof) => {
-			runOwnedSqlEvidence(
-				ownership.projectId,
-				await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
-				proof.label,
-			);
-		},
-		installSyntheticMigration: async (migration) => {
-			await installSyntheticMigration(ownership.workdir, migration);
-			runChecked(
-				"supabase",
-				[
-					"migration",
-					"up",
-					"--local",
-					"--include-all",
-					"--workdir",
-					ownership.workdir,
-					"--yes",
-				],
-				"disposable Supabase synthetic migration",
-			);
-		},
+		}),
+		runPostPgTapCleanupProof: timed(
+			RELEASE_GATE_TIMING_PHASE.PGTAP,
+			async (proof) => {
+				runOwnedSqlEvidence(
+					ownership.projectId,
+					await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+					proof.label,
+					proof.timeoutMs,
+				);
+			},
+		),
+		runRollbackReapplyProof: timed(
+			RELEASE_GATE_TIMING_PHASE.ROLLBACK_REAPPLY,
+			async (proof) => {
+				runOwnedSqlEvidence(
+					ownership.projectId,
+					await expandSqlIncludes(path.join(SOURCE_SUPABASE, proof.path)),
+					proof.label,
+				);
+			},
+		),
+		installSyntheticMigration: timed(
+			RELEASE_GATE_TIMING_PHASE.ROLLBACK_REAPPLY,
+			async (migration) => {
+				await installSyntheticMigration(ownership.workdir, migration);
+				runChecked(
+					"supabase",
+					[
+						"migration",
+						"up",
+						"--local",
+						"--include-all",
+						"--workdir",
+						ownership.workdir,
+						"--yes",
+					],
+					"disposable Supabase synthetic migration",
+				);
+			},
+		),
 	});
 	if (!plan.runBrowser) return;
 	const baseURLs = Object.fromEntries(
@@ -866,34 +1128,57 @@ async function executeGate(
 			"authenticated-state.json",
 		),
 		VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
+		VOTUS_E2E_GATE_MODE: plan.mode,
+		VOTUS_E2E_SELECTED_SPECS: JSON.stringify(plan.selectedSpecs),
 	};
-	runChecked(
-		"pnpm",
-		["build"],
-		"production Next build",
-		WEB_ROOT,
-		productEnvironment(environment, "shared"),
-	);
-	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
-	state.servers = [];
-	for (const [index, server] of serverPlan.entries()) {
-		await nextReservations[index]!.release();
-		const child = spawn(
-			process.execPath,
-			[NEXT_CLI, "start", "-H", "127.0.0.1", "-p", String(server.port)],
-			{
-				cwd: WEB_ROOT,
-				env: productEnvironment(environment, server.scenario),
-				stdio: "ignore",
-			},
+	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {
+		runChecked(
+			"pnpm",
+			["build:next"],
+			"production Next build",
+			WEB_ROOT,
+			productEnvironment(environment, "shared"),
 		);
-		state.servers.push({ ...server, child });
-		await waitForServer(`${baseURLs[server.scenario]}/login`, child);
-	}
-	await runPlaywright(environment, environment.VOTUS_E2E_RESULT_FILE!);
+	})();
+	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
+	await timed(RELEASE_GATE_TIMING_PHASE.NEXT_SERVER_LIFECYCLE, async () => {
+		state.servers = [];
+		for (const [index, server] of serverPlan.entries()) {
+			await nextReservations[index]!.release();
+			const child = spawn(
+				process.execPath,
+				[NEXT_CLI, "start", "-H", "127.0.0.1", "-p", String(server.port)],
+				{
+					cwd: WEB_ROOT,
+					env: productEnvironment(environment, server.scenario),
+					stdio: "ignore",
+				},
+			);
+			state.servers.push({ ...server, child });
+			await waitForServer(`${baseURLs[server.scenario]}/login`, child);
+		}
+	})();
+	await timed(RELEASE_GATE_TIMING_PHASE.PLAYWRIGHT, async () => {
+		await runPlaywright(
+			environment,
+			environment.VOTUS_E2E_RESULT_FILE!,
+			plan.selectedSpecs,
+		);
+	})();
 }
 async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 	const state: GateState = { stackMutationAttempted: false };
+	const timing = createReleaseGateTiming({
+		now: () => Date.now(),
+		writeOutput: (chunk) => process.stdout.write(chunk),
+	});
+	const emitTiming = () => {
+		try {
+			timing.emit();
+		} catch {
+			/* Timing output must not replace a gate result. */
+		}
+	};
 	let cleanupPromise: Promise<void> | undefined;
 	const cleanOnce = () =>
 		(cleanupPromise ??= cleanupReleaseGate(
@@ -904,27 +1189,28 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 		process.once(signal, () => {
 			state.interrupted = signal;
 			void Promise.race([
-				cleanOnce(),
+				timing.measure(RELEASE_GATE_TIMING_PHASE.CLEANUP, cleanOnce),
 				new Promise<never>((_, reject) =>
 					setTimeout(() => reject(new Error("signal cleanup timed out")), 120_000),
 				),
 			])
 				.catch((error: unknown) =>
-					process.stderr.write(
-						`E2E signal cleanup failed: ${error instanceof Error ? error.message : "unknown"}\n`,
-					),
+					reportReleaseGateFailure("E2E signal cleanup failed", error),
 				)
-				.finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
+				.finally(() => {
+					emitTiming();
+					process.exit(signal === "SIGINT" ? 130 : 143);
+				});
 		});
 	}
 	let failure: unknown;
 	try {
-		await executeGate(state, plan);
+		await executeGate(state, plan, timing);
 	} catch (error) {
 		failure = error;
 	}
 	try {
-		await cleanOnce();
+		await timing.measure(RELEASE_GATE_TIMING_PHASE.CLEANUP, cleanOnce);
 	} catch (error) {
 		failure = failure
 			? new AggregateError(
@@ -933,6 +1219,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 				)
 			: error;
 	}
+	emitTiming();
 	if (failure) throw failure;
 	process.stdout.write(
 		plan.mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY
@@ -941,23 +1228,67 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 				? "Scale proof passed: fixture setup, pgTAP/EXPLAIN, and cleanup complete\n"
 				: plan.mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY
 					? "Release proof passed: coverage scope binding, rollback/reapply, scale, pgTAP, and cleanup complete\n"
-					: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
+					: plan.mode === RELEASE_GATE_MODE.FOCUSED
+						? `Focused E2E diagnostic passed: selected=${plan.selectedSpecs.length}, discovered=${plan.selectedSpecs.length}, excluded=${EXPECTED_E2E_SPECS.length - plan.selectedSpecs.length}, skipped=0, disposable stack cleaned\n`
+						: "E2E release gate passed: 8 passed, 0 skipped, disposable stack cleaned\n",
 	);
 }
+export function reportReleaseGateFailure(
+	label: string,
+	error: unknown,
+	writeError: (chunk: string) => void = (chunk) => process.stderr.write(chunk),
+): void {
+	writeError(`${label}: details redacted\n`);
+	if (error instanceof ReleaseGateFailure)
+		writeError(
+			`E2E_RELEASE_GATE_FAILURE ${JSON.stringify({
+				schemaVersion: 1,
+				operation: error.metadata.operation,
+				reason: error.metadata.reason,
+				exitCode:
+					Number.isInteger(error.metadata.exitCode) &&
+					error.metadata.exitCode !== null &&
+					error.metadata.exitCode >= 0 &&
+					error.metadata.exitCode <= 255
+						? error.metadata.exitCode
+						: null,
+			})}\n`,
+		);
+	if (error instanceof ReleaseGateFailure && error.metadata.publicationDiagnostic) {
+		const diagnostic = error.metadata.publicationDiagnostic;
+		writeError(
+			`E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ${JSON.stringify({
+				schemaVersion: 1,
+				stage: diagnostic.stage,
+				issues: diagnostic.issues,
+			})}\n`,
+		);
+	}
+	const diagnostics = cleanupDiagnosticsLine(error);
+	if (diagnostics) writeError(`${diagnostics}\n`);
+}
+
+export interface ReleaseGateMainDependencies {
+	executePlan?(plan: ReleaseGatePlan): Promise<void>;
+	writeOutput?(chunk: string): void;
+}
+
 export async function releaseGateMain(
 	argv: readonly string[] = process.argv.slice(2),
+	dependencies: ReleaseGateMainDependencies = {},
 ): Promise<void> {
 	await runReleaseGateCli(argv, {
-		execute: executeReleaseGatePlan,
-		writeOutput: (chunk) => {
-			process.stdout.write(chunk);
-		},
+		execute: dependencies.executePlan ?? executeReleaseGatePlan,
+		writeOutput:
+			dependencies.writeOutput ??
+			((chunk) => {
+				process.stdout.write(chunk);
+			}),
 	});
 }
 const directEntry = process.argv[1];
 if (directEntry && path.resolve(directEntry) === fileURLToPath(import.meta.url))
 	void releaseGateMain().catch((error: unknown) => {
-		const message = error instanceof Error ? error.message : "unknown failure";
-		process.stderr.write(`E2E release gate failed: ${message}\n`);
+		reportReleaseGateFailure("E2E release gate failed", error);
 		process.exitCode = 1;
 	});

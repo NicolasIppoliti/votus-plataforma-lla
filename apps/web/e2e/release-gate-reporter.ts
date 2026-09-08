@@ -1,6 +1,6 @@
-import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import path from "node:path";
 import type {
 	FullConfig,
 	FullResult,
@@ -10,10 +10,25 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import {
-	assertGateReport,
 	EXPECTED_E2E_SPECS,
+	assertGateReport,
 	type GateTestResult,
 } from "./gate-contract";
+
+const RECEIPT_MODE = {
+	FULL: "full",
+	FOCUSED: "focused",
+} as const;
+
+type ReceiptMode = (typeof RECEIPT_MODE)[keyof typeof RECEIPT_MODE];
+
+export interface GateReceiptSelection {
+	mode: ReceiptMode;
+	selectedCount: number;
+	selected: readonly string[];
+	excludedCount: number;
+	excluded: readonly string[];
+}
 
 interface ReporterOptions {
 	receiptPath?: string;
@@ -41,17 +56,92 @@ function resultFailureLine(result: TestResult): number | undefined {
 		?.location?.line;
 }
 
+function exactSelectedSpecs(selected: readonly string[]): readonly string[] {
+	if (selected.length === 0) throw new Error("focused reporter selection is empty");
+	const seen = new Set<string>();
+	for (const spec of selected) {
+		if (
+			!EXPECTED_E2E_SPECS.includes(spec as (typeof EXPECTED_E2E_SPECS)[number]) ||
+			seen.has(spec)
+		)
+			throw new Error("focused reporter selection is invalid");
+		seen.add(spec);
+	}
+	return [...selected];
+}
+
+export function createReceiptSelection(
+	selected: readonly string[],
+	mode: ReceiptMode = RECEIPT_MODE.FOCUSED,
+): GateReceiptSelection {
+	const exactSelected = exactSelectedSpecs(selected);
+	const excluded = EXPECTED_E2E_SPECS.filter(
+		(spec) => !exactSelected.includes(spec),
+	);
+	return {
+		mode,
+		selectedCount: exactSelected.length,
+		selected: exactSelected,
+		excludedCount: excluded.length,
+		excluded,
+	};
+}
+
+function configuredReceiptSelection(): GateReceiptSelection {
+	const mode = process.env["VOTUS_E2E_GATE_MODE"];
+	if (!mode || mode === RECEIPT_MODE.FULL)
+		return createReceiptSelection(EXPECTED_E2E_SPECS, RECEIPT_MODE.FULL);
+	if (mode !== RECEIPT_MODE.FOCUSED)
+		throw new Error("focused reporter mode is invalid");
+	try {
+		const selected = JSON.parse(
+			process.env["VOTUS_E2E_SELECTED_SPECS"] ?? "",
+		) as unknown;
+		if (!Array.isArray(selected) || selected.some((spec) => typeof spec !== "string"))
+			throw new Error("invalid selection");
+		return createReceiptSelection(selected, RECEIPT_MODE.FOCUSED);
+	} catch {
+		throw new Error("focused reporter selection is invalid");
+	}
+}
+
+export function assertFocusedGateReport(
+	results: readonly GateTestResult[],
+	suiteStatus: string,
+	selected: readonly string[],
+): void {
+	const expected = [...exactSelectedSpecs(selected)].sort();
+	const discovered = results.map(({ spec }) => spec).sort();
+	const errors: string[] = [];
+	if (results.length !== expected.length)
+		errors.push(`discovered ${results.length} tests; expected ${expected.length}`);
+	if (JSON.stringify(discovered) !== JSON.stringify(expected))
+		errors.push(`spec inventory mismatch: discovered [${discovered.join(", ")}]`);
+	for (const status of ["failed", "timedOut", "skipped", "interrupted"] as const) {
+		const count = results.filter((result) => result.status === status).length;
+		if (count > 0) errors.push(`${status}=${count}`);
+	}
+	const passed = results.filter((result) => result.status === "passed").length;
+	if (passed !== expected.length)
+		errors.push(`passed=${passed}; expected=${expected.length}`);
+	if (suiteStatus !== "passed") errors.push(`suite status=${suiteStatus}`);
+	if (errors.length > 0)
+		throw new Error(`e2e focused gate failed: ${errors.join("; ")}`);
+}
+
 export default class ReleaseGateReporter implements Reporter {
 	private readonly expectedTestIdsBySpec = new Map<string, string[]>();
 	private readonly expectedSpecsByTestId = new Map<string, string>();
 	private readonly results = new Map<string, GateTestResult>();
 	private readonly unexpectedTestIds = new Set<string>();
 	private readonly receiptPath: string | undefined;
+	private readonly selection: GateReceiptSelection;
 	private readonly writeReceipt: (path: string, content: string) => void;
 	private readonly writeError: (message: string) => void;
 
 	constructor(options: ReporterOptions = {}) {
 		this.receiptPath = options.receiptPath ?? process.env["VOTUS_E2E_RESULT_FILE"];
+		this.selection = configuredReceiptSelection();
 		this.writeReceipt =
 		options.writeReceipt ??
 		((target, content) => writeFileSync(target, content, { mode: 0o600 }));
@@ -64,7 +154,7 @@ export default class ReleaseGateReporter implements Reporter {
 		this.expectedSpecsByTestId.clear();
 		this.unexpectedTestIds.clear();
 		this.expectedTestIdsBySpec.clear();
-		for (const spec of EXPECTED_E2E_SPECS)
+		for (const spec of this.selection.selected)
 			this.expectedTestIdsBySpec.set(spec, []);
 		for (const test of suite.allTests()) {
 			const spec = relativeTestSpec(test);
@@ -94,8 +184,10 @@ export default class ReleaseGateReporter implements Reporter {
 	}
 
 	private aggregatedResults(): GateTestResult[] {
-		const completed = EXPECTED_E2E_SPECS.map((spec) => {
+		return this.selection.selected.map((spec) => {
 			const expectedTestIds = this.expectedTestIdsBySpec.get(spec) ?? [];
+			if (expectedTestIds.length === 0)
+				return { spec, status: "interrupted" as const };
 			const nonPassing = expectedTestIds
 				.map(
 					(testId) =>
@@ -105,8 +197,6 @@ export default class ReleaseGateReporter implements Reporter {
 						},
 				)
 				.find(({ status }) => status !== "passed");
-			if (expectedTestIds.length === 0)
-				return { spec, status: "interrupted" as const };
 			if (!nonPassing) return { spec, status: "passed" as const };
 			return nonPassing.failureLine === undefined
 				? { spec, status: nonPassing.status }
@@ -116,7 +206,6 @@ export default class ReleaseGateReporter implements Reporter {
 					failureLine: nonPassing.failureLine,
 				};
 		});
-		return completed;
 	}
 
 	async onEnd(
@@ -132,10 +221,16 @@ export default class ReleaseGateReporter implements Reporter {
 				? "failed"
 				: result.status;
 		try {
-			assertGateReport(completed, suiteStatus);
+			if (this.selection.mode === RECEIPT_MODE.FULL)
+				assertGateReport(completed, suiteStatus);
+			else assertFocusedGateReport(completed, suiteStatus, this.selection.selected);
 			this.writeReceipt(
 				this.receiptPath,
-				JSON.stringify({ suiteStatus, results: completed }),
+				JSON.stringify({
+					suiteStatus,
+					results: completed,
+					selection: this.selection,
+				}),
 			);
 			return;
 		} catch (error) {
@@ -144,7 +239,11 @@ export default class ReleaseGateReporter implements Reporter {
 			const failureSuiteStatus = suiteStatus === "passed" ? "failed" : suiteStatus;
 			this.writeReceipt(
 				this.receiptPath,
-				JSON.stringify({ suiteStatus: failureSuiteStatus, results: completed }),
+				JSON.stringify({
+					suiteStatus: failureSuiteStatus,
+					results: completed,
+					selection: this.selection,
+				}),
 			);
 			this.writeError(`${message}\n`);
 			return { status: "failed" };

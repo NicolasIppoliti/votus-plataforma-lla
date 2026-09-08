@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """fetch_pba_2025.py
 14d, task 14.10: a deliberate, one-off runtime step that fetches the five
 registered PBA `sources.yaml` entries under design D10's full etiquette
@@ -28,7 +27,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "etl"))
 
-import etl.__main__ as cli  # noqa: E402
+import etl.__main__ as cli
 
 SOURCES_PATH = REPO_ROOT / "etl" / "sources.yaml"
 LOCAL_ROOT = REPO_ROOT / "archive"
