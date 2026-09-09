@@ -16,7 +16,7 @@ APPROVED_NODE24_ACTION_REFS = {
     "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", 4),
     "actions/setup-node": ("a0853c24544627f65ddf259abe73b1d18a591444", 3),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", 1),
-    "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 1),
+    "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 2),
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 1),
 }
 _LINE = object()
@@ -24,14 +24,56 @@ _LINE = object()
 
 def _assert_independent_release_jobs(jobs: dict[str, Any]) -> None:
     for name in ("web-static", "etl-release", "e2e-release"):
-        assert not {"if", "needs", "strategy"}.intersection(jobs[name])
+        assert not {"if", "needs"}.intersection(jobs[name])
+        if name == "etl-release":
+            assert jobs[name]["strategy"] == {
+                "fail-fast": False,
+                "matrix": {"case": ["ordinary", "success", "ledger", "sql"]},
+            }
+        else:
+            assert "strategy" not in jobs[name]
 
 
 @pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release"])
 @pytest.mark.parametrize("condition", ['{"if": false}', '\n  "if": false\n'])
 def test_release_job_conditions_cannot_hide_in_yaml_formatting(name: str, condition: str) -> None:
-    jobs = {key: {} for key in ("web-static", "etl-release", "e2e-release")}
-    jobs[name] = yaml.safe_load(condition)
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    _assert_independent_release_jobs(jobs)
+    jobs[name].update(yaml.safe_load(condition))
+    with pytest.raises(AssertionError):
+        _assert_independent_release_jobs(jobs)
+
+
+@pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release"])
+def test_release_jobs_cannot_be_serialized(name: str) -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    _assert_independent_release_jobs(jobs)
+    jobs[name]["needs"] = ["scope"]
+    with pytest.raises(AssertionError):
+        _assert_independent_release_jobs(jobs)
+
+
+@pytest.mark.parametrize("name", ["web-static", "e2e-release"])
+def test_only_etl_release_can_have_a_strategy(name: str) -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    _assert_independent_release_jobs(jobs)
+    jobs[name]["strategy"] = jobs["etl-release"]["strategy"]
+    with pytest.raises(AssertionError):
+        _assert_independent_release_jobs(jobs)
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {"fail-fast": True, "matrix": {"case": ["ordinary", "success", "ledger", "sql"]}},
+        {"fail-fast": False, "matrix": {"case": ["ordinary", "success", "sql"]}},
+        {"fail-fast": False, "matrix": {"case": ["ordinary", "success", "ledger", "sql", "extra"]}},
+    ],
+)
+def test_etl_matrix_cannot_cancel_or_change_required_cases(strategy: dict[str, Any]) -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    _assert_independent_release_jobs(jobs)
+    jobs["etl-release"]["strategy"] = strategy
     with pytest.raises(AssertionError):
         _assert_independent_release_jobs(jobs)
 
@@ -40,6 +82,12 @@ def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
     _assert_independent_release_jobs(workflow["jobs"])
     assert workflow["jobs"]["verify"]["if"] == "${{ always() }}"
+    aggregate = workflow["jobs"]["verify"]
+    assert aggregate["needs"] == ["scope", "web-static", "etl-release", "e2e-release"]
+    for name in aggregate["needs"]:
+        variable = name.upper().replace("-", "_") + "_RESULT"
+        assert aggregate["env"][variable] == f"${{{{ needs.{name}.result }}}}"
+        assert f'test "${variable}" = "success"' in aggregate["steps"][0]["run"]
     uploads = [
         (job_name, index, step)
         for job_name, job in workflow["jobs"].items()
@@ -94,6 +142,21 @@ def test_release_workflow_uses_approved_node24_action_refs_at_exact_counts() -> 
             f"{WORKFLOW_RELATIVE_PATH} must use {expected_ref} exactly {expected_count} time(s); "
             f"found {matching_refs}"
         )
+
+
+def test_supabase_cli_versions_are_pinned_to_their_exact_release_jobs() -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    setups = [
+        (name, step["uses"], step["with"])
+        for name, job in jobs.items()
+        for step in job["steps"]
+        if step.get("uses", "").startswith("supabase/setup-cli@")
+    ]
+    reference = "supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf"
+    assert setups == [
+        ("etl-release", reference, {"version": "2.116.0"}),
+        ("e2e-release", reference, {"version": "2.112.0"}),
+    ]
 
 
 def test_release_workflow_actions_are_immutable_and_checkout_drops_credentials() -> None:

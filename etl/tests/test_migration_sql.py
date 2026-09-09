@@ -2203,7 +2203,9 @@ def test_official_category_name_wrapper_preserves_the_closed_public_reachability
     down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
     signature = "results_exploration_official(uuid,uuid,text,text,text,text,integer,text)"
 
-    assert forward.startswith("begin;") and forward.endswith("commit;")
+    # The CLI owns the transaction, including its migration-history write.
+    top_level = re.sub(r"\$\$.*?\$\$", "", forward, flags=re.DOTALL)
+    assert not re.search(r"\b(?:begin|commit)\s*;", top_level)
     assert f"alter function public.{signature} rename to {predecessor}" in forward
     assert "create function public.results_exploration_official(" in forward
     wrapper = forward.split("create function public.results_exploration_official(", 1)[1]
