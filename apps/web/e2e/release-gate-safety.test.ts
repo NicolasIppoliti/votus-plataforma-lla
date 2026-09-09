@@ -11,6 +11,7 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
+import { PlaywrightFailure, playwrightFailure } from "./playwright-failure-diagnostics";
 import {
 	assertSourceInventory,
 	productEnvironment,
@@ -2137,7 +2138,10 @@ describe("ReleaseGateReporter", () => {
 		] as const)
 			reporter.onTestEnd(test, {
 				status, retry,
-				errors: [{ message: "SECRET-ERROR", location: { file: "/SECRET-PATH", line: 99 } }],
+				errors: [
+					{ message: "SECRET-ERROR", stack: "SECRET-STACK", snippet: "SECRET-SNIPPET", location: { file: test.location.file, line: 99, column: 7 } },
+					{ location: { file: test.location.file.replace("/e2e/", "/e2e/../e2e/"), line: 101, column: 9 } },
+				],
 			} as TestResult);
 		for (const test of [first, second, ...cases.slice(1)])
 			reporter.onTestEnd(test, { status: "passed", retry: 2 } as TestResult);
@@ -2148,11 +2152,15 @@ describe("ReleaseGateReporter", () => {
 		const companion = writes.get("/receipt.json.diagnostics.json");
 		expect(companion).toBeDefined();
 		expect(companion).not.toMatch(/SECRET|failureLine|title|errors/);
+		expect(JSON.parse(companion!).schemaVersion).toBe(2);
 		expect(JSON.parse(companion!).attempts).toEqual([
 			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0 },
 			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 2, status: "timedOut", retry: 0 },
 			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "interrupted", retry: 1 },
-		]);
+		].map((attempt) => ({
+			...attempt, errorLocations: [{ line: 99, column: 7 }, { line: 101, column: 9 }],
+			missingErrorLocations: 0, foreignErrorLocations: 0,
+		})));
 		supplyCompanion(companion!);
 		spawnSync.mockReturnValue({ status: 1 });
 		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
@@ -2160,6 +2168,82 @@ describe("ReleaseGateReporter", () => {
 		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
 		expect(output.join("")).toContain(`"companion":${companion}`);
 		expect(output.join("")).not.toMatch(/SECRET|failureLine/);
+	});
+	it("partitions all error metadata without leaking paths or changing canonical failure", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({
+			receiptPath: "/receipt.json",
+			writeReceipt: (target, content) => { writes.set(target, content); },
+			writeError: () => undefined,
+		});
+		const test = testCaseFor(EXPECTED_E2E_SPECS[0], "SECRET-ID", "SECRET-TITLE");
+		test.location.line = 12;
+		test.location.column = 3;
+		const location = { file: test.location.file, line: 99, column: 7 };
+		reporter.onBegin({} as FullConfig, suiteFor([test, ...cases.slice(1)]));
+		const errors = [
+			{ location }, { location }, {},
+			...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, "SECRET"].flatMap((value) => [
+				{ location: { ...location, line: value } }, { location: { ...location, column: value } },
+			]),
+			{ location: { ...location, file: null } },
+			{ location: { ...location, file: test.location.file.replace("/e2e/", "/SECRET/") } },
+			{ location: { ...location, file: "/SECRET/other.ts", line: 0 } },
+			null,
+		].map((error) => error === null ? null : ({ ...error, message: "SECRET", stack: "SECRET", snippet: "SECRET", value: "SECRET" }));
+		expect(() => reporter.onTestEnd(test, { status: "failed", retry: 0, errors } as TestResult)).not.toThrow();
+		reporter.onTestEnd(test, { status: "failed", retry: 1, errors: [] } as unknown as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(writes.get("/receipt.json")!).results[0]).toEqual({ spec: EXPECTED_E2E_SPECS[0], status: "failed" });
+		const text = writes.get("/receipt.json.diagnostics.json")!;
+		expect(text).not.toMatch(/SECRET|file|message|stack|snippet|title|value/);
+		supplyCompanion(text);
+		const failure = await playwrightFailure(1, false, "/receipt.json");
+		expect(failure.diagnostic.companion?.attempts).toEqual([
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0,
+				errorLocations: [{ line: 99, column: 7 }, { line: 99, column: 7 }], missingErrorLocations: 16, foreignErrorLocations: 1 },
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 1,
+				errorLocations: [], missingErrorLocations: 0, foreignErrorLocations: 0 },
+		]);
+		expect(JSON.parse(failure.line().slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length))).toEqual(failure.diagnostic);
+		const companion = JSON.parse(text);
+		for (const malformed of [
+			{ ...companion, schemaVersion: 1, attempts: [
+				{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0 },
+			] }, // Historical v1 is rejected, never upgraded.
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: [{ line: 1, column: 2, file: "SECRET" }] }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: Array(1025).fill({ line: 1, column: 2 }) }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], missingErrorLocations: -1 }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: [{ line: 0, column: 1 }] }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: [{ line: 1, column: Number.MAX_SAFE_INTEGER + 1 }] }] },
+		]) {
+			supplyCompanion(JSON.stringify(malformed));
+			const rejected = await playwrightFailure(1, false, "/receipt.json");
+			expect(rejected.diagnostic.availability).toBe("invalid-schema");
+			expect(rejected.line()).not.toMatch(/SECRET|companion/);
+		}
+		expect(() => new PlaywrightFailure({ ...failure.diagnostic, schemaVersion: 1 } as unknown as ConstructorParameters<typeof PlaywrightFailure>[0]).line()).toThrow();
+	});
+	it.each([1024, 1025])("preserves %i error coordinates and explicitly rejects overflow on consumption", async (size) => {
+		let companion = "";
+		const reporter = new ReleaseGateReporter({
+			receiptPath: "/receipt.json",
+			writeReceipt: (target, content) => { if (target.endsWith(".diagnostics.json")) companion = content; },
+			writeError: () => undefined,
+		});
+		const test = testCaseFor(EXPECTED_E2E_SPECS[0], "id", "title");
+		test.location.line = 12;
+		test.location.column = 3;
+		reporter.onBegin({} as FullConfig, suiteFor([test]));
+		reporter.onTestEnd(test, { status: "failed", retry: 0, errors: Array.from({ length: size }, () => ({
+			location: { file: test.location.file, line: 99, column: 7 },
+		})) } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(companion).attempts[0].errorLocations).toHaveLength(size);
+		supplyCompanion(companion);
+		const failure = await playwrightFailure(1, false, "/receipt.json");
+		expect(failure.diagnostic.availability).toBe(size === 1024 ? "available" : "invalid-schema");
+		if (size === 1025) expect(failure.diagnostic.issues).toEqual([{ code: "too_big", count: 1 }]);
 	});
 	it("emits safe typed Playwright diagnostics through causes alongside cleanup failures", async () => {
 		open.mockRejectedValue(Object.assign(new Error("SECRET-FILE"), { code: "ENOENT" }));
@@ -2174,7 +2258,7 @@ describe("ReleaseGateReporter", () => {
 			new Error("SECRET-WRAPPER", { cause: execution }), cleanup, secondCleanup,
 		]), (line) => { lines.push(line); });
 		const output = lines.join("");
-		expect(output).toContain('E2E_PLAYWRIGHT_DIAGNOSTIC {"schemaVersion":1,"exitCode":1,"spawn":"completed","availability":"missing"}');
+		expect(output).toContain('E2E_PLAYWRIGHT_DIAGNOSTIC {"schemaVersion":2,"exitCode":1,"spawn":"completed","availability":"missing"}');
 		expect(output.match(/E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS/g)).toHaveLength(2);
 		expect(output).not.toContain("SECRET");
 	});
@@ -2193,7 +2277,7 @@ describe("ReleaseGateReporter", () => {
 		const marker = JSON.parse(output[1]!.slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length));
 		expect(marker).toMatchObject({ exitCode: null, spawn: "failed", availability });
 		if (availability === "invalid-schema") expect(marker.issues).toEqual([
-			{ code: "invalid_value", count: 2 }, { code: "invalid_type", count: 5 },
+			{ code: "invalid_type", count: 5 }, { code: "invalid_value", count: 1 },
 			{ code: "unrecognized_keys", count: 1 },
 		]);
 		expect(output.join("")).not.toContain("SECRET");

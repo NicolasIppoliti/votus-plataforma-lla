@@ -13,9 +13,12 @@ export const attemptSchema = z.strictObject({
 	ordinal: count.positive(),
 	status: attemptStatus,
 	retry: count,
+	errorLocations: z.array(z.strictObject({ line: count.positive(), column: count.positive() })).max(1024),
+	missingErrorLocations: count,
+	foreignErrorLocations: count,
 });
 export const companionSchema = z.strictObject({
-	schemaVersion: z.literal(1),
+	schemaVersion: z.literal(2),
 	attempts: z.array(attemptSchema).max(1024),
 	counts: z.record(attemptStatus, count),
 	missingResults: count,
@@ -27,7 +30,7 @@ export type PlaywrightAttempt = z.infer<typeof attemptSchema>;
 export type CompanionReport = z.infer<typeof companionSchema>["report"];
 
 const diagnosticSchema = z.strictObject({
-	schemaVersion: z.literal(1),
+	schemaVersion: z.literal(2),
 	exitCode: z.number().int().min(0).max(255).nullable(),
 	spawn: z.enum(["completed", "failed"]),
 	availability: z.enum(["available", "missing", "unreadable", "oversized", "invalid-json", "invalid-schema", "unavailable"]),
@@ -56,7 +59,7 @@ export async function playwrightFailure(
 	receiptPath: string,
 ): Promise<PlaywrightFailure> {
 	const base = {
-		schemaVersion: 1 as const,
+		schemaVersion: 2 as const,
 		exitCode: Number.isInteger(exit) && exit !== null && exit >= 0 && exit <= 255 ? exit : null,
 		spawn: spawnFailed ? "failed" as const : "completed" as const,
 	};

@@ -55,8 +55,8 @@ function resultFailureLine(result: TestResult): number | undefined {
 	if (result.status === "passed") return undefined;
 	return result.errors
 		?.find(
-			({ location }) =>
-				Number.isInteger(location?.line) && location!.line > 0,
+			(error) =>
+				Number.isInteger(error?.location?.line) && error.location!.line > 0,
 		)
 		?.location?.line;
 }
@@ -192,12 +192,29 @@ export default class ReleaseGateReporter implements Reporter {
 			const status = attemptStatus.safeParse(result.status);
 			if (status.success) this.counts[status.data]++;
 			const identity = this.identities.get(test.id);
+			const errorLocations: PlaywrightAttempt["errorLocations"] = [];
+			let missingErrorLocations = 0;
+			let foreignErrorLocations = 0;
+			for (const error of result.errors ?? []) {
+				const location = error?.location;
+				const coordinate = attemptSchema.shape.errorLocations.element.safeParse({
+					line: location?.line, column: location?.column,
+				});
+				// Partition each error: malformed/missing metadata first, then foreign file.
+				if (!coordinate.success || typeof location?.file !== "string")
+					missingErrorLocations++;
+				else if (path.resolve(location.file) !== path.resolve(test.location.file))
+					foreignErrorLocations++;
+				else errorLocations.push(coordinate.data);
+			}
 			const attempt = attemptSchema.safeParse({
 				...(typeof identity === "object" && identity !== null ? identity : {}),
 				status: result.status, retry: result.retry,
+				errorLocations: [], missingErrorLocations, foreignErrorLocations,
 			});
 			if (attempt.success && this.expectedSpecsByTestId.get(test.id) === spec)
-				this.attempts.push(attempt.data);
+				// Preserve all coordinates; the bounded consumer explicitly rejects overflow.
+				this.attempts.push({ ...attempt.data, errorLocations });
 			else this.unmappableAttempts++;
 		}
 		if (this.expectedSpecsByTestId.get(test.id) !== spec) {
@@ -242,7 +259,7 @@ export default class ReleaseGateReporter implements Reporter {
 		if (!this.receiptPath) return;
 		try {
 			this.writeReceipt(diagnosticPath(this.receiptPath), JSON.stringify({
-				schemaVersion: 1, attempts: this.attempts, counts: this.counts,
+				schemaVersion: 2, attempts: this.attempts, counts: this.counts,
 				missingResults: [...this.expectedSpecsByTestId.keys()].filter((id) => !this.results.has(id)).length,
 				unexpectedDiscoveries: this.unexpectedTestIds.size,
 				unmappableAttempts: this.unmappableAttempts, report,
