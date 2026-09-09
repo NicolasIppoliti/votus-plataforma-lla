@@ -2,6 +2,17 @@
 .atl/
 .codegraph/
 
+# Pi runtime state and installed skills are local by default.
+# Keep the existing shared project configuration and Supabase skill links.
+/.pi/*
+!/.pi/gentle-ai/
+/.pi/gentle-ai/*
+!/.pi/gentle-ai/persona.json
+!/.pi/skills/
+/.pi/skills/*
+!/.pi/skills/supabase
+!/.pi/skills/supabase-postgres-best-practices
+
 # Raw immutable archive (D2) — sha256-tracked via archive-manifest.json, not git
 /archive/
 

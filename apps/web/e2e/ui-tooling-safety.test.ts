@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import {
+	spawnSync,
+	type SpawnSyncOptionsWithStringEncoding,
+} from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 interface TestApi {
 	describe: (name: string, callback: () => void) => void;
@@ -89,36 +93,6 @@ function readJson<T>(path: string): T {
 	return JSON.parse(readProjectFile(path)) as T;
 }
 
-function listFiles(root: string): string[] {
-	const absoluteRoot = resolve(PROJECT_ROOT, root);
-	const pending = [absoluteRoot];
-	const files: string[] = [];
-
-	while (pending.length > 0) {
-		const current = pending.pop();
-		if (!current) continue;
-
-		for (const entry of readdirSync(current).sort().reverse()) {
-			const absolutePath = resolve(current, entry);
-			if (statSync(absolutePath).isDirectory()) pending.push(absolutePath);
-			else files.push(relative(PROJECT_ROOT, absolutePath));
-		}
-	}
-
-	return files.sort();
-}
-
-function hashSkillFiles(files: string[]): string {
-	const hash = createHash("sha256");
-	for (const file of files) {
-		hash.update(file);
-		hash.update("\0");
-		hash.update(readProjectFile(file));
-		hash.update("\0");
-	}
-	return hash.digest("hex");
-}
-
 describe("UI tooling supply-chain contract", () => {
 	it("pins the approved Tailwind and shadcn foundation", () => {
 		const manifest = JSON.parse(
@@ -183,7 +157,7 @@ describe("UI tooling supply-chain contract", () => {
 		});
 	});
 
-	it("vendors the pinned first-party Impeccable Pi skill with no hooks or live mode", () => {
+	it("retains pinned Impeccable provenance without requiring local skills or enabling hooks", () => {
 		const provenance = readJson<ImpeccableProvenance>(
 			".impeccable/provenance.json",
 		);
@@ -211,9 +185,14 @@ describe("UI tooling supply-chain contract", () => {
 			policy: { hooks: "disabled", liveMode: "disabled" },
 		});
 
-		const installedFiles = listFiles(".pi/skills/impeccable");
-		assert.deepEqual(provenance.source.filesWritten, installedFiles);
-		assert.ok(installedFiles.includes(".pi/skills/impeccable/SKILL.md"));
+		// Pin the recorded installation inventory, not machine-local file contents.
+		const recordedFiles = provenance.source.filesWritten;
+		assert.equal(recordedFiles.length, 91);
+		assert.equal(
+			createHash("sha256").update(JSON.stringify(recordedFiles)).digest("hex"),
+			"9b3fbf9aa5b831a5512b8f36a4005e889fc721c817158bd59d90c5bbd1d3bd4a",
+		);
+		assert.ok(recordedFiles.includes(".pi/skills/impeccable/SKILL.md"));
 
 		const skillsLock = readJson<{
 			skills: Record<string, { computedHash: string; skillPath: string }>;
@@ -224,10 +203,6 @@ describe("UI tooling supply-chain contract", () => {
 		);
 		assert.equal(
 			skillsLock.skills.impeccable?.computedHash,
-			APPROVED_IMPECCABLE_SKILL_HASH,
-		);
-		assert.equal(
-			hashSkillFiles(installedFiles),
 			APPROVED_IMPECCABLE_SKILL_HASH,
 		);
 
@@ -242,6 +217,59 @@ describe("UI tooling supply-chain contract", () => {
 		]) {
 			assert.equal(existsSync(resolve(PROJECT_ROOT, forbiddenPath)), false);
 		}
+	});
+
+	it("keeps installed Pi skills local while tracking shared exceptions and provenance", () => {
+		for (const key of [
+			"GIT_DIR",
+			"GIT_WORK_TREE",
+			"GIT_COMMON_DIR",
+			"GIT_INDEX_FILE",
+			"GIT_OBJECT_DIRECTORY",
+			"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		]) {
+			assert.equal(Object.hasOwn(process.env, key), false, "Git override present");
+		}
+		const provenance = readJson<ImpeccableProvenance>(
+			".impeccable/provenance.json",
+		);
+		const localPaths = [
+			...provenance.source.filesWritten,
+			".pi/skills/another-installed-skill/SKILL.md",
+			".pi/runtime-state.json",
+			".pi/gentle-ai/local-state.json",
+		];
+		const sharedPaths = [
+			".impeccable/provenance.json",
+			".pi/gentle-ai/persona.json",
+			".pi/skills/supabase",
+			".pi/skills/supabase-postgres-best-practices",
+			"skills-lock.json",
+		];
+		const options: SpawnSyncOptionsWithStringEncoding = {
+			cwd: PROJECT_ROOT,
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			shell: false,
+		};
+		// --no-index tests ignore policy even if a local skill is force-added.
+		// These paths need not exist: a clean checkout must satisfy the contract.
+		const ignored = spawnSync(
+			"git",
+			["check-ignore", "--no-index", "--", ...localPaths, ...sharedPaths],
+			options,
+		);
+		assert.equal(ignored.status, 0, "Git ignore policy check failed");
+		assert.equal(ignored.stdout, `${localPaths.join("\n")}\n`);
+
+		const tracked = spawnSync(
+			"git",
+			["ls-files", "--", ".pi", ".impeccable/provenance.json", "skills-lock.json"],
+			options,
+		);
+		assert.equal(tracked.status, 0, "Git tracking policy check failed");
+		assert.equal(tracked.stdout, `${sharedPaths.join("\n")}\n`);
 	});
 
 	it("retains the production legacy CSS contracts during progressive migration", () => {
