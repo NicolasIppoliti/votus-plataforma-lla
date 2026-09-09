@@ -13,6 +13,20 @@ const CONTROLLED_DENIAL = {
   truncated: false,
 };
 
+// Wire fixtures, not sanitized page mocks. The unavailable case exercises the
+// sanitizer's unsupported-status refusal, not a thrown fetch/error boundary.
+export const REVIEW_SAFE_STATE_PAYLOADS = {
+  authorized_empty: {
+    ...CONTROLLED_DENIAL, status: "ok", authorization_status: "authorized_empty",
+  },
+  authorization_denied: CONTROLLED_DENIAL,
+  payload_too_large: {
+    ...CONTROLLED_DENIAL, status: "payload_too_large", authorization_status: "authorized",
+    total: 8675309, truncated: true, exclusions: [{ reason: "payload_bound" }],
+  },
+  unavailable: { ...CONTROLLED_DENIAL, status: "unavailable" },
+} as const;
+
 export type ReviewFetchHandler = (request: Request) => FetchHandlerResult | Promise<FetchHandlerResult>;
 type RecordValue = Record<string, unknown>;
 
@@ -118,7 +132,11 @@ export async function createReviewTestWorker(): Promise<ReviewTestWorker> {
   };
 }
 
-export function createReviewStateHandler(origin: string, onMatch?: () => void): ReviewFetchHandler {
+export function createReviewStateHandler(
+  origin: string,
+  onMatch?: () => void,
+  selectResponse: (offset: number) => Response = () => Response.json(CONTROLLED_DENIAL),
+): ReviewFetchHandler {
   const endpoint = new URL(origin);
   if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || !endpoint.port || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) throw new Error("review state origin must be an exact loopback URL");
   return async (request) => {
@@ -132,6 +150,6 @@ export function createReviewStateHandler(origin: string, onMatch?: () => void): 
     if (body.p_limit === 0) return fetch(request, { redirect: "error" });
     if (body.p_limit !== 50) return "abort";
     onMatch?.();
-    return new Response(JSON.stringify(CONTROLLED_DENIAL), { headers: { "content-type": "application/json" }, status: 200 });
+    return selectResponse(body.p_offset as number);
   };
 }

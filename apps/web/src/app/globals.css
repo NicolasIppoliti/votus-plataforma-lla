@@ -1667,6 +1667,20 @@ select option {
   background: var(--surface-muted);
 }
 
+.review-queue__state {
+  overflow-wrap: anywhere;
+}
+
+.review-queue__state[role="alert"] {
+  border-block-start-color: var(--warning-ink);
+  background: var(--warning-surface);
+}
+
+.review-queue__state h2 {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
 .review-queue__attention > p:nth-child(2) {
   color: var(--ink);
   font-size: 1.125rem;
