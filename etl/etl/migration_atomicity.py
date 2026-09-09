@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -39,8 +40,39 @@ class AtomicityFailure(RuntimeError):
     """Fixed diagnostics only; never expose CLI output, SQL, or connection details."""
 
 
+@contextmanager
+def _stage(case: str, stage: str):
+    try:
+        yield
+    except AtomicityFailure:
+        raise
+    except Exception as error:
+        category = "unexpected"
+        if isinstance(error, psycopg.Error):
+            category = "database"
+        elif isinstance(error, subprocess.TimeoutExpired):
+            category = "timeout"
+        elif isinstance(error, OSError):
+            category = "os"
+        diagnostic = f"migration_atomicity:{case}:stage={stage}:exception={category}"
+        state = error.sqlstate if isinstance(error, psycopg.Error) else None
+        if isinstance(state, str) and re.fullmatch(r"[0-9A-Z]{5}", state):
+            diagnostic += f":sqlstate={state}"
+        print(diagnostic)
+        raise AtomicityFailure(diagnostic) from None
+
+
+@contextmanager
+def _resource(factory, case: str):
+    with _stage(case, "cleanup"), ExitStack() as stack:
+        with _stage(case, "fixture_creation"):
+            resource = stack.enter_context(factory())
+        yield resource
+
+
 def _require(condition: bool, label: str) -> None:
     if not condition:
+        print(f"migration_atomicity:{label}")
         raise AtomicityFailure(f"migration_atomicity:{label}")
 
 
@@ -98,24 +130,29 @@ def _cli(binary: str, project: Path, params: dict[str, str], *, version: bool = 
 def _scenario(database: DisposablePostgres, migrations: Path, binary: str, case: str) -> bool:
     from etl.verify import apply_migrations
 
-    dsn = database.migration_dsn
-    _require(database.created_by_this_run and dsn is not None, "ownership=0")
-    database._verify_target()
-    params = conninfo_to_dict(dsn)
-    with tempfile.TemporaryDirectory(prefix="votus-cli-atomicity-") as directory:
-        project = Path(directory)
-        pending = project / "supabase" / "migrations"
-        pending.mkdir(parents=True)
-        (project / "supabase" / "config.toml").write_text(
-            'project_id = "votus-atomicity"\n[db]\nmajor_version = 17\n', encoding="utf-8"
-        )
-        predecessors = project / "predecessors"
-        predecessors.mkdir()
-        for path in sorted(migrations.glob("*.sql")):
-            if path.name < MIGRATION:
-                shutil.copyfile(path, predecessors / path.name)
-        apply_migrations(dsn, predecessors)
-        with psycopg.connect(dsn) as connection:
+    with _stage(case, "fixture_creation"):
+        dsn = database.migration_dsn
+        _require(database.created_by_this_run and dsn is not None, "ownership=0")
+        database._verify_target()
+        params = conninfo_to_dict(dsn)
+    with _resource(
+        lambda: tempfile.TemporaryDirectory(prefix="votus-cli-atomicity-"), case
+    ) as directory:
+        with _stage(case, "fixture_creation"):
+            project = Path(directory)
+            pending = project / "supabase" / "migrations"
+            pending.mkdir(parents=True)
+            (project / "supabase" / "config.toml").write_text(
+                'project_id = "votus-atomicity"\n[db]\nmajor_version = 17\n', encoding="utf-8"
+            )
+            predecessors = project / "predecessors"
+            predecessors.mkdir()
+            for path in sorted(migrations.glob("*.sql")):
+                if path.name < MIGRATION:
+                    shutil.copyfile(path, predecessors / path.name)
+        with _stage(case, "predecessors"):
+            apply_migrations(dsn, predecessors)
+        with _stage(case, "fixture_creation"), psycopg.connect(dsn) as connection:
             _require(connection.info.server_version // 10000 == 17, "postgres_version=0")
             # Match the pinned CLI's history schema; no fabricated/repair INSERT.
             connection.execute("create schema supabase_migrations")
@@ -129,9 +166,11 @@ def _scenario(database: DisposablePostgres, migrations: Path, binary: str, case:
                     "add constraint atomicity_reject_history "
                     "check (version <> '20260904035355')"
                 )
-        baseline = _snapshot(dsn)
+        with _stage(case, "observer"):
+            baseline = _snapshot(dsn)
         _require(baseline[0] is not None and baseline[1:] == (None, 0), f"{case}:baseline=0")
-        source = (migrations / MIGRATION).read_text(encoding="utf-8")
+        with _stage(case, "fixture_creation"):
+            source = (migrations / MIGRATION).read_text(encoding="utf-8")
         if case == "sql":
             # Fault follows the meaningful rename, inside a fixture COPY only.
             anchor = f"rename to {PRESERVED};"
@@ -141,9 +180,12 @@ def _scenario(database: DisposablePostgres, migrations: Path, binary: str, case:
                 anchor + "\ndo $$ begin raise exception 'atomicity_reject_sql'; end $$;",
                 1,
             )
-        (pending / MIGRATION).write_text(source, encoding="utf-8")
-        completed = _cli(binary, project, params)
-        after = _snapshot(dsn)
+        with _stage(case, "fixture_creation"):
+            (pending / MIGRATION).write_text(source, encoding="utf-8")
+        with _stage(case, "cli"):
+            completed = _cli(binary, project, params)
+        with _stage(case, "observer"):
+            after = _snapshot(dsn)
         if case == "success":
             _require(completed.returncode == 0, "success:cli=0")
             original, _, _ = baseline
@@ -158,8 +200,10 @@ def _scenario(database: DisposablePostgres, migrations: Path, binary: str, case:
                 and history == 1,
                 "success:definition_owner_acl_history=0",
             )
-            repeated = _cli(binary, project, params)
-            _require(repeated.returncode == 0 and _snapshot(dsn) == after, "success:repeat=0")
+            with _stage(case, "cli"):
+                repeated = _cli(binary, project, params)
+            with _stage(case, "observer"):
+                _require(repeated.returncode == 0 and _snapshot(dsn) == after, "success:repeat=0")
             print("migration_atomicity:success:history=1:repeat_unchanged=1")
             return True
         marker = LEDGER_FAULT if case == "ledger" else SQL_FAULT
@@ -207,13 +251,17 @@ def _run_owned_proof(owned: DisposablePostgres, migrations: Path) -> None:
     owned._verify_target()
     binary = shutil.which("supabase")
     _require(binary is not None, "cli_available=0")
-    with tempfile.TemporaryDirectory(prefix="votus-cli-version-") as directory:
-        version = _cli(binary, Path(directory), params, version=True)
+    with _resource(
+        lambda: tempfile.TemporaryDirectory(prefix="votus-cli-version-"), "success"
+    ) as directory:
+        with _stage("success", "cli"):
+            version = _cli(binary, Path(directory), params, version=True)
         _require(version.returncode == 0 and version.stdout.strip() == "2.116.0", "cli_pin=0")
     outcomes = []
     for case in ("success", "ledger", "sql"):
-        fixture = DisposablePostgres(owned.admin_dsn)
-        with fixture:
+        with _stage(case, "fixture_creation"):
+            fixture = DisposablePostgres(owned.admin_dsn)
+        with _resource(lambda: fixture, case):
             outcomes.append(_scenario(fixture, migrations, binary, case))
     # Run both negative cases even when the original UP violates ledger atomicity.
     _require(all(outcomes), "rollback=0")
