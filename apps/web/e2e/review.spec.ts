@@ -191,34 +191,38 @@ const NEXT_PAGE = "Página siguiente de la cola de revisión";
 const NAVIGATION_NAMES = ["Resumen operativo", "Explorar", "Comparar", "Municipal", "Fiscalización (no oficial)", "Simulación 2027", "Revisión de datos"];
 
 async function expectKeyboardFocus(target: Locator, region = false): Promise<void> {
-  await expect(target).toBeFocused();
-  await expect(target).toHaveCSS("outline-width", "3px");
-  await expect(target).toHaveCSS("outline-style", "solid");
-  await expect(target).toHaveCSS("outline-offset", "3px");
-  await expect.poll(() => target.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
-  const visibility = await target.evaluate((element) => {
-    const box = element.getBoundingClientRect();
-    const color = getComputedStyle(element).outlineColor;
-    let effectiveOpacity = 1;
-    for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
-      effectiveOpacity *= Number(getComputedStyle(ancestor).opacity);
-    }
-    return {
-      effectiveOpacity,
-      opaque: color !== "transparent" && !/[,/]\s*0\s*\)$/.test(color),
-      intersects: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
-      contained: box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth,
-    };
-  });
-  expect(visibility.effectiveOpacity).toBeGreaterThan(0);
-  expect(visibility.opaque).toBe(true);
-  expect(visibility.intersects).toBe(true);
-  if (!region) expect(visibility.contained).toBe(true);
+  return test.step("Verify keyboard focus", async () => {
+    await expect(target).toBeFocused();
+    await expect(target).toHaveCSS("outline-width", "3px");
+    await expect(target).toHaveCSS("outline-style", "solid");
+    await expect(target).toHaveCSS("outline-offset", "3px");
+    await expect.poll(() => target.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+    const visibility = await target.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const color = getComputedStyle(element).outlineColor;
+      let effectiveOpacity = 1;
+      for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+        effectiveOpacity *= Number(getComputedStyle(ancestor).opacity);
+      }
+      return {
+        effectiveOpacity,
+        opaque: color !== "transparent" && !/[,/]\s*0\s*\)$/.test(color),
+        intersects: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
+        contained: box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth,
+      };
+    });
+    expect(visibility.effectiveOpacity).toBeGreaterThan(0);
+    expect(visibility.opaque).toBe(true);
+    expect(visibility.intersects).toBe(true);
+    if (!region) expect(visibility.contained).toBe(true);
+  }, { box: true });
 }
 
 async function tabTo(page: Page, target: Locator, reverse = false, region = false): Promise<void> {
-  await page.keyboard.press(reverse ? "Shift+Tab" : "Tab");
-  await expectKeyboardFocus(target, region);
+  return test.step("Advance keyboard focus", async () => {
+    await page.keyboard.press(reverse ? "Shift+Tab" : "Tab");
+    await expectKeyboardFocus(target, region);
+  }, { box: true });
 }
 
 async function expectReviewWindow(page: Page, count: number, firstDetected: string): Promise<void> {
