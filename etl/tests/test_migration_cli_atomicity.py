@@ -51,7 +51,7 @@ def test_proof_refuses_unowned_or_non_ci_targets_before_any_connection(
     monkeypatch.setenv("POSTGRES_CONTAINER", container)
 
     with pytest.raises(AtomicityFailure, match=expected):
-        run_migration_atomicity(owned, Path("unused"))
+        run_migration_atomicity(owned, Path("unused"), "success")
 
     assert connections == []
 
@@ -65,7 +65,14 @@ def test_release_gate_reaches_real_cli_proof_with_its_own_pinned_service() -> No
     assert cli["uses"] == "supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf"
     assert cli["with"]["version"] == "2.116.0"
     gate = next(step for step in job["steps"] if step.get("name") == "Run disposable ETL gate")
-    assert "uv run --project etl etl-verify --migration-atomicity" in gate["run"]
+    assert job["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"case": ["ordinary", "success", "ledger", "sql"]},
+    }
+    assert gate["env"]["ETL_CASE"] == "${{ matrix.case }}"
+    assert 'if [ "$ETL_CASE" = "ordinary" ]; then' in gate["run"]
+    assert "uv run --project etl etl-verify\n" in gate["run"]
+    assert 'uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"' in gate["run"]
     assert gate["env"]["POSTGRES_CONTAINER"] == "${{ job.services.postgres.id }}"
     e2e = workflow["jobs"]["e2e-release"]
     e2e_cli = next(step for step in e2e["steps"] if step.get("uses", "").startswith("supabase/"))
@@ -84,6 +91,7 @@ def test_release_gate_reaches_real_cli_proof_with_its_own_pinned_service() -> No
         "cleanup",
         "assertion_cleanup",
         "assertion_temp_cleanup",
+        "complete",
     ],
 )
 @pytest.mark.parametrize("sqlstate", ["23514", "SYNTHETIC_DIAGNOSTIC_CANARY", None, 23514])
@@ -122,7 +130,7 @@ def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
     owned.admin = None
 
     def fixture(_dsn):
-        state.update(case=("success", "ledger", "sql")[len(attempted)], applied=False)
+        state.update(case=case, applied=False)
         attempted.append(state["case"])
         resource = MagicMock()
         resource.migration_dsn = owned.migration_dsn
@@ -199,8 +207,16 @@ def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
     monkeypatch.setattr(proof.tempfile, "TemporaryDirectory", temporary)
     monkeypatch.setattr(proof.subprocess, "run", cli)
 
+    if stage == "complete":
+        run_migration_atomicity(owned, path, case)
+        assert attempted == cleaned == [case]
+        assert temporary_cleaned == ["preflight", case]
+        output = capsys.readouterr()
+        assert canary not in output.out + output.err
+        return
+
     with pytest.raises(AtomicityFailure) as caught:
-        run_migration_atomicity(owned, path)
+        run_migration_atomicity(owned, path, case)
 
     label = "fixture_creation" if stage == "files" else stage
     if stage in ("assertion_cleanup", "assertion_temp_cleanup"):

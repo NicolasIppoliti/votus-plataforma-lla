@@ -900,9 +900,10 @@ def test_setup_and_cleanup_failure_are_reported_as_separate_causes() -> None:
     assert any("drop failed" in message for message in messages)
 
 
-@pytest.mark.parametrize(("enabled", "proof_fails"), [(True, False), (True, True), (False, False)])
-def test_command_runs_owned_atomicity_proof_before_restricted_pytest_and_cleans_up(
-    monkeypatch: pytest.MonkeyPatch, capsys, enabled: bool, proof_fails: bool
+@pytest.mark.parametrize("case", [None, "success", "ledger", "sql"])
+@pytest.mark.parametrize("proof_fails", [False, True])
+def test_command_runs_only_selected_proof_or_full_default_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, capsys, case: str | None, proof_fails: bool
 ) -> None:
     from etl import verify
 
@@ -916,11 +917,12 @@ def test_command_runs_owned_atomicity_proof_before_restricted_pytest_and_cleans_
     events: list[str] = []
     monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", database.admin_dsn)
     monkeypatch.setattr(
-        sys, "argv", ["etl-verify", *(["--migration-atomicity"] if enabled else [])]
+        sys, "argv", ["etl-verify", *(["--migration-atomicity", case] if case else [])]
     )
     monkeypatch.setattr(verify, "DisposablePostgres", lambda _: database)
 
-    def proof(owned: DisposablePostgres, migrations: Path) -> None:
+    def proof(owned: DisposablePostgres, migrations: Path, selected: str) -> None:
+        assert selected == case
         assert owned is database and owned.created_by_this_run
         assert owned.admin is None
         assert migrations.name == "migrations"
@@ -940,20 +942,40 @@ def test_command_runs_owned_atomicity_proof_before_restricted_pytest_and_cleans_
         events.append("restricted_pytest")
         return verify.PytestResult(executed=1, skipped=0)
 
+    grant = database.grant_test_privileges
+
+    def grant_after_migrations() -> None:
+        events.append("grants")
+        grant()
+
+    monkeypatch.setattr(database, "grant_test_privileges", grant_after_migrations)
     monkeypatch.setattr(verify, "run_migration_atomicity", proof, raising=False)
     monkeypatch.setattr(verify, "apply_migrations", migrate)
     monkeypatch.setattr(verify, "run_pytest", pytest_child)
 
-    assert verify.main() == (1 if proof_fails else 0)
-    expected = ["proof"] if enabled else []
-    if not proof_fails:
-        expected.extend(["migrations", "restricted_pytest"])
+    assert verify.main() == (1 if case and proof_fails else 0)
+    expected = ["proof"] if case else ["migrations", "grants", "restricted_pytest"]
     assert events == expected
     assert connections.admin.databases == {}
     assert connections.admin.roles == {}
     output = capsys.readouterr()
     assert "maintenance-value" not in output.out + output.err
     assert "disposable-value" not in output.out + output.err
+
+
+@pytest.mark.parametrize(
+    "arguments", [["--migration-atomicity"], ["--migration-atomicity", "other"]]
+)
+def test_command_rejects_missing_or_invalid_proof_case_before_provisioning(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    from etl import verify
+
+    monkeypatch.setattr(sys, "argv", ["etl-verify", *arguments])
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _: pytest.fail("provisioned"))
+    with pytest.raises(SystemExit) as caught:
+        verify.main()
+    assert caught.value.code == 2
 
 
 def test_command_isolates_cli_credentials_and_cleans_up_on_wrong_cli_version(
@@ -970,7 +992,7 @@ def test_command_isolates_cli_credentials_and_cleans_up_on_wrong_cli_version(
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("POSTGRES_CONTAINER", "a" * 64)
     monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "unrelated-value")
-    monkeypatch.setattr(sys, "argv", ["etl-verify", "--migration-atomicity"])
+    monkeypatch.setattr(sys, "argv", ["etl-verify", "--migration-atomicity", "success"])
     monkeypatch.setattr(verify, "DisposablePostgres", lambda _: database)
     monkeypatch.setattr(migration_atomicity.shutil, "which", lambda _: "/synthetic/supabase")
     children = []

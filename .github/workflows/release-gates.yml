@@ -61,6 +61,10 @@ jobs:
   etl-release:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [ordinary, success, ledger, sql]
     services:
       postgres:
         image: postgres:17
@@ -97,6 +101,7 @@ jobs:
         shell: bash
         env:
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          ETL_CASE: ${{ matrix.case }}
           ETL_TEST_ADMIN_DATABASE_URL: >-
             postgresql://postgres@127.0.0.1:54322/template1
         run: |
@@ -105,7 +110,11 @@ jobs:
             "create role anon nologin; create role authenticated nologin; \
             create role etl_writer login bypassrls password null; \
             grant etl_writer to postgres;"
-          uv run --project etl etl-verify --migration-atomicity
+          if [ "$ETL_CASE" = "ordinary" ]; then
+            uv run --project etl etl-verify
+          else
+            uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"
+          fi
 
   e2e-release:
     runs-on: ubuntu-latest

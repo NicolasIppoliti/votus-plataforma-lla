@@ -668,8 +668,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--migration-atomicity",
-        action="store_true",
-        help="Run the real Supabase CLI regression proof on the CI-owned Postgres service",
+        choices=("success", "ledger", "sql"),
+        help="Run one real Supabase CLI proof on an isolated CI-owned Postgres service",
     )
     args = parser.parse_args()
     admin_dsn = os.environ.get("ETL_TEST_ADMIN_DATABASE_URL")
@@ -695,16 +695,18 @@ def main() -> int:
     try:
         with database as database_dsn:
             if args.migration_atomicity:
-                run_migration_atomicity(database, migrations)
-            migration_dsn = _require_dsn(database.migration_dsn, "migration")
-            migration_count = apply_migrations(migration_dsn, migrations)
-            database.grant_test_privileges()
-            result = run_pytest(database_dsn, etl_root)
-        print(
-            f"ETL verification passed: {migration_count} migrations, "
-            f"{result.executed} executed, {result.skipped} skipped; "
-            f"cleaned {database.identity.name}"
-        )
+                run_migration_atomicity(database, migrations, args.migration_atomicity)
+                summary = f"migration atomicity {args.migration_atomicity}"
+            else:
+                migration_dsn = _require_dsn(database.migration_dsn, "migration")
+                migration_count = apply_migrations(migration_dsn, migrations)
+                database.grant_test_privileges()
+                result = run_pytest(database_dsn, etl_root)
+                summary = (
+                    f"{migration_count} migrations, "
+                    f"{result.executed} executed, {result.skipped} skipped"
+                )
+        print(f"ETL verification passed: {summary}; cleaned {database.identity.name}")
         return 0
     except (Exception, KeyboardInterrupt) as exc:
         print(f"ETL verification failed: {database.safe_error(exc)}", file=sys.stderr)

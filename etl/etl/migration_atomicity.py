@@ -227,7 +227,7 @@ def _scenario(database: DisposablePostgres, migrations: Path, binary: str, case:
         return rollback
 
 
-def _run_owned_proof(owned: DisposablePostgres, migrations: Path) -> None:
+def _run_owned_proof(owned: DisposablePostgres, migrations: Path, case: str) -> None:
     from etl.verify import DisposablePostgres
 
     # This opt-in proof is for the job's owned service, never an operator DSN.
@@ -257,19 +257,16 @@ def _run_owned_proof(owned: DisposablePostgres, migrations: Path) -> None:
         with _stage("success", "cli"):
             version = _cli(binary, Path(directory), params, version=True)
         _require(version.returncode == 0 and version.stdout.strip() == "2.116.0", "cli_pin=0")
-    outcomes = []
-    for case in ("success", "ledger", "sql"):
-        with _stage(case, "fixture_creation"):
-            fixture = DisposablePostgres(owned.admin_dsn)
-        with _resource(lambda: fixture, case):
-            outcomes.append(_scenario(fixture, migrations, binary, case))
-    # Run both negative cases even when the original UP violates ledger atomicity.
-    _require(all(outcomes), "rollback=0")
+    with _stage(case, "fixture_creation"):
+        fixture = DisposablePostgres(owned.admin_dsn)
+    with _resource(lambda: fixture, case):
+        rollback = _scenario(fixture, migrations, binary, case)
+    _require(rollback, "rollback=0")
 
 
-def run_migration_atomicity(owned: DisposablePostgres, migrations: Path) -> None:
+def run_migration_atomicity(owned: DisposablePostgres, migrations: Path, case: str) -> None:
     try:
-        _run_owned_proof(owned, migrations)
+        _run_owned_proof(owned, migrations, case)
     except AtomicityFailure:
         raise
     except Exception:
