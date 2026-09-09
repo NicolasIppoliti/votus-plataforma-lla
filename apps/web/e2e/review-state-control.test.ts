@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sanitizeReviewItems } from "../src/lib/workspace/review-items";
 import {
   createReviewStateHandler,
   createReviewTestWorker,
+  REVIEW_SAFE_STATE_PAYLOADS,
 } from "./review-state-control";
 
 const TEST_PROXY_ENVIRONMENT = "VOTUS_E2E_TEST_PROXY";
@@ -192,6 +194,52 @@ describe("review test transport", () => {
     expect(matched).toBe(1);
     expect(outboundFetch).toHaveBeenCalledTimes(1);
   });
+
+  it("selects a response using the validated review offset without intercepting counts", async () => {
+    const selectedOffsets: number[] = [];
+    let matched = 0;
+    const outboundFetch = vi.fn(async () => new Response("forwarded"));
+    vi.stubGlobal("fetch", outboundFetch);
+    const handler = createReviewStateHandler("http://127.0.0.1:54321", () => { matched += 1; }, (offset: number) => {
+      selectedOffsets.push(offset);
+      return Response.json({
+        authorization_status: "authorized_empty", exclusions: [], items: [],
+        status: "ok", total: 0, truncated: false,
+      });
+    });
+    const request = (p_limit: number, p_offset: number) => new Request(
+      "http://127.0.0.1:54321/rest/v1/rpc/review_items",
+      { method: "POST", body: JSON.stringify({ p_limit, p_offset }) },
+    );
+
+    expect(await handler(request(50, -1))).toBe("abort");
+    expect(await handler(request(50, 2_000_000_001))).toBe("abort");
+    expect(await handler(request(51, 0))).toBe("abort");
+    await handler(request(0, 0));
+    expect(selectedOffsets).toEqual([]);
+    expect(matched).toBe(0);
+    for (const offset of [0, 50, 2_000_000_000]) {
+      const response = await handler(request(50, offset));
+      if (!(response instanceof Response)) throw new Error("expected selected review response");
+      expect(sanitizeReviewItems(await response.json(), 50, offset)).toEqual({ status: "authorized_empty" });
+    }
+    expect(selectedOffsets).toEqual([0, 50, 2_000_000_000]);
+    expect(matched).toBe(3);
+    expect(outboundFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(Object.entries(REVIEW_SAFE_STATE_PAYLOADS))(
+    "projects the browser wire fixture through the real sanitizer as %s",
+    async (status, payload) => {
+      const handler = createReviewStateHandler("http://127.0.0.1:54321", undefined, () => Response.json(payload));
+      const response = await handler(new Request("http://127.0.0.1:54321/rest/v1/rpc/review_items", {
+        method: "POST", body: JSON.stringify({ p_limit: 50, p_offset: 0 }),
+      }));
+      if (!(response instanceof Response)) throw new Error("expected controlled review response");
+      expect(response.status).toBe(200);
+      expect(sanitizeReviewItems(await response.json(), 50, 0)).toEqual({ status });
+    },
+  );
 
   it("aborts malformed variants of the review RPC", async () => {
     const outboundFetch = vi.fn();

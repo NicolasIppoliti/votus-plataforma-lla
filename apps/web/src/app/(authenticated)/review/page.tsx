@@ -12,6 +12,13 @@ const REVIEW_STATE_COPY = {
   unavailable: "La cola de revisión no está disponible por el momento.",
 } as const satisfies Record<Exclude<AuthorizedReviewItems["status"], "ok">, string>;
 
+const REVIEW_STATE_TITLE = {
+  authorization_denied: "Acceso no autorizado",
+  authorized_empty: "Sin elementos pendientes",
+  payload_too_large: "Respuesta fuera del límite seguro",
+  unavailable: "Cola no disponible",
+} as const satisfies Record<Exclude<AuthorizedReviewItems["status"], "ok">, string>;
+
 /**
  * Authorized review queue — shares the exact scoped predicate used by the
  * authenticated layout count.
@@ -21,7 +28,23 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const offset = rawOffset && /^\d{1,10}$/.test(rawOffset) && Number(rawOffset) <= 2_000_000_000 ? Number(rawOffset) : 0;
   const payload = await authorizedReviewItems(await createSupabaseServerClient(), 50, offset);
   if (payload.status !== "ok") {
-    return <main><h1>Cola de revisión</h1><p>{REVIEW_STATE_COPY[payload.status]}</p></main>;
+    return (
+      <main className="review-queue page-shell">
+        <header className="review-queue__header">
+          <p className="eyebrow">Operaciones · revisión</p>
+          <h1>Cola de revisión</h1>
+        </header>
+        <aside
+          className="review-queue__attention review-queue__state"
+          role={payload.status === "authorized_empty" ? "status" : "alert"}
+          aria-labelledby="review-state-heading"
+        >
+          <p className="eyebrow">Atención operativa</p>
+          <h2 id="review-state-heading">{REVIEW_STATE_TITLE[payload.status]}</h2>
+          <p>{REVIEW_STATE_COPY[payload.status]}</p>
+        </aside>
+      </main>
+    );
   }
   const { items, total, truncated } = payload;
 

@@ -137,6 +137,39 @@ describe("review page — responsive review evidence", () => {
     expect(markup).not.toContain('href="/review?offset=150"');
   });
 
+  it.each([
+    ["authorized_empty", "status", "Sin elementos pendientes", AUTHORIZED_EMPTY],
+    ["authorization_denied", "alert", "Acceso no autorizado", AUTHORIZATION_DENIED],
+    ["payload_too_large", "alert", "Respuesta fuera del límite seguro", PAYLOAD_TOO_LARGE],
+    ["unavailable", "alert", "Cola no disponible", UNAVAILABLE],
+  ])("announces %s with operational hierarchy and no evidence", async (status, role, title, copy) => {
+    reviewState.status = status;
+    reviewState.total = 8675309;
+    reviewState.truncated = true;
+    reviewState.items = [{
+      id: "safe-state-id-sentinel",
+      kind: "safe-state-kind-sentinel",
+      severity: "warning",
+      detectedAt: "2026-02-01T12:00:00Z",
+      subject_ref: "safe-state-subject-sentinel",
+      note: "safe-state-note-sentinel",
+    }];
+
+    const markup = renderToStaticMarkup(
+      (await ReviewPage({ searchParams: Promise.resolve({ offset: "50" }) })) as ReactElement,
+    );
+
+    expect(markup).toMatch(/<header[^>]*>[\s\S]*Operaciones · revisión[\s\S]*<h1>Cola de revisión<\/h1>[\s\S]*<\/header>/);
+    expect(markup).toMatch(new RegExp(`<aside[^>]+role="${role}"[^>]+aria-labelledby="review-state-heading"[^>]*>`));
+    expect(markup).toContain("Atención operativa");
+    expect(markup).toContain(`<h2 id="review-state-heading">${title}</h2>`);
+    expect(markup).toContain(copy);
+    expect(markup).not.toMatch(/<table|<nav|Mostrando|elementos requieren revisión|8675309|safe-state-|2026-02-01/);
+    for (const otherCopy of [AUTHORIZED_EMPTY, AUTHORIZATION_DENIED, PAYLOAD_TOO_LARGE, UNAVAILABLE]) {
+      if (otherCopy !== copy) expect(markup).not.toContain(otherCopy);
+    }
+  });
+
   it("renders authorization denial distinctly from every other safe state", async () => {
     reviewState.status = "authorization_denied";
     reviewState.total = 0;

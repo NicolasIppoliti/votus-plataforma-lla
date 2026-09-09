@@ -3,7 +3,7 @@ import { type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import { durationInMilliseconds } from "./css-duration";
-import { createReviewStateHandler } from "./review-state-control";
+import { createReviewStateHandler, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
 
 const READ_ONLY_NOTICE =
@@ -198,6 +198,61 @@ test.describe("the review route reflects the disposable database", () => {
       expect(matched).toBe(1);
     });
   });
+
+  const safeStates = [
+    { status: "authorized_empty", role: "status", title: "Sin elementos pendientes", copy: "No hay elementos de revisión pendientes." },
+    { status: "authorization_denied", role: "alert", title: "Acceso no autorizado", copy: "No se pudo autorizar la cola de revisión." },
+    { status: "payload_too_large", role: "alert", title: "Respuesta fuera del límite seguro", copy: "La respuesta de la cola de revisión supera el límite seguro." },
+    { status: "unavailable", role: "alert", title: "Cola no disponible", copy: "La cola de revisión no está disponible por el momento." },
+  ] as const;
+
+  for (const state of safeStates) {
+    test(`test_controlled_review_${state.status}_has_safe_responsive_attention`, async ({ page, next }) => {
+      let matched = 0;
+      next.onFetch(createReviewStateHandler(
+        assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+        () => { matched += 1; },
+        () => Response.json(REVIEW_SAFE_STATE_PAYLOADS[state.status]),
+      ));
+      await withReviewItem(page, async () => {
+        await page.goto("/review");
+        const main = page.getByRole("main");
+        const title = main.getByRole("heading", { level: 1, name: "Cola de revisión" });
+        const attention = main.getByRole(state.role, { name: state.title });
+        for (const width of [320, 390, 1440]) {
+          await page.setViewportSize({ width, height: 900 });
+          await page.evaluate(async () => { await document.fonts.ready; });
+          await expect(title).toBeVisible();
+          await expect(main.getByText("Operaciones · revisión", { exact: true })).toBeVisible();
+          await expect(attention.getByRole("heading", { level: 2, name: state.title })).toBeVisible();
+          await expect(attention.getByText("Atención operativa", { exact: true })).toBeVisible();
+          await expect(attention.getByText(state.copy, { exact: true })).toBeVisible();
+          const titleBox = await title.boundingBox();
+          const panelBox = await attention.boundingBox();
+          if (!titleBox || !panelBox) throw new Error("safe review hierarchy has no layout box");
+          expect(panelBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+          const panelStyle = await attention.evaluate((element) => {
+            const style = getComputedStyle(element);
+            return { rail: style.borderBlockStartWidth, background: style.backgroundColor };
+          });
+          expect(panelStyle.rail).toBe("3px");
+          expect(panelStyle.background).toBe(state.role === "alert" ? "rgb(255, 244, 219)" : "rgb(233, 236, 232)");
+          await expectDocumentNotToOverflow(page);
+          await expectReducedMotion(page, attention);
+        }
+        // Presentation evidence only: layout count requests still reach the DB.
+        expect(matched).toBe(1);
+        await expect(main.getByRole("table")).toHaveCount(0);
+        await expect(main.getByRole("navigation")).toHaveCount(0);
+        await expect(main.getByRole("region", { name: REVIEW_REGION_LABEL })).toHaveCount(0);
+        await expect(main).not.toContainText(/\d|Mostrando|elementos requieren revisión|Oculto por alcance/);
+        for (const value of Object.values(REVIEW_ITEM)) await expect(main).not.toContainText(value);
+        for (const other of safeStates) {
+          if (other.status !== state.status) await expect(main).not.toContainText(other.copy);
+        }
+      });
+    });
+  }
 
   test("test_authenticated_route_projects_review_summary_without_page_overflow", async ({
     page,
