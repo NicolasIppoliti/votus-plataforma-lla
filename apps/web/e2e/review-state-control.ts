@@ -27,6 +27,24 @@ export const REVIEW_SAFE_STATE_PAYLOADS = {
   unavailable: { ...CONTROLLED_DENIAL, status: "unavailable" },
 } as const;
 
+// Presentation-only pages: counts in the authenticated shell still come from the DB.
+export function reviewPagePayload(offset: number, total = 101) {
+  const remaining = Math.max(0, total - offset - 50);
+  return {
+    authorization_status: "authorized",
+    exclusions: remaining ? [{ reason: "pagination_bound", rows: remaining }] : [],
+    items: Array.from({ length: Math.min(50, Math.max(0, total - offset)) }, (_, index) => ({
+      detected_at: new Date(Date.UTC(2026, 0, 1) + (offset + index) * 1000).toISOString(),
+      id: `00000000-0000-4000-8000-${(offset + index + 1).toString(16).padStart(12, "0")}`,
+      kind: "content_drift",
+      severity: "warning",
+    })),
+    status: "ok",
+    total,
+    truncated: remaining > 0,
+  };
+}
+
 export type ReviewFetchHandler = (request: Request) => FetchHandlerResult | Promise<FetchHandlerResult>;
 type RecordValue = Record<string, unknown>;
 
