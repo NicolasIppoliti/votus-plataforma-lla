@@ -18,11 +18,11 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
 import { z } from "zod";
+import { PlaywrightFailure, playwrightFailure } from "../e2e/playwright-failure-diagnostics.ts";
 import {
 	EXPECTED_E2E_SPECS,
 	classifyStaleOwnership,
 	planStaleWorkdirReap,
-	type GateTestResult,
 } from "../e2e/gate-contract.ts";
 import {
 	SERVER_SCENARIOS,
@@ -39,6 +39,7 @@ import {
 	assertTs7Version,
 	migrationVersionFromFileName,
 	cleanupDiagnosticsLine,
+	ReleaseGateCleanupError,
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
@@ -116,10 +117,6 @@ class ReleaseGateFailure extends Error {
 		super(message);
 		this.metadata = metadata;
 	}
-}
-interface PlaywrightReceipt {
-	suiteStatus: string;
-	results: GateTestResult[];
 }
 function commandResult(
 	command: string,
@@ -497,28 +494,7 @@ export async function runPlaywright(
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	if (!result.error && result.status === 0) return;
-	let summary = "no reporter receipt";
-	try {
-		const receipt = JSON.parse(
-			await readFile(receiptPath, "utf8"),
-		) as PlaywrightReceipt;
-		const counts = new Map<string, number>();
-		for (const testResult of receipt.results)
-			counts.set(testResult.status, (counts.get(testResult.status) ?? 0) + 1);
-		summary = `${receipt.results.length} discovered, ${[...counts.entries()]
-			.map(([status, count]) => `${status}=${count}`)
-			.join(", ")}, suite=${receipt.suiteStatus}, non-passing=[${receipt.results
-			.filter(({ status }) => status !== "passed")
-			.map(({ spec, status, failureLine }) =>
-				`${spec}:${status}${failureLine === undefined ? "" : `@${failureLine}`}`,
-			)
-			.join(", ")}]`;
-	} catch {
-		/* missing receipt is a failure */
-	}
-	throw new Error(
-		`Playwright release suite failed (exit ${result.status ?? "unavailable"}; ${summary}); output redacted`,
-	);
+	throw await playwrightFailure(result.status, Boolean(result.error), receiptPath);
 }
 async function stopChild(child: ChildProcess): Promise<void> {
 	if (child.exitCode !== null) return;
@@ -1239,6 +1215,20 @@ export function reportReleaseGateFailure(
 	writeError: (chunk: string) => void = (chunk) => process.stderr.write(chunk),
 ): void {
 	writeError(`${label}: details redacted\n`);
+	const pending = [error];
+	const seen = new Set<unknown>();
+	while (pending.length > 0) {
+		const error = pending.pop();
+		if (seen.has(error)) continue;
+		seen.add(error);
+		if (error instanceof AggregateError) pending.push(...error.errors);
+		if (error instanceof Error && error.cause !== undefined) pending.push(error.cause);
+		reportDiagnostic(error, writeError);
+	}
+}
+
+function reportDiagnostic(error: unknown, writeError: (chunk: string) => void): void {
+	if (error instanceof PlaywrightFailure) writeError(error.line());
 	if (error instanceof ReleaseGateFailure)
 		writeError(
 			`E2E_RELEASE_GATE_FAILURE ${JSON.stringify({
@@ -1264,8 +1254,10 @@ export function reportReleaseGateFailure(
 			})}\n`,
 		);
 	}
-	const diagnostics = cleanupDiagnosticsLine(error);
-	if (diagnostics) writeError(`${diagnostics}\n`);
+	if (error instanceof ReleaseGateCleanupError) {
+		const diagnostics = cleanupDiagnosticsLine(error);
+		if (diagnostics) writeError(`${diagnostics}\n`);
+	}
 }
 
 export interface ReleaseGateMainDependencies {
