@@ -900,6 +900,103 @@ def test_setup_and_cleanup_failure_are_reported_as_separate_causes() -> None:
     assert any("drop failed" in message for message in messages)
 
 
+@pytest.mark.parametrize(("enabled", "proof_fails"), [(True, False), (True, True), (False, False)])
+def test_command_runs_owned_atomicity_proof_before_restricted_pytest_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, capsys, enabled: bool, proof_fails: bool
+) -> None:
+    from etl import verify
+
+    connections = _Connections()
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@127.0.0.1/template1",
+        identity=_identity(),
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+    events: list[str] = []
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", database.admin_dsn)
+    monkeypatch.setattr(
+        sys, "argv", ["etl-verify", *(["--migration-atomicity"] if enabled else [])]
+    )
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _: database)
+
+    def proof(owned: DisposablePostgres, migrations: Path) -> None:
+        assert owned is database and owned.created_by_this_run
+        assert owned.admin is None
+        assert migrations.name == "migrations"
+        events.append("proof")
+        if proof_fails:
+            raise RuntimeError("migration_atomicity:ledger:rollback=0")
+
+    def migrate(dsn: str, migrations: Path) -> int:
+        assert dsn == database.migration_dsn
+        events.append("migrations")
+        return 1
+
+    def pytest_child(dsn: str, root: Path) -> verify.PytestResult:
+        assert "maintenance-value" not in dsn
+        assert database.identity.role_name in dsn
+        assert database.admin is None
+        events.append("restricted_pytest")
+        return verify.PytestResult(executed=1, skipped=0)
+
+    monkeypatch.setattr(verify, "run_migration_atomicity", proof, raising=False)
+    monkeypatch.setattr(verify, "apply_migrations", migrate)
+    monkeypatch.setattr(verify, "run_pytest", pytest_child)
+
+    assert verify.main() == (1 if proof_fails else 0)
+    expected = ["proof"] if enabled else []
+    if not proof_fails:
+        expected.extend(["migrations", "restricted_pytest"])
+    assert events == expected
+    assert connections.admin.databases == {}
+    assert connections.admin.roles == {}
+    output = capsys.readouterr()
+    assert "maintenance-value" not in output.out + output.err
+    assert "disposable-value" not in output.out + output.err
+
+
+def test_command_isolates_cli_credentials_and_cleans_up_on_wrong_cli_version(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    from etl import migration_atomicity, verify
+
+    connections = _Connections()
+    database = DisposablePostgres(
+        "postgresql://postgres:maintenance-value@127.0.0.1:54322/template1",
+        connect=connections,
+    )
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", database.admin_dsn)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("POSTGRES_CONTAINER", "a" * 64)
+    monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "unrelated-value")
+    monkeypatch.setattr(sys, "argv", ["etl-verify", "--migration-atomicity"])
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _: database)
+    monkeypatch.setattr(migration_atomicity.shutil, "which", lambda _: "/synthetic/supabase")
+    children = []
+
+    def cli_child(command, **kwargs):
+        assert command == ["/synthetic/supabase", "--version"]
+        env = kwargs["env"]
+        assert set(env) == {"PATH", "HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "PGPASSWORD"}
+        assert env["PGPASSWORD"] == "maintenance-value"
+        assert Path(env["HOME"]) == kwargs["cwd"]
+        assert kwargs["stdin"] == subprocess.DEVNULL and kwargs["shell"] is False
+        assert kwargs["capture_output"] is True
+        children.append(command)
+        return subprocess.CompletedProcess(command, 1, "", "maintenance-value unrelated-value")
+
+    monkeypatch.setattr(migration_atomicity.subprocess, "run", cli_child)
+
+    assert verify.main() == 1
+    assert len(children) == 1
+    assert connections.admin.databases == connections.admin.roles == {}
+    output = capsys.readouterr()
+    assert "migration_atomicity:cli_pin=0" in output.err
+    assert "maintenance-value" not in output.out + output.err
+    assert "unrelated-value" not in output.out + output.err
+
+
 def test_command_is_reachable_from_the_installed_package_entry_point(tmp_path: Path) -> None:
     entry_point = Path(sys.executable).with_name("etl-verify")
     assert entry_point.is_file()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import secrets
@@ -22,6 +23,8 @@ import psycopg
 from psycopg import sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+from etl.migration_atomicity import run_migration_atomicity
 
 NAME_PREFIX = "votus_etl_verify_"
 MARKER_PREFIX = "votus-etl-verify:"
@@ -662,6 +665,13 @@ def termination_as_interrupt(signum: int, _frame: FrameType | None) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--migration-atomicity",
+        action="store_true",
+        help="Run the real Supabase CLI regression proof on the CI-owned Postgres service",
+    )
+    args = parser.parse_args()
     admin_dsn = os.environ.get("ETL_TEST_ADMIN_DATABASE_URL")
     if not admin_dsn:
         print(
@@ -684,6 +694,8 @@ def main() -> int:
 
     try:
         with database as database_dsn:
+            if args.migration_atomicity:
+                run_migration_atomicity(database, migrations)
             migration_dsn = _require_dsn(database.migration_dsn, "migration")
             migration_count = apply_migrations(migration_dsn, migrations)
             database.grant_test_privileges()

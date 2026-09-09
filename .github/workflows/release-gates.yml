@@ -89,6 +89,10 @@ jobs:
       - name: Ruff format check
         run: uv run --project . --frozen ruff format --check .
         working-directory: etl
+      # v2.1.1
+      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf
+        with:
+          version: 2.116.0
       - name: Run disposable ETL gate
         shell: bash
         env:
@@ -101,7 +105,7 @@ jobs:
             "create role anon nologin; create role authenticated nologin; \
             create role etl_writer login bypassrls password null; \
             grant etl_writer to postgres;"
-          uv run --project etl etl-verify
+          uv run --project etl etl-verify --migration-atomicity
 
   e2e-release:
     runs-on: ubuntu-latest
