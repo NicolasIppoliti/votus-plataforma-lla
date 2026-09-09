@@ -1000,6 +1000,23 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
+	it("allows an artifact step condition without making its release job conditional", () => {
+		expectUnconditionalReleaseJob(
+			"  e2e-release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: ${{ failure() }}\n",
+		);
+	});
+	it.each(["if: ${{ failure() }}", "needs: web-static", "strategy: {}"])(
+		"rejects the release job-level restriction %s even with an artifact step",
+		(restriction) => {
+			expect(() => expectUnconditionalReleaseJob(
+				`  e2e-release:\n    ${restriction}\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: \${{ failure() }}\n`,
+			)).toThrow();
+		},
+	);
+	function expectUnconditionalReleaseJob(releaseJob: string): void {
+		// Match job keys at the workflow's four-space indentation, not nested step keys.
+		expect(releaseJob).not.toMatch(/^ {4}(?:if|needs|strategy):/m);
+	}
 	it("keeps independent release proofs parallel and aggregates their exact results", () => {
 		const workflow = readFileSync(
 			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
@@ -1035,7 +1052,7 @@ describe("base contracts", () => {
 		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
 		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
 		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
-			expect(releaseJob).not.toMatch(/\bif:|\bneeds:|\bstrategy:/);
+			expectUnconditionalReleaseJob(releaseJob);
 
 		expect(scope).toContain("name: scope");
 		expect(scope).toContain("timeout-minutes: 2");
@@ -1103,7 +1120,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(11);
+		expect(actionReferences).toHaveLength(12);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});

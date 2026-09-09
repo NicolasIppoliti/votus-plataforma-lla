@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from yaml.nodes import MappingNode
 
@@ -16,8 +17,52 @@ APPROVED_NODE24_ACTION_REFS = {
     "actions/setup-node": ("a0853c24544627f65ddf259abe73b1d18a591444", 3),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", 1),
     "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 1),
+    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 1),
 }
 _LINE = object()
+
+
+def _assert_independent_release_jobs(jobs: dict[str, Any]) -> None:
+    for name in ("web-static", "etl-release", "e2e-release"):
+        assert not {"if", "needs", "strategy"}.intersection(jobs[name])
+
+
+@pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release"])
+@pytest.mark.parametrize("condition", ['{"if": false}', '\n  "if": false\n'])
+def test_release_job_conditions_cannot_hide_in_yaml_formatting(name: str, condition: str) -> None:
+    jobs = {key: {} for key in ("web-static", "etl-release", "e2e-release")}
+    jobs[name] = yaml.safe_load(condition)
+    with pytest.raises(AssertionError):
+        _assert_independent_release_jobs(jobs)
+
+
+def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    _assert_independent_release_jobs(workflow["jobs"])
+    assert workflow["jobs"]["verify"]["if"] == "${{ always() }}"
+    uploads = [
+        (job_name, index, step)
+        for job_name, job in workflow["jobs"].items()
+        for index, step in enumerate(job["steps"])
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1
+    job_name, index, upload = uploads[0]
+    assert job_name == "e2e-release"
+    gate = workflow["jobs"][job_name]["steps"][index - 1]
+    assert gate["run"] == "pnpm test:e2e:gate"
+    assert gate["working-directory"] == "apps/web"
+    assert upload["uses"] == ("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+    assert upload["if"] == "${{ failure() }}"
+    assert upload["with"] == {
+        "name": "review-focus-geometry",
+        "path": "apps/web/test-results/**/review-focus-geometry.json",
+        "retention-days": 1,
+        "include-hidden-files": False,
+        "if-no-files-found": "ignore",
+    }
+    assert "continue-on-error" not in gate
+    assert workflow["permissions"] == {"contents": "read"}
 
 
 class _LineLoader(yaml.SafeLoader):
