@@ -228,6 +228,44 @@ describe("review test transport", () => {
     expect(outboundFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("holds a validated request, releases a failure, and permits a sanitized recovery", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let signalMatch!: () => void;
+    const matched = new Promise<void>((resolve) => { signalMatch = resolve; });
+    let recover = false;
+    let settled = false;
+    const handler = createReviewStateHandler("http://127.0.0.1:54321", signalMatch, async () => {
+      await held;
+      return recover
+        ? Response.json(REVIEW_SAFE_STATE_PAYLOADS.authorized_empty)
+        : new Response(null, { status: 503 });
+    });
+    const request = () => new Request("http://127.0.0.1:54321/rest/v1/rpc/review_items", {
+      method: "POST", body: JSON.stringify({ p_limit: 50, p_offset: 0 }),
+    });
+    const pending = Promise.resolve(handler(request())).then((response) => {
+      settled = true;
+      return response;
+    });
+    try {
+      await matched;
+      expect(settled).toBe(false);
+      release();
+      const failed = await pending;
+      if (!(failed instanceof Response)) throw new Error("expected controlled failure");
+      expect(failed.status).toBe(503);
+      recover = true;
+      const recovered = await handler(request());
+      if (!(recovered instanceof Response)) throw new Error("expected controlled recovery");
+      expect(recovered.status).toBe(200);
+      expect(sanitizeReviewItems(await recovered.json(), 50, 0)).toEqual({ status: "authorized_empty" });
+    } finally {
+      release();
+      await pending;
+    }
+  });
+
   it.each(Object.entries(REVIEW_SAFE_STATE_PAYLOADS))(
     "projects the browser wire fixture through the real sanitizer as %s",
     async (status, payload) => {
