@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeReviewItems } from "../src/lib/workspace/review-items";
 import {
   createReviewStateHandler,
+  reviewPagePayload,
   createReviewTestWorker,
   REVIEW_SAFE_STATE_PAYLOADS,
 } from "./review-state-control";
@@ -34,6 +35,30 @@ function proxyRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("review test transport", () => {
+  it.each([
+    [0, 101, 50, 51], [50, 101, 50, 1], [100, 101, 1, 0],
+    [150, 101, 0, 0], [1, 101, 50, 50],
+    [1_999_999_950, 2_000_000_051, 50, 51],
+    [2_000_000_000, 2_000_000_051, 50, 1],
+  ])("sanitizes the controlled wire window at offset %i", async (offset, total, count, remaining) => {
+    const handler = createReviewStateHandler("http://127.0.0.1:54321", undefined,
+      (selected) => Response.json(reviewPagePayload(selected, total)));
+    const response = await handler(new Request("http://127.0.0.1:54321/rest/v1/rpc/review_items", {
+      method: "POST", body: JSON.stringify({ p_limit: 50, p_offset: offset }),
+    }));
+    if (!(response instanceof Response)) throw new Error("expected review fixture response");
+    const wire = await response.json();
+    expect(wire.exclusions).toEqual(remaining ? [{ reason: "pagination_bound", rows: remaining }] : []);
+    const sanitized = sanitizeReviewItems(wire, 50, offset);
+    expect(sanitized).toMatchObject({ status: "ok", total, truncated: remaining > 0 });
+    if (sanitized.status !== "ok") throw new Error("fixture refused by real sanitizer");
+    expect(sanitized.items).toHaveLength(count);
+    expect(JSON.stringify(sanitized)).not.toMatch(/"id"|subject_ref|note/);
+    if (count) expect(sanitized.items[0]).toMatchObject({ severity: "warning", kind: "content_drift" });
+    expect(sanitizeReviewItems({ ...wire, items: [...wire.items, wire.items[0]] }, 50, offset))
+      .toEqual({ status: "unavailable" });
+  });
+
   it("enables Next's test proxy only for the gate child environment", async () => {
     process.env[TEST_PROXY_ENVIRONMENT] = "1";
     vi.resetModules();

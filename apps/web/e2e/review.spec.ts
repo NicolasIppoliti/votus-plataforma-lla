@@ -3,7 +3,7 @@ import { type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import { durationInMilliseconds } from "./css-duration";
-import { createReviewStateHandler, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
+import { createReviewStateHandler, reviewPagePayload, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
 
 const READ_ONLY_NOTICE =
@@ -185,8 +185,190 @@ async function expectPopulatedReviewLayout(
   await expectCellTextContained(row);
 }
 
+const PREVIOUS_PAGE = "Página anterior de la cola de revisión";
+const NEXT_PAGE = "Página siguiente de la cola de revisión";
+const NAVIGATION_NAMES = ["Resumen operativo", "Explorar", "Comparar", "Municipal", "Fiscalización (no oficial)", "Simulación 2027", "Revisión de datos"];
+
+async function expectKeyboardFocus(target: Locator, region = false): Promise<void> {
+  await expect(target).toBeFocused();
+  await expect(target).toHaveCSS("outline-width", "3px");
+  await expect(target).toHaveCSS("outline-style", "solid");
+  await expect(target).toHaveCSS("outline-offset", "3px");
+  await expect.poll(() => target.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+  const visibility = await target.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const color = getComputedStyle(element).outlineColor;
+    return {
+      opaque: color !== "transparent" && !/[,/]\s*0\s*\)$/.test(color),
+      intersects: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
+      contained: box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth,
+    };
+  });
+  expect(visibility.opaque).toBe(true);
+  expect(visibility.intersects).toBe(true);
+  if (!region) expect(visibility.contained).toBe(true);
+}
+
+async function tabTo(page: Page, target: Locator, reverse = false, region = false): Promise<void> {
+  await page.keyboard.press(reverse ? "Shift+Tab" : "Tab");
+  await expectKeyboardFocus(target, region);
+}
+
+async function expectReviewWindow(page: Page, count: number, firstDetected: string): Promise<void> {
+  const main = page.getByRole("main");
+  await expect(main).toContainText(`Mostrando ${count} de 101.`);
+  const rows = main.getByRole("table").locator("tbody").getByRole("row");
+  await expect(rows).toHaveCount(count);
+  await expect(rows.first().getByRole("cell").nth(3)).toHaveText(firstDetected);
+  await expect(rows.getByRole("cell", { name: "Oculto por alcance", exact: true })).toHaveCount(count * 2);
+  await expect(rows.getByRole("cell", { name: "content_drift", exact: true })).toHaveCount(count);
+  await expect(rows.getByRole("cell", { name: "warning", exact: true })).toHaveCount(count);
+  await expect(main).not.toContainText("00000000-0000-4000-8000-");
+}
+
 test.describe("the review route reflects the disposable database", () => {
   test.use({ hasTouch: true });
+
+  for (const width of [1440, 320]) {
+    test(`test_review_pagination_visits_real_urls_and_masked_windows_at_${width}px`, async ({ page, next }) => {
+      const offsets: number[] = [];
+      next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+        undefined, (offset) => { offsets.push(offset); return Response.json(reviewPagePayload(offset)); }));
+      await withReviewItem(page, async () => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto("/review");
+        await expect(page).toHaveURL(/\/review$/);
+        await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+        await expect(page.getByRole("link", { name: PREVIOUS_PAGE })).toHaveCount(0);
+        for (const step of [
+          { name: NEXT_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
+          { name: NEXT_PAGE, offset: 100, count: 1, date: "2026-01-01T00:01:40.000Z" },
+          { name: PREVIOUS_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
+        ]) {
+          const pager = page.getByRole("link", { name: step.name });
+          if (width === 320) {
+            await pager.scrollIntoViewIfNeeded();
+            const box = await pager.boundingBox();
+            if (!box) throw new Error("pager has no touch target");
+            expect(box.width).toBeGreaterThanOrEqual(44);
+            expect(box.height).toBeGreaterThanOrEqual(44);
+            await pager.tap();
+          } else await pager.click();
+          await expect(page).toHaveURL(new RegExp(`/review\\?offset=${step.offset}$`));
+          await expectReviewWindow(page, step.count, step.date);
+          await expect(page.getByRole("link", { name: PREVIOUS_PAGE })).toHaveCount(1);
+          await expect(page.getByRole("link", { name: NEXT_PAGE })).toHaveCount(step.offset === 100 ? 0 : 1);
+          await expectDocumentNotToOverflow(page);
+        }
+        // Next can reuse a prefetched/cached page when navigating back.
+        expect(offsets).toEqual(expect.arrayContaining([0, 50, 100]));
+        expect(offsets.every((offset) => [0, 50, 100].includes(offset))).toBe(true);
+      });
+    });
+  }
+
+  test("test_review_offset_fallbacks_empty_window_and_ceiling", async ({ page, next }) => {
+    const offsets: number[] = [];
+    next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+      undefined, (offset) => {
+        offsets.push(offset);
+        return Response.json(reviewPagePayload(offset, offset >= 1_999_999_950 ? 2_000_000_051 : 101));
+      }));
+    await withReviewItem(page, async () => {
+      for (const query of ["-1", "1.5", "nope", "2000000001", "00000000000"]) {
+        const before = offsets.length;
+        await page.goto(`/review?offset=${query}`);
+        await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+        expect(offsets.slice(before)).toContain(0);
+      }
+      await page.goto("/review?offset=1");
+      await expectReviewWindow(page, 50, "2026-01-01T00:00:01.000Z");
+      await page.getByRole("link", { name: PREVIOUS_PAGE }).click();
+      await expect(page).toHaveURL(/\/review\?offset=0$/);
+      await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+      await page.goto("/review?offset=150");
+      await expect(page.getByRole("main")).toContainText("No hay elementos de revisión en esta página.");
+      await expect(page.getByRole("table")).toHaveCount(0);
+      await expect(page.getByRole("link", { name: NEXT_PAGE })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: PREVIOUS_PAGE })).toHaveAttribute("href", "/review?offset=100");
+      await page.goto("/review?offset=1999999950");
+      await expect(page.getByRole("main")).toContainText("Mostrando 50 de 2000000051.");
+      await expect(page.getByRole("table").locator("tbody").getByRole("row")).toHaveCount(50);
+      await page.getByRole("link", { name: NEXT_PAGE }).click();
+      await expect(page).toHaveURL(/\/review\?offset=2000000000$/);
+      await expect(page.getByRole("main")).toContainText("Mostrando 50 de 2000000051.");
+      await expect(page.getByRole("table").locator("tbody").getByRole("row")).toHaveCount(50);
+      await expect(page.getByRole("link", { name: NEXT_PAGE })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: PREVIOUS_PAGE })).toHaveAttribute("href", "/review?offset=1999999950");
+      expect(offsets).toEqual(expect.arrayContaining([0, 1, 150, 1_999_999_950, 2_000_000_000]));
+    });
+  });
+
+  test("test_review_natural_keyboard_order_drawer_trap_and_pager_activation", async ({ page, next }) => {
+    next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+      undefined, (offset) => Response.json(reviewPagePayload(offset))));
+    await withReviewItem(page, async () => {
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        // Full navigation resets sequential focus; viewport changes alone do not.
+        await page.goto("/review?offset=50");
+        await expectReviewWindow(page, 50, "2026-01-01T00:00:50.000Z");
+        await tabTo(page, page.getByRole("link", { name: "Ir al contenido principal" }));
+        if (width === 1440) {
+          await tabTo(page, page.getByRole("link", { name: "Panel de Votus" }));
+          for (const name of NAVIGATION_NAMES) await tabTo(page, page.getByRole("navigation", { name: "principal", exact: true }).getByRole("link", { name, exact: true }));
+        } else {
+          const trigger = page.getByRole("button", { name: "Abrir navegación" });
+          await tabTo(page, trigger);
+          await page.keyboard.press("Enter");
+          const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+          const close = drawer.getByRole("button", { name: "Cerrar navegación" });
+          await expectKeyboardFocus(close);
+          await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true);
+          await tabTo(page, close);
+          await tabTo(page, drawer.getByRole("link", { name: "Panel de Votus" }));
+          for (const name of NAVIGATION_NAMES) await tabTo(page, drawer.getByRole("link", { name, exact: true }));
+          await tabTo(page, close);
+          await page.keyboard.press("Escape");
+          await expect(drawer).not.toBeVisible();
+          await expectKeyboardFocus(trigger);
+        }
+        const organization = page.getByRole("combobox", { name: "Organización" });
+        const submit = page.getByRole("button", { name: "Cambiar organización" });
+        await expect(organization).toBeEnabled();
+        await expect(submit).toBeEnabled();
+        await tabTo(page, organization);
+        await tabTo(page, submit);
+        const realCount = page.getByRole("banner").getByRole("link", { name: /^\d+ elemento\(s\) de revisión pendiente\(s\)$/ });
+        await expect(realCount).toHaveText("1 elemento(s) de revisión pendiente(s)");
+        await tabTo(page, realCount);
+        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }));
+        const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
+        await tabTo(page, region, false, true);
+        if (width < 1024) {
+          const before = await region.evaluate((element) => element.scrollLeft);
+          await page.keyboard.press("ArrowRight");
+          await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(before);
+        }
+        const previous = page.getByRole("link", { name: PREVIOUS_PAGE });
+        const nextPage = page.getByRole("link", { name: NEXT_PAGE });
+        await tabTo(page, previous);
+        await tabTo(page, nextPage);
+        await tabTo(page, previous, true);
+        if (width === 1440) {
+          await page.keyboard.press("Enter");
+          await expect(page).toHaveURL(/\/review\?offset=0$/);
+          await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+        } else {
+          await tabTo(page, nextPage);
+          await page.keyboard.press("Enter");
+          await expect(page).toHaveURL(/\/review\?offset=100$/);
+          await expectReviewWindow(page, 1, "2026-01-01T00:01:40.000Z");
+          await expect(nextPage).toHaveCount(0);
+        }
+      }
+    });
+  });
 
   test("test_controlled_review_denial_is_presentation_evidence_only", async ({ page, next }) => {
     let matched = 0;
