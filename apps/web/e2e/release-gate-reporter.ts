@@ -15,6 +15,11 @@ import {
 	type GateTestResult,
 } from "./gate-contract";
 
+import {
+	attemptSchema, attemptStatus, diagnosticPath,
+	type PlaywrightAttempt, type CompanionReport,
+} from "./playwright-failure-diagnostics.ts";
+
 const RECEIPT_MODE = {
 	FULL: "full",
 	FOCUSED: "focused",
@@ -134,6 +139,10 @@ export default class ReleaseGateReporter implements Reporter {
 	private readonly expectedSpecsByTestId = new Map<string, string>();
 	private readonly results = new Map<string, GateTestResult>();
 	private readonly unexpectedTestIds = new Set<string>();
+	private readonly identities = new Map<string, unknown>();
+	private attempts: PlaywrightAttempt[] = [];
+	private counts = { failed: 0, timedOut: 0, skipped: 0, interrupted: 0 };
+	private unmappableAttempts = 0;
 	private readonly receiptPath: string | undefined;
 	private readonly selection: GateReceiptSelection;
 	private readonly writeReceipt: (path: string, content: string) => void;
@@ -151,6 +160,10 @@ export default class ReleaseGateReporter implements Reporter {
 	onBegin(config: FullConfig, suite: Suite): void {
 		void config;
 		this.results.clear();
+		this.identities.clear();
+		this.attempts = [];
+		this.counts = { failed: 0, timedOut: 0, skipped: 0, interrupted: 0 };
+		this.unmappableAttempts = 0;
 		this.expectedSpecsByTestId.clear();
 		this.unexpectedTestIds.clear();
 		this.expectedTestIdsBySpec.clear();
@@ -161,15 +174,32 @@ export default class ReleaseGateReporter implements Reporter {
 			const expectedTestIds = this.expectedTestIdsBySpec.get(spec);
 			if (!expectedTestIds || this.expectedSpecsByTestId.has(test.id)) {
 				this.unexpectedTestIds.add(test.id);
+				this.identities.delete(test.id);
 				continue;
 			}
 			expectedTestIds.push(test.id);
+			this.identities.set(test.id, {
+				spec, line: test.location.line, column: test.location.column,
+				ordinal: expectedTestIds.length,
+			});
 			this.expectedSpecsByTestId.set(test.id, spec);
 		}
 	}
 
 	onTestEnd(test: TestCase, result: TestResult): void {
 		const spec = relativeTestSpec(test);
+		if (result.status !== "passed") {
+			const status = attemptStatus.safeParse(result.status);
+			if (status.success) this.counts[status.data]++;
+			const identity = this.identities.get(test.id);
+			const attempt = attemptSchema.safeParse({
+				...(typeof identity === "object" && identity !== null ? identity : {}),
+				status: result.status, retry: result.retry,
+			});
+			if (attempt.success && this.expectedSpecsByTestId.get(test.id) === spec)
+				this.attempts.push(attempt.data);
+			else this.unmappableAttempts++;
+		}
 		if (this.expectedSpecsByTestId.get(test.id) !== spec) {
 			this.unexpectedTestIds.add(test.id);
 			return;
@@ -208,6 +238,20 @@ export default class ReleaseGateReporter implements Reporter {
 		});
 	}
 
+	private writeDiagnostics(report: CompanionReport): void {
+		if (!this.receiptPath) return;
+		try {
+			this.writeReceipt(diagnosticPath(this.receiptPath), JSON.stringify({
+				schemaVersion: 1, attempts: this.attempts, counts: this.counts,
+				missingResults: [...this.expectedSpecsByTestId.keys()].filter((id) => !this.results.has(id)).length,
+				unexpectedDiscoveries: this.unexpectedTestIds.size,
+				unmappableAttempts: this.unmappableAttempts, report,
+			}));
+		} catch {
+			/* Best-effort diagnostics must not change the canonical outcome. */
+		}
+	}
+
 	async onEnd(
 		result: FullResult,
 	): Promise<{ status: FullResult["status"] } | void> {
@@ -220,6 +264,7 @@ export default class ReleaseGateReporter implements Reporter {
 			this.unexpectedTestIds.size > 0 && result.status === "passed"
 				? "failed"
 				: result.status;
+		let report: CompanionReport = "rejected";
 		try {
 			if (this.selection.mode === RECEIPT_MODE.FULL)
 				assertGateReport(completed, suiteStatus);
@@ -232,6 +277,7 @@ export default class ReleaseGateReporter implements Reporter {
 					selection: this.selection,
 				}),
 			);
+			report = "accepted";
 			return;
 		} catch (error) {
 			const message =
@@ -247,6 +293,8 @@ export default class ReleaseGateReporter implements Reporter {
 			);
 			this.writeError(`${message}\n`);
 			return { status: "failed" };
+		} finally {
+			this.writeDiagnostics(report);
 		}
 	}
 }

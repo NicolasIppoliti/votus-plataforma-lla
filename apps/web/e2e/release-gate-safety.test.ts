@@ -18,6 +18,7 @@ import {
 	listOwnedNetworks,
 	removeOwnedNetworks,
 	releaseGateMain,
+	runPlaywright,
 } from "../scripts/e2e-release-gate";
 import {
 	RELEASE_GATE_TIMING_PHASE,
@@ -41,6 +42,7 @@ import {
 } from "./gate-contract";
 import {
 	RELEASE_GATE_MODE,
+	ReleaseGateCleanupError,
 	assertExactMigrationInventory,
 	assertStackStatus,
 	assertSyntheticMigrationDoesNotCollide,
@@ -61,13 +63,17 @@ import {
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
-const { createServer, randomUUID, spawnSync, tmpdir } = vi.hoisted(() => ({
+const { createServer, randomUUID, spawnSync, tmpdir, open } = vi.hoisted(() => ({
+	open: vi.fn(),
 	createServer: vi.fn(),
 	randomUUID: vi.fn(),
 	spawnSync: vi.fn(),
 	tmpdir: vi.fn(),
 }));
 
+vi.mock("node:fs/promises", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:fs/promises")>()), open,
+}));
 vi.mock("node:child_process", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:child_process")>()),
 	spawnSync,
@@ -2081,6 +2087,17 @@ describe("release-gate version and endpoint validation", () => {
 	});
 });
 describe("ReleaseGateReporter", () => {
+	const supplyCompanion = (text: string) => {
+		let position = 0;
+		open.mockResolvedValue({
+			read: async (buffer: Buffer, offset: number, length: number) => {
+				const bytesRead = Buffer.from(text).copy(buffer, offset, position, position + length);
+				position += bytesRead;
+				return { bytesRead };
+			},
+			close: async () => undefined,
+		});
+	};
 	const testCaseFor = (spec: string, id: string, title: string) =>
 		({
 			id,
@@ -2100,9 +2117,134 @@ describe("ReleaseGateReporter", () => {
 	) =>
 		new ReleaseGateReporter({
 			receiptPath: "/receipt.json",
-			writeReceipt: (_path, content) => capture(content),
+			writeReceipt: (target, content) => { if (target === "/receipt.json") capture(content); },
 			writeError,
 		});
+	it("retains safe attempt history and distinct discovery ordinals at a shared declaration", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({
+			receiptPath: "/receipt.json",
+			writeReceipt: (target, content) => { writes.set(target, content); },
+			writeError: () => undefined,
+		});
+		const first = testCaseFor(EXPECTED_E2E_SPECS[0], "SECRET-ID-1", "SECRET-TITLE");
+		first.location.line = 12;
+		first.location.column = 3;
+		const second = { ...first, id: "SECRET-ID-2" };
+		reporter.onBegin({} as FullConfig, suiteFor([first, second, ...cases.slice(1)]));
+		for (const [test, status, retry] of [
+			[first, "failed", 0], [second, "timedOut", 0], [first, "interrupted", 1],
+		] as const)
+			reporter.onTestEnd(test, {
+				status, retry,
+				errors: [{ message: "SECRET-ERROR", location: { file: "/SECRET-PATH", line: 99 } }],
+			} as TestResult);
+		for (const test of [first, second, ...cases.slice(1)])
+			reporter.onTestEnd(test, { status: "passed", retry: 2 } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
+		expect(JSON.parse(writes.get("/receipt.json")!).results).toEqual(
+			EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+		);
+		const companion = writes.get("/receipt.json.diagnostics.json");
+		expect(companion).toBeDefined();
+		expect(companion).not.toMatch(/SECRET|failureLine|title|errors/);
+		expect(JSON.parse(companion!).attempts).toEqual([
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0 },
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 2, status: "timedOut", retry: 0 },
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "interrupted", retry: 1 },
+		]);
+		supplyCompanion(companion!);
+		spawnSync.mockReturnValue({ status: 1 });
+		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		const output: string[] = [];
+		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
+		expect(output.join("")).toContain(`"companion":${companion}`);
+		expect(output.join("")).not.toMatch(/SECRET|failureLine/);
+	});
+	it("emits safe typed Playwright diagnostics through causes alongside cleanup failures", async () => {
+		open.mockRejectedValue(Object.assign(new Error("SECRET-FILE"), { code: "ENOENT" }));
+		spawnSync.mockReturnValue({ status: 1, stdout: "SECRET-PIPE", stderr: "SECRET-PIPE" });
+		const execution = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		const cleanup = new ReleaseGateCleanupError([{ category: "STACK_STOP", error: new Error("SECRET-CLEANUP") }]);
+		const lines: string[] = [];
+		const secondCleanup = new ReleaseGateCleanupError([
+			{ category: "STACK_STOP", error: new Error("SECRET-SECOND-CLEANUP") },
+		]);
+		reportReleaseGateFailure("gate", new AggregateError([
+			new Error("SECRET-WRAPPER", { cause: execution }), cleanup, secondCleanup,
+		]), (line) => { lines.push(line); });
+		const output = lines.join("");
+		expect(output).toContain('E2E_PLAYWRIGHT_DIAGNOSTIC {"schemaVersion":1,"exitCode":1,"spawn":"completed","availability":"missing"}');
+		expect(output.match(/E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS/g)).toHaveLength(2);
+		expect(output).not.toContain("SECRET");
+	});
+	it.each([
+		["unreadable", null], ["invalid-json", "{"],
+		["invalid-schema", '{"schemaVersion":2,"attempts":"SECRET","SECRET-KEY":true}'],
+		["oversized", " ".repeat(256 * 1024 + 1)],
+	] as const)("keeps child failure and safely classifies %s evidence", async (availability, text) => {
+		if (text === null) open.mockRejectedValue(new Error("SECRET-READ"));
+		else supplyCompanion(text);
+		spawnSync.mockReturnValue({ status: null, error: new Error("SECRET-SPAWN") });
+		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(Error);
+		const output: string[] = [];
+		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
+		const marker = JSON.parse(output[1]!.slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length));
+		expect(marker).toMatchObject({ exitCode: null, spawn: "failed", availability });
+		if (availability === "invalid-schema") expect(marker.issues).toEqual([
+			{ code: "invalid_value", count: 2 }, { code: "invalid_type", count: 5 },
+			{ code: "unrecognized_keys", count: 1 },
+		]);
+		expect(output.join("")).not.toContain("SECRET");
+	});
+	it("does not read diagnostics or change successful child decisions", async () => {
+		open.mockClear();
+		spawnSync.mockReturnValue({ status: 0 });
+		await expect(runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS)).resolves.toBeUndefined();
+		expect(open).not.toHaveBeenCalled();
+	});
+	it("records reporter rejection and metadata losses even when browser cases pass", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target, content) => { writes.set(target, content); }, writeError: () => undefined });
+		const unknown = testCaseFor("./SECRET.spec.ts", "SECRET-ID", "SECRET-TITLE");
+		reporter.onBegin({} as FullConfig, suiteFor([...cases, unknown]));
+		for (const test of cases) reporter.onTestEnd(test, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		const companion = writes.get("/receipt.json.diagnostics.json")!;
+		expect(JSON.parse(companion)).toMatchObject({
+			report: "rejected", attempts: [], unexpectedDiscoveries: 1,
+			unmappableAttempts: 0, counts: { skipped: 0 },
+		});
+		supplyCompanion(companion);
+		spawnSync.mockReturnValue({ status: 1 });
+		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		const output: string[] = [];
+		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
+		expect(output.join("")).toContain('"report":"rejected"');
+		expect(output.join("")).not.toContain("SECRET");
+	});
+	it("counts missing results and unmappable declarations without guessing identities", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target, content) => { writes.set(target, content); }, writeError: () => undefined });
+		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, { status: "failed", retry: 0 } as TestResult);
+		reporter.onTestEnd(testCaseFor("./SECRET.spec.ts", "unknown", "SECRET"), { status: "skipped", retry: 0 } as TestResult);
+		for (const test of cases.slice(2)) reporter.onTestEnd(test, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(writes.get("/receipt.json.diagnostics.json")!)).toMatchObject({
+			attempts: [], missingResults: 1, unexpectedDiscoveries: 1, unmappableAttempts: 2,
+			counts: { failed: 1, timedOut: 0, skipped: 1, interrupted: 0 },
+		});
+	});
+	it("keeps canonical success when companion writing fails", async () => {
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target) => {
+			if (target.endsWith(".diagnostics.json")) throw new Error("SECRET-WRITE");
+		} });
+		reporter.onBegin({} as FullConfig, suite);
+		for (const test of cases) reporter.onTestEnd(test, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
+	});
 	it("uses the final valid callback outcome for a retry", async () => {
 		let receipt = "";
 		const reporter = makeReporter((content) => {
