@@ -131,6 +131,15 @@ jobs:
         working-directory: apps/web
       - run: pnpm test:e2e:gate
         working-directory: apps/web
+      # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ failure() }}
+        with:
+          name: review-focus-geometry
+          path: apps/web/test-results/**/review-focus-geometry.json
+          retention-days: 1
+          include-hidden-files: false
+          if-no-files-found: ignore
 
   verify:
     name: verify

@@ -6,6 +6,7 @@ import { durationInMilliseconds } from "./css-duration";
 import { createReviewStateHandler, reviewPagePayload, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
 import { zoomTest } from "./review-zoom-test-fixture";
+import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focus-geometry";
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -190,7 +191,7 @@ const PREVIOUS_PAGE = "Página anterior de la cola de revisión";
 const NEXT_PAGE = "Página siguiente de la cola de revisión";
 const NAVIGATION_NAMES = ["Resumen operativo", "Explorar", "Comparar", "Municipal", "Fiscalización (no oficial)", "Simulación 2027", "Revisión de datos"];
 
-async function expectKeyboardFocus(target: Locator, region = false): Promise<void> {
+async function expectKeyboardFocus(target: Locator, region = false, control: ReviewFocusControl = "unlabelled"): Promise<void> {
   await expect(target).toBeFocused();
   await expect(target).toHaveCSS("outline-width", "3px");
   await expect(target).toHaveCSS("outline-style", "solid");
@@ -203,22 +204,36 @@ async function expectKeyboardFocus(target: Locator, region = false): Promise<voi
     for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
       effectiveOpacity *= Number(getComputedStyle(ancestor).opacity);
     }
+    const rect = (value: DOMRect) => ({
+      left: value.left, top: value.top, right: value.right, bottom: value.bottom,
+      width: value.width, height: value.height,
+    });
+    const dialog = element.closest("dialog[open]");
     return {
       effectiveOpacity,
       opaque: color !== "transparent" && !/[,/]\s*0\s*\)$/.test(color),
       intersects: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
       contained: box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth,
+      target: rect(box),
+      viewport: { innerWidth, innerHeight, outerWidth, outerHeight, scrollX, scrollY },
+      dialog: dialog ? {
+        rect: rect(dialog.getBoundingClientRect()), clientHeight: dialog.clientHeight,
+        scrollHeight: dialog.scrollHeight, scrollTop: dialog.scrollTop,
+      } : null,
     };
   });
+  if (!visibility.intersects) {
+    await writeReviewFocusGeometry({ control, snapshot: visibility }, test.info());
+  }
   expect(visibility.effectiveOpacity).toBeGreaterThan(0);
   expect(visibility.opaque).toBe(true);
   expect(visibility.intersects).toBe(true);
   if (!region) expect(visibility.contained).toBe(true);
 }
 
-async function tabTo(page: Page, target: Locator, reverse = false, region = false): Promise<void> {
+async function tabTo(page: Page, target: Locator, reverse = false, region = false, control: ReviewFocusControl = "unlabelled"): Promise<void> {
   await page.keyboard.press(reverse ? "Shift+Tab" : "Tab");
-  await expectKeyboardFocus(target, region);
+  await expectKeyboardFocus(target, region, control);
 }
 
 async function expectReviewWindow(page: Page, count: number, firstDetected: string): Promise<void> {
@@ -304,46 +319,46 @@ for (const windowWidth of [1280, 640]) {
         await expect(page.getByRole("main")).toContainText(READ_ONLY_NOTICE);
         await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
         await expectCellTextContained(page.getByRole("table").locator("tbody").getByRole("row").first());
-        await tabTo(page, page.getByRole("link", { name: "Ir al contenido principal" }));
+        await tabTo(page, page.getByRole("link", { name: "Ir al contenido principal" }), false, false, "skip-link");
         // Both zoomed CSS widths use the responsive drawer, not desktop sidebar order.
         const trigger = page.getByRole("button", { name: "Abrir navegación" });
-        await tabTo(page, trigger);
+        await tabTo(page, trigger, false, false, "nav-trigger");
         await expectControlSize(trigger);
         await page.keyboard.press("Enter");
         const drawer = page.getByRole("dialog", { name: "Navegación principal" });
         const close = drawer.getByRole("button", { name: "Cerrar navegación" });
-        await expectKeyboardFocus(close);
+        await expectKeyboardFocus(close, false, "nav-close");
         await expectControlSize(close);
-        await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true);
-        await tabTo(page, close);
+        await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true, false, "last-drawer-link");
+        await tabTo(page, close, false, false, "nav-close");
         await page.keyboard.press("Escape");
         await expect(drawer).not.toBeVisible();
-        await expectKeyboardFocus(trigger);
-        await tabTo(page, page.getByRole("combobox", { name: "Organización" }));
-        await tabTo(page, page.getByRole("button", { name: "Cambiar organización" }));
+        await expectKeyboardFocus(trigger, false, "nav-trigger");
+        await tabTo(page, page.getByRole("combobox", { name: "Organización" }), false, false, "org-select");
+        await tabTo(page, page.getByRole("button", { name: "Cambiar organización" }), false, false, "org-submit");
         const realCount = page.getByRole("banner").getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)", exact: true });
-        await tabTo(page, realCount);
-        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }));
-        await tabTo(page, region, false, true);
+        await tabTo(page, realCount, false, false, "header-count");
+        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
+        await tabTo(page, region, false, true, "review-table-region");
         await expect(region).toHaveAttribute("tabindex", "0");
         const scroll = await region.evaluate((element) => ({ left: element.scrollLeft, width: element.clientWidth, total: element.scrollWidth }));
         expect(scroll.total).toBeGreaterThan(scroll.width);
         await page.keyboard.press("ArrowRight");
         await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(scroll.left);
         await expect(page.getByRole("link", { name: PREVIOUS_PAGE })).toHaveCount(0);
-        await tabTo(page, page.getByRole("link", { name: NEXT_PAGE }));
+        await tabTo(page, page.getByRole("link", { name: NEXT_PAGE }), false, false, "pager-next-entry");
         for (const step of [
-          { name: NEXT_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
-          { name: NEXT_PAGE, offset: 100, count: 1, date: "2026-01-01T00:01:40.000Z" },
-          { name: PREVIOUS_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
-        ]) {
+          { control: "pager-next-50", name: NEXT_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
+          { control: "pager-next-100", name: NEXT_PAGE, offset: 100, count: 1, date: "2026-01-01T00:01:40.000Z" },
+          { control: "pager-previous-50", name: PREVIOUS_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
+        ] as const) {
           const pager = page.getByRole("link", { name: step.name });
           await expect(pager).toHaveAttribute("href", `/review?offset=${step.offset}`);
           await pager.scrollIntoViewIfNeeded();
           await expectControlSize(pager);
           // First activation follows natural Tab entry; later pages explicitly refocus their pager.
           if (step.offset !== 50 || step.name === PREVIOUS_PAGE) await pager.focus();
-          await expectKeyboardFocus(pager);
+          await expectKeyboardFocus(pager, false, step.control);
           await page.keyboard.press("Enter");
           await expect(page).toHaveURL(new RegExp(`/review\\?offset=${step.offset}$`));
           await checkZoom(2);
