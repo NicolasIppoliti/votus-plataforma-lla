@@ -199,6 +199,100 @@ test.describe("the review route reflects the disposable database", () => {
     });
   });
 
+  test("test_review_loading_holds_static_geometry_until_the_validated_fetch_settles", async ({ page, next }) => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let matched = 0;
+    next.onFetch(createReviewStateHandler(
+      assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+      () => { matched += 1; },
+      async () => {
+        await held;
+        return Response.json(REVIEW_SAFE_STATE_PAYLOADS.authorized_empty);
+      },
+    ));
+    try {
+      await withReviewItem(page, async () => {
+        // Do not wait for load/network completion while the server response is held.
+        await page.goto("/review", { waitUntil: "commit" });
+        const main = page.getByRole("main");
+        await expect(main.getByRole("status")).toHaveText("Cargando cola de revisión…");
+        await expect.poll(() => matched).toBeGreaterThan(0);
+        for (const width of [320, 390, 1440]) {
+          await page.setViewportSize({ width, height: 900 });
+          const header = main.getByRole("heading", { level: 1, name: "Cola de revisión" });
+          await expect(header).toBeVisible();
+          const titleBox = await header.boundingBox();
+          const panels = main.locator('[aria-hidden="true"]');
+          await expect(panels).toHaveCount(2);
+          const attentionBox = await panels.nth(0).boundingBox();
+          const resultsBox = await panels.nth(1).boundingBox();
+          if (!titleBox || !attentionBox || !resultsBox) throw new Error("loading geometry missing");
+          expect(attentionBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+          expect(resultsBox.y).toBeGreaterThanOrEqual(attentionBox.y + attentionBox.height);
+          expect(resultsBox.height).toBeGreaterThanOrEqual(192);
+          await expectDocumentNotToOverflow(page);
+        }
+        const placeholders = main.locator(".review-queue__placeholder");
+        for (const motion of ["no-preference", "reduce"] as const) {
+          await page.emulateMedia({ reducedMotion: motion });
+          const animations = await placeholders.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).animationName));
+          expect(animations).toEqual(Array(5).fill("none"));
+        }
+        await expect(main).not.toContainText(/\d|Mostrando|elementos requieren revisión|Oculto por alcance/);
+        await expect(main.getByRole("table")).toHaveCount(0);
+        for (const value of Object.values(REVIEW_ITEM)) await expect(main).not.toContainText(value);
+        release();
+        await expect(main.getByRole("status", { name: "Sin elementos pendientes" })).toBeVisible();
+        await expect(main).not.toContainText("Cargando cola de revisión");
+        await expect(placeholders).toHaveCount(0);
+      });
+    } finally {
+      release();
+    }
+  });
+
+  test("test_review_technical_failure_recovers_by_keyboard_with_a_new_server_fetch", async ({ page, next }) => {
+    let matched = 0;
+    let recover = false;
+    const sentinel = "PRIVATE_REVIEW_FAILURE_SENTINEL";
+    next.onFetch(createReviewStateHandler(
+      assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+      () => { matched += 1; },
+      () => recover
+        ? Response.json(REVIEW_SAFE_STATE_PAYLOADS.authorized_empty)
+        : Response.json({ message: sentinel, details: sentinel, hint: sentinel }, { status: 503 }),
+    ));
+    await withReviewItem(page, async () => {
+      await page.goto("/review");
+      const main = page.getByRole("main");
+      const alert = main.getByRole("alert", { name: "No se pudo cargar la revisión" });
+      await expect(alert).toBeVisible();
+      expect(matched).toBeGreaterThan(0);
+      await expect(main).not.toContainText(/\d|Mostrando|elementos requieren revisión|Oculto por alcance/);
+      await expect(page.locator("body")).not.toContainText(sentinel);
+      await expect(main.getByRole("table")).toHaveCount(0);
+      for (const value of Object.values(REVIEW_ITEM)) await expect(main).not.toContainText(value);
+      for (const width of [320, 390, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(alert).toBeVisible();
+        await expectDocumentNotToOverflow(page);
+      }
+      const retry = alert.getByRole("button", { name: "Reintentar carga" });
+      await retry.focus();
+      await expect(retry).toBeFocused();
+      const failures = matched;
+      recover = true;
+      await retry.press("Enter");
+      await expect(main.getByRole("status", { name: "Sin elementos pendientes" })).toBeVisible();
+      expect(matched).toBeGreaterThan(failures);
+      await expect(alert).toHaveCount(0);
+      await expect(retry).toHaveCount(0);
+      await expect(page).toHaveURL(/\/review$/);
+      await expect(main.getByRole("table")).toHaveCount(0);
+    });
+  });
+
   const safeStates = [
     { status: "authorized_empty", role: "status", title: "Sin elementos pendientes", copy: "No hay elementos de revisión pendientes." },
     { status: "authorization_denied", role: "alert", title: "Acceso no autorizado", copy: "No se pudo autorizar la cola de revisión." },

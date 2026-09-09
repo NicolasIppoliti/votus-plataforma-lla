@@ -1704,6 +1704,15 @@ select option {
   padding-block: 0.25rem 0.6rem;
 }
 
+.review-queue__placeholder {
+  min-height: 1.5rem;
+  background: var(--border);
+}
+
+.review-queue__placeholder--body {
+  min-height: 12rem;
+}
+
 .review-queue__pagination {
   display: flex;
   flex-wrap: wrap;

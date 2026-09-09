@@ -135,7 +135,7 @@ export async function createReviewTestWorker(): Promise<ReviewTestWorker> {
 export function createReviewStateHandler(
   origin: string,
   onMatch?: () => void,
-  selectResponse: (offset: number) => Response = () => Response.json(CONTROLLED_DENIAL),
+  selectResponse: (offset: number) => Response | Promise<Response> = () => Response.json(CONTROLLED_DENIAL),
 ): ReviewFetchHandler {
   const endpoint = new URL(origin);
   if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || !endpoint.port || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) throw new Error("review state origin must be an exact loopback URL");
