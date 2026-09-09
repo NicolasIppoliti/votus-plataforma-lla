@@ -199,12 +199,18 @@ async function expectKeyboardFocus(target: Locator, region = false): Promise<voi
   const visibility = await target.evaluate((element) => {
     const box = element.getBoundingClientRect();
     const color = getComputedStyle(element).outlineColor;
+    let effectiveOpacity = 1;
+    for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+      effectiveOpacity *= Number(getComputedStyle(ancestor).opacity);
+    }
     return {
+      effectiveOpacity,
       opaque: color !== "transparent" && !/[,/]\s*0\s*\)$/.test(color),
       intersects: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
       contained: box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth,
     };
   });
+  expect(visibility.effectiveOpacity).toBeGreaterThan(0);
   expect(visibility.opaque).toBe(true);
   expect(visibility.intersects).toBe(true);
   if (!region) expect(visibility.contained).toBe(true);
@@ -257,6 +263,104 @@ zoomTest("test_authorized_review_uses_native_200_percent_zoom", async ({ page, n
     // The zoom fixture resets explicitly while this page is alive, before context disposal.
   });
 });
+
+for (const windowWidth of [1280, 640]) {
+  zoomTest.describe(`native 200% review at fixed ${windowWidth}px window`, () => {
+    zoomTest.use({ zoomWindowWidth: windowWidth });
+    zoomTest("review remains keyboard usable with local table overflow and real paging", async ({ page, next, zoom }) => {
+      const offsets: number[] = [];
+      next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+        undefined, (offset) => { offsets.push(offset); return Response.json(reviewPagePayload(offset)); }));
+      await withReviewItem(page, async () => {
+        // Fresh document for natural keyboard entry; never resize this window or viewport.
+        await page.goto("/review");
+        await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+        await page.evaluate(async () => { await document.fonts.ready; });
+        const dimensions = () => page.evaluate(() => ({
+          inner: innerWidth, client: document.documentElement.clientWidth,
+          outer: outerWidth, height: outerHeight,
+        }));
+        expect(await zoom.set(1)).toBe(1);
+        const baseline = await dimensions();
+        expect(baseline.outer).toBe(windowWidth);
+        expect(Math.abs(baseline.inner - windowWidth)).toBeLessThanOrEqual(2);
+        const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
+        const originalRegionWidth = await region.evaluate((element) => element.clientWidth);
+        const checkZoom = async (factor: 1 | 2) => {
+          // Chrome resets automatic per-tab settings on navigation; always reapply/read back.
+          expect(await zoom.set(factor)).toBe(factor);
+          await expect.poll(async () => Math.abs((await dimensions()).inner - baseline.inner / factor)).toBeLessThanOrEqual(2);
+          await expect.poll(async () => Math.abs((await dimensions()).client - baseline.client / factor)).toBeLessThanOrEqual(20);
+          expect(await dimensions()).toMatchObject({ outer: baseline.outer, height: baseline.height });
+          await expectDocumentNotToOverflow(page);
+        };
+        const expectControlSize = async (control: Locator) => {
+          const box = await control.boundingBox();
+          if (!box) throw new Error("zoom control has no layout box");
+          expect(box.width).toBeGreaterThanOrEqual(44);
+          expect(box.height).toBeGreaterThanOrEqual(44);
+        };
+        await checkZoom(2);
+        await expect(page.getByRole("main")).toContainText(READ_ONLY_NOTICE);
+        await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+        await expectCellTextContained(page.getByRole("table").locator("tbody").getByRole("row").first());
+        await tabTo(page, page.getByRole("link", { name: "Ir al contenido principal" }));
+        // Both zoomed CSS widths use the responsive drawer, not desktop sidebar order.
+        const trigger = page.getByRole("button", { name: "Abrir navegación" });
+        await tabTo(page, trigger);
+        await expectControlSize(trigger);
+        await page.keyboard.press("Enter");
+        const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+        const close = drawer.getByRole("button", { name: "Cerrar navegación" });
+        await expectKeyboardFocus(close);
+        await expectControlSize(close);
+        await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true);
+        await tabTo(page, close);
+        await page.keyboard.press("Escape");
+        await expect(drawer).not.toBeVisible();
+        await expectKeyboardFocus(trigger);
+        await tabTo(page, page.getByRole("combobox", { name: "Organización" }));
+        await tabTo(page, page.getByRole("button", { name: "Cambiar organización" }));
+        const realCount = page.getByRole("banner").getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)", exact: true });
+        await tabTo(page, realCount);
+        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }));
+        await tabTo(page, region, false, true);
+        await expect(region).toHaveAttribute("tabindex", "0");
+        const scroll = await region.evaluate((element) => ({ left: element.scrollLeft, width: element.clientWidth, total: element.scrollWidth }));
+        expect(scroll.total).toBeGreaterThan(scroll.width);
+        await page.keyboard.press("ArrowRight");
+        await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(scroll.left);
+        await expect(page.getByRole("link", { name: PREVIOUS_PAGE })).toHaveCount(0);
+        await tabTo(page, page.getByRole("link", { name: NEXT_PAGE }));
+        for (const step of [
+          { name: NEXT_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
+          { name: NEXT_PAGE, offset: 100, count: 1, date: "2026-01-01T00:01:40.000Z" },
+          { name: PREVIOUS_PAGE, offset: 50, count: 50, date: "2026-01-01T00:00:50.000Z" },
+        ]) {
+          const pager = page.getByRole("link", { name: step.name });
+          await expect(pager).toHaveAttribute("href", `/review?offset=${step.offset}`);
+          await pager.scrollIntoViewIfNeeded();
+          await expectControlSize(pager);
+          // First activation follows natural Tab entry; later pages explicitly refocus their pager.
+          if (step.offset !== 50 || step.name === PREVIOUS_PAGE) await pager.focus();
+          await expectKeyboardFocus(pager);
+          await page.keyboard.press("Enter");
+          await expect(page).toHaveURL(new RegExp(`/review\\?offset=${step.offset}$`));
+          await checkZoom(2);
+          await expectReviewWindow(page, step.count, step.date);
+          await expect(page.getByRole("link", { name: NEXT_PAGE })).toHaveCount(step.offset === 100 ? 0 : 1);
+        }
+        expect(offsets).toEqual(expect.arrayContaining([0, 50, 100]));
+        expect(offsets.every((offset) => [0, 50, 100].includes(offset))).toBe(true);
+        await page.goto("/review");
+        await checkZoom(2);
+        await checkZoom(1);
+        await expectReviewWindow(page, 50, "2026-01-01T00:00:00.000Z");
+        await expect.poll(() => region.evaluate((element) => element.clientWidth)).toBe(originalRegionWidth);
+      });
+    });
+  });
+}
 
 test.describe("the review route reflects the disposable database", () => {
   test.use({ hasTouch: true });

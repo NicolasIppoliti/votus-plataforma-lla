@@ -16,7 +16,9 @@ export function requireZoomConfiguration(
   browserName: string,
   storageState: BrowserContextOptions["storageState"],
   launchOptions: LaunchOptions,
+  windowWidth = 1280,
 ): void {
+  if (windowWidth !== 640 && windowWidth !== 1280) throw new Error("Unsupported native zoom window width");
   if (browserName !== "chromium") throw new Error("Native zoom requires Chromium");
   if (!storageState) throw new Error("Native zoom requires the real-login storageState fixture");
   if (launchOptions.executablePath || launchOptions.channel || launchOptions.ignoreDefaultArgs ||
@@ -47,9 +49,62 @@ interface ChromeTabs {
   getZoom(id: number): Promise<number>;
 }
 
+interface ZoomOwner<C> {
+  launch(start: () => Promise<C>): Promise<C>;
+  reset?: () => Promise<unknown>;
+}
+
+export async function withOwnedZoomSession<C extends { close(): Promise<void> }>(
+  removeOwnedRoot: () => Promise<void>,
+  run: (owner: ZoomOwner<C>) => Promise<void>,
+): Promise<void> {
+  let context: C | undefined;
+  let launchAttempted = false;
+  let closed = false;
+  const errors: unknown[] = [];
+  const owner: ZoomOwner<C> = {
+    async launch(start) {
+      if (launchAttempted) throw new Error("Native zoom launch already attempted");
+      launchAttempted = true;
+      context = await start();
+      return context;
+    },
+  };
+  try {
+    await run(owner);
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    try {
+      await owner.reset?.();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (context) {
+      try {
+        await context.close();
+        closed = true;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (!launchAttempted || closed) {
+      try {
+        await removeOwnedRoot();
+      } catch (error) {
+        errors.push(error);
+      }
+    } else {
+      errors.push(new Error("Native zoom closure unconfirmed; owned temporary directory retained"));
+    }
+  }
+  if (errors.length) throw new AggregateError(errors, "Native zoom session failed");
+}
+
 interface ZoomSession {
   context: BrowserContext;
   blank: Page;
+  owner: ZoomOwner<BrowserContext>;
 }
 
 interface ZoomDriver {
@@ -57,19 +112,17 @@ interface ZoomDriver {
 }
 
 interface ZoomFixtures {
+  zoomWindowWidth: number;
   zoomSession: ZoomSession;
   zoom: ZoomDriver;
 }
 
 export const zoomTest = test.extend<ZoomFixtures>({
-  zoomSession: async ({ playwright, browserName, launchOptions, storageState }, use) => {
-    requireZoomConfiguration(browserName, storageState, launchOptions);
+  zoomWindowWidth: [1280, { option: true }],
+  zoomSession: async ({ playwright, browserName, launchOptions, storageState, zoomWindowWidth }, use) => {
+    requireZoomConfiguration(browserName, storageState, launchOptions, zoomWindowWidth);
     const root = await mkdtemp(join(tmpdir(), "votus-review-zoom-"));
-    let context: BrowserContext | undefined;
-    let launchAttempted = false;
-    let closed = false;
-    const errors: unknown[] = [];
-    try {
+    await withOwnedZoomSession<BrowserContext>(() => rm(root, { recursive: true, force: true }), async (owner) => {
       const extension = join(root, "extension");
       await mkdir(extension);
       await writeFile(join(extension, "manifest.json"), JSON.stringify({
@@ -79,10 +132,9 @@ export const zoomTest = test.extend<ZoomFixtures>({
         background: { service_worker: "worker.js" },
       }));
       await writeFile(join(extension, "worker.js"), "chrome.runtime.onInstalled.addListener(() => {});\n");
-      launchAttempted = true;
       // The provided Playwright instance keeps context defaults and artifact hooks.
       // Persistent launch drops storageState, so restore it through the public API.
-      context = await playwright.chromium.launchPersistentContext(join(root, "profile"), {
+      const context = await owner.launch(() => playwright.chromium.launchPersistentContext(join(root, "profile"), {
         ...launchOptions,
         channel: "chromium",
         viewport: null,
@@ -90,35 +142,13 @@ export const zoomTest = test.extend<ZoomFixtures>({
           ...(launchOptions.args ?? []),
           `--disable-extensions-except=${extension}`,
           `--load-extension=${extension}`,
-          "--window-size=1280,900",
+          `--window-size=${zoomWindowWidth},900`,
         ],
-      });
+      }));
       const blank = ownedInitialBlank(context.pages());
       await context.setStorageState(storageState!);
-      // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture callback.
-      await use({ context, blank });
-    } catch (error) {
-      errors.push(error);
-    } finally {
-      if (context) {
-        try {
-          await context.close();
-          closed = true;
-        } catch (error) {
-          errors.push(error);
-        }
-      }
-      if (!launchAttempted || closed) {
-        try {
-          await rm(root, { recursive: true, force: true });
-        } catch (error) {
-          errors.push(error);
-        }
-      } else {
-        errors.push(new Error("Native zoom closure unconfirmed; owned temporary directory retained"));
-      }
-    }
-    if (errors.length) throw new AggregateError(errors, "Native zoom session failed");
+      await use({ context, blank, owner });
+    });
   },
   context: async ({ zoomSession }, use) => {
     // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture callback.
@@ -136,7 +166,7 @@ export const zoomTest = test.extend<ZoomFixtures>({
     // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture callback.
     await use(page);
   },
-  zoom: async ({ page, context }, use) => {
+  zoom: async ({ page, context, zoomSession }, use) => {
     const workers = context.serviceWorkers();
     const worker = workers[0] ?? await context.waitForEvent("serviceworker");
     if (context.serviceWorkers().length !== 1 || !worker.url().startsWith("chrome-extension://")) {
@@ -163,20 +193,11 @@ export const zoomTest = test.extend<ZoomFixtures>({
         }, { tabId, factor });
       },
     };
-    const errors: unknown[] = [];
-    try {
-      // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture callback.
-      await use(driver);
-    } catch (error) {
-      errors.push(error);
-    } finally {
-      try {
-        if (page.isClosed()) throw new Error("Owned zoom page closed before explicit reset");
-        await driver.set(1);
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (errors.length) throw new AggregateError(errors, "Native zoom use or reset failed");
+    zoomSession.owner.reset = async () => {
+      if (page.isClosed()) throw new Error("Owned zoom page closed before explicit reset");
+      await driver.set(1);
+    };
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture callback.
+    await use(driver);
   },
 });

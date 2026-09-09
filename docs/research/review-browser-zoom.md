@@ -41,17 +41,17 @@ One execution/context completed; context and server closed. The parent removed o
 Source [4]: installed `next/experimental/testmode/playwright` fixture and Playwright fixture/context implementation, inspected by the parent in the application dependency tree.
 
 - Next's provided auto-fixture binds instrumentation to `page.context()`; preserve its baseURL, default context options, timeouts, and trace hooks rather than building a parallel unmanaged browser.
-- Persistent-context protocol drops `storageState`. Future B must call the public `context.setStorageState(realLoginState)` before the actual test page or any application navigation. No authentication bypass or replacement login state is acceptable.
+- Persistent-context protocol drops `storageState`. B calls the public `context.setStorageState(realLoginState)` before the actual test page or any application navigation. No authentication bypass or replacement login state is acceptable.
 - The ordinary default page fixture calls `newPage()`. If needed, retain the captured initial blank page until the actual test page exists; close only that captured identity, never an arbitrary first page.
 - Next unregisters its per-test fetch handler but does not unroute the context; the owned persistent context must close during teardown. Actual Next integration remains pending CI.
-- Only the future zoom context uses `viewport: null` and a fixed window. Ordinary touch and viewport behavior remain unchanged.
+- Only the zoom context uses `viewport: null` and a fixed window. Ordinary touch and viewport behavior remain unchanged.
 - Project screenshots and traces remain off, as approved. No manual recorder or authentication traces.
 
 ## Acceptance and resource boundaries
 
-- B must include a reachable real `/review` smoke test using existing real-login/workspace setup and cleanup, not an unused zoom fixture.
+- B includes a reachable real `/review` smoke test using existing real-login/workspace setup and cleanup, not an unused zoom fixture.
 - Require native factor readback plus a materially smaller CSS layout viewport at unchanged outer width. CSS zoom, DPR emulation, viewport resizing, and pinch/page-scale emulation are not substitutes.
-- C covers unchanged-factor control, same-origin sibling isolation, navigation reapplication, explicit reset restoring baseline, and usable review layout/interactions at 200%. Allow scrollbar/rounding differences in layout measurements.
+- C authors fixed-window factor/layout checks, navigation reapplication, explicit reset restoring baseline, and review interactions at 200%. Allow scrollbar/rounding differences. Same-origin sibling isolation remains unproven: the approved fixture deliberately rejects multiple pages instead of creating sibling tabs.
 - In `finally`, attempt reset while the owned tab is alive, close the context regardless of reset failure, and clean only owned profile resources. Preserve original failures and surface teardown failures; never skip startup/readback failures.
 - No human profile, cookies, remote-debugging port, privileged OS automation, public port, production endpoint, or global browser setting changes. Restrict the driver to the owned HTTP(S) page; restricted schemes remain unverified.
 - Each unit must fit 400 authored additions plus deletions, including this entire initially untracked note. Do not compress resource safety or erase evidence to fit a forecast.
@@ -60,4 +60,14 @@ Source [4]: installed `next/experimental/testmode/playwright` fixture and Playwr
 
 Pagination payloads are presentation-only wire fixtures validated through the real sanitizer and existing guarded fetch controller. Count-only requests still reach the real database. Tests preserve loading, retry, safe-state, and regional-focus coverage while adding actual URL transitions, masked windows, 320px taps, and fresh-document keyboard order.
 
-Unit tests and Playwright registration can validate fixture behavior and test discovery; they cannot prove browser interactions. New E2E scenarios remain authored but unrun until the parent's GitHub CI publication. Units B and C, real application zoom acceptance, and CI outcomes remain open.
+Unit tests cannot prove browser interactions. Authenticated B/C runtime acceptance remains pending the actual GitHub CI result; local feasibility does not close issue #266.
+
+## Unit C authored coverage and evidence limits
+
+- Two zoom-only cases request fixed 1280×900 and 640×900 windows. Each independently checks native factor readback, approximately halved inner/client width, unchanged outer width/height, and explicit 100% layout restoration. No measurement resizes the window or emulates zoom.
+- The existing authenticated B smoke remains unchanged. C reuses real login/workspace setup and the validated Next fetch controller; masked 50/50/1 row windows follow actual Next/Previous URLs. The banner count still reaches the database, independently of presentation payloads.
+- At 200%, fresh-document keyboard entry reaches the responsive drawer, Escape returns focus, the labelled table scrolls horizontally by keyboard without document overflow, and Enter activates the pager. Controls are checked in CSS pixels against 44×44; vertical scrolling remains allowed for the 50-row region.
+- The focus assertion additionally rejects zero effective ancestor opacity. This is not a contrast threshold, a manual visual audit, or a reopening of A's closed advisory.
+- The actual fixture uses a small owned-session lifecycle helper: reset attempt, confirmed context closure, then owned-root removal. Failed launch or unconfirmed closure retains the root. Browser-free callbacks exercise these paths and preserve primary/reset/close/removal errors without launching a browser or deleting files locally.
+- Width rejection received a behavior-level RED before implementation. The new single-launch helper guard received a missing-interface RED; that is not evidence of a prior browser bug. Existing cleanup semantics received GREEN-first coverage after extraction.
+- These browser cases are authored but locally UNRUN. The neutral Playwright 1.62.1 / Chromium 151 zero-permission probe above remains the only supplied local runtime evidence. CI must establish authenticated integration, narrow-window behavior, focus, paging, and teardown on the exact candidate.
