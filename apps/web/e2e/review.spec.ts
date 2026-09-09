@@ -5,6 +5,7 @@ import { assertE2eEnvironment } from "./gate-contract";
 import { durationInMilliseconds } from "./css-duration";
 import { createReviewStateHandler, reviewPagePayload, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
+import { zoomTest } from "./review-zoom-test-fixture";
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -225,6 +226,37 @@ async function expectReviewWindow(page: Page, count: number, firstDetected: stri
   await expect(rows.getByRole("cell", { name: "warning", exact: true })).toHaveCount(count);
   await expect(main).not.toContainText("00000000-0000-4000-8000-");
 }
+
+zoomTest("test_authorized_review_uses_native_200_percent_zoom", async ({ page, next, zoom }) => {
+  let matched = 0;
+  next.onFetch(createReviewStateHandler(
+    assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
+    () => { matched += 1; },
+    (offset) => Response.json(reviewPagePayload(offset)),
+  ));
+  await withReviewItem(page, async () => {
+    await page.goto("/review");
+    await expect(page).toHaveURL(/\/review$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Cola de revisión" })).toBeVisible();
+    await expect(page.getByRole("region", { name: REVIEW_REGION_LABEL })).toBeVisible();
+    await expect(page.getByRole("table").getByRole("row")).toHaveCount(51);
+    expect(matched).toBeGreaterThan(0);
+    const dimensions = () => page.evaluate(() => ({
+      inner: window.innerWidth,
+      client: document.documentElement.clientWidth,
+      outer: window.outerWidth,
+    }));
+    expect(await zoom.set(1)).toBe(1);
+    const baseline = await dimensions();
+    expect(baseline.inner).toBeGreaterThan(0);
+    expect(await zoom.set(2)).toBe(2);
+    await expect.poll(async () => Math.abs((await dimensions()).inner - baseline.inner / 2)).toBeLessThanOrEqual(2);
+    const enlarged = await dimensions();
+    expect(Math.abs(enlarged.client - baseline.client / 2)).toBeLessThanOrEqual(20);
+    expect(enlarged.outer).toBe(baseline.outer);
+    // The zoom fixture resets explicitly while this page is alive, before context disposal.
+  });
+});
 
 test.describe("the review route reflects the disposable database", () => {
   test.use({ hasTouch: true });
