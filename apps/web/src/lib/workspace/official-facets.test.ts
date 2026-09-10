@@ -19,6 +19,28 @@ const establishment = { ...parent, circuito_code: "00001", establecimiento_code:
 const mesa = { ...parent, circuito_code: "00001", establecimiento_code: "E1", mesa_code: 7 };
 const payload = (facets: unknown[] = [row], extra: Record<string, unknown> = {}) => ({ status: "ok", facets, total: facets.length, truncated: false, circuitos: [], establecimientos: [], mesas: [], exclusions: [], ...extra });
 
+async function expectFactoryMalformedDiagnostic(data: unknown, reason: string, sentinel: string): Promise<void> {
+  mocks.createClient.mockResolvedValue({ auth: { getClaims: mocks.getClaims }, schema: mocks.schema });
+  mocks.getClaims.mockResolvedValue({
+    data: { claims: { exp: Math.floor(Date.now() / 1_000) + 60, session_id: IDS.election, sub: IDS.category } },
+    error: null,
+  });
+  mocks.schema.mockReturnValue({ rpc: mocks.rpc });
+  mocks.rpc.mockResolvedValue({ data, error: null });
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+  try {
+    await expect(createAuthorizedOfficialFacetRepository().facets({})).rejects.toMatchObject({
+      code: OFFICIAL_FACETS_ERROR.MALFORMED,
+      message: "authorized official facets: malformed",
+    });
+    expect(error.mock.calls).toEqual([["[workspace:official_facets]", { code: "malformed", reason }]]);
+    expect(JSON.stringify(error.mock.calls)).not.toContain(sentinel);
+  } finally {
+    error.mockRestore();
+  }
+}
+
 describe("AuthorizedOfficialFacetRepository", () => {
   it("logs only the malformed diagnostic when the authorized RPC response cannot be decoded", async () => {
     const secretSentinel = "synthetic-secret-sentinel";
@@ -56,6 +78,118 @@ describe("AuthorizedOfficialFacetRepository", () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  it("logs the district-metadata reason without response data when coarse rows disagree", async () => {
+    const metadataSentinel = "synthetic-district-metadata-sentinel";
+    const currentElection = { ...row, distrito_name: metadataSentinel };
+    const priorElection = {
+      ...currentElection,
+      election_id: "10000000-0000-4000-8000-000000000003",
+      year: 2023,
+      distrito_name: null,
+      distrito_name_status: "missing",
+      distrito_name_variant_count: 0,
+    };
+    mocks.createClient.mockResolvedValue({
+      auth: { getClaims: mocks.getClaims },
+      schema: mocks.schema,
+    });
+    mocks.getClaims.mockResolvedValue({
+      data: { claims: { exp: Math.floor(Date.now() / 1_000) + 60, session_id: IDS.election, sub: IDS.category } },
+      error: null,
+    });
+    mocks.schema.mockReturnValue({ rpc: mocks.rpc });
+    mocks.rpc.mockResolvedValue({ data: payload([currentElection, priorElection]), error: null });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await expect(createAuthorizedOfficialFacetRepository().facets({})).rejects.toMatchObject({
+        code: OFFICIAL_FACETS_ERROR.MALFORMED,
+        message: "authorized official facets: malformed",
+      });
+      expect(error.mock.calls).toEqual([[
+        "[workspace:official_facets]",
+        { code: "malformed", reason: "facets.metadata.distrito_inconsistent" },
+      ]]);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(metadataSentinel);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("logs the section-metadata reason without response data when coarse rows disagree", async () => {
+    const metadataSentinel = "synthetic-section-metadata-sentinel";
+    const currentElection = { ...row, seccion_name: metadataSentinel };
+    const priorElection = {
+      ...currentElection,
+      election_id: "10000000-0000-4000-8000-000000000004",
+      year: 2023,
+      seccion_name: null,
+      seccion_name_status: "missing",
+      seccion_name_variant_count: 0,
+    };
+    mocks.createClient.mockResolvedValue({
+      auth: { getClaims: mocks.getClaims },
+      schema: mocks.schema,
+    });
+    mocks.getClaims.mockResolvedValue({
+      data: { claims: { exp: Math.floor(Date.now() / 1_000) + 60, session_id: IDS.election, sub: IDS.category } },
+      error: null,
+    });
+    mocks.schema.mockReturnValue({ rpc: mocks.rpc });
+    mocks.rpc.mockResolvedValue({ data: payload([currentElection, priorElection]), error: null });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await expect(createAuthorizedOfficialFacetRepository().facets({})).rejects.toMatchObject({
+        code: OFFICIAL_FACETS_ERROR.MALFORMED,
+        message: "authorized official facets: malformed",
+      });
+      expect(error.mock.calls).toEqual([[
+        "[workspace:official_facets]",
+        { code: "malformed", reason: "facets.metadata.seccion_inconsistent" },
+      ]]);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(metadataSentinel);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("logs the invalid-round reason without response data", async () => {
+    const invalidRound = "synthetic-round-sentinel ";
+    await expectFactoryMalformedDiagnostic(
+      payload([{ ...row, round: invalidRound }]),
+      "facets.row.round_invalid",
+      invalidRound,
+    );
+  });
+
+  it("logs the invalid-category-name reason without response data", async () => {
+    const invalidCategoryName = "synthetic-category-name-sentinel ";
+    await expectFactoryMalformedDiagnostic(
+      payload([{ ...row, category_name: invalidCategoryName }]),
+      "facets.row.category_name_invalid",
+      invalidCategoryName,
+    );
+  });
+
+  it("logs the invalid-distrito-code reason without response data", async () => {
+    const invalidDistritoCode = "synthetic-distrito-code-sentinel ";
+    await expectFactoryMalformedDiagnostic(
+      payload([{ ...row, distrito_code: invalidDistritoCode }]),
+      "facets.row.distrito_code_invalid",
+      invalidDistritoCode,
+    );
+  });
+
+  it("logs the invalid-seccion-code reason without response data", async () => {
+    const invalidSeccionCode = "synthetic-seccion-code-sentinel ";
+    await expectFactoryMalformedDiagnostic(
+      payload([{ ...row, seccion_code: invalidSeccionCode }]),
+      "facets.row.seccion_code_invalid",
+      invalidSeccionCode,
+    );
   });
 
   it("logs only unavailable when the real RPC wrapper rejects a provider error", async () => {
