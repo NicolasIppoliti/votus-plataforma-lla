@@ -1,4 +1,4 @@
-do $$ begin perform set_config('votus_drilldown_facets.workspace_query_owner',pg_has_role(current_user,'workspace_query_owner','SET')::text,true); if not pg_has_role(current_user,'workspace_query_owner','SET') then execute format('grant workspace_query_owner to %I',current_user); end if; end $$;
+do $$ begin perform set_config('votus_drilldown_facets.workspace_query_owner',pg_has_role(current_user,'workspace_query_owner','SET')::text,true); perform set_config('votus_drilldown_facets.workspace_query_grantee',current_user,true); if not pg_has_role(current_user,'workspace_query_owner','SET') then execute format('grant workspace_query_owner to %I',current_user); end if; end $$;
 grant create on schema workspace_api to workspace_query_owner;
 set role workspace_query_owner;
 create or replace function workspace_api.official_facets(
@@ -56,7 +56,8 @@ begin
 end $$;
 revoke all on function workspace_api.official_facets(uuid,uuid,text,text,text,text) from public,anon,authenticated;
 grant execute on function workspace_api.official_facets(uuid,uuid,text,text,text,text) to authenticated;
-reset role;
+set role postgres;
 revoke create on schema workspace_api from workspace_query_owner;
 do $$ begin if to_regrole('service_role') is not null then revoke all on function workspace_api.official_facets(uuid,uuid,text,text,text,text) from service_role; end if; end $$;
-do $$ begin if current_setting('votus_drilldown_facets.workspace_query_owner',true)='false' then execute format('revoke workspace_query_owner from %I',current_user); end if; end $$;
+do $$ begin if current_setting('votus_drilldown_facets.workspace_query_owner',true)='false' then execute format('revoke workspace_query_owner from %I',current_setting('votus_drilldown_facets.workspace_query_grantee',true)); end if; end $$;
+reset role;
