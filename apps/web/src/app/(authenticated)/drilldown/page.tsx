@@ -59,6 +59,7 @@ const FACET_EXCLUSION_LABELS = {
 
 type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
+type EvidenceRefusalWithDetails = Exclude<EvidenceRefusal, { status: "authorization_denied" }>;
 
 function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
   const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, {
@@ -73,8 +74,9 @@ function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
   });
 
   return (
-    <section className="panel" aria-labelledby="explorer-form-heading">
+    <section className="official-explorer__filters panel" aria-labelledby="explorer-form-heading">
       <div className="panel__heading">
+        <p className="official-explorer__section-label">Definir el alcance</p>
         <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>
         <p>Use los selectores para crear un enlace directo reutilizable a resultados oficiales.</p>
       </div>
@@ -213,7 +215,7 @@ function schoolExclusionNotes(
   );
 }
 
-function RefusalEvidence({ evidence }: { evidence: EvidenceRefusal["evidence"] | undefined }): ReactNode {
+function RefusalEvidence({ evidence }: { evidence: EvidenceRefusalWithDetails["evidence"] | undefined }): ReactNode {
   if (!evidence?.length) return null;
   return evidence.map((part) => (
     <section key={part.part} aria-label={`Evidencia de rechazo: ${part.part}`}>
@@ -244,10 +246,12 @@ function refusalMessage(status: EvidenceRefusal["status"]): string {
 
 function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
-  if (result.sourceKind !== "official" || schools.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.sourceAudit.some(({ kind }) => kind !== "official")) return <p role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</p>;
+  if (result.sourceKind !== "official" || schools.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.sourceAudit.some(({ kind }) => kind !== "official")) return <section className="official-explorer__state" role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
   return (
     <>
-      <h2>Desglose oficial autorizado</h2>
+      <section className="official-explorer__results" aria-labelledby="official-results-heading">
+        <p className="official-explorer__section-label">Resultados y evidencia</p>
+        <h2 id="official-results-heading">Desglose oficial autorizado</h2>
       <p role="status">
         {result.totalVotes} votos a nivel {result.level}, obtenidos de filas de fuente {result.sourceGranularity}
         {result.mesaCount === null
@@ -295,9 +299,13 @@ function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
           </table>
         </TableScroll>
       </section>
+      </section>
 
-      <section aria-labelledby="reference-heading">
-        <h2 id="reference-heading">Referencia electoral autorizada</h2>
+      <section className="official-explorer__evidence" aria-labelledby="official-evidence-heading">
+        <p className="official-explorer__section-label">Evidencia y archivo</p>
+        <h2 id="official-evidence-heading">Referencias de la consulta</h2>
+        <section aria-labelledby="reference-heading">
+          <h3 id="reference-heading">Referencia electoral autorizada</h3>
         {reference.sourceExclusions.map((entry) => (
           <p role="note" key={`reference-${entry.kind}`}>
             Se excluyeron {entry.rows} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {entry.reason}.
@@ -319,8 +327,8 @@ function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
         </TableScroll>
       </section>
 
-      <section aria-labelledby="provenance-heading">
-        <h2 id="provenance-heading">Procedencia segura</h2>
+        <section aria-labelledby="provenance-heading">
+          <h3 id="provenance-heading">Procedencia segura</h3>
         {sourceExclusionNotes(provenance.sourceExclusions, "procedencia")}
         <ul aria-label="procedencia">
           {provenance.items.map((item) => (
@@ -329,22 +337,28 @@ function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
             </li>
           ))}
         </ul>
+        </section>
       </section>
     </>
   );
 }
 
+function ExplorerHeader(): ReactNode {
+  return (
+    <header className="official-explorer__header page-header">
+      <p className="eyebrow">Resultados oficiales / explorador</p>
+      <h1>Explorador oficial</h1>
+      <p className="page-header__lede">Seleccione un alcance publicado y examine evidencia oficial autorizada sin exponer ubicaciones de origen.</p>
+      <p className="official-explorer__context">Las cifras, exclusiones y referencias se conservan junto a la evidencia que las califica.</p>
+    </header>
+  );
+}
+
 function PageShell({ form, children }: { form: ReactNode; children: ReactNode }): ReactNode {
   return (
-    <main className="page-shell">
-      <div className="shell-container">
-        <header className="page-header">
-          <p className="eyebrow">Resultados oficiales / detalle</p>
-          <h1>Explorar resultados oficiales</h1>
-          <p className="page-header__lede">
-            Seleccione un alcance publicado y examine evidencia oficial autorizada sin exponer ubicaciones de origen.
-          </p>
-        </header>
+    <main className="page-shell official-explorer">
+      <div className="shell-container official-explorer__layout">
+        <ExplorerHeader />
         {form}
         {children}
       </div>
@@ -353,7 +367,14 @@ function PageShell({ form, children }: { form: ReactNode; children: ReactNode })
 }
 
 function refusalPage(message: ReactNode): ReactNode {
-  return <main><h1>Explorar resultados oficiales</h1><p role="alert">{message}</p></main>;
+  return (
+    <main className="page-shell official-explorer">
+      <div className="shell-container official-explorer__layout">
+        <ExplorerHeader />
+        <section className="official-explorer__state" role="alert">{message}</section>
+      </div>
+    </main>
+  );
 }
 
 export default async function DrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
@@ -400,7 +421,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     });
   } catch (error) {
     if (error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.PAYLOAD_TOO_LARGE) {
-      return <main><h1>Explorar resultados oficiales</h1><p role="alert">Se rechazó la solicitud: las opciones autorizadas exceden el límite seguro.</p>{facetExclusionNotes(error.exclusions, true)}</main>;
+      return refusalPage(<><span>Se rechazó la solicitud: las opciones autorizadas exceden el límite seguro.</span>{facetExclusionNotes(error.exclusions, true)}</>);
     }
     const reason = error instanceof AuthorizedOfficialFacetsError
       ? error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED
@@ -445,7 +466,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     level === EXPLORATION_LEVEL.ESTABLECIMIENTO && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode) ||
     level === EXPLORATION_LEVEL.MESA && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode && typeof effectiveCodes.mesaCode === "number");
   if (!hierarchyMatches || !baseReady || !levelReady || !electionId || !categoryId || !effectiveCodes.distritoCode || !effectiveCodes.seccionCode || !level) {
-    return <PageShell form={form}><p role="status">Elija una sección exacta y los selectores requeridos para el nivel del informe.</p></PageShell>;
+    return <PageShell form={form}><section className="official-explorer__state" role="status">Elija una sección exacta y los selectores requeridos para el nivel del informe.</section></PageShell>;
   }
 
   const selection: OfficialSelection = {
@@ -462,8 +483,12 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (evidence.status !== OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK) {
     return (
       <PageShell form={form}>
-        <p role="alert">{refusalMessage(evidence.status)}</p>
-        <RefusalEvidence evidence={evidence.evidence} />
+        <section className="official-explorer__state" role="alert">
+          <p>{refusalMessage(evidence.status)}</p>
+          {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED
+            ? null
+            : <RefusalEvidence evidence={evidence.evidence} />}
+        </section>
       </PageShell>
     );
   }

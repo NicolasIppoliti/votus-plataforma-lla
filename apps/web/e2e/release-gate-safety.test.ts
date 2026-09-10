@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type {
 	FullConfig,
@@ -9,12 +11,15 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
+import { PlaywrightFailure, playwrightFailure } from "./playwright-failure-diagnostics";
 import {
 	assertSourceInventory,
+	productEnvironment,
 	matchingProjectResourcesActive,
 	listOwnedNetworks,
 	removeOwnedNetworks,
 	releaseGateMain,
+	runPlaywright,
 } from "../scripts/e2e-release-gate";
 import {
 	RELEASE_GATE_TIMING_PHASE,
@@ -38,6 +43,7 @@ import {
 } from "./gate-contract";
 import {
 	RELEASE_GATE_MODE,
+	ReleaseGateCleanupError,
 	assertExactMigrationInventory,
 	assertStackStatus,
 	assertSyntheticMigrationDoesNotCollide,
@@ -58,12 +64,30 @@ import {
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
-const { spawnSync } = vi.hoisted(() => ({ spawnSync: vi.fn() }));
+const { createServer, randomUUID, spawnSync, tmpdir, open } = vi.hoisted(() => ({
+	open: vi.fn(),
+	createServer: vi.fn(),
+	randomUUID: vi.fn(),
+	spawnSync: vi.fn(),
+	tmpdir: vi.fn(),
+}));
 
+vi.mock("node:fs/promises", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:fs/promises")>()), open,
+}));
 vi.mock("node:child_process", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:child_process")>()),
 	spawnSync,
 }));
+vi.mock("node:crypto", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:crypto")>()),
+	randomUUID,
+}));
+vi.mock("node:net", () => ({ default: { createServer } }));
+vi.mock("node:os", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:os")>();
+	return { ...actual, default: { ...actual, tmpdir }, tmpdir };
+});
 
 const OWNERSHIP: GateOwnership = {
 	workdir: "/private/tmp/votus-e2e-owned",
@@ -108,6 +132,11 @@ const STALE_EVIDENCE = {
 	ownerProcessActive: false,
 	projectResourcesActive: false,
 } as const;
+function fixtureFunctionBody(fixtureSql: string, name: string) {
+	const match = fixtureSql.match(new RegExp(`create function public\\.${name}\\([\\s\\S]*?as \\$\\$([\\s\\S]*?)end \\$\\$;`));
+	expect(match, `fixture function ${name}`).not.toBeNull();
+	return match![1]!;
+}
 describe("release-gate phase timing", () => {
 	it("emits deterministic phase durations from the injected clock", async () => {
 		let now = 100;
@@ -241,6 +270,7 @@ describe("migration release-gate integration", () => {
 		"20260831055357",
 		"20260831150450",
 		"20260831160422",
+		"20260904035355",
 	];
 	it("inspects the exact production migration and proof plan", async () => {
 		const plan = await inspectReleaseGatePlan();
@@ -253,7 +283,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(64);
+		).toBe(65);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -358,7 +388,7 @@ describe("migration release-gate integration", () => {
 		);
 		expect(names).toHaveLength(plan.migrationVersions.length);
 		expect(names.at(-1)).toBe(
-			"20260831160422_platform_review_breakdown.sql",
+			"20260904035355_add_official_category_name.sql",
 		);
 	});
 	it("runs every production phase in plan order before installing synthetic 0039", async () => {
@@ -534,7 +564,7 @@ describe("migration release-gate integration", () => {
 		expect(() =>
 			assertExactMigrationInventory(actual, EXPECTED_MIGRATION_VERSIONS),
 		).toThrow(
-			"migration inventory must be exactly versions 0001 through 20260831150450 plus 20260831160422",
+			"migration inventory must be exactly versions 0001 through 20260831160422 plus 20260904035355",
 		);
 	});
 	it.each([
@@ -672,11 +702,12 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("64 as migration_inventory_count");
+		expect(proof).toContain("65 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
+			"20260904035355-down",
 			"20260831160422-down",
 			"20260831150450-down",
 			"20260831055357-down",
@@ -763,6 +794,7 @@ describe("migration release-gate integration", () => {
 			"20260831055357-up",
 			"20260831150450-up",
 			"20260831160422-up",
+			"20260904035355-up",
 		]);
 		expect(proof).toContain(
 			"0028 rollback did not restore the exact 0026 facet discovery plan",
@@ -876,6 +908,13 @@ describe("migration release-gate integration", () => {
 	});
 });
 describe("base contracts", () => {
+	it("keeps the canonical runner compatible with native strip-only mode", () => {
+		const source = readFileSync(
+			new URL("../scripts/e2e-release-gate.ts", import.meta.url),
+			"utf8",
+		);
+		expect(() => stripTypeScriptTypes(source, { mode: "strip" })).not.toThrow();
+	});
 	it("keeps the authorized review browser fixture service-role-only and self-cleaning", () => {
 		const fixtureSql = readFileSync(
 			new URL("./service-role-grants.sql", import.meta.url),
@@ -888,10 +927,28 @@ describe("base contracts", () => {
 			"create function public.e2e_cleanup_authorized_review_fixture(p_fixture jsonb) returns jsonb",
 		);
 		expect(fixtureSql).toContain("create function public.e2e_setup_authorized_fiscal_fixture(p_user_id uuid, p_distrito_code text, p_seccion_code text) returns jsonb"); expect(fixtureSql).toContain("'e2e-authorized-fiscal-browser-'||organization_id");
+		expect(fixtureSql).toContain("create function public.e2e_extend_authorized_fiscal_fixture(p_fixture jsonb, p_distrito_code text, p_seccion_code text) returns jsonb");
 		expect(fixtureSql).toContain("create function public.e2e_cleanup_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
 		expect(fixtureSql).toContain("create function public.e2e_revoke_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb");
 		expect(fixtureSql).toContain("update workspace_private.organization set entitlement_revision = entitlement_revision + 1");
-		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g)).toHaveLength(5);
+		expect(fixtureSql).toContain("'extra_distrito_code'");
+		expect(fixtureSql).toContain("'extra_seccion_code'");
+		expect(fixtureSql).toContain("'owns_extra_section_scope'");
+		expect(fixtureSql).toContain("fixture_has_extra");
+		expect(fixtureSql).toContain("'revoked_scope_count', revoked_scope_count");
+		expect(fixtureSql).toContain("delete from workspace_private.organization_section_entitlement where organization_id = fixture_organization_id");
+		expect(fixtureSql.match(/security definer set search_path = ''/g)).toHaveLength(6);
+		expect(fixtureSql.match(/security definer set search_path = pg_catalog, pg_temp/g) ?? []).toHaveLength(0);
+		const extension = fixtureFunctionBody(fixtureSql, "e2e_extend_authorized_fiscal_fixture");
+		expect(extension).toMatch(/join workspace_private\.organization_membership membership on membership\.organization_id\s*=\s*organization\.id/);
+		expect(extension).toMatch(/where\s+organization\.id\s*=\s*fixture_organization_id\s+and\s+organization\.slug\s*=\s*'e2e-authorized-fiscal-browser-'\|\|fixture_organization_id[\s\S]*?membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null[\s\S]*?\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+entitlement\.revoked_at\s+is\s+null[\s\S]*?not exists\s*\(select 1 from workspace_private\.organization_section_entitlement other\s+where other\.organization_id\s*=\s*organization\.id\s+and\s+\(other\.distrito_code,\s*other\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\)[\s\S]*?for update of organization, membership, entitlement;[\s\S]*?insert into workspace_private\.section_scope/);
+		const cleanup = fixtureFunctionBody(fixtureSql, "e2e_cleanup_authorized_fiscal_fixture");
+		for (const predicate of [/membership\.organization_id\s*=\s*fixture_organization_id\s+and\s+membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null/, /not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\)/, /fixture_has_extra and not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)/, /exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+\(not fixture_has_extra or \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)/]) expect(cleanup).toMatch(predicate);
+		expect(cleanup).toMatch(/delete from workspace_private\.organization_membership where organization_id\s*=\s*fixture_organization_id\s+and\s+user_id\s*=\s*fixture_user_id;[\s\S]*?delete from workspace_private\.organization where id\s*=\s*fixture_organization_id\s+and\s+slug\s*=\s*'e2e-authorized-fiscal-browser-'\|\|fixture_organization_id;/);
+		for (const guard of [/if fixture_owns_section_scope then[\s\S]*?delete from workspace_private\.section_scope scope\s+where \(scope\.distrito_code,\s*scope\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.review_item_section_scope review_scope\s+where \(review_scope\.distrito_code,\s*review_scope\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)/, /if fixture_has_extra and fixture_owns_extra_section_scope then[\s\S]*?delete from workspace_private\.section_scope scope\s+where \(scope\.distrito_code,\s*scope\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)\)[\s\S]*?not exists\s*\(select 1 from workspace_private\.review_item_section_scope review_scope\s+where \(review_scope\.distrito_code,\s*review_scope\.seccion_code\)\s*=\s*\(scope\.distrito_code,\s*scope\.seccion_code\)/]) expect(cleanup).toMatch(guard);
+		const revoke = fixtureFunctionBody(fixtureSql, "e2e_revoke_authorized_fiscal_fixture");
+		for (const predicate of [/join workspace_private\.organization_membership membership on membership\.organization_id\s*=\s*organization\.id\s+where organization\.id\s*=\s*fixture_organization_id[\s\S]*?membership\.user_id\s*=\s*fixture_user_id\s+and\s+membership\.revoked_at\s+is\s+null/, /not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+entitlement\.revoked_at\s+is\s+null\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)/, /fixture_has_extra and not exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+entitlement\.revoked_at\s+is\s+null\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)/, /exists\s*\(select 1 from workspace_private\.organization_section_entitlement entitlement\s+where entitlement\.organization_id\s*=\s*fixture_organization_id\s+and\s+\(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+and\s+\(not fixture_has_extra or \(entitlement\.distrito_code,\s*entitlement\.seccion_code\)\s*<>\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)/]) expect(revoke).toMatch(predicate);
+		expect(revoke).toMatch(/update workspace_private\.organization_section_entitlement set revoked_at\s*=\s*statement_timestamp\(\)\s+where organization_id\s*=\s*fixture_organization_id\s+and\s+revoked_at\s+is\s+null\s+and\s+\(\(distrito_code,\s*seccion_code\)\s*=\s*\(fixture_distrito_code,\s*fixture_seccion_code\)\s+or\s+\(fixture_has_extra\s+and\s+\(distrito_code,\s*seccion_code\)\s*=\s*\(fixture_extra_distrito_code,\s*fixture_extra_seccion_code\)\)\);\s+get diagnostics revoked_scope_count = row_count;\s+if revoked_scope_count <> \(case when fixture_has_extra then 2 else 1 end\)/);
 		expect(fixtureSql).toContain(
 			"revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated",
 		);
@@ -904,7 +961,7 @@ describe("base contracts", () => {
 		expect(fixtureSql).toContain(
 			"grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role",
 		);
-		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)", "e2e_revoke_authorized_fiscal_fixture(jsonb)"]) {
+		for (const signature of ["e2e_setup_authorized_fiscal_fixture(uuid,text,text)", "e2e_extend_authorized_fiscal_fixture(jsonb,text,text)", "e2e_cleanup_authorized_fiscal_fixture(jsonb)", "e2e_revoke_authorized_fiscal_fixture(jsonb)"]) {
 			expect(fixtureSql).toContain(`revoke all on function public.${signature} from public, anon, authenticated`); expect(fixtureSql).toContain(`grant execute on function public.${signature} to service_role`);
 		}
 		expect(fixtureSql).toContain("select pg_notify('pgrst','reload schema')");
@@ -912,6 +969,21 @@ describe("base contracts", () => {
 		expect(fixtureSql).toContain("delete from public.review_item");
 		expect(fixtureSql).toContain("delete from workspace_private.organization");
 		expect(fixtureSql).toContain("'owns_section_scope'");
+	});
+	it("grants the audit owner the four fixture cleanup DELETE policies", () => {
+		const fixtureSql = readFileSync(
+			new URL("./service-role-grants.sql", import.meta.url),
+			"utf8",
+		);
+		for (const [policy, table] of [
+			["e2e_workspace_audit_organization_delete", "workspace_private.organization"],
+			["e2e_workspace_audit_membership_delete", "workspace_private.organization_membership"],
+			["e2e_workspace_audit_entitlement_delete", "workspace_private.organization_section_entitlement"],
+			["e2e_workspace_audit_section_scope_delete", "workspace_private.section_scope"],
+		])
+			expect(fixtureSql).toContain(
+				`create policy ${policy} on ${table} for delete to workspace_audit_owner using(true);`,
+			);
 	});
 	it("keeps the isolated CI Postgres service passwordless", () => {
 		const workflow = readFileSync(
@@ -928,6 +1000,47 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
+	it("allows an artifact step condition without making its release job conditional", () => {
+		expectUnconditionalReleaseJob(
+			"  e2e-release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: ${{ failure() }}\n",
+		);
+	});
+	it.each(["if: ${{ failure() }}", "needs: web-static", "strategy: {}"])(
+		"rejects the release job-level restriction %s even with an artifact step",
+		(restriction) => {
+			expect(() => expectUnconditionalReleaseJob(
+				`  e2e-release:\n    ${restriction}\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: \${{ failure() }}\n`,
+			)).toThrow();
+		},
+	);
+	const etlStrategy = "    strategy:\n      fail-fast: false\n      matrix:\n        case: [ordinary, success, ledger, sql]\n";
+	it("allows only the exact isolated ETL matrix", () => {
+		expectUnconditionalReleaseJob(`  etl-release:\n${etlStrategy}    steps:\n`);
+	});
+	it.each([
+		etlStrategy.replace("false", "true"),
+		etlStrategy.replace("ledger, sql", "ledger, sql, extra"),
+		etlStrategy.replace("case:", "include:"),
+		`${etlStrategy}      max-parallel: 1\n`,
+		"",
+	])("rejects an unsupported ETL matrix %s", (strategy) => {
+		expect(() => expectUnconditionalReleaseJob(`  etl-release:\n${strategy}    steps:\n`)).toThrow();
+	});
+	it.each(["web-static", "e2e-release"])("rejects the ETL matrix on %s", (job) => {
+		expect(() => expectUnconditionalReleaseJob(`  ${job}:\n${etlStrategy}`)).toThrow();
+	});
+	it.each(["if: always()", "needs: web-static"])("rejects ETL job restriction %s", (restriction) => {
+		expect(() => expectUnconditionalReleaseJob(`  etl-release:\n${etlStrategy}    ${restriction}\n`)).toThrow();
+	});
+	function expectUnconditionalReleaseJob(releaseJob: string): void {
+		// Match job keys at the workflow's four-space indentation, not nested step keys.
+		expect(releaseJob).not.toMatch(/^ {4}(?:if|needs):/m);
+		if (releaseJob.startsWith("  etl-release:\n")) {
+			expect(releaseJob.match(/^ {4}strategy:\n(?: {6,}.*\n)*/gm)).toEqual([etlStrategy]);
+		} else {
+			expect(releaseJob).not.toMatch(/^ {4}strategy:/m);
+		}
+	}
 	it("keeps independent release proofs parallel and aggregates their exact results", () => {
 		const workflow = readFileSync(
 			new URL("../../../.github/workflows/release-gates.yml", import.meta.url),
@@ -963,7 +1076,7 @@ describe("base contracts", () => {
 		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
 		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
 		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
-			expect(releaseJob).not.toMatch(/\bif:|\bneeds:|\bstrategy:/);
+			expectUnconditionalReleaseJob(releaseJob);
 
 		expect(scope).toContain("name: scope");
 		expect(scope).toContain("timeout-minutes: 2");
@@ -999,8 +1112,15 @@ describe("base contracts", () => {
 		expect(etlRelease).toContain("create role etl_writer login bypassrls password null");
 		expect(etlRelease.match(/uv run --project \. --frozen ruff check \./g)).toHaveLength(1);
 		expect(etlRelease.match(/uv run --project \. --frozen ruff format --check \./g)).toHaveLength(1);
-		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(1);
-		expect(etlRelease).not.toMatch(/pnpm|setup-node|supabase\/setup-cli|playwright/);
+		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(2);
+		expect(etlRelease).toContain("supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf");
+		expect(etlRelease).toContain("version: 2.116.0");
+		expect(etlRelease).toContain("ETL_CASE: ${{ matrix.case }}");
+		expect(etlRelease).toContain('if [ "$ETL_CASE" = "ordinary" ]; then');
+		expect(etlRelease).toMatch(/^\s+uv run --project etl etl-verify$/m);
+		expect(etlRelease).toContain('uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"');
+		expect(etlRelease).not.toMatch(/pnpm|setup-node|playwright/);
+		expect(workflow).not.toMatch(/^\s+continue-on-error:/m);
 
 		expect(e2eRelease).toContain("timeout-minutes: 20");
 		expect(e2eRelease).toContain("pnpm/action-setup@");
@@ -1031,7 +1151,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(11);
+		expect(actionReferences).toHaveLength(13);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});
@@ -1110,6 +1230,25 @@ describe("base contracts", () => {
 	it("allows a cold CI runner to pull and start Supabase", () => {
 		expect(SUPABASE_START_TIMEOUT_MS).toBe(10 * 60_000);
 	});
+	it("enables Next's test proxy only in every gate-owned product child environment", () => {
+		const initialGateSignal = process.env.VOTUS_E2E_TEST_PROXY;
+		const parentEnvironment: NodeJS.ProcessEnv = {
+			NODE_ENV: "test",
+			VOTUS_E2E_TEST_PROXY: "unrecognized",
+		};
+		for (const scenario of [
+			"shared",
+			"comparison",
+			"fiscalizacion",
+			"municipal",
+			"provenance",
+		] as const)
+			expect(productEnvironment(parentEnvironment, scenario)).toMatchObject({
+				VOTUS_E2E_TEST_PROXY: "1",
+			});
+		expect(parentEnvironment.VOTUS_E2E_TEST_PROXY).toBe("unrecognized");
+		expect(process.env.VOTUS_E2E_TEST_PROXY).toBe(initialGateSignal);
+	});
 	it("requires and returns every generated environment value", () => {
 		expect(assertE2eEnvironment(ENV)).toEqual(ENV);
 		expect(() => assertE2eEnvironment({})).toThrow(
@@ -1166,6 +1305,364 @@ describe("base contracts", () => {
 		spawnSync.mockReturnValueOnce({ status: 1, stdout: "network-enumeration-secret", stderr: "network-enumeration-secret" });
 		expect(() => listOwnedNetworks(OWNERSHIP.projectId)).toThrowError(new Error("failed to enumerate disposable Supabase networks"));
 	});
+	const successfulCommand = (stdout = "") => ({ status: 0, stdout });
+	const loopbackPublication = (hostIp: string) =>
+		["5432/tcp", "8000/tcp"].map((port) =>
+			JSON.stringify({ [port]: [{ HostIp: hostIp, HostPort: "46000" }] }),
+		).join("\n");
+	const MALFORMED_PORT_PUBLICATION = [
+		JSON.stringify({ "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "46000" }] }),
+		JSON.stringify({
+			"8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "46000" }],
+			"8443/tcp": { HostIp: "127.0.0.1", HostPort: "46000" },
+		}),
+	].join("\n");
+	const PUBLICATION_DIAGNOSTIC_PORT_MAPS = [
+		JSON.stringify({ "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "0" }] }),
+		JSON.stringify({
+			PRIVATE_OUTPUT_MARKER: [
+				{ HostIp: "0.0.0.0", HostPort: "46000" },
+				{ HostIp: "0.0.0.0", HostPort: "46000" },
+			],
+		}),
+	].join("\n");
+	const SINGLE_PUBLICATION_RECORD = JSON.stringify({
+		"5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "46000" }],
+	});
+	const THREE_PUBLICATION_RECORDS = [
+		SINGLE_PUBLICATION_RECORD,
+		JSON.stringify({ "8000/tcp": [{ HostIp: "::1", HostPort: "46001" }] }),
+		JSON.stringify({ "8443/tcp": [{ HostIp: "127.0.0.1", HostPort: "46002" }] }),
+	].join("\n");
+	const STRUCTURAL_PUBLICATION_RECORDS = [
+		JSON.stringify(null),
+		JSON.stringify({
+			PRIVATE_OUTPUT_MARKER: { HostIp: "127.0.0.1", HostPort: "46000" },
+			HostIp: [null],
+			"8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "0" }],
+		}),
+	].join("\n");
+	const UNPUBLISHED_RECORDS = [
+		JSON.stringify({ "5432/tcp": null, "5433/tcp": [] }),
+		JSON.stringify({ "8000/tcp": [], "8443/tcp": null }),
+	].join("\n");
+	const EXPECTED_PUBLICATION_DIAGNOSTICS = new Map([
+		["missing host publication proof", { stage: "json", issues: [] }],
+		["publication diagnostic malformed JSON", { stage: "json", issues: [] }],
+		["publication diagnostic unexpected error", { stage: "unexpected", issues: [] }],
+		["publication diagnostic schema SyntaxError", { stage: "unexpected", issues: [] }],
+		["publication diagnostic empty ZodError", { stage: "unexpected", issues: [] }],
+		["publication diagnostic unknown issue", { stage: "schema", issues: ["host_port", "unclassified"] }],
+		["publication diagnostic schema classes", { stage: "schema", issues: ["host_ip", "host_port"] }],
+		["publication diagnostic single record", { stage: "schema", issues: ["record_count"] }],
+		["publication diagnostic three records", { stage: "schema", issues: ["record_count"] }],
+		["publication diagnostic structural levels", { stage: "schema", issues: ["shape", "host_port"] }],
+		["publication diagnostic unpublished bindings", { stage: "schema", issues: ["unpublished"] }],
+	]);
+	const EXPECTED_PHASE_TRACE = {
+		network: ["network", "cleanup"],
+		startup: ["network", "startup", "cleanup"],
+		publication: ["network", "startup", "publication", "cleanup"],
+		migration: ["network", "startup", "publication", "migration", "cleanup"],
+	} as const;
+	const EXPECTED_FAILURE_RECORD = {
+		NETWORK_CREATE: {
+			schemaVersion: 1,
+			operation: "supabase_network_create",
+			reason: "command_failed",
+			exitCode: 1,
+		},
+		SUPABASE_START: {
+			schemaVersion: 1,
+			operation: "supabase_start",
+			reason: "command_failed",
+			exitCode: 1,
+		},
+		SUPABASE_START_UNAVAILABLE: {
+			schemaVersion: 1,
+			operation: "supabase_start",
+			reason: "command_failed",
+			exitCode: null,
+		},
+		PUBLICATION_INSPECT: {
+			schemaVersion: 1,
+			operation: "supabase_publication_inspect",
+			reason: "command_failed",
+			exitCode: 7,
+		},
+		PUBLICATION_VALIDATE: {
+			schemaVersion: 1,
+			operation: "supabase_publication_validate",
+			reason: "invalid_publication",
+			exitCode: null,
+		},
+	} as const;
+	const INVALID_STARTUP_STATUSES = [-1, 256, 1.5] as const;
+	const REJECTION_CASES = [
+		...["malformed JSON", "unexpected error", "schema SyntaxError", "empty ZodError", "unknown issue"].map(
+			(variant) => [
+				`publication diagnostic ${variant}`, "publication",
+				"Supabase host publication proof is absent or invalid", 0,
+				variant === "malformed JSON"
+					? `${SINGLE_PUBLICATION_RECORD}\nPRIVATE_OUTPUT_MARKER`
+					: PUBLICATION_DIAGNOSTIC_PORT_MAPS,
+				EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+			] as const,
+		),
+		["network creation failure", "network", "disposable Supabase network create", 0, undefined, EXPECTED_FAILURE_RECORD.NETWORK_CREATE, 0],
+		["startup failure", "startup", "disposable Supabase start failed", 1, undefined, EXPECTED_FAILURE_RECORD.SUPABASE_START, 0],
+		["startup diagnostics", "startup", "disposable Supabase start failed", 1, undefined, EXPECTED_FAILURE_RECORD.SUPABASE_START, 0],
+		["startup failure with null status", "startup", "disposable Supabase start failed", null, undefined, EXPECTED_FAILURE_RECORD.SUPABASE_START_UNAVAILABLE, 0],
+		...INVALID_STARTUP_STATUSES.map(
+			(status) =>
+				[
+					`startup failure with status ${status}`,
+					"startup",
+					"disposable Supabase start failed",
+					status,
+					undefined,
+					EXPECTED_FAILURE_RECORD.SUPABASE_START_UNAVAILABLE,
+					0,
+				] as const,
+		),
+		["publication inspection command failure", "publication", "disposable Supabase host publication is unavailable or failed its preflight check", 0, loopbackPublication("127.0.0.1"), EXPECTED_FAILURE_RECORD.PUBLICATION_INSPECT, 7],
+		["missing host publication proof", "publication", "Supabase host publication proof is absent or invalid", 0, undefined, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["malformed host publication", "publication", "Supabase host publication proof is absent or invalid", 0, MALFORMED_PORT_PUBLICATION, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["publication diagnostic schema classes", "publication", "Supabase host publication proof is absent or invalid", 0, PUBLICATION_DIAGNOSTIC_PORT_MAPS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		[
+			"publication diagnostic single record", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			SINGLE_PUBLICATION_RECORD, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		[
+			"publication diagnostic three records", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			THREE_PUBLICATION_RECORDS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		[
+			"publication diagnostic structural levels", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			STRUCTURAL_PUBLICATION_RECORDS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		[
+			"publication diagnostic unpublished bindings", "publication",
+			"Supabase host publication proof is absent or invalid", 0,
+			UNPUBLISHED_RECORDS, EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0,
+		],
+		["IPv4 wildcard host publication", "publication", "Supabase host publication proof is absent or invalid", 0, loopbackPublication("0.0.0.0"), EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["IPv6 wildcard host publication", "publication", "Supabase host publication proof is absent or invalid", 0, loopbackPublication("::"), EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
+		["IPv4 loopback host publication", "migration", "disposable Supabase incremental migrations failed", 0, loopbackPublication("127.0.0.1"), undefined, 0],
+		["IPv6 loopback host publication", "migration", "disposable Supabase incremental migrations failed", 0, loopbackPublication("::1"), undefined, 0],
+	] as const;
+	it.each(REJECTION_CASES)(
+		"creates the exact owned loopback bridge before canonical Supabase startup and rejects %s",
+		async (_scenario, phase, failure, startStatus, publication, expectedRecord, publicationStatus) => {
+			const { z } = await import("zod");
+			const { releaseGateMain, reportReleaseGateFailure } = await import("../scripts/e2e-release-gate");
+			const config = z.config();
+			const priorCustomError = Object.getOwnPropertyDescriptor(config, "customError");
+			const restoreCustomError = () => {
+				if (priorCustomError) Object.defineProperty(config, "customError", priorCustomError);
+				else Reflect.deleteProperty(config, "customError");
+			};
+			const fault = new Map<string, Error>([
+				["publication diagnostic unexpected error", new Error("PRIVATE_OUTPUT_MARKER")],
+				["publication diagnostic schema SyntaxError", new SyntaxError("PRIVATE_OUTPUT_MARKER")],
+				["publication diagnostic empty ZodError", new z.ZodError([])],
+				["publication diagnostic unknown issue", new z.ZodError([
+					{ code: "unrecognized_keys", keys: ["PRIVATE_OUTPUT_MARKER"], path: [], message: "PRIVATE_OUTPUT_MARKER" },
+					{ code: "custom", path: [0, "PRIVATE_OUTPUT_MARKER", 0, "HostPort"], message: "PRIVATE_OUTPUT_MARKER" },
+				])],
+			]).get(_scenario);
+			const formattingFault = vi.fn(() => {
+				restoreCustomError();
+				throw fault;
+			});
+			const token = "12345678-1234-4123-8123-123456789abc";
+			const projectId = "votus-e2e-12345678123441238123";
+			const network = `supabase_network_${projectId}`;
+			const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
+			let port = 46000;
+			let networkPresent = false;
+			let selectedNetwork: string | undefined;
+			const trace: string[] = [];
+			tmpdir.mockReturnValue(tempRoot);
+			randomUUID.mockReturnValue(token);
+			createServer.mockImplementation(() => ({
+				once: vi.fn(),
+				listen: vi.fn((_port, _host, listening) => listening()),
+				address: () => ({ port: port++ }),
+				close: vi.fn((done) => done()),
+			}));
+			spawnSync.mockImplementation((command, args) => {
+				if (command === "pnpm")
+					return successfulCommand(
+						args[0] === "--version" ? "10.0.0\n" : "Version 7.0.0\n",
+					);
+				if (command === "docker" && args[0] === "info")
+					return successfulCommand("29.7.2\n");
+				if (command === "docker" && args[0] === "network") {
+					if (args[1] === "create") {
+						trace.push("network");
+						networkPresent = true;
+						return phase === "network"
+							? { status: 1, stdout: "", stderr: "" }
+							: successfulCommand();
+					}
+					if (args[1] === "rm") {
+						trace.push("cleanup");
+						networkPresent = false;
+					}
+					if (args[1] === "ls")
+						return successfulCommand(networkPresent ? `${network}\n` : "");
+					return successfulCommand();
+				}
+				if (command === "docker" && args[0] === "inspect") {
+					trace.push("publication");
+					if (fault) z.config({ customError: formattingFault });
+					return publicationStatus === 0
+						? successfulCommand(publication ?? "")
+						: {
+							status: publicationStatus,
+							stdout: "PRIVATE_OUTPUT_MARKER",
+							stderr: "PRIVATE_OUTPUT_MARKER",
+						};
+				}
+				if (command === "supabase" && args[0] === "start") {
+					if (args[1] === "--help")
+						return successfulCommand("--workdir --ignore-health-check --network-id\n");
+					trace.push("startup");
+					selectedNetwork = args[args.indexOf("--network-id") + 1];
+					return {
+						status: startStatus,
+						stdout: "",
+						stderr: _scenario === "startup diagnostics" ? "PRIVATE_OUTPUT_MARKER" : "",
+					};
+				}
+				if (command === "supabase" && args[0] === "migration") {
+					trace.push("migration");
+					return { status: 1, stdout: "", stderr: "" };
+				}
+				if (command === "supabase" && args[0] === "--version")
+					return successfulCommand("2.115.0\n");
+				if (command === "supabase" && args[0] === "stop")
+					return successfulCommand("--project-id --no-backup\n");
+				return successfulCommand();
+			});
+			const writeOutput = vi
+				.spyOn(process.stdout, "write")
+				.mockImplementation(() => true);
+			const originalOnce = process.once.bind(process);
+			const signalOnce = vi
+				.spyOn(process, "once")
+				.mockImplementation((event, listener) =>
+					event === "SIGINT" || event === "SIGTERM"
+						? process
+						: originalOnce(event, listener),
+				);
+			try {
+				let rejection: unknown;
+				await expect(
+					releaseGateMain(["--scale-proof-only"]).catch((error: unknown) => {
+						rejection = error;
+						throw error;
+					}),
+				).rejects.toThrow(failure);
+				if (fault) expect(formattingFault).toHaveBeenCalledOnce();
+				if (expectedRecord || phase === "migration") {
+					const reported: string[] = [];
+					const diagnosticCase = EXPECTED_PUBLICATION_DIAGNOSTICS.get(_scenario);
+					const writeError = diagnosticCase
+						? vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+							reported.push(String(chunk));
+							return true;
+						})
+						: undefined;
+					try {
+						reportReleaseGateFailure(
+							"E2E release gate failed",
+							rejection,
+							diagnosticCase ? undefined : (line) => reported.push(line),
+						);
+					} finally {
+						writeError?.mockRestore();
+					}
+					const failureRecords = reported.filter((line) =>
+						line.startsWith("E2E_RELEASE_GATE_FAILURE "),
+					);
+					expect(failureRecords).toHaveLength(expectedRecord ? 1 : 0);
+					if (expectedRecord) expect(
+						JSON.parse(
+							failureRecords[0]!.slice("E2E_RELEASE_GATE_FAILURE ".length),
+						),
+					).toEqual(expectedRecord);
+					if (diagnosticCase) {
+						expect(spawnSync).toHaveBeenCalledWith(
+							"docker",
+							[
+								"inspect",
+								"--format",
+								"{{json .NetworkSettings.Ports}}",
+								"supabase_db_votus-e2e-12345678123441238123",
+								"supabase_kong_votus-e2e-12345678123441238123",
+							],
+							expect.any(Object),
+						);
+						const prefix = "E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ";
+						const diagnostics = reported.join("").split("\n").filter((line) =>
+							line.startsWith(prefix),
+						);
+						expect(diagnostics).toHaveLength(1);
+						expect(JSON.parse(diagnostics[0]!.slice(prefix.length))).toEqual({
+							schemaVersion: 1,
+							...diagnosticCase,
+						});
+						expect(reported.join("")).not.toContain("PRIVATE_OUTPUT_MARKER");
+					}
+					if (expectedRecord?.reason === "command_failed" || phase === "migration")
+						expect(reported.join("")).not.toContain("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ");
+					if (
+						_scenario === "startup diagnostics" ||
+						_scenario === "publication inspection command failure"
+					)
+						expect(reported.join("")).not.toContain("PRIVATE_OUTPUT_MARKER");
+				}
+				expect(spawnSync).toHaveBeenCalledWith(
+					"docker",
+					[
+						"network",
+						"create",
+						"--driver",
+						"bridge",
+						"--label",
+						`com.supabase.cli.project=${projectId}`,
+						"--label",
+						`com.docker.compose.project=${projectId}`,
+						"--opt",
+						"com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+						network,
+					],
+					expect.any(Object),
+				);
+				expect(trace).toEqual(EXPECTED_PHASE_TRACE[phase]);
+				expect(selectedNetwork).toBe(
+					phase === "network" ? undefined : network,
+				);
+				expect(networkPresent).toBe(false);
+				expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
+			} finally {
+				restoreCustomError();
+				signalOnce.mockRestore();
+				writeOutput.mockRestore();
+				spawnSync.mockReset();
+				createServer.mockReset();
+				randomUUID.mockReset();
+				tmpdir.mockReset();
+				rmSync(tempRoot, { force: true, recursive: true });
+			}
+		},
+	);
+
 	it("runs production cleanup in exact-owned order and verifies residuals", async () => {
 		const events: string[] = [];
 		let containers = [`supabase_db_${OWNERSHIP.projectId}`];
@@ -1639,29 +2136,425 @@ describe("release-gate version and endpoint validation", () => {
 	});
 });
 describe("ReleaseGateReporter", () => {
-	const cases = EXPECTED_E2E_SPECS.map(
-		(spec, index) =>
-			({ id: String(index), location: { file: `/repo/${spec}` } }) as TestCase,
+	const supplyCompanion = (text: string) => {
+		let position = 0;
+		open.mockResolvedValue({
+			read: async (buffer: Buffer, offset: number, length: number) => {
+				const bytesRead = Buffer.from(text).copy(buffer, offset, position, position + length);
+				position += bytesRead;
+				return { bytesRead };
+			},
+			close: async () => undefined,
+		});
+	};
+	const testCaseFor = (spec: string, id: string, title: string) =>
+		({
+			id,
+			title,
+			location: { file: fileURLToPath(new URL(spec.startsWith("e2e/") ? `./${spec.slice(4)}` : spec, import.meta.url)) },
+		}) as TestCase;
+	const cases = EXPECTED_E2E_SPECS.map((spec, index) =>
+		testCaseFor(spec, String(index), `${spec} passing case`),
 	);
-	const suite = { allTests: () => cases } as Suite;
+	const suiteFor = (testCases: TestCase[]) =>
+		({ allTests: () => testCases }) as Suite;
+	const suite = suiteFor(cases);
 	const fullResult = { status: "passed" } as FullResult;
-	const makeReporter = (capture: (content: string) => void) =>
+	const makeReporter = (
+		capture: (content: string) => void,
+		writeError: (message: string) => void = () => undefined,
+	) =>
 		new ReleaseGateReporter({
 			receiptPath: "/receipt.json",
-			writeReceipt: (_path, content) => capture(content),
+			writeReceipt: (target, content) => { if (target === "/receipt.json") capture(content); },
+			writeError,
+		});
+	it("retains safe attempt history and distinct discovery ordinals at a shared declaration", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({
+			receiptPath: "/receipt.json",
+			writeReceipt: (target, content) => { writes.set(target, content); },
 			writeError: () => undefined,
 		});
-	it("is directly driven through the exact passing inventory", async () => {
+		const first = testCaseFor(EXPECTED_E2E_SPECS[0], "SECRET-ID-1", "SECRET-TITLE");
+		first.location.line = 12;
+		first.location.column = 3;
+		const second = { ...first, id: "SECRET-ID-2" };
+		reporter.onBegin({} as FullConfig, suiteFor([first, second, ...cases.slice(1)]));
+		for (const [test, status, retry] of [
+			[first, "failed", 0], [second, "timedOut", 0], [first, "interrupted", 1],
+		] as const)
+			reporter.onTestEnd(test, {
+				status, retry,
+				errors: [
+					{ message: "SECRET-ERROR", stack: "SECRET-STACK", snippet: "SECRET-SNIPPET", location: { file: test.location.file, line: 99, column: 7 } },
+					{ location: { file: test.location.file.replace("/e2e/", "/e2e/../e2e/"), line: 101, column: 9 } },
+				],
+			} as TestResult);
+		for (const test of [first, second, ...cases.slice(1)])
+			reporter.onTestEnd(test, { status: "passed", retry: 2 } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
+		expect(JSON.parse(writes.get("/receipt.json")!).results).toEqual(
+			EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+		);
+		const companion = writes.get("/receipt.json.diagnostics.json");
+		expect(companion).toBeDefined();
+		expect(companion).not.toMatch(/SECRET|failureLine|title|errors/);
+		expect(JSON.parse(companion!).schemaVersion).toBe(2);
+		expect(JSON.parse(companion!).attempts).toEqual([
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0 },
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 2, status: "timedOut", retry: 0 },
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "interrupted", retry: 1 },
+		].map((attempt) => ({
+			...attempt, errorLocations: [{ line: 99, column: 7 }, { line: 101, column: 9 }],
+			missingErrorLocations: 0, foreignErrorLocations: 0,
+		})));
+		supplyCompanion(companion!);
+		spawnSync.mockReturnValue({ status: 1 });
+		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		const output: string[] = [];
+		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
+		expect(output.join("")).toContain(`"companion":${companion}`);
+		expect(output.join("")).not.toMatch(/SECRET|failureLine/);
+	});
+	it("partitions all error metadata without leaking paths or changing canonical failure", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({
+			receiptPath: "/receipt.json",
+			writeReceipt: (target, content) => { writes.set(target, content); },
+			writeError: () => undefined,
+		});
+		const test = testCaseFor(EXPECTED_E2E_SPECS[0], "SECRET-ID", "SECRET-TITLE");
+		test.location.line = 12;
+		test.location.column = 3;
+		const location = { file: test.location.file, line: 99, column: 7 };
+		reporter.onBegin({} as FullConfig, suiteFor([test, ...cases.slice(1)]));
+		const errors = [
+			{ location }, { location }, {},
+			...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, "SECRET"].flatMap((value) => [
+				{ location: { ...location, line: value } }, { location: { ...location, column: value } },
+			]),
+			{ location: { ...location, file: null } },
+			{ location: { ...location, file: test.location.file.replace("/e2e/", "/SECRET/") } },
+			{ location: { ...location, file: "/SECRET/other.ts", line: 0 } },
+			null,
+		].map((error) => error === null ? null : ({ ...error, message: "SECRET", stack: "SECRET", snippet: "SECRET", value: "SECRET" }));
+		expect(() => reporter.onTestEnd(test, { status: "failed", retry: 0, errors } as TestResult)).not.toThrow();
+		reporter.onTestEnd(test, { status: "failed", retry: 1, errors: [] } as unknown as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(writes.get("/receipt.json")!).results[0]).toEqual({ spec: EXPECTED_E2E_SPECS[0], status: "failed" });
+		const text = writes.get("/receipt.json.diagnostics.json")!;
+		expect(text).not.toMatch(/SECRET|file|message|stack|snippet|title|value/);
+		supplyCompanion(text);
+		const failure = await playwrightFailure(1, false, "/receipt.json");
+		expect(failure.diagnostic.companion?.attempts).toEqual([
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0,
+				errorLocations: [{ line: 99, column: 7 }, { line: 99, column: 7 }], missingErrorLocations: 16, foreignErrorLocations: 1 },
+			{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 1,
+				errorLocations: [], missingErrorLocations: 0, foreignErrorLocations: 0 },
+		]);
+		expect(JSON.parse(failure.line().slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length))).toEqual(failure.diagnostic);
+		const companion = JSON.parse(text);
+		for (const malformed of [
+			{ ...companion, schemaVersion: 1, attempts: [
+				{ spec: EXPECTED_E2E_SPECS[0], line: 12, column: 3, ordinal: 1, status: "failed", retry: 0 },
+			] }, // Historical v1 is rejected, never upgraded.
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: [{ line: 1, column: 2, file: "SECRET" }] }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: Array(1025).fill({ line: 1, column: 2 }) }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], missingErrorLocations: -1 }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: [{ line: 0, column: 1 }] }] },
+			{ ...companion, attempts: [{ ...companion.attempts[0], errorLocations: [{ line: 1, column: Number.MAX_SAFE_INTEGER + 1 }] }] },
+		]) {
+			supplyCompanion(JSON.stringify(malformed));
+			const rejected = await playwrightFailure(1, false, "/receipt.json");
+			expect(rejected.diagnostic.availability).toBe("invalid-schema");
+			expect(rejected.line()).not.toMatch(/SECRET|companion/);
+		}
+		expect(() => new PlaywrightFailure({ ...failure.diagnostic, schemaVersion: 1 } as unknown as ConstructorParameters<typeof PlaywrightFailure>[0]).line()).toThrow();
+	});
+	it.each([1024, 1025])("preserves %i error coordinates and explicitly rejects overflow on consumption", async (size) => {
+		let companion = "";
+		const reporter = new ReleaseGateReporter({
+			receiptPath: "/receipt.json",
+			writeReceipt: (target, content) => { if (target.endsWith(".diagnostics.json")) companion = content; },
+			writeError: () => undefined,
+		});
+		const test = testCaseFor(EXPECTED_E2E_SPECS[0], "id", "title");
+		test.location.line = 12;
+		test.location.column = 3;
+		reporter.onBegin({} as FullConfig, suiteFor([test]));
+		reporter.onTestEnd(test, { status: "failed", retry: 0, errors: Array.from({ length: size }, () => ({
+			location: { file: test.location.file, line: 99, column: 7 },
+		})) } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(companion).attempts[0].errorLocations).toHaveLength(size);
+		supplyCompanion(companion);
+		const failure = await playwrightFailure(1, false, "/receipt.json");
+		expect(failure.diagnostic.availability).toBe(size === 1024 ? "available" : "invalid-schema");
+		if (size === 1025) expect(failure.diagnostic.issues).toEqual([{ code: "too_big", count: 1 }]);
+	});
+	it("emits safe typed Playwright diagnostics through causes alongside cleanup failures", async () => {
+		open.mockRejectedValue(Object.assign(new Error("SECRET-FILE"), { code: "ENOENT" }));
+		spawnSync.mockReturnValue({ status: 1, stdout: "SECRET-PIPE", stderr: "SECRET-PIPE" });
+		const execution = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		const cleanup = new ReleaseGateCleanupError([{ category: "STACK_STOP", error: new Error("SECRET-CLEANUP") }]);
+		const lines: string[] = [];
+		const secondCleanup = new ReleaseGateCleanupError([
+			{ category: "STACK_STOP", error: new Error("SECRET-SECOND-CLEANUP") },
+		]);
+		reportReleaseGateFailure("gate", new AggregateError([
+			new Error("SECRET-WRAPPER", { cause: execution }), cleanup, secondCleanup,
+		]), (line) => { lines.push(line); });
+		const output = lines.join("");
+		expect(output).toContain('E2E_PLAYWRIGHT_DIAGNOSTIC {"schemaVersion":2,"exitCode":1,"spawn":"completed","availability":"missing"}');
+		expect(output.match(/E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS/g)).toHaveLength(2);
+		expect(output).not.toContain("SECRET");
+	});
+	it.each([
+		["unreadable", null], ["invalid-json", "{"],
+		["invalid-schema", '{"schemaVersion":2,"attempts":"SECRET","SECRET-KEY":true}'],
+		["oversized", " ".repeat(256 * 1024 + 1)],
+	] as const)("keeps child failure and safely classifies %s evidence", async (availability, text) => {
+		if (text === null) open.mockRejectedValue(new Error("SECRET-READ"));
+		else supplyCompanion(text);
+		spawnSync.mockReturnValue({ status: null, error: new Error("SECRET-SPAWN") });
+		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(Error);
+		const output: string[] = [];
+		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
+		const marker = JSON.parse(output[1]!.slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length));
+		expect(marker).toMatchObject({ exitCode: null, spawn: "failed", availability });
+		if (availability === "invalid-schema") expect(marker.issues).toEqual([
+			{ code: "invalid_type", count: 5 }, { code: "invalid_value", count: 1 },
+			{ code: "unrecognized_keys", count: 1 },
+		]);
+		expect(output.join("")).not.toContain("SECRET");
+	});
+	it("does not read diagnostics or change successful child decisions", async () => {
+		open.mockClear();
+		spawnSync.mockReturnValue({ status: 0 });
+		await expect(runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS)).resolves.toBeUndefined();
+		expect(open).not.toHaveBeenCalled();
+	});
+	it("records reporter rejection and metadata losses even when browser cases pass", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target, content) => { writes.set(target, content); }, writeError: () => undefined });
+		const unknown = testCaseFor("./SECRET.spec.ts", "SECRET-ID", "SECRET-TITLE");
+		reporter.onBegin({} as FullConfig, suiteFor([...cases, unknown]));
+		for (const test of cases) reporter.onTestEnd(test, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		const companion = writes.get("/receipt.json.diagnostics.json")!;
+		expect(JSON.parse(companion)).toMatchObject({
+			report: "rejected", attempts: [], unexpectedDiscoveries: 1,
+			unmappableAttempts: 0, counts: { skipped: 0 },
+		});
+		supplyCompanion(companion);
+		spawnSync.mockReturnValue({ status: 1 });
+		const failure = await runPlaywright({ NODE_ENV: "test" }, "/receipt.json", EXPECTED_E2E_SPECS).catch((error: unknown) => error);
+		const output: string[] = [];
+		reportReleaseGateFailure("gate", failure, (line) => { output.push(line); });
+		expect(output.join("")).toContain('"report":"rejected"');
+		expect(output.join("")).not.toContain("SECRET");
+	});
+	it("counts missing results and unmappable declarations without guessing identities", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target, content) => { writes.set(target, content); }, writeError: () => undefined });
+		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, { status: "failed", retry: 0 } as TestResult);
+		reporter.onTestEnd(testCaseFor("./SECRET.spec.ts", "unknown", "SECRET"), { status: "skipped", retry: 0 } as TestResult);
+		for (const test of cases.slice(2)) reporter.onTestEnd(test, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(writes.get("/receipt.json.diagnostics.json")!)).toMatchObject({
+			attempts: [], missingResults: 1, unexpectedDiscoveries: 1, unmappableAttempts: 2,
+			counts: { failed: 1, timedOut: 0, skipped: 1, interrupted: 0 },
+		});
+	});
+	it("keeps canonical success when companion writing fails", async () => {
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target) => {
+			if (target.endsWith(".diagnostics.json")) throw new Error("SECRET-WRITE");
+		} });
+		reporter.onBegin({} as FullConfig, suite);
+		for (const test of cases) reporter.onTestEnd(test, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
+	});
+	it("uses the final valid callback outcome for a retry", async () => {
 		let receipt = "";
 		const reporter = makeReporter((content) => {
 			receipt = content;
 		});
 		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, {
+			status: "failed",
+			errors: [{ location: { file: "/private/failure.spec.ts", line: 42, column: 9 } }],
+		} as TestResult);
 		for (const testCase of cases)
 			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
 		await expect(reporter.onEnd(fullResult)).resolves.toBeUndefined();
-		expect(JSON.parse(receipt).results).toHaveLength(8);
+		expect(JSON.parse(receipt)).toEqual({
+			suiteStatus: "passed",
+			results: PASSED,
+			selection: {
+				mode: "full",
+				selectedCount: EXPECTED_E2E_SPECS.length,
+				selected: EXPECTED_E2E_SPECS,
+				excludedCount: 0,
+				excluded: [],
+			},
+		});
 	});
+	it("aggregates multiple cases into one selected-spec receipt in focused mode", async () => {
+		const selected = "e2e/municipal.spec.ts";
+		const previousMode = process.env["VOTUS_E2E_GATE_MODE"];
+		const previousSelected = process.env["VOTUS_E2E_SELECTED_SPECS"];
+		process.env["VOTUS_E2E_GATE_MODE"] = "focused";
+		process.env["VOTUS_E2E_SELECTED_SPECS"] = JSON.stringify([selected]);
+		try {
+			let receipt = "";
+			const errors: string[] = [];
+			const reporter = makeReporter(
+				(content) => {
+					receipt = content;
+				},
+				(message) => errors.push(message.trim()),
+			);
+			const testCases = [
+				testCaseFor(selected, "municipal-first", "municipal first case"),
+				testCaseFor(selected, "municipal-second", "municipal second case"),
+			];
+			reporter.onBegin({} as FullConfig, suiteFor(testCases));
+			for (const testCase of testCases)
+				reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+			const outcome = await reporter.onEnd(fullResult);
+
+			expect(outcome, errors.join("\n")).toBeUndefined();
+			expect(JSON.parse(receipt)).toEqual({
+				suiteStatus: "passed",
+				results: [{ spec: selected, status: "passed" }],
+				selection: {
+					mode: "focused",
+					selectedCount: 1,
+					selected: [selected],
+					excludedCount: 7,
+					excluded: EXPECTED_E2E_SPECS.filter((spec) => spec !== selected),
+				},
+			});
+		} finally {
+			if (previousMode === undefined) delete process.env["VOTUS_E2E_GATE_MODE"];
+			else process.env["VOTUS_E2E_GATE_MODE"] = previousMode;
+			if (previousSelected === undefined)
+				delete process.env["VOTUS_E2E_SELECTED_SPECS"];
+			else process.env["VOTUS_E2E_SELECTED_SPECS"] = previousSelected;
+		}
+	});
+	it("aggregates nine passing test cases into the exact eight-spec receipt", async () => {
+		let receipt = "";
+		const errors: string[] = [];
+		const reporter = makeReporter(
+			(content) => {
+				receipt = content;
+			},
+			(message) => errors.push(message.trim()),
+		);
+		const testCases = EXPECTED_E2E_SPECS.flatMap((spec, index) =>
+			spec === "e2e/municipal.spec.ts"
+				? [
+					testCaseFor(spec, `${index}-first`, "municipal first case"),
+					testCaseFor(spec, `${index}-second`, "municipal second case"),
+				]
+				: [testCaseFor(spec, `${index}-only`, `${spec} only case`)],
+		);
+		reporter.onBegin({} as FullConfig, suiteFor(testCases));
+		for (const testCase of testCases)
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+		const outcome = await reporter.onEnd(fullResult);
+
+		expect(outcome, errors.join("\n")).toBeUndefined();
+		const report = JSON.parse(receipt) as {
+			suiteStatus: string;
+			results: GateTestResult[];
+		};
+		expect(report).toEqual({
+			suiteStatus: "passed",
+			results: EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+			selection: {
+				mode: "full",
+				selectedCount: EXPECTED_E2E_SPECS.length,
+				selected: EXPECTED_E2E_SPECS,
+				excludedCount: 0,
+				excluded: [],
+			},
+		});
+	});
+	it("fails closed when an expected spec has no discovered test IDs", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => {
+			receipt = content;
+		});
+		const missingSpec = EXPECTED_E2E_SPECS.at(-1)!;
+		const testCases = cases.slice(0, -1);
+		reporter.onBegin({} as FullConfig, suiteFor(testCases));
+		for (const testCase of testCases)
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(receipt)).toEqual({
+			suiteStatus: "failed",
+			results: EXPECTED_E2E_SPECS.map((spec) =>
+				spec === missingSpec ? { spec, status: "interrupted" } : { spec, status: "passed" },
+			),
+			selection: {
+				mode: "full",
+				selectedCount: EXPECTED_E2E_SPECS.length,
+				selected: EXPECTED_E2E_SPECS,
+				excludedCount: 0,
+				excluded: [],
+			},
+		});
+	});
+	it.each(["failed", "timedOut", "interrupted", "skipped"] as const)(
+		"fails the municipal spec when a later case is %s",
+		async (status) => {
+			let receipt = "";
+			const reporter = makeReporter((content) => {
+				receipt = content;
+			});
+			const municipal = "e2e/municipal.spec.ts";
+			const testCases = EXPECTED_E2E_SPECS.flatMap((spec, index) =>
+				spec === municipal
+					? [
+						testCaseFor(spec, `${index}-passed`, "municipal first passing case"),
+						testCaseFor(spec, `${index}-${status}`, `municipal later ${status} case`),
+					]
+					: [testCaseFor(spec, `${index}-only`, `${spec} only case`)],
+			);
+			reporter.onBegin({} as FullConfig, suiteFor(testCases));
+			for (const testCase of testCases)
+				reporter.onTestEnd(
+					testCase,
+					testCase.id.endsWith(`-${status}`)
+						? ({
+								status,
+								errors: [
+									{ location: { file: "/private/failure.spec.ts", line: 42, column: 9 } },
+								],
+							} as TestResult)
+						: ({ status: "passed" } as TestResult),
+				);
+
+			await expect(reporter.onEnd(fullResult)).resolves.toEqual({
+				status: "failed",
+			});
+			const results = (JSON.parse(receipt) as { results: GateTestResult[] }).results;
+			expect(results).toHaveLength(EXPECTED_E2E_SPECS.length);
+			expect(results.find(({ spec }) => spec === municipal)).toEqual({
+				spec: municipal,
+				status,
+				failureLine: 42,
+			});
+		},
+	);
 	it("records only a valid failure line for non-passing tests", async () => {
 		let receipt = "";
 		const reporter = makeReporter((content) => {
@@ -1737,10 +2630,76 @@ describe("ReleaseGateReporter", () => {
 		await expect(reporter.onEnd(fullResult)).resolves.toEqual({
 			status: "failed",
 		});
+		expect(JSON.parse(receipt).suiteStatus).toBe("failed");
 		expect(JSON.parse(receipt).results[0]).toMatchObject({
 			status: "interrupted",
 		});
 	});
+	it("does not count a known ID from outside e2e as completed", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => (receipt = content));
+		reporter.onBegin({} as FullConfig, suite);
+		for (const testCase of cases.slice(1))
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+		reporter.onTestEnd(
+			testCaseFor("../outside/auth.spec.ts", cases[0]!.id, "mismatched case"), { status: "passed" } as TestResult,
+		);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(receipt).results[0]).toEqual({
+			spec: EXPECTED_E2E_SPECS[0], status: "interrupted",
+		});
+	});
+	it("preserves a failure when an outside callback reuses its ID", async () => {
+		let receipt = "";
+		const reporter = makeReporter((content) => (receipt = content));
+		reporter.onBegin({} as FullConfig, suite);
+		reporter.onTestEnd(cases[0]!, {
+			status: "failed",
+			errors: [{ location: { file: "/private/failure.spec.ts", line: 42, column: 9 } }],
+		} as TestResult);
+		reporter.onTestEnd(
+			testCaseFor("../outside/auth.spec.ts", cases[0]!.id, "mismatched case"), { status: "passed" } as TestResult,
+		);
+		for (const testCase of cases.slice(1))
+			reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+		await expect(reporter.onEnd(fullResult)).resolves.toEqual({ status: "failed" });
+		expect(JSON.parse(receipt).results[0]).toEqual({
+			spec: EXPECTED_E2E_SPECS[0], status: "failed", failureLine: 42,
+		});
+	});
+	it.each(["suite", "result"] as const)(
+		"fails closed for an unexpected spec from the %s while retaining the bounded receipt",
+		async (source) => {
+			let receipt = "";
+			const reporter = makeReporter((content) => {
+				receipt = content;
+			});
+			const unexpected = testCaseFor(
+				"e2e/unexpected.spec.ts",
+				"unexpected",
+				"unexpected test case",
+			);
+			reporter.onBegin(
+				{} as FullConfig,
+				suiteFor(source === "suite" ? [...cases, unexpected] : cases),
+			);
+			for (const testCase of [...cases, unexpected])
+				reporter.onTestEnd(testCase, { status: "passed" } as TestResult);
+
+			await expect(reporter.onEnd(fullResult)).resolves.toEqual({
+				status: "failed",
+			});
+			const report = JSON.parse(receipt) as {
+				suiteStatus: string;
+				results: GateTestResult[];
+			};
+			expect(report.suiteStatus).toBe("failed");
+			expect(report.results).toHaveLength(EXPECTED_E2E_SPECS.length);
+			expect(report.results).toEqual(
+				EXPECTED_E2E_SPECS.map((spec) => ({ spec, status: "passed" })),
+			);
+		},
+	);
 });
 
 describe("release-gate cleanup diagnostics", () => {

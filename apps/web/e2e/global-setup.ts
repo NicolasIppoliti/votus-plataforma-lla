@@ -67,7 +67,7 @@ export default async function globalSetup(): Promise<void> {
     await page.getByLabel("Contraseña").fill(password);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
     try {
-      await page.waitForURL(/\/dashboard/, { timeout: 10_000 });
+      await page.waitForURL((url) => url.pathname === "/", { timeout: 10_000 });
     } catch {
       const alert = await page.getByRole("alert").textContent().catch(() => null);
       throw new Error(`e2e global setup: fixture sign-in failed${alert ? `: ${alert}` : ""}`);

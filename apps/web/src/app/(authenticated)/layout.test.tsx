@@ -1,12 +1,10 @@
-import { readFileSync } from "node:fs";
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import AuthenticatedLayout from "./layout";
 
-const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
+const navigation = vi.hoisted(() => ({ pathname: "/" }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
-const globalStyles = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
@@ -41,16 +39,19 @@ async function renderLayout(pathname: string): Promise<string> {
   );
 }
 
-it("keeps authenticated header, navigation, and content on the shared centered container", async () => {
+it("renders the Command Ledger shell in keyboard order", async () => {
   const markup = await renderLayout("/dashboard");
-  const navigationRule = globalStyles.match(/\.navigation-list\s*\{([^}]*)\}/)?.[1];
+  const sidebarIndex = markup.indexOf('<aside class="situation-sidebar">');
+  const navigationIndex = markup.indexOf('<nav aria-label="principal"');
+  const topbarIndex = markup.indexOf('<header class="workspace-topbar">');
+  const mainIndex = markup.indexOf('id="main-content"');
 
-  expect(markup).toContain('class="shell-container site-header__inner"');
-  expect(primaryNavigation(markup)).toContain('<ul class="shell-container navigation-list">');
+  expect(sidebarIndex).toBeGreaterThanOrEqual(0);
+  expect(primaryNavigation(markup)).toContain('<ul class="navigation-list">');
+  expect(topbarIndex).toBeGreaterThan(navigationIndex);
+  expect(mainIndex).toBeGreaterThan(topbarIndex);
+  expect(markup).toContain('class="app-shell__workspace"');
   expect(markup).toContain('class="shell-container app-content"');
-  expect(navigationRule).toBeDefined();
-  expect(navigationRule).toMatch(/margin-block:\s*0;/);
-  expect(navigationRule).not.toMatch(/(?:^|;)\s*margin\s*:/);
 });
 
 it.each([
@@ -67,6 +68,36 @@ it.each([
   for (const message of messages) expect(markup).toContain(message);
 });
 
+it("renders a closed mobile drawer from the shared navigation contract", async () => {
+  const markup = await renderLayout("/dashboard");
+  const drawerMarkup = mobileDrawer(markup);
+
+  expect(markup).toContain(
+    'aria-controls="mobile-navigation-drawer" aria-expanded="false"',
+  );
+  expect(drawerMarkup).not.toMatch(/<dialog[^>]*\sopen(?:\s|=|>)/);
+  expect(drawerMarkup).toContain('<aside class="situation-sidebar">');
+  expect(drawerMarkup).toContain(
+    "Esta herramienta no es una fuente electoral oficial.",
+  );
+  expect(drawerMarkup.match(/<nav aria-label="principal"/g) ?? []).toHaveLength(1);
+  const drawerNavigation = drawerMarkup.match(
+    /<nav aria-label="principal"[\s\S]*?<\/nav>/,
+  )?.[0] ?? "";
+  expect([...drawerNavigation.matchAll(/<a ([^>]*)>/g)]
+    .map(([, attributes]) => attributes?.match(/href="([^"]+)"/)?.[1])
+    .filter((href): href is string => typeof href === "string"))
+    .toEqual([
+      "/",
+      "/drilldown",
+      "/compare",
+      "/municipal",
+      "/fiscalizacion",
+      "/simulate",
+      "/review",
+    ]);
+});
+
 it("renders exactly one keyboard-accessible sign-out form action", async () => {
   const markup = await renderLayout("/dashboard");
   const signOutForms =
@@ -77,6 +108,14 @@ it("renders exactly one keyboard-accessible sign-out form action", async () => {
   expect(signOutForms).toHaveLength(1);
   expect(signOutForms[0]).toMatch(/<form[^>]*\saction=/);
 });
+
+function mobileDrawer(markup: string): string {
+  const drawerMarkup = markup.match(
+    /<dialog[^>]*id="mobile-navigation-drawer"[\s\S]*?<\/dialog>/,
+  )?.[0];
+  expect(drawerMarkup).toBeDefined();
+  return drawerMarkup ?? "";
+}
 
 function primaryNavigation(markup: string): string {
   const navigationMarkup = markup.match(
@@ -93,8 +132,10 @@ function currentPrimaryHrefs(markup: string): string[] {
 }
 
 it.each([
-  ["/dashboard", "/dashboard"],
+  ["/", "/"],
   ["/drilldown", "/drilldown"],
+  ["/compare", "/compare"],
+  ["/municipal", "/municipal"],
   ["/fiscalizacion", "/fiscalizacion"],
   ["/simulate", "/simulate"],
   ["/review", "/review"],
@@ -103,6 +144,8 @@ it.each([
 });
 
 it.each([
+  ["/compare/districts", "/compare"],
+  ["/municipal/coronel-rosales", "/municipal"],
   ["/simulate/", "/simulate"],
   ["/review/history", "/review"],
 ])("matches the %s route to its navigation family", async (pathname, href) => {
@@ -113,13 +156,6 @@ it("does not treat a shared route prefix as a navigation family", async () => {
   expect(currentPrimaryHrefs(await renderLayout("/review-history"))).toEqual([]);
 });
 
-it.each(["/compare", "/municipal"])(
-  "leaves intentionally unrepresented route %s without a current link",
-  async (pathname) => {
-    expect(currentPrimaryHrefs(await renderLayout(pathname))).toEqual([]);
-  },
-);
-
 it("links authenticated operators to the seat simulation route", async () => {
   const markup = await renderLayout("/dashboard");
 
@@ -129,14 +165,14 @@ it("links authenticated operators to the seat simulation route", async () => {
   expect(markup.match(/id="main-content"/g) ?? []).toHaveLength(1);
   expect(markup).toContain('nav aria-label="principal"');
   expect(markup).toContain('href="/simulate"');
-  expect(markup).toContain("Simulación de bancas");
+  expect(markup).toContain("Simulación 2027");
 });
 
 it("links authenticated operators to the official results explorer", async () => {
   const markup = await renderLayout("/dashboard");
 
   expect(markup).toContain('href="/drilldown"');
-  expect(markup).toContain("Explorar resultados");
+  expect(markup).toContain("Explorar");
 });
 
 it("surfaces an unknown review state", async () => { workspace.reviewItems.mockRejectedValueOnce(new Error("unavailable")); expect(await renderLayout("/dashboard")).toContain("No se pudo verificar el estado de revisión."); });
@@ -148,21 +184,52 @@ it("renders the authorized unresolved count from the verified workspace facade",
   expect(markup).toContain("3 elemento(s) de revisión pendiente(s)");
 });
 
-it("preserves source status and keeps cold routes out of primary navigation", async () => {
+it("renders all seven shared destinations in contract order with explicit source status", async () => {
   const markup = await renderLayout("/dashboard");
   const navigationMarkup = primaryNavigation(markup);
+  const hrefs = [...navigationMarkup.matchAll(/<a ([^>]*)>/g)]
+    .map(([, attributes]) => attributes?.match(/href="([^"]+)"/)?.[1])
+    .filter((href): href is string => typeof href === "string");
 
   expect(markup).toContain("Esta herramienta no es una fuente electoral oficial.");
-  expect(navigationMarkup).toContain('href="/dashboard"');
-  expect(navigationMarkup).toContain("Panel");
-  expect(navigationMarkup).not.toContain('href="/compare"');
-  expect(navigationMarkup).not.toContain(">Comparar<");
-  expect(navigationMarkup).toContain('href="/fiscalizacion"');
+  expect(hrefs).toEqual([
+    "/",
+    "/drilldown",
+    "/compare",
+    "/municipal",
+    "/fiscalizacion",
+    "/simulate",
+    "/review",
+  ]);
+  expect(navigationMarkup).toContain(
+    '<section aria-labelledby="primary-navigation-situation-heading">',
+  );
+  expect(navigationMarkup).toContain(
+    '<h2 id="primary-navigation-situation-heading">Situación</h2>',
+  );
+  expect(navigationMarkup).toContain(
+    '<h2 id="primary-navigation-officialResults-heading">Resultados oficiales</h2>',
+  );
+  expect(navigationMarkup).toContain(
+    '<section aria-describedby="primary-navigation-fiscalizacion-description" aria-labelledby="primary-navigation-fiscalizacion-heading">',
+  );
+  expect(navigationMarkup).toContain(
+    '<h2 id="primary-navigation-fiscalizacion-heading">Fiscalización</h2>',
+  );
+  expect(navigationMarkup).toContain(
+    '<p id="primary-navigation-fiscalizacion-description">Fuente no oficial, separada de los resultados oficiales.</p>',
+  );
+  expect(navigationMarkup).toContain(
+    '<h2 id="primary-navigation-scenarios-heading">Escenarios</h2>',
+  );
+  expect(navigationMarkup).toContain(
+    '<h2 id="primary-navigation-operations-heading">Operaciones</h2>',
+  );
+  expect(navigationMarkup).toContain("Resumen operativo");
+  expect(navigationMarkup).toContain("Explorar");
+  expect(navigationMarkup).toContain("Comparar");
+  expect(navigationMarkup).toContain("Municipal");
   expect(navigationMarkup).toContain("Fiscalización (no oficial)");
-  expect(navigationMarkup).not.toContain('href="/municipal"');
-  expect(navigationMarkup).not.toContain(">Municipal (Concejales)<");
-  expect(navigationMarkup).toContain('href="/simulate"');
-  expect(navigationMarkup).toContain("Simulación de bancas");
-  expect(navigationMarkup).toContain('href="/review"');
-  expect(navigationMarkup).toContain("Revisión");
+  expect(navigationMarkup).toContain("Simulación 2027");
+  expect(navigationMarkup).toContain("Revisión de datos");
 });

@@ -33,7 +33,7 @@ describe("municipal page — loadMunicipalView", () => {
   it("test_renderMunicipalView_renders_resolved_party_names", async () => {
     const view = { status: "ok" as const,
       rows: [{ ...MUNICIPAL_ROWS[0]!, partyName: "ALIANZA LA LIBERTAD AVANZA", canonicalPartyId: "lla" }],
-      excluded: {}, partyMappingConfigured: true };
+      excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } }, partyMappingConfigured: true };
 
     expect(view.status).toBe("ok");
     expect(view.rows[0]?.partyName).toBe("ALIANZA LA LIBERTAD AVANZA");
@@ -65,7 +65,7 @@ describe("municipal page — renderMunicipalView", () => {
       renderMunicipalView({
         status: "ok",
         rows: [{ ...MUNICIPAL_ROWS[0]!, partyName: "ALIANZA LA LIBERTAD AVANZA" }],
-        excluded: {},
+        excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } },
         partyMappingConfigured: true,
       }),
     );
@@ -88,7 +88,7 @@ describe("municipal page — renderMunicipalView", () => {
         renderMunicipalView({
           status: "ok",
           rows: [{ ...MUNICIPAL_ROWS[0]!, requestedGranularity }],
-          excluded: {},
+          excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } },
           partyMappingConfigured: true,
         }),
       );
@@ -100,8 +100,9 @@ describe("municipal page — renderMunicipalView", () => {
 
 let entryPointRows: ResultRow[] = [];
 let entryPointSources: SourceRef[] = [];
-let authorizedEvidenceState: { status: "denied" | "malformed" | "unavailable" | "truncated" } | null = null;
+let authorizedEvidenceState: Exclude<MunicipalOfficialEvidence, { status: "ok" }> | null = null;
 let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
+let authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
 let authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
 
 afterEach(() => {
@@ -109,6 +110,7 @@ afterEach(() => {
   entryPointSources = [];
   authorizedEvidenceState = null;
   authorizedEvidenceSource = "official";
+  authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
   authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
   redirectMock.mockClear();
   delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
@@ -122,7 +124,7 @@ describe("municipal page — the badge describes the rows, not a memory of them"
       renderMunicipalView({
         status: "ok",
         rows: [{ ...MUNICIPAL_ROWS[0]!, granularity: "distrito" }],
-        excluded: {},
+        excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } },
         partyMappingConfigured: true,
       }),
     );
@@ -146,7 +148,7 @@ describe("municipal page — the badge describes the rows, not a memory of them"
         // `summedFrom` nor `degradedFrom`, i.e. the single input where the
         // badge carries nothing about the rows at all.
         rows: [{ ...MUNICIPAL_ROWS[0]!, granularity: "mesa" }],
-        excluded: {},
+        excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } },
         partyMappingConfigured: true,
       }),
     );
@@ -164,7 +166,7 @@ describe("municipal page — the badge describes the rows, not a memory of them"
           { ...MUNICIPAL_ROWS[0]!, granularity: "seccion" },
           { ...MUNICIPAL_ROWS[0]!, granularity: "distrito" },
         ],
-        excluded: {},
+        excluded: {}, sourceAudit: { official: { rows: 2, votes: 8400 } },
         partyMappingConfigured: true,
       }),
     );
@@ -177,7 +179,7 @@ describe("municipal page — the badge describes the rows, not a memory of them"
     // And NO badge: `readGranularity` folds to the coarsest level, so a badge
     // beside the refusal names one of the mixed levels as if it were the set's.
     expect(html).not.toContain('aria-label="granularidad:');
-    expect(html).not.toContain("8400");
+    expect(html).not.toContain("8400 voto(s)");
   });
 });
 
@@ -193,7 +195,7 @@ vi.mock("@/lib/supabase/server-client", () => ({
 
 vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
   loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
-    status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", electionYear: 2025, electionRound: "legislativas", totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
+    status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", categoryName: authorizedEvidenceIdentity.categoryName, electionYear: authorizedEvidenceIdentity.year, electionRound: authorizedEvidenceIdentity.round, totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
     parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: authorizedEvidenceAudit, sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
   }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) })),
 }));
@@ -222,9 +224,38 @@ describe("municipal page — the real entry point", () => {
 
   it("test_production_refuses_unofficial_evidence", async () => { authorizedEvidenceSource = "fiscalizacion"; entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }]; const { default: Page } = await import("./page"); const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement); expect(html).toContain("no es de fuente oficial"); expect(html).not.toContain("4200 voto(s)"); });
 
+  it.each([
+    ["wrong year", { year: 2024 }],
+    ["wrong round", { round: "legislativas" }],
+    ["wrong category", { categoryName: "DIPUTADOS PROVINCIALES" }],
+  ])("refuses %s before figures or provenance reach the page", async (_case, identity) => {
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+    authorizedEvidenceIdentity = { ...authorizedEvidenceIdentity, ...identity };
+    entryPointSources = [{
+      archiveEntryId: "SENTINEL-PROVENANCE",
+      sha256: "f".repeat(64),
+      url: "https://example.test/sentinel",
+      fetchedAt: "SENTINEL-FETCHED-AT",
+    }];
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup(
+      (await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement,
+    );
+
+    expect(html).toContain("No se pudo leer la evidencia municipal autorizada");
+    for (const secret of ["4200", "ALIANZA LA LIBERTAD AVANZA", "SENTINEL-PROVENANCE", "SENTINEL-FETCHED-AT"])
+      expect(html).not.toContain(secret);
+  });
+
   it("test_production_refuses_an_empty_official_source_audit", async () => {
     entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
     authorizedEvidenceAudit = [];
+    entryPointSources = [{
+      archiveEntryId: "SENTINEL-MALFORMED-AUDIT-PROVENANCE",
+      sha256: "e".repeat(64),
+      url: "https://example.test/malformed-audit",
+      fetchedAt: "SENTINEL-MALFORMED-AUDIT-FETCHED-AT",
+    }];
     const { default: Page } = await import("./page");
 
     const html = renderToStaticMarkup(
@@ -236,6 +267,8 @@ describe("municipal page — the real entry point", () => {
     expect(html).toContain("auditoría oficial");
     expect(html).not.toContain("4200 voto(s)");
     expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA");
+    expect(html).not.toContain("SENTINEL-MALFORMED-AUDIT-PROVENANCE");
+    expect(html).not.toContain("SENTINEL-MALFORMED-AUDIT-FETCHED-AT");
   });
 
   it("test_the_data_path_reaches_the_render_with_its_sources", async () => {
@@ -266,10 +299,60 @@ describe("municipal page — the real entry point", () => {
         expect(markup).not.toContain("https://example.test/pba-2023.html");
       });
 
+      it("test_authorized_page_renders_a_route_local_exact_results_table_with_adjacent_evidence", async () => {
+        const { default: MunicipalPage } = await import("./page");
+        entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+        entryPointSources = [{
+          archiveEntryId: "pba/2025-municipal-coronel-rosales",
+          sha256: "aaaabbbbccccdddd0000111122223333444455556666777788889999aaaabbbb",
+          url: "https://example.test/pba-2023.html",
+          fetchedAt: "2026-01-01T00:00:00Z",
+        }];
+
+        const markup = renderToStaticMarkup(
+          (await MunicipalPage({
+            searchParams: Promise.resolve({ electionId: "2025-municipal" }),
+          })) as ReactElement,
+        );
+
+        expect(markup).toContain('class="page-shell official-municipal"');
+        expect(markup).toContain('class="official-municipal__results"');
+        expect(markup).toContain('role="region" aria-label="Tabla de resultados oficiales exactos por partido" tabindex="0"');
+        expect(markup).toContain("<caption>Resultados oficiales exactos por partido y votos</caption>");
+        expect(markup).toContain('<th scope="col">Partido</th>');
+        expect(markup).toContain('<th scope="col" class="table-cell--number">Votos exactos</th>');
+        expect(markup).toContain('<th scope="row">ALIANZA LA LIBERTAD AVANZA</th>');
+        expect(markup).toContain('<td class="table-cell--number">4200</td>');
+        expect(markup).not.toContain("ALIANZA LA LIBERTAD AVANZA: 4200 voto(s)");
+        expect(markup).toContain('class="official-municipal__evidence"');
+        expect(markup).toContain("aaaabbbbccccdddd");
+      });
+
       it("test_malformed_authorized_evidence_hides_figures", async () => {
         const { default: Page } = await import("./page"); authorizedEvidenceState = { status: "malformed" };
         const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement);
         expect(html).toContain("formato inválido"); expect(html).not.toContain("4200 voto(s)");
+      });
+
+      it("test_refusal_and_empty_states_hide_the_exact_figure_and_evidence", async () => {
+        const { default: Page } = await import("./page");
+        const sentinels = ["Resultados exactos", "ALIANZA LA LIBERTAD AVANZA", "4200", "Archivo y procedencia", "procedencia"];
+        for (const [state, message] of [
+          [{ status: "denied" }, "no autoriza"], [{ status: "unavailable" }, "no está disponible"],
+          [{ status: "malformed" }, "formato inválido"], [{ status: "truncated" }, "truncada"],
+          [{ status: "empty" }, "No hay resultados oficiales"],
+        ] as const) {
+          authorizedEvidenceState = state;
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2025-municipal" }) })) as ReactElement);
+          expect(html).toContain(message);
+          for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+        }
+        for (const searchParams of [{ unexpected: "x" }, { jurisdictionId: "j-027" }, { categoryId: "c-otro" }, { partyCategory: "CONCEJALES" }, { electionId: ["2025-municipal", "2025-municipal"] }]) {
+          authorizedEvidenceState = null;
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve(searchParams) }) as ReactElement));
+          expect(html).toContain("Se rechazó la solicitud");
+          for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+        }
       });
 
       it("test_bare_route_renders_one_accessible_configured_election_selector", async () => {
@@ -423,7 +506,7 @@ describe("municipal page — path 3 fires when the repository filter regresses",
 { ...MUNICIPAL_ROWS[0]! },
 { ...MUNICIPAL_ROWS[0]!, sourceKind: "fiscalizacion" },
           ],
-          excluded: {},
+          excluded: {}, sourceAudit: { official: { rows: 2, votes: 8400 } },
           partyMappingConfigured: true,
         },
         [{ archiveEntryId: "a", sha256: "a".repeat(64),
@@ -431,18 +514,9 @@ describe("municipal page — path 3 fires when the repository filter regresses",
       ),
     );
 
-    expect(html).toContain("no son oficiales");
-    // The BREAKDOWN, in both units — the shape rule 3 exists to protect. Its
-    // two siblings pin it; this driver asserted only that the refusal fired,
-    // so the per-kind tally could regress to a bare total and stay green.
-    expect(html).toContain("1 fila fiscalización / 4200 votos");
-    // No PARTY line. `not.toContain("<li>")` was too broad once the unmapped
-    // breakdown started rendering its own list: the refusal legitimately emits
-    // `<li>` now, and the claim was never about markup — it is that no figure
-    // is attributed to a party.
-        expect(html).not.toContain(": 4200 votos");
-        expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA:");
-        expect(html).not.toContain("https://example.test/municipal.csv");
+    expect(html).toContain("la auditoría de fuente oficial no es válida");
+    for (const secret of ["4200", "ALIANZA LA LIBERTAD AVANZA", "https://example.test/municipal.csv"])
+      expect(html).not.toContain(secret);
       });
     });
 
@@ -450,7 +524,7 @@ describe("municipal page — path 3 fires when the repository filter regresses",
       const row = { ...MUNICIPAL_ROWS[0]!, canonicalPartyId: "lla" };
       const html = renderToStaticMarkup(renderMunicipalView({ status: "ok",
         rows: [{ ...row, partyName: "LLA" }, { ...row, partyName: "ALIANZA LLA" }],
-        excluded: { fiscalizacion: { rows: 1, votes: 90 } }, partyMappingConfigured: true },
+        excluded: { fiscalizacion: { rows: 1, votes: 90 } }, sourceAudit: { official: { rows: 2, votes: 8400 } }, partyMappingConfigured: true },
         [{ archiveEntryId: "a", sha256: "b".repeat(64),
           url: "https://example.test/conflict.csv", fetchedAt: "2026-01-01" }]));
       for (const fact of ["Se rechazó", "nombres incompatibles",
@@ -465,10 +539,11 @@ describe("municipal evidence — the rendered-page defense boundary", () => {
     result: {
       status: "ok",
       sourceKind: "official",
+      categoryName: "CONCEJALES",
       level: "seccion",
       sourceGranularity: "seccion",
       electionYear: 2025,
-      electionRound: "legislativas",
+      electionRound: "provinciales",
       totalVotes: 4200,
       mesaCount: null,
       parties: [{
@@ -510,8 +585,7 @@ describe("municipal evidence — the rendered-page defense boundary", () => {
 
     expect(view.status).toBe("read_failed");
     expect(view).not.toHaveProperty("rows");
-    expect(view).toHaveProperty("excluded.fiscalizacion", { rows: 2, votes: 30 });
-    expect(JSON.stringify(view)).not.toContain('"sourceKind":"official"');
+    expect(view).toEqual({ status: "read_failed", reason: "la auditoría oficial municipal no coincide con las cifras autorizadas" });
   });
 
   it("refuses a party total that disagrees with the official total", () => {
@@ -633,7 +707,7 @@ describe("municipal page — no mapping source is not a claim about the data", (
       renderMunicipalView({
         status: "ok",
         rows: [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }],
-        excluded: {},
+        excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } },
         partyMappingConfigured: false,
       }),
     );

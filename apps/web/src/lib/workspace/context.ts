@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExplorationFacetSelection } from "@/lib/results/exploration";
+import { sanitizeReviewItems, type AuthorizedReviewItems } from "./review-items";
 import type { OfficialSectionSelection, OfficialSelection } from "../../app/api/workspace/official/input";
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -133,14 +134,14 @@ export async function authorizedFiscalizacionResult(client: SupabaseClient, sele
   return rpcData(await verifiedWorkspaceApi(client), "fiscalizacion_result", { ...officialSectionParameters(selection), p_opt_in: optIn }) as Promise<AuthorizedFiscalizacionResult>;
 }
 
-export async function authorizedReviewItems(client: SupabaseClient, limit = 50, offset = 0) {
+export async function authorizedReviewItems(client: SupabaseClient, limit = 50, offset = 0): Promise<AuthorizedReviewItems> {
   if (!Number.isSafeInteger(limit) || limit < 0 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0 || offset > 2_000_000_000) {
     throw new Error("Invalid review pagination");
   }
-  return rpcData(await verifiedWorkspaceApi(client), "review_items", {
+  return sanitizeReviewItems(await rpcData(await verifiedWorkspaceApi(client), "review_items", {
     p_limit: limit,
     p_offset: offset,
-  });
+  }), limit, offset);
 }
 
 function officialParameters(selection: OfficialSelection) {

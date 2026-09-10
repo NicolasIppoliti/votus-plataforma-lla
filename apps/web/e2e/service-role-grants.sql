@@ -34,6 +34,10 @@ do $$ begin
   end;
   raise exception 'workspace admin inherited direct review context DML';
 end $$;
+create policy e2e_workspace_audit_organization_delete on workspace_private.organization for delete to workspace_audit_owner using(true);
+create policy e2e_workspace_audit_membership_delete on workspace_private.organization_membership for delete to workspace_audit_owner using(true);
+create policy e2e_workspace_audit_entitlement_delete on workspace_private.organization_section_entitlement for delete to workspace_audit_owner using(true);
+create policy e2e_workspace_audit_section_scope_delete on workspace_private.section_scope for delete to workspace_audit_owner using(true);
 reset role;
 grant workspace_admin_owner to workspace_audit_owner with inherit true,set false;
 grant workspace_audit_owner to current_user;
@@ -43,7 +47,7 @@ create policy e2e_workspace_audit_review_all on public.review_item for all to wo
 grant create on schema public to workspace_audit_owner;
 set role workspace_audit_owner;
 create function public.e2e_setup_authorized_review_fixture(p_user_id uuid, p_review_item_id uuid) returns jsonb
-language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+language plpgsql security definer set search_path = '' as $$
 declare
   organization_id uuid := gen_random_uuid();
   distrito_code text := '02';
@@ -78,7 +82,7 @@ begin
 end $$;
 
 create function public.e2e_cleanup_authorized_review_fixture(p_fixture jsonb) returns jsonb
-language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+language plpgsql security definer set search_path = '' as $$
 declare
   fixture_organization_id uuid;
   fixture_user_id uuid;
@@ -133,44 +137,213 @@ begin
   return jsonb_build_object('cleaned', true, 'removed_section_scope', removed_section_scope);
 end $$;
 
-create function public.e2e_setup_authorized_fiscal_fixture(p_user_id uuid, p_distrito_code text, p_seccion_code text) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+create function public.e2e_setup_authorized_fiscal_fixture(p_user_id uuid, p_distrito_code text, p_seccion_code text) returns jsonb language plpgsql security definer set search_path = '' as $$
 declare organization_id uuid := gen_random_uuid(); distrito_code text := p_distrito_code; seccion_code text := p_seccion_code; owns_section_scope boolean := false; begin
   if p_user_id is null or p_distrito_code !~ '^[0-9]{2}$' or p_seccion_code !~ '^[0-9]{3}$' then raise exception 'e2e authorized fiscal fixture inputs are invalid'; end if; insert into workspace_private.organization(id, slug, display_name, entitlement_revision) values (organization_id, 'e2e-authorized-fiscal-browser-'||organization_id, 'E2E Authorized Fiscal Browser', 1); insert into workspace_private.organization_membership(organization_id, user_id) values (organization_id, p_user_id); insert into workspace_private.section_scope values (distrito_code, seccion_code) on conflict do nothing returning true into owns_section_scope; insert into workspace_private.organization_section_entitlement(organization_id, distrito_code, seccion_code) values (organization_id, distrito_code, seccion_code); return jsonb_build_object('fixture_version', 1, 'organization_id', organization_id, 'user_id', p_user_id, 'distrito_code', distrito_code, 'seccion_code', seccion_code, 'owns_section_scope', coalesce(owns_section_scope, false));
 end $$;
-create function public.e2e_cleanup_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
-declare fixture_organization_id uuid; fixture_user_id uuid; fixture_distrito_code text; fixture_seccion_code text; fixture_owns_section_scope boolean; begin
-  if jsonb_typeof(p_fixture) <> 'object' then raise exception 'e2e authorized fiscal fixture cleanup token is invalid'; end if; begin fixture_organization_id := (p_fixture->>'organization_id')::uuid; fixture_user_id := (p_fixture->>'user_id')::uuid; fixture_distrito_code := p_fixture->>'distrito_code'; fixture_seccion_code := p_fixture->>'seccion_code'; fixture_owns_section_scope := (p_fixture->>'owns_section_scope')::boolean; exception when others then raise exception 'e2e authorized fiscal fixture cleanup token is invalid'; end; if (p_fixture->>'fixture_version') <> '1' or fixture_distrito_code !~ '^[0-9]{2}$' or fixture_seccion_code !~ '^[0-9]{3}$' then raise exception 'e2e authorized fiscal fixture cleanup token is invalid'; end if; perform 1 from workspace_private.organization organization join workspace_private.organization_membership membership on membership.organization_id = organization.id join workspace_private.organization_section_entitlement entitlement on entitlement.organization_id = organization.id where organization.id = fixture_organization_id and organization.slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id and membership.user_id = fixture_user_id and membership.revoked_at is null and (entitlement.distrito_code, entitlement.seccion_code) = (fixture_distrito_code, fixture_seccion_code) for update of organization, membership, entitlement; if not found then raise exception 'e2e authorized fiscal fixture cleanup facts are missing or collide'; end if; delete from workspace_private.workspace_context where organization_id = fixture_organization_id; delete from workspace_private.workspace_audit_event where organization_id = fixture_organization_id; delete from workspace_private.organization_section_entitlement where organization_id = fixture_organization_id; delete from workspace_private.organization_membership where organization_id = fixture_organization_id; delete from workspace_private.organization where id = fixture_organization_id and slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id; if fixture_owns_section_scope then delete from workspace_private.section_scope scope where (scope.distrito_code, scope.seccion_code) = (fixture_distrito_code, fixture_seccion_code) and not exists (select 1 from workspace_private.organization_section_entitlement entitlement where (entitlement.distrito_code, entitlement.seccion_code) = (scope.distrito_code, scope.seccion_code)) and not exists (select 1 from workspace_private.review_item_section_scope review_scope where (review_scope.distrito_code, review_scope.seccion_code) = (scope.distrito_code, scope.seccion_code)); end if; return jsonb_build_object('cleaned', true);
-end $$;
-create function public.e2e_revoke_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb
-language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
-declare fixture_organization_id uuid; fixture_user_id uuid; fixture_distrito_code text; fixture_seccion_code text;
+create function public.e2e_extend_authorized_fiscal_fixture(p_fixture jsonb, p_distrito_code text, p_seccion_code text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  fixture_organization_id uuid;
+  fixture_user_id uuid;
+  fixture_distrito_code text;
+  fixture_seccion_code text;
+  owns_extra_section_scope boolean := false;
 begin
-  if jsonb_typeof(p_fixture) <> 'object' then raise exception 'e2e authorized fiscal fixture revocation token is invalid'; end if;
-  begin fixture_organization_id := (p_fixture->>'organization_id')::uuid; fixture_user_id := (p_fixture->>'user_id')::uuid; fixture_distrito_code := p_fixture->>'distrito_code'; fixture_seccion_code := p_fixture->>'seccion_code'; exception when others then raise exception 'e2e authorized fiscal fixture revocation token is invalid'; end;
-  if (p_fixture->>'fixture_version') <> '1' or fixture_distrito_code !~ '^[0-9]{2}$' or fixture_seccion_code !~ '^[0-9]{3}$' then raise exception 'e2e authorized fiscal fixture revocation token is invalid'; end if;
+  if jsonb_typeof(p_fixture) <> 'object' or (p_fixture->>'fixture_version') <> '1'
+    or p_fixture ?| array['extra_distrito_code', 'extra_seccion_code', 'owns_extra_section_scope']
+  then raise exception 'e2e authorized fiscal fixture extension token is invalid'; end if;
+  begin
+    fixture_organization_id := (p_fixture->>'organization_id')::uuid;
+    fixture_user_id := (p_fixture->>'user_id')::uuid;
+    fixture_distrito_code := p_fixture->>'distrito_code';
+    fixture_seccion_code := p_fixture->>'seccion_code';
+  exception when others then raise exception 'e2e authorized fiscal fixture extension token is invalid';
+  end;
+  if fixture_distrito_code !~ '^[0-9]{2}$' or fixture_seccion_code !~ '^[0-9]{3}$'
+    or p_distrito_code <> fixture_distrito_code or p_seccion_code !~ '^[0-9]{3}$'
+    or p_seccion_code = fixture_seccion_code
+  then raise exception 'e2e authorized fiscal fixture extension inputs are invalid'; end if;
   perform 1 from workspace_private.organization organization
   join workspace_private.organization_membership membership on membership.organization_id = organization.id
   join workspace_private.organization_section_entitlement entitlement on entitlement.organization_id = organization.id
-  where organization.id = fixture_organization_id and organization.slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id
+  where organization.id = fixture_organization_id
+    and organization.slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id
     and membership.user_id = fixture_user_id and membership.revoked_at is null
     and (entitlement.distrito_code, entitlement.seccion_code) = (fixture_distrito_code, fixture_seccion_code)
     and entitlement.revoked_at is null
+    and not exists (select 1 from workspace_private.organization_section_entitlement other
+      where other.organization_id = organization.id
+        and (other.distrito_code, other.seccion_code) <> (fixture_distrito_code, fixture_seccion_code))
   for update of organization, membership, entitlement;
-  if not found then raise exception 'e2e authorized fiscal fixture revocation facts are missing or collide'; end if;
+  if not found then raise exception 'e2e authorized fiscal fixture extension facts are missing or collide'; end if;
+  insert into workspace_private.section_scope(distrito_code, seccion_code)
+  values (p_distrito_code, p_seccion_code) on conflict do nothing returning true into owns_extra_section_scope;
+  insert into workspace_private.organization_section_entitlement(organization_id, distrito_code, seccion_code)
+  values (fixture_organization_id, p_distrito_code, p_seccion_code);
+  return jsonb_build_object(
+    'fixture_version', 2, 'organization_id', fixture_organization_id, 'user_id', fixture_user_id,
+    'distrito_code', fixture_distrito_code, 'seccion_code', fixture_seccion_code,
+    'owns_section_scope', (p_fixture->>'owns_section_scope')::boolean,
+    'extra_distrito_code', p_distrito_code, 'extra_seccion_code', p_seccion_code,
+    'owns_extra_section_scope', coalesce(owns_extra_section_scope, false)
+  );
+end $$;
+
+create function public.e2e_cleanup_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  fixture_organization_id uuid;
+  fixture_user_id uuid;
+  fixture_distrito_code text;
+  fixture_seccion_code text;
+  fixture_owns_section_scope boolean;
+  fixture_extra_distrito_code text;
+  fixture_extra_seccion_code text;
+  fixture_owns_extra_section_scope boolean;
+  fixture_has_extra boolean := false;
+  removed_section_scope boolean := false;
+  removed_extra_section_scope boolean := false;
+begin
+  if jsonb_typeof(p_fixture) <> 'object' then raise exception 'e2e authorized fiscal fixture cleanup token is invalid'; end if;
+  fixture_has_extra := (p_fixture->>'fixture_version') = '2';
+  begin
+    fixture_organization_id := (p_fixture->>'organization_id')::uuid;
+    fixture_user_id := (p_fixture->>'user_id')::uuid;
+    fixture_distrito_code := p_fixture->>'distrito_code';
+    fixture_seccion_code := p_fixture->>'seccion_code';
+    fixture_owns_section_scope := (p_fixture->>'owns_section_scope')::boolean;
+    if fixture_has_extra then
+      fixture_extra_distrito_code := p_fixture->>'extra_distrito_code';
+      fixture_extra_seccion_code := p_fixture->>'extra_seccion_code';
+      fixture_owns_extra_section_scope := (p_fixture->>'owns_extra_section_scope')::boolean;
+    end if;
+  exception when others then raise exception 'e2e authorized fiscal fixture cleanup token is invalid';
+  end;
+  if (p_fixture->>'fixture_version') not in ('1', '2')
+    or fixture_distrito_code !~ '^[0-9]{2}$' or fixture_seccion_code !~ '^[0-9]{3}$'
+    or (fixture_has_extra and (fixture_extra_distrito_code <> fixture_distrito_code
+      or fixture_extra_seccion_code !~ '^[0-9]{3}$' or fixture_extra_seccion_code = fixture_seccion_code))
+  then raise exception 'e2e authorized fiscal fixture cleanup token is invalid'; end if;
+  perform 1 from workspace_private.organization organization
+  where organization.id = fixture_organization_id
+    and organization.slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id
+  for update;
+  if not found then
+    return jsonb_build_object('cleaned', true, 'already_cleaned', true);
+  end if;
+  perform 1 from workspace_private.organization_membership membership
+  where membership.organization_id = fixture_organization_id and membership.user_id = fixture_user_id
+    and membership.revoked_at is null
+  for update;
+  if not found or not exists (select 1 from workspace_private.organization_section_entitlement entitlement
+    where entitlement.organization_id = fixture_organization_id
+      and (entitlement.distrito_code, entitlement.seccion_code) = (fixture_distrito_code, fixture_seccion_code))
+    or (fixture_has_extra and not exists (select 1 from workspace_private.organization_section_entitlement entitlement
+      where entitlement.organization_id = fixture_organization_id
+        and (entitlement.distrito_code, entitlement.seccion_code) = (fixture_extra_distrito_code, fixture_extra_seccion_code)))
+    or exists (select 1 from workspace_private.organization_section_entitlement entitlement
+      where entitlement.organization_id = fixture_organization_id
+        and (entitlement.distrito_code, entitlement.seccion_code) <> (fixture_distrito_code, fixture_seccion_code)
+        and (not fixture_has_extra or (entitlement.distrito_code, entitlement.seccion_code) <> (fixture_extra_distrito_code, fixture_extra_seccion_code)))
+  then raise exception 'e2e authorized fiscal fixture cleanup facts are missing or collide'; end if;
+  delete from workspace_private.workspace_context where organization_id = fixture_organization_id;
+  delete from workspace_private.workspace_audit_event where organization_id = fixture_organization_id;
+  delete from workspace_private.organization_section_entitlement where organization_id = fixture_organization_id;
+  delete from workspace_private.organization_membership where organization_id = fixture_organization_id and user_id = fixture_user_id;
+  if not found then raise exception 'e2e authorized fiscal fixture membership cleanup failed'; end if;
+  delete from workspace_private.organization where id = fixture_organization_id
+    and slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id;
+  if not found then raise exception 'e2e authorized fiscal fixture organization cleanup failed'; end if;
+  if fixture_owns_section_scope then
+    delete from workspace_private.section_scope scope
+    where (scope.distrito_code, scope.seccion_code) = (fixture_distrito_code, fixture_seccion_code)
+      and not exists (select 1 from workspace_private.organization_section_entitlement entitlement
+        where (entitlement.distrito_code, entitlement.seccion_code) = (scope.distrito_code, scope.seccion_code))
+      and not exists (select 1 from workspace_private.review_item_section_scope review_scope
+        where (review_scope.distrito_code, review_scope.seccion_code) = (scope.distrito_code, scope.seccion_code));
+    removed_section_scope := found;
+  end if;
+  if fixture_has_extra and fixture_owns_extra_section_scope then
+    delete from workspace_private.section_scope scope
+    where (scope.distrito_code, scope.seccion_code) = (fixture_extra_distrito_code, fixture_extra_seccion_code)
+      and not exists (select 1 from workspace_private.organization_section_entitlement entitlement
+        where (entitlement.distrito_code, entitlement.seccion_code) = (scope.distrito_code, scope.seccion_code))
+      and not exists (select 1 from workspace_private.review_item_section_scope review_scope
+        where (review_scope.distrito_code, review_scope.seccion_code) = (scope.distrito_code, scope.seccion_code));
+    removed_extra_section_scope := found;
+  end if;
+  return jsonb_build_object('cleaned', true, 'removed_section_scope', removed_section_scope,
+    'removed_extra_section_scope', removed_extra_section_scope);
+end $$;
+create function public.e2e_revoke_authorized_fiscal_fixture(p_fixture jsonb) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  fixture_organization_id uuid;
+  fixture_user_id uuid;
+  fixture_distrito_code text;
+  fixture_seccion_code text;
+  fixture_extra_distrito_code text;
+  fixture_extra_seccion_code text;
+  fixture_has_extra boolean := false;
+  revoked_scope_count integer := 0;
+begin
+  if jsonb_typeof(p_fixture) <> 'object' then raise exception 'e2e authorized fiscal fixture revocation token is invalid'; end if;
+  fixture_has_extra := (p_fixture->>'fixture_version') = '2';
+  begin
+    fixture_organization_id := (p_fixture->>'organization_id')::uuid;
+    fixture_user_id := (p_fixture->>'user_id')::uuid;
+    fixture_distrito_code := p_fixture->>'distrito_code';
+    fixture_seccion_code := p_fixture->>'seccion_code';
+    if fixture_has_extra then
+      fixture_extra_distrito_code := p_fixture->>'extra_distrito_code';
+      fixture_extra_seccion_code := p_fixture->>'extra_seccion_code';
+    end if;
+  exception when others then raise exception 'e2e authorized fiscal fixture revocation token is invalid';
+  end;
+  if (p_fixture->>'fixture_version') not in ('1', '2')
+    or fixture_distrito_code !~ '^[0-9]{2}$' or fixture_seccion_code !~ '^[0-9]{3}$'
+    or (fixture_has_extra and (fixture_extra_distrito_code <> fixture_distrito_code
+      or fixture_extra_seccion_code !~ '^[0-9]{3}$' or fixture_extra_seccion_code = fixture_seccion_code))
+  then raise exception 'e2e authorized fiscal fixture revocation token is invalid'; end if;
+  perform 1 from workspace_private.organization organization
+  join workspace_private.organization_membership membership on membership.organization_id = organization.id
+  where organization.id = fixture_organization_id
+    and organization.slug = 'e2e-authorized-fiscal-browser-'||fixture_organization_id
+    and membership.user_id = fixture_user_id and membership.revoked_at is null
+  for update of organization, membership;
+  if not found or not exists (select 1 from workspace_private.organization_section_entitlement entitlement
+    where entitlement.organization_id = fixture_organization_id and entitlement.revoked_at is null
+      and (entitlement.distrito_code, entitlement.seccion_code) = (fixture_distrito_code, fixture_seccion_code))
+    or (fixture_has_extra and not exists (select 1 from workspace_private.organization_section_entitlement entitlement
+      where entitlement.organization_id = fixture_organization_id and entitlement.revoked_at is null
+        and (entitlement.distrito_code, entitlement.seccion_code) = (fixture_extra_distrito_code, fixture_extra_seccion_code)))
+    or exists (select 1 from workspace_private.organization_section_entitlement entitlement
+      where entitlement.organization_id = fixture_organization_id
+        and (entitlement.distrito_code, entitlement.seccion_code) <> (fixture_distrito_code, fixture_seccion_code)
+        and (not fixture_has_extra or (entitlement.distrito_code, entitlement.seccion_code) <> (fixture_extra_distrito_code, fixture_extra_seccion_code)))
+  then raise exception 'e2e authorized fiscal fixture revocation facts are missing or collide'; end if;
   update workspace_private.organization_section_entitlement set revoked_at = statement_timestamp()
-  where organization_id = fixture_organization_id and distrito_code = fixture_distrito_code and seccion_code = fixture_seccion_code and revoked_at is null;
-  if not found then raise exception 'e2e authorized fiscal fixture entitlement changed concurrently'; end if;
+  where organization_id = fixture_organization_id and revoked_at is null
+    and ((distrito_code, seccion_code) = (fixture_distrito_code, fixture_seccion_code)
+      or (fixture_has_extra and (distrito_code, seccion_code) = (fixture_extra_distrito_code, fixture_extra_seccion_code)));
+  get diagnostics revoked_scope_count = row_count;
+  if revoked_scope_count <> (case when fixture_has_extra then 2 else 1 end)
+  then raise exception 'e2e authorized fiscal fixture entitlement changed concurrently'; end if;
   update workspace_private.organization set entitlement_revision = entitlement_revision + 1 where id = fixture_organization_id;
-  return jsonb_build_object('revoked', true, 'organization_id', fixture_organization_id);
+  return jsonb_build_object('revoked', true, 'organization_id', fixture_organization_id,
+    'revoked_scope_count', revoked_scope_count);
 end $$;
 revoke all on function public.e2e_setup_authorized_review_fixture(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.e2e_cleanup_authorized_review_fixture(jsonb) from public, anon, authenticated;
 revoke all on function public.e2e_setup_authorized_fiscal_fixture(uuid,text,text) from public, anon, authenticated;
+revoke all on function public.e2e_extend_authorized_fiscal_fixture(jsonb,text,text) from public, anon, authenticated;
 revoke all on function public.e2e_cleanup_authorized_fiscal_fixture(jsonb) from public, anon, authenticated;
 revoke all on function public.e2e_revoke_authorized_fiscal_fixture(jsonb) from public, anon, authenticated;
 grant execute on function public.e2e_setup_authorized_review_fixture(uuid, uuid) to service_role;
 grant execute on function public.e2e_cleanup_authorized_review_fixture(jsonb) to service_role;
 grant execute on function public.e2e_setup_authorized_fiscal_fixture(uuid,text,text) to service_role;
+grant execute on function public.e2e_extend_authorized_fiscal_fixture(jsonb,text,text) to service_role;
 grant execute on function public.e2e_cleanup_authorized_fiscal_fixture(jsonb) to service_role;
 grant execute on function public.e2e_revoke_authorized_fiscal_fixture(jsonb) to service_role;
 reset role;

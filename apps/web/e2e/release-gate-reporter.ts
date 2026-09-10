@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type {
 	FullConfig,
@@ -13,6 +14,11 @@ import {
 	assertGateReport,
 	type GateTestResult,
 } from "./gate-contract";
+
+import {
+	attemptSchema, attemptStatus, diagnosticPath,
+	type PlaywrightAttempt, type CompanionReport,
+} from "./playwright-failure-diagnostics.ts";
 
 const RECEIPT_MODE = {
 	FULL: "full",
@@ -33,6 +39,26 @@ interface ReporterOptions {
 	receiptPath?: string;
 	writeReceipt?: (path: string, content: string) => void;
 	writeError?: (message: string) => void;
+}
+
+const E2E_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const UNEXPECTED_E2E_SPEC = "e2e/__unexpected__.spec.ts";
+
+function relativeTestSpec(test: TestCase): string {
+	const relative = path.relative(E2E_ROOT, path.resolve(test.location.file));
+	const basename = path.basename(relative);
+	if (path.dirname(relative) !== "." || !basename) return UNEXPECTED_E2E_SPEC;
+	return `e2e/${basename}`;
+}
+
+function resultFailureLine(result: TestResult): number | undefined {
+	if (result.status === "passed") return undefined;
+	return result.errors
+		?.find(
+			(error) =>
+				Number.isInteger(error?.location?.line) && error.location!.line > 0,
+		)
+		?.location?.line;
 }
 
 function exactSelectedSpecs(selected: readonly string[]): readonly string[] {
@@ -109,8 +135,14 @@ export function assertFocusedGateReport(
 }
 
 export default class ReleaseGateReporter implements Reporter {
-	private discovered: TestCase[] = [];
+	private readonly expectedTestIdsBySpec = new Map<string, string[]>();
+	private readonly expectedSpecsByTestId = new Map<string, string>();
 	private readonly results = new Map<string, GateTestResult>();
+	private readonly unexpectedTestIds = new Set<string>();
+	private readonly identities = new Map<string, unknown>();
+	private attempts: PlaywrightAttempt[] = [];
+	private counts = { failed: 0, timedOut: 0, skipped: 0, interrupted: 0 };
+	private unmappableAttempts = 0;
 	private readonly receiptPath: string | undefined;
 	private readonly selection: GateReceiptSelection;
 	private readonly writeReceipt: (path: string, content: string) => void;
@@ -120,26 +152,76 @@ export default class ReleaseGateReporter implements Reporter {
 		this.receiptPath = options.receiptPath ?? process.env["VOTUS_E2E_RESULT_FILE"];
 		this.selection = configuredReceiptSelection();
 		this.writeReceipt =
-			options.writeReceipt ??
-			((target, content) => writeFileSync(target, content, { mode: 0o600 }));
-		this.writeError =
-			options.writeError ?? ((message) => process.stderr.write(message));
+		options.writeReceipt ??
+		((target, content) => writeFileSync(target, content, { mode: 0o600 }));
+		this.writeError = options.writeError ?? ((message) => process.stderr.write(message));
 	}
 
 	onBegin(config: FullConfig, suite: Suite): void {
 		void config;
-		this.discovered = suite.allTests();
+		this.results.clear();
+		this.identities.clear();
+		this.attempts = [];
+		this.counts = { failed: 0, timedOut: 0, skipped: 0, interrupted: 0 };
+		this.unmappableAttempts = 0;
+		this.expectedSpecsByTestId.clear();
+		this.unexpectedTestIds.clear();
+		this.expectedTestIdsBySpec.clear();
+		for (const spec of this.selection.selected)
+			this.expectedTestIdsBySpec.set(spec, []);
+		for (const test of suite.allTests()) {
+			const spec = relativeTestSpec(test);
+			const expectedTestIds = this.expectedTestIdsBySpec.get(spec);
+			if (!expectedTestIds || this.expectedSpecsByTestId.has(test.id)) {
+				this.unexpectedTestIds.add(test.id);
+				this.identities.delete(test.id);
+				continue;
+			}
+			expectedTestIds.push(test.id);
+			this.identities.set(test.id, {
+				spec, line: test.location.line, column: test.location.column,
+				ordinal: expectedTestIds.length,
+			});
+			this.expectedSpecsByTestId.set(test.id, spec);
+		}
 	}
 
 	onTestEnd(test: TestCase, result: TestResult): void {
-		const spec = `e2e/${path.basename(test.location.file)}`;
-		const failureLine =
-			result.status === "passed"
-				? undefined
-				: result.errors?.find(
-						({ location }) =>
-							Number.isInteger(location?.line) && location!.line > 0,
-					)?.location?.line;
+		const spec = relativeTestSpec(test);
+		if (result.status !== "passed") {
+			const status = attemptStatus.safeParse(result.status);
+			if (status.success) this.counts[status.data]++;
+			const identity = this.identities.get(test.id);
+			const errorLocations: PlaywrightAttempt["errorLocations"] = [];
+			let missingErrorLocations = 0;
+			let foreignErrorLocations = 0;
+			for (const error of result.errors ?? []) {
+				const location = error?.location;
+				const coordinate = attemptSchema.shape.errorLocations.element.safeParse({
+					line: location?.line, column: location?.column,
+				});
+				// Partition each error: malformed/missing metadata first, then foreign file.
+				if (!coordinate.success || typeof location?.file !== "string")
+					missingErrorLocations++;
+				else if (path.resolve(location.file) !== path.resolve(test.location.file))
+					foreignErrorLocations++;
+				else errorLocations.push(coordinate.data);
+			}
+			const attempt = attemptSchema.safeParse({
+				...(typeof identity === "object" && identity !== null ? identity : {}),
+				status: result.status, retry: result.retry,
+				errorLocations: [], missingErrorLocations, foreignErrorLocations,
+			});
+			if (attempt.success && this.expectedSpecsByTestId.get(test.id) === spec)
+				// Preserve all coordinates; the bounded consumer explicitly rejects overflow.
+				this.attempts.push({ ...attempt.data, errorLocations });
+			else this.unmappableAttempts++;
+		}
+		if (this.expectedSpecsByTestId.get(test.id) !== spec) {
+			this.unexpectedTestIds.add(test.id);
+			return;
+		}
+		const failureLine = resultFailureLine(result);
 		this.results.set(
 			test.id,
 			failureLine === undefined
@@ -148,39 +230,88 @@ export default class ReleaseGateReporter implements Reporter {
 		);
 	}
 
-	async onEnd(result: FullResult): Promise<{ status: FullResult["status"] } | void> {
-		const completed = this.discovered.map((test) => {
-			const recorded = this.results.get(test.id);
-			return (
-				recorded ??
-				({
-					spec: `e2e/${path.basename(test.location.file)}`,
-					status: "interrupted",
-				} as const)
-			);
+	private aggregatedResults(): GateTestResult[] {
+		return this.selection.selected.map((spec) => {
+			const expectedTestIds = this.expectedTestIdsBySpec.get(spec) ?? [];
+			if (expectedTestIds.length === 0)
+				return { spec, status: "interrupted" as const };
+			const nonPassing = expectedTestIds
+				.map(
+					(testId) =>
+						this.results.get(testId) ?? {
+							spec,
+							status: "interrupted" as const,
+						},
+				)
+				.find(({ status }) => status !== "passed");
+			if (!nonPassing) return { spec, status: "passed" as const };
+			return nonPassing.failureLine === undefined
+				? { spec, status: nonPassing.status }
+				: {
+					spec,
+					status: nonPassing.status,
+					failureLine: nonPassing.failureLine,
+				};
 		});
+	}
+
+	private writeDiagnostics(report: CompanionReport): void {
+		if (!this.receiptPath) return;
+		try {
+			this.writeReceipt(diagnosticPath(this.receiptPath), JSON.stringify({
+				schemaVersion: 2, attempts: this.attempts, counts: this.counts,
+				missingResults: [...this.expectedSpecsByTestId.keys()].filter((id) => !this.results.has(id)).length,
+				unexpectedDiscoveries: this.unexpectedTestIds.size,
+				unmappableAttempts: this.unmappableAttempts, report,
+			}));
+		} catch {
+			/* Best-effort diagnostics must not change the canonical outcome. */
+		}
+	}
+
+	async onEnd(
+		result: FullResult,
+	): Promise<{ status: FullResult["status"] } | void> {
 		if (!this.receiptPath) {
 			this.writeError("e2e release gate failed: VOTUS_E2E_RESULT_FILE is missing\n");
 			return { status: "failed" };
 		}
-		this.writeReceipt(
-			this.receiptPath,
-			JSON.stringify({
-				suiteStatus: result.status,
-				results: completed,
-				selection: this.selection,
-			}),
-		);
+		const completed = this.aggregatedResults();
+		const suiteStatus =
+			this.unexpectedTestIds.size > 0 && result.status === "passed"
+				? "failed"
+				: result.status;
+		let report: CompanionReport = "rejected";
 		try {
 			if (this.selection.mode === RECEIPT_MODE.FULL)
-				assertGateReport(completed, result.status);
-			else assertFocusedGateReport(completed, result.status, this.selection.selected);
+				assertGateReport(completed, suiteStatus);
+			else assertFocusedGateReport(completed, suiteStatus, this.selection.selected);
+			this.writeReceipt(
+				this.receiptPath,
+				JSON.stringify({
+					suiteStatus,
+					results: completed,
+					selection: this.selection,
+				}),
+			);
+			report = "accepted";
 			return;
 		} catch (error) {
 			const message =
 				error instanceof Error ? error.message : "unknown reporter contract failure";
+			const failureSuiteStatus = suiteStatus === "passed" ? "failed" : suiteStatus;
+			this.writeReceipt(
+				this.receiptPath,
+				JSON.stringify({
+					suiteStatus: failureSuiteStatus,
+					results: completed,
+					selection: this.selection,
+				}),
+			);
 			this.writeError(`${message}\n`);
 			return { status: "failed" };
+		} finally {
+			this.writeDiagnostics(report);
 		}
 	}
 }

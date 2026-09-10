@@ -43,6 +43,7 @@ RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION = "20260831032044"
 RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION = "20260831055357"
 YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION = "20260831150450"
 PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION = "20260831160422"
+OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION = "20260904035355"
 LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS = (
     REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
     REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
@@ -78,6 +79,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION,
         YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION,
         PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION,
+        OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -242,7 +244,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 63
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 64
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -367,6 +369,12 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert (
         _validated_migration_path(LEGACY_RESULTS_CUTOVER_MIGRATION_VERSION, down=True).name
         == "20260829032228_revoke_legacy_results_public_contract.down.sql"
+    )
+    assert _validated_migration_path(OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION).name == (
+        f"{OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION}_add_official_category_name.sql"
+    )
+    assert _validated_migration_path(OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION, down=True).name == (
+        f"{OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION}_add_official_category_name.down.sql"
     )
     for version, stem in (
         (REVIEW_ITEM_CONTEXT_MIGRATION_VERSION, "review_item_context_foundation"),

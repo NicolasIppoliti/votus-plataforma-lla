@@ -30,8 +30,9 @@ do $$ declare fast_payload jsonb; preserved_payload jsonb; selected_rows bigint;
     results_exploration_official_0029(election_id,category_id,'04',p_requested_level=>'distrito')
     into fast_payload,preserved_payload from (values ('30000000-0000-0000-0000-000000000001'::uuid,
       '30000000-0000-0000-0000-000000000002'::uuid)) ids(election_id,category_id);
-  if fast_payload-'source_exclusions' is distinct from preserved_payload then
-    raise exception 'large district payload differs from preserved 0029 semantics';
+  if fast_payload-'source_exclusions'-'category_name' is distinct from preserved_payload
+      or fast_payload->>'category_name'<>'DIPUTADO NACIONAL' then
+    raise exception 'large district payload differs from preserved 0029 fields plus category identity';
   end if;
       select count(*),count(distinct (rr.archive_entry_id,rr.granularity,j.distrito_code,
         j.seccion_code,e.year,e.round,c.name)) into selected_rows,selected_shapes from jurisdiction j
@@ -91,9 +92,9 @@ end $$;
 select is((select core_payload from production_district_evidence),
   (select reference_core_payload from production_district_evidence),
   '0035 district core exactly preserves the full realistic 0034 JSONB payload');
-select is((select public_payload from production_district_evidence),
-  (select reference_public_payload from production_district_evidence),
-  'new public district wrapper exactly preserves the real 0034 public wrapper JSONB payload');
+select ok((select public_payload=reference_public_payload||
+    jsonb_build_object('category_name','DIPUTADO NACIONAL') from production_district_evidence),
+  'new public district wrapper adds category identity while preserving the exact 0034 public payload');
 -- Only the optimized public call is latency-bounded. Neither preserved reference call is bounded:
 -- they remain in the disposable fixture solely so performance cannot trade away exact parity.
 select ok((select public_elapsed_ms<=3000 from production_district_evidence),
@@ -116,8 +117,8 @@ select is(results_exploration_official(
     p_requested_level=>'distrito'),
   results_exploration_official_wrapper_0034(
     '30000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','06',
-    p_requested_level=>'distrito'),
-  'NULL and literal chr(1) sections preserve the full reference public JSONB payload');
+    p_requested_level=>'distrito')||jsonb_build_object('category_name','DIPUTADO NACIONAL'),
+  'NULL and literal chr(1) sections add category identity and preserve the reference public payload');
 select is((select jsonb_build_object(
     'optimized_total',(optimized->>'total_votes')::bigint,
     'optimized_rows',(optimized->'source_audit'->0->>'rows')::bigint,

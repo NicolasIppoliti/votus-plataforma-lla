@@ -61,6 +61,10 @@ jobs:
   etl-release:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [ordinary, success, ledger, sql]
     services:
       postgres:
         image: postgres:17
@@ -89,10 +93,15 @@ jobs:
       - name: Ruff format check
         run: uv run --project . --frozen ruff format --check .
         working-directory: etl
+      # v2.1.1
+      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf
+        with:
+          version: 2.116.0
       - name: Run disposable ETL gate
         shell: bash
         env:
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          ETL_CASE: ${{ matrix.case }}
           ETL_TEST_ADMIN_DATABASE_URL: >-
             postgresql://postgres@127.0.0.1:54322/template1
         run: |
@@ -101,7 +110,11 @@ jobs:
             "create role anon nologin; create role authenticated nologin; \
             create role etl_writer login bypassrls password null; \
             grant etl_writer to postgres;"
-          uv run --project etl etl-verify
+          if [ "$ETL_CASE" = "ordinary" ]; then
+            uv run --project etl etl-verify
+          else
+            uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"
+          fi
 
   e2e-release:
     runs-on: ubuntu-latest
@@ -131,6 +144,15 @@ jobs:
         working-directory: apps/web
       - run: pnpm test:e2e:gate
         working-directory: apps/web
+      # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ failure() }}
+        with:
+          name: review-focus-geometry
+          path: apps/web/test-results/**/review-focus-geometry.json
+          retention-days: 1
+          include-hidden-files: false
+          if-no-files-found: ignore
 
   verify:
     name: verify

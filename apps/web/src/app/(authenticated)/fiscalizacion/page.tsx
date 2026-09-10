@@ -74,8 +74,9 @@ function CoverageExplorerForm({
   });
 
   return (
-    <section className="panel" aria-labelledby="coverage-form-heading">
+    <section className="fiscalizacion-workspace__filters panel" aria-labelledby="coverage-form-heading">
       <div className="panel__heading">
+        <p className="fiscalizacion-workspace__section-label">Alcance y control</p>
         <h2 id="coverage-form-heading">Elegir el alcance de la cobertura</h2>
         <p>
           Mantenga la presencia no oficial separada del denominador de resultados
@@ -169,7 +170,7 @@ function CoverageExplorerForm({
 
 function PageHeader(): ReactNode {
   return (
-    <header className="page-header">
+    <header className="page-header fiscalizacion-workspace__header">
       <p className="eyebrow">Fiscalización / evidencia autorizada</p>
       <h1>Fiscalización (no oficial)</h1>
       <p className="page-header__lede">
@@ -181,10 +182,12 @@ function PageHeader(): ReactNode {
 
 function refusal(reason: string): ReactNode {
   return (
-    <main className="page-shell">
-      <div className="shell-container">
+    <main className="page-shell fiscalizacion-workspace">
+      <div className="shell-container fiscalizacion-workspace__layout">
         <PageHeader />
-        <p role="alert">Se rechazó la solicitud: {reason}.</p>
+        <section className="fiscalizacion-workspace__state" role="alert">
+          <p>Se rechazó la solicitud: {reason}.</p>
+        </section>
       </div>
     </main>
   );
@@ -232,29 +235,47 @@ function evidenceRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function exactClaimFailures(
-  label: string,
-  value: unknown,
-  evidenceKey: "observed_units" | "reference",
-): string[] {
-  const evidence = evidenceRecord(value);
-  if (!evidence || !(evidenceKey in evidence)) return [];
+const PRESENTATION_KIND = {
+  READY: "ready",
+  EMPTY: "empty",
+  TECHNICAL_ERROR: "technical_error",
+  REFUSED: "refused",
+} as const;
 
-  const expectedClaims: Record<string, unknown> = {
-    authorization_status: "authorized",
-    source_kind: "fiscalizacion",
-    is_random_sample: false,
-  };
-  if (evidenceKey === "observed_units") {
-    expectedClaims["vote_data"] = "not_included";
-  }
+const PRESENTATION_REASON = {
+  UNAVAILABLE: "unavailable",
+  INVALID: "invalid",
+  DENIED: "denied",
+  OVERSIZED: "oversized",
+} as const;
 
-  return Object.entries(expectedClaims).flatMap(([claim, expected]) =>
-    evidence[claim] === expected
-      ? []
-      : [`${label}: ${claim} debe declarar ${String(expected)}.`],
-  );
+type PresentationReason =
+  (typeof PRESENTATION_REASON)[keyof typeof PRESENTATION_REASON];
+
+interface ReadyFiscalizacionPresentation {
+  kind: typeof PRESENTATION_KIND.READY;
+  coverage: AuthorizedFiscalizacionCoverage;
+  result: AuthorizedFiscalizacionResult;
 }
+
+interface EmptyFiscalizacionPresentation {
+  kind: typeof PRESENTATION_KIND.EMPTY;
+}
+
+interface TechnicalErrorFiscalizacionPresentation {
+  kind: typeof PRESENTATION_KIND.TECHNICAL_ERROR;
+}
+
+interface RefusedFiscalizacionPresentation {
+  kind: typeof PRESENTATION_KIND.REFUSED;
+  reason: PresentationReason;
+}
+
+type FiscalizacionPresentation =
+  | ReadyFiscalizacionPresentation
+  | EmptyFiscalizacionPresentation
+  | TechnicalErrorFiscalizacionPresentation
+  | RefusedFiscalizacionPresentation;
 
 function settledValue<T>(result: PromiseSettledResult<T>): T | null {
   return result.status === "fulfilled" ? result.value : null;
@@ -268,6 +289,115 @@ function settledStatus<T>(result: PromiseSettledResult<T>): string {
     : "unavailable (invalid)";
 }
 
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function hasValidReference(evidence: Record<string, unknown>): boolean {
+  const reference = evidenceRecord(evidence["reference"]);
+  return (
+    reference !== null &&
+    Object.getPrototypeOf(reference) === Object.prototype &&
+    isNonnegativeSafeInteger(reference["denominator_units"])
+  );
+}
+
+function isExactEmptyCollection(value: unknown): boolean {
+  const collection = evidenceRecord(value);
+  return (
+    collection !== null &&
+    Object.getPrototypeOf(collection) === Object.prototype &&
+    Object.keys(collection).length === 3 &&
+    Array.isArray(collection["items"]) &&
+    collection["items"].length === 0 &&
+    collection["total"] === 0 &&
+    collection["truncated"] === false
+  );
+}
+
+function hasExactClaims(
+  value: unknown,
+  evidenceKey: "observed_units" | "reference",
+): boolean {
+  const evidence = evidenceRecord(value);
+  if (
+    !evidence ||
+    evidence["status"] !== "ok" ||
+    evidence["authorization_status"] !== "authorized" ||
+    evidence["source_kind"] !== "fiscalizacion" ||
+    evidence["is_random_sample"] !== false
+  ) {
+    return false;
+  }
+  if (evidenceKey === "observed_units") {
+    return (
+      evidence["vote_data"] === "not_included" &&
+      isNonnegativeSafeInteger(evidence["observed_units"]) &&
+      isNonnegativeSafeInteger(evidence["denominator_units"]) &&
+      evidence["denominator_units"] >= evidence["observed_units"]
+    );
+  }
+  return hasValidReference(evidence);
+}
+
+function hasAuthorizedNoRows(value: unknown): boolean {
+  const evidence = evidenceRecord(value);
+  return (
+    evidence !== null &&
+    evidence["status"] === "no_rows" &&
+    evidence["authorization_status"] === "authorized" &&
+    evidence["source_kind"] === "fiscalizacion" &&
+    evidence["is_random_sample"] === false &&
+    hasValidReference(evidence) &&
+    evidence["truncated"] === false &&
+    ["rows", "unmapped", "exclusions", "provenance"].every((key) =>
+      isExactEmptyCollection(evidence[key]),
+    )
+  );
+}
+
+function refusalReason(
+  coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>,
+  result: PromiseSettledResult<AuthorizedFiscalizacionResult>,
+): PresentationReason {
+  const statuses = [settledStatus(coverage), settledStatus(result)];
+  if (statuses.includes("authorization_denied")) return PRESENTATION_REASON.DENIED;
+  if (statuses.includes("payload_too_large")) return PRESENTATION_REASON.OVERSIZED;
+  const coverageValue = settledValue(coverage);
+  const resultValue = settledValue(result);
+  if (
+    statuses.includes("selection_invalid") ||
+    statuses.includes("source_inconsistent") ||
+    (evidenceRecord(coverageValue)?.["status"] === "ok" &&
+      !hasExactClaims(coverageValue, "observed_units")) ||
+    (evidenceRecord(resultValue)?.["status"] === "ok" &&
+      !hasExactClaims(resultValue, "reference")) ||
+    (evidenceRecord(resultValue)?.["status"] === "no_rows" &&
+      !hasAuthorizedNoRows(resultValue))
+  ) {
+    return PRESENTATION_REASON.INVALID;
+  }
+  return PRESENTATION_REASON.UNAVAILABLE;
+}
+
+function fiscalizacionPresentation(
+  coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>,
+  result: PromiseSettledResult<AuthorizedFiscalizacionResult>,
+): FiscalizacionPresentation {
+  const coverageValue = settledValue(coverage);
+  const resultValue = settledValue(result);
+  if (coverage.status === "rejected" || result.status === "rejected") {
+    return { kind: PRESENTATION_KIND.TECHNICAL_ERROR };
+  }
+  if (coverageValue && resultValue && hasExactClaims(coverageValue, "observed_units")) {
+    if (hasAuthorizedNoRows(resultValue)) return { kind: PRESENTATION_KIND.EMPTY };
+    if (hasExactClaims(resultValue, "reference")) {
+      return { kind: PRESENTATION_KIND.READY, coverage: coverageValue, result: resultValue };
+    }
+  }
+  return { kind: PRESENTATION_KIND.REFUSED, reason: refusalReason(coverage, result) };
+}
+
 function CoverageEvidence({
   result,
 }: {
@@ -275,7 +405,8 @@ function CoverageEvidence({
 }): ReactNode {
   const value = settledValue(result);
   return (
-    <section className="panel" aria-labelledby="workspace-coverage">
+    <section className="fiscalizacion-workspace__coverage" aria-labelledby="workspace-coverage">
+      <p className="fiscalizacion-workspace__section-label">Fuente fiscal</p>
       <h2 id="workspace-coverage">Cobertura autorizada</h2>
       <p role={value ? "status" : "alert"}>
         Estado de cobertura: {settledStatus(result)}.
@@ -325,7 +456,8 @@ function ResultEvidence({
 }): ReactNode {
   const value = settledValue(result);
   return (
-    <section className="panel" aria-labelledby="workspace-result">
+    <section className="fiscalizacion-workspace__result" aria-labelledby="workspace-result">
+      <p className="fiscalizacion-workspace__section-label">Resultado y procedencia</p>
       <h2 id="workspace-result">Resultado autorizado</h2>
       <p role={value ? "status" : "alert"}>
         Estado del resultado: {settledStatus(result)}.
@@ -407,45 +539,37 @@ function AuthorizedEvidence({
   coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>;
   result: PromiseSettledResult<AuthorizedFiscalizacionResult>;
 }): ReactNode {
-  const failures = [
-    ...exactClaimFailures("Cobertura", settledValue(coverage), "observed_units"),
-    ...exactClaimFailures("Resultado", settledValue(result), "reference"),
-  ];
+  const presentation = fiscalizacionPresentation(coverage, result);
 
-  if (failures.length > 0) {
-    return (
-      <main className="page-shell">
-        <div className="shell-container">
-          <PageHeader />
-          {form}
-          <section
-            className="panel"
-            role="alert"
-            aria-labelledby="workspace-source-refusal"
-          >
-            <h2 id="workspace-source-refusal">Evidencia rechazada</h2>
-            <p>
-              Se rechazó la evidencia autorizada: no superó la verificación
-              independiente de fuente de la página.
-            </p>
-            <ul aria-label="Fallas de fuente de la evidencia">
-              {failures.map((failure) => (
-                <li key={failure}>{failure}</li>
-              ))}
-            </ul>
-          </section>
-        </div>
-      </main>
+  const state =
+    presentation.kind === PRESENTATION_KIND.EMPTY ? (
+      <section className="fiscalizacion-workspace__state" role="status" aria-labelledby="workspace-evidence-empty">
+        <h2 id="workspace-evidence-empty">Evidencia sin filas</h2>
+        <p>La consulta autorizada no devolvió resultados de fiscalización.</p>
+      </section>
+    ) : presentation.kind === PRESENTATION_KIND.TECHNICAL_ERROR ? (
+      <section className="fiscalizacion-workspace__state" role="alert" aria-labelledby="workspace-evidence-error">
+        <h2 id="workspace-evidence-error">Error técnico de evidencia</h2>
+        <p>No se pudo cargar la pareja de evidencia. Reintente la consulta.</p>
+      </section>
+    ) : presentation.kind === PRESENTATION_KIND.REFUSED ? (
+      <section className="fiscalizacion-workspace__state" role="alert" aria-labelledby="workspace-evidence-refusal">
+        <h2 id="workspace-evidence-refusal">Evidencia no disponible</h2>
+        <p>Estado de evidencia: {presentation.reason}.</p>
+      </section>
+    ) : (
+      <section className="fiscalizacion-workspace__evidence" aria-label="Evidencia fiscal autorizada">
+        <CoverageEvidence result={{ status: "fulfilled", value: presentation.coverage }} />
+        <ResultEvidence result={{ status: "fulfilled", value: presentation.result }} />
+      </section>
     );
-  }
 
   return (
-    <main className="page-shell">
-      <div className="shell-container">
+    <main className="page-shell fiscalizacion-workspace">
+      <div className="shell-container fiscalizacion-workspace__layout">
         <PageHeader />
         {form}
-        <CoverageEvidence result={coverage} />
-        <ResultEvidence result={result} />
+        {state}
       </div>
     </main>
   );
@@ -495,7 +619,7 @@ async function renderFiscalizacionPage(
    try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }
    catch (error) { return refusal(error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones" : "No se pudieron cargar las opciones"); }
    const form = <CoverageExplorerForm facets={facets} selected={selected} />;
-   return <main className="page-shell"><div className="shell-container"><PageHeader />{form}<p role="status">Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></div></main>;
+   return <main className="page-shell fiscalizacion-workspace"><div className="shell-container fiscalizacion-workspace__layout"><PageHeader />{form}<section className="fiscalizacion-workspace__state" role="status"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></div></main>;
 }
 
 export default async function FiscalizacionPage({

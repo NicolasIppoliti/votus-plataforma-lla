@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { SignOutForm } from "@/components/SignOutForm";
-import { SourceDisclaimer } from "@/components/SourceDisclaimer";
-import { WorkspaceSelector } from "@/components/WorkspaceSelector";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";
-import { PrimaryNavigation } from "./PrimaryNavigation";
+import { ApplicationShell } from "./ApplicationShell";
+import { MobileNavigation } from "./MobileNavigation";
+import { SituationSidebar } from "./SituationSidebar";
+import { WorkspaceTopbar } from "./WorkspaceTopbar";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -30,12 +29,9 @@ import { PrimaryNavigation } from "./PrimaryNavigation";
  * closing the reachability gap `sdd-verify` found (fiscalizacion-analysis
  * spec, "An operator route reaches fiscalización through the opt-in path").
  *
- * Phase 16c: `/municipal` made the `coronel_rosales_municipal` party
- * mappings reachable. Because useful municipal and comparison requests require
- * prepared context, both routes remain discoverable from the dashboard's
- * prepared-route cards rather than the primary navigation. `/simulate` follows
- * the production reachability contract: an operator can enter the projection
- * workflow from this authenticated navigation.
+ * Phase 16c introduced the `/municipal` and `/compare` workflows. UI #78a
+ * makes both routes directly reachable from the shared primary-navigation
+ * contract while preserving `/simulate` as the projection workflow entry.
  */
 export default async function AuthenticatedLayout({
   children,
@@ -68,34 +64,17 @@ export default async function AuthenticatedLayout({
   }
 
   return (
-    <div className="app-shell">
-      <header className="site-header">
-        <div className="shell-container site-header__inner">
-          <Link className="site-brand" href="/dashboard" aria-label="Panel de Votus">
-            <span className="site-brand__name">Votus</span>
-            <span className="site-brand__descriptor">espacio de evidencia</span>
-          </Link>
-          <p className="site-context">Análisis electoral interno</p>
-          <WorkspaceSelector initialSelection={selection} />
-          <SignOutForm />
-        </div>
-        <PrimaryNavigation />
-      </header>
-      <div className="shell-container app-content" id="main-content" tabIndex={-1}>
-        <div className="source-disclaimer">
-          <SourceDisclaimer />
-        </div>
-        {unresolvedCount === undefined ? <p className="review-alert" role="status">No se pudo verificar el estado de revisión.</p> : null}
-        {typeof unresolvedCount === "number" && unresolvedCount > 0 ? (
-          <p className="review-alert" role="alert">
-                <span className="status-label">Requiere revisión</span>
-                <Link href="/review">
-                  {unresolvedCount} elemento(s) de revisión pendiente(s)
-                </Link>
-          </p>
-        ) : null}
-        {children}
-      </div>
-    </div>
+    <ApplicationShell
+      sidebar={<SituationSidebar />}
+      topbar={
+        <WorkspaceTopbar
+          selection={selection}
+          unresolvedCount={unresolvedCount}
+          mobileNavigation={<MobileNavigation sidebar={<SituationSidebar />} />}
+        />
+      }
+    >
+      {children}
+    </ApplicationShell>
   );
 }

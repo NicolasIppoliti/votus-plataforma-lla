@@ -58,7 +58,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
-      await expect(page).toHaveURL(/\/dashboard/);
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
 
       await page.goto(new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}` +
@@ -72,7 +72,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
       await expect(legacy).not.toContainText(`${OFFICIAL_VOTES} votos`);
 
-      await page.getByRole("link", { name: "Explorar resultados" }).click();
+      await page
+        .getByRole("navigation", { name: "principal" })
+        .getByRole("link", { name: "Explorar", exact: true })
+        .click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
       const coldUrl = page.url();
       let draftUrl = coldUrl;
@@ -141,7 +144,23 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);
       await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votos a nivel mesa`);
       await expect(explorer).not.toContainText(FISCALIZACION_MARKER);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toBeVisible();
       await expect(explorer.getByRole("heading", { name: "Referencia electoral autorizada" })).toBeVisible();
+      const voteTable = explorer.getByRole("region", { name: "Votos oficiales y porcentaje por partido" });
+      await voteTable.focus();
+      await expect(voteTable).toBeFocused();
+      expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+      await page.setViewportSize({ width: 320, height: 720 });
+      await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toBeVisible();
+      await expect(explorer.getByText("Resultados y evidencia", { exact: true })).toBeVisible();
+      await expect(voteTable).toBeVisible();
+      await voteTable.focus();
+      await expect(voteTable).toBeFocused();
+      expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await page.setViewportSize({ width: 1440, height: 900 });
+
       const provenance = page.getByRole("list", { name: "procedencia" });
       await expect(provenance.getByRole("listitem")).toHaveCount(1);
       await expect(provenance).toContainText(identity.archiveEntryIds[0]!);

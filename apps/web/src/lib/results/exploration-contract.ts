@@ -21,7 +21,7 @@ export interface SchoolBreakdownOk {
 export type SchoolBreakdownResult = SchoolBreakdownOk | ExplorationRefusal;
 export interface ExplorationOk {
   status: "ok"; sourceKind: "official"; level: ExplorationLevel; sourceGranularity: ExplorationLevel;
-  electionYear: number; electionRound: string; totalVotes: number;
+  electionYear: number; electionRound: string; categoryName: string; totalVotes: number;
   mesaCount: number | null; parties: ExplorationParty[]; archiveEntryIds: string[];
   sourceAudit: ExplorationSourceAudit[];
   sourceExclusions: ExplorationSourceAudit[];
@@ -49,6 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stringField(value: Record<string, unknown>, key: string): string {
   const field = value[key];
   if (typeof field !== "string" || field.length === 0) throw new Error(`invalid ${key}`);
+  return field;
+}
+function nonblankStringField(value: Record<string, unknown>, key: string): string {
+  const field = stringField(value, key);
+  if (field.trim().length === 0) throw new Error(`invalid ${key}`);
   return field;
 }
 function nullableStringField(value: Record<string, unknown>, key: string): string | null {
@@ -187,6 +192,7 @@ export function parseOfficialExploration(value: unknown): ExplorationResult {
     const level = value["level"];
     const sourceGranularity = value["source_granularity"];
     const totalVotes = nonnegativeInteger(value, "total_votes");
+    const categoryName = nonblankStringField(value, "category_name");
     const sourceAudit = parseSourceAudit(value["source_audit"]);
     const sourceExclusions = parseSourceExclusions(value["source_exclusions"]);
     const parties = value["parties"];
@@ -213,6 +219,7 @@ export function parseOfficialExploration(value: unknown): ExplorationResult {
       sourceGranularity,
       electionYear: nonnegativeInteger(value, "election_year"),
       electionRound: stringField(value, "election_round"),
+      categoryName,
       totalVotes,
       mesaCount: nullableNonnegativeInteger(value, "mesa_count"),
       parties: parsedParties,

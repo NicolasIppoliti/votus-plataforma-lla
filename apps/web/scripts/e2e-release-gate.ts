@@ -17,11 +17,12 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
+import { z } from "zod";
+import { PlaywrightFailure, playwrightFailure } from "../e2e/playwright-failure-diagnostics.ts";
 import {
 	EXPECTED_E2E_SPECS,
 	classifyStaleOwnership,
 	planStaleWorkdirReap,
-	type GateTestResult,
 } from "../e2e/gate-contract.ts";
 import {
 	SERVER_SCENARIOS,
@@ -38,6 +39,7 @@ import {
 	assertTs7Version,
 	migrationVersionFromFileName,
 	cleanupDiagnosticsLine,
+	ReleaseGateCleanupError,
 	cleanupReleaseGate,
 	formatPgTapFailure,
 	establishOwnership,
@@ -75,9 +77,46 @@ interface GateState extends ReleaseGateCleanupState<OwnedNextServer> {
 	reservations?: PortReservation[];
 	interrupted?: string;
 }
-interface PlaywrightReceipt {
-	suiteStatus: string;
-	results: GateTestResult[];
+const RELEASE_GATE_FAILURE_OPERATION = {
+	SUPABASE_START: "supabase_start",
+	SUPABASE_NETWORK_CREATE: "supabase_network_create",
+	SUPABASE_PUBLICATION_INSPECT: "supabase_publication_inspect",
+	SUPABASE_PUBLICATION_VALIDATE: "supabase_publication_validate",
+} as const;
+type ReleaseGateFailureOperation =
+	(typeof RELEASE_GATE_FAILURE_OPERATION)[keyof typeof RELEASE_GATE_FAILURE_OPERATION];
+const RELEASE_GATE_FAILURE_REASON = {
+	COMMAND_FAILED: "command_failed",
+	INVALID_PUBLICATION: "invalid_publication",
+} as const;
+type ReleaseGateFailureReason =
+	(typeof RELEASE_GATE_FAILURE_REASON)[keyof typeof RELEASE_GATE_FAILURE_REASON];
+const PUBLICATION_ISSUE = {
+	RECORD_COUNT: "record_count",
+	SHAPE: "shape",
+	UNPUBLISHED: "unpublished",
+	HOST_IP: "host_ip",
+	HOST_PORT: "host_port",
+	UNCLASSIFIED: "unclassified",
+} as const;
+type PublicationIssue = (typeof PUBLICATION_ISSUE)[keyof typeof PUBLICATION_ISSUE];
+interface PublicationDiagnostic {
+	stage: "json" | "schema" | "unexpected";
+	issues: readonly PublicationIssue[];
+}
+interface ReleaseGateFailureMetadata {
+	operation: ReleaseGateFailureOperation;
+	reason: ReleaseGateFailureReason;
+	exitCode: number | null;
+	publicationDiagnostic?: PublicationDiagnostic;
+}
+class ReleaseGateFailure extends Error {
+	readonly metadata: ReleaseGateFailureMetadata;
+
+	constructor(message: string, metadata: ReleaseGateFailureMetadata) {
+		super(message);
+		this.metadata = metadata;
+	}
 }
 function commandResult(
 	command: string,
@@ -97,10 +136,19 @@ function requireCommand(
 	args: readonly string[],
 	label: string,
 	cwd = REPO_ROOT,
+	operation?: ReleaseGateFailureOperation,
 ): string {
 	const result = commandResult(command, args, cwd);
-	if (result.error || result.status !== 0)
-		throw new Error(`${label} is unavailable or failed its preflight check`);
+	if (result.error || result.status !== 0) {
+		const message = `${label} is unavailable or failed its preflight check`;
+		if (operation)
+			throw new ReleaseGateFailure(message, {
+				operation,
+				reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+				exitCode: result.status,
+			});
+		throw new Error(message);
+	}
 	return result.stdout;
 }
 function runChecked(
@@ -110,6 +158,7 @@ function runChecked(
 	cwd = REPO_ROOT,
 	environment: NodeJS.ProcessEnv = process.env,
 	timeout = 120_000,
+	operation?: ReleaseGateFailureOperation,
 ): void {
 	const result = spawnSync(command, args, {
 		cwd,
@@ -118,10 +167,16 @@ function runChecked(
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout,
 	});
-	if (result.error || result.status !== 0)
-		throw new Error(
-			`${label} failed (exit ${result.status ?? "unavailable"}); output redacted`,
-		);
+	if (result.error || result.status !== 0) {
+		const message = `${label} failed (exit ${result.status ?? "unavailable"}); output redacted`;
+		if (operation)
+			throw new ReleaseGateFailure(message, {
+				operation,
+				reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+				exitCode: result.status,
+			});
+		throw new Error(message);
+	}
 }
 function runEvidence(
 	command: string,
@@ -293,6 +348,7 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 	if (
 		!startHelp.includes("--workdir") ||
 		!startHelp.includes("--ignore-health-check") ||
+		!startHelp.includes("--network-id") ||
 		!stopHelp.includes("--project-id") ||
 		!stopHelp.includes("--no-backup")
 	)
@@ -438,28 +494,7 @@ export async function runPlaywright(
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	if (!result.error && result.status === 0) return;
-	let summary = "no reporter receipt";
-	try {
-		const receipt = JSON.parse(
-			await readFile(receiptPath, "utf8"),
-		) as PlaywrightReceipt;
-		const counts = new Map<string, number>();
-		for (const testResult of receipt.results)
-			counts.set(testResult.status, (counts.get(testResult.status) ?? 0) + 1);
-		summary = `${receipt.results.length} discovered, ${[...counts.entries()]
-			.map(([status, count]) => `${status}=${count}`)
-			.join(", ")}, suite=${receipt.suiteStatus}, non-passing=[${receipt.results
-			.filter(({ status }) => status !== "passed")
-			.map(({ spec, status, failureLine }) =>
-				`${spec}:${status}${failureLine === undefined ? "" : `@${failureLine}`}`,
-			)
-			.join(", ")}]`;
-	} catch {
-		/* missing receipt is a failure */
-	}
-	throw new Error(
-		`Playwright release suite failed (exit ${result.status ?? "unavailable"}; ${summary}); output redacted`,
-	);
+	throw await playwrightFailure(result.status, Boolean(result.error), receiptPath);
 }
 async function stopChild(child: ChildProcess): Promise<void> {
 	if (child.exitCode !== null) return;
@@ -578,6 +613,110 @@ const RELEASE_GATE_CLEANUP_DEPENDENCIES: ReleaseGateCleanupDependencies<OwnedNex
 		removeWorkdir: (workdir) => rm(workdir, { recursive: true }),
 		workdirExists: existsSync,
 	};
+const HOST_BINDING_SCHEMA = z.object({
+	HostIp: z.enum(["127.0.0.1", "::1"]),
+	HostPort: z
+		.string()
+		.regex(/^\d+$/)
+		.refine((port) => Number(port) >= 1 && Number(port) <= 65_535),
+});
+const PORT_MAP_SCHEMA = z
+	.record(z.string(), z.array(HOST_BINDING_SCHEMA).nullable())
+	.refine((ports) => Object.values(ports).some((bindings) => bindings?.length));
+const LOOPBACK_HOST_PUBLICATION_SCHEMA = z.array(PORT_MAP_SCHEMA).length(2);
+
+function publicationSchemaDiagnostic(
+	error: z.ZodError,
+): PublicationDiagnostic | undefined {
+	if (error.issues.length === 0) return undefined;
+	const present = new Set<PublicationIssue>();
+	for (const issue of error.issues) {
+		const [mapIndex, portKey, bindingIndex, field] = issue.path;
+		const mapPath =
+			typeof mapIndex === "number" &&
+			Number.isSafeInteger(mapIndex) &&
+			mapIndex >= 0;
+		const portPath = mapPath && typeof portKey === "string";
+		const bindingPath =
+			portPath &&
+			typeof bindingIndex === "number" &&
+			Number.isSafeInteger(bindingIndex) &&
+			bindingIndex >= 0;
+		const bindingField = issue.path.length === 4 && bindingPath;
+		if (
+			issue.path.length === 0 &&
+			(issue.code === "too_small" || issue.code === "too_big") &&
+			issue.origin === "array"
+		)
+			present.add(PUBLICATION_ISSUE.RECORD_COUNT);
+		else if (
+			issue.code === "invalid_type" &&
+			((issue.path.length === 1 && mapPath && issue.expected === "record") ||
+				(issue.path.length === 2 && portPath && issue.expected === "array") ||
+				(issue.path.length === 3 && bindingPath && issue.expected === "object"))
+		)
+			present.add(PUBLICATION_ISSUE.SHAPE);
+		else if (issue.path.length === 1 && mapPath && issue.code === "custom")
+			present.add(PUBLICATION_ISSUE.UNPUBLISHED);
+		else if (bindingField && field === "HostIp" && issue.code === "invalid_value")
+			present.add(PUBLICATION_ISSUE.HOST_IP);
+		else if (
+			bindingField &&
+			field === "HostPort" &&
+			((issue.code === "invalid_type" && issue.expected === "string") ||
+				(issue.code === "invalid_format" && issue.format === "regex") ||
+				issue.code === "custom")
+		)
+			present.add(PUBLICATION_ISSUE.HOST_PORT);
+		else
+			present.add(PUBLICATION_ISSUE.UNCLASSIFIED);
+	}
+	return {
+		stage: "schema",
+		issues: Object.values(PUBLICATION_ISSUE).filter((issue) => present.has(issue)),
+	};
+}
+
+function assertLoopbackHostPublication(projectId: string): void {
+	const output = requireCommand(
+		"docker",
+		[
+			"inspect",
+			"--format",
+			"{{json .NetworkSettings.Ports}}",
+			`supabase_db_${projectId}`,
+			`supabase_kong_${projectId}`,
+		],
+		"disposable Supabase host publication",
+		REPO_ROOT,
+		RELEASE_GATE_FAILURE_OPERATION.SUPABASE_PUBLICATION_INSPECT,
+	);
+	let decoded = false;
+	try {
+		const publications = output.trim().split("\n").map((publication) => JSON.parse(publication));
+		decoded = true;
+		LOOPBACK_HOST_PUBLICATION_SCHEMA.parse(publications);
+	} catch (error) {
+		const fallback: PublicationDiagnostic = {
+			stage: !decoded && error instanceof SyntaxError ? "json" : "unexpected",
+			issues: [],
+		};
+		const publicationDiagnostic =
+			decoded && error instanceof z.ZodError
+				? publicationSchemaDiagnostic(error) ?? fallback
+				: fallback;
+		throw new ReleaseGateFailure(
+			"Supabase host publication proof is absent or invalid",
+			{
+				operation: RELEASE_GATE_FAILURE_OPERATION.SUPABASE_PUBLICATION_VALIDATE,
+				reason: RELEASE_GATE_FAILURE_REASON.INVALID_PUBLICATION,
+				exitCode: null,
+				publicationDiagnostic,
+			},
+		);
+	}
+}
+
 export function removeOwnedNetworks(networks: readonly string[]): Promise<void> {
 	runChecked(
 		"docker",
@@ -711,7 +850,7 @@ const DATA_SPEC_BY_SCENARIO = {
 	municipal: "e2e/municipal.spec.ts",
 	provenance: "e2e/provenance.spec.ts",
 } as const;
-function productEnvironment(
+export function productEnvironment(
 	common: NodeJS.ProcessEnv,
 	scenario: ServerScenario,
 ): NodeJS.ProcessEnv {
@@ -721,6 +860,7 @@ function productEnvironment(
 	const prefix = `e2e-${scenario}`;
 	return {
 		...common,
+		VOTUS_E2E_TEST_PROXY: "1",
 		CORONEL_ROSALES_JURISDICTION_ID:
 			identity?.jurisdictionId ?? `${prefix}-unused-jurisdiction`,
 		MUNICIPAL_ELECTION_ID:
@@ -791,7 +931,30 @@ async function executeGate(
 	for (const reservation of supabaseReservations) await reservation.release();
 	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
 	state.stackMutationAttempted = true;
+	const network = `supabase_network_${ownership.projectId}`;
 	await timing.measure(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
+		const networkResult = commandResult("docker", [
+			"network",
+			"create",
+			"--driver",
+			"bridge",
+			"--label",
+			`com.supabase.cli.project=${ownership.projectId}`,
+			"--label",
+			`com.docker.compose.project=${ownership.projectId}`,
+			"--opt",
+			"com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+			network,
+		]);
+		if (networkResult.error || networkResult.status !== 0)
+			throw new ReleaseGateFailure(
+				`disposable Supabase network create failed (exit ${networkResult.status ?? "unavailable"}); output redacted`,
+				{
+					operation: RELEASE_GATE_FAILURE_OPERATION.SUPABASE_NETWORK_CREATE,
+					reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+					exitCode: networkResult.status,
+				},
+			);
 		runChecked(
 			"supabase",
 			[
@@ -801,13 +964,17 @@ async function executeGate(
 				"--exclude",
 				EXCLUDED_SERVICES,
 				"--ignore-health-check",
+				"--network-id",
+				network,
 				"--yes",
 			],
 			"disposable Supabase start",
 			REPO_ROOT,
 			process.env,
 			SUPABASE_START_TIMEOUT_MS,
+			RELEASE_GATE_FAILURE_OPERATION.SUPABASE_START,
 		);
+		assertLoopbackHostPublication(ownership.projectId);
 	});
 	const timed =
 		<TArgs extends unknown[], TResult>(
@@ -1048,8 +1215,49 @@ export function reportReleaseGateFailure(
 	writeError: (chunk: string) => void = (chunk) => process.stderr.write(chunk),
 ): void {
 	writeError(`${label}: details redacted\n`);
-	const diagnostics = cleanupDiagnosticsLine(error);
-	if (diagnostics) writeError(`${diagnostics}\n`);
+	const pending = [error];
+	const seen = new Set<unknown>();
+	while (pending.length > 0) {
+		const error = pending.pop();
+		if (seen.has(error)) continue;
+		seen.add(error);
+		if (error instanceof AggregateError) pending.push(...error.errors);
+		if (error instanceof Error && error.cause !== undefined) pending.push(error.cause);
+		reportDiagnostic(error, writeError);
+	}
+}
+
+function reportDiagnostic(error: unknown, writeError: (chunk: string) => void): void {
+	if (error instanceof PlaywrightFailure) writeError(error.line());
+	if (error instanceof ReleaseGateFailure)
+		writeError(
+			`E2E_RELEASE_GATE_FAILURE ${JSON.stringify({
+				schemaVersion: 1,
+				operation: error.metadata.operation,
+				reason: error.metadata.reason,
+				exitCode:
+					Number.isInteger(error.metadata.exitCode) &&
+					error.metadata.exitCode !== null &&
+					error.metadata.exitCode >= 0 &&
+					error.metadata.exitCode <= 255
+						? error.metadata.exitCode
+						: null,
+			})}\n`,
+		);
+	if (error instanceof ReleaseGateFailure && error.metadata.publicationDiagnostic) {
+		const diagnostic = error.metadata.publicationDiagnostic;
+		writeError(
+			`E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ${JSON.stringify({
+				schemaVersion: 1,
+				stage: diagnostic.stage,
+				issues: diagnostic.issues,
+			})}\n`,
+		);
+	}
+	if (error instanceof ReleaseGateCleanupError) {
+		const diagnostics = cleanupDiagnosticsLine(error);
+		if (diagnostics) writeError(`${diagnostics}\n`);
+	}
 }
 
 export interface ReleaseGateMainDependencies {
