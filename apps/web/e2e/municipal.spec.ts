@@ -85,9 +85,77 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main).toContainText(`1 fila fiscalización / ${FISCALIZACION_VOTES} votos`);
       await expect(main.getByRole("list", { name: "procedencia" })).toContainText(`${identity.archiveEntryIds[0]} — sha256: ${MUNICIPAL_SOURCE_ISOLATION_FIXTURE.archiveEntries![0]!["sha256"]}`);
       await expect(main.getByRole("list", { name: "procedencia" })).not.toContainText(identity.archiveEntryIds[1]!);
+      await expect(main.getByRole("list", { name: "procedencia" })).not.toContainText(identity.archiveEntryIds[2]!);
       await expect(main).toContainText("2026-08-10T00:00:00+00:00");
       const tableRegion = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" });
       await tableRegion.focus(); await expect(tableRegion).toBeFocused();
+      const heading = main.getByRole("heading", {
+        name: "Resultados municipales (Concejales)",
+        level: 1,
+      });
+      const results = main.getByRole("region", {
+        name: "Resultados exactos", exact: true,
+      });
+      const evidence = main.getByRole("complementary", {
+        name: "Evidencia oficial",
+      });
+      const selection = main.getByRole("region", {
+        name: "Contexto de la consulta",
+      });
+
+      await page.setViewportSize({ width: 1710, height: 906 });
+      await expect(heading).toBeVisible();
+      await expect(heading).toHaveCSS("font-size", "36px");
+      await expect(heading).toHaveCSS("line-height", "36px");
+      await expect(heading).toHaveCSS("letter-spacing", "-1.62px");
+      await expect(main.locator(":scope > .shell-container")).toHaveCSS(
+        "max-width", "1540px",
+      );
+      const desktopResults = await results.evaluate((element) => {
+        const { x, y, right } = element.getBoundingClientRect();
+        return { x, y, right };
+      });
+      const desktopEvidence = await evidence.evaluate((element) => {
+        const { x, y, right, width } = element.getBoundingClientRect();
+        return { x, y, right, width };
+      });
+      const desktopSelection = await selection.evaluate((element) => {
+        const { x, right, bottom } = element.getBoundingClientRect();
+        return { x, right, bottom };
+      });
+      expect(desktopEvidence.x).toBeGreaterThanOrEqual(desktopResults.right);
+      expect(Math.abs(desktopEvidence.y - desktopResults.y)).toBeLessThanOrEqual(1);
+      expect(desktopEvidence.width).toBeCloseTo(304, 0);
+      expect(desktopSelection.bottom).toBeLessThanOrEqual(desktopResults.y);
+      expect(Math.abs(desktopSelection.x - desktopResults.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(desktopSelection.right - desktopEvidence.right))
+        .toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(1710);
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(heading).toHaveCSS("font-size", "28px");
+      const mobileResults = await results.evaluate((element) => {
+        const { x, bottom, width } = element.getBoundingClientRect();
+        return { x, bottom, width };
+      });
+      const mobileEvidence = await evidence.evaluate((element) => {
+        const { x, y, width } = element.getBoundingClientRect();
+        return { x, y, width };
+      });
+      expect(mobileEvidence.y).toBeGreaterThanOrEqual(mobileResults.bottom);
+      expect(Math.abs(mobileEvidence.x - mobileResults.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(mobileEvidence.width - mobileResults.width))
+        .toBeLessThanOrEqual(1);
+      await expect(tableRegion).toHaveAttribute("tabindex", "0");
+      await tableRegion.focus();
+      await expect(tableRegion).toBeFocused();
+      expect(await tableRegion.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      )).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(390);
+
       await page.setViewportSize({ width: 1440, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
       await page.setViewportSize({ width: 320, height: 720 });
