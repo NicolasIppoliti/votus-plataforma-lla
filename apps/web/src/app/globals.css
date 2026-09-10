@@ -1566,6 +1566,11 @@ select option {
   gap: 1rem;
 }
 
+.app-content:has(> .official-municipal) {
+  max-width: none;
+  padding-inline: 0;
+}
+
 .official-municipal {
   padding-block: 0;
 }

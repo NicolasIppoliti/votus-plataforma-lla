@@ -60,6 +60,11 @@ test.describe("the municipal route requires workspace-authorized official result
       const main = page.getByRole("main");
       await expect(main.getByRole("heading", { name: "Municipal (Concejales)" })).toBeVisible();
       await expect(main.getByRole("alert")).toContainText("El espacio de trabajo no autoriza esta sección municipal");
+      await expect(main.getByRole("region", {
+        name: "Tabla de resultados oficiales exactos por partido", exact: true,
+      })).toHaveCount(0);
+      await expect(main.getByRole("table")).toHaveCount(0);
+      await expect(main.getByRole("rowheader")).toHaveCount(0);
       await expect(main).not.toContainText(`ALIANZA LA LIBERTAD AVANZA: ${OFFICIAL_VOTES} voto(s)`);
       await expect(main).not.toContainText("110: 1 filas");
       await expect(main.getByRole("status", { name: "granularidad: seccion" })).toHaveCount(0);
@@ -88,6 +93,10 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.getByRole("list", { name: "procedencia" })).not.toContainText(identity.archiveEntryIds[2]!);
       await expect(main).toContainText("2026-08-10T00:00:00+00:00");
       const tableRegion = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" });
+      const officialRows = tableRegion.getByRole("table").locator("tbody").getByRole("row");
+      await expect(officialRows).toHaveCount(1);
+      await expect(officialRows.getByRole("rowheader")).toHaveText(["ALIANZA LA LIBERTAD AVANZA"]);
+      await expect(officialRows.getByRole("cell")).toHaveText([String(OFFICIAL_VOTES)]);
       await tableRegion.focus(); await expect(tableRegion).toBeFocused();
       const heading = main.getByRole("heading", {
         name: "Resultados municipales (Concejales)",
@@ -103,6 +112,33 @@ test.describe("the municipal route requires workspace-authorized official result
         name: "Contexto de la consulta",
       });
 
+      await expect(evidence.getByRole("alert")).toContainText(
+        "1 de 2 filas (3333 votos) se resolvieron sin un partido curado",
+      );
+      await expect(evidence.getByRole("listitem").filter({
+        hasText: /^110: 1 filas, 3333 votos$/,
+      })).toHaveCount(1);
+
+      const expectEffectiveLayoutWidth = async () => {
+        const layout = main.locator(":scope > .official-municipal__layout");
+        await expect(layout).toBeVisible();
+        await expect(page.locator(".app-shell__workspace")).toBeVisible();
+        await expect.poll(async () => layout.evaluate((element) => {
+          const workspace = element.closest(".app-shell__workspace");
+          if (!(workspace instanceof HTMLElement)) {
+            throw new Error("Municipal layout requires an application workspace");
+          }
+          const style = getComputedStyle(workspace);
+          const availableWidth = workspace.clientWidth
+            - Number.parseFloat(style.paddingLeft)
+            - Number.parseFloat(style.paddingRight);
+          const expectedWidth = Math.min(1540, availableWidth);
+          return Math.abs(element.getBoundingClientRect().width - expectedWidth);
+        }), {
+          message: "Municipal layout fills the workspace up to its 1540px cap",
+        }).toBeLessThanOrEqual(1);
+      };
+
       await page.setViewportSize({ width: 1710, height: 906 });
       await expect(heading).toBeVisible();
       await expect(heading).toHaveCSS("font-size", "36px");
@@ -111,6 +147,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.locator(":scope > .shell-container")).toHaveCSS(
         "max-width", "1540px",
       );
+      await expectEffectiveLayoutWidth();
       const desktopResults = await results.evaluate((element) => {
         const { x, y, right } = element.getBoundingClientRect();
         return { x, y, right };
@@ -135,6 +172,7 @@ test.describe("the municipal route requires workspace-authorized official result
 
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(heading).toHaveCSS("font-size", "28px");
+      await expectEffectiveLayoutWidth();
       const mobileResults = await results.evaluate((element) => {
         const { x, bottom, width } = element.getBoundingClientRect();
         return { x, bottom, width };
