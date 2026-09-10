@@ -1013,9 +1013,33 @@ describe("base contracts", () => {
 			)).toThrow();
 		},
 	);
+	const etlStrategy = "    strategy:\n      fail-fast: false\n      matrix:\n        case: [ordinary, success, ledger, sql]\n";
+	it("allows only the exact isolated ETL matrix", () => {
+		expectUnconditionalReleaseJob(`  etl-release:\n${etlStrategy}    steps:\n`);
+	});
+	it.each([
+		etlStrategy.replace("false", "true"),
+		etlStrategy.replace("ledger, sql", "ledger, sql, extra"),
+		etlStrategy.replace("case:", "include:"),
+		`${etlStrategy}      max-parallel: 1\n`,
+		"",
+	])("rejects an unsupported ETL matrix %s", (strategy) => {
+		expect(() => expectUnconditionalReleaseJob(`  etl-release:\n${strategy}    steps:\n`)).toThrow();
+	});
+	it.each(["web-static", "e2e-release"])("rejects the ETL matrix on %s", (job) => {
+		expect(() => expectUnconditionalReleaseJob(`  ${job}:\n${etlStrategy}`)).toThrow();
+	});
+	it.each(["if: always()", "needs: web-static"])("rejects ETL job restriction %s", (restriction) => {
+		expect(() => expectUnconditionalReleaseJob(`  etl-release:\n${etlStrategy}    ${restriction}\n`)).toThrow();
+	});
 	function expectUnconditionalReleaseJob(releaseJob: string): void {
 		// Match job keys at the workflow's four-space indentation, not nested step keys.
-		expect(releaseJob).not.toMatch(/^ {4}(?:if|needs|strategy):/m);
+		expect(releaseJob).not.toMatch(/^ {4}(?:if|needs):/m);
+		if (releaseJob.startsWith("  etl-release:\n")) {
+			expect(releaseJob.match(/^ {4}strategy:\n(?: {6,}.*\n)*/gm)).toEqual([etlStrategy]);
+		} else {
+			expect(releaseJob).not.toMatch(/^ {4}strategy:/m);
+		}
 	}
 	it("keeps independent release proofs parallel and aggregates their exact results", () => {
 		const workflow = readFileSync(
@@ -1088,8 +1112,15 @@ describe("base contracts", () => {
 		expect(etlRelease).toContain("create role etl_writer login bypassrls password null");
 		expect(etlRelease.match(/uv run --project \. --frozen ruff check \./g)).toHaveLength(1);
 		expect(etlRelease.match(/uv run --project \. --frozen ruff format --check \./g)).toHaveLength(1);
-		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(1);
-		expect(etlRelease).not.toMatch(/pnpm|setup-node|supabase\/setup-cli|playwright/);
+		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(2);
+		expect(etlRelease).toContain("supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf");
+		expect(etlRelease).toContain("version: 2.116.0");
+		expect(etlRelease).toContain("ETL_CASE: ${{ matrix.case }}");
+		expect(etlRelease).toContain('if [ "$ETL_CASE" = "ordinary" ]; then');
+		expect(etlRelease).toMatch(/^\s+uv run --project etl etl-verify$/m);
+		expect(etlRelease).toContain('uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"');
+		expect(etlRelease).not.toMatch(/pnpm|setup-node|playwright/);
+		expect(workflow).not.toMatch(/^\s+continue-on-error:/m);
 
 		expect(e2eRelease).toContain("timeout-minutes: 20");
 		expect(e2eRelease).toContain("pnpm/action-setup@");
@@ -1120,7 +1151,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(12);
+		expect(actionReferences).toHaveLength(13);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});

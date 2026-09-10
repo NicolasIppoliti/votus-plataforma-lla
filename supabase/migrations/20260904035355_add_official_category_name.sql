@@ -1,5 +1,3 @@
-begin;
-
 alter function public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)
   rename to results_exploration_official_wrapper_20260904035355;
 
@@ -65,5 +63,3 @@ end
 $$;
 grant execute on function public.results_exploration_official(uuid,uuid,text,text,text,text,integer,text)
   to workspace_query_owner;
-
-commit;
