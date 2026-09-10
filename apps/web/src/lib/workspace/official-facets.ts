@@ -7,6 +7,13 @@ export const OFFICIAL_FACETS_ERROR = { AUTHORIZATION_DENIED: "authorization_deni
 export const OFFICIAL_FACET_EXCLUSION_REASON = { NON_OFFICIAL_SOURCE_ROWS:"non_official_source_rows", INCOMPLETE_LINEAGE_ROWS:"official_rows_with_incomplete_lineage", COARSE_OVERFLOW:"coarse_facets_overflow", CIRCUIT_OVERFLOW:"circuitos_overflow", ESTABLISHMENT_OVERFLOW:"establecimientos_overflow", MESA_OVERFLOW:"mesas_overflow" } as const;
 type OfficialFacetsErrorCode = (typeof OFFICIAL_FACETS_ERROR)[keyof typeof OFFICIAL_FACETS_ERROR];
 type OfficialFacetExclusionReason = (typeof OFFICIAL_FACET_EXCLUSION_REASON)[keyof typeof OFFICIAL_FACET_EXCLUSION_REASON];
+type OfficialFacetDiagnosticReason = "facets.metadata.distrito_inconsistent" | "facets.metadata.seccion_inconsistent" | "facets.row.round_invalid" | "facets.row.category_name_invalid" | "facets.row.distrito_code_invalid" | "facets.row.seccion_code_invalid";
+const diagnosticReasons = new WeakMap<Error, OfficialFacetDiagnosticReason>();
+function malformed(reason?: OfficialFacetDiagnosticReason): AuthorizedOfficialFacetsError {
+  const error = new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
+  if (reason) diagnosticReasons.set(error, reason);
+  return error;
+}
 export interface OfficialFacetExclusion extends ExplorationFacetExclusion { reason: OfficialFacetExclusionReason; }
 export class AuthorizedOfficialFacetsError extends Error {
   readonly exclusions:readonly OfficialFacetExclusion[];
@@ -42,8 +49,17 @@ function parent(value: Record<string, unknown>): DeepParent | null {
 function noDuplicates<T>(rows: T[], key: (row: T) => string): T[] {
   const values = new Set<string>(); for (const row of rows) { const id=key(row); if(values.has(id)) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED); values.add(id); } return rows;
 }
-function consistent<T>(rows:T[],key:(row:T)=>string,project:(row:T)=>unknown):void {
-  const values=new Map<string,string>(); for(const row of rows){const id=key(row),value=JSON.stringify(project(row)); if(values.has(id)&&values.get(id)!==value)throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED); values.set(id,value);}
+function consistent<T>(rows:T[],key:(row:T)=>string,project:(row:T)=>unknown,reason?:OfficialFacetDiagnosticReason):void {
+  const values = new Map<string,string>();
+  for (const row of rows) {
+    const id = key(row), value = JSON.stringify(project(row));
+    if (values.has(id) && values.get(id) !== value) {
+      const error = new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
+      if (reason) diagnosticReasons.set(error, reason);
+      throw error;
+    }
+    values.set(id, value);
+  }
 }
 function parseExclusions(value:unknown):OfficialFacetExclusion[]{if(!Array.isArray(value)||value.length>4)throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);const reasons=new Set<string>();return value.map((raw)=>{const item=record(raw),reason=item?.["reason"],rows=item?.["rows"];if(!item||!exactKeys(item,["reason","rows"])||typeof reason!=="string"||!Object.values(OFFICIAL_FACET_EXCLUSION_REASON).includes(reason as OfficialFacetExclusionReason)||!Number.isSafeInteger(rows)||Number(rows)<=0||reasons.has(reason))throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);reasons.add(reason);return{reason:reason as OfficialFacetExclusionReason,rows:Number(rows)};});}
 function parseRows(payload: unknown): ParsedFacets {
@@ -57,14 +73,20 @@ function parseRows(payload: unknown): ParsedFacets {
   const auditReasons = new Set<OfficialFacetExclusionReason>([OFFICIAL_FACET_EXCLUSION_REASON.NON_OFFICIAL_SOURCE_ROWS,OFFICIAL_FACET_EXCLUSION_REASON.INCOMPLETE_LINEAGE_ROWS]);
   if (exclusions.length > 2 || exclusions.some((item) => !auditReasons.has(item.reason)) || [facets,rawCircuits,rawEstablishments,rawMesas].some((items) => items.length > 200) || total !== facets.length) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
   const rows = noDuplicates(facets.map((raw: unknown) => {
-    const value = record(raw), distrito = value && metadata(value,"distrito"), seccion = value && metadata(value,"seccion"), lineage = value && parent(value), round = value && text(value["round"]), categoryName = value && text(value["category_name"]), year = value?.["year"];
-    if (!value || !exactKeys(value,ROW_KEYS) || !lineage || !round || !categoryName || !Number.isSafeInteger(year) || Number(year)<0 || !distrito || !seccion) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
+    const value = record(raw), distrito = value && metadata(value,"distrito"), seccion = value && metadata(value,"seccion"), lineage = value && parent(value), distritoCode = value && text(value["distrito_code"]), seccionCode = value && text(value["seccion_code"]), round = value && text(value["round"]), categoryName = value && text(value["category_name"]), year = value?.["year"];
+    if (!value || !exactKeys(value,ROW_KEYS)) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
+        if (!distritoCode) throw malformed("facets.row.distrito_code_invalid");
+        if (!seccionCode) throw malformed("facets.row.seccion_code_invalid");
+        if (!lineage) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
+        if (!round) throw malformed("facets.row.round_invalid");
+        if (!categoryName) throw malformed("facets.row.category_name_invalid");
+        if (!Number.isSafeInteger(year) || Number(year)<0 || !distrito || !seccion) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED);
     return { ...lineage, year:Number(year), round, categoryName, distrito, seccion };
   }), (row) => [row.electionId,row.categoryId,row.distritoCode,row.seccionCode].join("\0"));
   const circuitos = noDuplicates(rawCircuits.map((raw: unknown) => { const value=record(raw), lineage=value&&parent(value), circuito=value&&metadata(value,"circuito"); if(!value||!exactKeys(value,CIRCUIT_KEYS)||!lineage||!circuito) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED); return {...lineage,circuitoCode:circuito.code,circuito}; }), (row) => [row.electionId,row.categoryId,row.distritoCode,row.seccionCode,row.circuitoCode].join("\0"));
   const establecimientos = noDuplicates(rawEstablishments.map((raw: unknown) => { const value=record(raw), lineage=value&&parent(value), circuitoCode=value&&text(value["circuito_code"]), establecimiento=value&&metadata(value,"establecimiento"); if(!value||!exactKeys(value,ESTABLISHMENT_KEYS)||!lineage||!circuitoCode||!establecimiento) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED); return {...lineage,circuitoCode,circuito:{code:circuitoCode,name:null,nameStatus:"missing" as const,nameVariantCount:0},establecimientoCode:establecimiento.code,establecimiento}; }), (row) => [row.electionId,row.categoryId,row.distritoCode,row.seccionCode,row.circuitoCode,row.establecimientoCode].join("\0"));
   const mesas = noDuplicates(rawMesas.map((raw: unknown) => { const value=record(raw), lineage=value&&parent(value), circuitoCode=value&&text(value["circuito_code"]), establecimientoCode=value&&text(value["establecimiento_code"]), mesaCode=value?.["mesa_code"]; if(!value||!exactKeys(value,MESA_KEYS)||!lineage||!circuitoCode||!establecimientoCode||!Number.isSafeInteger(mesaCode)||Number(mesaCode)<0) throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.MALFORMED); return {...lineage,circuitoCode,establecimientoCode,mesaCode:Number(mesaCode)}; }), (row) => [row.electionId,row.categoryId,row.distritoCode,row.seccionCode,row.circuitoCode,row.establecimientoCode,row.mesaCode].join("\0"));
-  consistent(rows,(r)=>r.electionId,(r)=>[r.year,r.round]); consistent(rows,(r)=>r.categoryId,(r)=>r.categoryName); consistent(rows,(r)=>r.distritoCode,(r)=>r.distrito); consistent(rows,(r)=>`${r.distritoCode}/${r.seccionCode}`,(r)=>r.seccion);
+  consistent(rows,(r)=>r.electionId,(r)=>[r.year,r.round]); consistent(rows,(r)=>r.categoryId,(r)=>r.categoryName); consistent(rows,(r)=>r.distritoCode,(r)=>r.distrito,"facets.metadata.distrito_inconsistent"); consistent(rows,(r)=>`${r.distritoCode}/${r.seccionCode}`,(r)=>r.seccion,"facets.metadata.seccion_inconsistent");
   return { rows,circuitos,establecimientos,mesas,exclusions };
 }
 function belongs(parentSelection: ExplorationFacetSelection, row: DeepParent): boolean { return row.electionId===parentSelection.electionId&&row.categoryId===parentSelection.categoryId&&row.distritoCode===parentSelection.distritoCode&&row.seccionCode===parentSelection.seccionCode; }
@@ -85,7 +107,8 @@ export class AuthorizedOfficialFacetRepository {
     } catch (error) {
       if (error instanceof AuthorizedOfficialFacetsError) {
         if (error.code === OFFICIAL_FACETS_ERROR.MALFORMED) {
-          console.error("[workspace:official_facets]", { code: error.code });
+          const reason = diagnosticReasons.get(error);
+          console.error("[workspace:official_facets]", reason ? { code: error.code, reason } : { code: error.code });
         }
         throw error;
       }
