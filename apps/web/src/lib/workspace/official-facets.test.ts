@@ -83,10 +83,10 @@ describe("AuthorizedOfficialFacetRepository", () => {
   it("logs the district-metadata reason without response data when coarse rows disagree", async () => {
     const metadataSentinel = "synthetic-district-metadata-sentinel";
     const currentElection = { ...row, distrito_name: metadataSentinel };
-    const priorElection = {
+    const otherSection = {
       ...currentElection,
-      election_id: "10000000-0000-4000-8000-000000000003",
-      year: 2023,
+      seccion_code: "028",
+      seccion_name: "Section 028",
       distrito_name: null,
       distrito_name_status: "missing",
       distrito_name_variant_count: 0,
@@ -100,7 +100,7 @@ describe("AuthorizedOfficialFacetRepository", () => {
       error: null,
     });
     mocks.schema.mockReturnValue({ rpc: mocks.rpc });
-    mocks.rpc.mockResolvedValue({ data: payload([currentElection, priorElection]), error: null });
+    mocks.rpc.mockResolvedValue({ data: payload([currentElection, otherSection]), error: null });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
@@ -121,10 +121,8 @@ describe("AuthorizedOfficialFacetRepository", () => {
   it("logs the section-metadata reason without response data when coarse rows disagree", async () => {
     const metadataSentinel = "synthetic-section-metadata-sentinel";
     const currentElection = { ...row, seccion_name: metadataSentinel };
-    const priorElection = {
+    const conflictingSection = {
       ...currentElection,
-      election_id: "10000000-0000-4000-8000-000000000004",
-      year: 2023,
       seccion_name: null,
       seccion_name_status: "missing",
       seccion_name_variant_count: 0,
@@ -138,7 +136,7 @@ describe("AuthorizedOfficialFacetRepository", () => {
       error: null,
     });
     mocks.schema.mockReturnValue({ rpc: mocks.rpc });
-    mocks.rpc.mockResolvedValue({ data: payload([currentElection, priorElection]), error: null });
+    mocks.rpc.mockResolvedValue({ data: payload([currentElection, conflictingSection]), error: null });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
@@ -284,9 +282,57 @@ describe("AuthorizedOfficialFacetRepository", () => {
     await expect(new AuthorizedOfficialFacetRepository(() => Promise.resolve(raw)).facets(selection)).rejects.toMatchObject({ code });
   });
 
-  it("accepts repeated coarse metadata across distinct authorized tuples", async () => {
-    const second = { ...row, category_id: "20000000-0000-4000-8000-000000000002", category_name: "SENADORES" };
-    await expect(new AuthorizedOfficialFacetRepository(() => Promise.resolve(payload([row, second]))).facets({ electionId: IDS.election })).resolves.toMatchObject({ categories: [{ name: "DIPUTADOS" }, { name: "SENADORES" }] });
+  it("accepts canonical district metadata that differs across election and category scopes", async () => {
+    const firstSection = {
+      ...row,
+      distrito_name: null,
+      distrito_name_status: "conflict",
+      distrito_name_variant_count: 2,
+    };
+    const secondSection = {
+      ...firstSection,
+      seccion_code: "028",
+      seccion_name: null,
+      seccion_name_status: "missing",
+      seccion_name_variant_count: 0,
+    };
+    const otherElection = {
+      ...row,
+      election_id: "10000000-0000-4000-8000-000000000003",
+      year: 2023,
+    };
+    const otherCategory = {
+      ...row,
+      category_id: "20000000-0000-4000-8000-000000000003",
+      category_name: "SENADORES",
+    };
+    const repository = new AuthorizedOfficialFacetRepository(() => Promise.resolve(payload([
+      firstSection,
+      secondSection,
+      otherElection,
+      otherCategory,
+    ])));
+
+    await expect(repository.facets({})).resolves.toMatchObject({
+      elections: [
+        { id: IDS.election, year: 2025 },
+        { id: otherElection.election_id, year: 2023 },
+      ],
+    });
+    await expect(repository.facets({ electionId: IDS.election, categoryId: IDS.category })).resolves.toMatchObject({
+      distritos: [{ code: "02", name: null, nameStatus: "conflict", nameVariantCount: 2 }],
+      secciones: [],
+    });
+    await expect(repository.facets({
+      electionId: IDS.election,
+      categoryId: IDS.category,
+      distritoCode: "02",
+    })).resolves.toMatchObject({
+      secciones: [
+        { code: "027", name: "Coronel Rosales", nameStatus: "present", nameVariantCount: 1 },
+        { code: "028", name: null, nameStatus: "missing", nameVariantCount: 0 },
+      ],
+    });
   });
 
   it("propagates bounded exclusion evidence without widening no-selector official facets", async () => { const repository = new AuthorizedOfficialFacetRepository(() => Promise.resolve(payload([row], { exclusions: [{ reason: "non_official_source_rows", rows: 3 }, { reason: "official_rows_with_incomplete_lineage", rows: 2 }] })));
