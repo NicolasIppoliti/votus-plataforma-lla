@@ -78,7 +78,20 @@ function assertMember(parsed: ParsedFacets, selection: ExplorationFacetSelection
 function options<T,U>(rows:T[],key:(row:T)=>string,project:(row:T)=>U):U[] { const result=new Map<string,U>(); for(const row of rows) result.set(key(row),project(row)); return [...result.values()]; }
 export class AuthorizedOfficialFacetRepository {
   constructor(private readonly load:Loader) {}
-  async facets(selection:ExplorationFacetSelection):Promise<ExplorationFacets>{ let parsed:ParsedFacets; try{parsed=parseRows(await this.load(selection));}catch(error){if(error instanceof AuthorizedOfficialFacetsError)throw error;throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.UNAVAILABLE);} assertMember(parsed,selection);
+  async facets(selection:ExplorationFacetSelection):Promise<ExplorationFacets>{ let parsed:ParsedFacets;
+    try {
+      parsed = parseRows(await this.load(selection));
+      assertMember(parsed,selection);
+    } catch (error) {
+      if (error instanceof AuthorizedOfficialFacetsError) {
+        if (error.code === OFFICIAL_FACETS_ERROR.MALFORMED) {
+          console.error("[workspace:official_facets]", { code: error.code });
+        }
+        throw error;
+      }
+      console.error("[workspace:official_facets]", { code: OFFICIAL_FACETS_ERROR.UNAVAILABLE });
+      throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.UNAVAILABLE);
+    }
     const elections=options(parsed.rows,(r)=>r.electionId,(r)=>({id:r.electionId,year:r.year,round:r.round,label:`${r.year} ${r.round}`}));
     const categoryRows=selection.electionId?parsed.rows.filter((r)=>r.electionId===selection.electionId):[], categories=options(categoryRows,(r)=>r.categoryId,(r)=>({id:r.categoryId,name:r.categoryName}));
     const districtRows=selection.categoryId?categoryRows.filter((r)=>r.categoryId===selection.categoryId):[], distritos=options(districtRows,(r)=>r.distritoCode,(r)=>r.distrito);
