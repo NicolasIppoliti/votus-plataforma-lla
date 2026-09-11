@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@12.3.4",
   "type": "module",
   "scripts": {
     "dev": "next dev",
@@ -23,7 +24,7 @@
     "clsx": "2.1.1",
     "react-dom": "19.2.8",
     "server-only": "0.0.1",
-    "tailwind-merge": "3.5.0",
+    "tailwind-merge": "3.6.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

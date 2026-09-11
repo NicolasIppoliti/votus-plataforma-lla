@@ -1092,7 +1092,7 @@ describe("base contracts", () => {
 
 		expect(webStatic).toContain("timeout-minutes: 10");
 		expect(webStatic).toContain("persist-credentials: false");
-		expect(webStatic).toContain("version: 10.32.1");
+		expect(webStatic).toContain("version: 12.3.4");
 		expect(webStatic).toContain("node-version: 24");
 		expect(webStatic).toContain("pnpm/action-setup@");
 		expect(webStatic).toContain("actions/setup-node@");
@@ -1129,7 +1129,7 @@ describe("base contracts", () => {
 		expect(e2eRelease).toContain("pnpm/action-setup@");
 		expect(e2eRelease).toContain("actions/setup-node@");
 		expect(e2eRelease).toContain("supabase/setup-cli@");
-		expect(e2eRelease).toContain("version: 10.32.1");
+		expect(e2eRelease).toContain("version: 12.3.4");
 		expect(e2eRelease).toContain("node-version: 24");
 		expect(e2eRelease).toContain("version: 2.112.0");
 		expect(e2eRelease).toContain("persist-credentials: false");

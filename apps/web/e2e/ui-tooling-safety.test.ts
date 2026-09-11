@@ -19,6 +19,7 @@ const { describe, it } = testApi;
 const WEB_ROOT = resolve(import.meta.dirname, "..");
 const PROJECT_ROOT = resolve(WEB_ROOT, "../..");
 interface PackageManifest {
+	packageManager: string;
 	dependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
 }
@@ -61,6 +62,14 @@ function readJson<T>(path: string): T {
 	return JSON.parse(readProjectFile(path)) as T;
 }
 
+function assertNoTrackedImpeccableProviderPaths(trackedOutput: string): void {
+	assert.equal(
+		trackedOutput,
+		"",
+		"Impeccable provider paths must not be tracked",
+	);
+}
+
 describe("UI tooling supply-chain contract", () => {
 	it("pins the approved Tailwind and shadcn foundation", () => {
 		const manifest = JSON.parse(
@@ -69,7 +78,8 @@ describe("UI tooling supply-chain contract", () => {
 		assert.equal(manifest.devDependencies["@tailwindcss/postcss"], "4.3.3");
 		assert.equal(manifest.devDependencies.tailwindcss, "4.3.3");
 		assert.equal(manifest.dependencies.clsx, "2.1.1");
-		assert.equal(manifest.dependencies["tailwind-merge"], "3.5.0");
+		assert.equal(manifest.dependencies["tailwind-merge"], "3.6.0");
+		assert.equal(manifest.packageManager, "pnpm@12.3.4");
 
 		const postcss = readWebFile("postcss.config.mjs");
 		assert.ok(postcss.includes('"@tailwindcss/postcss": {}'));
@@ -119,7 +129,7 @@ describe("UI tooling supply-chain contract", () => {
 			mcpServers: {
 				shadcn: {
 					command: "npx",
-					args: ["-y", "shadcn@4.19.1", "mcp"],
+					args: ["-y", "shadcn@4.21.0", "mcp"],
 				},
 			},
 		});
@@ -229,7 +239,7 @@ describe("UI tooling supply-chain contract", () => {
 			options,
 		);
 		assert.equal(tracked.status, 0, "Git tracking policy check failed");
-		assert.equal(tracked.stdout, "", "Impeccable provider paths must not be tracked");
+		assertNoTrackedImpeccableProviderPaths(tracked.stdout);
 
 		const sharedTracked = spawnSync(
 			"git",
@@ -239,6 +249,14 @@ describe("UI tooling supply-chain contract", () => {
 		assert.equal(sharedTracked.status, 0, "Shared tracking policy check failed");
 		assert.equal(sharedTracked.stdout, `${sharedPaths.join("\n")}\n`);
 
+	});
+
+	it("rejects fabricated tracked Impeccable provider output", () => {
+		assert.throws(() =>
+			assertNoTrackedImpeccableProviderPaths(
+				".pi/skills/impeccable/reference/layout.md\n",
+			),
+		);
 	});
 
 	it("removes local Impeccable provider hooks", () => {

@@ -118,11 +118,11 @@ MCP initialization adds editor/client configuration (`.mcp.json`, `.cursor/mcp.j
 
 ### Supply-chain assessment
 
-**Best base, with registry discipline.** The canonical repo is mature, MIT, highly adopted, and the npm package has signatures/provenance. Still, `npx shadcn@latest` is a moving executable and registry items are mutable source payloads. This project currently pins the local MCP command to `shadcn@4.19.1`. The later `4.21.0` finding is planned follow-up #197, not delivered policy; future component operations must preview the exact payload, review every copied file and dependency, and allow only named registries. A community registry being shadcn-compatible does not make it shadcn-maintained.
+**Best base, with registry discipline.** The canonical repo is mature, MIT, highly adopted, and the npm package has signatures/provenance. Still, `npx shadcn@latest` is a moving executable and registry items are mutable source payloads. #197 pins the local MCP command to `shadcn@4.21.0`; future component operations must preview the exact payload, review every copied file and dependency, and allow only named registries. A community registry being shadcn-compatible does not make it shadcn-maintained.
 
 ### Installed pnpm policy
 
-The project uses pnpm's explicit [`allowBuilds`](https://pnpm.io/settings#allowbuilds) map to deny lifecycle scripts for both `sharp` and `unrs-resolver`. Frozen installs run without `--ignore-scripts`, so the checked policy—not a blanket command flag—decides whether dependency scripts execute. The supply-chain gate required a one-command [`minimumReleaseAgeExclude`](https://pnpm.io/settings#minimumreleaseageexclude) exception for the exact locked `@alloc/quick-lru@5.3.0`; that exception is deliberately not persisted in repository configuration.
+The project uses pnpm's explicit [`allowBuilds`](https://pnpm.io/settings#allowbuilds) map to deny lifecycle scripts for both `sharp` and `unrs-resolver`. Frozen installs run without `--ignore-scripts`, so the checked policy—not a blanket command flag—decides whether dependency scripts execute. #197 pins `pnpm@12.3.4`; its official two-document environment-plus-project lockfile format is intentional and must be consumed by a multi-document YAML reader. The supply-chain gate required a one-command [`minimumReleaseAgeExclude`](https://pnpm.io/settings#minimumreleaseageexclude) exception for the exact locked `@alloc/quick-lru@5.3.0`; that exception is deliberately not persisted in repository configuration.
 
 ## 4. beUI
 
@@ -193,7 +193,7 @@ This is more precise than GitHub's missing license metadata for the current root
 
 ## Recommended operating policy
 
-1. **Base layer:** initialize and own shadcn/ui source with the MCP/CLI pinned to `shadcn@4.19.1` and an allowlist containing only `@shadcn` initially. The dated `4.21.0` finding remains planned follow-up #197, not a delivered upgrade.
+1. **Base layer:** initialize and own shadcn/ui source with the MCP/CLI pinned to `shadcn@4.21.0` and an allowlist containing only `@shadcn` initially. #197 also pins `tailwind-merge@3.6.0` and `pnpm@12.3.4`; pnpm 12's official two-document environment-plus-project lockfile format is intentional.
 2. **Design direction:** Impeccable is optional Pi-only local tooling, verified only when locally installed; keep hooks disabled. It is not a clean-checkout or runtime dependency.
 3. **Dependency execution:** keep `sharp` and `unrs-resolver` lifecycle scripts denied; treat any future build-script permission or persisted release-age exception as a new supply-chain decision.
 4. **Vercel influence:** translate the neutral principles from `design.md` into the project's own design document. Do not ship Vercel wordmarks, the `vbg-*` report shell, or the hosted brand CSS in a non-Vercel product.
