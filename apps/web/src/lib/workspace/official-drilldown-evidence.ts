@@ -2,7 +2,7 @@ import "server-only";
 
 import {
   parseOfficialExploration, parseSchoolBreakdown,
-  type ExplorationOk, type SchoolBreakdownOk,
+  type ExplorationOk, type ExplorationSourceAudit, type SchoolBreakdownExclusion, type SchoolBreakdownOk,
 } from "../results/exploration-contract";
 import { hierarchyInvalid, type ExplorationSelection } from "../results/exploration";
 import { createSupabaseServerClient } from "../supabase/server-client";
@@ -39,12 +39,17 @@ interface OfficialReferenceSourceExclusion { kind: string; reason: string; rows:
 interface OfficialSourceExclusion { kind: string; rows: number; votes: number }
 interface OfficialReferenceEvidence { items: OfficialReferenceItem[]; sourceExclusions: OfficialReferenceSourceExclusion[] }
 interface OfficialProvenanceEvidence { items: OfficialProvenanceItem[]; sourceExclusions: OfficialSourceExclusion[] }
+interface OfficialSchoolBreakdownUnavailable {
+  status: typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE;
+  exclusions: SchoolBreakdownExclusion[];
+  sourceExclusions: ExplorationSourceAudit[];
+}
 interface OfficialDrilldownEvidenceOk {
   status: typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK;
-  result: ExplorationOk; schools: SchoolBreakdownOk;
+  result: ExplorationOk; schools: SchoolBreakdownOk | OfficialSchoolBreakdownUnavailable;
   reference: OfficialReferenceEvidence; provenance: OfficialProvenanceEvidence;
 }
-interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
+interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes?: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
 interface OfficialDrilldownEvidenceAuthorizationDenied {
   status: typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED;
 }
@@ -83,33 +88,51 @@ function sourceExclusions(value: unknown): OfficialSourceExclusion[] | null {
     previous = kind; return { kind, rows: entry["rows"], votes: entry["votes"] }; });
   return parsed.includes(null) ? null : parsed as OfficialSourceExclusion[];
 }
-function refusalItems(value: unknown, field: RefusalField): OfficialRefusalItem[] | null {
+function refusalItems(value: unknown, field: RefusalField, votesRequired = true): OfficialRefusalItem[] | null {
   const values = bounded(value, EXCLUSION_LIMIT); let previous = ""; if (!values) return null;
-  const parsed = values.map((item) => { const entry = raw(item), label = entry?.[field];
-    if (!entry || !text(label) || label <= previous || field === REFUSAL_FIELD.KIND && label === "official" || !uint(entry["rows"]) || entry["rows"] === 0 || !uint(entry["votes"])) return null;
-    previous = label; return { [field]: label, rows: entry["rows"], votes: entry["votes"] } as OfficialRefusalItem; });
+  const parsed = values.map((item) => { const entry = raw(item), label = entry?.[field], votes = entry?.["votes"];
+    if (!entry || !text(label) || label <= previous || field === REFUSAL_FIELD.KIND && label === "official" ||
+        !uint(entry["rows"]) || entry["rows"] === 0 || votesRequired && !uint(votes) || !votesRequired && votes !== undefined && !uint(votes)) return null;
+    previous = label; return { [field]: label, rows: entry["rows"], ...(uint(votes) ? { votes } : {}) } as OfficialRefusalItem; });
   return parsed.includes(null) ? null : parsed as OfficialRefusalItem[];
 }
 function refusalEvidence(part: Raw, name: string): OfficialRefusalPartEvidence | null {
   for (const key of ["exclusions", "source_exclusions", "items", "archive_entry_ids", "sources", "schools", "parties"])
     if (key in part && !bounded(part[key], key === "items" || key === "archive_entry_ids" || key === "sources" || key === "parties" ? ITEM_LIMIT : EXCLUSION_LIMIT)) return null;
-  const exclusions = "exclusions" in part ? refusalItems(part["exclusions"], REFUSAL_FIELD.REASON) : [], sourceExclusions = "source_exclusions" in part ? refusalItems(part["source_exclusions"], REFUSAL_FIELD.KIND) : [];
+  const exclusions = "exclusions" in part ? refusalItems(part["exclusions"], REFUSAL_FIELD.REASON, name !== "reference") : [], sourceExclusions = "source_exclusions" in part ? refusalItems(part["source_exclusions"], REFUSAL_FIELD.KIND, name !== "reference") : [];
   if (!("counts" in part ? validCounts(part["counts"]) : true) || "total" in part && !uint(part["total"]) || "reason" in part && !text(part["reason"]) || !exclusions || !sourceExclusions) return null;
   const counts = raw(part["counts"]); return { part: name, ...(text(part["reason"]) ? { reason: part["reason"] } : {}), ...(counts && Object.keys(counts).length ? { counts: { ...counts } as Record<string, number> } : {}), ...(exclusions.length ? { exclusions } : {}), ...(sourceExclusions.length ? { sourceExclusions } : {}) };
+}
+function parseUnavailableSchools(part: Raw): OfficialSchoolBreakdownUnavailable | null {
+  const evidence = refusalEvidence(part, "schools");
+  if (!evidence || part["status"] !== "source_unavailable" || part["authorization_status"] !== "authorized" ||
+      part["truncated"] !== false || !text(part["reason"])) return null;
+  const exclusions: SchoolBreakdownExclusion[] = [], sourceExclusions: ExplorationSourceAudit[] = [];
+  for (const item of evidence.exclusions ?? []) {
+    if (!text(item.reason) || !uint(item.votes)) return null;
+    exclusions.push({ reason: item.reason, rows: item.rows, votes: item.votes });
+  }
+  for (const item of evidence.sourceExclusions ?? []) {
+    if (!text(item.kind) || !uint(item.votes)) return null;
+    sourceExclusions.push({ kind: item.kind, rows: item.rows, votes: item.votes });
+  }
+  return exclusions.length || sourceExclusions.length
+    ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE, exclusions, sourceExclusions }
+    : null;
 }
 function coherentState(parts: Raw[]): OfficialDrilldownEvidenceState | OfficialDrilldownEvidenceAuthorizationDenied | null {
   const statuses = parts.map((part) => part["status"]);
   if (!statuses.every((status) => status === statuses[0])) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
   const status = statuses[0];
   if (status === "ok") return null;
-  const evidence = parts.map((part, index) => refusalEvidence(part, ["result", "schools", "reference", "provenance"][index]!)); if (evidence.some((item) => item === null)) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
-  const safeEvidence = evidence.filter((item): item is OfficialRefusalPartEvidence => item !== null && Object.keys(item).length > 1), state = (value: OfficialDrilldownEvidenceState["status"]): OfficialDrilldownEvidenceState => ({ status: value, ...(safeEvidence.length ? { evidence: safeEvidence } : {}) });
   if (status === "authorization_denied") {
     const authorization = parts[0]?.["authorization_status"];
     return parts.every((part) => text(part["authorization_status"]) && part["authorization_status"] === authorization && authorization !== "authorized" && part["truncated"] === false)
       ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED }
       : { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
   }
+  const evidence = parts.map((part, index) => refusalEvidence(part, ["result", "schools", "reference", "provenance"][index]!)); if (evidence.some((item) => item === null)) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
+  const safeEvidence = evidence.filter((item): item is OfficialRefusalPartEvidence => item !== null && Object.keys(item).length > 1), state = (value: OfficialDrilldownEvidenceState["status"]): OfficialDrilldownEvidenceState => ({ status: value, ...(safeEvidence.length ? { evidence: safeEvidence } : {}) });
   if (status === "payload_too_large") return parts.every((part) => part["authorization_status"] === "authorized" && part["truncated"] === true)
     ? state(OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.PAYLOAD_TOO_LARGE)
     : { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
@@ -140,26 +163,29 @@ function selectionForParser(selection: OfficialSelection): ExplorationSelection 
     ...(selection.mesaCode !== null ? { mesaCode: selection.mesaCode } : {}),
   };
 }
-async function parseDisplayedParts(result: Raw, schools: Raw, selection: OfficialSelection) {
+async function parseDisplayedParts(result: Raw, schools: Raw | null, selection: OfficialSelection,
+  unavailableSchools: OfficialSchoolBreakdownUnavailable | null = null) {
   const resultIds = uniqueText(result["archive_entry_ids"]);
   if (!bounded(result["parties"], ITEM_LIMIT) || !bounded(result["source_audit"], EXCLUSION_LIMIT) ||
-      !bounded(result["source_exclusions"], EXCLUSION_LIMIT) || !resultIds?.length ||
-      !bounded(schools["schools"], SCHOOL_LIMIT) || !bounded(schools["source_audit"], EXCLUSION_LIMIT) ||
-      !bounded(schools["source_exclusions"], EXCLUSION_LIMIT) || !bounded(schools["exclusions"], EXCLUSION_LIMIT)) return null;
-  const schoolRows = schools["schools"] as unknown[];
-  const identities = new Set<string>();
-  for (const value of schoolRows) {
-    const school = raw(value), parties = bounded(school?.["parties"], ITEM_LIMIT), ids = uniqueText(school?.["archive_entry_ids"]);
-    if (!school || !parties || !ids || !text(school["circuito_code"]) || !text(school["code"]) || identities.has(`${school["circuito_code"]}\0${school["code"]}`)) return null;
-    identities.add(`${school["circuito_code"]}\0${school["code"]}`);
+      !bounded(result["source_exclusions"], EXCLUSION_LIMIT) || !resultIds?.length || schools &&
+      (!bounded(schools["schools"], SCHOOL_LIMIT) || !bounded(schools["source_audit"], EXCLUSION_LIMIT) ||
+       !bounded(schools["source_exclusions"], EXCLUSION_LIMIT) || !bounded(schools["exclusions"], EXCLUSION_LIMIT))) return null;
+  if (schools) {
+    const identities = new Set<string>();
+    for (const value of schools["schools"] as unknown[]) {
+      const school = raw(value), parties = bounded(school?.["parties"], ITEM_LIMIT), ids = uniqueText(school?.["archive_entry_ids"]);
+      if (!school || !parties || !ids || !text(school["circuito_code"]) || !text(school["code"]) || identities.has(`${school["circuito_code"]}\0${school["code"]}`)) return null;
+      identities.add(`${school["circuito_code"]}\0${school["code"]}`);
+    }
   }
   const parserSelection = selectionForParser(selection);
   try {
     if (hierarchyInvalid(parserSelection)) return null;
     const parsedResult = parseOfficialExploration(result);
+    if (parsedResult.status !== "ok" || parsedResult.level !== selection.requestedLevel) return null;
+    if (!schools) return unavailableSchools ? { result: parsedResult, schools: unavailableSchools } : null;
     const parsedSchools = parseSchoolBreakdown(schools);
-    return parsedResult.status === "ok" && parsedSchools.status === "ok" && parsedResult.level === selection.requestedLevel
-      ? { result: parsedResult, schools: parsedSchools } : null;
+    return parsedSchools.status === "ok" ? { result: parsedResult, schools: parsedSchools } : null;
   } catch { return null; }
 }
 
@@ -219,14 +245,22 @@ export async function loadAuthorizedOfficialDrilldownEvidence(selection: Officia
     const bundle = raw(await authorizedOfficialBundle(await createSupabaseServerClient(), selection));
     const result = raw(bundle?.["result"]), schools = raw(bundle?.["schools"]), reference = raw(bundle?.["reference"]), provenance = raw(bundle?.["provenance"]);
     if (!bundle || !result || !schools || !reference || !provenance) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
-    const parts = [result, schools, reference, provenance], state = coherentState(parts);
+    const parts = [result, schools, reference, provenance];
+    const partialSchools = result["status"] === "ok" && schools["status"] === "source_unavailable" &&
+      reference["status"] === "ok" && provenance["status"] === "ok";
+    const state = partialSchools ? null : coherentState(parts);
     if (state) return state;
-    if (!parts.every(validSuccessEnvelope)) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
-    const displayed = await parseDisplayedParts(result, schools, selection);
+    if (![result, reference, provenance].every(validSuccessEnvelope) || !partialSchools && !validSuccessEnvelope(schools))
+      return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
+    const unavailableSchools = partialSchools ? parseUnavailableSchools(schools) : null;
+    if (partialSchools && !unavailableSchools) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
+    const displayed = await parseDisplayedParts(result, partialSchools ? null : schools, selection, unavailableSchools);
     const safeReference = parseReference(reference, selection), safeProvenance = parseProvenance(provenance);
     if (!displayed || !safeReference || !safeProvenance) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
     const available = new Set(safeProvenance.items.map((item) => item.archiveEntryId));
-    const displayedIds = [...displayed.result.archiveEntryIds, ...displayed.schools.schools.flatMap((school) => school.archiveEntryIds)];
+    const schoolIds = displayed.schools.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK
+      ? displayed.schools.schools.flatMap((school) => school.archiveEntryIds) : [];
+    const displayedIds = [...displayed.result.archiveEntryIds, ...schoolIds];
     return displayedIds.every((id) => available.has(id))
       ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK, ...displayed, reference: safeReference, provenance: safeProvenance }
       : { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };

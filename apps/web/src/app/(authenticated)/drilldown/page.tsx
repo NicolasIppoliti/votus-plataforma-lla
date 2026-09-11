@@ -224,12 +224,12 @@ function RefusalEvidence({ evidence }: { evidence: EvidenceRefusalWithDetails["e
       {part.counts ? <p role="note">Conteos: {formatCounts(part.counts)}.</p> : null}
       {part.exclusions?.map((entry) => (
         <p role="note" key={`${part.part}-exclusion-${entry.reason}`}>
-          Exclusión {entry.reason}: {entry.rows} fila(s) / {entry.votes} voto(s).
+          Exclusión {entry.reason}: {entry.rows} fila(s){entry.votes === undefined ? "." : ` / ${entry.votes} voto(s).`}
         </p>
       ))}
       {part.sourceExclusions?.map((entry) => (
         <p role="note" key={`${part.part}-source-${entry.kind}`}>
-          Fuente excluida {displaySourceKind(entry.kind ?? "unknown")}: {entry.rows} fila(s) / {entry.votes} voto(s).
+          Fuente excluida {displaySourceKind(entry.kind ?? "unknown")}: {entry.rows} fila(s){entry.votes === undefined ? "." : ` / ${entry.votes} voto(s).`}
         </p>
       ))}
     </section>
@@ -246,7 +246,7 @@ function refusalMessage(status: EvidenceRefusal["status"]): string {
 
 function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
-  if (result.sourceKind !== "official" || schools.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.sourceAudit.some(({ kind }) => kind !== "official")) return <section className="official-explorer__state" role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
+  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className="official-explorer__state" role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
   return (
     <>
       <section className="official-explorer__results" aria-labelledby="official-results-heading">
@@ -280,24 +280,31 @@ function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
 
       <section aria-labelledby="school-breakdown-heading">
         <h2 id="school-breakdown-heading">Desglose oficial autorizado por establecimiento</h2>
-        {schoolExclusionNotes(schools.exclusions, schools.sourceExclusions)}
-        <TableScroll label="Votos oficiales por circuito y establecimiento">
-          <table className="data-table">
-            <caption>Votos oficiales por circuito y establecimiento</caption>
-            <thead><tr><th scope="col">Establecimiento</th><th scope="col">Mesas</th><th scope="col">Identidad del partido</th><th scope="col">Votos</th><th scope="col">Porcentaje</th></tr></thead>
-            <tbody>
-              {schools.schools.flatMap((school) => school.parties.map((party, index) => (
-                <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
-                  <th className="evidence-text" scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
-                  <td>{school.mesaCount} mesas</td>
-                  <td className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</td>
-                  <td>{party.votes} votos</td>
-                  <td>{formatShare(party.voteShare)}</td>
-                </tr>
-              )))}
-            </tbody>
-          </table>
-        </TableScroll>
+        {schools.status === "unavailable"
+          ? <>
+              <p role="note">El desglose por establecimientos no está disponible para la granularidad publicada por la fuente.</p>
+              {schoolExclusionNotes(schools.exclusions, schools.sourceExclusions)}
+            </>
+          : <>
+              {schoolExclusionNotes(schools.exclusions, schools.sourceExclusions)}
+              <TableScroll label="Votos oficiales por circuito y establecimiento">
+                <table className="data-table">
+                  <caption>Votos oficiales por circuito y establecimiento</caption>
+                  <thead><tr><th scope="col">Establecimiento</th><th scope="col">Mesas</th><th scope="col">Identidad del partido</th><th scope="col">Votos</th><th scope="col">Porcentaje</th></tr></thead>
+                  <tbody>
+                    {schools.schools.flatMap((school) => school.parties.map((party, index) => (
+                      <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
+                        <th className="evidence-text" scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
+                        <td>{school.mesaCount} mesas</td>
+                        <td className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</td>
+                        <td>{party.votes} votos</td>
+                        <td>{formatShare(party.voteShare)}</td>
+                      </tr>
+                    )))}
+                  </tbody>
+                </table>
+              </TableScroll>
+            </>}
       </section>
       </section>
 

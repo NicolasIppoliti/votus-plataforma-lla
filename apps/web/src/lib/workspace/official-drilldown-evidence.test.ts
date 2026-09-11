@@ -52,6 +52,53 @@ describe("loadAuthorizedOfficialDrilldownEvidence", () => {
     expect(mocks.bundle).toHaveBeenCalledWith({}, selection);
   });
 
+  it("keeps valid official evidence when schools lack complete mesa source granularity", async () => {
+    const bundle = validBundle();
+    mocks.bundle.mockResolvedValueOnce({
+      ...bundle,
+      schools: {
+        status: "source_unavailable",
+        reason: "the registered source publishes no complete establecimiento data",
+        counts: { complete_establecimientos: 0, excluded_rows: 2, excluded_votes: 300 },
+        exclusions: [{ reason: "official_rows_without_mesa_granularity", rows: 2, votes: 300 }],
+        source_exclusions: [],
+        ...authorized,
+      },
+    });
+
+    const evidence = await loadAuthorizedOfficialDrilldownEvidence(selection);
+
+    expect(evidence).toMatchObject({
+      status: "ok",
+      result: { level: "seccion", totalVotes: 300 },
+      reference: { items: [{ electionId: selection.electionId, seccionCode: "027" }] },
+      provenance: { items: [
+        { archiveEntryId: "archive-1", capability: "results", status: "ok" },
+        { archiveEntryId: "archive-2", capability: "results", status: "error" },
+      ] },
+      schools: {
+        status: "unavailable",
+        exclusions: [{ reason: "official_rows_without_mesa_granularity", rows: 2, votes: 300 }],
+        sourceExclusions: [],
+      },
+    });
+    expect(evidence.status === "ok" ? evidence.schools : null).toEqual({
+      status: "unavailable",
+      exclusions: [{ reason: "official_rows_without_mesa_granularity", rows: 2, votes: 300 }],
+      sourceExclusions: [],
+    });
+  });
+
+  it("rejects an invalid unavailable-school envelope while other evidence is valid", async () => {
+    const bundle = validBundle();
+    mocks.bundle.mockResolvedValueOnce({
+      ...bundle,
+      schools: { status: "source_unavailable", ...authorized },
+    });
+
+    await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({ status: "malformed" });
+  });
+
   it("accepts 153 complete references and refuses the explicitly truncated 201st reference", async () => {
     const complete = validBundle(); resizeReference(complete, 153); mocks.bundle.mockResolvedValueOnce(complete);
     const evidence = await loadAuthorizedOfficialDrilldownEvidence(selection);
@@ -68,6 +115,58 @@ describe("loadAuthorizedOfficialDrilldownEvidence", () => {
     const part = { status: rawStatus, counts: {}, exclusions: [], source_exclusions: [], items: [], archive_entry_ids: [], sources: [], schools: [], parties: [], total: 0, source_kind: "official", ...fields };
     mocks.bundle.mockResolvedValue({ result: part, schools: part, reference: part, provenance: part });
     await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({ status: expected });
+  });
+
+  it("preserves row-only reference exclusions from the real refusal contract", async () => {
+    const part = {
+      status: "source_unavailable",
+      reason: "source unavailable",
+      counts: {},
+      exclusions: [],
+      source_exclusions: [],
+      authorization_status: "authorized",
+      truncated: false,
+    };
+    mocks.bundle.mockResolvedValue({
+      result: part,
+      schools: part,
+      reference: {
+        ...part,
+        exclusions: [{ reason: "official_rows_without_section_identity", rows: 2 }],
+        source_exclusions: [{ kind: "fiscalizacion", rows: 3 }],
+      },
+      provenance: part,
+    });
+
+    const evidence = await loadAuthorizedOfficialDrilldownEvidence(selection);
+
+    expect(evidence).toMatchObject({ status: "unavailable" });
+    expect(evidence.status === "unavailable"
+      ? evidence.evidence?.find((item) => item.part === "reference")
+      : null).toEqual({
+        part: "reference",
+        reason: "source unavailable",
+        exclusions: [{ reason: "official_rows_without_section_identity", rows: 2 }],
+        sourceExclusions: [{ kind: "fiscalizacion", rows: 3 }],
+      });
+  });
+
+  it("normalizes a coherent denial before optional provenance details", async () => {
+    const denial = {
+      status: "authorization_denied",
+      authorization_status: "scope_denied",
+      truncated: false,
+    };
+    mocks.bundle.mockResolvedValue({
+      result: denial,
+      schools: denial,
+      reference: denial,
+      provenance: { ...denial, reason: null },
+    });
+
+    await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({
+      status: "authorization_denied",
+    });
   });
 
   it("preserves only bounded per-part refusal evidence", async () => {

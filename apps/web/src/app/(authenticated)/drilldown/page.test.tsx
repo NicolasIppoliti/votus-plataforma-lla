@@ -114,6 +114,34 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("href=");
   });
 
+  it("renders valid section evidence with an explicit unavailable school breakdown", async () => {
+    const bundle = authorizedBundle();
+    mocks.bundle.mockResolvedValueOnce({
+      ...bundle,
+      schools: {
+        status: "source_unavailable",
+        reason: "the source has no complete mesa identity",
+        counts: { complete_establecimientos: 0, excluded_rows: 2, excluded_votes: 300 },
+        exclusions: [{ reason: "official_rows_without_mesa_granularity", rows: 2, votes: 300 }],
+        source_exclusions: [],
+        ...authorized,
+      },
+    });
+
+    const markup = await render();
+
+    expect(markup).toContain("300 votos a nivel seccion");
+    expect(markup).toContain("archive-1");
+    expect(markup).toContain(
+      "El desglose por establecimientos no está disponible para la granularidad publicada por la fuente.",
+    );
+    expect(markup).toContain(
+      "Se excluyeron 2 fila(s) / 300 voto(s): official_rows_without_mesa_granularity.",
+    );
+    expect(markup).not.toContain("Votos oficiales por circuito y establecimiento");
+    expect(markup).not.toContain("no superó la validación de integridad");
+  });
+
   it("rejects widened fiscal evidence before it reaches the rendered result", async () => {
     const widened = authorizedBundle();
     widened.result.source_kind = "fiscalizacion";
@@ -132,6 +160,24 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).toContain("Se excluyeron 1 fila de fuente fiscalización / 20 votos del agregado procedencia");
     expect(markup).toContain("Se excluyeron 1 fila(s) de referencia de fuente fiscalización");
     expect(markup).not.toContain("320 votos");
+  });
+
+  it("renders row-only reference exclusions without an undefined vote count", async () => {
+    const bundle = unavailableBundle();
+    mocks.bundle.mockResolvedValueOnce({
+      ...bundle,
+      reference: {
+        ...bundle.reference,
+        exclusions: [{ reason: "official_rows_without_section_identity", rows: 2 }],
+        source_exclusions: [{ kind: "fiscalizacion", rows: 3 }],
+      },
+    });
+
+    const markup = await render();
+
+    expect(markup).toContain("Exclusión official_rows_without_section_identity: 2 fila(s).");
+    expect(markup).toContain("Fuente excluida fiscalización: 3 fila(s).");
+    expect(markup).not.toContain("undefined");
   });
 
   it("does not render denied envelope payload through the real evidence adapter", async () => {
