@@ -342,6 +342,15 @@ function hasExactClaims(
 
 function hasAuthorizedNoRows(value: unknown): boolean {
   const evidence = evidenceRecord(value);
+  const exclusions = evidenceRecord(evidence?.["exclusions"]);
+  const items = exclusions?.["items"];
+  const official = Array.isArray(items) && items.length === 1 ? evidenceRecord(items[0]) : null;
+  // The SQL producer can exclude official rows even when no fiscal rows exist.
+  const validExclusions = isExactEmptyCollection(exclusions) || (
+    exclusions?.["total"] === 1 && exclusions["truncated"] === false &&
+    official?.["reason"] === "source_kind_official" &&
+    isNonnegativeSafeInteger(official["rows"]) && official["rows"] > 0
+  );
   return (
     evidence !== null &&
     evidence["status"] === "no_rows" &&
@@ -350,7 +359,8 @@ function hasAuthorizedNoRows(value: unknown): boolean {
     evidence["is_random_sample"] === false &&
     hasValidReference(evidence) &&
     evidence["truncated"] === false &&
-    ["rows", "unmapped", "exclusions", "provenance"].every((key) =>
+    validExclusions &&
+    ["rows", "unmapped", "provenance"].every((key) =>
       isExactEmptyCollection(evidence[key]),
     )
   );
@@ -390,8 +400,12 @@ function fiscalizacionPresentation(
     return { kind: PRESENTATION_KIND.TECHNICAL_ERROR };
   }
   if (coverageValue && resultValue && hasExactClaims(coverageValue, "observed_units")) {
-    if (hasAuthorizedNoRows(resultValue)) return { kind: PRESENTATION_KIND.EMPTY };
-    if (hasExactClaims(resultValue, "reference")) {
+    if (hasAuthorizedNoRows(resultValue) || hasExactClaims(resultValue, "reference")) {
+      if ("denominator_units" in coverageValue && "reference" in resultValue &&
+          coverageValue.denominator_units !== resultValue.reference.denominator_units) {
+        return { kind: PRESENTATION_KIND.REFUSED, reason: PRESENTATION_REASON.INVALID };
+      }
+      if (hasAuthorizedNoRows(resultValue)) return { kind: PRESENTATION_KIND.EMPTY };
       return { kind: PRESENTATION_KIND.READY, coverage: coverageValue, result: resultValue };
     }
   }
@@ -532,10 +546,12 @@ function ResultEvidence({
 
 function AuthorizedEvidence({
   form,
+  selection,
   coverage,
   result,
 }: {
   form: ReactNode;
+  selection: FiscalizacionEvidenceSelection;
   coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>;
   result: PromiseSettledResult<AuthorizedFiscalizacionResult>;
 }): ReactNode {
@@ -551,6 +567,13 @@ function AuthorizedEvidence({
       <section className="fiscalizacion-workspace__state" role="alert" aria-labelledby="workspace-evidence-error">
         <h2 id="workspace-evidence-error">Error técnico de evidencia</h2>
         <p>No se pudo cargar la pareja de evidencia. Reintente la consulta.</p>
+        {/* Native navigation deliberately reloads the document and its evidence requests. */}
+        <a className="button button--primary" href={`/fiscalizacion?${new URLSearchParams({
+          electionId: selection.electionId,
+          categoryId: selection.categoryId,
+          distritoCode: selection.distritoCode,
+          seccionCode: selection.seccionCode,
+        })}`}>Reintentar carga</a>
       </section>
     ) : presentation.kind === PRESENTATION_KIND.REFUSED ? (
       <section className="fiscalizacion-workspace__state" role="alert" aria-labelledby="workspace-evidence-refusal">
@@ -613,7 +636,7 @@ async function renderFiscalizacionPage(
    if (electionId && categoryId && distritoCode && seccionCode) {
      const selection: FiscalizacionEvidenceSelection = { electionId, categoryId, distritoCode, seccionCode };
      const [coverage, result, facets] = await Promise.all([Promise.allSettled([loadSafeFiscalizacionCoverage(selection, true), loadSafeFiscalizacionResult(selection, true)]), createAuthorizedOfficialFacetRepository().facets(selected).catch(() => null)]).then(([evidence, loadedFacets]) => [evidence[0], evidence[1], loadedFacets] as const);
-     return <AuthorizedEvidence form={facets ? <CoverageExplorerForm facets={facets} selected={selected} /> : null} coverage={coverage} result={result} />;
+     return <AuthorizedEvidence selection={selection} form={facets ? <CoverageExplorerForm facets={facets} selected={selected} /> : null} coverage={coverage} result={result} />;
    }
    let facets: ExplorationFacets;
    try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }

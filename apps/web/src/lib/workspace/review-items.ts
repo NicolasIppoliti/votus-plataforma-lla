@@ -1,3 +1,7 @@
+import { z } from "zod";
+
+const REVIEW_TIMESTAMP = z.iso.datetime({ offset: true }).max(64);
+
 const REVIEW_ITEM_KIND = {
   AMBIGUOUS_MESA_CIRCUITO: "ambiguous_mesa_circuito",
   AMBIGUOUS_OFFICIAL_MESA_IDENTITY: "ambiguous_official_mesa_identity",
@@ -19,7 +23,7 @@ const REVIEW_ITEM_KIND = {
   UNREADABLE_VOTE_CELL: "unreadable_vote_cell",
 } as const;
 
-const REVIEW_ITEM_SEVERITY = { ERROR: "error", WARNING: "warning" } as const;
+const REVIEW_ITEM_SEVERITY = { ERROR: "error", WARNING: "warning", INFO: "info" } as const;
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface AuthorizedReviewItem {
@@ -62,7 +66,7 @@ function safeItem(value: RecordValue): AuthorizedReviewItem | null {
     typeof id !== "string" || !CANONICAL_UUID.test(id) ||
     typeof kind !== "string" || !Object.values(REVIEW_ITEM_KIND).includes(kind as AuthorizedReviewItem["kind"]) ||
     typeof severity !== "string" || !Object.values(REVIEW_ITEM_SEVERITY).includes(severity as AuthorizedReviewItem["severity"]) ||
-    typeof detectedAt !== "string" || detectedAt.length === 0 || detectedAt.length > 64 || !Number.isFinite(Date.parse(detectedAt))
+    typeof detectedAt !== "string" || !REVIEW_TIMESTAMP.safeParse(detectedAt).success
   ) return null;
   return { detectedAt, kind: kind as AuthorizedReviewItem["kind"], severity: severity as AuthorizedReviewItem["severity"] };
 }

@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
-import { expect, test, type Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { expect, test } from "./review-test-fixture";
+import { zoomTest } from "./review-zoom-test-fixture";
+import { createFiscalStateHandler, fiscalWirePair, fiscalWireStates } from "./fiscalizacion-state-control";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import { coverageFixture, withResultFixture } from "./result-fixture";
@@ -39,7 +42,12 @@ async function withAuthorizedFiscalWorkspace<T>(page: Page, run: () => Promise<T
 }
 
 test.describe("the fiscalizacion route explores coverage", () => {
-  test("test_route_reaches_only_authorized_fiscalizacion_evidence", async ({ page }) => {
+  test("test_route_reaches_only_authorized_fiscalizacion_evidence", async ({ page, next }) => {
+    const matched: string[] = [];
+    next.onFetch(createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE, (side, request) => {
+      matched.push(side);
+      return fetch(request, { redirect: "error" });
+    }));
     await withResultFixture(SPEC, COVERAGE_FIXTURE, async () => withAuthorizedFiscalWorkspace(page, async () => {
       await expect(page).toHaveURL(new URL("/", baseURL).toString());
       await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
@@ -88,6 +96,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
 
       const main = page.getByRole("main");
       await expect(main).toContainText("Estado de cobertura: ok"); await expect(main).toContainText("1 unidades observadas de 2 del denominador oficial");
+      expect(matched).toEqual(expect.arrayContaining(["coverage", "result"]));
       await expect(main).toContainText("Mesa 2");
       await expect(main).toContainText("Estado del resultado: ok"); await expect(main).toContainText("Fuente: fiscalización; no es una muestra aleatoria"); await expect(main).toContainText("denominador 2");
       await expect(main).toContainText("22222 votos"); await expect(main).not.toContainText(/11111|33333/); await expect(main).toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[1]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[0]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[2]?.["id"]));
@@ -119,3 +128,143 @@ test.describe("the fiscalizacion route explores coverage", () => {
     }));
   });
 });
+
+const fiscalUrl = new URL(`/fiscalizacion?${new URLSearchParams({
+  electionId: COVERAGE_SCOPE.electionId, categoryId: COVERAGE_SCOPE.categoryId,
+  distritoCode: COVERAGE_SCOPE.distritoCode, seccionCode: COVERAGE_SCOPE.seccionCode,
+})}`, baseURL).toString();
+const pair = fiscalWirePair(COVERAGE_SCOPE);
+const figureSentinels = /7 unidades observadas|denominador 108|Sentinel school|Sentinel Party|876543|456789|sentinel-unmapped|missing_identity|fiscal\/sentinel|SHA-256/;
+
+async function expectSuppressed(page: Page): Promise<void> {
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { name: "Cobertura autorizada", exact: true })).toHaveCount(0);
+  await expect(main.getByRole("heading", { name: "Resultado autorizado", exact: true })).toHaveCount(0);
+  await expect(main.getByRole("table")).toHaveCount(0);
+  await expect(main.getByRole("list")).toHaveCount(0);
+  await expect(main).not.toContainText(figureSentinels);
+}
+
+async function expectReady(page: Page): Promise<void> {
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { name: "Cobertura autorizada", exact: true })).toBeVisible();
+  await expect(main.getByRole("heading", { name: "Resultado autorizado", exact: true })).toBeVisible();
+  for (const text of ["7 unidades observadas de 108", "Sentinel school", "Sentinel Party", "876543", "456789", "missing_identity", "fiscal/sentinel"])
+    await expect(main).toContainText(text);
+  for (const label of ["Unidades sin cobertura", "Resultados"])
+    await expect(main.getByRole("alert").filter({ hasText: `${label}: se muestran 100 de 101; respuesta truncada` })).toBeVisible();
+}
+
+async function tabTo(page: Page, control: Locator): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await page.keyboard.press("Tab");
+    if (await control.evaluate((element) => element === document.activeElement)) break;
+  }
+  await expect(control).toBeFocused();
+  const box = await control.boundingBox();
+  if (!box) throw new Error("fiscal control has no layout box");
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(await control.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe("none");
+}
+
+for (const state of fiscalWireStates(COVERAGE_SCOPE)) {
+  test(`paired evidence suppresses ${state.side} ${state.payload.status}`, async ({ page, next }) => {
+    const matched: string[] = [];
+    next.onFetch(createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE, (side) => {
+      matched.push(side);
+      return Response.json(side === state.side ? state.payload : pair[side]);
+    }));
+    await withResultFixture(SPEC, COVERAGE_FIXTURE, () => withAuthorizedFiscalWorkspace(page, async () => {
+      await page.goto(fiscalUrl);
+      const role = state.payload.status === "no_rows" ? "status" : "alert";
+      await expect(page.getByRole("main").getByRole(role).filter({ hasText: state.text })).toBeVisible();
+      await expectSuppressed(page);
+      expect(matched).toEqual(expect.arrayContaining(["coverage", "result"]));
+      await expect(page.getByLabel("Sección")).toHaveValue(COVERAGE_SCOPE.seccionCode);
+    }));
+  });
+}
+
+for (const side of ["coverage", "result"] as const) {
+  for (const failure of ["malformed", "thrown"] as const) {
+    test(`${side} ${failure} recovers with a keyboard document retry`, async ({ page, next }) => {
+      let failing = true;
+      const matched: string[] = [];
+      next.onFetch(createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE, (requested) => {
+        matched.push(requested);
+        if (failing && requested === side) {
+          if (failure === "thrown") throw new Error("controlled transport failure");
+          return Response.json({ status: "ok", unsafe: "remote-detail-sentinel" });
+        }
+        return Response.json(pair[requested]);
+      }));
+      await withResultFixture(SPEC, COVERAGE_FIXTURE, () => withAuthorizedFiscalWorkspace(page, async () => {
+        await page.goto(fiscalUrl);
+        await expect(page.getByRole("alert").filter({ hasText: "Error técnico de evidencia" })).toBeVisible();
+        await expectSuppressed(page);
+        await expect(page.getByRole("main")).not.toContainText(/remote-detail-sentinel|controlled transport failure/);
+        expect(matched).toEqual(expect.arrayContaining(["coverage", "result"]));
+        await page.locator("html").evaluate((element) => { element.dataset.documentSentinel = "old"; });
+        const retry = page.getByRole("link", { name: "Reintentar carga" });
+        await tabTo(page, retry);
+        const prior = matched.length;
+        failing = false;
+        await page.keyboard.press("Enter");
+        await expectReady(page);
+        await expect(page).toHaveURL(fiscalUrl);
+        await expect(page.locator("html")).not.toHaveAttribute("data-document-sentinel", "old");
+        expect(matched.slice(prior)).toEqual(expect.arrayContaining(["coverage", "result"]));
+      }));
+    });
+  }
+}
+
+test("deferred production evidence stays figure-free while loading", async ({ page, next }) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const matched: string[] = [];
+  next.onFetch(createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE, async (side) => {
+    matched.push(side);
+    await pending;
+    return Response.json(pair[side]);
+  }));
+  await withResultFixture(SPEC, COVERAGE_FIXTURE, () => withAuthorizedFiscalWorkspace(page, async () => {
+    try {
+      await page.goto(fiscalUrl, { waitUntil: "commit" });
+      await expect.poll(() => matched.length).toBe(2);
+      await expect(page.getByLabel("Cargando fiscalización")).toBeVisible();
+      await expectSuppressed(page);
+    } finally { release(); }
+    await expectReady(page);
+  }));
+});
+
+for (const width of [640, 1280]) {
+  zoomTest.describe(`fiscal evidence at native 200% in ${width}px window`, () => {
+    zoomTest.use({ zoomWindowWidth: width });
+    zoomTest("retains paired evidence and keyboard controls without document overflow", async ({ page, next, zoom }) => {
+      const matched: string[] = [];
+      next.onFetch(createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE, (side) => {
+        matched.push(side);
+        return Response.json(pair[side]);
+      }));
+      await withResultFixture(SPEC, COVERAGE_FIXTURE, () => withAuthorizedFiscalWorkspace(page, async () => {
+        await page.goto(fiscalUrl);
+        await expectReady(page);
+        expect(matched).toEqual(expect.arrayContaining(["coverage", "result"]));
+        expect(await zoom.set(1)).toBe(1);
+        const baseline = await page.evaluate(() => ({ inner: innerWidth, outer: outerWidth }));
+        expect(baseline.outer).toBe(width);
+        expect(await zoom.set(2)).toBe(2);
+        await expect.poll(() => page.evaluate(() => innerWidth)).toBeCloseTo(baseline.inner / 2, 0);
+        expect(await page.evaluate(() => outerWidth)).toBe(baseline.outer);
+        expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await tabTo(page, page.getByLabel("Elección"));
+        await tabTo(page, page.getByRole("button", { name: "Mostrar cobertura" }));
+        await tabTo(page, page.getByRole("region", { name: "Resultados de fiscalización" }));
+        await expectReady(page);
+      }));
+    });
+  });
+}
