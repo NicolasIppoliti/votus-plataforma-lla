@@ -44,6 +44,7 @@ RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION = "20260831055357"
 YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION = "20260831150450"
 PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION = "20260831160422"
 OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION = "20260904035355"
+CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION = "20260910212254"
 LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS = (
     REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
     REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
@@ -80,6 +81,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION,
         PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION,
         OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION,
+        CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -244,7 +246,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 64
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 65
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -375,6 +377,16 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     )
     assert _validated_migration_path(OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION, down=True).name == (
         f"{OFFICIAL_CATEGORY_NAME_MIGRATION_VERSION}_add_official_category_name.down.sql"
+    )
+    assert _validated_migration_path(
+        CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION
+    ).name == (
+        f"{CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION}_canonical_authorized_official_facet_metadata.sql"
+    )
+    assert _validated_migration_path(
+        CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION, down=True
+    ).name == (
+        f"{CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION}_canonical_authorized_official_facet_metadata.down.sql"
     )
     for version, stem in (
         (REVIEW_ITEM_CONTEXT_MIGRATION_VERSION, "review_item_context_foundation"),
@@ -1941,7 +1953,8 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             "select granted.rolname,member.rolname,m.admin_option,m.inherit_option,m.set_option "
             "from pg_auth_members m join pg_roles granted on granted.oid=m.roleid "
             "join pg_roles member on member.oid=m.member "
-            "where granted.rolname in ('workspace_admin_owner','workspace_audit_owner') "
+            "where granted.rolname in "
+            "('workspace_admin_owner','workspace_audit_owner','workspace_query_owner') "
             "and member.rolname=current_user order by granted.rolname"
         )
         with psycopg.connect(admin_dsn) as connection:
@@ -1954,6 +1967,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             ],
         )
         _set_latest_review_context_level(admin_dsn, 0)
+        roll_back_workspace(CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION)
         roll_back_workspace(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(
@@ -2022,6 +2036,11 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         restore_workspace()
         with psycopg.connect(admin_dsn) as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
+            assert connection.execute(
+                "select lower(pg_get_functiondef("
+                "'workspace_api.official_facets(uuid,uuid,text,text,text,text)'::regprocedure)) "
+                "like '%authorized_names as materialized%'"
+            ).fetchone() == (True,)
             assert connection.execute(
                 "select has_table_privilege("
                 "'workspace_query_owner','public.party_mapping','SELECT'),"

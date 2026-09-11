@@ -1177,9 +1177,12 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
 
 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:
+    canonical_authorized_official_facet_metadata_migration_version = "20260910212254"
     official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        f"\\ir ../migrations/down/{canonical_authorized_official_facet_metadata_migration_version}"
+        "_canonical_authorized_official_facet_metadata.down.sql",
         f"\\ir ../migrations/down/{official_category_name_migration_version}"
         "_add_official_category_name.down.sql",
         "\\ir ../migrations/down/20260831160422_platform_review_breakdown.down.sql",
@@ -1266,6 +1269,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260831160422_platform_review_breakdown.sql",
         f"\\ir ../migrations/{official_category_name_migration_version}"
         "_add_official_category_name.sql",
+        f"\\ir ../migrations/{canonical_authorized_official_facet_metadata_migration_version}"
+        "_canonical_authorized_official_facet_metadata.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1280,8 +1285,12 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "65 as migration_inventory_count",
+        "66 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
+        (
+            "canonical authorized official facet metadata reapply did not restore "
+            "its source-backed cte plan"
+        ),
         "authenticated legacy public result access survived cutover",
         "dropping only its index",
     ):
@@ -2232,6 +2241,62 @@ def test_official_category_name_wrapper_preserves_the_closed_public_reachability
     ) in down
     assert "create function" not in down
     assert predecessor not in down.split("rename to results_exploration_official", 1)[1]
+
+
+def test_canonical_official_facet_metadata_migration_preserves_closed_interface() -> None:
+    version = "20260910212254"
+    forward_path = MIGRATIONS / f"{version}_canonical_authorized_official_facet_metadata.sql"
+    down_path = (
+        MIGRATIONS / "down" / f"{version}_canonical_authorized_official_facet_metadata.down.sql"
+    )
+    forward = " ".join(forward_path.read_text(encoding="utf-8").lower().split())
+    down = " ".join(down_path.read_text(encoding="utf-8").lower().split())
+    signature = "workspace_api.official_facets(uuid,uuid,text,text,text,text)"
+    declaration = (
+        "create or replace function workspace_api.official_facets( "
+        "p_election_id uuid default null,p_category_id uuid default null,"
+        "p_distrito_code text default null, p_seccion_code text default null,"
+        "p_circuito_code text default null,p_establecimiento_code text default null "
+        ") returns jsonb"
+    )
+
+    top_level = re.sub(r"\$\$.*?\$\$", "", forward, flags=re.DOTALL)
+    assert not re.search(r"\b(?:begin|commit)\s*;", top_level)
+    assert declaration in forward
+    for marker in (
+        "authorized_names as materialized",
+        "selected_names as",
+        "district_metadata as",
+        "rr.source_kind='official'",
+    ):
+        assert marker in forward
+
+    for migration in (forward, down):
+        assert declaration in migration
+        assert (
+            "language plpgsql stable security definer set "
+            "search_path=pg_catalog,workspace_private,pg_temp" in migration
+        )
+        assert "grant create on schema workspace_api to workspace_query_owner" in migration
+        assert "set role workspace_query_owner" in migration
+        assert "set role postgres" in migration
+        assert "revoke create on schema workspace_api from workspace_query_owner" in migration
+        assert "votus_drilldown_facets.workspace_query_grantee" in migration
+        assert "revoke workspace_query_owner from %i',current_setting" in migration
+        assert f"revoke all on function {signature} from public,anon,authenticated" in migration
+        assert f"grant execute on function {signature} to authenticated" in migration
+        assert "to_regrole('service_role')" in migration
+        assert (
+            migration.rfind("set role postgres")
+            < migration.rfind("revoke create on schema workspace_api")
+            < migration.rfind("reset role")
+        )
+
+    assert down.startswith("begin;") and down.endswith("commit;")
+    assert "with options as materialized" in down
+    assert "authorized_names as materialized" not in down
+    assert "selected_names as" not in down
+    assert "district_metadata as" not in down
 
 
 def test_scale_proof_binds_the_district_index_contract_to_the_production_rpc() -> None:
