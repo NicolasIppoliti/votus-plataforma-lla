@@ -2,19 +2,20 @@
 
 Cross-workstream planning index grounded in the [11 September audit](audits/2026-09-11-project-status.md).
 The [active proposal/PRD](../openspec/changes/operational-verification/proposal.md) owns the first slice;
-future specs own acceptance scenarios. This is not an implementation backlog or release certification.
+the [specification](../openspec/changes/operational-verification/specs/operational-verification/spec.md) owns acceptance scenarios. This is not a release certification.
 
 ## Status and sequencing
 
-NOW is active planning, not implemented or hosted-verified.
+NOW has a constructed documentation procedure; no hosted state has been verified.
 NEXT workstreams are independent future changes; none has been opened here.
 LATER items require their own scope decisions. Horizons are priorities, not dates or estimates.
 
 ## NOW — Operational verification
 
-**Status:** active planning; confirmed product scope and documentation research complete.
+**Status:** documentation constructed; independent lifecycle evaluation pending, no hosted RUN.
+**Start here:** [Private operational verification procedure](operational-verification.md), then its evidence template; BUILD/REVIEW stays offline.
 **Value:** give responsible internal operators reproducible private diagnosis instead of inferred readiness.
-**Dependencies:** specs/design and a usable procedure/template; separately approved future target,
+**RUN dependencies:** separately approved future target,
 revision, existing identities and selected official 2023/2025 Coronel Rosales `02/027` observations.
 **Done when:** the clear operator entrypoint supports bounded alignment/access/aggregate evidence,
 explicit unknowns, privacy/30-day retention and stop rules; execution remains separately authorized.
