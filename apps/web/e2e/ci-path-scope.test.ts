@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	classifyNameStatus,
@@ -131,13 +133,21 @@ function verify(gates: string, results: string[]) {
 	});
 }
 function publish(input: string) {
-	return spawnSync("bash", ["-euc", shellFor("Publish scope gates")], {
-		encoding: "utf8",
-		env: {
-			NODE_ENV: "test", PATH: process.env.PATH,
-			SCOPE_JSON: input, GITHUB_OUTPUT: "/dev/stdout",
-		},
-	});
+	const directory = mkdtempSync(join(tmpdir(), "ci-scope-output-"));
+	try {
+		const outputPath = join(directory, "github-output");
+		writeFileSync(outputPath, "");
+		const result = spawnSync("bash", ["-euc", shellFor("Publish scope gates")], {
+			encoding: "utf8",
+			env: {
+				NODE_ENV: "test", PATH: process.env.PATH,
+				SCOPE_JSON: input, GITHUB_OUTPUT: outputPath,
+			},
+		});
+		return { ...result, publishedOutput: readFileSync(outputPath, "utf8") };
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 }
 describe("workflow scope boundaries", () => {
 	it.each(patterns)("accepts only the exact %s result pattern", (_decision, gates, ...results) => {
@@ -160,7 +170,8 @@ describe("workflow scope boundaries", () => {
 	it.each(patterns)("publishes canonical %s gates", (decision, gates) => {
 		const result = publish(JSON.stringify({ schemaVersion: 1, decision, gates: JSON.parse(gates) }));
 		expect(result.status, result.stderr).toBe(0);
-		expect(result.stdout).toBe(`gates=${gates}\n`);
+		expect(result.publishedOutput).toBe(`gates=${gates}\n`);
+		expect(result.stdout).toBe("");
 	});
 	it.each([
 		null, {},
@@ -172,11 +183,13 @@ describe("workflow scope boundaries", () => {
 		})),
 	])("rejects invalid publisher contract %j", (contract) => {
 		const result = publish(JSON.stringify(contract));
+		expect(result.publishedOutput).toBe("");
 		expect(result.status).not.toBe(0);
 		expect(result.stdout).toBe("");
 	});
 	it.each(["", "not-json"])("rejects malformed publisher JSON %j", (input) => {
 		const result = publish(input);
+		expect(result.publishedOutput).toBe("");
 		expect(result.status).not.toBe(0);
 		expect(result.stdout).toBe("");
 	});
@@ -195,6 +208,6 @@ describe("workflow scope boundaries", () => {
 		], { encoding: "utf8", input });
 		expect(result.status).toBe(0);
 		expect(JSON.parse(result.stdout).gates).toEqual(ALL_GATES);
-		expect(publish(result.stdout).stdout).toBe(`gates=${JSON.stringify(ALL_GATES)}\n`);
+		expect(publish(result.stdout).publishedOutput).toBe(`gates=${JSON.stringify(ALL_GATES)}\n`);
 	});
 });
