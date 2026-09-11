@@ -4,11 +4,13 @@
 
 Research snapshot: **2026-09-01**. Counts are volatile. No package, skill, or MCP server was installed. `npx skills find` was not executed because `npx` may download and execute a package; the same public skills.sh search index and first-party skill pages were queried directly instead.
 
+> **Superseded Impeccable 3.6 assumptions (2026-09-11):** The historical recommendation to pin Impeccable project-locally at `skill-v3.6.0` and require that skill in a clean checkout no longer applies. Impeccable is now optional, Pi-only local tooling: it is verified only when locally installed, never installs hooks, and is not a clean-checkout or runtime dependency. The retained 3.6 provenance below is historical research, not current policy.
+
 ## Recommendation matrix
 
 | Tool | Verified first-party agent surface | Runtime/code surface | Recommendation | Main caution |
 | --- | --- | --- | --- | --- |
-| [Impeccable](https://impeccable.style/) | Official skill, commands, npm CLI/installer, provider hooks; no official MCP found | Framework-aware design workflow and deterministic detector | **Adopt project-locally at the pinned `skill-v3.6.0` tag and commit; keep hooks and live mode disabled** | The installer can write agent folders, hook manifests, `.impeccable/*`, `PRODUCT.md`, and `DESIGN.md`; `npx impeccable` executes a moving npm artifact unless version-pinned |
+| [Impeccable](https://impeccable.style/) | Official skill, commands, npm CLI/installer, provider hooks; no official MCP found | Framework-aware design workflow and deterministic detector | **Optional Pi-only local tooling; no hooks and no clean-checkout dependency** | The installer can write agent folders, hook manifests, `.impeccable/*`, `PRODUCT.md`, and `DESIGN.md`; `npx impeccable` executes a moving npm artifact unless version-pinned |
 | [Vercel `design.md`](https://vercel.com/design.md) | Official Vercel-hosted Markdown with skill frontmatter; no first-party installer, package, MCP, skills.sh entry, or source repository found | Guidance plus a hosted Vercel brand CSS foundation | **Reference only** for hierarchy, evidence, typography, restraint, and reduced motion | It explicitly targets **official Vercel-authored report websites** and requires Vercel identity assets; it is not a neutral product design system and has no license statement in the served Markdown/CSS |
 | [shadcn/ui](https://ui.shadcn.com/) | Official skill in the canonical repo, npm CLI, local stdio MCP server, registry and agent documentation | Copies editable component source and dependencies into the app | **Adopt as the base** | Registry/CLI operations write source and config; third-party registries are separate trust domains; `@latest` is mutable |
 | [beUI](https://beui.dev/) | Official skill, hosted HTTP MCP, agent guide, shadcn registry; no beUI runtime package | Copies React/Tailwind/Motion source plus per-component dependencies | **Selective use only** after inspecting each registry item | Live remote registry content can change; richer components add Motion and other dependencies; hosted MCP adds a remote trust boundary |
@@ -53,7 +55,7 @@ The recommended installer is not a read-only documentation copy. Depending on pr
 
 ### Supply-chain assessment
 
-**Moderate by default; higher with hooks/live mode.** The source is public, highly adopted, Apache-2.0, and the npm package publishes an integrity hash/signature. However, `npx impeccable install` executes code and may install hooks that run on future agent edits. This project therefore pins the complete Pi skill project-locally at tag `skill-v3.6.0`, commit `858b9bbea637c1b3beaf89b2ff7a8c22163ee7ef`, records every installed file and its deterministic hash, and keeps hooks and live mode explicitly disabled. Future updates must repeat the same provenance and byte-verification process. Do not confuse the many community `impeccable` skills in search results with `pbakaus/impeccable`.
+**Moderate by default; higher with hooks/live mode.** The source is public, highly adopted, Apache-2.0, and the npm package publishes an integrity hash/signature. However, `npx impeccable install` executes code and may install hooks that run on future agent edits. **Superseded:** the former `skill-v3.6.0` project-local pin, provenance inventory, and clean-checkout requirement are no longer policy. Impeccable is optional Pi-only local tooling, verified only when it is locally installed; hooks remain disabled and it is never a clean-checkout or runtime dependency. Do not confuse the many community `impeccable` skills in search results with `pbakaus/impeccable`.
 
 ## 2. Vercel `design.md`
 
@@ -116,7 +118,7 @@ MCP initialization adds editor/client configuration (`.mcp.json`, `.cursor/mcp.j
 
 ### Supply-chain assessment
 
-**Best base, with registry discipline.** The canonical repo is mature, MIT, highly adopted, and the npm package has signatures/provenance. Still, `npx shadcn@latest` is a moving executable and registry items are mutable source payloads. This project pins the local MCP command to `shadcn@4.19.1`; future component operations must preview the exact payload, review every copied file and dependency, and allow only named registries. A community registry being shadcn-compatible does not make it shadcn-maintained.
+**Best base, with registry discipline.** The canonical repo is mature, MIT, highly adopted, and the npm package has signatures/provenance. Still, `npx shadcn@latest` is a moving executable and registry items are mutable source payloads. This project currently pins the local MCP command to `shadcn@4.19.1`. The later `4.21.0` finding is planned follow-up #197, not delivered policy; future component operations must preview the exact payload, review every copied file and dependency, and allow only named registries. A community registry being shadcn-compatible does not make it shadcn-maintained.
 
 ### Installed pnpm policy
 
@@ -191,8 +193,8 @@ This is more precise than GitHub's missing license metadata for the current root
 
 ## Recommended operating policy
 
-1. **Base layer:** initialize and own shadcn/ui source with the MCP/CLI pinned to `shadcn@4.19.1` and an allowlist containing only `@shadcn` initially.
-2. **Design direction:** use the project-local Impeccable skill pinned to `skill-v3.6.0` / `858b9bbea637c1b3beaf89b2ff7a8c22163ee7ef`; keep hooks and live mode disabled unless a separately reviewed change enables them.
+1. **Base layer:** initialize and own shadcn/ui source with the MCP/CLI pinned to `shadcn@4.19.1` and an allowlist containing only `@shadcn` initially. The dated `4.21.0` finding remains planned follow-up #197, not a delivered upgrade.
+2. **Design direction:** Impeccable is optional Pi-only local tooling, verified only when locally installed; keep hooks disabled. It is not a clean-checkout or runtime dependency.
 3. **Dependency execution:** keep `sharp` and `unrs-resolver` lifecycle scripts denied; treat any future build-script permission or persisted release-age exception as a new supply-chain decision.
 4. **Vercel influence:** translate the neutral principles from `design.md` into the project's own design document. Do not ship Vercel wordmarks, the `vbg-*` report shell, or the hosted brand CSS in a non-Vercel product.
 5. **Motion budget:** first use native CSS/shadcn states. Add a beUI component when it replaces a complex, well-bounded interaction; add a Transitions.dev snippet when only a focused transition is needed. Do not adopt both for the same interaction.
