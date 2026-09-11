@@ -3,7 +3,6 @@ import {
 	spawnSync,
 	type SpawnSyncOptionsWithStringEncoding,
 } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -19,9 +18,6 @@ const { describe, it } = testApi;
 
 const WEB_ROOT = resolve(import.meta.dirname, "..");
 const PROJECT_ROOT = resolve(WEB_ROOT, "../..");
-const APPROVED_IMPECCABLE_SKILL_HASH =
-	"31029a52831c6967afcbd66e647d3c94767d7ed20f58dc9fefb98e61785d2164";
-
 interface PackageManifest {
 	dependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
@@ -51,34 +47,6 @@ interface McpConfig {
 			args: string[];
 		}
 	>;
-}
-
-interface ImpeccableProvenance {
-	schemaVersion: number;
-	tool: {
-		name: string;
-		version: string;
-	};
-	npm: {
-		package: string;
-		version: string;
-		tarball: string;
-		integrity: string;
-		gitHead: string;
-	};
-	source: {
-		repository: string;
-		ref: string;
-		commit: string;
-		sourcePath: string;
-		installedPath: string;
-		filesWritten: string[];
-	};
-	license: string;
-	policy: {
-		hooks: string;
-		liveMode: string;
-	};
 }
 
 function readProjectFile(path: string): string {
@@ -157,69 +125,25 @@ describe("UI tooling supply-chain contract", () => {
 		});
 	});
 
-	it("retains pinned Impeccable provenance without requiring local skills or enabling hooks", () => {
-		const provenance = readJson<ImpeccableProvenance>(
-			".impeccable/provenance.json",
-		);
-		assert.deepEqual(provenance, {
-			schemaVersion: 1,
-			tool: { name: "impeccable", version: "3.6.0" },
-			npm: {
-				package: "impeccable",
-				version: "3.6.0",
-				tarball:
-					"https://registry.npmjs.org/impeccable/-/impeccable-3.6.0.tgz",
-				integrity:
-					"sha512-nysc6/2OHTWqLrcSxTxZk4r4QMufhU8NTIuG2ic6p5zzyZe45AWBX3/18OA5S88pCWq+4z8pKsjUxhAM990RKg==",
-				gitHead: "2c33196c51ac52e47691384e61d89f1218d8d21d",
-			},
-			source: {
-				repository: "https://github.com/pbakaus/impeccable",
-				ref: "refs/tags/skill-v3.6.0",
-				commit: "858b9bbea637c1b3beaf89b2ff7a8c22163ee7ef",
-				sourcePath: ".pi/skills/impeccable",
-				installedPath: ".pi/skills/impeccable",
-				filesWritten: provenance.source.filesWritten,
-			},
-			license: "Apache-2.0",
-			policy: { hooks: "disabled", liveMode: "disabled" },
-		});
-
-		// Pin the recorded installation inventory, not machine-local file contents.
-		const recordedFiles = provenance.source.filesWritten;
-		assert.equal(recordedFiles.length, 91);
-		assert.equal(
-			createHash("sha256").update(JSON.stringify(recordedFiles)).digest("hex"),
-			"9b3fbf9aa5b831a5512b8f36a4005e889fc721c817158bd59d90c5bbd1d3bd4a",
-		);
-		assert.ok(recordedFiles.includes(".pi/skills/impeccable/SKILL.md"));
-
+	it("removes Impeccable skill lock while retaining Supabase skill locks", () => {
 		const skillsLock = readJson<{
 			skills: Record<string, { computedHash: string; skillPath: string }>;
 		}>("skills-lock.json");
-		assert.equal(
-			skillsLock.skills.impeccable?.skillPath,
-			".pi/skills/impeccable/SKILL.md",
-		);
-		assert.equal(
-			skillsLock.skills.impeccable?.computedHash,
-			APPROVED_IMPECCABLE_SKILL_HASH,
-		);
-
-		for (const forbiddenPath of [
-			".claude/settings.local.json",
-			".cursor/hooks.json",
-			".codex/hooks.json",
-			".github/hooks/impeccable.json",
-			".grok/hooks/impeccable.json",
-			".impeccable/config.json",
-			".impeccable/config.local.json",
-		]) {
-			assert.equal(existsSync(resolve(PROJECT_ROOT, forbiddenPath)), false);
-		}
+		assert.equal(Object.hasOwn(skillsLock.skills, "impeccable"), false);
+		assert.deepEqual(Object.keys(skillsLock.skills).sort(), [
+			"supabase",
+			"supabase-postgres-best-practices",
+		]);
 	});
 
-	it("keeps installed Pi skills local while tracking shared exceptions and provenance", () => {
+	it("removes obsolete Impeccable provenance", () => {
+		assert.equal(
+			existsSync(resolve(PROJECT_ROOT, ".impeccable/provenance.json")),
+			false,
+		);
+	});
+
+	it("ignores local tooling artifacts without hiding shared configuration", () => {
 		for (const key of [
 			"GIT_DIR",
 			"GIT_WORK_TREE",
@@ -230,22 +154,44 @@ describe("UI tooling supply-chain contract", () => {
 		]) {
 			assert.equal(Object.hasOwn(process.env, key), false, "Git override present");
 		}
-		const provenance = readJson<ImpeccableProvenance>(
-			".impeccable/provenance.json",
-		);
 		const localPaths = [
-			...provenance.source.filesWritten,
+			".agents/skills/impeccable/reference/layout.md",
+			".claude/skills/impeccable/reference/layout.md",
+			".claude/agents/impeccable-reviewer.md",
+			".claude/settings.local.json",
+			".codex/hooks.json",
+			".github/skills/impeccable/reference/layout.md",
+			".github/agents/impeccable-reviewer.agent.md",
+			".github/hooks/impeccable.json",
+			".opencode/skills/impeccable/reference/layout.md",
+			".opencode/commands/impeccable.md",
+			".pi/skills/impeccable/reference/layout.md",
 			".pi/skills/another-installed-skill/SKILL.md",
 			".pi/runtime-state.json",
 			".pi/gentle-ai/local-state.json",
+			".impeccable/config.local.json",
+			".impeccable/live/session.json",
+			".impeccable/logs/installer.log",
+			".DS_Store",
+			"apps/web/.DS_Store",
+			"coverage/lcov.info",
+			"apps/web/coverage/lcov.info",
+			".turbo/turbo-build.log",
+			".eslintcache",
+			"apps/web/.eslintcache",
+			"logs/web.log",
+			"apps/web/logs/web.log",
+			"apps/web/src/app/page.tsx.swp",
+			"apps/web/src/app/page.tsx.swo",
 		];
 		const sharedPaths = [
-			".impeccable/provenance.json",
+			".mcp.json",
 			".pi/gentle-ai/persona.json",
 			".pi/skills/supabase",
 			".pi/skills/supabase-postgres-best-practices",
 			"skills-lock.json",
 		];
+		const unignoredPaths = [...sharedPaths, ".impeccable/config.json"];
 		const options: SpawnSyncOptionsWithStringEncoding = {
 			cwd: PROJECT_ROOT,
 			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
@@ -257,7 +203,7 @@ describe("UI tooling supply-chain contract", () => {
 		// These paths need not exist: a clean checkout must satisfy the contract.
 		const ignored = spawnSync(
 			"git",
-			["check-ignore", "--no-index", "--", ...localPaths, ...sharedPaths],
+			["check-ignore", "--no-index", "--", ...localPaths, ...unignoredPaths],
 			options,
 		);
 		assert.equal(ignored.status, 0, "Git ignore policy check failed");
@@ -265,11 +211,48 @@ describe("UI tooling supply-chain contract", () => {
 
 		const tracked = spawnSync(
 			"git",
-			["ls-files", "--", ".pi", ".impeccable/provenance.json", "skills-lock.json"],
+			[
+				"ls-files",
+				"--",
+				":(glob).agents/skills/impeccable/**",
+				":(glob).claude/skills/impeccable/**",
+				":(glob).claude/agents/impeccable-*.md",
+				".claude/settings.local.json",
+				".codex/hooks.json",
+				":(glob).github/skills/impeccable/**",
+				":(glob).github/agents/impeccable-*.agent.md",
+				".github/hooks/impeccable.json",
+				":(glob).opencode/skills/impeccable/**",
+				".opencode/commands/impeccable.md",
+				":(glob).pi/skills/impeccable/**",
+			],
 			options,
 		);
 		assert.equal(tracked.status, 0, "Git tracking policy check failed");
-		assert.equal(tracked.stdout, `${sharedPaths.join("\n")}\n`);
+		assert.equal(tracked.stdout, "", "Impeccable provider paths must not be tracked");
+
+		const sharedTracked = spawnSync(
+			"git",
+			["ls-files", "--", ...sharedPaths],
+			options,
+		);
+		assert.equal(sharedTracked.status, 0, "Shared tracking policy check failed");
+		assert.equal(sharedTracked.stdout, `${sharedPaths.join("\n")}\n`);
+
+	});
+
+	it("removes local Impeccable provider hooks", () => {
+		for (const forbiddenPath of [
+			".claude/settings.local.json",
+			".codex/hooks.json",
+			".github/hooks/impeccable.json",
+		]) {
+			assert.equal(
+				existsSync(resolve(PROJECT_ROOT, forbiddenPath)),
+				false,
+				`Impeccable provider hook remains at ${forbiddenPath}`,
+			);
+		}
 	});
 
 	it("retains the production legacy CSS contracts during progressive migration", () => {

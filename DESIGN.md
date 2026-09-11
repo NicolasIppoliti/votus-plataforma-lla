@@ -225,7 +225,7 @@ WCAG 2.2 AA is a blocking merge gate.
 ### Adopt
 
 - **shadcn/ui:** Pinned CLI, local MCP, only `@shadcn` initially.
-- **Impeccable:** Pinned project-local skill for design critique and consistency detection.
+- **Impeccable (optional):** Pi-only local skill for design critique and consistency detection. It is not required in a clean checkout and must not install hooks.
 
 ### Reference only
 

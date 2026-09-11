@@ -2,7 +2,19 @@
 .atl/
 .codegraph/
 
-# Pi runtime state and installed skills are local by default.
+# Local Impeccable installer footprints. Shared agent configuration stays trackable.
+/.agents/skills/impeccable/
+/.claude/skills/impeccable/
+/.claude/agents/impeccable-*.md
+/.claude/settings.local.json
+/.codex/hooks.json
+/.github/skills/impeccable/
+/.github/agents/impeccable-*.agent.md
+/.github/hooks/impeccable.json
+/.opencode/skills/impeccable/
+/.opencode/commands/impeccable.md
+
+# Pi runtime state and optional locally installed skills are local by default.
 # Keep the existing shared project configuration and Supabase skill links.
 /.pi/*
 !/.pi/gentle-ai/
@@ -12,6 +24,22 @@
 /.pi/skills/*
 !/.pi/skills/supabase
 !/.pi/skills/supabase-postgres-best-practices
+
+# Local Impeccable state. config.json remains eligible for review and tracking.
+/.impeccable/config.local.json
+/.impeccable/live/
+/.impeccable/logs/
+/.impeccable/cache/
+/.impeccable/session/
+
+# Machine-generated metadata and test/build artifacts.
+.DS_Store
+coverage/
+.turbo/
+.eslintcache
+*.log
+*.swp
+*.swo
 
 # Raw immutable archive (D2) — sha256-tracked via archive-manifest.json, not git
 /archive/
