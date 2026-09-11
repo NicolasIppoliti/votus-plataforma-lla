@@ -13,22 +13,31 @@ const rect = z.strictObject({
   left: coordinate, top: coordinate, right: coordinate, bottom: coordinate,
   width: dimension, height: dimension,
 });
-const captureSchema = z.strictObject({
-  control: z.enum(controls),
-  snapshot: z.strictObject({
-    effectiveOpacity: z.number().min(0).max(1),
-    opaque: z.boolean(), intersects: z.literal(false), contained: z.boolean(),
-    target: rect,
-    viewport: z.strictObject({
-      innerWidth: dimension, innerHeight: dimension,
-      outerWidth: dimension, outerHeight: dimension,
-      scrollX: coordinate, scrollY: coordinate,
-    }),
-    dialog: z.strictObject({
-      rect, clientHeight: dimension, scrollHeight: dimension, scrollTop: coordinate,
-    }).nullable(),
+const snapshotSchema = z.strictObject({
+  effectiveOpacity: z.number().min(0).max(1),
+  opaque: z.boolean(), intersects: z.boolean(), contained: z.boolean(),
+  target: rect,
+  viewport: z.strictObject({
+    innerWidth: dimension, innerHeight: dimension,
+    outerWidth: dimension, outerHeight: dimension,
+    scrollX: coordinate, scrollY: coordinate,
   }),
+  dialog: z.strictObject({
+    rect, clientHeight: dimension, scrollHeight: dimension, scrollTop: coordinate,
+  }).nullable(),
 });
+
+const captureSchema = z.strictObject({
+  version: z.literal(2),
+  reason: z.enum(["appearance", "off-viewport"]),
+  control: z.enum(controls),
+  appearance: z.strictObject({
+    active: z.boolean(), focusVisible: z.boolean(),
+    outlineWidthPx: dimension, outlineOffsetPx: coordinate,
+    outlineStyle: z.enum(["none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset", "outset", "auto"]),
+  }),
+  snapshot: snapshotSchema,
+}).refine((capture) => capture.reason !== "off-viewport" || !capture.snapshot.intersects);
 
 interface OutputLocation {
   outputPath(name: string): string;
