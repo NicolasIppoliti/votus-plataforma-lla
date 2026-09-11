@@ -16,12 +16,15 @@ vi.mock("@/lib/workspace/official-facets", async (importOriginal) => ({
   createAuthorizedOfficialFacetRepository: mocks.createFacetRepository,
 }));
 
-vi.mock("@/lib/workspace/fiscalizacion-evidence", () => ({
+vi.mock("@/lib/workspace/fiscalizacion-evidence", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/workspace/fiscalizacion-evidence")>(),
   loadSafeFiscalizacionCoverage: mocks.coverage,
   loadSafeFiscalizacionResult: mocks.result,
 }));
 
 const { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR } = await import("@/lib/workspace/official-facets");
+const { sanitizeFiscalizacionCoverage, sanitizeFiscalizacionResult } = await import("@/lib/workspace/fiscalizacion-evidence");
+const { fiscalWirePair, fiscalWireStates } = await import("../../../../e2e/fiscalizacion-state-control");
 const { default: FiscalizacionPage } = await import("./page");
 const { default: FiscalizacionLoading } = await import("./loading");
 const { default: FiscalizacionError } = await import("./error");
@@ -423,13 +426,39 @@ describe("FiscalizacionPage", () => {
   it("renders valid no_rows as an explicit figure-free empty state", async () => {
     mocks.facets.mockResolvedValue(FACETS);
     mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
-    mocks.result.mockResolvedValue(AUTHORIZED_NO_ROWS_RESULT);
+    const payload = fiscalWireStates(COMPLETE_SELECTION)[0].payload;
+    const safe = sanitizeFiscalizacionResult(payload, COMPLETE_SELECTION);
+    expect(safe?.status).toBe("no_rows");
+    mocks.coverage.mockResolvedValue(sanitizeFiscalizacionCoverage(fiscalWirePair(COMPLETE_SELECTION).coverage));
+    mocks.result.mockResolvedValue(safe);
 
     const markup = await renderComplete();
+    expect(markup).not.toContain("source_kind_official");
+    expect(markup).not.toContain('id="workspace-coverage"');
+    expect(markup).not.toContain('id="workspace-result"');
 
     expect(markup).toContain("Evidencia sin filas");
     expect(markup).toContain("La consulta autorizada no devolvió resultados de fiscalización.");
     expect(markup).not.toContain("Evidencia no disponible");
+    expectFigureFree(markup);
+  });
+
+  it.each(["ok", "no_rows"] as const)("refuses independently valid %s evidence with different official denominators", async (status) => {
+    mocks.facets.mockResolvedValue(FACETS);
+    const pair = fiscalWirePair(COMPLETE_SELECTION);
+    const coverage = sanitizeFiscalizacionCoverage(pair.coverage);
+    const payload = status === "no_rows" ? fiscalWireStates(COMPLETE_SELECTION)[0].payload : pair.result;
+    const result = sanitizeFiscalizacionResult({ ...payload, reference: {
+      ...payload.reference, denominator_units: 2,
+    } }, COMPLETE_SELECTION);
+    expect(coverage?.status).toBe("ok");
+    expect(result?.status).toBe(status);
+    mocks.coverage.mockResolvedValue(coverage);
+    mocks.result.mockResolvedValue(result);
+    const markup = await renderComplete();
+    expect(markup).toContain("Estado de evidencia: invalid");
+    expect(markup).not.toContain('id="workspace-coverage"');
+    expect(markup).not.toContain('id="workspace-result"');
     expectFigureFree(markup);
   });
 
@@ -442,6 +471,22 @@ describe("FiscalizacionPage", () => {
 
     expect(markup).toContain("Error técnico de evidencia");
     expect(markup).not.toContain("Evidencia no disponible");
+    expectFigureFree(markup);
+  });
+
+  it("offers a native retry at the normalized selection without disclosing failed evidence", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockRejectedValue(new Error("unsafe remote detail"));
+    mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+
+    const markup = await renderPage({ ...COMPLETE_SELECTION, distritoCode: "2", seccionCode: "27" });
+    const href = `/fiscalizacion?electionId=${COMPLETE_SELECTION.electionId}&amp;categoryId=${COMPLETE_SELECTION.categoryId}&amp;distritoCode=02&amp;seccionCode=027`;
+    expect(markup).toContain(`<a class="button button--primary" href="${href}">Reintentar carga</a>`);
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain('<option value="027" selected="">');
+    expect(markup).not.toContain("unsafe remote detail");
+    expect(markup).not.toContain('id="workspace-coverage"');
+    expect(markup).not.toContain('id="workspace-result"');
     expectFigureFree(markup);
   });
 
