@@ -1206,7 +1206,8 @@ describe("base contracts", () => {
 	])("rejects an unsupported ETL matrix %s", (strategy) => {
 		expect(() => expectScopedReleaseJob(scopedJob(`  etl-release:\n${strategy}    steps:\n`))).toThrow();
 	});
-	it.each(["web-static", "e2e-release"])("rejects the ETL matrix on %s", (job) => {
+	it.each(["web-static", "e2e-release", "e2e-sql"])("rejects the ETL matrix on %s", (job) => {
+		expectScopedReleaseJob(scopedJob(`  ${job}:\n    steps:\n`));
 		expect(() => expectScopedReleaseJob(scopedJob(`  ${job}:\n${etlStrategy}`))).toThrow();
 	});
 	it.each(["if: always()", "needs: web-static"])("rejects ETL job restriction %s", (restriction) => {
@@ -1214,14 +1215,16 @@ describe("base contracts", () => {
 	});
 	function scopedJob(releaseJob: string): string {
 		const id = releaseJob.match(/^  ([a-z0-9-]+):/)![1];
-		return releaseJob.replace("\n", `\n    needs: scope\n    if: \${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), '${id}') }}\n`);
+		const logicalGate = id === "e2e-sql" ? "e2e-release" : id;
+		return releaseJob.replace("\n", `\n    needs: scope\n    if: \${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), '${logicalGate}') }}\n`);
 	}
 	function expectScopedReleaseJob(releaseJob: string): void {
 		// Match job keys at the workflow's four-space indentation, not nested step keys.
 		const id = releaseJob.match(/^  ([a-z0-9-]+):/)![1];
+		const logicalGate = id === "e2e-sql" ? "e2e-release" : id;
 		expect(releaseJob.match(/^ {4}(?:if|needs):.*$/gm)).toEqual([
 			"    needs: scope",
-			`    if: \${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), '${id}') }}`,
+			`    if: \${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), '${logicalGate}') }}`,
 		]);
 		if (releaseJob.startsWith("  etl-release:\n")) {
 			expect(releaseJob.match(/^ {4}strategy:\n(?: {6,}.*\n)*/gm)).toEqual([etlStrategy]);
@@ -1250,6 +1253,7 @@ describe("base contracts", () => {
 		const webStatic = job("web-static");
 		const etlRelease = job("etl-release");
 		const e2eRelease = job("e2e-release");
+		const e2eSql = job("e2e-sql");
 		const verify = job("verify");
 
 		expect(jobIds).toEqual([
@@ -1257,13 +1261,14 @@ describe("base contracts", () => {
 			"web-static",
 			"etl-release",
 			"e2e-release",
+			"e2e-sql",
 			"verify",
 		]);
 		expect(workflow).toMatch(/^  pull_request:$/m);
 		expect(workflow).toMatch(/^  push:\n    branches: \[main\]$/m);
 		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
 		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
-		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
+		for (const releaseJob of [webStatic, etlRelease, e2eRelease, e2eSql])
 			expectScopedReleaseJob(releaseJob);
 
 		expect(scope).toContain("name: scope");
@@ -1326,26 +1331,42 @@ describe("base contracts", () => {
 		expect(e2eRelease).toContain("persist-credentials: false");
 		expect(e2eRelease.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
 		expect(e2eRelease.match(/pnpm exec playwright install --with-deps chromium/g)).toHaveLength(1);
-		expect(e2eRelease.match(/^\s*- run: pnpm test:e2e:gate$/gm)).toHaveLength(1);
+		expect(e2eRelease.match(/^\s*- run: pnpm test:e2e:gate --lane browser$/gm)).toHaveLength(1);
 		expect(e2eRelease).not.toMatch(/services:|setup-uv|uv run|postgres:17/);
+
+		expect(e2eSql).toContain("timeout-minutes: 20");
+		expect(e2eSql).toContain("runs-on: ubuntu-latest");
+		expect(e2eSql).toContain("version: 12.3.4");
+		expect(e2eSql).toContain("node-version: 24");
+		expect(e2eSql).toContain("cache: pnpm");
+		expect(e2eSql).toContain("cache-dependency-path: apps/web/pnpm-lock.yaml");
+		expect(e2eSql).toContain("version: 2.112.0");
+		expect(e2eSql).toContain("persist-credentials: false");
+		expect(e2eSql.match(/^\s*- run: .*$/gm)?.map((line) => line.trim())).toEqual([
+			"- run: pnpm install --frozen-lockfile",
+			"- run: pnpm test:e2e:gate --lane sql",
+		]);
+		expect(e2eSql.match(/working-directory: apps\/web/g)).toHaveLength(2);
+		expect(e2eSql).not.toMatch(/playwright|build|artifact|services:|setup-uv|uv run/);
 
 		expect(verify).toContain("name: verify");
 		expect(verify).toContain("timeout-minutes: 2");
 		expect(verify).toMatch(
-			/needs:\n      - scope\n      - web-static\n      - etl-release\n      - e2e-release/,
+			/needs:\n      - scope\n      - web-static\n      - etl-release\n      - e2e-release\n      - e2e-sql/,
 		);
 		expect(verify).toContain("if: ${{ always() }}");
 		expect(verify).toContain("${{ needs.scope.result }}");
 		expect(verify).toContain("${{ needs.web-static.result }}");
 		expect(verify).toContain("${{ needs.etl-release.result }}");
 		expect(verify).toContain("${{ needs.e2e-release.result }}");
+		expect(verify).toContain("E2E_SQL_RESULT: ${{ needs.e2e-sql.result }}");
 		expect(verify).toContain("SCOPE_GATES: ${{ needs.scope.outputs.gates }}");
 
 		const actionReferences = Array.from(
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(13);
+		expect(actionReferences).toHaveLength(17);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});

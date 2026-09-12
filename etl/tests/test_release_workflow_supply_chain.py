@@ -13,21 +13,24 @@ WORKFLOW_RELATIVE_PATH = Path(".github/workflows/release-gates.yml")
 WORKFLOW_PATH = REPOSITORY_ROOT / WORKFLOW_RELATIVE_PATH
 FULL_COMMIT_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 APPROVED_NODE24_ACTION_REFS = {
-    "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", 4),
-    "actions/setup-node": ("a0853c24544627f65ddf259abe73b1d18a591444", 3),
+    "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", 5),
+    "actions/setup-node": ("a0853c24544627f65ddf259abe73b1d18a591444", 4),
+    "pnpm/action-setup": ("fc06bc1257f339d1d5d8b3a19a8cae5388b55320", 3),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", 1),
-    "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 2),
+    "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 3),
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 1),
 }
 _LINE = object()
 
 
 def _assert_independent_release_jobs(jobs: dict[str, Any]) -> None:
-    for name in ("web-static", "etl-release", "e2e-release"):
+    for name in ("web-static", "etl-release", "e2e-release", "e2e-sql"):
+        logical_gate = "e2e-release" if name == "e2e-sql" else name
+        assert name in jobs
         assert jobs[name]["needs"] == "scope"
         assert jobs[name]["if"] == (
             "${{ !cancelled() && needs.scope.result == 'success' && "
-            f"contains(fromJSON(needs.scope.outputs.gates || '[]'), '{name}') }}" + "}"
+            f"contains(fromJSON(needs.scope.outputs.gates || '[]'), '{logical_gate}') }}" + "}"
         )
         if name == "etl-release":
             assert jobs[name]["strategy"] == {
@@ -38,7 +41,7 @@ def _assert_independent_release_jobs(jobs: dict[str, Any]) -> None:
             assert "strategy" not in jobs[name]
 
 
-@pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release"])
+@pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release", "e2e-sql"])
 @pytest.mark.parametrize("condition", ['{"if": false}', '\n  "if": false\n'])
 def test_release_job_conditions_cannot_hide_in_yaml_formatting(name: str, condition: str) -> None:
     jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
@@ -48,7 +51,7 @@ def test_release_job_conditions_cannot_hide_in_yaml_formatting(name: str, condit
         _assert_independent_release_jobs(jobs)
 
 
-@pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release"])
+@pytest.mark.parametrize("name", ["web-static", "etl-release", "e2e-release", "e2e-sql"])
 def test_release_jobs_cannot_be_serialized(name: str) -> None:
     jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
     _assert_independent_release_jobs(jobs)
@@ -57,7 +60,7 @@ def test_release_jobs_cannot_be_serialized(name: str) -> None:
         _assert_independent_release_jobs(jobs)
 
 
-@pytest.mark.parametrize("name", ["web-static", "e2e-release"])
+@pytest.mark.parametrize("name", ["web-static", "e2e-release", "e2e-sql"])
 def test_only_etl_release_can_have_a_strategy(name: str) -> None:
     jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
     _assert_independent_release_jobs(jobs)
@@ -87,7 +90,7 @@ def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
     _assert_independent_release_jobs(workflow["jobs"])
     assert workflow["jobs"]["verify"]["if"] == "${{ always() }}"
     aggregate = workflow["jobs"]["verify"]
-    assert aggregate["needs"] == ["scope", "web-static", "etl-release", "e2e-release"]
+    assert aggregate["needs"] == ["scope", "web-static", "etl-release", "e2e-release", "e2e-sql"]
     for name in aggregate["needs"]:
         variable = name.upper().replace("-", "_") + "_RESULT"
         assert aggregate["env"][variable] == f"${{{{ needs.{name}.result }}}}"
@@ -111,6 +114,7 @@ esac
 test "$WEB_STATIC_RESULT" = "$web"
 test "$ETL_RELEASE_RESULT" = "$etl"
 test "$E2E_RELEASE_RESULT" = "$e2e"
+test "$E2E_SQL_RESULT" = "$e2e"
 """
     )
     uploads = [
@@ -123,7 +127,7 @@ test "$E2E_RELEASE_RESULT" = "$e2e"
     job_name, index, upload = uploads[0]
     assert job_name == "e2e-release"
     gate = workflow["jobs"][job_name]["steps"][index - 1]
-    assert gate["run"] == "pnpm test:e2e:gate"
+    assert gate["run"] == "pnpm test:e2e:gate --lane browser"
     assert gate["working-directory"] == "apps/web"
     assert upload["uses"] == ("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
     assert upload["if"] == "${{ failure() }}"
@@ -136,6 +140,60 @@ test "$E2E_RELEASE_RESULT" = "$e2e"
     }
     assert "continue-on-error" not in gate
     assert workflow["permissions"] == {"contents": "read"}
+
+
+def _assert_sql_lane(job: dict[str, Any]) -> None:
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "services" not in job
+    assert "continue-on-error" not in job
+    steps = job["steps"]
+    assert len(steps) == 6
+    assert [step["uses"].partition("@")[0] for step in steps[:4]] == [
+        "actions/checkout",
+        "pnpm/action-setup",
+        "actions/setup-node",
+        "supabase/setup-cli",
+    ]
+    assert steps[0]["with"] == {"persist-credentials": False}
+    assert steps[1]["with"] == {"version": "12.3.4"}
+    assert steps[2]["with"] == {
+        "node-version": 24,
+        "cache": "pnpm",
+        "cache-dependency-path": "apps/web/pnpm-lock.yaml",
+    }
+    assert steps[3]["with"] == {"version": "2.112.0"}
+    assert steps[4:] == [
+        {"run": "pnpm install --frozen-lockfile", "working-directory": "apps/web"},
+        {"run": "pnpm test:e2e:gate --lane sql", "working-directory": "apps/web"},
+    ]
+    assert all("if" not in step and "continue-on-error" not in step for step in steps)
+
+
+def test_sql_lane_has_only_pinned_setup_install_and_complete_sql_command() -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    assert "e2e-sql" in jobs
+    _assert_sql_lane(jobs["e2e-sql"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"run": "pnpm test:e2e:gate --scale-proof-only"},
+        {"run": "pnpm test:e2e:gate"},
+        {"if": "${{ failure() }}"},
+        {"continue-on-error": True},
+        {"working-directory": "."},
+    ],
+)
+def test_sql_lane_cannot_reduce_or_mask_required_proofs(mutation: dict[str, Any]) -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    assert "e2e-sql" in jobs
+    job = jobs["e2e-sql"]
+    _assert_sql_lane(job)
+    job["steps"][-1].update(mutation)
+    with pytest.raises(AssertionError):
+        _assert_sql_lane(job)
 
 
 class _LineLoader(yaml.SafeLoader):
@@ -181,6 +239,7 @@ def test_supabase_cli_versions_are_pinned_to_their_exact_release_jobs() -> None:
     assert setups == [
         ("etl-release", reference, {"version": "2.116.0"}),
         ("e2e-release", reference, {"version": "2.112.0"}),
+        ("e2e-sql", reference, {"version": "2.112.0"}),
     ]
 
 
