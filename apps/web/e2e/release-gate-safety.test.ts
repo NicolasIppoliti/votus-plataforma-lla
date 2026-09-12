@@ -1003,22 +1003,22 @@ describe("base contracts", () => {
 		expect(workflow).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(gateContract).not.toContain(`"${passwordEnvironmentName}"`);
 	});
-	it("allows an artifact step condition without making its release job conditional", () => {
-		expectUnconditionalReleaseJob(
-			"  e2e-release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: ${{ failure() }}\n",
+	it("allows an artifact step condition without changing its scope condition", () => {
+		expectScopedReleaseJob(
+			scopedJob("  e2e-release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: ${{ failure() }}\n"),
 		);
 	});
 	it.each(["if: ${{ failure() }}", "needs: web-static", "strategy: {}"])(
 		"rejects the release job-level restriction %s even with an artifact step",
 		(restriction) => {
-			expect(() => expectUnconditionalReleaseJob(
+			expect(() => expectScopedReleaseJob(
 				`  e2e-release:\n    ${restriction}\n    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        if: \${{ failure() }}\n`,
 			)).toThrow();
 		},
 	);
 	const etlStrategy = "    strategy:\n      fail-fast: false\n      matrix:\n        case: [ordinary, success, ledger, sql]\n";
 	it("allows only the exact isolated ETL matrix", () => {
-		expectUnconditionalReleaseJob(`  etl-release:\n${etlStrategy}    steps:\n`);
+		expectScopedReleaseJob(scopedJob(`  etl-release:\n${etlStrategy}    steps:\n`));
 	});
 	it.each([
 		etlStrategy.replace("false", "true"),
@@ -1027,17 +1027,25 @@ describe("base contracts", () => {
 		`${etlStrategy}      max-parallel: 1\n`,
 		"",
 	])("rejects an unsupported ETL matrix %s", (strategy) => {
-		expect(() => expectUnconditionalReleaseJob(`  etl-release:\n${strategy}    steps:\n`)).toThrow();
+		expect(() => expectScopedReleaseJob(scopedJob(`  etl-release:\n${strategy}    steps:\n`))).toThrow();
 	});
 	it.each(["web-static", "e2e-release"])("rejects the ETL matrix on %s", (job) => {
-		expect(() => expectUnconditionalReleaseJob(`  ${job}:\n${etlStrategy}`)).toThrow();
+		expect(() => expectScopedReleaseJob(scopedJob(`  ${job}:\n${etlStrategy}`))).toThrow();
 	});
 	it.each(["if: always()", "needs: web-static"])("rejects ETL job restriction %s", (restriction) => {
-		expect(() => expectUnconditionalReleaseJob(`  etl-release:\n${etlStrategy}    ${restriction}\n`)).toThrow();
+		expect(() => expectScopedReleaseJob(scopedJob(`  etl-release:\n${etlStrategy}    ${restriction}\n`))).toThrow();
 	});
-	function expectUnconditionalReleaseJob(releaseJob: string): void {
+	function scopedJob(releaseJob: string): string {
+		const id = releaseJob.match(/^  ([a-z0-9-]+):/)![1];
+		return releaseJob.replace("\n", `\n    needs: scope\n    if: \${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), '${id}') }}\n`);
+	}
+	function expectScopedReleaseJob(releaseJob: string): void {
 		// Match job keys at the workflow's four-space indentation, not nested step keys.
-		expect(releaseJob).not.toMatch(/^ {4}(?:if|needs):/m);
+		const id = releaseJob.match(/^  ([a-z0-9-]+):/)![1];
+		expect(releaseJob.match(/^ {4}(?:if|needs):.*$/gm)).toEqual([
+			"    needs: scope",
+			`    if: \${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), '${id}') }}`,
+		]);
 		if (releaseJob.startsWith("  etl-release:\n")) {
 			expect(releaseJob.match(/^ {4}strategy:\n(?: {6,}.*\n)*/gm)).toEqual([etlStrategy]);
 		} else {
@@ -1079,9 +1087,15 @@ describe("base contracts", () => {
 		expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
 		expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
 		for (const releaseJob of [webStatic, etlRelease, e2eRelease])
-			expectUnconditionalReleaseJob(releaseJob);
+			expectScopedReleaseJob(releaseJob);
 
 		expect(scope).toContain("name: scope");
+		expect(scope).toContain("gates: ${{ steps.publish.outputs.gates }}");
+		expect(scope).toContain("id: publish");
+		expect(scope).toContain("SCOPE_JSON: ${{ steps.classify.outputs.json }}");
+		expect(scope).toContain("id: classify");
+		expect(scope).toContain(`printf '%s\\n' "$scope_json"`);
+		expect(scope).toContain(`printf 'json=%s\\n' "$scope_json" >> "$GITHUB_OUTPUT"`);
 		expect(scope).toContain("timeout-minutes: 2");
 		expect(scope).toContain("persist-credentials: false");
 		expect(scope).toContain("fetch-depth: 0");
@@ -1148,7 +1162,7 @@ describe("base contracts", () => {
 		expect(verify).toContain("${{ needs.web-static.result }}");
 		expect(verify).toContain("${{ needs.etl-release.result }}");
 		expect(verify).toContain("${{ needs.e2e-release.result }}");
-		expect(verify.match(/= "success"/g)).toHaveLength(4);
+		expect(verify).toContain("SCOPE_GATES: ${{ needs.scope.outputs.gates }}");
 
 		const actionReferences = Array.from(
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),

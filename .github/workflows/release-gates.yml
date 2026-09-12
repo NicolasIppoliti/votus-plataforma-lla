@@ -8,6 +8,8 @@ permissions:
 jobs:
   scope:
     name: scope
+    outputs:
+      gates: ${{ steps.publish.outputs.gates }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -21,16 +23,44 @@ jobs:
         with:
           node-version: 24
       - name: Classify changed paths
+        id: classify
         shell: bash
         run: |
+          scope_json=$(
           if [ "${{ github.event_name }}" = "push" ]; then
             node --experimental-strip-types apps/web/scripts/ci-path-scope.ts --all
           else
             node --experimental-strip-types apps/web/scripts/ci-path-scope.ts \
               --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.sha }}"
           fi
+          )
+          printf '%s\n' "$scope_json"
+          printf 'json=%s\n' "$scope_json" >> "$GITHUB_OUTPUT"
+      - name: Publish scope gates
+        id: publish
+        shell: bash
+        env:
+          SCOPE_JSON: ${{ steps.classify.outputs.json }}
+        run: |
+          node <<'NODE'
+          const { appendFileSync } = require('node:fs');
+          const scope = JSON.parse(process.env.SCOPE_JSON);
+          const choices = new Map([
+            ['all', ['web-static', 'etl-release', 'e2e-release']],
+            ['etl-only', ['etl-release']],
+            ['web-and-e2e', ['web-static', 'e2e-release']],
+          ]);
+          const gates = choices.get(scope?.decision);
+          if (scope?.schemaVersion !== 1 || !gates ||
+              JSON.stringify(scope.gates) !== JSON.stringify(gates)) {
+            throw new Error('Invalid scope contract');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `gates=${JSON.stringify(gates)}\n`);
+          NODE
 
   web-static:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'web-static') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -59,6 +89,8 @@ jobs:
         working-directory: apps/web
 
   etl-release:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'etl-release') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -117,6 +149,8 @@ jobs:
           fi
 
   e2e-release:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'e2e-release') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -165,6 +199,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:
+      SCOPE_GATES: ${{ needs.scope.outputs.gates }}
       SCOPE_RESULT: ${{ needs.scope.result }}
       WEB_STATIC_RESULT: ${{ needs.web-static.result }}
       ETL_RELEASE_RESULT: ${{ needs.etl-release.result }}
@@ -174,6 +209,15 @@ jobs:
         shell: bash
         run: |
           test "$SCOPE_RESULT" = "success"
-          test "$WEB_STATIC_RESULT" = "success"
-          test "$ETL_RELEASE_RESULT" = "success"
-          test "$E2E_RELEASE_RESULT" = "success"
+          case "$SCOPE_GATES" in
+            '["web-static","etl-release","e2e-release"]')
+              web=success; etl=success; e2e=success ;;
+            '["etl-release"]')
+              web=skipped; etl=success; e2e=skipped ;;
+            '["web-static","e2e-release"]')
+              web=success; etl=skipped; e2e=success ;;
+            *) echo "Invalid scope gates" >&2; exit 1 ;;
+          esac
+          test "$WEB_STATIC_RESULT" = "$web"
+          test "$ETL_RELEASE_RESULT" = "$etl"
+          test "$E2E_RELEASE_RESULT" = "$e2e"
