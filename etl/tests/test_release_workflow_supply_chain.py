@@ -24,7 +24,11 @@ _LINE = object()
 
 def _assert_independent_release_jobs(jobs: dict[str, Any]) -> None:
     for name in ("web-static", "etl-release", "e2e-release"):
-        assert not {"if", "needs"}.intersection(jobs[name])
+        assert jobs[name]["needs"] == "scope"
+        assert jobs[name]["if"] == (
+            "${{ !cancelled() && needs.scope.result == 'success' && "
+            f"contains(fromJSON(needs.scope.outputs.gates || '[]'), '{name}') }}" + "}"
+        )
         if name == "etl-release":
             assert jobs[name]["strategy"] == {
                 "fail-fast": False,
@@ -48,7 +52,7 @@ def test_release_job_conditions_cannot_hide_in_yaml_formatting(name: str, condit
 def test_release_jobs_cannot_be_serialized(name: str) -> None:
     jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
     _assert_independent_release_jobs(jobs)
-    jobs[name]["needs"] = ["scope"]
+    jobs[name]["needs"] = ["scope", "etl-release" if name == "web-static" else "web-static"]
     with pytest.raises(AssertionError):
         _assert_independent_release_jobs(jobs)
 
@@ -87,7 +91,28 @@ def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
     for name in aggregate["needs"]:
         variable = name.upper().replace("-", "_") + "_RESULT"
         assert aggregate["env"][variable] == f"${{{{ needs.{name}.result }}}}"
-        assert f'test "${variable}" = "success"' in aggregate["steps"][0]["run"]
+    assert workflow["jobs"]["scope"]["outputs"] == {"gates": "${{ steps.publish.outputs.gates }}"}
+    assert aggregate["env"]["SCOPE_GATES"] == "${{ needs.scope.outputs.gates }}"
+    # Runtime permutations are exercised by the web workflow-boundary tests.
+    assert aggregate["steps"][0]["shell"] == "bash"
+    assert (
+        aggregate["steps"][0]["run"]
+        == """\
+test "$SCOPE_RESULT" = "success"
+case "$SCOPE_GATES" in
+  '["web-static","etl-release","e2e-release"]')
+    web=success; etl=success; e2e=success ;;
+  '["etl-release"]')
+    web=skipped; etl=success; e2e=skipped ;;
+  '["web-static","e2e-release"]')
+    web=success; etl=skipped; e2e=success ;;
+  *) echo "Invalid scope gates" >&2; exit 1 ;;
+esac
+test "$WEB_STATIC_RESULT" = "$web"
+test "$ETL_RELEASE_RESULT" = "$etl"
+test "$E2E_RELEASE_RESULT" = "$e2e"
+"""
+    )
     uploads = [
         (job_name, index, step)
         for job_name, job in workflow["jobs"].items()
