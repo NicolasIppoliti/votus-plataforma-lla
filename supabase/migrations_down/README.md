@@ -1,4 +1,9 @@
-# Down migrations
+# Historical down migrations
+
+This sibling directory is retained for historical migration and OpenSpec
+references. Current release proofs use [migrations/down](../migrations/down/README.md).
+Neither directory provides complete rollback coverage or a one-command hosted
+rollback. Keep existing SQL paths intact; do not move them into the forward inventory.
 
 The Supabase CLI applies every `.sql` file directly under `supabase/migrations/`
 as a forward migration, in filename order, during `supabase db start` /
@@ -9,12 +14,9 @@ migration's version, which the CLI rejects as a duplicate `schema_migrations`
 primary key (discovered running migrations 0001-0005 for the first time in
 Phase 8, `SQLSTATE 23505`).
 
-Down migrations therefore live in this sibling directory instead, one file
-per forward migration, so the CLI never auto-applies them. Apply one
-manually and deliberately when rolling back a specific migration, e.g.:
-
-```sh
-supabase db execute --file supabase/migrations_down/0006_rls_down.sql
-```
-
-or via `docker exec`/`psql` directly against the target Postgres instance.
+The historical down scripts were placed in this sibling directory to keep them
+out of automatic forward application. This does not imply one down script exists
+for every forward migration. For any proposed manual rollback, first read the
+[current guidance](../migrations/down/README.md) and the exact migration contract;
+verify supported tooling and obtain separate target-specific execution approval.
+The old command example is not a supported hosted rollback procedure.

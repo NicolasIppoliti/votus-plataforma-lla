@@ -8,22 +8,31 @@ This change does not run a hosted migration or deploy the web application. The e
 
 ## Reproduce the local proof
 
-Run from the repository root:
+Run from the repository root with the [web prerequisites](../apps/web/README.md),
+including pnpm 12.3.4 and the owned gate's Docker/Supabase capabilities:
 
 ```bash
 uv --directory etl run pytest tests/test_migration_sql.py -q
-pnpm --dir apps/web exec vitest run e2e/release-gate-safety.test.ts e2e/scenario-ownership.test.ts
-node --experimental-strip-types apps/web/scripts/e2e-release-gate.ts --release-proof-only
+npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web exec vitest run e2e/release-gate-safety.test.ts e2e/scenario-ownership.test.ts
+npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate -- --release-proof-only
 ```
 
 The disposable proof MUST report:
 
-- canonical migration inventory `0001` through `0027` exactly; the isolated E2E-only service-role migration is synthetic `0028`;
+- exact canonical production migration inventory and a non-colliding isolated E2E-only service-role migration, as defined by `MIGRATION_VERSIONS` and `SYNTHETIC_MIGRATION` in the [current gate plan](../apps/web/scripts/e2e-gate-runtime.ts);
 - pgTAP success for authenticated execution, anonymous denial, internal-function denial, RLS-visible reads, normalized identities, source isolation, and literal `is_random_sample = false`;
 - a scale contract with many out-of-scope official rows, a tiny selected `02/001` scope, non-official rows elsewhere, unchanged official totals, and null/unsupported source kinds audited as `unknown`;
 - an `EXPLAIN (ANALYZE, BUFFERS)` plan that names `result_row_non_official_scope_idx` for the selected source-exclusion audit;
-- rollback/reapply sequence `0027 down -> 0026 down -> 0025 down -> 0023 down -> 0022 down -> 0021 down -> 0020 down`, then the corresponding forward sequence through `0027`;
+- the current rollback/reapply proofs selected by that gate plan, including the historical 0027 index contract; inspect the [release SQL](../supabase/tests/results_exploration_release.sql) for its actual sequence rather than treating the original 0027-era chain as the whole current gate;
 - restored authenticated grants, anonymous/internal denial, and zero owned Docker/workdir residue.
+
+To inspect inventory without running a stack, open the gate plan's two constants
+and compare them with the filenames directly under [forward migrations](../supabase/migrations/).
+The [runner](../apps/web/scripts/e2e-release-gate.ts) validates that inventory before
+execution and installs synthetic grants only in its owned test environment.
+The current gate includes later numbered and timestamped migrations; the hosted
+0027 procedure below remains a historical, migration-specific contract, not a
+claim about today's deployed prefix. See [partial down coverage](../supabase/migrations/down/README.md).
 
 Disposable timings describe only the fixture and current machine. They are not production latency guarantees.
 
