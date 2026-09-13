@@ -10,7 +10,10 @@ import {
   type ScopeFormKind, type ScopeMembership, type ScopeOptionPatch,
 } from "./scope-selector-behavior";
 
-interface ScopeSelectorFormProps { action: string; kind: ScopeFormKind; children: ReactNode; }
+interface ScopeSelectorFormProps {
+  action: string; kind: ScopeFormKind; children: ReactNode;
+  submittedValues?: ScopeControlValues;
+}
 
 function formControls(form: HTMLFormElement): ScopeControls {
   const controls: ScopeControls = {};
@@ -45,7 +48,7 @@ function patchOptions(form: HTMLFormElement, patches: ScopeOptionPatch[]): void 
   }
 }
 
-export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormProps): ReactNode {
+export function ScopeSelectorForm({ action, kind, children, submittedValues }: ScopeSelectorFormProps): ReactNode {
   const router = useRouter();
   const searchParams = useSearchParams();
   const appliedQuery = searchParams.toString();
@@ -53,6 +56,10 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
   const retryRef = useRef<() => void>(() => undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftValues, setDraftValues] = useState<ScopeControlValues | null>(null);
+  const dirty = submittedValues && draftValues && SCOPE_CONTROL_NAMES.some(
+    (name) => (draftValues[name] ?? "") !== (submittedValues[name] ?? ""),
+  );
 
   useEffect(() => {
     const form = formRef.current;
@@ -63,7 +70,11 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
     let busy = false;
     let failed = false;
 
+    const updateDraft = (): void => {
+      if (submittedValues) setDraftValues(controlValues(controls));
+    };
     const loadOptions = async (changedName?: ScopeControlName): Promise<void> => {
+      updateDraft();
       controller?.abort();
       controller = new AbortController();
       const requestController = controller;
@@ -95,6 +106,7 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
         if (dependent && kind === SCOPE_FORM_KIND.DRILLDOWN) dependent.add("level");
         patchOptions(form, dependent ? patches.filter(({ name }) => dependent.has(name)) : patches);
         synchronizeScopeControls(controls, kind);
+        updateDraft();
       } catch {
         if (requestController.signal.aborted || requestGeneration !== generation) return;
         failed = true;
@@ -128,10 +140,11 @@ export function ScopeSelectorForm({ action, kind, children }: ScopeSelectorFormP
       cleanupEnhancement();
       form.removeEventListener("submit", handleSubmit);
     };
-  }, [action, appliedQuery, kind, router]);
+  }, [action, appliedQuery, kind, router, submittedValues]);
 
   return <form action={action} method="get" aria-busy={loading || undefined} key={appliedQuery} ref={formRef}>
     {children}
+    {dirty ? <p role="status">Cambios sin aplicar</p> : null}
     <p aria-live="polite">{loading ? "Actualizando opciones…" : ""}</p>
     {error ? <p role="alert">{error} <button type="button" onClick={() => retryRef.current()}>Reintentar</button></p> : null}
   </form>;

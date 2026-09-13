@@ -169,6 +169,52 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(provenance).not.toContainText("http://");
       await expect(provenance).not.toContainText("https://");
 
+      const submittedScope = explorer.getByRole("region", { name: "Alcance aplicado", exact: true });
+      const results = explorer.getByRole("region", { name: "Desglose oficial autorizado", exact: true });
+      const evidence = explorer.getByRole("region", { name: "Referencias de la consulta", exact: true });
+      const submittedHeading = results.getByRole("heading", { name: "Desglose oficial autorizado", exact: true });
+      await expect(submittedScope).toBeVisible();
+      const submitted = {
+        scope: await submittedScope.innerText(), heading: await submittedHeading.innerText(),
+        votes: await voteTable.innerText(), provenance: await provenance.innerText(),
+        results: await results.innerText(), evidence: await evidence.innerText(),
+      };
+      const dirty = form.getByText("Cambios sin aplicar", { exact: true });
+      const level = form.getByRole("combobox", { name: "Nivel del informe", exact: true });
+      await expect(level).toHaveValue("mesa");
+      await expect(dirty).toHaveCount(0);
+      for (const value of ["establecimiento", "mesa"]) {
+        const options = page.waitForResponse((response) =>
+          new URL(response.url()).pathname === "/api/drilldown/scope-options" && response.request().method() === "POST");
+        await level.selectOption(value);
+        expect((await options).ok()).toBe(true);
+        await expect(form).not.toHaveAttribute("aria-busy", "true");
+        await expect(level).toHaveValue(value);
+        if (value === "establecimiento") await expect(dirty).toBeVisible();
+        else await expect(dirty).toHaveCount(0);
+        await expect(page).toHaveURL(explorerUrl);
+        await expect.poll(async () => ({
+          scope: await submittedScope.innerText(), heading: await submittedHeading.innerText(),
+          votes: await voteTable.innerText(), provenance: await provenance.innerText(),
+          results: await results.innerText(), evidence: await evidence.innerText(),
+        })).toEqual(submitted);
+      }
+      const filters = explorer.getByRole("region", { name: "Elegir el alcance de los resultados", exact: true });
+      await expect.poll(async () => {
+        const [filterBox, resultBox, evidenceBox] = await Promise.all(
+          [filters, results, evidence].map((region) => region.evaluate((element) => {
+            const { top, bottom, left, right, width } = element.getBoundingClientRect();
+            return { top, bottom, left, right, width };
+          })),
+        );
+        return {
+          filtersAbove: filterBox!.bottom <= Math.min(resultBox!.top, evidenceBox!.top),
+          adjacent: resultBox!.right <= evidenceBox!.left,
+          aligned: Math.abs(resultBox!.top - evidenceBox!.top) <= 2,
+          resultsDominant: resultBox!.width > evidenceBox!.width,
+        };
+      }).toEqual({ filtersAbove: true, adjacent: true, aligned: true, resultsDominant: true });
+
       await page.goBack(); await expect(page).toHaveURL(draftUrl);
       await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
       draftUrl = coldUrl; navigations.length = 0;

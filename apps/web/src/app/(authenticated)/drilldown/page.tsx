@@ -4,6 +4,7 @@ import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
 import {
   SCOPE_FORM_KIND,
   scopeControlStates,
+  serializeScopeDraft,
 } from "@/components/scope-selector-behavior";
 import { TableScroll } from "@/components/TableScroll";
 import {
@@ -35,6 +36,7 @@ interface DrilldownPageProps {
 
 interface ExplorerFormProps {
   facets: ExplorationFacets;
+  submitted?: boolean;
   selected: {
     electionId?: string;
     categoryId?: string;
@@ -61,8 +63,8 @@ type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusalWithDetails = Exclude<EvidenceRefusal, { status: "authorization_denied" }>;
 
-function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
-  const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, {
+function ExplorerForm({ facets, selected, submitted = false }: ExplorerFormProps): ReactNode {
+  const values = {
     electionId: selected.electionId ?? "",
     categoryId: selected.categoryId ?? "",
     distritoCode: selected.distritoCode ?? "",
@@ -71,7 +73,8 @@ function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
     establecimientoCode: selected.establecimientoCode ?? "",
     mesaCode: selected.mesaCode?.toString() ?? "",
     level: selected.level ?? "",
-  });
+  };
+  const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, values);
 
   return (
     <section className="official-explorer__filters panel" aria-labelledby="explorer-form-heading">
@@ -80,7 +83,8 @@ function ExplorerForm({ facets, selected }: ExplorerFormProps): ReactNode {
         <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>
         <p>Use los selectores para crear un enlace directo reutilizable a resultados oficiales.</p>
       </div>
-      <ScopeSelectorForm action="/drilldown" kind={SCOPE_FORM_KIND.DRILLDOWN}>
+      <ScopeSelectorForm key={serializeScopeDraft(values)} action="/drilldown" kind={SCOPE_FORM_KIND.DRILLDOWN}
+        {...(submitted ? { submittedValues: values } : {})}>
         <fieldset className="form-grid selector-form">
           <legend className="selector-form__legend">Selectores de resultados</legend>
           <div className="field">
@@ -244,7 +248,7 @@ function refusalMessage(status: EvidenceRefusal["status"]): string {
   return "Se rechazó la solicitud: la evidencia autorizada no está disponible.";
 }
 
-function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
+function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selection: OfficialSelection }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
   if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className="official-explorer__state" role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
   return (
@@ -311,6 +315,19 @@ function ResultEvidence({ evidence }: { evidence: EvidenceOk }): ReactNode {
       <section className="official-explorer__evidence" aria-labelledby="official-evidence-heading">
         <p className="official-explorer__section-label">Evidencia y archivo</p>
         <h2 id="official-evidence-heading">Referencias de la consulta</h2>
+        <section aria-labelledby="submitted-scope-heading">
+          <h3 id="submitted-scope-heading">Alcance aplicado</h3>
+          <dl className="official-explorer__submitted-scope evidence-text">
+            <dt>Elección</dt><dd>{selection.electionId}</dd>
+            <dt>Categoría</dt><dd>{selection.categoryId}</dd>
+            <dt>Distrito</dt><dd>{selection.distritoCode}</dd>
+            <dt>Sección</dt><dd>{selection.seccionCode}</dd>
+            <dt>Circuito</dt><dd>{selection.circuitoCode ?? "Cualquier circuito"}</dd>
+            <dt>Establecimiento</dt><dd>{selection.establecimientoCode ?? "Cualquier establecimiento"}</dd>
+            <dt>Mesa</dt><dd>{selection.mesaCode ?? "Cualquier mesa"}</dd>
+            <dt>Nivel del informe</dt><dd>{selection.requestedLevel}</dd>
+          </dl>
+        </section>
         <section aria-labelledby="reference-heading">
           <h3 id="reference-heading">Referencia electoral autorizada</h3>
         {reference.sourceExclusions.map((entry) => (
@@ -500,5 +517,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     );
   }
 
-  return <PageShell form={form}><ResultEvidence evidence={evidence} /></PageShell>;
+  return <PageShell form={<ExplorerForm facets={facets} selected={selected} submitted />}>
+    <ResultEvidence evidence={evidence} selection={selection} />
+  </PageShell>;
 }
