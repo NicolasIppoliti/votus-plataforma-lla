@@ -147,6 +147,7 @@ export interface ReleaseGateCliDependencies {
 
 export interface ReleaseGateProductionPhaseEffects {
 	runProductionMigrations(): Promise<void>;
+	startApplicationServices(): Promise<void>;
 	validateStackStatus(): Promise<StackStatus>;
 	runSetupProof(proof: ReleaseGateSetupProof): Promise<void>;
 	runPgTapProof(proof: ReleaseGatePgTapProof): Promise<void>;
@@ -514,6 +515,7 @@ export async function runProductionReleasePhases(
 	effects: ReleaseGateProductionPhaseEffects,
 ): Promise<StackStatus> {
 	await effects.runProductionMigrations();
+	await effects.startApplicationServices();
 	const stack = await effects.validateStackStatus();
 	for (const proof of plan.pgTapProofs) {
 		for (const setup of plan.setupProofs)
