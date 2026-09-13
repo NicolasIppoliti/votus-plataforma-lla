@@ -98,6 +98,7 @@ from .ingest.pba import (
     load_pba_rows,
     pba_parser_quarantine_review_kind,
 )
+from .ingest_metrics import IngestMetrics, MetricsReportError, metrics_report
 from .jurisdiction import (
     is_canonicalizable_circuito_code,
     is_canonicalizable_code,
@@ -859,6 +860,7 @@ def ingest_source(
     manifest_path: Path,
     party_map_path: Path = DEFAULT_PARTY_MAP_PATH,
     crosswalk_path: Path = DEFAULT_CROSSWALK_PATH,
+    metrics: IngestMetrics | None = None,
 ) -> int:
     """Load one already-archived source's parsed rows into `result_row`.
 
@@ -869,6 +871,14 @@ def ingest_source(
     if entry is None:
         raise UnknownSourceError(f"no registered source with id {source_id!r}")
     capability = entry["capability"]
+    if metrics is not None:
+        if capability != "national" or entry.get("source_kind", "official") != "official":
+            raise ValueError("metrics require national official ingestion")
+        registered_year, registered_round = registered_source_election(entry)
+        metrics.data["scope"] = {
+            "source_id": source_id, "year": registered_year, "round": registered_round,
+            "capability": "national", "source_kind": "official",
+        }
     resolved_url: str | None = None
     if capability != "pba":
         resolved_url = resolve_database_url(database_url)
@@ -917,6 +927,7 @@ def ingest_source(
                     election_year=registered_year,
                     election_round=registered_round,
                     establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
+                    metrics=metrics,
                 )
                 inserted = load_national_rows(
                     conn,
@@ -1100,6 +1111,8 @@ def ingest_source(
         else:
             raise UnknownSourceError(f"unsupported capability {capability!r} for ingest")
         conn.commit()
+        if metrics is not None:
+            metrics.data["commit_returned"] = True
     except Exception:
         conn.rollback()
         raise
@@ -1109,6 +1122,22 @@ def ingest_source(
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
+    if getattr(args, "metrics_output", None) is None:
+        return _cmd_ingest(args)
+    try:
+        with metrics_report(
+            Path(args.metrics_output), archive_root=Path(args.local_root),
+            protected=tuple(Path(path) for path in (
+                args.sources_path, args.manifest_path, args.crosswalk_path, args.party_map_path,
+            )),
+        ) as metrics:
+            return _cmd_ingest(args, metrics)
+    except MetricsReportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _cmd_ingest(args: argparse.Namespace, metrics: IngestMetrics | None = None) -> int:
     sources = load_sources(Path(args.sources_path))
     try:
         inserted = ingest_source(
@@ -1124,6 +1153,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             # party map and then ingesting against the repo default silently
             # breaks the guarantee `validate-curated` gives.
             party_map_path=Path(args.party_map_path),
+            metrics=metrics,
         )
     except (
         UnknownSourceError,
@@ -1156,6 +1186,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    if metrics is not None:
+        metrics.data["status"] = "succeeded"
     print(f"ingested {inserted} rows from {args.source}")
     return 0
 
@@ -3289,6 +3321,7 @@ def build_parser() -> argparse.ArgumentParser:
         "ingest", help="Load one archived source's rows into result_row."
     )
     ingest_parser.add_argument("--source", required=True)
+    ingest_parser.add_argument("--metrics-output", type=Path, default=None)
     ingest_parser.add_argument("--database-url", default=None)
     ingest_parser.add_argument("--year", type=int, required=True)
     ingest_parser.add_argument("--round", dest="round", required=True)
