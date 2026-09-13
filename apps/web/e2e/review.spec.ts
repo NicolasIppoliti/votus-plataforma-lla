@@ -115,15 +115,18 @@ async function expectPopulatedReviewLayout(
       let armed = false, moved = false, released = false, complete = false;
       let resetPending = false;
       let resetComplete = false;
+      const completeInteraction = () => {
+        complete = armed && moved && released && element.scrollLeft > 0;
+      };
       const key = (event: Event) => {
         if (!resetComplete || !(event instanceof KeyboardEvent) || event.target !== element || !event.isTrusted || event.key !== "ArrowRight"
           || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         if (event.type === "keydown") { armed = true; moved = released = complete = false; }
-        else if (armed) released = true;
+        else if (armed) { released = true; completeInteraction(); }
       };
       const scroll = () => {
         complete = false;
-        if (armed && element.scrollLeft > 0) moved = true;
+        if (armed && element.scrollLeft > 0) { moved = true; completeInteraction(); }
       };
       const end = () => {
         if (resetPending) {
@@ -131,9 +134,7 @@ async function expectPopulatedReviewLayout(
             resetPending = false;
             resetComplete = true;
           }
-          return;
         }
-        if (armed && moved && released && element.scrollLeft > 0) complete = true;
       };
       element.addEventListener("keydown", key);
       element.addEventListener("keyup", key);
@@ -159,7 +160,7 @@ async function expectPopulatedReviewLayout(
       await completion.evaluate(state => state.reset());
       await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
       await expect.poll(() => completion.evaluate(state => state.resetCompleted())).toBe(true);
-      await page.keyboard.press("ArrowRight");
+      await region.press("ArrowRight");
       await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
       await expect.poll(() => completion.evaluate(state => state.completed())).toBe(true);
     } finally {
