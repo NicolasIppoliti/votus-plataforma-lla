@@ -276,6 +276,7 @@ describe("explicit release-gate lanes", () => {
 		const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
 		const token = "12345678-1234-4123-8123-123456789abc";
 		const trace: string[] = [];
+		const commands: { command: string; args: readonly string[] }[] = [];
 		const output: string[] = [];
 		let port = 46000;
 		let sqlCount = 0;
@@ -292,7 +293,21 @@ describe("explicit release-gate lanes", () => {
 		const browser = vi.spyOn(chromium, "executablePath").mockReturnValue(
 			argv.includes("sql") ? `${tempRoot}/absent-chromium` : fileURLToPath(import.meta.url),
 		);
-		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+		const readinessRequests: { url: string; options: RequestInit | undefined }[] = [];
+		const cancelBody = vi.fn().mockResolvedValue(undefined);
+		const timeout = vi.spyOn(AbortSignal, "timeout");
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+			if (String(input).includes("/rest/v1/")) {
+				trace.push("readiness");
+				readinessRequests.push({ url: String(input), options });
+				if (fault === "redirect") throw new TypeError("synthetic-anon synthetic-service redirect");
+				if (fault === "timeout") throw new DOMException("synthetic-anon synthetic-service timeout", "TimeoutError");
+				const response = new Response(null, { status: fault.startsWith("http-") ? Number(fault.slice(5)) : 200 });
+				Object.defineProperty(response, "body", { value: { cancel: cancelBody } });
+				return response;
+			}
+			return new Response(null, { status: 200 });
+		});
 		spawn.mockImplementation(() => {
 			trace.push("server");
 			return {
@@ -320,6 +335,7 @@ describe("explicit release-gate lanes", () => {
 		});
 		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 		spawnSync.mockImplementation((command, args, options) => {
+			commands.push({ command, args: [...args] });
 			let phase = "";
 			let text = "";
 			if (command === "pnpm") {
@@ -331,11 +347,39 @@ describe("explicit release-gate lanes", () => {
 					expect(options.env.VOTUS_E2E_GATE_MODE).toBe("full");
 				}
 			}
-			if (command === "docker" && args[0] === "inspect") text = ["5432/tcp", "8000/tcp"]
-				.map((key) => JSON.stringify({ [key]: [{ HostIp: "127.0.0.1", HostPort: "46000" }] })).join("\n");
+			if (command === "docker" && args[0] === "network" && args[1] === "create") {
+				phase = "network";
+				text = fault === "network-id-empty" ? "\n"
+					: fault === "network-id-malformed" ? "PRIVATE_OUTPUT_MARKER"
+						: fault === "network-id-multiline" ? `${"b".repeat(64)}\n${"c".repeat(64)}`
+							: `${"b".repeat(64)}\n`;
+			}
+			if (command === "docker" && args[0] === "container" && args[1] === "inspect") {
+				phase = "db-inspect";
+				text = fault === "identity-json" ? "PRIVATE_OUTPUT_MARKER" : JSON.stringify({
+					id: fault === "identity-id" ? "a".repeat(12) : "a".repeat(64),
+					name: fault === "identity-name" ? "/supabase_db_unowned" : "/supabase_db_votus-e2e-12345678123441238123",
+					project: fault === "identity-project" ? "unowned" : "votus-e2e-12345678123441238123",
+					networks: fault === "identity-network" ? { unowned: { NetworkID: "b".repeat(64) } }
+						: fault === "identity-extra-network" ? { "supabase_network_votus-e2e-12345678123441238123": { NetworkID: "b".repeat(64) }, unowned: { NetworkID: "b".repeat(64) } }
+						: { "supabase_network_votus-e2e-12345678123441238123": {
+							NetworkID: fault === "attachment-missing" ? undefined
+								: fault === "attachment-nonstring" ? 123
+									: fault === "attachment-malformed" ? "PRIVATE_OUTPUT_MARKER"
+										: fault === "attachment-different" ? "c".repeat(64) : "b".repeat(64),
+						} },
+				});
+			}
+			if (command === "docker" && args[0] === "container" && args[1] === "rm") phase = "db-remove";
+			if (command === "docker" && args[0] === "inspect") {
+				phase = "publication";
+				text = ["5432/tcp", "8000/tcp"]
+					.map((key) => JSON.stringify({ [key]: [{ HostIp: "127.0.0.1", HostPort: "46000" }] })).join("\n");
+			}
 			if (command === "docker" && args[0] === "exec") phase = `sql${++sqlCount}`;
 			if (command === "supabase") {
 				if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
+				else if (args[0] === "db" && args[1] === "start") phase = "db-start";
 				else if (args[0] === "start") phase = "start";
 				else if (args[0] === "migration") phase = `migration${++migrationCount}`;
 				else if (args[0] === "test") phase = `pgtap:${String(args[2]).split("/").at(-1)}`;
@@ -360,10 +404,10 @@ describe("explicit release-gate lanes", () => {
 				expect(exit).toHaveBeenCalledWith(143);
 			}
 			expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
-			return { trace, output: output.join(""), failure };
+			return { trace, commands, readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure };
 		} finally {
 			stdout.mockRestore(); stderr.mockRestore(); signals.mockRestore(); exit.mockRestore();
-			browser.mockRestore(); fetchMock.mockRestore();
+			browser.mockRestore(); fetchMock.mockRestore(); timeout.mockRestore();
 			vi.clearAllTimers(); vi.useRealTimers();
 			spawnSync.mockReset(); spawn.mockReset(); createServer.mockReset();
 			randomUUID.mockReset(); tmpdir.mockReset();
@@ -375,12 +419,42 @@ describe("explicit release-gate lanes", () => {
 		const result = await runLane(lane === "full" ? [] : ["--lane", lane]);
 		expect(result.failure).toBeUndefined();
 		expect(result.trace.filter((phase) => phase === "start")).toHaveLength(1);
-		expect(result.trace.slice(0, 3)).toEqual(["start", "migration1", "status"]);
+		expect(result.trace.slice(0, 9)).toEqual(["network", "db-start", "migration1", "db-inspect", "db-remove", "start", "publication", "status", "readiness"]);
+		expect(result.readinessRequests).toEqual([{
+			url: "http://127.0.0.1:46005/rest/v1/",
+			options: {
+				method: "HEAD", redirect: "error", signal: expect.any(AbortSignal),
+				headers: { apikey: "synthetic-anon", Authorization: "Bearer synthetic-anon", "Accept-Profile": "workspace_api" },
+			},
+		}]);
+		expect(result.timeouts).toEqual([5000]);
+		expect(result.cancelCount).toBe(1);
+		const workdir = result.commands.find(({ args }) => args[0] === "db" && args[1] === "start")!.args[3];
+		const network = "supabase_network_votus-e2e-12345678123441238123";
+		expect(result.commands.filter(({ args }) => args[0] === "network" && args[1] === "create")).toHaveLength(1);
+		expect(result.commands.find(({ args }) => args[0] === "db" && args[1] === "start")?.args).toEqual([
+			"db", "start", "--workdir", workdir, "--network-id", network, "--yes",
+		]);
+		expect(result.commands.find(({ args }) => args[0] === "container" && args[1] === "inspect")?.args).toEqual([
+			"container", "inspect", "--format",
+			'{"id":{{json .Id}},"name":{{json .Name}},"project":{{json (index .Config.Labels "com.supabase.cli.project")}},"networks":{{json .NetworkSettings.Networks}}}',
+			"supabase_db_votus-e2e-12345678123441238123",
+		]);
+		expect(result.commands.find(({ args }) => args[0] === "container" && args[1] === "rm")?.args).toEqual([
+			"container", "rm", "--force", "--", "a".repeat(64),
+		]);
+		expect(result.commands.find(({ args }) => args[0] === "start" && !args.includes("--help"))?.args).toEqual([
+			"start", "--workdir", workdir, "--exclude",
+			"realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor",
+			"--network-id", network, "--yes",
+		]);
+		for (const { args } of result.commands.filter(({ args }) => args.includes("--workdir") && !args.includes("--help")))
+			expect(args[args.indexOf("--workdir") + 1]).toBe(workdir);
 		expect(result.trace.at(-1)).toBe("cleanup");
 		const pgTap = result.trace.filter((phase) => phase.startsWith("pgtap:"));
 		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 13);
 		if (lane !== "browser") {
-			expect(result.trace.slice(3, 9)).toEqual([
+			expect(result.trace.slice(9, 15)).toEqual([
 				"pgtap:results_exploration.sql", "sql1", "pgtap:results_exploration_scale.sql",
 				"pgtap:results_exploration_scale_plans.sql", "sql2", "pgtap:results_coverage_scope_binding.sql",
 			]);
@@ -397,6 +471,54 @@ describe("explicit release-gate lanes", () => {
 			]);
 			expect(result.output).toContain(lane === "browser" ? "Browser lane passed: 8 passed, 0 skipped, disposable stack cleaned; partial release coverage" : "E2E release gate passed: 8 passed");
 		}
+	});
+
+	it.each(["network-id-empty", "network-id-malformed", "network-id-multiline"])("rejects %s before DB startup and cleans up once", async (fault) => {
+		const result = await runLane(["--lane", "browser"], fault);
+		expect(result.failure).toEqual(new Error("owned network identity is invalid; output redacted"));
+		expect(result.trace).toEqual(["network", "cleanup"]);
+		for (const value of ["PRIVATE_OUTPUT_MARKER", "b".repeat(64), "c".repeat(64)])
+			expect(result.output).not.toContain(value);
+	});
+
+	it.each(["identity-json", "identity-id", "identity-name", "identity-project", "identity-network", "identity-extra-network"])("refuses database handoff for %s and cleans up once", async (fault) => {
+		const result = await runLane(["--lane", "browser"], fault);
+		expect(result.failure).toEqual(new Error("owned database identity mismatch; output redacted"));
+		expect(result.trace).toEqual(["network", "db-start", "migration1", "db-inspect", "cleanup"]);
+		expect(result.readinessRequests).toHaveLength(0);
+		expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+		expect(result.output).not.toContain("lane passed:");
+	});
+
+	it.each(["attachment-missing", "attachment-nonstring", "attachment-malformed", "attachment-different"])("refuses %s before container removal and cleans up once", async (fault) => {
+		const result = await runLane(["--lane", "browser"], fault);
+		expect(result.failure).toEqual(new Error("owned database identity mismatch; output redacted"));
+		expect(result.trace).toEqual(["network", "db-start", "migration1", "db-inspect", "cleanup"]);
+		expect(result.commands.filter(({ args }) => args[0] === "container" && args[1] === "rm")).toHaveLength(0);
+		expect(result.commands.filter(({ args }) => args[0] === "start" && !args.includes("--help"))).toHaveLength(0);
+		for (const value of ["PRIVATE_OUTPUT_MARKER", "b".repeat(64), "c".repeat(64)])
+			expect(result.output).not.toContain(value);
+	});
+
+	it.each(["db-start", "migration1", "db-inspect", "db-remove", "start"])("stops before readiness and proofs after %s failure", async (fault) => {
+		const result = await runLane(["--lane", "browser"], fault);
+		const phases = ["network", "db-start", "migration1", "db-inspect", "db-remove", "start"];
+		expect(result.failure).toBeDefined();
+		expect(result.trace).toEqual([...phases.slice(0, phases.indexOf(fault) + 1), "cleanup"]);
+		expect(result.readinessRequests).toHaveLength(0);
+		expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+		expect(result.output).not.toContain("lane passed:");
+	});
+
+	it.each(["http-503", "http-204", "http-301", "redirect", "timeout"])("fails closed without retries or credential output on REST %s", async (fault) => {
+		const result = await runLane(["--lane", "browser"], fault);
+		expect(result.failure).toEqual(new Error("workspace_api REST readiness failed; output redacted"));
+		expect(result.trace).toEqual(["network", "db-start", "migration1", "db-inspect", "db-remove", "start", "publication", "status", "readiness", "cleanup"]);
+		expect(result.readinessRequests).toHaveLength(1);
+		expect(result.timeouts).toEqual([5000]);
+		expect(result.cancelCount).toBe(fault.startsWith("http-") ? 1 : 0);
+		for (const forbidden of ["synthetic-anon", "synthetic-service", "lane passed:", "release gate passed:"])
+			expect(result.output).not.toContain(forbidden);
 	});
 
 	it.each([
@@ -576,6 +698,9 @@ describe("migration release-gate integration", () => {
 			runProductionMigrations: async () => {
 				trace.push("production-migrations");
 			},
+			startApplicationServices: async () => {
+				trace.push("application-services");
+			},
 			validateStackStatus: async () => {
 				trace.push("stack-status");
 				return {
@@ -604,6 +729,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(trace).toEqual([
 			"production-migrations",
+			"application-services",
 			"stack-status",
 			"pgTAP:disposable results-exploration pgTAP",
 			"setup:disposable scale fixture setup",
@@ -626,11 +752,28 @@ describe("migration release-gate integration", () => {
 		]);
 		expect(stack.API_URL).toBe("http://127.0.0.1:54321");
 	});
+	it("stops before status and proofs when application services reject", async () => {
+		const later = vi.fn();
+		const migrations = vi.fn().mockResolvedValue(undefined);
+		await expect(runProductionReleasePhases(await inspectReleaseGatePlan(), {
+			runProductionMigrations: migrations,
+			startApplicationServices: async () => { throw new Error("services failed"); },
+			validateStackStatus: later,
+			runSetupProof: later,
+			runPgTapProof: later,
+			runPostPgTapCleanupProof: later,
+			runRollbackReapplyProof: later,
+			installSyntheticMigration: later,
+		})).rejects.toThrow("services failed");
+		expect(migrations).toHaveBeenCalledOnce();
+		expect(later).not.toHaveBeenCalled();
+	});
 	it("propagates a production phase rejection without running later phases", async () => {
 		const plan = await inspectReleaseGatePlan();
 		const trace: string[] = [];
 		await expect(
 			runProductionReleasePhases(plan, {
+				startApplicationServices: async () => {},
 				runProductionMigrations: async () => {
 					trace.push("production-migrations");
 				},
@@ -677,6 +820,7 @@ describe("migration release-gate integration", () => {
 		const trace: string[] = [];
 		await expect(
 			runProductionReleasePhases(plan, {
+				startApplicationServices: async () => {},
 				runProductionMigrations: async () => {
 					trace.push("production-migrations");
 				},
@@ -812,6 +956,7 @@ describe("migration release-gate integration", () => {
 		const plan = await inspectReleaseGatePlan(["--scale-proof-only"]);
 		const trace: string[] = [];
 		await runProductionReleasePhases(plan, {
+			startApplicationServices: async () => {},
 			runProductionMigrations: async () => {
 				trace.push("production-migrations");
 			},
@@ -1576,9 +1721,10 @@ describe("base contracts", () => {
 	]);
 	const EXPECTED_PHASE_TRACE = {
 		network: ["network", "cleanup"],
-		startup: ["network", "startup", "cleanup"],
-		publication: ["network", "startup", "publication", "cleanup"],
-		migration: ["network", "startup", "publication", "migration", "cleanup"],
+		startup: ["network", "db-start", "migration", "startup", "cleanup"],
+		publication: ["network", "db-start", "migration", "startup", "publication", "cleanup"],
+		migration: ["network", "db-start", "migration", "cleanup"],
+		status: ["network", "db-start", "migration", "startup", "publication", "cleanup"],
 	} as const;
 	const EXPECTED_FAILURE_RECORD = {
 		NETWORK_CREATE: {
@@ -1666,8 +1812,9 @@ describe("base contracts", () => {
 		],
 		["IPv4 wildcard host publication", "publication", "Supabase host publication proof is absent or invalid", 0, loopbackPublication("0.0.0.0"), EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
 		["IPv6 wildcard host publication", "publication", "Supabase host publication proof is absent or invalid", 0, loopbackPublication("::"), EXPECTED_FAILURE_RECORD.PUBLICATION_VALIDATE, 0],
-		["IPv4 loopback host publication", "migration", "disposable Supabase incremental migrations failed", 0, loopbackPublication("127.0.0.1"), undefined, 0],
-		["IPv6 loopback host publication", "migration", "disposable Supabase incremental migrations failed", 0, loopbackPublication("::1"), undefined, 0],
+		["migration failure", "migration", "disposable Supabase incremental migrations failed", 0, undefined, undefined, 0],
+		["IPv4 loopback host publication", "status", "Supabase status is not valid JSON", 0, loopbackPublication("127.0.0.1"), undefined, 0],
+		["IPv6 loopback host publication", "status", "Supabase status is not valid JSON", 0, loopbackPublication("::1"), undefined, 0],
 	] as const;
 	it.each(REJECTION_CASES)(
 		"creates the exact owned loopback bridge before canonical Supabase startup and rejects %s",
@@ -1722,7 +1869,7 @@ describe("base contracts", () => {
 						networkPresent = true;
 						return phase === "network"
 							? { status: 1, stdout: "", stderr: "" }
-							: successfulCommand();
+							: successfulCommand(`${"b".repeat(64)}\n`);
 					}
 					if (args[1] === "rm") {
 						trace.push("cleanup");
@@ -1754,9 +1901,15 @@ describe("base contracts", () => {
 						stderr: _scenario === "startup diagnostics" ? "PRIVATE_OUTPUT_MARKER" : "",
 					};
 				}
+				if (command === "supabase" && args[0] === "db" && args[1] === "start") {
+					trace.push("db-start");
+					selectedNetwork = args[args.indexOf("--network-id") + 1];
+				}
+				if (command === "docker" && args[0] === "container" && args[1] === "inspect")
+					return successfulCommand(JSON.stringify({ id: "a".repeat(64), name: `/supabase_db_${projectId}`, project: projectId, networks: { [network]: { NetworkID: "b".repeat(64) } } }));
 				if (command === "supabase" && args[0] === "migration") {
 					trace.push("migration");
-					return { status: 1, stdout: "", stderr: "" };
+					return { status: phase === "migration" ? 1 : 0, stdout: "", stderr: "" };
 				}
 				if (command === "supabase" && args[0] === "--version")
 					return successfulCommand("2.115.0\n");

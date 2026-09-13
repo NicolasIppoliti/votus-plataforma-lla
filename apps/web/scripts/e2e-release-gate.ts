@@ -23,6 +23,7 @@ import {
 	EXPECTED_E2E_SPECS,
 	classifyStaleOwnership,
 	planStaleWorkdirReap,
+	planOwnedCleanup,
 } from "../e2e/gate-contract.ts";
 import {
 	SERVER_SCENARIOS,
@@ -347,7 +348,6 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 	);
 	if (
 		!startHelp.includes("--workdir") ||
-		!startHelp.includes("--ignore-health-check") ||
 		!startHelp.includes("--network-id") ||
 		!stopHelp.includes("--project-id") ||
 		!stopHelp.includes("--no-backup")
@@ -932,7 +932,7 @@ async function executeGate(
 	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
 	state.stackMutationAttempted = true;
 	const network = `supabase_network_${ownership.projectId}`;
-	await timing.measure(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
+	const networkId = await timing.measure(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
 		const networkResult = commandResult("docker", [
 			"network",
 			"create",
@@ -955,15 +955,16 @@ async function executeGate(
 					exitCode: networkResult.status,
 				},
 			);
+		const createdNetworkId = networkResult.stdout.trim();
+		if (!/^[a-f0-9]{64}$/.test(createdNetworkId))
+			throw new Error("owned network identity is invalid; output redacted");
 		runChecked(
 			"supabase",
 			[
+				"db",
 				"start",
 				"--workdir",
 				ownership.workdir,
-				"--exclude",
-				EXCLUDED_SERVICES,
-				"--ignore-health-check",
 				"--network-id",
 				network,
 				"--yes",
@@ -974,7 +975,7 @@ async function executeGate(
 			SUPABASE_START_TIMEOUT_MS,
 			RELEASE_GATE_FAILURE_OPERATION.SUPABASE_START,
 		);
-		assertLoopbackHostPublication(ownership.projectId);
+		return createdNetworkId;
 	});
 	const timed =
 		<TArgs extends unknown[], TResult>(
@@ -1003,17 +1004,66 @@ async function executeGate(
 				);
 			},
 		),
+		startApplicationServices: timed(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
+			// A running DB makes top-level start short-circuit. Remove only its container:
+			// the existing named volume skips fresh initialization and retains migrations.
+			const marker = JSON.parse(await readFile(path.join(ownership.workdir, OWNER_FILE), "utf8"));
+			planOwnedCleanup(os.tmpdir(), ownership.workdir, ownership, marker);
+			const identityOutput = requireCommand("docker", [
+				"container", "inspect", "--format",
+				'{"id":{{json .Id}},"name":{{json .Name}},"project":{{json (index .Config.Labels "com.supabase.cli.project")}},"networks":{{json .NetworkSettings.Networks}}}',
+				`supabase_db_${ownership.projectId}`,
+			], "owned database identity inspection");
+			let id: string;
+			try {
+				const identity = z.object({
+					id: z.string().regex(/^[a-f0-9]{64}$/),
+					name: z.literal(`/supabase_db_${ownership.projectId}`),
+					project: z.literal(ownership.projectId),
+					networks: z.record(z.string(), z.object({ NetworkID: z.literal(networkId) })),
+				}).parse(JSON.parse(identityOutput));
+				const attached = Object.keys(identity.networks);
+				if (attached.length !== 1 || attached[0] !== network) throw new Error();
+				id = identity.id;
+			} catch {
+				throw new Error("owned database identity mismatch; output redacted");
+			}
+			runChecked("docker", ["container", "rm", "--force", "--", id], "owned database container handoff");
+			runChecked("supabase", [
+				"start", "--workdir", ownership.workdir, "--exclude", EXCLUDED_SERVICES,
+				"--network-id", network, "--yes",
+			], "disposable Supabase start", REPO_ROOT, process.env,
+			SUPABASE_START_TIMEOUT_MS, RELEASE_GATE_FAILURE_OPERATION.SUPABASE_START);
+			assertLoopbackHostPublication(ownership.projectId);
+		}),
 		validateStackStatus: async () => {
 			const statusOutput = requireCommand(
 				"supabase",
 				["status", "--workdir", ownership.workdir, "-o", "json"],
 				"disposable Supabase status",
 			);
-			return assertStackStatus(
+			const status = assertStackStatus(
 				statusOutput,
 				supabasePorts[0]!,
 				supabasePorts[1]!,
 			);
+			try {
+				const response = await fetch(new URL("/rest/v1/", status.API_URL), {
+					method: "HEAD",
+					headers: {
+						apikey: status.ANON_KEY,
+						Authorization: `Bearer ${status.ANON_KEY}`,
+						"Accept-Profile": "workspace_api",
+					},
+					redirect: "error",
+					signal: AbortSignal.timeout(5_000),
+				});
+				await response.body?.cancel();
+				if (response.status !== 200) throw new Error();
+			} catch {
+				throw new Error("workspace_api REST readiness failed; output redacted");
+			}
+			return status;
 		},
 		runSetupProof: timed(RELEASE_GATE_TIMING_PHASE.PGTAP, async (proof) => {
 			runOwnedSqlEvidence(
