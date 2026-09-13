@@ -114,6 +114,36 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("href=");
   });
 
+  it("renders the complete normalized submitted mesa identity beside exact authorized evidence", async () => {
+    const bundle = authorizedBundle();
+    bundle.result.level = "mesa";
+    mocks.bundle.mockResolvedValueOnce(bundle);
+    const markup = await render({
+      level: "mesa", mesaCode: "001", establecimientoCode: "E1", circuitoCode: "1",
+      seccionCode: "27", distritoCode: "2",
+      categoryId: COMPLETE_SECTION.categoryId, electionId: COMPLETE_SECTION.electionId,
+    });
+    expect(markup).toContain("300 votos a nivel mesa");
+    expect(markup).toContain('aria-labelledby="official-evidence-heading"');
+    const evidence = markup.slice(markup.indexOf('aria-labelledby="official-evidence-heading"'));
+    expect(evidence).toContain('<h3 id="submitted-scope-heading">Alcance aplicado</h3>');
+    for (const entry of [
+      `Elección</dt><dd>${COMPLETE_SECTION.electionId}`,
+      `Categoría</dt><dd>${COMPLETE_SECTION.categoryId}`,
+      "Distrito</dt><dd>02", "Sección</dt><dd>027", "Circuito</dt><dd>00001",
+      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel del informe</dt><dd>mesa",
+    ]) expect(evidence).toContain(entry);
+    expect(evidence).toContain("Referencia electoral autorizada");
+    expect(evidence).toContain(`SHA-256 ${"a".repeat(64)}`);
+    expect(markup).toContain("300 votos a nivel mesa");
+    expect(markup).toContain("<td>300 votos</td><td>100.00%</td>");
+    expect(mocks.bundle).toHaveBeenCalledWith(expect.anything(), {
+      electionId: COMPLETE_SECTION.electionId, categoryId: COMPLETE_SECTION.categoryId,
+      distritoCode: "02", seccionCode: "027", circuitoCode: "00001",
+      establecimientoCode: "E1", mesaCode: 1, requestedLevel: "mesa",
+    });
+  });
+
   it("renders valid section evidence with an explicit unavailable school breakdown", async () => {
     const bundle = authorizedBundle();
     mocks.bundle.mockResolvedValueOnce({
