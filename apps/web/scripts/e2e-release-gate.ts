@@ -41,6 +41,7 @@ import {
 	cleanupDiagnosticsLine,
 	ReleaseGateCleanupError,
 	cleanupReleaseGate,
+	createReleaseGatePlan,
 	formatPgTapFailure,
 	establishOwnership,
 	planOwnedSqlInvocation,
@@ -77,7 +78,13 @@ interface GateState extends ReleaseGateCleanupState<OwnedNextServer> {
 	reservations?: PortReservation[];
 	interrupted?: string;
 }
+const PGTAP_PROOFS = createReleaseGatePlan(RELEASE_GATE_MODE.FULL).pgTapProofs;
+const SPAWN_ERROR_CODES = [
+	"EACCES", "EAGAIN", "EFAULT", "EINTR", "EINVAL", "EIO",
+	"EMFILE", "ENFILE", "ENOENT", "ENOMEM", "ENOBUFS", "ETIMEDOUT",
+];
 const RELEASE_GATE_FAILURE_OPERATION = {
+	PGTAP: "pgtap",
 	SUPABASE_START: "supabase_start",
 	SUPABASE_NETWORK_CREATE: "supabase_network_create",
 	SUPABASE_PUBLICATION_INSPECT: "supabase_publication_inspect",
@@ -104,11 +111,19 @@ interface PublicationDiagnostic {
 	stage: "json" | "schema" | "unexpected";
 	issues: readonly PublicationIssue[];
 }
+interface PgTapDiagnostic {
+	proof: string | null;
+	signal: string | null;
+	spawnErrorCode: string | null;
+	sqlstates: string[];
+	failedAssertions: number[];
+}
 interface ReleaseGateFailureMetadata {
 	operation: ReleaseGateFailureOperation;
 	reason: ReleaseGateFailureReason;
 	exitCode: number | null;
 	publicationDiagnostic?: PublicationDiagnostic;
+	pgTapDiagnostic?: PgTapDiagnostic;
 }
 class ReleaseGateFailure extends Error {
 	readonly metadata: ReleaseGateFailureMetadata;
@@ -192,8 +207,36 @@ function runEvidence(
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout,
 	});
-	if (result.error || result.status !== 0)
-		throw new Error(formatPgTapFailure(label, result.status, result.stdout));
+	if (result.error || result.status !== 0) {
+		// Recognize only numbered TAP failures and explicitly tagged SQLSTATE tokens.
+		// Bound inspection and emitted metadata; descriptions and other output stay private.
+		const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.slice(0, 65_536);
+		const sqlstates = Array.from(
+			output.matchAll(/\(SQLSTATE ([0-9A-Z]{5})\)/g),
+			(match) => match[1]!,
+		);
+		const failedAssertions = Array.from(
+			output.matchAll(/^[ \t]*not ok ([1-9][0-9]{0,5})(?= - |[ \t]*$)/gm),
+			(match) => Number(match[1]),
+		);
+		throw new ReleaseGateFailure(
+			formatPgTapFailure(label, result.status, result.stdout ?? ""),
+			{
+				operation: RELEASE_GATE_FAILURE_OPERATION.PGTAP,
+				reason: RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED,
+				exitCode: result.status,
+				pgTapDiagnostic: {
+					proof: PGTAP_PROOFS.find((proof) => proof.label === label)?.path ?? null,
+					signal: result.signal,
+					spawnErrorCode:
+						result.error && "code" in result.error && typeof result.error.code === "string"
+							? result.error.code : null,
+					sqlstates: [...new Set(sqlstates)].slice(0, 16),
+					failedAssertions: [...new Set(failedAssertions)].slice(0, 16),
+				},
+			},
+		);
+	}
 	process.stdout.write(`${label}:\n${result.stdout.trim()}\n`);
 }
 async function expandSqlIncludes(
@@ -1244,6 +1287,25 @@ function reportDiagnostic(error: unknown, writeError: (chunk: string) => void): 
 						: null,
 			})}\n`,
 		);
+	if (error instanceof ReleaseGateFailure && error.metadata.pgTapDiagnostic) {
+		const diagnostic = error.metadata.pgTapDiagnostic;
+		writeError(`E2E_RELEASE_GATE_PGTAP_DIAGNOSTIC ${JSON.stringify({
+			schemaVersion: 1,
+			proof: PGTAP_PROOFS.find((proof) => proof.path === diagnostic.proof)?.path ?? null,
+			exitCode:
+				Number.isInteger(error.metadata.exitCode) && error.metadata.exitCode !== null &&
+				error.metadata.exitCode >= 0 && error.metadata.exitCode <= 255
+					? error.metadata.exitCode : null,
+			signal:
+				typeof diagnostic.signal === "string" && Object.hasOwn(os.constants.signals, diagnostic.signal)
+					? diagnostic.signal : null,
+			spawnErrorCode: SPAWN_ERROR_CODES.find((code) => code === diagnostic.spawnErrorCode) ?? null,
+			sqlstates: diagnostic.sqlstates
+				.filter((code) => typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)).slice(0, 16),
+			failedAssertions: diagnostic.failedAssertions
+				.filter((number) => Number.isInteger(number) && number > 0 && number <= 999_999).slice(0, 16),
+		})}\n`);
+	}
 	if (error instanceof ReleaseGateFailure && error.metadata.publicationDiagnostic) {
 		const diagnostic = error.metadata.publicationDiagnostic;
 		writeError(

@@ -203,7 +203,7 @@ async function expectKeyboardFocus(target: Locator, region = false, control: Rev
       left: value.left, top: value.top, right: value.right, bottom: value.bottom,
       width: value.width, height: value.height,
     });
-    const dialog = element.closest("dialog[open]");
+    const dialog = element.closest('[data-slot="sheet-content"][role="dialog"][data-state="open"]');
     return {
       appearance: {
         active: document.activeElement === element, focusVisible: element.matches(":focus-visible"),

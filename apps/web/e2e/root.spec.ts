@@ -121,6 +121,71 @@ test("real workspace A to B replaces identity and authorized count, while B to A
   });
 });
 
+test("the short mobile drawer keeps the real organization and account footer keyboard reachable", async ({ page }) => {
+  await withReviewItem(page, async () => {
+    await page.setViewportSize({ width: 320, height: 400 });
+    await page.goto("/");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Ir al contenido principal" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    const trigger = page.getByRole("button", { name: "Abrir navegación" });
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("Enter");
+    const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+    const close = drawer.getByRole("button", { name: "Cerrar navegación" });
+    const account = drawer.locator("summary", { hasText: "Cuenta" });
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(account).toBeFocused();
+    await expect(account).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press("Shift+Tab");
+    await expect(drawer.getByRole("button", { name: "Cambiar organización" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    const organization = drawer.getByRole("combobox", { name: "Organización", exact: true });
+    await expect(organization).toBeFocused();
+    await expect(organization).toBeInViewport({ ratio: 1 });
+    await expect(organization.locator("option:checked")).toHaveText("E2E Authorized Review Browser");
+    const selectorIds = await page.locator(".workspace-footer select").evaluateAll(elements => elements.map(element => element.id));
+    expect(selectorIds).toHaveLength(2);
+    expect(new Set(selectorIds).size).toBe(2);
+    expect(selectorIds.every(Boolean)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+});
+
+test("resizing an open drawer to desktop preserves one visible keyboard footer path", async ({ page }) => {
+  await withReviewItem(page, async () => {
+    await page.setViewportSize({ width: 320, height: 400 });
+    await page.goto("/");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const trigger = page.getByRole("button", { name: "Abrir navegación", includeHidden: true });
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("Enter");
+    const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+    await expect(drawer.getByRole("button", { name: "Cerrar navegación" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(drawer.locator("summary", { hasText: "Cuenta" })).toBeFocused();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(drawer).toBeHidden();
+    const activeIsVisible = () => page.evaluate(() => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || active === document.body || !active.checkVisibility()) return false;
+      const box = active.getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth;
+    });
+    await expect.poll(activeIsVisible).toBe(true);
+    await expect(page.getByRole("contentinfo", { name: "Organización y cuenta" })).toHaveCount(1);
+    await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
+    await page.keyboard.press("Tab");
+    await expect.poll(activeIsVisible).toBe(true);
+  });
+});
+
 test("account controls live in the visible sidebar footer and preserve drawer keyboard operation", async ({ page, context }) => {
   // Sign out only a new login session, never the harness's shared storage session.
   await context.clearCookies();
@@ -294,6 +359,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     );
     const drawerTrigger = topbar.getByRole("button", {
       name: "Abrir navegación",
+      includeHidden: true,
     });
 
     await expect(desktopSidebar).toBeHidden();
@@ -304,7 +370,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       "mobile-navigation-drawer",
     );
     await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
-    const overflowBeforeOpen = await page.evaluate(() => document.body.style.overflow);
+    const overflowBeforeOpen = await page.evaluate(() => getComputedStyle(document.body).overflow);
     await drawerTrigger.click();
 
     const drawer = page.getByRole("dialog", {
@@ -319,7 +385,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(drawer).toBeVisible();
     await expect(drawer).toHaveAttribute("id", "mobile-navigation-drawer");
     await expect(drawerTrigger).toHaveAttribute("aria-expanded", "true");
-    expect(await page.evaluate(() => document.body.style.overflow)).toBe("hidden");
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     await expect(closeDrawer).toBeFocused();
     await expect(drawer).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
@@ -384,7 +450,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await page.keyboard.press("Escape");
     await expect(drawer).toBeHidden();
     await expect(drawerTrigger).toHaveAttribute("aria-expanded", "false");
-    expect(await page.evaluate(() => document.body.style.overflow)).toBe(
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe(
       overflowBeforeOpen,
     );
     await expect(drawerTrigger).toBeFocused();
