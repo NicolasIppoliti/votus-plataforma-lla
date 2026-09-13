@@ -26,7 +26,7 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   fixture = extension.data as WorkspaceFixture;
   let outcome: { value: T } | { error: unknown }; let cleanupError: Error | null = null;
   try {
-    await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByLabel("Organización"); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
+    await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByRole("combobox", { name: "Organización", exact: true }); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
     const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched;
     expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
     const revokeAuthorization = async (): Promise<void> => { const revoked = await admin.rpc("e2e_revoke_authorized_fiscal_fixture", { p_fixture: fixture }); if (revoked.error || revoked.data?.revoked !== true || revoked.data?.revoked_scope_count !== 2) throw new Error("failed to revoke authorized comparison fixture"); };

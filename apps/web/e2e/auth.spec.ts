@@ -24,7 +24,7 @@ test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOT
 // The in-scope content marker rendered only inside `(authenticated)/`
 // routes (see `src/app/(authenticated)/page.tsx`). No anonymous
 // response, cached or otherwise, may ever contain it.
-const IN_SCOPE_MARKER = "Panel de Votus";
+const IN_SCOPE_MARKER = "Panel operativo";
 const PROTECTED_ROUTES = [
   "/",
   "/dashboard",
@@ -192,6 +192,9 @@ test.describe("no anonymous read path", () => {
     //    the same native submit control.
     for (const route of PROTECTED_ROUTES) {
       await page.goto(route);
+      const trigger = page.getByRole("button", { name: "Abrir navegación" });
+      if (await trigger.isVisible()) await trigger.click();
+      await page.getByRole("contentinfo", { name: "Organización y cuenta" }).locator("summary").press("Enter");
       const signOutControl = page.getByRole("button", {
         name: "Cerrar sesión",
         exact: true,

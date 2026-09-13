@@ -1,9 +1,9 @@
 "use client";
-import { useState, useTransition, type FormEvent } from "react";
+import { useId, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { WorkspaceSelection } from "@/lib/workspace/selection";
 
-interface WorkspaceSelectorProps { initialSelection: WorkspaceSelection; }
+interface WorkspaceSelectorProps { initialSelection: WorkspaceSelection; onSwitchStart?: () => void; }
 interface WorkspaceSelectorSnapshot { activeOrganizationId: string | null; revision: number | null; status: WorkspaceSelection["status"]; }
 const messages: Record<string, string> = {
   conflict: "La organización cambió en otra pestaña. Actualizá la página e intentá de nuevo.",
@@ -16,8 +16,9 @@ const messages: Record<string, string> = {
   unavailable: "No se pudo cambiar la organización.",
 };
 
-export function WorkspaceSelector({ initialSelection }: WorkspaceSelectorProps) {
+export function WorkspaceSelector({ initialSelection, onSwitchStart }: WorkspaceSelectorProps) {
   const router = useRouter();
+  const organizationId = useId();
   const [selected, setSelected] = useState(initialSelection.activeOrganizationId ?? "");
   const [revision, setRevision] = useState(initialSelection.revision);
   const [message, setMessage] = useState(messages[initialSelection.status] ?? "");
@@ -33,6 +34,7 @@ export function WorkspaceSelector({ initialSelection }: WorkspaceSelectorProps) 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!selected || revision === null) return;
+    onSwitchStart?.();
     startTransition(async () => {
       setMessage("");
       try {
@@ -49,8 +51,8 @@ export function WorkspaceSelector({ initialSelection }: WorkspaceSelectorProps) 
   if (initialSelection.total === 0) return <div>{message ? <p role="status">{message}</p> : null}<p role="status">No hay organizaciones disponibles.</p></div>;
   if (initialSelection.organizations.length === 0) return <p role="status">No se pudo cargar la lista parcial de organizaciones.</p>;
   return <form onSubmit={submit}>
-    <label htmlFor="workspace-organization">Organización</label>{" "}
-    <select id="workspace-organization" value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
+    <label htmlFor={organizationId}>Organización</label>{" "}
+    <select id={organizationId} value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
       <option value="" disabled>Seleccionar organización</option>
       {initialSelection.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
     </select>{" "}

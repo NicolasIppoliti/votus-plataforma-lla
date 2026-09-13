@@ -7,6 +7,10 @@ import { ApplicationShell } from "./ApplicationShell";
 import { MobileNavigation } from "./MobileNavigation";
 import { SituationSidebar } from "./SituationSidebar";
 import { WorkspaceTopbar } from "./WorkspaceTopbar";
+import { WorkspacePresentation } from "./WorkspacePresentation";
+import { WorkspaceFooter } from "./WorkspaceFooter";
+import { AccountDisclosure } from "./AccountDisclosure";
+import { SignOutForm } from "@/components/SignOutForm";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -63,18 +67,36 @@ export default async function AuthenticatedLayout({
     unresolvedCount = undefined;
   }
 
+  const activeOrganization = selection.status === "active"
+    ? selection.organizations.find((organization) => organization.id === selection.activeOrganizationId)
+    : undefined;
+
+  const sidebar = (
+    <SituationSidebar footer={
+      <WorkspaceFooter selection={selection}>
+        <AccountDisclosure><SignOutForm /></AccountDisclosure>
+      </WorkspaceFooter>
+    } />
+  );
+
   return (
+    <WorkspacePresentation snapshot={{
+      organizationId: activeOrganization?.id ?? null,
+      organizationName: activeOrganization?.name ?? null,
+      status: selection.status,
+      revision: selection.revision,
+      unresolvedCount: activeOrganization ? unresolvedCount : undefined,
+    }}>
     <ApplicationShell
-      sidebar={<SituationSidebar />}
+      sidebar={sidebar}
       topbar={
         <WorkspaceTopbar
-          selection={selection}
-          unresolvedCount={unresolvedCount}
-          mobileNavigation={<MobileNavigation sidebar={<SituationSidebar />} />}
+          mobileNavigation={<MobileNavigation sidebar={sidebar} />}
         />
       }
     >
       {children}
     </ApplicationShell>
+    </WorkspacePresentation>
   );
 }

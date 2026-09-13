@@ -2,9 +2,15 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import AuthenticatedLayout from "./layout";
+import OperationalBriefingPage from "./page";
 
 const navigation = vi.hoisted(() => ({ pathname: "/" }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
+const supabase = vi.hoisted(() => ({
+  auth: {
+    getUser: async () => ({ data: { user: { id: "authenticated-operator" } } }),
+  },
+}));
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
@@ -13,11 +19,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/supabase/server-client", () => ({
-  createSupabaseServerClient: async () => ({
-    auth: {
-      getUser: async () => ({ data: { user: { id: "authenticated-operator" } } }),
-    },
-  }),
+  createSupabaseServerClient: async () => supabase,
 }));
 
 vi.mock("@/lib/workspace/context", () => ({
@@ -98,15 +100,30 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
     ]);
 });
 
-it("renders exactly one keyboard-accessible sign-out form action", async () => {
-  const markup = await renderLayout("/dashboard");
-  const signOutForms =
-    markup.match(
-      /<form[^>]*>[\s\S]*?<button class="button button--secondary" type="submit">Cerrar sesión<\/button>[\s\S]*?<\/form>/g,
-    ) ?? [];
-
-  expect(signOutForms).toHaveLength(1);
-  expect(signOutForms[0]).toMatch(/<form[^>]*\saction=/);
+it("renders one real sign-out action per sidebar footer with unique organization labels", async () => {
+  const markup = await renderLayout("/");
+  const footers = markup.match(/<footer\b[^>]*>[\s\S]*?<\/footer>/g) ?? [];
+  expect(footers).toHaveLength(2);
+  const selectorIds: string[] = [];
+  for (const footer of footers) {
+    expect(footer).toContain('aria-label="Organización y cuenta"');
+    const account = footer.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
+    expect(account).not.toMatch(/<details[^>]*\sopen(?:\s|=|>)/);
+    expect(account).toContain("<summary>Cuenta</summary>");
+    const forms = account.match(/<form\b[^>]*>[\s\S]*?<\/form>/g) ?? [];
+    expect(forms).toHaveLength(1);
+    expect(forms[0]).toMatch(/<form[^>]*\saction=/);
+    expect(forms[0]).toContain('type="submit">Cerrar sesión</button>');
+    const id = footer.match(/<select id="([^"]+)"/)?.[1] ?? "";
+    expect(id).not.toBe("");
+    expect(footer).toContain(`<label for="${id}">Organización</label>`);
+    selectorIds.push(id);
+    expect(footer.indexOf("<select")).toBeLessThan(footer.indexOf("<details"));
+  }
+  expect(new Set(selectorIds).size).toBe(2);
+  const topbar = markup.replace(mobileDrawer(markup), "").match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0];
+  expect(topbar).not.toContain("<form");
+  expect(topbar).toContain("Organización activa:");
 });
 
 function mobileDrawer(markup: string): string {
@@ -182,6 +199,79 @@ it("renders the authorized unresolved count from the verified workspace facade",
 
   expect(workspace.reviewItems).toHaveBeenCalledWith(expect.anything(), 0, 0);
   expect(markup).toContain("3 elemento(s) de revisión pendiente(s)");
+});
+
+it("shares one authorized pending count between the topbar and root operational attention", async () => {
+  navigation.pathname = "/";
+  workspace.reviewItems.mockClear();
+  workspace.reviewItems.mockResolvedValueOnce({ status: "ok", total: 7 });
+
+  const markup = renderToStaticMarkup(
+    await AuthenticatedLayout({ children: <OperationalBriefingPage /> }),
+  );
+
+  expect(workspace.reviewItems).toHaveBeenCalledExactlyOnceWith(supabase, 0, 0);
+  const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0];
+  expect(topbar).toContain("7 elemento(s) de revisión pendiente(s)");
+
+  const main = markup.match(/<main\b[^>]*>[\s\S]*?<\/main>/)?.[0];
+  expect(main).toBeDefined();
+  expect(main).toContain("Atención operativa");
+  const attention = main?.match(
+    /<(?:section|aside)\b[^>]*>(?:(?!<\/(?:section|aside)>)[\s\S])*Atención operativa[\s\S]*?<\/(?:section|aside)>/,
+  )?.[0];
+  expect(attention).toBeDefined();
+  expect(attention).toMatch(/\b7\b/);
+  expect(attention).toContain('href="/review"');
+});
+
+it.each([
+  [{ status: "ok", total: 0 }, "Sin elementos pendientes"],
+  [undefined, "No se pudo verificar el estado de revisión."],
+  [{ status: "denied", total: 7 }, "No se pudo verificar el estado de revisión."],
+  [{ status: "ok", total: -1 }, "No se pudo verificar el estado de revisión."],
+  [{ status: "ok", total: 0.5 }, "No se pudo verificar el estado de revisión."],
+  [{ status: "ok", total: Number.MAX_SAFE_INTEGER + 1 }, "No se pudo verificar el estado de revisión."],
+  [{ status: "ok", total: "7" }, "No se pudo verificar el estado de revisión."],
+  [{ status: "ok", total: NaN }, "No se pudo verificar el estado de revisión."],
+] as const)("keeps root attention and topbar aligned for review payload %j", async (payload, message) => {
+  workspace.reviewItems.mockClear();
+  workspace.reviewItems.mockResolvedValueOnce(payload);
+  const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
+  expect(workspace.reviewItems).toHaveBeenCalledExactlyOnceWith(supabase, 0, 0);
+  const main = markup.match(/<main\b[^>]*>[\s\S]*?<\/main>/)?.[0] ?? "";
+  const topbar = markup.replace(mobileDrawer(markup), "").match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
+  for (const reader of [main, topbar]) {
+    expect(reader).toContain(message);
+    expect(reader).not.toContain("elemento(s) de revisión pendiente(s)");
+    if (payload?.total !== 0) expect(reader).not.toContain("Sin elementos pendientes");
+  }
+  for (const href of ["/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate", "/review"]) {
+    expect(main).toContain(`href="${href}"`);
+  }
+});
+
+it.each(["stale", "revoked", "expired", "mismatch", "selection_required", "denied", "conflict", "unavailable"])(
+  "suppresses a returned count when workspace selection is %s", async (status) => {
+    workspace.selection.mockResolvedValueOnce({ status, revision: 2, activeOrganizationId: null, organizations: [], total: 0, truncated: false });
+    workspace.reviewItems.mockClear();
+    workspace.reviewItems.mockResolvedValueOnce({ status: "ok", total: 7 });
+    const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
+    expect(workspace.reviewItems).toHaveBeenCalledExactlyOnceWith(supabase, 0, 0);
+    expect(markup.match(/No se pudo verificar el estado de revisión\./g)).toHaveLength(2);
+    expect(markup).not.toContain("elemento(s) de revisión pendiente(s)");
+    expect(markup).not.toContain("Sin elementos pendientes");
+    expect(markup).not.toContain("Organización activa:");
+  },
+);
+
+it("keeps real root attention unknown after the review request throws", async () => {
+  workspace.reviewItems.mockClear();
+  workspace.reviewItems.mockRejectedValueOnce(new Error("unavailable"));
+  const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
+  expect(workspace.reviewItems).toHaveBeenCalledExactlyOnceWith(supabase, 0, 0);
+  expect(markup.match(/No se pudo verificar el estado de revisión\./g)).toHaveLength(2);
+  expect(markup).not.toContain("Sin elementos pendientes");
 });
 
 it("renders all seven shared destinations in contract order with explicit source status", async () => {

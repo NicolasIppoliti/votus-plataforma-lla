@@ -17,6 +17,7 @@ const focusableSelector = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
+  "summary",
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
@@ -35,7 +36,10 @@ export function MobileNavigation({ sidebar }: MobileNavigationProps): ReactNode 
     if (!dialog) return;
 
     if (isOpen) {
-      if (!dialog.open) dialog.showModal();
+      if (!dialog.open) {
+        triggerRef.current?.focus({ preventScroll: true });
+        dialog.showModal();
+      }
       closeButtonRef.current?.focus();
       return;
     }
@@ -60,7 +64,6 @@ export function MobileNavigation({ sidebar }: MobileNavigationProps): ReactNode 
 
   function handleDialogClose() {
     setIsOpen(false);
-    triggerRef.current?.focus();
   }
 
   function handleNavigationClick(event: MouseEvent<HTMLDivElement>) {
@@ -75,7 +78,7 @@ export function MobileNavigation({ sidebar }: MobileNavigationProps): ReactNode 
 
     const focusable = Array.from(
       dialog.querySelectorAll<HTMLElement>(focusableSelector),
-    ).filter((element) => !element.matches(":disabled") && element.tabIndex >= 0);
+    ).filter((element) => !element.matches(":disabled") && element.tabIndex >= 0 && element.checkVisibility());
     const first = focusable[0];
     const last = focusable.at(-1);
     if (!first || !last) return;
