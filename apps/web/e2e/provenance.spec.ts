@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Page } from "@playwright/test";
+import { test as nextTest } from "./review-test-fixture";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import {
@@ -29,6 +30,55 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 // `SourceDisclaimer.tsx`, task 11.17). No page rendered without an
 // explicit unofficial opt-in may ever contain it.
 const FISCALIZACION_MARKER = "party-internal, unofficial";
+
+nextTest("retries unavailable official evidence with the submitted selection after a draft edit", async ({ page, next }) => {
+    const bodies: unknown[] = [];
+    const origin = new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin;
+    next.onFetch(async (request) => {
+      const url = new URL(request.url);
+      if (url.origin !== origin) return "abort";
+      if (url.pathname !== "/rest/v1/rpc/official_result") return fetch(request, { redirect: "error" });
+      if (request.method !== "POST" || url.search || url.hash) return "abort";
+      bodies.push(await request.clone().json());
+      if (bodies.length === 1) return Response.json({ message: "controlled unavailable" }, { status: 503 });
+      return fetch(request, { redirect: "error" });
+    });
+  await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    const path = `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
+      `&distritoCode=${identity.distritoCode}&seccionCode=${identity.seccionCode}` +
+      "&circuitoCode=00001&establecimientoCode=E1&mesaCode=1&level=mesa";
+    const submittedUrl = new URL(path, baseURL).toString();
+    const expectedBody = {
+      p_election_id: SOURCE_SCOPE.electionId, p_category_id: SOURCE_SCOPE.categoryId,
+      p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode,
+      p_circuito_code: "00001", p_establecimiento_code: "E1", p_mesa_code: 1, p_requested_level: "mesa",
+    };
+    await page.goto(submittedUrl);
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("no está disponible");
+    expect(bodies).toEqual([expectedBody]);
+    const options = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/drilldown/scope-options" && response.request().method() === "POST");
+    await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("establecimiento");
+    expect((await options).ok()).toBe(true);
+    await expect(page.locator('form[action="/drilldown"]')).not.toHaveAttribute("aria-busy", "true");
+    await expect(page).toHaveURL(submittedUrl);
+    await page.locator("html").evaluate((element) => { element.dataset.retrySentinel = "original-document"; });
+    const retry = page.getByRole("link", { name: "Reintentar carga", exact: true });
+    await expect(retry).toHaveCount(1);
+    await expect(retry).toHaveAttribute("href", path);
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await retry.press("Enter");
+    await expect.poll(() => bodies.length).toBe(2);
+    expect(bodies).toEqual([expectedBody, expectedBody]);
+    await expect(page).toHaveURL(submittedUrl);
+    await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
+    await expect(page.getByRole("combobox", { name: "Nivel del informe", exact: true })).toHaveValue("mesa");
+    await expect(page.getByRole("main")).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa`);
+    await expect(page.getByRole("list", { name: "procedencia" })).toContainText("SHA-256");
+    await expect(retry).toHaveCount(0);
+  }));
+});
 
 async function expectNoBlankSearchParams(page: Page): Promise<void> {
   const url = new URL(page.url());
