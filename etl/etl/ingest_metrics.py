@@ -14,15 +14,24 @@ class MetricsReportError(ValueError):
 class IngestMetrics:
     def __init__(self):
         self.data = {
-            "version": 1, "scope": None, "status": "failed", "commit_returned": False,
-            "first_pass": "not_started", "iteration": "not_started",
-            "records_seen": None, "rows_emitted": None, "candidate_keys": None,
-            "exclusions": None, "ambiguous_categories": None, "companion_conflicts": None,
+            "version": 1,
+            "scope": None,
+            "status": "failed",
+            "commit_returned": False,
+            "first_pass": "not_started",
+            "iteration": "not_started",
+            "records_seen": None,
+            "rows_emitted": None,
+            "candidate_keys": None,
+            "exclusions": None,
+            "ambiguous_categories": None,
+            "companion_conflicts": None,
         }
 
     def record_exclusion(self, reason: str, votes: int | None, rows: int = 1):
         bucket = self.data["exclusions"].setdefault(
-            reason, {"rows": 0, "parseable_votes": 0, "unreadable_vote_rows": 0},
+            reason,
+            {"rows": 0, "parseable_votes": 0, "unreadable_vote_rows": 0},
         )
         bucket["rows"] += rows
         bucket["parseable_votes"] += votes if votes is not None else 0

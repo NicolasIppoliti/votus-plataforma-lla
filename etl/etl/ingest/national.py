@@ -293,9 +293,13 @@ def _parse_establecimientos(
     excluded: dict[str, int] = {}
     if metrics is not None:
         metrics.data["companion_conflicts"] = {
-            "input_exclusions": excluded, "input_unique_conflict_keys": None,
-            "input_conflict_keys": None, "result_rows": None, "result_votes": None,
-            "result_keys": None, "result_reasons": None,
+            "input_exclusions": excluded,
+            "input_unique_conflict_keys": None,
+            "input_conflict_keys": None,
+            "result_rows": None,
+            "result_votes": None,
+            "result_keys": None,
+            "result_reasons": None,
         }
     for raw in reader:
         key = _national_companion_key(
@@ -355,7 +359,8 @@ def _parse_establecimientos(
         )
     if metrics is not None:
         metrics.data["companion_conflicts"].update(
-            input_unique_conflict_keys=len(frozen_conflict_reasons), input_conflict_keys=counts,
+            input_unique_conflict_keys=len(frozen_conflict_reasons),
+            input_conflict_keys=counts,
         )
     return by_mesa, frozen_conflict_reasons
 
@@ -648,11 +653,17 @@ def iter_national_rows(
     reader = _national_reader(csv_text)
     if metrics is not None:
         metrics.data.update(
-            first_pass="partial", records_seen=0, candidate_keys=0, exclusions={},
+            first_pass="partial",
+            records_seen=0,
+            candidate_keys=0,
+            exclusions={},
         )
         if metrics.data["companion_conflicts"] is not None:
             metrics.data["companion_conflicts"].update(
-                result_rows=0, result_votes=0, result_keys=0, result_reasons={},
+                result_rows=0,
+                result_votes=0,
+                result_keys=0,
+                result_reasons={},
             )
     for index, raw in enumerate(reader):
         if metrics is not None:

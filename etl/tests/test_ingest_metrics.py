@@ -26,10 +26,26 @@ HEADER = (
 
 
 def row(**changes):
-    values = dict(zip(HEADER, [
-        "9", "Synthetic\nDistrict", "8", "Section", "7", "Circuit",
-        "1", "CATEGORY", "44", "POSITIVO", "10", "A", "NATIVOS",
-    ]))
+    values = dict(
+        zip(
+            HEADER,
+            [
+                "9",
+                "Synthetic\nDistrict",
+                "8",
+                "Section",
+                "7",
+                "Circuit",
+                "1",
+                "CATEGORY",
+                "44",
+                "POSITIVO",
+                "10",
+                "A",
+                "NATIVOS",
+            ],
+        )
+    )
     return values | changes
 
 
@@ -78,13 +94,16 @@ class Connection:
             self.response = ("synthetic-id",)
         elif text.startswith("select v.distrito"):
             self.response = [
-                (*key, "jurisdiction-id", None, None, None, None)
-                for key in zip(*params[:5])
+                (*key, "jurisdiction-id", None, None, None, None) for key in zip(*params[:5])
             ]
         else:
-            assert text.startswith((
-                "insert into archive_entry", "delete from result_row", "LOCK TABLE jurisdiction",
-            )), text
+            assert text.startswith(
+                (
+                    "insert into archive_entry",
+                    "delete from result_row",
+                    "LOCK TABLE jurisdiction",
+                )
+            ), text
 
     def fetchone(self):
         return self.response
@@ -135,11 +154,21 @@ def scenario(tmp_path, monkeypatch):
         sources = tmp_path / "sources.yaml"
         sources.write_text(json.dumps({capability: [source]}))
         manifest = tmp_path / "manifest.json"
-        manifest.write_text(json.dumps([source | {
-            "capability": capability, "archived_path": str(source_file),
-            "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
-            "fetched_at": "2023-01-01T00:00:00Z", "status": "ok",
-        }]))
+        manifest.write_text(
+            json.dumps(
+                [
+                    source
+                    | {
+                        "capability": capability,
+                        "archived_path": str(source_file),
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                        "bytes": len(data),
+                        "fetched_at": "2023-01-01T00:00:00Z",
+                        "status": "ok",
+                    }
+                ]
+            )
+        )
         conn = Connection()
 
         def connect(dsn):
@@ -149,11 +178,25 @@ def scenario(tmp_path, monkeypatch):
 
         monkeypatch.setattr(psycopg, "connect", connect)
         argv = [
-            "--sources-path", str(sources), "--manifest-path", str(manifest),
-            "--local-root", str(tmp_path / "archive"), "ingest", "--source", "synthetic",
-            "--year", "2023", "--round", "paso", "--database-url", DSN,
-            "--party-map-path", str(tmp_path / "party-map.yaml"),
-            "--crosswalk-path", str(tmp_path / "crosswalk.yaml"),
+            "--sources-path",
+            str(sources),
+            "--manifest-path",
+            str(manifest),
+            "--local-root",
+            str(tmp_path / "archive"),
+            "ingest",
+            "--source",
+            "synthetic",
+            "--year",
+            "2023",
+            "--round",
+            "paso",
+            "--database-url",
+            DSN,
+            "--party-map-path",
+            str(tmp_path / "party-map.yaml"),
+            "--crosswalk-path",
+            str(tmp_path / "crosswalk.yaml"),
         ]
         return argv, conn, tmp_path / "metrics.json"
 
@@ -174,24 +217,39 @@ def test_cli_json_counts_logical_records_once_and_preserves_paso_lists(scenario,
     assert capsys.readouterr() == ("ingested 2 rows from synthetic\n", "")
     assert json.loads(output.read_text()) == {
         "version": 1,
-        "scope": {"source_id": "synthetic", "year": 2023, "round": "paso",
-                  "capability": "national", "source_kind": "official"},
-        "status": "succeeded", "commit_returned": True,
-        "first_pass": "complete", "iteration": "complete",
-        "records_seen": 2, "rows_emitted": 2, "candidate_keys": 2,
-        "exclusions": {}, "ambiguous_categories": {}, "companion_conflicts": None,
+        "scope": {
+            "source_id": "synthetic",
+            "year": 2023,
+            "round": "paso",
+            "capability": "national",
+            "source_kind": "official",
+        },
+        "status": "succeeded",
+        "commit_returned": True,
+        "first_pass": "complete",
+        "iteration": "complete",
+        "records_seen": 2,
+        "rows_emitted": 2,
+        "candidate_keys": 2,
+        "exclusions": {},
+        "ambiguous_categories": {},
+        "companion_conflicts": None,
     }
     assert (conn.commits, conn.rollbacks) == (1, 0)
 
 
 def test_cli_reports_exclusion_subsets_and_ambiguous_categories(scenario, capsys):
-    argv, _, output = scenario([
-        row(), row(lista_numero="B"), row(mesa_id="2", votos_cantidad="3"),
-        row(mesa_id="2", votos_cantidad="4"),
-        row(votos_tipo="EN BLANCO", votos_cantidad="5"),
-        row(votos_tipo="EN BLANCO", votos_cantidad="unknown"),
-        row(votos_cantidad="unknown"),
-    ])
+    argv, _, output = scenario(
+        [
+            row(),
+            row(lista_numero="B"),
+            row(mesa_id="2", votos_cantidad="3"),
+            row(mesa_id="2", votos_cantidad="4"),
+            row(votos_tipo="EN BLANCO", votos_cantidad="5"),
+            row(votos_tipo="EN BLANCO", votos_cantidad="unknown"),
+            row(votos_cantidad="unknown"),
+        ]
+    )
     assert main(argv) == 0
     baseline_output = capsys.readouterr()
     assert main([*argv, "--metrics-output", str(output)]) == 0
@@ -205,9 +263,14 @@ def test_cli_reports_exclusion_subsets_and_ambiguous_categories(scenario, capsys
     assert report["ambiguous_categories"] == {"CATEGORY": {"rows": 2, "votes": 7, "keys": 1}}
 
 
-@pytest.mark.parametrize("capability,kind", [
-    ("pba", None), ("fiscalizacion", None), ("national", "fiscalizacion"),
-])
+@pytest.mark.parametrize(
+    "capability,kind",
+    [
+        ("pba", None),
+        ("fiscalizacion", None),
+        ("national", "fiscalizacion"),
+    ],
+)
 def test_metrics_rejects_unsupported_scope_before_connection(scenario, capsys, capability, kind):
     argv, conn, output = scenario([], capability=capability, source_kind=kind)
     assert main([*argv, "--metrics-output", str(output)]) == 1
@@ -222,14 +285,23 @@ def test_metrics_rejects_unsupported_scope_before_connection(scenario, capsys, c
 def test_cli_companion_quarantines_have_separate_nonadditive_breakdowns(scenario):
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zipped:
-        zipped.writestr("results.csv", csv_bytes([
-            row(), row(mesa_id="2", votos_cantidad="3"),
-            row(mesa_id="2", circuito_id="8", votos_cantidad="4"),
-        ]))
-        zipped.writestr("companion.csv", (
-            "distrito_id,seccion_id,mesa_id,localvotacion_codigo,localvotacion_nombre\n"
-            "9,8,1,E,First\n9,8,1,E,Second\n9,8,2,F,Third\n9,8,3,,\n"
-        ))
+        zipped.writestr(
+            "results.csv",
+            csv_bytes(
+                [
+                    row(),
+                    row(mesa_id="2", votos_cantidad="3"),
+                    row(mesa_id="2", circuito_id="8", votos_cantidad="4"),
+                ]
+            ),
+        )
+        zipped.writestr(
+            "companion.csv",
+            (
+                "distrito_id,seccion_id,mesa_id,localvotacion_codigo,localvotacion_nombre\n"
+                "9,8,1,E,First\n9,8,1,E,Second\n9,8,2,F,Third\n9,8,3,,\n"
+            ),
+        )
     argv, _, output = scenario([], payload=archive.getvalue())
     assert main([*argv, "--metrics-output", str(output)]) == 0
     report = json.loads(output.read_text())
@@ -237,35 +309,56 @@ def test_cli_companion_quarantines_have_separate_nonadditive_breakdowns(scenario
     assert report["ambiguous_categories"] == {}
     assert report["exclusions"] == {
         "ambiguous result circuits for establecimiento companion": {
-            "rows": 2, "parseable_votes": 7, "unreadable_vote_rows": 0,
+            "rows": 2,
+            "parseable_votes": 7,
+            "unreadable_vote_rows": 0,
         },
     }
     assert report["companion_conflicts"] == {
         "input_exclusions": {"absent establecimiento code or name": 1},
         "input_unique_conflict_keys": 1,
         "input_conflict_keys": {
-            "mesa_metadata_conflict": 1, "establishment_code_multiple_names": 1,
+            "mesa_metadata_conflict": 1,
+            "establishment_code_multiple_names": 1,
         },
-        "result_rows": 1, "result_votes": 10, "result_keys": 1,
-        "result_reasons": {"mesa_metadata_conflict": {"rows": 1, "votes": 10},
-                           "establishment_code_multiple_names": {"rows": 1, "votes": 10}},
+        "result_rows": 1,
+        "result_votes": 10,
+        "result_keys": 1,
+        "result_reasons": {
+            "mesa_metadata_conflict": {"rows": 1, "votes": 10},
+            "establishment_code_multiple_names": {"rows": 1, "votes": 10},
+        },
     }
 
 
-@pytest.mark.parametrize("case,expected", [
-    ("empty", (0, "succeeded", "complete", "complete", 0, 0, 0, {})),
-    ("header", (1, "failed", "not_started", "not_started", None, None, None, None)),
-    ("partial", (1, "failed", "partial", "not_started", 2, None, 1, None)),
-])
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("empty", (0, "succeeded", "complete", "complete", 0, 0, 0, {})),
+        ("header", (1, "failed", "not_started", "not_started", None, None, None, None)),
+        ("partial", (1, "failed", "partial", "not_started", 2, None, 1, None)),
+    ],
+)
 def test_cli_empty_and_schema_failures_distinguish_unknown_counts(scenario, case, expected):
     rows = [row(), row(mesa_tipo="UNSUPPORTED")] if case == "partial" else []
     argv, conn, output = scenario(rows, payload=b"unexpected\n" if case == "header" else None)
     result = main([*argv, "--metrics-output", str(output)])
     report = json.loads(output.read_text())
-    assert (result, *(report[key] for key in (
-        "status", "first_pass", "iteration", "records_seen", "rows_emitted",
-        "candidate_keys", "ambiguous_categories",
-    ))) == expected
+    assert (
+        result,
+        *(
+            report[key]
+            for key in (
+                "status",
+                "first_pass",
+                "iteration",
+                "records_seen",
+                "rows_emitted",
+                "candidate_keys",
+                "ambiguous_categories",
+            )
+        ),
+    ) == expected
     assert report["commit_returned"] is (case == "empty")
     assert (conn.commits, conn.rollbacks) == ((1, 0) if case == "empty" else (0, 1))
 
@@ -278,7 +371,9 @@ def test_late_batch_failure_preserves_first_pass_and_original_exception(scenario
     report = json.loads(output.read_text())
     assert (report["first_pass"], report["iteration"]) == ("complete", "partial")
     assert (report["records_seen"], report["rows_emitted"], report["candidate_keys"]) == (
-        2001, 2000, 2001,
+        2001,
+        2000,
+        2001,
     )
     assert report["status"] == "failed"
     assert report["commit_returned"] is False
@@ -303,7 +398,10 @@ def test_public_iterator_second_pass_io_failure_keeps_partial_emission():
     metrics = IngestMetrics()
     iterator = iter_national_rows(
         FailingStream(csv_bytes([row(), row(lista_numero="B")]).decode()),
-        archive_entry_id="synthetic", election_year=2023, election_round="paso", metrics=metrics,
+        archive_entry_id="synthetic",
+        election_year=2023,
+        election_round="paso",
+        metrics=metrics,
     )
     assert metrics.data["records_seen"] is None
     assert next(iterator).list_id == "44-A"
@@ -314,10 +412,21 @@ def test_public_iterator_second_pass_io_failure_keeps_partial_emission():
     assert metrics.data["commit_returned"] is False
 
 
-@pytest.mark.parametrize("case", [
-    "existing", "directory", "missing_parent", "denied", "archive",
-    "archive_symlink", "sources", "manifest", "config", "dangling",
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "existing",
+        "directory",
+        "missing_parent",
+        "denied",
+        "archive",
+        "archive_symlink",
+        "sources",
+        "manifest",
+        "config",
+        "dangling",
+    ],
+)
 def test_unsafe_destinations_refuse_before_connection(scenario, tmp_path, monkeypatch, case):
     argv, conn, output = scenario([row()])
     if case == "existing":
@@ -358,7 +467,10 @@ def test_unsafe_destinations_refuse_before_connection(scenario, tmp_path, monkey
 
 @pytest.mark.parametrize("fail_loading", [False, True])
 def test_publication_failure_never_rolls_back_a_returned_commit_or_masks_ingest(
-    scenario, monkeypatch, capsys, fail_loading,
+    scenario,
+    monkeypatch,
+    capsys,
+    fail_loading,
 ):
     argv, conn, output = scenario([row()])
     conn.fail_batch = 1 if fail_loading else None

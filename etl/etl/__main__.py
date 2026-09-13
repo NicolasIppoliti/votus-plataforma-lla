@@ -876,8 +876,11 @@ def ingest_source(
             raise ValueError("metrics require national official ingestion")
         registered_year, registered_round = registered_source_election(entry)
         metrics.data["scope"] = {
-            "source_id": source_id, "year": registered_year, "round": registered_round,
-            "capability": "national", "source_kind": "official",
+            "source_id": source_id,
+            "year": registered_year,
+            "round": registered_round,
+            "capability": "national",
+            "source_kind": "official",
         }
     resolved_url: str | None = None
     if capability != "pba":
@@ -1126,10 +1129,17 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         return _cmd_ingest(args)
     try:
         with metrics_report(
-            Path(args.metrics_output), archive_root=Path(args.local_root),
-            protected=tuple(Path(path) for path in (
-                args.sources_path, args.manifest_path, args.crosswalk_path, args.party_map_path,
-            )),
+            Path(args.metrics_output),
+            archive_root=Path(args.local_root),
+            protected=tuple(
+                Path(path)
+                for path in (
+                    args.sources_path,
+                    args.manifest_path,
+                    args.crosswalk_path,
+                    args.party_map_path,
+                )
+            ),
         ) as metrics:
             return _cmd_ingest(args, metrics)
     except MetricsReportError as exc:
