@@ -1725,8 +1725,21 @@ describe("base contracts", () => {
 		publication: ["network", "db-start", "migration", "startup", "publication", "cleanup"],
 		migration: ["network", "db-start", "migration", "cleanup"],
 		status: ["network", "db-start", "migration", "startup", "publication", "cleanup"],
+		pgtap: ["network", "db-start", "migration", "startup", "publication", "pgtap", "cleanup"],
 	} as const;
 	const EXPECTED_FAILURE_RECORD = {
+		PGTAP_UNAVAILABLE: {
+			schemaVersion: 1,
+			operation: "pgtap",
+			reason: "command_failed",
+			exitCode: null,
+		},
+		PGTAP: {
+			schemaVersion: 1,
+			operation: "pgtap",
+			reason: "command_failed",
+			exitCode: 7,
+		},
 		NETWORK_CREATE: {
 			schemaVersion: 1,
 			operation: "supabase_network_create",
@@ -1760,6 +1773,11 @@ describe("base contracts", () => {
 	} as const;
 	const INVALID_STARTUP_STATUSES = [-1, 256, 1.5] as const;
 	const REJECTION_CASES = [
+		["pgTAP safe diagnostics", "pgtap", "disposable scale payload/parity pgTAP failed", 0, loopbackPublication("127.0.0.1"), EXPECTED_FAILURE_RECORD.PGTAP, 0],
+		...["pgTAP termination", "pgTAP unrecognized metadata"].map((scenario) => [
+			scenario, "pgtap", "disposable scale payload/parity pgTAP failed", 0,
+			loopbackPublication("127.0.0.1"), EXPECTED_FAILURE_RECORD.PGTAP_UNAVAILABLE, 0,
+		] as const),
 		...["malformed JSON", "unexpected error", "schema SyntaxError", "empty ZodError", "unknown issue"].map(
 			(variant) => [
 				`publication diagnostic ${variant}`, "publication",
@@ -1911,12 +1929,36 @@ describe("base contracts", () => {
 					trace.push("migration");
 					return { status: phase === "migration" ? 1 : 0, stdout: "", stderr: "" };
 				}
+				if (command === "supabase" && args[0] === "status" && phase === "pgtap")
+					return successfulCommand(JSON.stringify({
+						API_URL: "http://127.0.0.1:46005",
+						DB_URL: "postgresql://postgres:postgres@127.0.0.1:46006/postgres",
+						ANON_KEY: "synthetic-anon", SERVICE_ROLE_KEY: "synthetic-service",
+					}));
+				if (command === "supabase" && args[0] === "test") {
+					trace.push("pgtap");
+					if (_scenario !== "pgTAP safe diagnostics") return {
+						status: null,
+						signal: _scenario === "pgTAP termination" ? "SIGTERM" : "PRIVATE_OUTPUT_MARKER",
+						error: Object.assign(new Error("PRIVATE_OUTPUT_MARKER"), {
+							code: _scenario === "pgTAP termination" ? "ETIMEDOUT" : "PRIVATE_OUTPUT_MARKER",
+						}),
+						stdout: "not ok PRIVATE_OUTPUT_MARKER\nnot ok 1234567 - private\n",
+						stderr: "PRIVATE_OUTPUT_MARKER (SQLSTATE PRIVATE_OUTPUT_MARKER)\n",
+					};
+					return {
+						status: 7, signal: null,
+						stdout: "not ok 18 - PRIVATE_OUTPUT_MARKER\n",
+						stderr: "PRIVATE_OUTPUT_MARKER (SQLSTATE 57014)\n",
+					};
+				}
 				if (command === "supabase" && args[0] === "--version")
 					return successfulCommand("2.115.0\n");
 				if (command === "supabase" && args[0] === "stop")
 					return successfulCommand("--project-id --no-backup\n");
 				return successfulCommand();
 			});
+			const readiness = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 			const writeOutput = vi
 				.spyOn(process.stdout, "write")
 				.mockImplementation(() => true);
@@ -1964,6 +2006,20 @@ describe("base contracts", () => {
 							failureRecords[0]!.slice("E2E_RELEASE_GATE_FAILURE ".length),
 						),
 					).toEqual(expectedRecord);
+					if (phase === "pgtap") {
+						const prefix = "E2E_RELEASE_GATE_PGTAP_DIAGNOSTIC ";
+						const diagnostics = reported.filter((line) => line.startsWith(prefix));
+						expect(diagnostics).toHaveLength(1);
+						expect(JSON.parse(diagnostics[0]!.slice(prefix.length))).toEqual({
+							schemaVersion: 1, proof: "tests/results_exploration_scale.sql",
+							exitCode: _scenario === "pgTAP safe diagnostics" ? 7 : null,
+							signal: _scenario === "pgTAP termination" ? "SIGTERM" : null,
+							spawnErrorCode: _scenario === "pgTAP termination" ? "ETIMEDOUT" : null,
+							sqlstates: _scenario === "pgTAP safe diagnostics" ? ["57014"] : [],
+							failedAssertions: _scenario === "pgTAP safe diagnostics" ? [18] : [],
+						});
+						expect(reported.join("")).not.toContain("PRIVATE_OUTPUT_MARKER");
+					}
 					if (diagnosticCase) {
 						expect(spawnSync).toHaveBeenCalledWith(
 							"docker",
@@ -2020,6 +2076,7 @@ describe("base contracts", () => {
 				expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
 			} finally {
 				restoreCustomError();
+				readiness.mockRestore();
 				signalOnce.mockRestore();
 				writeOutput.mockRestore();
 				spawnSync.mockReset();

@@ -1,152 +1,57 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { ReviewAttention, WorkspaceIdentity } from "./WorkspacePresentation";
+
+function Workflow({ href, title, children }: { href: string; title: string; children: ReactNode }) {
+  return <li className="briefing-workflow">
+    <Link href={href}>{title}</Link>
+    <p>{children}</p>
+  </li>;
+}
 
 export function OperationalBriefing(): ReactNode {
   return (
-    <main className="page-shell">
-      <div className="shell-container">
-        <header className="page-header">
-          <p className="eyebrow">Espacio de evidencia / índice de trabajo</p>
-          <h1>Panel de Votus</h1>
-          <p className="page-header__lede">
-            Pase de la evidencia oficial y pública a la revisión, el análisis y
-            la simulación acotada sin perder de vista el estado de las fuentes
-            de cada flujo de trabajo.
-          </p>
-        </header>
-
-        <section
-          className="workflow-section"
-          aria-labelledby="evidence-workflows"
-        >
-          <div className="workflow-section__heading">
-            <h2 id="evidence-workflows">Evidencia y revisión</h2>
-            <p>
-              Comience por los flujos que examinan resultados, registran el
-              estado de las fuentes o muestran material pendiente antes de
-              compartir una interpretación.
-            </p>
+    <main className="operational-briefing">
+      <header className="briefing-heading">
+        <h1>Panel operativo</h1>
+        <p>Contexto de trabajo y acceso a las consultas. Cada resultado conserva su alcance y su evidencia.</p>
+      </header>
+      <div className="briefing-grid">
+        <section className="briefing-panel briefing-intro" aria-labelledby="briefing-next-heading">
+          <h2 id="briefing-next-heading">Elegir la próxima consulta</h2>
+          <p>Definir una selección oficial o contrastar dos elecciones en una misma sección. Las cifras aparecen en su flujo, no en este panel.</p>
+          <div className="briefing-actions">
+            <Link className="briefing-action briefing-action--primary" href="/drilldown">Explorar resultados</Link>
+            <Link className="briefing-action" href="/compare">Comparar elecciones</Link>
           </div>
-          <ul className="workflow-grid">
-            <li className="workflow-card">
-              <div className="workflow-card__body">
-                <p className="workflow-card__status">Resultados oficiales</p>
-                <h3>Explorar el registro de resultados</h3>
-                <p>
-                  Examine las filas de resultados oficiales con su granularidad
-                  y procedencia, sin reducir la evidencia a una sola cifra
-                  destacada.
-                </p>
-              </div>
-              <div className="workflow-card__footer">
-                <Link className="text-link" href="/drilldown">
-                  Explorar resultados
-                </Link>
-              </div>
-            </li>
-            <li className="workflow-card">
-              <div className="workflow-card__body">
-                <p className="workflow-card__status">
-                  Fuente de acceso voluntario
-                </p>
-                <h3>Examinar registros de fiscalización</h3>
-                <p>
-                  Revise el material de fiscalización no oficial por separado de
-                  las cifras oficiales y mantenga visible el estado de su
-                  fuente.
-                </p>
-              </div>
-              <div className="workflow-card__footer">
-                <Link className="text-link" href="/fiscalizacion">
-                  Fiscalización (no oficial)
-                </Link>
-              </div>
-            </li>
-            <li className="workflow-card">
-              <div className="workflow-card__body">
-                <p className="workflow-card__status">
-                  Pendientes para consulta
-                </p>
-                <h3>Consultar elementos de revisión</h3>
-                <p>
-                  Inspeccione los elementos pendientes y la evidencia registrada
-                  antes de confiar en un resultado o avanzar con una
-                  interpretación.
-                </p>
-              </div>
-              <div className="workflow-card__footer">
-                <Link className="text-link" href="/review">
-                  Revisión
-                </Link>
-              </div>
-            </li>
-            <li className="workflow-card">
-              <div className="workflow-card__body">
-                <p className="workflow-card__status">Supuestos del modelo</p>
-                <h3>Probar proyecciones de bancas</h3>
-                <p>
-                  Ejecute una simulación acotada de bancas y mantenga los
-                  supuestos y las proyecciones no oficiales separados de los
-                  resultados observados.
-                </p>
-              </div>
-              <div className="workflow-card__footer">
-                <Link className="text-link" href="/simulate">
-                  Simulación de bancas
-                </Link>
-              </div>
-            </li>
+        </section>
+        <ReviewAttention />
+        <section className="briefing-panel briefing-work" aria-labelledby="briefing-official-heading">
+          <h2 id="briefing-official-heading">Resultados oficiales</h2>
+          <ul>
+            <Workflow href="/drilldown" title="Explorar resultados">Elección, categoría y territorio. Tabla exacta y nivel real de la fuente.</Workflow>
+            <Workflow href="/compare" title="Comparar elecciones">Elecciones nacionales de 2023 y 2025. Sección compartida y evidencia independiente.</Workflow>
+            <Workflow href="/municipal" title="Resultados municipales">Coronel Rosales · Concejales 2025. Elección configurada.</Workflow>
           </ul>
         </section>
-
-        <section
-          className="workflow-section"
-          aria-labelledby="prepared-workflows"
-        >
-          <div className="workflow-section__heading">
-            <h2 id="prepared-workflows">Rutas de análisis especializadas</h2>
-            <p>
-              Inicie una comparación nacional o el análisis municipal desde
-              selectores que construyen enlaces reutilizables.
-            </p>
-          </div>
-          <ul className="workflow-grid">
-            <li className="workflow-card workflow-card--prepared">
-              <div className="workflow-card__body">
-                <p className="workflow-card__status">
-                  Selección nacional disponible
-                </p>
-                <h3>Comparar resultados electorales</h3>
-                <p>
-                  Elija elecciones nacionales de 2023 y 2025 y compare una
-                  categoría publicada en ambas mediante un enlace reutilizable.
-                </p>
-              </div>
-              <div className="workflow-card__footer">
-                <Link className="text-link" href="/compare">
-                  Comparar resultados electorales
-                </Link>
-              </div>
-            </li>
-            <li className="workflow-card workflow-card--prepared">
-              <div className="workflow-card__body">
-                <p className="workflow-card__status">
-                  Selección municipal disponible
-                </p>
-                <h3>Analizar concejos municipales</h3>
-                <p>
-                  Elija la elección municipal configurada y consulte resultados
-                  oficiales con procedencia y exclusiones visibles.
-                </p>
-              </div>
-              <div className="workflow-card__footer">
-                <Link className="text-link" href="/municipal">
-                  Análisis de concejos municipales
-                </Link>
-              </div>
-            </li>
+        <section className="briefing-panel briefing-separate" aria-labelledby="briefing-separate-heading">
+          <h2 id="briefing-separate-heading">Flujos separados</h2>
+          <ul>
+            <Workflow href="/fiscalizacion" title="Cobertura y resultados">Fiscalización no oficial, por acceso explícito. La cobertura no es una muestra aleatoria.</Workflow>
+            <Workflow href="/simulate" title="Simular escenario">Hipótesis de asignación. No es una predicción ni un resultado histórico.</Workflow>
           </ul>
         </section>
+        <aside className="briefing-context" aria-labelledby="briefing-context-heading">
+          <h2 id="briefing-context-heading">Contexto del workspace</h2>
+          <WorkspaceIdentity />
+          <dl>
+            <dt>Alcance</dt>
+            <dd>Consultas según las fuentes disponibles y el acceso autorizado.</dd>
+            <dt>Disponibilidad</dt>
+            <dd>Cada ruta muestra sus propias limitaciones. No se presume cobertura nacional.</dd>
+          </dl>
+          <p>Este panel no suma votos oficiales y de fiscalización ni presenta indicadores electorales.</p>
+        </aside>
       </div>
     </main>
   );

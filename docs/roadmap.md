@@ -7,7 +7,8 @@ the [specification](../openspec/changes/operational-verification/specs/operation
 ## Status and sequencing
 
 NOW has a constructed documentation procedure; no hosted state has been verified.
-NEXT workstreams are independent future changes; none has been opened here.
+Maintainer guidance is delivered and the first bounded cleanup is implemented and locally verified.
+The other NEXT workstreams remain independent future changes.
 LATER items require their own scope decisions. Horizons are priorities, not dates or estimates.
 
 ## NOW — Operational verification
@@ -23,7 +24,9 @@ Neither planning completion nor a later report automatically approves or blocks 
 
 ## NEXT — Maintainer clarity and bounded cleanup
 
-**Status:** independent future change, not yet opened; no dependency on hosted verification.
+**Status:** guidance and migration inventory/down-path documentation delivered; test-only boundary
+scaffolding removed and locally verified. Additional cleanup requires its own scope; no dependency
+on hosted verification.
 **Value:** one reliable root-level setup/release/rollback navigation path, distinct from the
 specific operational-verification procedure; no duplicate operator or runtime framework.
 **Dependencies:** inventory current documentation and production callers before editing/removing paths.

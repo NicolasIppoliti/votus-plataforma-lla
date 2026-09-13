@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TextIO
 
 from etl import db
+from etl.ingest_metrics import IngestMetrics
 from etl.jurisdiction import (
     JurisdictionNames,
     ResultRow,
@@ -265,6 +266,7 @@ def _parse_establecimientos(
     csv_bytes: bytes | None,
     *,
     source_label: str,
+    metrics: IngestMetrics | None = None,
 ) -> tuple[dict[CompanionKey, tuple[str, str]], dict[CompanionKey, frozenset[str]]]:
     """Read the optional companion using its measured distrito/seccion/mesa key.
 
@@ -289,6 +291,16 @@ def _parse_establecimientos(
     names_by_code: dict[str, set[str]] = {}
     keys_by_code: dict[str, set[CompanionKey]] = {}
     excluded: dict[str, int] = {}
+    if metrics is not None:
+        metrics.data["companion_conflicts"] = {
+            "input_exclusions": excluded,
+            "input_unique_conflict_keys": None,
+            "input_conflict_keys": None,
+            "result_rows": None,
+            "result_votes": None,
+            "result_keys": None,
+            "result_reasons": None,
+        }
     for raw in reader:
         key = _national_companion_key(
             raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
@@ -328,6 +340,7 @@ def _parse_establecimientos(
             file=sys.stderr,
         )
     frozen_conflict_reasons = {key: frozenset(reasons) for key, reasons in conflict_reasons.items()}
+    counts = {}
     if frozen_conflict_reasons:
         counts = {
             reason: sum(reason in reasons for reasons in frozen_conflict_reasons.values())
@@ -343,6 +356,11 @@ def _parse_establecimientos(
             f"quarantined {len(frozen_conflict_reasons)} unique establecimiento companion "
             f"mesa key(s) — {'; '.join(parts)}",
             file=sys.stderr,
+        )
+    if metrics is not None:
+        metrics.data["companion_conflicts"].update(
+            input_unique_conflict_keys=len(frozen_conflict_reasons),
+            input_conflict_keys=counts,
         )
     return by_mesa, frozen_conflict_reasons
 
@@ -589,11 +607,13 @@ def iter_national_rows(
     election_year: int,
     election_round: str,
     establecimientos_csv_bytes: bytes | None = None,
+    metrics: IngestMetrics | None = None,
 ) -> Iterator[NationalRow]:
     """Validate a seekable national CSV in pass one, then emit rows in pass two."""
     establecimientos, conflicting_establecimientos = _parse_establecimientos(
         establecimientos_csv_bytes,
         source_label=archive_entry_id,
+        metrics=metrics,
     )
     excluded_rows: dict[str, int] = {}
     excluded_votes: dict[str, int] = {}
@@ -603,23 +623,51 @@ def iter_national_rows(
     def exclude(reason: str, raw_votes: str | None) -> None:
         excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
         votes = parse_source_int(raw_votes)
+        if metrics is not None:
+            metrics.record_exclusion(reason, votes)
         if votes is None:
             excluded_unparseable[reason] = excluded_unparseable.get(reason, 0) + 1
         else:
             excluded_votes[reason] = excluded_votes.get(reason, 0) + votes
 
-    def record_companion_conflict(key: CompanionKey, _reasons: frozenset[str], votes: int) -> None:
+    def record_companion_conflict(key: CompanionKey, reasons: frozenset[str], votes: int) -> None:
         stats = companion_conflict_stats.get(key)
         if stats is None:
             companion_conflict_stats[key] = _NaturalKeyStats(count=1, votes=votes)
         else:
             stats.count += 1
             stats.votes += votes
+        if metrics is not None:
+            companion = metrics.data["companion_conflicts"]
+            companion["result_rows"] += 1
+            companion["result_votes"] += votes
+            companion["result_keys"] = len(companion_conflict_stats)
+            for reason in reasons:
+                bucket = companion["result_reasons"].setdefault(reason, {"rows": 0, "votes": 0})
+                bucket["rows"] += 1
+                bucket["votes"] += votes
 
     csv_text.seek(0)
     circuits_by_companion_key: dict[CompanionKey, set[str]] = {}
     stats_by_key: dict[NaturalKey, _NaturalKeyStats] = {}
-    for index, raw in enumerate(_national_reader(csv_text)):
+    reader = _national_reader(csv_text)
+    if metrics is not None:
+        metrics.data.update(
+            first_pass="partial",
+            records_seen=0,
+            candidate_keys=0,
+            exclusions={},
+        )
+        if metrics.data["companion_conflicts"] is not None:
+            metrics.data["companion_conflicts"].update(
+                result_rows=0,
+                result_votes=0,
+                result_keys=0,
+                result_reasons={},
+            )
+    for index, raw in enumerate(reader):
+        if metrics is not None:
+            metrics.data["records_seen"] += 1
         if establecimientos_csv_bytes is not None:
             companion_key = _national_companion_key(
                 raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
@@ -650,12 +698,20 @@ def iter_national_rows(
         else:
             stats.count += 1
             stats.votes += row.result.votes
+        if metrics is not None:
+            metrics.data["candidate_keys"] = len(stats_by_key)
 
     ambiguous_companion_keys = {
         key for key, circuits in circuits_by_companion_key.items() if len(circuits) > 1
     }
     for key, stats in stats_by_key.items():
         if _companion_key_from_natural_key(key) in ambiguous_companion_keys:
+            if metrics is not None:
+                metrics.record_exclusion(
+                    "ambiguous result circuits for establecimiento companion",
+                    stats.votes,
+                    stats.count,
+                )
             excluded_rows["ambiguous result circuits for establecimiento companion"] = (
                 excluded_rows.get("ambiguous result circuits for establecimiento companion", 0)
                 + stats.count
@@ -669,10 +725,19 @@ def iter_national_rows(
         for key, stats in stats_by_key.items()
         if stats.count > 1 and _companion_key_from_natural_key(key) not in ambiguous_companion_keys
     }
+    if metrics is not None:
+        categories = metrics.data["ambiguous_categories"] = {}
+        for key in ambiguous_natural_keys:
+            bucket = categories.setdefault(key[4], {"rows": 0, "votes": 0, "keys": 0})
+            bucket["rows"] += stats_by_key[key].count
+            bucket["votes"] += stats_by_key[key].votes
+            bucket["keys"] += 1
     _report_exclusions(excluded_rows, excluded_votes, excluded_unparseable)
     _report_companion_result_conflicts(companion_conflict_stats, conflicting_establecimientos)
     _report_ambiguous_natural_keys(stats_by_key, ambiguous_natural_keys)
 
+    if metrics is not None:
+        metrics.data.update(first_pass="complete", iteration="partial", rows_emitted=0)
     csv_text.seek(0)
     for index, raw in enumerate(_national_reader(csv_text)):
         row = _candidate_from_raw(
@@ -695,7 +760,11 @@ def iter_national_rows(
             continue
         if _natural_key(row) in ambiguous_natural_keys:
             continue
+        if metrics is not None:
+            metrics.data["rows_emitted"] += 1
         yield row
+    if metrics is not None:
+        metrics.data["iteration"] = "complete"
 
 
 # NO `resolve_jurisdictions` / `QuarantinedNationalRow` /

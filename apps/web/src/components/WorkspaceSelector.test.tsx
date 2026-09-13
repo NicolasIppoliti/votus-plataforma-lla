@@ -27,7 +27,7 @@ const hooks = vi.hoisted(() => {
   };
 });
 const router = vi.hoisted(() => ({ refresh: vi.fn() }));
-vi.mock("react", async (importOriginal) => ({ ...(await importOriginal<typeof import("react")>()), useState: hooks.useState, useEffect: hooks.useEffect, useTransition: hooks.useTransition }));
+vi.mock("react", async (importOriginal) => ({ ...(await importOriginal<typeof import("react")>()), useId: () => "workspace-selector-test", useState: hooks.useState, useEffect: hooks.useEffect, useTransition: hooks.useTransition }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 const { WorkspaceSelector } = await import("./WorkspaceSelector");
 
