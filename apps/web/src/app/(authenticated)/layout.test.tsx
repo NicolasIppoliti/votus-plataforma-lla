@@ -72,20 +72,13 @@ it.each([
 
 it("renders a closed mobile drawer from the shared navigation contract", async () => {
   const markup = await renderLayout("/dashboard");
-  const drawerMarkup = mobileDrawer(markup);
-
-  expect(markup).toContain(
-    'aria-controls="mobile-navigation-drawer" aria-expanded="false"',
-  );
-  expect(drawerMarkup).not.toMatch(/<dialog[^>]*\sopen(?:\s|=|>)/);
-  expect(drawerMarkup).toContain('<aside class="situation-sidebar">');
-  expect(drawerMarkup).toContain(
-    "Esta herramienta no es una fuente electoral oficial.",
-  );
-  expect(drawerMarkup.match(/<nav aria-label="principal"/g) ?? []).toHaveLength(1);
-  const drawerNavigation = drawerMarkup.match(
-    /<nav aria-label="principal"[\s\S]*?<\/nav>/,
-  )?.[0] ?? "";
+  // Closed portal content is absent from SSR; Root E2E verifies its shared
+  // navigation and footer after opening the real production drawer.
+  expect(markup).toContain('aria-controls="mobile-navigation-drawer"');
+  expect(markup).toContain('aria-expanded="false"');
+  expect(markup).not.toContain('role="dialog"');
+  expect(markup.match(/<nav aria-label="principal"/g) ?? []).toHaveLength(1);
+  const drawerNavigation = primaryNavigation(markup);
   expect([...drawerNavigation.matchAll(/<a ([^>]*)>/g)]
     .map(([, attributes]) => attributes?.match(/href="([^"]+)"/)?.[1])
     .filter((href): href is string => typeof href === "string"))
@@ -100,10 +93,10 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
     ]);
 });
 
-it("renders one real sign-out action per sidebar footer with unique organization labels", async () => {
+it("renders the real desktop sign-out action and label while the drawer is closed", async () => {
   const markup = await renderLayout("/");
   const footers = markup.match(/<footer\b[^>]*>[\s\S]*?<\/footer>/g) ?? [];
-  expect(footers).toHaveLength(2);
+  expect(footers).toHaveLength(1);
   const selectorIds: string[] = [];
   for (const footer of footers) {
     expect(footer).toContain('aria-label="Organización y cuenta"');
@@ -120,19 +113,11 @@ it("renders one real sign-out action per sidebar footer with unique organization
     selectorIds.push(id);
     expect(footer.indexOf("<select")).toBeLessThan(footer.indexOf("<details"));
   }
-  expect(new Set(selectorIds).size).toBe(2);
-  const topbar = markup.replace(mobileDrawer(markup), "").match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0];
+  expect(new Set(selectorIds).size).toBe(1);
+  const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0];
   expect(topbar).not.toContain("<form");
   expect(topbar).toContain("Organización activa:");
 });
-
-function mobileDrawer(markup: string): string {
-  const drawerMarkup = markup.match(
-    /<dialog[^>]*id="mobile-navigation-drawer"[\s\S]*?<\/dialog>/,
-  )?.[0];
-  expect(drawerMarkup).toBeDefined();
-  return drawerMarkup ?? "";
-}
 
 function primaryNavigation(markup: string): string {
   const navigationMarkup = markup.match(
@@ -240,7 +225,7 @@ it.each([
   const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
   expect(workspace.reviewItems).toHaveBeenCalledExactlyOnceWith(supabase, 0, 0);
   const main = markup.match(/<main\b[^>]*>[\s\S]*?<\/main>/)?.[0] ?? "";
-  const topbar = markup.replace(mobileDrawer(markup), "").match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
+  const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
   for (const reader of [main, topbar]) {
     expect(reader).toContain(message);
     expect(reader).not.toContain("elemento(s) de revisión pendiente(s)");
