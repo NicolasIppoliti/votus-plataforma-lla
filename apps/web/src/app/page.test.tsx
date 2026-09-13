@@ -8,8 +8,15 @@ it("renders the root operational briefing with evidence and review routes", () =
     <OperationalBriefingPage /> as ReactElement,
   );
 
-  expect(markup).toContain("<h1>Panel de Votus</h1>");
-  expect(markup).toContain("Evidencia y revisión");
+  expect(markup).toContain("<h1>Panel operativo</h1>");
+  expect(markup).toContain("Elegir la próxima consulta");
+  expect(markup).toContain("Resultados oficiales");
+  expect(markup).toContain("Flujos separados");
+  expect(markup).toContain("Contexto del workspace");
+  const hrefs = [...markup.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
+  expect([...new Set(hrefs)].sort()).toEqual(["/compare", "/drilldown", "/fiscalizacion", "/municipal", "/review", "/simulate"]);
+  expect(markup.indexOf("Explorar resultados")).toBeLessThan(markup.indexOf("Atención operativa"));
+  expect(markup.indexOf("Comparar elecciones")).toBeLessThan(markup.indexOf("Atención operativa"));
   expect(markup).toContain('href="/review"');
   expect(markup).toContain('href="/drilldown"');
 });

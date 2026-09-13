@@ -36,7 +36,21 @@ async function withAuthorizedFiscalWorkspace<T>(page: Page, run: () => Promise<T
   const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: COVERAGE_SCOPE.distritoCode, p_seccion_code: COVERAGE_SCOPE.seccionCode });
   if (fixtureError || typeof fixture?.organization_id !== "string") { const cause = new Error(`failed to set up authorized fiscal fixture: ${fixtureError?.message ?? "invalid response"}`); if (fixture) { const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture }); if (cleanup.error) throw new AggregateError([cause, new Error(cleanup.error.message)], "fiscal fixture setup and cleanup failed"); } throw cause; }
   let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
-  try { await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByLabel("Organización"); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id); const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched; expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } }); outcome = { value: await run() }; }
+  try {
+    await page.goto(new URL("/dashboard", baseURL).toString());
+    const trigger = page.getByRole("button", { name: "Abrir navegación" });
+    const mobile = await trigger.isVisible();
+    if (mobile) await trigger.click();
+    const selector = page.getByRole("combobox", { name: "Organización", exact: true });
+    await expect(selector).toBeVisible();
+    await selector.selectOption(fixture.organization_id);
+    const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Cambiar organización" }).click();
+    const response = await switched;
+    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
+    if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+    outcome = { value: await run() };
+  }
   catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
   if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "fiscal assertion and fixture cleanup failed"); throw outcome.error; } if (cleanupError) throw new Error(`failed to clean fiscal fixture: ${cleanupError.message}`); return outcome.value;
 }

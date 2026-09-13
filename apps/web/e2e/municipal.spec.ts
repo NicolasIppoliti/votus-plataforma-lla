@@ -28,7 +28,7 @@ async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promis
   const fixture = data as WorkspaceFixture;
   try {
     await page.goto(new URL("/dashboard", baseURL).toString());
-    await page.getByLabel("Organización").selectOption(fixture.organization_id);
+    await page.getByRole("combobox", { name: "Organización", exact: true }).selectOption(fixture.organization_id);
     const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
     await page.getByRole("button", { name: "Cambiar organización" }).click();
     expect({ ok: (await switched).ok() }).toEqual({ ok: true });

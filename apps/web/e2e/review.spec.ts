@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
+import { REVIEW_ITEM, withReviewItem } from "./authorized-review-fixture";
+import { writeFile } from "node:fs/promises";
 import { type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
@@ -11,15 +12,6 @@ import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focu
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
 const REVIEW_REGION_LABEL = "Elementos de revisión pendientes";
-const REVIEW_ITEM = {
-  id: "00000000-0000-4000-8000-000000000024",
-  kind: "pba_conflicting_duplicate_semantic_result",
-  severity: "warning",
-  subject_ref: `official-import/2025/general/mesa/${"subject-segment-".repeat(8)}`,
-  detected_at: "2026-08-13T12:34:56.789Z",
-  note: `The official mesa identity needs manual review because ${"the source lineage remains ambiguous; ".repeat(6)}`,
-} as const;
-
 async function expectReducedMotion(page: Page, target: Locator): Promise<void> {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const durations = await target.evaluate((element) => {
@@ -27,54 +19,6 @@ async function expectReducedMotion(page: Page, target: Locator): Promise<void> {
     return [...styles.animationDuration.split(","), ...styles.transitionDuration.split(",")];
   });
   expect(durations.map(durationInMilliseconds).every((duration) => duration <= 0.01)).toBe(true);
-}
-
-async function withReviewItem<T>(page: Page, run: () => Promise<T>): Promise<T> {
-  const environment = assertE2eEnvironment(process.env);
-  const admin = createClient(
-    environment.NEXT_PUBLIC_SUPABASE_URL,
-    environment.SUPABASE_SERVICE_ROLE_KEY,
-  );
-  const { error: insertError } = await admin
-    .from("review_item")
-    .insert(REVIEW_ITEM);
-  if (insertError) {
-    throw new Error(`failed to seed review item: ${insertError.message}`);
-  }
-  const { data: auth, error: authError } = await admin.auth.admin.listUsers();
-  const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase()); if (authError || !user) { const cause = new Error(`failed to resolve fixture user: ${authError?.message ?? "user missing"}`); const { error } = await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id); if (error) throw new AggregateError([cause, new Error(error.message)], "review fixture setup and cleanup failed"); throw cause; }
-  const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_review_fixture", { p_user_id: user.id, p_review_item_id: REVIEW_ITEM.id }); if (fixtureError || typeof fixture?.organization_id !== "string") { const cause = new Error(`failed to set up authorized review fixture: ${fixtureError?.message ?? "invalid response"}`); const cleanup = fixtureError ? await admin.from("review_item").delete().eq("id", REVIEW_ITEM.id) : await admin.rpc("e2e_cleanup_authorized_review_fixture", { p_fixture: fixture }); if (cleanup.error) throw new AggregateError([cause, new Error(cleanup.error.message)], "review fixture setup and cleanup failed"); throw cause; }
-
-  let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
-  try {
-    await page.goto("/");
-    const organizationSelector = page.getByLabel("Organización");
-    await expect(organizationSelector).toBeVisible();
-    await organizationSelector.selectOption(fixture.organization_id);
-    const switchResponse = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await page.getByRole("button", { name: "Cambiar organización" }).click();
-    const response = await switchResponse;
-    expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
-    outcome = { value: await run() };
-  } catch (error) {
-    outcome = { error };
-  } finally {
-    ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_review_fixture", { p_fixture: fixture }));
-  }
-
-  if ("error" in outcome) {
-    if (cleanupError) {
-      throw new AggregateError(
-        [outcome.error, new Error(cleanupError.message)],
-        "review assertion and fixture cleanup failed",
-      );
-    }
-    throw outcome.error;
-  }
-  if (cleanupError) {
-    throw new Error(`failed to clean review item: ${cleanupError.message}`);
-  }
-  return outcome.value;
 }
 
 async function expectDocumentNotToOverflow(page: Page): Promise<void> {
@@ -164,8 +108,64 @@ async function expectPopulatedReviewLayout(
     await expect(region).not.toBeFocused();
     await page.keyboard.press("Tab");
     await expect(region).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(scrollDimensions.scrollLeft);
+    // Viewport/focus traversal may retain an earlier horizontal position.
+    // Start this directional check at the left edge, never at its end stop.
+    // Registration is acknowledged before the existing reset and keyboard input.
+    const completion = await region.evaluateHandle((element) => {
+      let armed = false, moved = false, released = false, complete = false;
+      let resetPending = false;
+      let resetComplete = false;
+      const key = (event: Event) => {
+        if (!resetComplete || !(event instanceof KeyboardEvent) || event.target !== element || !event.isTrusted || event.key !== "ArrowRight"
+          || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (event.type === "keydown") { armed = true; moved = released = complete = false; }
+        else if (armed) released = true;
+      };
+      const scroll = () => {
+        complete = false;
+        if (armed && element.scrollLeft > 0) moved = true;
+      };
+      const end = () => {
+        if (resetPending) {
+          if (element.scrollLeft === 0) {
+            resetPending = false;
+            resetComplete = true;
+          }
+          return;
+        }
+        if (armed && moved && released && element.scrollLeft > 0) complete = true;
+      };
+      element.addEventListener("keydown", key);
+      element.addEventListener("keyup", key);
+      element.addEventListener("scroll", scroll);
+      element.addEventListener("scrollend", end);
+      return {
+        reset: () => {
+          resetPending = element.scrollLeft !== 0;
+          resetComplete = !resetPending;
+          element.scrollLeft = 0;
+        },
+        resetCompleted: () => resetComplete,
+        completed: () => complete,
+        dispose: () => {
+          element.removeEventListener("keydown", key);
+          element.removeEventListener("keyup", key);
+          element.removeEventListener("scroll", scroll);
+          element.removeEventListener("scrollend", end);
+        },
+      };
+    });
+    try {
+      await completion.evaluate(state => state.reset());
+      await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
+      await expect.poll(() => completion.evaluate(state => state.resetCompleted())).toBe(true);
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+      await expect.poll(() => completion.evaluate(state => state.completed())).toBe(true);
+    } finally {
+      try { await completion.evaluate(state => state.dispose()); }
+      finally { await completion.dispose(); }
+    }
   } else {
     expect(scrollDimensions.scrollWidth).toBeLessThanOrEqual(
       scrollDimensions.clientWidth,
@@ -211,6 +211,13 @@ async function expectKeyboardFocus(target: Locator, region = false, control: Rev
         outlineOffsetPx: Number.parseFloat(getComputedStyle(element).outlineOffset),
         outlineStyle: getComputedStyle(element).outlineStyle,
       },
+      focus: {
+        activeTarget: document.activeElement === element ? "target"
+          : document.activeElement?.matches(".mobile-navigation__trigger") ? "drawer-trigger"
+          : document.activeElement === document.body ? "body"
+          : `other-${document.activeElement?.tagName.toLowerCase() ?? "none"}`,
+        documentFocused: document.hasFocus(), targetConnected: element.isConnected,
+      },
       effectiveOpacity,
       opaque: color !== "transparent" && !/[,/]\s*0\s*\)$/.test(color),
       intersects: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
@@ -223,6 +230,19 @@ async function expectKeyboardFocus(target: Locator, region = false, control: Rev
       } : null,
     };
   });
+  const writeDiagnostics = async (canonical: unknown, focus: Awaited<ReturnType<typeof capture>>["focus"]) => {
+    const failures: unknown[] = [];
+    if (!await writeReviewFocusGeometry(canonical, test.info())) {
+      failures.push(new Error("Canonical focus geometry was rejected or could not be written"));
+    }
+    try {
+      await writeFile(test.info().outputPath("review-focus-state.json"),
+        JSON.stringify({ version: 1, control, ...focus }), { mode: 0o600, flag: "wx" });
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length) throw new AggregateError(failures, "Focus diagnostics failed");
+  };
   try {
     await expect(target).toBeFocused();
     await expect(target).toHaveCSS("outline-width", "3px");
@@ -231,21 +251,28 @@ async function expectKeyboardFocus(target: Locator, region = false, control: Rev
     await expect.poll(() => target.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
   } catch (error) {
     try {
-      const { appearance, ...snapshot } = await capture();
-      await writeReviewFocusGeometry({ version: 2, reason: "appearance", control, appearance, snapshot }, test.info());
-    } catch {
-      // Even a detached target or failed evaluation must preserve the original assertion.
+      const { appearance, focus, ...snapshot } = await capture();
+      await writeDiagnostics({ version: 2, reason: "appearance", control, appearance, snapshot }, focus);
+    } catch (diagnosticError) {
+      throw new AggregateError([error, diagnosticError], "Focus assertion and diagnostic capture failed");
     }
     throw error;
   }
-  const { appearance, ...visibility } = await capture();
-  if (!visibility.intersects) {
-    await writeReviewFocusGeometry({ version: 2, reason: "off-viewport", control, appearance, snapshot: visibility }, test.info());
+  const { appearance, focus, ...visibility } = await capture();
+  try {
+    expect(visibility.effectiveOpacity).toBeGreaterThan(0);
+    expect(visibility.opaque).toBe(true);
+    expect(visibility.intersects).toBe(true);
+    if (!region) expect(visibility.contained, JSON.stringify({ control, target: visibility.target, viewport: visibility.viewport, dialog: visibility.dialog })).toBe(true);
+  } catch (error) {
+    try {
+      await writeDiagnostics({ version: 2, reason: visibility.intersects ? "appearance" : "off-viewport",
+        control, appearance, snapshot: visibility }, focus);
+    } catch (diagnosticError) {
+      throw new AggregateError([error, diagnosticError], "Focus visibility assertion and diagnostic capture failed");
+    }
+    throw error;
   }
-  expect(visibility.effectiveOpacity).toBeGreaterThan(0);
-  expect(visibility.opaque).toBe(true);
-  expect(visibility.intersects).toBe(true);
-  if (!region) expect(visibility.contained).toBe(true);
 }
 
 async function tabTo(page: Page, target: Locator, reverse = false, region = false, control: ReviewFocusControl = "unlabelled"): Promise<void> {
@@ -346,16 +373,29 @@ for (const windowWidth of [1280, 640]) {
         const close = drawer.getByRole("button", { name: "Cerrar navegación" });
         await expectKeyboardFocus(close, false, "nav-close");
         await expectControlSize(close);
+        const account = drawer.locator("summary", { hasText: "Cuenta" });
+        const organization = drawer.getByRole("combobox", { name: "Organización" });
+        const submit = drawer.getByRole("button", { name: "Cambiar organización" });
+        await tabTo(page, account, true);
+        await tabTo(page, submit, true, false, "org-submit");
+        await tabTo(page, organization, true, false, "org-select");
         await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true, false, "last-drawer-link");
+        await tabTo(page, organization, false, false, "org-select");
+        await expectControlSize(organization);
+        await tabTo(page, submit, false, false, "org-submit");
+        await expectControlSize(submit);
+        await tabTo(page, account);
+        await page.keyboard.press("Enter");
+        await tabTo(page, drawer.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
+        await page.keyboard.press("Escape");
+        await expectKeyboardFocus(account);
+        await expect(drawer).toBeVisible();
         await tabTo(page, close, false, false, "nav-close");
         await page.keyboard.press("Escape");
         await expect(drawer).not.toBeVisible();
         await expectKeyboardFocus(trigger, false, "nav-trigger");
-        await tabTo(page, page.getByRole("combobox", { name: "Organización" }), false, false, "org-select");
-        await tabTo(page, page.getByRole("button", { name: "Cambiar organización" }), false, false, "org-submit");
         const realCount = page.getByRole("banner").getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)", exact: true });
         await tabTo(page, realCount, false, false, "header-count");
-        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
         await tabTo(page, region, false, true, "review-table-region");
         await expect(region).toHaveAttribute("tabindex", "0");
         const scroll = await region.evaluate((element) => ({ left: element.scrollLeft, width: element.clientWidth, total: element.scrollWidth }));
@@ -492,14 +532,10 @@ test.describe("the review route reflects the disposable database", () => {
           const drawer = page.getByRole("dialog", { name: "Navegación principal" });
           const close = drawer.getByRole("button", { name: "Cerrar navegación" });
           await expectKeyboardFocus(close, false, "nav-close");
-          await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true, false, "last-drawer-link");
+          await tabTo(page, drawer.locator("summary", { hasText: "Cuenta" }), true);
           await tabTo(page, close, false, false, "nav-close");
           await tabTo(page, drawer.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, drawer.getByRole("link", { name, exact: true }));
-          await tabTo(page, close, false, false, "nav-close");
-          await page.keyboard.press("Escape");
-          await expect(drawer).not.toBeVisible();
-          await expectKeyboardFocus(trigger, false, "nav-trigger");
         }
         const organization = page.getByRole("combobox", { name: "Organización" });
         const submit = page.getByRole("button", { name: "Cambiar organización" });
@@ -507,10 +543,22 @@ test.describe("the review route reflects the disposable database", () => {
         await expect(submit).toBeEnabled();
         await tabTo(page, organization, false, false, "org-select");
         await tabTo(page, submit, false, false, "org-submit");
+        const account = page.getByRole("contentinfo", { name: "Organización y cuenta" }).locator("summary");
+        await tabTo(page, account);
+        await page.keyboard.press("Enter");
+        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
+        await page.keyboard.press("Escape");
+        await expectKeyboardFocus(account);
+        if (width < 1024) {
+          const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+          await tabTo(page, drawer.getByRole("button", { name: "Cerrar navegación" }), false, false, "nav-close");
+          await page.keyboard.press("Escape");
+          await expect(drawer).not.toBeVisible();
+          await expectKeyboardFocus(page.getByRole("button", { name: "Abrir navegación" }), false, "nav-trigger");
+        }
         const realCount = page.getByRole("banner").getByRole("link", { name: /^\d+ elemento\(s\) de revisión pendiente\(s\)$/ });
         await expect(realCount).toHaveText("1 elemento(s) de revisión pendiente(s)");
         await tabTo(page, realCount, false, false, "header-count");
-        await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
         const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
         await tabTo(page, region, false, true, "review-table-region");
         if (width < 1024) {
@@ -708,7 +756,7 @@ test.describe("the review route reflects the disposable database", () => {
 
       const dashboardMain = page.getByRole("main");
       await dashboardMain
-        .getByRole("link", { name: "Revisión", exact: true })
+        .getByRole("link", { name: "Consultar revisión", exact: true })
         .click();
 
       await expect(page).toHaveURL(/\/review/);

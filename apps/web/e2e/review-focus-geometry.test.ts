@@ -101,6 +101,25 @@ test("supports no open dialog and the closed unlabelled fallback", async () => {
   expect(JSON.parse(call[1])).toEqual(capture);
 });
 
+test.each([appearanceCapture, offViewportCapture])("projects $reason focus metadata outside the strict receiver", async (capture) => {
+  const outputPath = vi.fn((name: string) => `case-output/${name}`);
+  const writer = vi.fn().mockResolvedValue(undefined);
+  const enriched = { ...capture, snapshot: { ...capture.snapshot, focus: {
+    activeTarget: "drawer-trigger", documentFocused: true, targetConnected: true,
+  } } };
+  expect(await writeReviewFocusGeometry(enriched, { outputPath }, writer)).toBe(false);
+  expect(outputPath).not.toHaveBeenCalled();
+  expect(writer).not.toHaveBeenCalled();
+  const { focus: _focus, ...canonical } = enriched.snapshot;
+  void _focus;
+  const projected = { ...capture, snapshot: canonical };
+  expect(await writeReviewFocusGeometry(projected, { outputPath }, writer)).toBe(true);
+  expect(writer).toHaveBeenCalledWith("case-output/review-focus-geometry.json", JSON.stringify(capture), { mode: 0o600, flag: "wx" });
+  writer.mockRejectedValueOnce(new Error("synthetic write failure"));
+  expect(await writeReviewFocusGeometry(projected, { outputPath }, writer)).toBe(false);
+  expect(projected).toEqual(capture);
+});
+
 test.each(["path", "write", "existing-file"])("diagnostic failure (%s) preserves the captured false assertion", async (failure) => {
   const capture = { ...offViewportCapture, snapshot: structuredClone(snapshot) };
   const outputPath = () => {
