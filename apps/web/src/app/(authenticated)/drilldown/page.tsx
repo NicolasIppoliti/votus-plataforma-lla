@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
 import {
   SCOPE_FORM_KIND,
+  canonicalScopeSearchParams,
   scopeControlStates,
   serializeScopeDraft,
 } from "@/components/scope-selector-behavior";
@@ -509,6 +510,18 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
       <PageShell form={form}>
         <section className="official-explorer__state" role="alert">
           <p>{refusalMessage(evidence.status)}</p>
+          {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE
+            ? <a href={`/drilldown?${canonicalScopeSearchParams({
+                electionId: selection.electionId,
+                categoryId: selection.categoryId,
+                distritoCode: selection.distritoCode,
+                seccionCode: selection.seccionCode ?? "",
+                circuitoCode: selection.circuitoCode ?? "",
+                establecimientoCode: selection.establecimientoCode ?? "",
+                mesaCode: selection.mesaCode?.toString() ?? "",
+                level: selection.requestedLevel,
+              })}`}>Reintentar carga</a>
+            : null}
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED
             ? null
             : <RefusalEvidence evidence={evidence.evidence} />}

@@ -304,15 +304,51 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("archive-1");
   });
 
-  it("renders only bounded typed unavailable evidence and no transport locations", async () => {
-    mocks.bundle.mockResolvedValueOnce(unavailableBundle());
-
-    const markup = await render();
+  it("offers exactly one canonical full-selection retry while retaining only bounded unavailable diagnostics", async () => {
+    const bundle = unavailableBundle();
+    mocks.bundle.mockResolvedValueOnce({
+      ...bundle,
+      result: { ...bundle.result, source_url: "https://transport.invalid/raw", total_votes: 987654,
+        parties, archive_entry_ids: ["LEAK_ARCHIVE"], sha256: "b".repeat(64) },
+    });
+    const markup = await render({
+      ...COMPLETE_SECTION, distritoCode: "2", seccionCode: "27", circuitoCode: "1",
+      establecimientoCode: "E1", mesaCode: "001", level: "mesa",
+      returnTo: "https://external.invalid/raw",
+    });
 
     for (const text of ["provenance unavailable", "rows: 3", "missing_mesa", "fiscalización", "2 fila(s) / 40 voto(s)"])
       expect(markup).toContain(text);
-    expect(markup).not.toContain("https://");
-    expect(markup).not.toContain("href=");
+    for (const forbidden of ["https://", "http://", "transport.invalid", "external.invalid", "returnTo", "987654", "LEAK_ARCHIVE", "b".repeat(64), "SHA-256", 'aria-label="procedencia"', "LLA", "votos a nivel"])
+      expect(markup).not.toContain(forbidden);
+    const links = [...markup.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)];
+    expect(links).toHaveLength(1);
+    expect(links[0]?.[2]).toBe("Reintentar carga");
+    expect(links[0]?.[1]?.replaceAll("&amp;", "&")).toBe(
+      `/drilldown?electionId=${COMPLETE_SECTION.electionId}&categoryId=${COMPLETE_SECTION.categoryId}` +
+      "&distritoCode=02&seccionCode=027&circuitoCode=00001&establecimientoCode=E1&mesaCode=1&level=mesa",
+    );
+  });
+
+  it("renders an unmapped list and zero totals with unavailable shares truthfully", async () => {
+    const bundle = authorizedBundle();
+    const zeroParties = [{ identity_status: "unmapped", canonical_party_id: null,
+      display_name: null, list_id: "999", votes: 0, vote_share: null }];
+    const zeroAudit = [{ kind: "official", rows: 2, votes: 0 }];
+    mocks.bundle.mockResolvedValueOnce({
+      ...bundle,
+      result: { ...bundle.result, total_votes: 0, parties: zeroParties, source_audit: zeroAudit },
+      schools: { ...bundle.schools, source_audit: zeroAudit, schools: bundle.schools.schools.map((school) =>
+        ({ ...school, total_votes: 0, parties: zeroParties })) },
+      provenance: { ...bundle.provenance, source_audit: zeroAudit },
+    });
+    const markup = await render();
+    expect(markup).toContain("0 votos a nivel seccion");
+    expect(markup.match(/Lista sin mapear 999/g)).toHaveLength(2);
+    expect(markup.match(/porcentaje no disponible/g)).toHaveLength(2);
+    expect(markup).not.toMatch(/>999<|\d+\.\d+%/);
+    expect(markup).toContain("SHA-256");
+    expect(markup).not.toContain("no superó la validación");
   });
 
   it("presents the official explorer hierarchy with adjacent labelled evidence tables", async () => {
@@ -340,6 +376,8 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).toContain("la selección no pertenece al alcance autorizado");
     expect(markup).not.toContain("Resultados y evidencia");
     expect(markup).not.toContain("Evidencia y archivo");
+    expect(markup).not.toContain("Reintentar carga");
+    expect(markup).not.toContain("href=");
     expect(markup).not.toContain("300 votos a nivel seccion");
   });
 });
