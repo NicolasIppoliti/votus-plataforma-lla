@@ -1147,7 +1147,8 @@ async function executeGate(
 			"authenticated-state.json",
 		),
 		VOTUS_E2E_RESULT_FILE: path.join(ownership.workdir, "playwright-result.json"),
-		VOTUS_E2E_GATE_MODE: plan.mode,
+		// Lanes select orchestration; browser evidence still requires the full inventory.
+		VOTUS_E2E_GATE_MODE: plan.mode === RELEASE_GATE_MODE.BROWSER ? RELEASE_GATE_MODE.FULL : plan.mode,
 		VOTUS_E2E_SELECTED_SPECS: JSON.stringify(plan.selectedSpecs),
 	};
 	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {
@@ -1240,6 +1241,15 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 	}
 	emitTiming();
 	if (failure) throw failure;
+	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
+	if (plan.mode === RELEASE_GATE_MODE.SQL || plan.mode === RELEASE_GATE_MODE.BROWSER) {
+		process.stdout.write(
+			plan.mode === RELEASE_GATE_MODE.SQL
+				? "SQL lane passed: 13 pgTAP proofs, 2 rollback/reapply proofs, cleanup complete; partial release coverage\n"
+				: "Browser lane passed: 8 passed, 0 skipped, disposable stack cleaned; partial release coverage\n",
+		);
+		return;
+	}
 	process.stdout.write(
 		plan.mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY
 			? "Rollback proofs passed: 2 SQL processes, cleanup complete\n"

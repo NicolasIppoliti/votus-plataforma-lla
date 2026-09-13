@@ -57,11 +57,36 @@ For a focused browser check against canonical specs:
 npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:focused -- e2e/root.spec.ts
 ```
 
-The focused mode still uses the owned runner; only the full gate provides the
-complete browser-spec run. Bare `test:e2e` invokes Playwright directly and is not
-the recommended replacement for either owned gate command.
+The focused mode still uses the owned runner, but selects only the requested
+browser specs. Bare `test:e2e` invokes Playwright directly and is not the recommended
+replacement for an owned gate command.
 
 The [gate plan](scripts/e2e-gate-runtime.ts) defines current production migration
 versions, synthetic test-only migration and proof selection. See
 [results-explorer operations](../../docs/results-exploration.md) for the historical
 index proof and hosted boundary, not a second current migration inventory.
+
+## SQL and browser lanes
+
+The default full release gate remains the complete local release check:
+one owned disposable database runs SQL proofs, both rollback/reapply proofs,
+the synthetic 0039 browser grants, and all eight browser specs sequentially.
+
+Explicit lanes run partial components, each with its own disposable stack:
+
+```sh
+npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate --lane sql
+npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate --lane browser
+```
+
+- `sql`: all 13 pgTAP proofs, including scale setup and immediate post-plan cleanup,
+  then both rollback/reapply proofs. No 0039 grants, build, or browser installation required.
+- `browser`: both rollback/reapply proofs, then 0039 grants in that same database,
+  one production build, five scenario servers, and the full eight-spec reporter.
+  No pgTAP or scale fixtures.
+
+Each lane reports success only after owned cleanup. Neither lane replaces full
+release acceptance; a required CI aggregate is not wired yet.
+Lanes cannot combine with focused or reduced-proof modes. Add `--inspect-plan` to
+either command to inspect its inventory without starting services. Existing focused and reduced modes
+are unchanged; `--scale-proof-only` is not the complete SQL lane.

@@ -1,3 +1,4 @@
+import { chromium } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -64,7 +65,8 @@ import {
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
-const { createServer, randomUUID, spawnSync, tmpdir, open } = vi.hoisted(() => ({
+const { createServer, randomUUID, spawn, spawnSync, tmpdir, open } = vi.hoisted(() => ({
+	spawn: vi.fn(),
 	open: vi.fn(),
 	createServer: vi.fn(),
 	randomUUID: vi.fn(),
@@ -77,6 +79,7 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
 }));
 vi.mock("node:child_process", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:child_process")>()),
+	spawn,
 	spawnSync,
 }));
 vi.mock("node:crypto", async (importOriginal) => ({
@@ -240,6 +243,180 @@ async function inspectReleaseGatePlan(
 	expect(executed).toBe(false);
 	return JSON.parse(output) as ReleaseGatePlan;
 }
+describe("explicit release-gate lanes", () => {
+	it.each(["sql", "browser"])("inspects the complete %s lane without effects", async (lane) => {
+		const full = await inspectReleaseGatePlan();
+		const plan = await inspectReleaseGatePlan(["--lane", lane]);
+		expect(plan.mode).toBe(lane);
+		expect(plan.migrationVersions).toEqual(full.migrationVersions);
+		expect(plan.rollbackReapplyProofs).toEqual(full.rollbackReapplyProofs);
+		expect(plan.rollbackReapplyProofs).toHaveLength(2);
+		expect(plan.selectedSpecs).toEqual(lane === "sql" ? [] : EXPECTED_E2E_SPECS);
+		expect(plan.runBrowser).toBe(lane === "browser");
+		expect(plan.requireBrowserCapability).toBe(lane === "browser");
+		expect(plan.pgTapProofs).toEqual(lane === "sql" ? full.pgTapProofs : []);
+		expect(plan.setupProofs).toEqual(lane === "sql" ? full.setupProofs : []);
+		expect(plan.postPgTapCleanupProofs).toEqual(lane === "sql" ? full.postPgTapCleanupProofs : []);
+		if (lane === "sql") expect(plan.pgTapProofs).toHaveLength(13);
+	});
+
+	it.each([
+		["--lane"], ["--lane", "invalid"], ["--lane", "sql", "browser"],
+		["--lane", "sql", "--lane", "sql"], ["--lane=sql"],
+		...["--focused", "--release-proof-only", "--scale-proof-only", "--rollback-proofs-only"]
+			.map((flag) => ["--lane", "browser", flag]),
+	])("rejects invalid lane arguments before effects: %j", async (...argv) => {
+		const executePlan = vi.fn();
+		await expect(releaseGateMain(argv, { executePlan })).rejects.toThrow("lane");
+		expect(executePlan).not.toHaveBeenCalled();
+	});
+
+	// Reuse the existing isolated-workdir lifecycle with fake process/network boundaries.
+	async function runLane(argv: string[], fault = "") {
+		const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
+		const token = "12345678-1234-4123-8123-123456789abc";
+		const trace: string[] = [];
+		const output: string[] = [];
+		let port = 46000;
+		let sqlCount = 0;
+		let migrationCount = 0;
+		let interrupt: (() => void) | undefined;
+		let failure: unknown;
+		vi.useFakeTimers();
+		tmpdir.mockReturnValue(tempRoot);
+		randomUUID.mockReturnValue(token);
+		createServer.mockImplementation(() => ({
+			once: vi.fn(), listen: vi.fn((_port, _host, ready) => ready()),
+			address: () => ({ port: port++ }), close: vi.fn((done) => done()),
+		}));
+		const browser = vi.spyOn(chromium, "executablePath").mockReturnValue(
+			argv.includes("sql") ? `${tempRoot}/absent-chromium` : fileURLToPath(import.meta.url),
+		);
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+		spawn.mockImplementation(() => {
+			trace.push("server");
+			return {
+				exitCode: null as number | null,
+				kill() { this.exitCode = 0; },
+				once(_event: string, done: () => void) { done(); },
+			};
+		});
+		const originalOnce = process.once.bind(process);
+		const signals = vi.spyOn(process, "once").mockImplementation((event, listener) => {
+			if (event === "SIGTERM") interrupt = () => listener();
+			return event === "SIGINT" || event === "SIGTERM" ? process : originalOnce(event, listener);
+		});
+		let exited: (() => void) | undefined;
+		const signalExit = new Promise<void>((resolve) => { exited = resolve; });
+		const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+			exited?.(); return undefined as never;
+		});
+		const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+			if (String(chunk).includes("lane passed:") || String(chunk).includes("release gate passed:")) {
+				expect(trace.at(-1)).toBe("cleanup");
+				expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
+			}
+			output.push(String(chunk)); return true;
+		});
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		spawnSync.mockImplementation((command, args, options) => {
+			let phase = "";
+			let text = "";
+			if (command === "pnpm") {
+				text = args[0] === "--version" ? "10.0.0" : "Version 7.0.0";
+				if (args[0] === "build:next") phase = "build";
+				if (args[1] === "playwright") {
+					phase = "playwright";
+					expect(args.slice(3)).toEqual(EXPECTED_E2E_SPECS);
+					expect(options.env.VOTUS_E2E_GATE_MODE).toBe("full");
+				}
+			}
+			if (command === "docker" && args[0] === "inspect") text = ["5432/tcp", "8000/tcp"]
+				.map((key) => JSON.stringify({ [key]: [{ HostIp: "127.0.0.1", HostPort: "46000" }] })).join("\n");
+			if (command === "docker" && args[0] === "exec") phase = `sql${++sqlCount}`;
+			if (command === "supabase") {
+				if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
+				else if (args[0] === "start") phase = "start";
+				else if (args[0] === "migration") phase = `migration${++migrationCount}`;
+				else if (args[0] === "test") phase = `pgtap:${String(args[2]).split("/").at(-1)}`;
+				else if (args[0] === "status") {
+					phase = "status";
+					text = JSON.stringify({ API_URL: "http://127.0.0.1:46005", DB_URL: "postgresql://postgres:postgres@127.0.0.1:46006/postgres", ANON_KEY: "synthetic-anon", SERVICE_ROLE_KEY: "synthetic-service" });
+				} else if (args[0] === "stop") phase = "cleanup";
+			}
+			if (phase) trace.push(phase);
+			if (phase === "cleanup" && fault === "signal") interrupt?.();
+			return phase && phase === fault
+				? { status: 1, stdout: "PRIVATE_OUTPUT_MARKER", stderr: "PRIVATE_OUTPUT_MARKER" }
+				: { status: 0, stdout: text };
+		});
+		try {
+			await releaseGateMain(argv).catch((error: unknown) => {
+				failure = error;
+				reportReleaseGateFailure("test gate failure", error, (line) => output.push(line));
+			});
+			if (fault === "signal") {
+				await signalExit;
+				expect(exit).toHaveBeenCalledWith(143);
+			}
+			expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
+			return { trace, output: output.join(""), failure };
+		} finally {
+			stdout.mockRestore(); stderr.mockRestore(); signals.mockRestore(); exit.mockRestore();
+			browser.mockRestore(); fetchMock.mockRestore();
+			vi.clearAllTimers(); vi.useRealTimers();
+			spawnSync.mockReset(); spawn.mockReset(); createServer.mockReset();
+			randomUUID.mockReset(); tmpdir.mockReset();
+			rmSync(tempRoot, { force: true, recursive: true });
+		}
+	}
+
+	it.each(["sql", "browser", "full"])("executes %s through the production CLI and owned cleanup", async (lane) => {
+		const result = await runLane(lane === "full" ? [] : ["--lane", lane]);
+		expect(result.failure).toBeUndefined();
+		expect(result.trace.filter((phase) => phase === "start")).toHaveLength(1);
+		expect(result.trace.slice(0, 3)).toEqual(["start", "migration1", "status"]);
+		expect(result.trace.at(-1)).toBe("cleanup");
+		const pgTap = result.trace.filter((phase) => phase.startsWith("pgtap:"));
+		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 13);
+		if (lane !== "browser") {
+			expect(result.trace.slice(3, 9)).toEqual([
+				"pgtap:results_exploration.sql", "sql1", "pgtap:results_exploration_scale.sql",
+				"pgtap:results_exploration_scale_plans.sql", "sql2", "pgtap:results_coverage_scope_binding.sql",
+			]);
+		}
+		expect(result.trace.filter((phase) => /^sql\d$/.test(phase))).toHaveLength(lane === "browser" ? 2 : 4);
+		if (lane === "sql") {
+			expect(result.trace.slice(-3)).toEqual(["sql3", "sql4", "cleanup"]);
+			expect(result.output).toContain("SQL lane passed: 13 pgTAP proofs, 2 rollback/reapply proofs, cleanup complete; partial release coverage");
+			expect(result.output).not.toContain("8 passed");
+		} else {
+			expect(result.trace.slice(-11)).toEqual([
+				lane === "browser" ? "sql1" : "sql3", lane === "browser" ? "sql2" : "sql4",
+				"migration2", "build", ...Array<string>(5).fill("server"), "playwright", "cleanup",
+			]);
+			expect(result.output).toContain(lane === "browser" ? "Browser lane passed: 8 passed, 0 skipped, disposable stack cleaned; partial release coverage" : "E2E release gate passed: 8 passed");
+		}
+	});
+
+	it.each([
+		["sql", "pgtap:results_exploration.sql"], ["sql", "sql1"], ["sql", "sql2"],
+		["sql", "sql3"], ["sql", "sql4"], ["sql", "status"], ["sql", "cleanup"], ["sql", "signal"],
+		["browser", "sql1"], ["browser", "sql2"], ["browser", "playwright"],
+		["browser", "status"], ["browser", "cleanup"], ["browser", "signal"],
+	])("does not report success for %s lane failure at %s", async (lane, fault) => {
+		const baseline = await runLane(["--lane", lane]);
+		expect(baseline.failure).toBeUndefined();
+		const result = await runLane(["--lane", lane], fault);
+		expect(result.failure).toBeDefined();
+		expect(result.trace.at(-1)).toBe("cleanup");
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.output).not.toContain("lane passed:");
+		expect(result.output).not.toContain("release gate passed:");
+		expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+	});
+});
+
 describe("migration release-gate integration", () => {
 	const EXPECTED_MIGRATION_VERSIONS = [
 		...Array.from({ length: 38 }, (_, index) =>

@@ -63,6 +63,8 @@ export function planOwnedSqlInvocation(
 
 export const RELEASE_GATE_MODE = {
 	FULL: "full",
+	SQL: "sql",
+	BROWSER: "browser",
 	FOCUSED: "focused",
 	RELEASE_PROOF_ONLY: "release-proof-only",
 	SCALE_PROOF_ONLY: "scale-proof-only",
@@ -391,6 +393,15 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 ];
 
 function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
+	if (argv.some((arg) => arg === "--lane" || arg.startsWith("--lane="))) {
+		const laneArgs = argv.filter((arg) => arg !== "--inspect-plan");
+		if (
+			laneArgs.length !== 2 || laneArgs[0] !== "--lane" ||
+			(laneArgs[1] !== RELEASE_GATE_MODE.SQL && laneArgs[1] !== RELEASE_GATE_MODE.BROWSER)
+		)
+			throw new Error("lane requires exactly one sql|browser value and cannot combine with focused or reduced modes");
+		return laneArgs[1];
+	}
 	const focused = argv.includes("--focused");
 	const releaseProofOnly = argv.includes("--release-proof-only");
 	const scaleProofOnly = argv.includes("--scale-proof-only");
@@ -458,22 +469,22 @@ export function createReleaseGatePlan(
 	const resolvedSelectedSpecs =
 		mode === RELEASE_GATE_MODE.FOCUSED
 			? parseFocusedE2eSelection(selectedSpecs)
-			: [...EXPECTED_E2E_SPECS];
-	const rollbackProofsOnly = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY;
+			: mode === RELEASE_GATE_MODE.SQL ? [] : [...EXPECTED_E2E_SPECS];
+	const omitPgTap = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY || mode === RELEASE_GATE_MODE.BROWSER;
 	const scaleProofOnly = mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	return {
 		mode,
 		selectedSpecs: resolvedSelectedSpecs,
 		migrationVersions: [...MIGRATION_VERSIONS],
 		syntheticMigration: { ...SYNTHETIC_MIGRATION },
-		setupProofs: rollbackProofsOnly
+		setupProofs: omitPgTap
 			? []
 			: SETUP_PROOFS.filter(
 					(proof) =>
 						!scaleProofOnly ||
 						proof.beforePgTapPath === "tests/results_exploration_scale.sql",
 				).map((proof) => ({ ...proof })),
-		pgTapProofs: rollbackProofsOnly
+		pgTapProofs: omitPgTap
 			? []
 			: PG_TAP_PROOFS.filter(
 					(proof) =>
@@ -481,17 +492,19 @@ export function createReleaseGatePlan(
 						proof.path === "tests/results_exploration_scale.sql" ||
 						proof.path === "tests/results_exploration_scale_plans.sql",
 				).map((proof) => ({ ...proof })),
-		postPgTapCleanupProofs: rollbackProofsOnly
+		postPgTapCleanupProofs: omitPgTap
 			? []
 			: POST_PG_TAP_CLEANUP_PROOFS.map((proof) => ({ ...proof })),
 		rollbackReapplyProofs: scaleProofOnly
 			? []
 			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
 		requireBrowserCapability:
+			mode === RELEASE_GATE_MODE.BROWSER ||
 			mode === RELEASE_GATE_MODE.FULL ||
 			mode === RELEASE_GATE_MODE.FOCUSED ||
 			mode === RELEASE_GATE_MODE.RELEASE_PROOF_ONLY,
 		runBrowser:
+			mode === RELEASE_GATE_MODE.BROWSER ||
 			mode === RELEASE_GATE_MODE.FULL || mode === RELEASE_GATE_MODE.FOCUSED,
 	};
 }
@@ -513,7 +526,7 @@ export async function runProductionReleasePhases(
 	}
 	for (const proof of plan.rollbackReapplyProofs)
 		await effects.runRollbackReapplyProof(proof);
-	if (plan.mode !== RELEASE_GATE_MODE.SCALE_PROOF_ONLY)
+	if (plan.mode !== RELEASE_GATE_MODE.SCALE_PROOF_ONLY && plan.mode !== RELEASE_GATE_MODE.SQL)
 		await effects.installSyntheticMigration(plan.syntheticMigration);
 	return stack;
 }
