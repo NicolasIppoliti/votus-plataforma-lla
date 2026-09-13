@@ -85,8 +85,11 @@ npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate --lane
   one production build, five scenario servers, and the full eight-spec reporter.
   No pgTAP or scale fixtures.
 
-Each lane reports success only after owned cleanup. Neither lane replaces full
-release acceptance; a required CI aggregate is not wired yet.
+Each lane reports success only after owned cleanup. Neither lane alone replaces
+full release acceptance. CI runs independent `e2e-sql` and `e2e-release` (browser)
+jobs under the same logical `e2e-release` path scope. The required `verify` aggregate
+requires both to succeed when selected, or both to be skipped for ETL-only scope.
+The default local gate remains full; no remote timing improvement is claimed.
 Lanes cannot combine with focused or reduced-proof modes. Add `--inspect-plan` to
 either command to inspect its inventory without starting services. Existing focused and reduced modes
 are unchanged; `--scale-proof-only` is not the complete SQL lane.

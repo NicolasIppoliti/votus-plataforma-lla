@@ -118,9 +118,9 @@ function shellFor(step: string): string {
 	return body.replace(/^ {10}/gm, "");
 }
 const patterns = [
-	["all", '["web-static","etl-release","e2e-release"]', "success", "success", "success"],
-	["etl-only", '["etl-release"]', "skipped", "success", "skipped"],
-	["web-and-e2e", '["web-static","e2e-release"]', "success", "skipped", "success"],
+	["all", '["web-static","etl-release","e2e-release"]', "success", "success", "success", "success"],
+	["etl-only", '["etl-release"]', "skipped", "success", "skipped", "skipped"],
+	["web-and-e2e", '["web-static","e2e-release"]', "success", "skipped", "success", "success"],
 ] as const;
 function verify(gates: string, results: string[]) {
 	return spawnSync("bash", ["-euc", shellFor("Require all release gates")], {
@@ -129,6 +129,7 @@ function verify(gates: string, results: string[]) {
 			NODE_ENV: "test", PATH: process.env.PATH, SCOPE_GATES: gates,
 			SCOPE_RESULT: results[0], WEB_STATIC_RESULT: results[1],
 			ETL_RELEASE_RESULT: results[2], E2E_RELEASE_RESULT: results[3],
+			E2E_SQL_RESULT: results[4],
 		},
 	});
 }
@@ -150,22 +151,42 @@ function publish(input: string) {
 	}
 }
 describe("workflow scope boundaries", () => {
+	it.each([["e2e-release", "browser"], ["e2e-sql", "sql"]])(
+		"reaches the %s lane through its workflow command",
+		(job, lane) => {
+			const body = workflow.split(`  ${job}:\n`)[1]?.split(/\n  [a-z][a-z-]+:\n/)[0];
+			expect(body).toBeDefined();
+			expect(body).toContain(`- run: pnpm test:e2e:gate --lane ${lane}\n        working-directory: apps/web`);
+		},
+	);
+	it.each(["failure", "cancelled", "skipped"])("rejects selected SQL lane result %s", (result) => {
+		const gates = JSON.stringify(ALL_GATES);
+		const baseline = ["success", "success", "success", "success", "success"];
+		expect(verify(gates, baseline).status).toBe(0);
+		baseline[4] = result;
+		expect(verify(gates, baseline).status).not.toBe(0);
+	});
 	it.each(patterns)("accepts only the exact %s result pattern", (_decision, gates, ...results) => {
 		expect(verify(gates, ["success", ...results]).status).toBe(0);
-		for (let index = 0; index < 4; index++) {
-			for (const result of ["", "success", "skipped", "failure", "cancelled"]) {
+		for (let index = 0; index < 5; index++) {
+			for (const result of ["", "success", "skipped", "failure", "cancelled", "unknown"]) {
 				const altered = ["success", ...results];
 				if (altered[index] === result) continue;
+				expect(verify(gates, altered).status).toBe(0);
 				altered[index] = result;
 				expect(verify(gates, altered).status, `${index}: ${result}`).not.toBe(0);
 			}
 		}
 	});
+	it.each(patterns)("rejects an absent SQL result for %s", (_decision, gates, ...results) => {
+		expect(verify(gates, ["success", ...results]).status).toBe(0);
+		expect(verify(gates, ["success", ...results.slice(0, 3)]).status).not.toBe(0);
+	});
 	it.each([
 		"", "null", "{}", "[]", "not-json", '["web-static"]',
 		'["etl-release","etl-release"]', '["unknown"]', '["e2e-release","web-static"]',
 	])("rejects noncanonical aggregate gates %s", (gates) => {
-		expect(verify(gates, ["success", "success", "success", "success"]).status).not.toBe(0);
+		expect(verify(gates, ["success", "success", "success", "success", "success"]).status).not.toBe(0);
 	});
 	it.each(patterns)("publishes canonical %s gates", (decision, gates) => {
 		const result = publish(JSON.stringify({ schemaVersion: 1, decision, gates: JSON.parse(gates) }));
