@@ -41,7 +41,12 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, cleanupError], "comparison assertions and cleanup failed"); throw outcome.error; }
   if (cleanupError) throw cleanupError; return outcome.value;
 }
-async function submitOptions(page: Page): Promise<void> { await page.getByRole("button", { name: "Actualizar opciones" }).click(); await expect(page.getByRole("main")).toBeVisible(); }
+async function submitOptions(page: Page): Promise<void> {
+  const navigation = page.waitForResponse((response) => response.request().isNavigationRequest() && new URL(response.url()).pathname === "/compare");
+  await page.getByRole("button", { name: "Actualizar opciones" }).click();
+  expect((await navigation).ok()).toBe(true);
+  await expect(page.getByRole("main")).toBeVisible();
+}
 test.describe("authorized official comparison", () => {
   test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
@@ -49,13 +54,41 @@ test.describe("authorized official comparison", () => {
         if (!leftOnlySection) throw new Error("comparison fixture left-only section is missing");
         const comparisonNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparar", exact: true });
       await comparisonNavigationLink.click(); await expect(page).toHaveURL(/\/compare$/); await expect(comparisonNavigationLink).toHaveAttribute("aria-current", "page");
-      await page.getByLabel("Elección izquierda (2023)").selectOption(identity.electionIds[0]!); await page.getByLabel("Elección derecha (2025)").selectOption(identity.electionIds[1]!); await submitOptions(page);
-      await page.getByLabel("Categoría izquierda").selectOption(identity.categoryId); await page.getByLabel("Categoría derecha").selectOption(identity.categoryId); await submitOptions(page);
-      await page.getByLabel("Distrito compartido").selectOption(identity.distritoCode); await submitOptions(page);
+      const compare = page.getByRole("button", { name: "Comparar resultados", exact: true });
+      const unavailableCompare = () => expect(compare.filter({ visible: true }).and(page.locator(":enabled"))).toHaveCount(0);
+      const leftCategory = page.getByLabel("Categoría izquierda", { exact: true });
+      const rightCategory = page.getByLabel("Categoría derecha", { exact: true });
+      await unavailableCompare();
+      await page.getByLabel("Elección izquierda (2023)").selectOption(identity.electionIds[0]!);
+      await page.getByLabel("Elección derecha (2025)").selectOption(identity.electionIds[1]!);
+      await unavailableCompare();
+      await submitOptions(page);
+      await expect(page).toHaveURL(new RegExp(`leftElectionId=${identity.electionIds[0]}`));
+      for (const category of [leftCategory, rightCategory]) {
+        await expect(category).toBeEnabled();
+        await expect(category).toHaveAttribute("required", "");
+        await expect(category).toHaveValue("");
+      }
+      // Required, empty descendants must not block an options-only GET.
+      await submitOptions(page);
+      await unavailableCompare();
+      await leftCategory.selectOption(identity.categoryId);
+      await expect(rightCategory).toHaveValue("");
+      await unavailableCompare();
+      await rightCategory.selectOption(identity.categoryId);
+      await expect(leftCategory).toHaveValue(identity.categoryId);
+      await unavailableCompare();
+      await submitOptions(page);
+      await page.getByLabel("Distrito compartido").selectOption(identity.distritoCode);
+      await unavailableCompare();
+      await submitOptions(page);
         const sharedSection = page.getByRole("combobox", { name: "Sección compartida", exact: true });
         await expect(sharedSection.getByRole("option", { name: leftOnlySection.seccionCode, exact: false })).toHaveCount(0);
         await expect(page.getByRole("main")).toContainText("Opciones no compartidas — Sección: 1 Lado A / 0 Lado B (disponibles solo en ese lado).");
-        await sharedSection.selectOption(identity.seccionCode); await submitOptions(page);
+        await unavailableCompare();
+        await sharedSection.selectOption(identity.seccionCode);
+        await expect(compare).toBeEnabled();
+        await compare.click();
       const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ leftElectionId: identity.electionIds[0], leftCategoryId: identity.categoryId, rightElectionId: identity.electionIds[1], rightCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
       const main = page.getByRole("main"); await expect(main).toContainText("sin cambio"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
       await expect(main).toContainText(identity.archiveEntryIds[0]!); await expect(main).toContainText(identity.archiveEntryIds[1]!); await expect(main).toContainText("SHA-256"); await expect(main).not.toContainText("https://"); await expect(main).not.toContainText("example.test");
@@ -66,6 +99,35 @@ test.describe("authorized official comparison", () => {
       await expect(rightSide).toContainText("Elección: 2025");
       await expect(rightSide).toContainText(`Categoría: ${identity.categoryName}`);
       const tableRegion = main.getByRole("region", { name: /Tabla exacta/ });
+      await expect(main.getByText("Comparación aplicada", { exact: true })).toBeVisible();
+      await expect(main.getByRole("combobox")).toHaveCount(6);
+      for (const side of ["A", "B"]) await expect(main.getByRole("group", { name: new RegExp(`^Lado ${side}\\b`) })).toHaveCount(1);
+      const appliedHeading = main.getByRole("heading", { name: "Resultados exactos", exact: true });
+      const table = tableRegion.getByRole("table");
+      const rails = main.getByRole("complementary", { name: "Evidencia oficial por lado" }).getByRole("article");
+      await expect(rails).toHaveCount(2);
+      const applied = { heading: await appliedHeading.innerText(), table: await table.innerText(), rails: await rails.allInnerTexts() };
+      const expectAppliedUnchanged = async (): Promise<void> => {
+        await expect.poll(async () => ({
+          heading: await appliedHeading.innerText(),
+          table: await table.innerText(),
+          rails: await rails.allInnerTexts(),
+        })).toEqual(applied);
+      };
+      const hashes = applied.rails.flatMap((rail) => [...rail.matchAll(/SHA-256 ([a-f0-9]{64})/g)].map((match) => match[1]));
+      expect(hashes).toHaveLength(2);
+      for (const category of [leftCategory, rightCategory]) {
+        await category.selectOption("");
+        await expect(main.getByText("Cambios sin aplicar", { exact: true })).toBeVisible();
+        await unavailableCompare();
+        await expect(page).toHaveURL(servedUrl.toString());
+        await expectAppliedUnchanged();
+        await category.selectOption(identity.categoryId);
+        await expect(main.getByText("Cambios sin aplicar", { exact: true })).toHaveCount(0);
+        await expect(compare).toBeEnabled();
+        await expect(page).toHaveURL(servedUrl.toString());
+        await expectAppliedUnchanged();
+      }
       await tableRegion.focus();
       await expect(tableRegion).toBeFocused();
       await page.setViewportSize({ width: 1440, height: 900 });

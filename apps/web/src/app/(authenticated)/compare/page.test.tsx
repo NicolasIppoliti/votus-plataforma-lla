@@ -47,6 +47,26 @@ describe("authorized comparison page", () => {
     expect(markup).toContain("Referencia oficial — Lado A");
     expect(markup).toContain("Procedencia oficial — Lado B");
   });
+  it("keeps six native edit controls and uniquely labelled sides beside the applied comparison", async () => {
+    const markup = await render(PARAMS);
+    for (const [name, value] of Object.entries(PARAMS)) {
+      expect(markup).toMatch(new RegExp(`<select[^>]*name="${name}"[^>]*>`));
+      expect(markup).toContain(`value="${value}" selected=""`);
+    }
+    const ids = [...markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const tag of ["fieldset", "article"]) {
+      const labels = [...markup.matchAll(new RegExp(`<${tag}[^>]*aria-labelledby="([^"]+)"`, "g"))];
+      expect(labels.length).toBeGreaterThanOrEqual(2);
+      for (const [index, side] of ["A", "B"].entries()) {
+        expect(markup).toMatch(new RegExp(`id="${labels[index]![1]}"[^>]*>Lado ${side}`));
+      }
+    }
+    for (const text of ["Comparación aplicada", "Resultados exactos", "60,00 %", "55,00 %", "-5,00 puntos porcentuales", "Referencia oficial — Lado A", "Referencia oficial — Lado B", "Procedencia oficial — Lado A", "Procedencia oficial — Lado B", "official/archive-2023", "official/archive-2025"]) expect(markup).toContain(text);
+    expect(markup.match(/SHA-256/g)).toHaveLength(2);
+    expect(markup).not.toContain("Cambios sin aplicar");
+    expect(markup).not.toContain("999 votos");
+  });
   it("keeps the selector context while a denied comparison removes both sides of evidence", async () => {
     mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
     const markup = await render(PARAMS);

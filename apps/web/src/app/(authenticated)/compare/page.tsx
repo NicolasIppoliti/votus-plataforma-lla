@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ComparisonSelectionForm } from "./ComparisonSelectionForm";
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { TableScroll } from "@/components/TableScroll";
@@ -135,6 +136,7 @@ interface CompareSelectorProps {
   unique?: LoadedFacetUniqueCounts;
   message: string;
   alert?: boolean;
+  children?: ReactNode;
 }
 
 function CompareSelector({
@@ -147,20 +149,21 @@ function CompareSelector({
   unique,
   message,
   alert = false,
+  children,
 }: CompareSelectorProps): ReactNode {
   const leftElectionId = selected[QUERY_KEY.LEFT_ELECTION_ID];
   const rightElectionId = selected[QUERY_KEY.RIGHT_ELECTION_ID];
   const leftCategoryId = selected[QUERY_KEY.LEFT_CATEGORY_ID];
   const rightCategoryId = selected[QUERY_KEY.RIGHT_CATEGORY_ID];
   const distritoCode = selected[QUERY_KEY.DISTRITO_CODE];
-  const ready = Boolean(
-    leftElectionId &&
-      rightElectionId &&
-      leftCategoryId &&
-      rightCategoryId &&
-      distritoCode &&
-      selected[QUERY_KEY.SECCION_CODE],
-  );
+  const options = {
+    leftElectionId: elections.filter((option) => option.year === 2023).map((option) => option.id),
+    rightElectionId: elections.filter((option) => option.year === 2025).map((option) => option.id),
+    leftCategoryId: leftCategories.map((option) => option.id),
+    rightCategoryId: rightCategories.map((option) => option.id),
+    distritoCode: distritos.map((option) => option.code),
+    seccionCode: secciones.map((option) => option.code),
+  };
 
   return (
     <main className="page-shell official-compare">
@@ -176,10 +179,10 @@ function CompareSelector({
           <div className="panel__heading">
             <h2 id="compare-selector-heading">Elegir selecciones y sección compartida</h2>
           </div>
-          <form action="/compare" method="get">
+          <ComparisonSelectionForm key={JSON.stringify(selected)} selected={selected} options={options} applied={Boolean(children)}>
             <div className="official-compare__selector-grid">
-              <fieldset className="official-compare__side" aria-labelledby="compare-side-a-heading">
-                <legend id="compare-side-a-heading">Lado A <span>Selección oficial de 2023</span></legend>
+              <fieldset className="official-compare__side" aria-labelledby="compare-edit-a-heading">
+                <legend id="compare-edit-a-heading">Lado A <span>Selección oficial de 2023</span></legend>
                 <div className="field">
                   <label htmlFor="compare-left-election">Elección izquierda (2023)</label>
                   <select id="compare-left-election" name={QUERY_KEY.LEFT_ELECTION_ID} defaultValue={leftElectionId ?? ""} required>
@@ -197,8 +200,8 @@ function CompareSelector({
                   </select>
                 </div>
               </fieldset>
-              <fieldset className="official-compare__side" aria-labelledby="compare-side-b-heading">
-                <legend id="compare-side-b-heading">Lado B <span>Selección oficial de 2025</span></legend>
+              <fieldset className="official-compare__side" aria-labelledby="compare-edit-b-heading">
+                <legend id="compare-edit-b-heading">Lado B <span>Selección oficial de 2025</span></legend>
                 <div className="field">
                   <label htmlFor="compare-right-election">Elección derecha (2025)</label>
                   <select id="compare-right-election" name={QUERY_KEY.RIGHT_ELECTION_ID} defaultValue={rightElectionId ?? ""} required>
@@ -234,12 +237,7 @@ function CompareSelector({
                 </div>
               </fieldset>
             </div>
-            <div className="form-actions">
-              <button className="button button--primary" type="submit">
-                {ready ? "Comparar resultados" : "Actualizar opciones"}
-              </button>
-            </div>
-          </form>
+          </ComparisonSelectionForm>
               {!alert && unique && (
                 <aside aria-label="Opciones no compartidas">
                   {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
@@ -248,6 +246,7 @@ function CompareSelector({
               )}
         </section>
         <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+        {children}
       </div>
     </main>
   );
@@ -530,12 +529,16 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     : undefined;
 
   return (
-    <main className="page-shell official-compare">
-      <div className="shell-container official-compare__layout">
-        <header className="page-header official-compare__header">
-          <p className="official-compare__section-label">Resultados oficiales / comparación autorizada</p>
-          <h1>Comparación oficial autorizada</h1>
-        </header>
+    <CompareSelector
+      elections={cold.elections}
+      leftCategories={leftCategories}
+      rightCategories={rightCategories}
+      distritos={distritos}
+      secciones={secciones}
+      selected={selected}
+      unique={unique}
+      message="Comparación aplicada"
+    >
         {comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
         <section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading">Resultados exactos</h2>
@@ -582,7 +585,6 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             {provenance(evidence.right, "right", "Lado B")}
           </article>
         </aside>
-      </div>
-    </main>
+    </CompareSelector>
   );
 }
