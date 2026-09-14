@@ -1495,6 +1495,7 @@ select option {
 
 .official-compare,
 .official-compare__layout,
+.official-compare__analysis,
 .official-compare__selection,
 .official-compare__results,
 .official-compare__evidence {
@@ -1503,6 +1504,7 @@ select option {
 }
 
 .official-compare__layout,
+.official-compare__analysis,
 .official-compare__selector-grid,
 .official-compare__contexts,
 .official-compare__results,
@@ -1511,7 +1513,21 @@ select option {
 .official-compare__side,
 .official-compare__shared {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
+}
+
+.official-compare__analysis {
+  align-items: start;
+}
+
+.official-compare__contexts :where(h2, p),
+.official-compare__evidence-side > h3 {
+  margin: 0;
+}
+
+.official-compare__contexts .official-compare__side {
+  background: var(--surface);
 }
 
 .official-compare__side-evidence,
@@ -1561,6 +1577,22 @@ select option {
 
 .official-compare__selection :where(select, .button) {
   min-height: 2.75rem;
+  max-width: 100%;
+  font-size: 0.875rem;
+}
+
+.official-compare__selection .field {
+  min-width: 0;
+}
+
+.official-compare__selection .button {
+  white-space: normal;
+}
+
+.official-compare__side,
+.official-compare__shared,
+.official-compare__evidence {
+  overflow-wrap: anywhere;
 }
 
 .official-compare__selection select {
@@ -1613,14 +1645,17 @@ select option {
 
 @media (min-width: 64rem) {
   .official-compare__selector-grid,
-  .official-compare__contexts,
-  .official-compare__evidence {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .official-compare__contexts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .official-compare__results,
-  .official-compare__state {
+  .official-compare__shared {
     grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .official-compare__analysis {
+    grid-template-columns: minmax(0, 2.5fr) minmax(0, 1fr);
   }
 }
 

@@ -540,6 +540,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       message="Comparación aplicada"
     >
         {comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
+        <div className="official-compare__analysis">
         <section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading">Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
@@ -568,7 +569,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         </section>
         <aside className="official-compare__evidence" aria-labelledby="compare-evidence-heading">
           <h2 id="compare-evidence-heading">Evidencia oficial por lado</h2>
-          <article className="official-compare__evidence-side">
+          <article className="official-compare__evidence-side" aria-labelledby="compare-evidence-a-heading">
+            <h3 id="compare-evidence-a-heading">Evidencia oficial — Lado A</h3>
             {sourceNotes(evidence.left, "Izquierda", "Lado A")}
             <section className="official-compare__side-evidence" aria-labelledby="reference-left">
               <h3 id="reference-left">Referencia oficial — Lado A</h3>
@@ -576,7 +578,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             </section>
             {provenance(evidence.left, "left", "Lado A")}
           </article>
-          <article className="official-compare__evidence-side">
+          <article className="official-compare__evidence-side" aria-labelledby="compare-evidence-b-heading">
+            <h3 id="compare-evidence-b-heading">Evidencia oficial — Lado B</h3>
             {sourceNotes(evidence.right, "Derecha", "Lado B")}
             <section className="official-compare__side-evidence" aria-labelledby="reference-right">
               <h3 id="reference-right">Referencia oficial — Lado B</h3>
@@ -585,6 +588,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             {provenance(evidence.right, "right", "Lado B")}
           </article>
         </aside>
+        </div>
     </CompareSelector>
   );
 }
