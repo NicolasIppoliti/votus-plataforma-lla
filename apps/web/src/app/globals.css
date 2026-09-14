@@ -1673,8 +1673,8 @@ select option {
   }
 }
 
-.fiscalizacion-workspace :where(.fiscalizacion-workspace__layout, .fiscalizacion-workspace__evidence, .fiscalizacion-workspace__coverage, .fiscalizacion-workspace__result) { min-width: 0; max-width: 100%; }
-.fiscalizacion-workspace__layout, .fiscalizacion-workspace__evidence, .fiscalizacion-workspace__coverage, .fiscalizacion-workspace__result { display: grid; gap: 0.8rem; }
+.fiscalizacion-workspace :where(.fiscalizacion-workspace__layout, .fiscalizacion-workspace__evidence, .fiscalizacion-workspace__qualification, .fiscalizacion-workspace__coverage, .fiscalizacion-workspace__result) { min-width: 0; max-width: 100%; }
+.fiscalizacion-workspace__layout, .fiscalizacion-workspace__evidence, .fiscalizacion-workspace__qualification, .fiscalizacion-workspace__coverage, .fiscalizacion-workspace__result { display: grid; gap: 0.8rem; }
 .fiscalizacion-workspace__header { margin-block: 0 0.5rem; padding-block-end: 1.25rem; border-block-end: 1px solid var(--border); }
 .fiscalizacion-workspace__section-label { margin: 0; color: var(--fiscalizacion); font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .fiscalizacion-workspace__filters { min-width: 0; border-block-start: 3px solid var(--fiscalizacion); }
@@ -1685,7 +1685,7 @@ select option {
 .fiscalizacion-workspace__evidence, .fiscalizacion-workspace__state { min-width: 0; padding: 1.1rem; border: 1px solid var(--border); background: var(--surface); }
 .fiscalizacion-workspace__evidence { border-block-start: 3px solid var(--fiscalizacion); background: var(--surface-muted); }
 .fiscalizacion-workspace__coverage, .fiscalizacion-workspace__result { padding-block-start: 1rem; border-block-start: 1px solid var(--border); }
-.fiscalizacion-workspace__coverage { border-block-start: 0; padding-block-start: 0; }
+.fiscalizacion-workspace__qualification { padding-block-end: 0.2rem; }
 .fiscalizacion-workspace__evidence p[role="status"] { padding-inline-start: 0.75rem; border-inline-start: 3px solid var(--fiscalizacion); font-weight: 700; }
 .fiscalizacion-workspace__evidence :where(ul, .table-scroll) { margin: 0; }
 .fiscalizacion-workspace__evidence ul { display: grid; gap: 0.5rem; padding-inline-start: 1.25rem; }

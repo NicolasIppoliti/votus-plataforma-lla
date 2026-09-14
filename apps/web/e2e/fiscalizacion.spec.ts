@@ -115,6 +115,26 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(main).toContainText("Estado del resultado: ok"); await expect(main).toContainText("Fuente: fiscalización; no es una muestra aleatoria"); await expect(main).toContainText("denominador 2");
       await expect(main).toContainText("22222 votos"); await expect(main).not.toContainText(/11111|33333/); await expect(main).toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[1]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[0]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[2]?.["id"]));
       const tableRegion = page.getByRole("region", { name: "Resultados de fiscalización" });
+      await page.setViewportSize({ width: 390, height: 844 });
+      const qualification = main.getByRole("region", { name: "Calificación de la evidencia", exact: true });
+      const resultRegion = main.getByRole("region", { name: "Resultado autorizado", exact: true });
+      const coverageDetail = main.getByRole("region", { name: "Cobertura autorizada", exact: true });
+      await expect(qualification).toContainText("1 unidades observadas de 2 del denominador oficial");
+      await expect(qualification).toContainText("No es una muestra aleatoria");
+      const mobileQualification = await qualification.evaluate((element) => {
+        const { y, bottom } = element.getBoundingClientRect();
+        return { y, bottom };
+      });
+      const mobileResult = await resultRegion.evaluate((element) => {
+        const { y, bottom } = element.getBoundingClientRect();
+        return { y, bottom };
+      });
+      const mobileCoverage = await coverageDetail.evaluate((element) => {
+        const { y } = element.getBoundingClientRect();
+        return { y };
+      });
+      expect(mobileQualification.bottom).toBeLessThanOrEqual(mobileResult.y);
+      expect(mobileResult.bottom).toBeLessThanOrEqual(mobileCoverage.y);
       await tableRegion.focus(); await expect(tableRegion).toBeFocused();
       const submitBounds = await page.getByRole("button", { name: "Mostrar cobertura" }).boundingBox();
       if (!submitBounds) throw new Error("coverage submit button has no rendered bounds");
