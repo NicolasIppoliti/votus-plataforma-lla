@@ -303,6 +303,33 @@ describe("FiscalizacionPage", () => {
     expect(markup).toContain(
       'aria-label="Resultados de fiscalización" tabindex="0"',
     );
+
+    const qualification = markup.indexOf('class="fiscalizacion-workspace__qualification"');
+    const resultHeading = markup.indexOf('id="workspace-result"');
+    const voteTable = markup.indexOf('<caption>Resultados de fiscalización</caption>');
+    const coverageDetail = markup.indexOf('id="workspace-coverage"');
+    expect(qualification).toBeGreaterThanOrEqual(0);
+    expect(qualification).toBeLessThan(resultHeading);
+    expect(resultHeading).toBeLessThan(voteTable);
+    expect(voteTable).toBeLessThan(coverageDetail);
+    expect(markup).toContain("No es una muestra aleatoria");
+    expect(markup.match(/Denominador oficial: 8\./g)).toHaveLength(2);
+    expect(markup).toContain("Detalle acotado: 100 de 101 unidades sin cobertura");
+    expect(markup).toContain("Detalle acotado: 100 de 101 filas de resultado");
+  });
+
+  it("keeps accepted paired evidence visible when authorized facets are unavailable", async () => {
+    mocks.facets.mockRejectedValue(new Error("controlled facets unavailable"));
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+
+    const markup = await renderComplete();
+
+    expect(markup).toContain('class="fiscalizacion-workspace__qualification"');
+    expect(markup).toContain("7 unidades observadas de 8 del denominador oficial");
+    expect(markup).toContain("Guardian Party");
+    expect(markup).toContain("South school");
+    expect(markup).not.toContain('<form action="/fiscalizacion" method="get">');
   });
 
   it.each([

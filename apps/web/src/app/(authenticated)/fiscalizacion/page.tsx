@@ -412,6 +412,50 @@ function fiscalizacionPresentation(
   return { kind: PRESENTATION_KIND.REFUSED, reason: refusalReason(coverage, result) };
 }
 
+function CoverageQualification({
+  coverage,
+  result,
+}: {
+  coverage: AuthorizedFiscalizacionCoverage;
+  result: AuthorizedFiscalizacionResult;
+}): ReactNode {
+  if (!("observed_units" in coverage) || !("reference" in result)) return null;
+
+  return (
+    <section
+      className="fiscalizacion-workspace__qualification"
+      aria-labelledby="workspace-qualification"
+    >
+      <p className="fiscalizacion-workspace__section-label">Cobertura y resultados</p>
+      <h2 id="workspace-qualification">Calificación de la evidencia</h2>
+      <p role="status">
+        {coverage.observed_units} unidades observadas de {coverage.denominator_units} del
+        denominador oficial.
+      </p>
+      <p>No es una muestra aleatoria. Fuente: fiscalización.</p>
+      <p>
+        Referencia: {result.reference.election_year ?? "año no disponible"}{" "}
+        {result.reference.election_round ?? "ronda no disponible"},{" "}
+        {result.reference.category_name ?? "categoría no disponible"}, distrito{" "}
+        {result.reference.distrito_code}, sección {result.reference.seccion_code}.
+      </p>
+      <p>Denominador oficial: {coverage.denominator_units}.</p>
+      {coverage.uncovered.truncated ? (
+        <p role="note">
+          Detalle acotado: {coverage.uncovered.items.length} de {coverage.uncovered.total}{" "}
+          unidades sin cobertura.
+        </p>
+      ) : null}
+      {result.rows.truncated ? (
+        <p role="note">
+          Detalle acotado: {result.rows.items.length} de {result.rows.total} filas de
+          resultado.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function CoverageEvidence({
   result,
 }: {
@@ -486,6 +530,7 @@ function ResultEvidence({
             {value.reference.distrito_code}, sección {value.reference.seccion_code};
             denominador {value.reference.denominator_units}.
           </p>
+          <p>Denominador oficial: {value.reference.denominator_units}.</p>
           <TableScroll label="Resultados de fiscalización">
             <table className="data-table">
               <caption>Resultados de fiscalización</caption>
@@ -582,8 +627,12 @@ function AuthorizedEvidence({
       </section>
     ) : (
       <section className="fiscalizacion-workspace__evidence" aria-label="Evidencia fiscal autorizada">
-        <CoverageEvidence result={{ status: "fulfilled", value: presentation.coverage }} />
+        <CoverageQualification
+          coverage={presentation.coverage}
+          result={presentation.result}
+        />
         <ResultEvidence result={{ status: "fulfilled", value: presentation.result }} />
+        <CoverageEvidence result={{ status: "fulfilled", value: presentation.coverage }} />
       </section>
     );
 
