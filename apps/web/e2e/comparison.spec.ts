@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { comparisonFixture, withResultFixture } from "./result-fixture";
@@ -106,9 +106,11 @@ test.describe("authorized official comparison", () => {
       const table = tableRegion.getByRole("table");
       const rails = main.getByRole("complementary", { name: "Evidencia oficial por lado" }).getByRole("article");
       await expect(rails).toHaveCount(2);
-      const applied = { heading: await appliedHeading.innerText(), table: await table.innerText(), rails: await rails.allInnerTexts() };
+      const appliedContexts = main.getByRole("region", { name: "Contexto de comparación autorizada" });
+      const applied = { contexts: await appliedContexts.innerText(), heading: await appliedHeading.innerText(), table: await table.innerText(), rails: await rails.allInnerTexts() };
       const expectAppliedUnchanged = async (): Promise<void> => {
         await expect.poll(async () => ({
+          contexts: await appliedContexts.innerText(),
           heading: await appliedHeading.innerText(),
           table: await table.innerText(),
           rails: await rails.allInnerTexts(),
@@ -130,10 +132,89 @@ test.describe("authorized official comparison", () => {
       }
       await tableRegion.focus();
       await expect(tableRegion).toBeFocused();
-      await page.setViewportSize({ width: 1440, height: 900 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
-      await page.setViewportSize({ width: 320, height: 720 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+      const editA = main.getByRole("group", { name: /^Lado A\b/ });
+      const editB = main.getByRole("group", { name: /^Lado B\b/ });
+      const shared = main.getByRole("group", { name: /^Jurisdicción compartida\b/ });
+      const contexts = main.getByRole("region", { name: "Contexto de comparación autorizada" });
+      const evidenceA = main.getByRole("article", { name: "Evidencia oficial — Lado A", exact: true });
+      const evidenceB = main.getByRole("article", { name: "Evidencia oficial — Lado B", exact: true });
+      const bounds = async (locator: Locator) => {
+        await expect(locator).toBeVisible();
+        const box = await locator.boundingBox();
+        if (!box) throw new Error("Visible comparison region has no bounds");
+        return box;
+      };
+      const precedes = async (before: Locator, after: Locator) => {
+        const afterElement = await after.elementHandle();
+        if (!afterElement) throw new Error("Missing ordered comparison region");
+        expect(await before.evaluate((element, next) => Boolean(element.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING), afterElement)).toBe(true);
+      };
+      await test.step("1440px equal editors, shared strip and dominant exact table beside evidence", async () => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const a = await bounds(editA), b = await bounds(editB), territory = await bounds(shared);
+        expect(Math.abs(a.width - b.width)).toBeLessThanOrEqual(2);
+        expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(2);
+        expect(Math.abs(a.height - b.height)).toBeLessThanOrEqual(2);
+        expect(a.x + a.width).toBeLessThanOrEqual(b.x + 2);
+        expect(territory.y).toBeGreaterThanOrEqual(Math.max(a.y + a.height, b.y + b.height) - 2);
+        expect(territory.width).toBeGreaterThan(a.width);
+        await expect(shared).toHaveCount(1);
+        const exact = await bounds(tableRegion);
+        for (const evidence of [evidenceA, evidenceB]) {
+          await expect(evidence).toHaveCount(1);
+          const rail = await bounds(evidence);
+          expect(exact.width).toBeGreaterThan(rail.width);
+          expect(rail.x).toBeGreaterThanOrEqual(exact.x + exact.width - 2);
+          await expect(evidence).toContainText("SHA-256");
+        }
+        const evidence = await bounds(main.getByRole("complementary", { name: "Evidencia oficial por lado" }));
+        const results = await bounds(main.getByRole("region", { name: "Resultados exactos", exact: true }));
+        expect(Math.min(evidence.y + evidence.height, results.y + results.height)).toBeGreaterThan(Math.max(evidence.y, results.y));
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
+      });
+      await test.step("390px preserves reading order from editors through both evidence rails", async () => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        const ordered = [editA, editB, shared, compare, contexts, tableRegion, evidenceA, evidenceB];
+        for (let index = 1; index < ordered.length; index++) {
+          const before = ordered[index - 1]!, after = ordered[index]!;
+          await precedes(before, after);
+          const previous = await bounds(before), next = await bounds(after);
+          expect(next.y).toBeGreaterThanOrEqual(previous.y + previous.height - 2);
+        }
+        await precedes(leftSide, rightSide);
+        await expect(contexts.getByRole("article", { name: "Lado A", exact: true })).toContainText("2023");
+        await expect(contexts.getByRole("article", { name: "Lado B", exact: true })).toContainText("2025");
+        await expectAppliedUnchanged();
+      });
+      await test.step("320px keeps controls readable and delegates horizontal overflow only to TableScroll", async () => {
+        await page.setViewportSize({ width: 320, height: 720 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+        for (const control of await main.locator("select, button").all()) {
+          if (!await control.isVisible()) continue;
+          const box = await bounds(control);
+          expect(box.x).toBeGreaterThanOrEqual(0);
+          expect(box.x + box.width).toBeLessThanOrEqual(320);
+          expect(box.width).toBeGreaterThanOrEqual(44);
+          expect(box.height).toBeGreaterThanOrEqual(24);
+          expect(await control.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+        }
+        await expect(tableRegion).toHaveCount(1);
+        await expect(tableRegion).toHaveAttribute("tabindex", "0");
+        await expect(tableRegion).toHaveClass(/\btable-scroll\b/);
+        await expect(tableRegion.getByRole("table")).toHaveCount(1);
+        expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+        const overflowOwners = await main.locator("*").evaluateAll((elements) => elements.filter((element) => {
+          const overflow = getComputedStyle(element).overflowX;
+          return ["auto", "scroll"].includes(overflow) && element.scrollWidth > element.clientWidth;
+        }).map((element) => element.getAttribute("aria-label")));
+        expect(overflowOwners).toEqual([await tableRegion.getAttribute("aria-label")]);
+        await tableRegion.focus();
+        await expect(tableRegion).toBeFocused();
+        await tableRegion.evaluate((element) => { element.scrollLeft = 0; });
+        await page.keyboard.press("ArrowRight");
+        await expect.poll(() => tableRegion.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+        await expectAppliedUnchanged();
+      });
       await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
       await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");

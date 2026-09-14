@@ -67,6 +67,44 @@ describe("authorized comparison page", () => {
     expect(markup).not.toContain("Cambios sin aplicar");
     expect(markup).not.toContain("999 votos");
   });
+  it("separates edit panels, shared territory, applied contexts and independently named evidence", async () => {
+    const markup = await render(PARAMS);
+    const fieldsets = [...markup.matchAll(/<fieldset\b[^>]*>[\s\S]*?<\/fieldset>/g)].map(([html]) => html);
+    expect(fieldsets).toHaveLength(3);
+    for (const [index, side] of ["A", "B"].entries()) {
+      expect(fieldsets[index]).toContain('class="official-compare__side"');
+      expect(fieldsets[index]).toContain(`aria-labelledby="compare-edit-${side.toLowerCase()}-heading"`);
+      expect(fieldsets[index]?.match(/<select\b/g)).toHaveLength(2);
+    }
+    expect(fieldsets[2]).toContain('aria-labelledby="compare-shared-heading"');
+    expect(fieldsets[2]).toContain('value="02" selected=""');
+    expect(fieldsets[2]).toContain('value="027" selected=""');
+    const contexts = markup.match(/<section\b[^>]*aria-label="Contexto de comparación autorizada"[^>]*>[\s\S]*?<\/section>/)?.[0];
+    expect(contexts).toBeDefined();
+    expect(contexts).not.toMatch(/<select|<input|<button/);
+    for (const text of ["Lado A", "Lado B", "Elección: 2023 generales", "Elección: 2025 generales", "DIPUTADOS 2023", "DIPUTADOS 2025", "02/027"]) expect(contexts).toContain(text);
+    expect(markup.indexOf("Comparación aplicada")).toBeLessThan(markup.indexOf(contexts!));
+    const tableScroll = markup.match(/<div\b[^>]*aria-label="Tabla exacta de participación y variación por partido en 02\/027"[^>]*>[\s\S]*?<\/table>/)?.[0];
+    expect(tableScroll).toContain('tabindex="0"');
+    expect(markup.match(/<table\b/g)).toHaveLength(1);
+    for (const text of ["60,00 %", "40,00 %", "55,00 %", "45,00 %", "-5,00 puntos porcentuales", "+5,00 puntos porcentuales"]) expect(tableScroll).toContain(text);
+    expect(markup).toContain("02/027: sin cambio.");
+    const rails = [...markup.matchAll(/<article\b[^>]*class="official-compare__evidence-side"[^>]*>[\s\S]*?<\/article>/g)].map(([html]) => html);
+    expect(rails).toHaveLength(2);
+    for (const [index, side] of ["A", "B"].entries()) {
+      const rail = rails[index]!;
+      const openingTag = rail.slice(0, rail.indexOf(">") + 1);
+      const headingId = openingTag.match(/aria-labelledby="([^"]+)"/)?.[1];
+      expect(headingId, `Evidence ${side} needs its own accessible name`).toBeDefined();
+      expect(rail).toMatch(new RegExp(`id="${headingId}"[^>]*>Evidencia oficial — Lado ${side}<`));
+      expect(rail).toContain(`Referencia oficial — Lado ${side}`);
+      expect(rail).toContain(`Procedencia oficial — Lado ${side}`);
+      expect(rail).toContain(`official/archive-${index === 0 ? 2023 : 2025}`);
+      expect(rail).toContain(`SHA-256 ${"a".repeat(64)}`);
+    }
+    const ids = [...markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
   it("keeps the selector context while a denied comparison removes both sides of evidence", async () => {
     mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
     const markup = await render(PARAMS);
