@@ -440,8 +440,17 @@ export default async function MunicipalPage({
     return municipalRefusal("El espacio de trabajo no autoriza esta sección municipal.");
   if (evidence.status === "empty")
     return municipalState("No hay resultados oficiales autorizados para esta sección.", "status");
-  if (evidence.status === "unavailable")
-    return municipalRefusal("La evidencia oficial autorizada no está disponible.");
+  if (evidence.status === "unavailable") {
+    const retryHref = `/municipal?electionId=${encodeURIComponent(configuredElectionId)}`;
+    return municipalState(
+      <>
+        Se rechazó la solicitud: La evidencia oficial autorizada no está disponible.{" "}
+        <a href={retryHref}>Reintentar misma consulta</a>{" · "}
+        <a href="/municipal">Volver a elección configurada</a>
+      </>,
+      "alert",
+    );
+  }
   if (evidence.status === "malformed")
     return municipalRefusal("La evidencia oficial autorizada tiene un formato inválido.");
   if (evidence.status === "truncated")

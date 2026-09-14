@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
 import { assertE2eEnvironment } from "./gate-contract";
+import { test as nextTest } from "./review-test-fixture";
 import {
   FISCALIZACION_VOTES,
   OFFICIAL_VOTES,
@@ -38,6 +39,61 @@ async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promis
     if (cleanup.error || cleanup.data?.cleaned !== true) throw new Error(cleanup.error?.message ?? "municipal fixture cleanup failed");
   }
 }
+
+nextTest("retries unavailable municipal evidence with the exact configured request", async ({ page, next }) => {
+  const bodies: unknown[] = [];
+  const origin = new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin;
+  next.onFetch(async (request) => {
+    const url = new URL(request.url);
+    if (url.origin !== origin) return "abort";
+    if (url.pathname !== "/rest/v1/rpc/official_result") return fetch(request, { redirect: "error" });
+    if (request.method !== "POST" || url.search || url.hash) return "abort";
+    bodies.push(await request.clone().json());
+    if (bodies.length === 1) return Response.json({ message: "controlled unavailable" }, { status: 503 });
+    return fetch(request, { redirect: "error" });
+  });
+
+  await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () =>
+    withAuthorizedMunicipalWorkspace(page, async () => {
+      const path = `/municipal?electionId=${encodeURIComponent(MUNICIPAL_SCOPE.electionId)}`;
+      const submittedUrl = new URL(path, baseURL).toString();
+      const expectedBody = {
+        p_election_id: MUNICIPAL_SCOPE.electionId,
+        p_category_id: MUNICIPAL_SCOPE.categoryId,
+        p_distrito_code: "02",
+        p_seccion_code: "027",
+        p_circuito_code: null,
+        p_establecimiento_code: null,
+        p_mesa_code: null,
+        p_requested_level: "seccion",
+      };
+
+      await page.goto(submittedUrl);
+      const main = page.getByRole("main");
+      await expect(main.getByRole("alert")).toContainText("no está disponible");
+      expect(bodies).toEqual([expectedBody]);
+      const retry = main.getByRole("link", { name: "Reintentar misma consulta", exact: true });
+      const reset = main.getByRole("link", { name: "Volver a elección configurada", exact: true });
+      await expect(retry).toHaveAttribute("href", path);
+      await expect(reset).toHaveAttribute("href", "/municipal");
+      await expect(main.getByRole("table")).toHaveCount(0);
+      await expect(main.getByRole("list", { name: "procedencia" })).toHaveCount(0);
+
+      await page.locator("html").evaluate((element) => { element.dataset.retrySentinel = "original-document"; });
+      await retry.focus();
+      await expect(retry).toBeFocused();
+      await retry.press("Enter");
+      await expect.poll(() => bodies.length).toBe(2);
+      expect(bodies).toEqual([expectedBody, expectedBody]);
+      await expect(page).toHaveURL(submittedUrl);
+      await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
+      await expect(main.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
+      await expect(main.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(retry).toHaveCount(0);
+      await expect(reset).toHaveCount(0);
+    }),
+  );
+});
 
 test.describe("the municipal route requires workspace-authorized official results", () => {
   test("test_route_is_reachable_and_fails_closed_without_workspace_entitlement", async ({ page }) => {
