@@ -338,11 +338,26 @@ describe("municipal page — the real entry point", () => {
         expect(html).toContain("formato inválido"); expect(html).not.toContain("4200 voto(s)");
       });
 
-      it("test_refusal_and_empty_states_hide_the_exact_figure_and_evidence", async () => {
+      it("test_valid_unavailable_request_offers_only_truthful_native_continuations", async () => {
         const { default: Page } = await import("./page");
-        const sentinels = ["Resultados exactos", "ALIANZA LA LIBERTAD AVANZA", "4200", "Archivo y procedencia", "procedencia"];
+        authorizedEvidenceState = { status: "unavailable" };
+
+        const html = renderToStaticMarkup((await Page({
+          searchParams: Promise.resolve({ electionId: "2025-municipal" }),
+        })) as ReactElement);
+
+        expect(html).toContain("La evidencia oficial autorizada no está disponible");
+        expect(html).toContain('<a href="/municipal?electionId=2025-municipal">Reintentar misma consulta</a>');
+        expect(html).toContain('<a href="/municipal">Volver a elección configurada</a>');
+        for (const sentinel of ["Resultados exactos", "ALIANZA LA LIBERTAD AVANZA", "4200", "Archivo y procedencia", "procedencia"])
+          expect(html).not.toContain(sentinel);
+      });
+
+      it("test_other_refusal_and_empty_states_hide_figures_evidence_and_retry", async () => {
+        const { default: Page } = await import("./page");
+        const sentinels = ["Resultados exactos", "ALIANZA LA LIBERTAD AVANZA", "4200", "Archivo y procedencia", "procedencia", "Reintentar misma consulta", "Volver a elección configurada"];
         for (const [state, message] of [
-          [{ status: "denied" }, "no autoriza"], [{ status: "unavailable" }, "no está disponible"],
+          [{ status: "denied" }, "no autoriza"],
           [{ status: "malformed" }, "formato inválido"], [{ status: "truncated" }, "truncada"],
           [{ status: "empty" }, "No hay resultados oficiales"],
         ] as const) {
@@ -402,6 +417,8 @@ describe("municipal page — the real entry point", () => {
         delete process.env["MUNICIPAL_ELECTION_ID"];
         let html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
         expect(html).toContain("MUNICIPAL_ELECTION_ID");
+        expect(html).not.toContain("Reintentar misma consulta");
+        expect(html).not.toContain("Volver a elección configurada");
         process.env["MUNICIPAL_ELECTION_ID"] = "2023-municipal";
         html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "2023-municipal" }) })) as ReactElement);
         expect(html).toContain("formato inválido");
