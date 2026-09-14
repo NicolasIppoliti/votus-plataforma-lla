@@ -8,7 +8,10 @@ const { redirectMock } = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 import type { ResultRow } from "@/lib/results/result-rows";
 import type { SourceRef } from "@/lib/results/types";
-import type { MunicipalOfficialEvidence } from "@/lib/workspace/official-evidence";
+import {
+  loadMunicipalOfficialEvidence,
+  type MunicipalOfficialEvidence,
+} from "@/lib/workspace/official-evidence";
 import {
   municipalViewFromOfficialEvidence,
   type MunicipalView,
@@ -112,6 +115,7 @@ afterEach(() => {
   authorizedEvidenceSource = "official";
   authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
   authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
+  vi.mocked(loadMunicipalOfficialEvidence).mockClear();
   redirectMock.mockClear();
   delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   delete process.env["MUNICIPAL_ELECTION_ID"];
@@ -194,10 +198,10 @@ vi.mock("@/lib/supabase/server-client", () => ({
 }));
 
 vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
-  loadMunicipalOfficialEvidence: () => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
+  loadMunicipalOfficialEvidence: vi.fn(() => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
     status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", categoryName: authorizedEvidenceIdentity.categoryName, electionYear: authorizedEvidenceIdentity.year, electionRound: authorizedEvidenceIdentity.round, totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
     parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: authorizedEvidenceAudit, sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
-  }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) })),
+  }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) }))),
 }));
 
 describe("municipal page — the real entry point", () => {
@@ -355,12 +359,23 @@ describe("municipal page — the real entry point", () => {
         }
       });
 
-      it("test_bare_route_renders_one_accessible_configured_election_selector", async () => {
+      it("test_bare_route_identifies_the_fixed_race_before_loading_figures", async () => {
         const { default: Page } = await import("./page");
         const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
-        for (const fact of ['<label for="municipal-election">Elección municipal</label>',
-          'name="electionId"']) expect(html).toContain(fact);
+
+        for (const fact of [
+          "Coronel Rosales",
+          "Municipal · Concejales · Oficial",
+          "Distrito 02 · Sección 027",
+          "Esquema nacional: distrito es la provincia; sección es el partido.",
+          '<label for="municipal-election">Elección configurada</label>',
+          'name="electionId"',
+          "Ver resultados oficiales",
+        ]) expect(html).toContain(fact);
         expect(html.match(/<option/g)).toHaveLength(1);
+        expect(loadMunicipalOfficialEvidence).not.toHaveBeenCalled();
+        expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA");
+        expect(html).not.toContain("sha256");
         expect(html).not.toContain("UUID");
       });
 

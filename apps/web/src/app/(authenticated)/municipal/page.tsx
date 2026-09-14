@@ -253,16 +253,18 @@ export function renderMunicipalView(
     <main className="page-shell official-municipal">
       <div className="shell-container official-municipal__layout">
         <header className="page-header official-municipal__header">
-          <p className="official-municipal__section-label">Resultados oficiales / municipal autorizado</p>
-          <h1>Resultados municipales (Concejales)</h1>
+          <p className="official-municipal__section-label">Municipal · Concejales · Oficial</p>
+          <h1>Coronel Rosales</h1>
+          <p className="official-municipal__context">Distrito 02 · Sección 027</p>
           <p className="official-municipal__context">
-            Cifras oficiales exactas para la sección fija 02/027. La fiscalización no forma parte de estos resultados.
+            Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.
           </p>
         </header>
         <section className="official-municipal__selection" aria-labelledby="municipal-context-heading">
           <h2 id="municipal-context-heading">Contexto de la consulta</h2>
           <dl className="official-municipal__context-list">
-            <div><dt>Alcance autorizado</dt><dd>Distrito 02 / sección 027</dd></div>
+            <div><dt>Territorio autorizado</dt><dd>Coronel Rosales</dd></div>
+            <div><dt>Identidad nacional</dt><dd>Distrito 02 · Sección 027</dd></div>
             <div><dt>Categoría</dt><dd>Concejales</dd></div>
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
           </dl>
@@ -412,17 +414,18 @@ export default async function MunicipalPage({
   if (!electionId) {
     return <main className="page-shell official-municipal"><div className="shell-container official-municipal__layout">
       <header className="page-header official-municipal__header">
-        <p className="official-municipal__section-label">Resultados oficiales / municipal autorizado</p>
-        <h1>Resultados municipales (Concejales)</h1>
-        <p className="official-municipal__context">Seleccione la elección municipal configurada para consultar la sección fija 02/027.</p>
+        <p className="official-municipal__section-label">Municipal · Concejales · Oficial</p>
+        <h1>Coronel Rosales</h1>
+        <p className="official-municipal__context">Distrito 02 · Sección 027</p>
+        <p className="official-municipal__context">Esquema nacional: distrito es la provincia; sección es el partido.</p>
       </header>
       <section className="official-municipal__selection" aria-labelledby="municipal-selection-heading">
         <h2 id="municipal-selection-heading">Selección oficial</h2>
         <form method="get" action="/municipal" className="official-municipal__form">
           <div className="field">
-            <label htmlFor="municipal-election">Elección municipal</label>
+            <label htmlFor="municipal-election">Elección configurada</label>
             <select id="municipal-election" name="electionId" defaultValue={configuredElectionId}>
-              <option value={configuredElectionId}>Elección municipal 2025 — Concejales</option>
+              <option value={configuredElectionId}>2025 · Provinciales · Concejales</option>
             </select>
           </div>
           <button className="button button--primary" type="submit">Ver resultados oficiales</button>

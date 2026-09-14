@@ -52,12 +52,18 @@ test.describe("the municipal route requires workspace-authorized official result
         "aria-current",
         "page",
       );
-      await page.getByLabel("Elección municipal").selectOption(MUNICIPAL_SCOPE.electionId);
+      const main = page.getByRole("main");
+      await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
+      await expect(main).toContainText("Municipal · Concejales · Oficial");
+      await expect(main).toContainText("Distrito 02 · Sección 027");
+      await expect(main).toContainText("Esquema nacional: distrito es la provincia; sección es el partido.");
+      await expect(main.getByRole("table")).toHaveCount(0);
+      await expect(main).not.toContainText("sha256");
+      await page.getByLabel("Elección configurada").selectOption(MUNICIPAL_SCOPE.electionId);
       await page.getByRole("button", { name: "Ver resultados oficiales" }).click();
       const url = new URL(page.url());
       expect([[...url.searchParams.keys()], url.searchParams.get("electionId")]).toEqual([["electionId"], MUNICIPAL_SCOPE.electionId]);
 
-      const main = page.getByRole("main");
       await expect(main.getByRole("heading", { name: "Municipal (Concejales)" })).toBeVisible();
       await expect(main.getByRole("alert")).toContainText("El espacio de trabajo no autoriza esta sección municipal");
       await expect(main.getByRole("region", {
@@ -80,10 +86,15 @@ test.describe("the municipal route requires workspace-authorized official result
       await page.goto(new URL("/", baseURL).toString());
       const municipalNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Municipal", exact: true });
       await municipalNavigationLink.click();
-      await page.getByLabel("Elección municipal").selectOption(MUNICIPAL_SCOPE.electionId);
+      const coldMain = page.getByRole("main");
+      await expect(coldMain.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
+      await expect(coldMain).toContainText("Distrito 02 · Sección 027");
+      await page.getByLabel("Elección configurada").selectOption(MUNICIPAL_SCOPE.electionId);
       await page.getByRole("button", { name: "Ver resultados oficiales" }).click();
       expect(new URL(page.url()).searchParams.toString()).toBe(`electionId=${MUNICIPAL_SCOPE.electionId}`);
       const main = page.getByRole("main");
+      await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
+      await expect(main).toContainText("Distrito 02 · Sección 027");
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeVisible();
       await expect(main.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
       await expect(main.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
@@ -99,7 +110,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(officialRows.getByRole("cell")).toHaveText([String(OFFICIAL_VOTES)]);
       await tableRegion.focus(); await expect(tableRegion).toBeFocused();
       const heading = main.getByRole("heading", {
-        name: "Resultados municipales (Concejales)",
+        name: "Coronel Rosales",
         level: 1,
       });
       const results = main.getByRole("region", {
