@@ -1703,6 +1703,16 @@ select option {
   .fiscalizacion-workspace__header, .fiscalizacion-workspace__state { grid-column: 1 / -1; }
   .fiscalizacion-workspace__filters { grid-column: 1; position: sticky; inset-block-start: 1rem; }
   .fiscalizacion-workspace__evidence, .fiscalizacion-loading__block { grid-column: 2; }
+  .fiscalizacion-workspace__evidence {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr);
+    grid-template-areas:
+      "qualification result"
+      "coverage result";
+    align-items: start;
+  }
+  .fiscalizacion-workspace__qualification { grid-area: qualification; }
+  .fiscalizacion-workspace__result { grid-area: result; }
+  .fiscalizacion-workspace__coverage { grid-area: coverage; }
   .fiscalizacion-loading__filters { grid-column: 1; }
   .fiscalizacion-loading__block { grid-row: 2; }
 }
