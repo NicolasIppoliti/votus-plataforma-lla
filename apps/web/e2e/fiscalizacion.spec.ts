@@ -135,6 +135,29 @@ test.describe("the fiscalizacion route explores coverage", () => {
       });
       expect(mobileQualification.bottom).toBeLessThanOrEqual(mobileResult.y);
       expect(mobileResult.bottom).toBeLessThanOrEqual(mobileCoverage.y);
+
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const desktopQualification = await qualification.evaluate((element) => {
+        const { x, y, right, bottom, width } = element.getBoundingClientRect();
+        return { x, y, right, bottom, width };
+      });
+      const desktopResult = await resultRegion.evaluate((element) => {
+        const { x, y, right, width } = element.getBoundingClientRect();
+        return { x, y, right, width };
+      });
+      const desktopCoverage = await coverageDetail.evaluate((element) => {
+        const { x, y, right, width } = element.getBoundingClientRect();
+        return { x, y, right, width };
+      });
+      expect(Math.abs(desktopQualification.y - desktopResult.y)).toBeLessThanOrEqual(1);
+      expect(desktopResult.x).toBeGreaterThanOrEqual(desktopQualification.right);
+      expect(desktopCoverage.y).toBeGreaterThanOrEqual(desktopQualification.bottom);
+      expect(Math.abs(desktopCoverage.x - desktopQualification.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(desktopCoverage.right - desktopQualification.right)).toBeLessThanOrEqual(1);
+      expect(desktopResult.width).toBeGreaterThan(desktopQualification.width);
+      expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+      await page.setViewportSize({ width: 390, height: 844 });
       await tableRegion.focus(); await expect(tableRegion).toBeFocused();
       const submitBounds = await page.getByRole("button", { name: "Mostrar cobertura" }).boundingBox();
       if (!submitBounds) throw new Error("coverage submit button has no rendered bounds");
