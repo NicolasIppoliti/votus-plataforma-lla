@@ -77,17 +77,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
               <colgroup>
                 <col className="review-column review-column--kind" />
                 <col className="review-column review-column--severity" />
-                <col className="review-column review-column--subject" />
                 <col className="review-column review-column--detected" />
-                <col className="review-column review-column--note" />
               </colgroup>
               <thead>
                 <tr>
                   <th scope="col">Tipo</th>
                   <th scope="col">Severidad</th>
-                  <th scope="col">Asunto</th>
                   <th scope="col">Detectado</th>
-                  <th scope="col">Nota</th>
                 </tr>
               </thead>
               <tbody>
@@ -95,9 +91,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
                   <tr key={`${item.kind}:${item.severity}:${item.detectedAt}:${index}`}>
                     <td className="table-cell--short">{item.kind}</td>
                     <td className="table-cell--short">{item.severity}</td>
-                    <td className="evidence-token table-cell--identity">Oculto por alcance</td>
                     <td className="table-cell--timestamp">{item.detectedAt}</td>
-                    <td className="evidence-text">Oculto por alcance</td>
                   </tr>
                 ))}
               </tbody>

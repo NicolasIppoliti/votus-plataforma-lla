@@ -145,6 +145,11 @@ async function expectPopulatedReviewLayout(
           resetPending = element.scrollLeft !== 0;
           resetComplete = !resetPending;
           element.scrollLeft = 0;
+          // An immediate reset need not dispatch a later scrollend event.
+          if (element.scrollLeft === 0) {
+            resetPending = false;
+            resetComplete = true;
+          }
         },
         resetCompleted: () => resetComplete,
         completed: () => complete,
@@ -177,12 +182,13 @@ async function expectPopulatedReviewLayout(
   const row = table.locator("tbody").getByRole("row");
   await expect(row).toHaveCount(1);
   const cells = row.getByRole("cell");
-  await expect(cells).toHaveCount(5);
+  await expect(table.getByRole("columnheader")).toHaveText(["Tipo", "Severidad", "Detectado"]);
+  await expect(table.getByRole("columnheader", { name: /Asunto|Nota|Subject|Note/i })).toHaveCount(0);
+  await expect(cells).toHaveCount(3);
   await expect(cells.nth(0)).toHaveText(REVIEW_ITEM.kind);
   await expect(cells.nth(1)).toHaveText(REVIEW_ITEM.severity);
-  await expect(cells.nth(2)).toHaveText("Oculto por alcance");
-  await expect(cells.nth(3)).toContainText("2026-08-13T12:34:56.789");
-  await expect(cells.nth(4)).toHaveText("Oculto por alcance");
+  await expect(cells.nth(2)).toContainText("2026-08-13T12:34:56.789");
+  await expect(table).not.toContainText("Oculto por alcance");
   await expect(page.locator("body")).not.toContainText(REVIEW_ITEM.subject_ref);
   await expect(page.locator("body")).not.toContainText(REVIEW_ITEM.note);
   await expectCellTextContained(row);
@@ -286,8 +292,10 @@ async function expectReviewWindow(page: Page, count: number, firstDetected: stri
   await expect(main).toContainText(`Mostrando ${count} de 101.`);
   const rows = main.getByRole("table").locator("tbody").getByRole("row");
   await expect(rows).toHaveCount(count);
-  await expect(rows.first().getByRole("cell").nth(3)).toHaveText(firstDetected);
-  await expect(rows.getByRole("cell", { name: "Oculto por alcance", exact: true })).toHaveCount(count * 2);
+  await expect(main.getByRole("columnheader")).toHaveText(["Tipo", "Severidad", "Detectado"]);
+  await expect(rows.getByRole("cell")).toHaveCount(count * 3);
+  await expect(rows.first().getByRole("cell").nth(2)).toHaveText(firstDetected);
+  await expect(rows.getByRole("cell", { name: "Oculto por alcance", exact: true })).toHaveCount(0);
   await expect(rows.getByRole("cell", { name: "content_drift", exact: true })).toHaveCount(count);
   await expect(rows.getByRole("cell", { name: "warning", exact: true })).toHaveCount(count);
   await expect(main).not.toContainText("00000000-0000-4000-8000-");
@@ -439,7 +447,7 @@ test.describe("the review route reflects the disposable database", () => {
   test.use({ hasTouch: true });
 
   for (const width of [1440, 320]) {
-    test(`test_review_pagination_visits_real_urls_and_masked_windows_at_${width}px`, async ({ page, next }) => {
+    test(`test_review_pagination_visits_real_urls_and_three_column_windows_at_${width}px`, async ({ page, next }) => {
       const offsets: number[] = [];
       next.onFetch(createReviewStateHandler(assertE2eEnvironment(process.env).NEXT_PUBLIC_SUPABASE_URL,
         undefined, (offset) => { offsets.push(offset); return Response.json(reviewPagePayload(offset)); }));
@@ -778,6 +786,12 @@ test.describe("the review route reflects the disposable database", () => {
         page,
         { width: 320, height: 844 },
         true,
+      );
+      // Three authorized fields fit a tablet without a five-column scroll budget.
+      await expectPopulatedReviewLayout(
+        page,
+        { width: 900, height: 900 },
+        false,
       );
       await expectPopulatedReviewLayout(
         page,

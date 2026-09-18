@@ -1,6 +1,7 @@
 # Local AI runtime state
 .atl/
 .codegraph/
+/odd/
 
 # Local Impeccable installer footprints. Shared agent configuration stays trackable.
 /.agents/skills/impeccable/

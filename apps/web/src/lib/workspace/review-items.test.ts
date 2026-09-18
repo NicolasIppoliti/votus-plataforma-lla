@@ -142,7 +142,7 @@ describe("authorizedReviewItems", () => {
     expect(markup).toContain('class="table-cell--short">info');
     expect(markup).toContain('class="table-cell--short">fetch_failure');
     expect(markup).toContain(ITEM.detected_at);
-    expect(markup.match(/Oculto por alcance/g)).toHaveLength(2);
+    expect(markup).not.toContain("Oculto por alcance");
     expect(markup).not.toContain(ITEM.id);
     expect(markup).not.toContain("La cola de revisión no está disponible");
   });

@@ -66,15 +66,18 @@ describe("review page — responsive review evidence", () => {
     expect(markup).toMatch(
       /<caption>Elementos de revisión pendientes<\/caption>/,
     );
-    expect(markup).toMatch(/<col[^>]+class="review-column review-column--subject"/);
-    expect(markup).toMatch(/<col[^>]+class="review-column review-column--note"/);
+    expect([...markup.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map((match) => match[1])).toEqual([
+      "Tipo",
+      "Severidad",
+      "Detectado",
+    ]);
     expect(markup).toContain('class="table-cell--short">fetch_failure');
     expect(markup).toContain('class="table-cell--short">warning');
     expect(markup).toContain(
       'class="table-cell--timestamp">2026-02-01T12:00:00Z',
     );
-    expect(markup.match(/scope="col"/g)).toHaveLength(5);
-    expect(markup.match(/Oculto por alcance/g)).toHaveLength(2);
+    expect(markup.match(/scope="col"/g)).toHaveLength(3);
+    expect(markup).not.toContain("Oculto por alcance");
     expect(markup).not.toContain(longSubjectRef);
     expect(markup).not.toContain(longNote);
   });

@@ -922,7 +922,7 @@ select option {
 }
 
 .data-table--review {
-  min-width: 63rem;
+  min-width: 40rem;
   table-layout: fixed;
 }
 
@@ -934,16 +934,7 @@ select option {
   width: 8rem;
 }
 
-.data-table--review .review-column--subject {
-  width: 18rem;
-}
-
 .data-table--review .review-column--detected {
-  width: 16rem;
-}
-
-/* The final column absorbs collapsed-border rounding so the 63rem table fits its desktop region. */
-.data-table--review .review-column--note {
   width: auto;
 }
 
