@@ -234,8 +234,55 @@ def test_cli_json_counts_logical_records_once_and_preserves_paso_lists(scenario,
         "exclusions": {},
         "ambiguous_categories": {},
         "companion_conflicts": None,
+        "categories": {
+            "CATEGORY": {"records_seen": 2, "rows_emitted": 2, "exclusions": {}},
+        },
     }
     assert (conn.commits, conn.rollbacks) == (1, 0)
+
+
+def test_cli_reports_truncated_record_without_a_category(scenario):
+    payload = csv_bytes([row()]) + b"9,District\n"
+    argv, _, output = scenario([], payload=payload)
+    assert main([*argv, "--metrics-output", str(output)]) == 0
+    report = json.loads(output.read_text())
+    assert report["categories"][""] == {
+        "records_seen": 1,
+        "rows_emitted": 0,
+        "exclusions": {
+            "votos_tipo=None": {"rows": 1, "parseable_votes": 0, "unreadable_vote_rows": 1},
+        },
+    }
+
+
+def test_cli_preserves_raw_categories_and_reused_mesas_across_districts(scenario):
+    argv, _, output = scenario(
+        [
+            row(agrupacion_id="135", lista_numero="3016"),
+            row(agrupacion_id="135", lista_numero="3017"),
+            row(distrito_id="10", agrupacion_id="135", lista_numero="3016"),
+            row(cargo_nombre=" LOCAL CATEGORY "),
+            row(cargo_nombre="EXCLUDED ONLY", votos_tipo="NULO", votos_cantidad="6"),
+        ]
+    )
+    assert main([*argv, "--metrics-output", str(output)]) == 0
+    report = json.loads(output.read_text())
+    assert report["categories"] == {
+        "CATEGORY": {"records_seen": 3, "rows_emitted": 3, "exclusions": {}},
+        " LOCAL CATEGORY ": {"records_seen": 1, "rows_emitted": 1, "exclusions": {}},
+        "EXCLUDED ONLY": {
+            "records_seen": 1,
+            "rows_emitted": 0,
+            "exclusions": {
+                "votos_tipo='NULO'": {
+                    "rows": 1,
+                    "parseable_votes": 6,
+                    "unreadable_vote_rows": 0,
+                },
+            },
+        },
+    }
+    assert report["ambiguous_categories"] == {}
 
 
 def test_cli_reports_exclusion_subsets_and_ambiguous_categories(scenario, capsys):
@@ -261,6 +308,29 @@ def test_cli_reports_exclusion_subsets_and_ambiguous_categories(scenario, capsys
         "unreadable votos_cantidad": {"rows": 1, "parseable_votes": 0, "unreadable_vote_rows": 1},
     }
     assert report["ambiguous_categories"] == {"CATEGORY": {"rows": 2, "votes": 7, "keys": 1}}
+    assert report["categories"] == {
+        "CATEGORY": {
+            "records_seen": 7,
+            "rows_emitted": 2,
+            "exclusions": {
+                "votos_tipo='EN BLANCO'": {
+                    "rows": 2,
+                    "parseable_votes": 5,
+                    "unreadable_vote_rows": 1,
+                },
+                "unreadable votos_cantidad": {
+                    "rows": 1,
+                    "parseable_votes": 0,
+                    "unreadable_vote_rows": 1,
+                },
+                "ambiguous natural key": {
+                    "rows": 2,
+                    "parseable_votes": 7,
+                    "unreadable_vote_rows": 0,
+                },
+            },
+        },
+    }
 
 
 @pytest.mark.parametrize(
@@ -314,6 +384,29 @@ def test_cli_companion_quarantines_have_separate_nonadditive_breakdowns(scenario
             "unreadable_vote_rows": 0,
         },
     }
+    assert report["categories"] == {
+        "CATEGORY": {
+            "records_seen": 3,
+            "rows_emitted": 0,
+            "exclusions": {
+                "mesa_metadata_conflict": {
+                    "rows": 1,
+                    "parseable_votes": 10,
+                    "unreadable_vote_rows": 0,
+                },
+                "establishment_code_multiple_names": {
+                    "rows": 1,
+                    "parseable_votes": 10,
+                    "unreadable_vote_rows": 0,
+                },
+                "ambiguous result circuits for establecimiento companion": {
+                    "rows": 2,
+                    "parseable_votes": 7,
+                    "unreadable_vote_rows": 0,
+                },
+            },
+        },
+    }
     assert report["companion_conflicts"] == {
         "input_exclusions": {"absent establecimiento code or name": 1},
         "input_unique_conflict_keys": 1,
@@ -359,6 +452,15 @@ def test_cli_empty_and_schema_failures_distinguish_unknown_counts(scenario, case
             )
         ),
     ) == expected
+    assert report["categories"] == (
+        {}
+        if case == "empty"
+        else None
+        if case == "header"
+        else {
+            "CATEGORY": {"records_seen": 2, "rows_emitted": None, "exclusions": {}},
+        }
+    )
     assert report["commit_returned"] is (case == "empty")
     assert (conn.commits, conn.rollbacks) == ((1, 0) if case == "empty" else (0, 1))
 
@@ -375,6 +477,9 @@ def test_late_batch_failure_preserves_first_pass_and_original_exception(scenario
         2000,
         2001,
     )
+    assert report["categories"] == {
+        "CATEGORY": {"records_seen": 2001, "rows_emitted": 2000, "exclusions": {}},
+    }
     assert report["status"] == "failed"
     assert report["commit_returned"] is False
     assert (conn.commits, conn.rollbacks) == (0, 1)
