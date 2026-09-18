@@ -14,6 +14,43 @@ async function expectNoSevereAccessibilityIssues(page: Page) {
     .map(issue => ({ id: issue.id, impact: issue.impact, affectedNodes: issue.nodes.length }))).toEqual([]);
 }
 
+test("the authenticated page follows the system theme and persists explicit theme choices", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: ROOT_CONTENT })).toBeVisible();
+  const theme = page.getByRole("combobox", { name: "Tema", exact: true });
+  const root = page.locator("html");
+  await expect(root).toHaveCSS("color-scheme", "dark");
+  await expect(theme.locator("option:checked")).toHaveText("Sistema");
+  await expect(theme.locator("option")).toHaveText(["Sistema", "Claro", "Oscuro"]);
+
+  await theme.focus();
+  await expect(theme).toBeFocused();
+  await theme.selectOption({ label: "Claro" });
+  await expect(theme.locator("option:checked")).toHaveText("Claro");
+  await expect(root).toHaveCSS("color-scheme", "light");
+  await page.reload();
+  await expect(theme.locator("option:checked")).toHaveText("Claro");
+  await expect(root).toHaveCSS("color-scheme", "light");
+
+  await theme.selectOption({ label: "Oscuro" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.reload();
+  await expect(theme.locator("option:checked")).toHaveText("Oscuro");
+  await expect(root).toHaveCSS("color-scheme", "dark");
+
+  await theme.selectOption({ label: "Sistema" });
+  await expect(root).toHaveCSS("color-scheme", "light");
+  await page.reload();
+  await expect(theme.locator("option:checked")).toHaveText("Sistema");
+  await expect(root).toHaveCSS("color-scheme", "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(root).toHaveCSS("color-scheme", "dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(root).toHaveCSS("color-scheme", "light");
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test("a real same-workspace POST hides both counts until an equal-valued RSC snapshot arrives", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.goto("/");
