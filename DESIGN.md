@@ -13,14 +13,14 @@
 - **Name:** Command Ledger
 - **Aesthetic:** Editorial Operative — industrial discipline for data, editorial hierarchy for decisions.
 - **Decoration:** Intentional and minimal. Typography, hairline borders, tonal surfaces, and evidence structure do the visual work.
-- **Theme:** Light-first analytical surfaces inside a deep graphite application shell. No theme selector in the initial redesign.
+- **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
 - **Layout:** Grid-disciplined analytical routes with controlled asymmetry on the operational briefing.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
 - **Approved prototype screens:** Authenticated shell + operational briefing, and official comparison dense route.
 
 ## Design Principles
 
-1. **Evidence stays beside the figure it qualifies.** Provenance, coverage, granularity, exclusions, truncation, and source kind cannot be detached into unrelated footers.
+1. **Evidence stays beside the figure it qualifies.** Essential source, granularity, refusal/degraded-state, and interpretation-changing qualifiers remain inline. Supporting contextual evidence opens on demand in a right-side Sheet, never the sole location of essential qualifiers.
 2. **Denied is not empty.** Empty, denied, unavailable, truncated, technical error, and loading states share structure but never meaning or disclosure behavior.
 3. **Tables are canonical.** Visualizations accelerate interpretation but do not replace exact values or accessible alternatives.
 4. **Density follows the task.** Briefing and shell are calm; exploration and comparison are compact; simulation balances controls and technical evidence.
@@ -81,6 +81,8 @@ Mobile display and route headings step down one level; body copy never drops bel
 
 ### Core palette
 
+The values below describe the light-theme reference. Both themes retain Votus-owned semantic/source/status meanings and must meet the accessibility contract; the preset's neutral palette does not replace them.
+
 | Token | Value | Meaning |
 | --- | --- | --- |
 | `--shell` | `#121B1E` | Sidebar and deep application chrome |
@@ -133,10 +135,12 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 
 Use a pinned shadcn CLI version and allow only the canonical `@shadcn` registry initially. Source is copied into the repository and becomes project-owned.
 
+**Reviewed baseline (2026-09-18):** Exact preset [`b5aq`](https://ui.shadcn.com/create?preset=b5aq): Nova, Radix, neutral base/theme/chart, Lucide, and IBM Plex Sans. Do not apply it globally. Votus-owned tokens remain authoritative for the Command Ledger semantic/source/status palette, IBM Plex Mono, visible focus, compact density, and low-radius geometry (`3/6/10px`).
+
 Expected primitives:
 
 - Button, Input, Label, Select, Checkbox
-- Sheet for mobile navigation
+- Sheet for mobile navigation and on-demand right-side contextual evidence
 - Dialog and AlertDialog
 - Popover and Command for optional navigation acceleration
 - Tabs and Collapsible for evidence disclosure
@@ -185,7 +189,7 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 - No pie charts, gauges, decorative KPI visualizations, or animated numbers.
 - Every chart includes an accessible table or textual equivalent.
 - Official and fiscalización can be juxtaposed but cannot share an aggregated series.
-- Provenance, coverage, exclusions, and source kind remain adjacent to the visualization.
+- Essential source and interpretation-changing provenance, coverage, exclusion, and granularity qualifiers remain adjacent to the visualization; supporting detail may open in the contextual Sheet.
 
 ## Motion
 
@@ -240,6 +244,8 @@ Every external addition records owner, exact version/commit or registry payload,
 
 ## Migration and Delivery Strategy
 
+Migration remains parity-first: component replacement preserves navigation, URLs, authorization, calculations, source boundaries, and workflows. The approved theme activation and contextual Sheet interactions are direction for explicit later slices, not permission to introduce behavior changes during primitive replacement.
+
 Use one isolated feature-branch chain with one sequential writer:
 
 1. Pinned tooling, Tailwind 4, tokens, and primitives.
@@ -290,7 +296,10 @@ New product features discovered during design become separate future work units.
 | 2026-09-01 | Situation-room product posture | Make trust, speed, and analytical hierarchy memorable |
 | 2026-09-01 | Analyst/operator primary persona | Preserve operator-grade precision over generic executive simplification |
 | 2026-09-01 | Command Ledger approved | Best balance of briefing, density, actions, and evidence adjacency |
-| 2026-09-01 | Light-first graphite/ivory system | Better long-form reading, screenshots, print, and semantic contrast |
+| 2026-09-01 | Light-first graphite/ivory system (superseded by 2026-09-18 theme decision) | Better long-form reading, screenshots, print, and semantic contrast |
 | 2026-09-01 | IBM Plex typography | Technical/institutional identity without Vercel brand convergence |
 | 2026-09-01 | Progressive shadcn/Tailwind migration | Route-complete slices with final legacy removal |
 | 2026-09-01 | WCAG 2.2 AA blocking gate | Accessibility is production evidence, not later cleanup |
+| 2026-09-18 | Keep exact `b5aq` baseline (Nova, Radix, neutral base/theme/chart, Lucide, IBM Plex Sans); no global apply | Preserve Command Ledger's Votus-owned semantic/source/status palette, Mono, focus, compact density, and 3/6/10px geometry |
+| 2026-09-18 | Support light and dark themes, initialized from OS preference with an in-app selector and persistent per-user override | Replace the earlier light-first/no-selector restriction with explicit user control |
+| 2026-09-18 | On-demand right-side contextual evidence Sheet; essential qualifiers remain inline; migration stays parity-first | Reduce primary-view load without hiding source, granularity, refusal/degraded states, or interpretation-changing evidence; separate behavior changes from component parity |

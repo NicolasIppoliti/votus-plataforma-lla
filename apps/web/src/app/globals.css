@@ -76,6 +76,46 @@
     max(1rem, env(safe-area-inset-right));
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --shell: #10181b;
+  --canvas: #151e21;
+  --surface: #1d292d;
+  --surface-muted: #29373b;
+  --ink: #edf2ef;
+  --muted-ink: #b4c3bf;
+  --border: #526560;
+  --accent: #80d5c8;
+  --accent-strong: #a1e6dc;
+  --official: #9bc8f5;
+  --fiscalizacion: #efbb79;
+  --simulation: #cdb3ee;
+  --success: #8ad5b0;
+  --danger: #ffaaa2;
+  --warning-ink: #f5d49a;
+  --warning-surface: #3d3020;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted-ink);
+  --color-line: var(--border);
+  --color-line-strong: #81968e;
+  --color-accent: var(--accent);
+  --color-accent-dark: var(--accent-strong);
+  --color-accent-soft: #203f39;
+  --color-focus: #ffc18b;
+  --color-warning-soft: var(--warning-surface);
+  --color-warning-line: #d4a85f;
+}
+
+/* These existing inverse surfaces use surface tokens as foreground colors. */
+:root[data-theme="dark"] :is(.situation-sidebar, .mobile-navigation__header, .briefing-attention) {
+  --surface: #edf2ef;
+  --surface-muted: #b4c3bf;
+  --accent-strong: #084f4a;
+}
+
 *,
 *::before,
 *::after {
@@ -405,6 +445,22 @@ select option {
   gap: 0.5rem 1rem;
   min-height: 4rem;
   padding-block: 0.5rem;
+}
+
+.theme-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  margin-inline-start: auto;
+  font-size: 0.8125rem;
+}
+
+.theme-selector select {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  max-width: 100%;
+  padding-block: 0.4rem;
 }
 
 .workspace-identity {

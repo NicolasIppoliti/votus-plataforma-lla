@@ -28,7 +28,19 @@ export default function RootLayout({
   children: ReactNode;
 }): ReactNode {
   return (
-    <html lang="es">
+    <html lang="es" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `
+          (() => {
+            let preference;
+            try { preference = localStorage.getItem("votus-theme"); } catch {}
+            const theme = preference === "light" || preference === "dark"
+              ? preference : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            document.documentElement.dataset.theme = theme;
+            document.documentElement.style.colorScheme = theme;
+          })();
+        ` }} />
+      </head>
       <body className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
         <a className="skip-link" href="#main-content">
           Ir al contenido principal

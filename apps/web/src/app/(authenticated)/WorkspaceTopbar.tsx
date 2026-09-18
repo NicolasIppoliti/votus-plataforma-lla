@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ThemeSelector } from "@/components/ThemeSelector";
 import { WorkspaceReviewStatus, WorkspaceIdentity } from "./WorkspacePresentation";
 
 interface WorkspaceTopbarProps {
@@ -14,6 +15,7 @@ export function WorkspaceTopbar({
         {mobileNavigation}
         <WorkspaceIdentity />
         <div className="review-alert" role="status"><WorkspaceReviewStatus /></div>
+        <ThemeSelector />
       </div>
     </header>
   );
