@@ -26,12 +26,25 @@ class IngestMetrics:
             "exclusions": None,
             "ambiguous_categories": None,
             "companion_conflicts": None,
+            "categories": None,
         }
 
-    def record_exclusion(self, reason: str, votes: int | None, rows: int = 1):
+    def record_exclusion(self, reason: str, votes: int | None, rows: int = 1, *, category: str):
+        self.record_category_exclusion(category, reason, votes, rows)
         bucket = self.data["exclusions"].setdefault(
             reason,
             {"rows": 0, "parseable_votes": 0, "unreadable_vote_rows": 0},
+        )
+        bucket["rows"] += rows
+        bucket["parseable_votes"] += votes if votes is not None else 0
+        bucket["unreadable_vote_rows"] += rows if votes is None else 0
+
+    def record_category_exclusion(
+        self, category: str, reason: str, votes: int | None, rows: int = 1
+    ):
+        # Companion conflict reasons overlap; these are not additive exclusion totals.
+        bucket = self.data["categories"][category]["exclusions"].setdefault(
+            reason, {"rows": 0, "parseable_votes": 0, "unreadable_vote_rows": 0}
         )
         bucket["rows"] += rows
         bucket["parseable_votes"] += votes if votes is not None else 0

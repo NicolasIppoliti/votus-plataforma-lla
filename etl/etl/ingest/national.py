@@ -624,7 +624,7 @@ def iter_national_rows(
         excluded_rows[reason] = excluded_rows.get(reason, 0) + 1
         votes = parse_source_int(raw_votes)
         if metrics is not None:
-            metrics.record_exclusion(reason, votes)
+            metrics.record_exclusion(reason, votes, category=raw.get("cargo_nombre") or "")
         if votes is None:
             excluded_unparseable[reason] = excluded_unparseable.get(reason, 0) + 1
         else:
@@ -643,6 +643,7 @@ def iter_national_rows(
             companion["result_votes"] += votes
             companion["result_keys"] = len(companion_conflict_stats)
             for reason in reasons:
+                metrics.record_category_exclusion(raw.get("cargo_nombre") or "", reason, votes)
                 bucket = companion["result_reasons"].setdefault(reason, {"rows": 0, "votes": 0})
                 bucket["rows"] += 1
                 bucket["votes"] += votes
@@ -657,6 +658,7 @@ def iter_national_rows(
             records_seen=0,
             candidate_keys=0,
             exclusions={},
+            categories={},
         )
         if metrics.data["companion_conflicts"] is not None:
             metrics.data["companion_conflicts"].update(
@@ -668,6 +670,12 @@ def iter_national_rows(
     for index, raw in enumerate(reader):
         if metrics is not None:
             metrics.data["records_seen"] += 1
+            # Empty and absent source categories share the unnamed bucket; never trim names.
+            category = metrics.data["categories"].setdefault(
+                raw.get("cargo_nombre") or "",
+                {"records_seen": 0, "rows_emitted": None, "exclusions": {}},
+            )
+            category["records_seen"] += 1
         if establecimientos_csv_bytes is not None:
             companion_key = _national_companion_key(
                 raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
@@ -711,6 +719,7 @@ def iter_national_rows(
                     "ambiguous result circuits for establecimiento companion",
                     stats.votes,
                     stats.count,
+                    category=key[4],
                 )
             excluded_rows["ambiguous result circuits for establecimiento companion"] = (
                 excluded_rows.get("ambiguous result circuits for establecimiento companion", 0)
@@ -728,6 +737,9 @@ def iter_national_rows(
     if metrics is not None:
         categories = metrics.data["ambiguous_categories"] = {}
         for key in ambiguous_natural_keys:
+            metrics.record_category_exclusion(
+                key[4], "ambiguous natural key", stats_by_key[key].votes, stats_by_key[key].count
+            )
             bucket = categories.setdefault(key[4], {"rows": 0, "votes": 0, "keys": 0})
             bucket["rows"] += stats_by_key[key].count
             bucket["votes"] += stats_by_key[key].votes
@@ -738,6 +750,8 @@ def iter_national_rows(
 
     if metrics is not None:
         metrics.data.update(first_pass="complete", iteration="partial", rows_emitted=0)
+        for category in metrics.data["categories"].values():
+            category["rows_emitted"] = 0
     csv_text.seek(0)
     for index, raw in enumerate(_national_reader(csv_text)):
         row = _candidate_from_raw(
@@ -762,6 +776,7 @@ def iter_national_rows(
             continue
         if metrics is not None:
             metrics.data["rows_emitted"] += 1
+            metrics.data["categories"][raw.get("cargo_nombre") or ""]["rows_emitted"] += 1
         yield row
     if metrics is not None:
         metrics.data["iteration"] = "complete"

@@ -30,13 +30,44 @@ interruption or write/sync failure can leave an empty, incomplete or unsynced fi
 | `records_seen` | Logical results-CSV records encountered once in pass one, excluding header; quoted newlines are not extra records. |
 | `rows_emitted` | Rows yielded in pass two, not inserted or committed rows. |
 | `candidate_keys` | Size of the existing first-pass natural-key map, before ambiguity exclusions; no additional per-key collection. |
-| `exclusions` | Per reason: rows, sum of parseable votes, and unreadable-vote rows (a **subset** of excluded rows). Zero parseable votes does not assign zero to unknown votes. |
+| `exclusions` | Global totals per reason: rows, sum of parseable votes, and unreadable-vote rows (a **subset** of excluded rows). Zero parseable votes does not assign zero to unknown votes. |
+| `categories` | Per raw source category: `records_seen` in pass one, `rows_emitted` in pass two, and `exclusions` with the same per-reason counters as the global field. Null means that observation phase has not started; completed empty observations are zero. Missing or truncated category values use the empty-string key so they remain visible. Source category names are otherwise preserved rather than trimmed, normalized or filtered. |
 | `ambiguous_categories` | Per category: ambiguous rows, votes and keys; unknown until first-pass classification completes. |
 | `companion_conflicts` | Null without observed companion metadata; otherwise separate input-exclusion rows per reason, unique conflicted input keys and keys per reason, plus affected result rows/votes/keys and result rows/votes per reason. Reason buckets can overlap. Result circuit ambiguities remain in `exclusions`. |
 
 Unobserved counts are null; completed empty observations are zero or empty objects.
-Partial counts describe only work observed so far. Do not sum these buckets into a
-conservation formula. No raw rows, connection strings or exception messages are stored.
-Synthetic CLI tests use only a PostgreSQL connection double: they prove reporting and
-control flow, not real persistence, rollback, idempotency, RSS, performance, publisher
-authenticity or full-source verification. No real archive ingestion is authorized here.
+Partial counts describe only work observed so far. Category and global exclusion reasons
+can overlap: one source row may contribute to more than one companion reason, and an
+unreadable vote is a qualifier inside an exclusion rather than another excluded row.
+`rows_emitted` describes parser output, not inserts or commits. Therefore neither the
+category buckets nor the global fields form a universal conservation equation.
+
+This report contains no list-identity field and therefore does not prove party mapping.
+The ingest parser continues to emit PASO internal-list identities such as `135-3016`
+without falling back to the parent agrupación. Category accounting likewise does not
+assume `mesa_id` is globally unique. Natural-key, jurisdiction and election normalization
+remain owned by the existing ingest boundaries.
+
+No raw rows, connection strings or exception messages are stored. Synthetic CLI tests
+use only a PostgreSQL connection double: they prove reporting and control flow, not real
+persistence, rollback, idempotency, RSS, performance, publisher authenticity or
+full-source verification.
+
+## Deferred real PASO proof
+
+A real `national/2023-paso-wayback` proof is a separate, explicitly authorized operation.
+It requires an isolated local database, enough capacity for the 3.76 GB extracted CSV
+plus PostgreSQL data, indexes and WAL, and two complete ingestions. Before running it,
+record and approve:
+
+- a minimum free-disk floor and an abort threshold;
+- peak-RSS and elapsed-time limits;
+- isolated database creation, ownership and cleanup commands;
+- distinct new metrics paths for both runs;
+- OS-level elapsed-time and peak-RSS capture;
+- post-run SQL observations grouped by election, source kind and raw category; and
+- equality checks across both runs for scoped row counts, vote aggregates and uniqueness.
+
+Aggregate equality is evidence of idempotent outcomes, not a cryptographic row-by-row
+proof. The proof must surface unmapped PASO `agrupación-lista` IDs through the existing
+validation path; never collapse them to the parent agrupación to make the proof pass.
