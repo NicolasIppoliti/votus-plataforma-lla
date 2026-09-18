@@ -20,7 +20,7 @@ it("loads explicit IBM Plex fonts while preserving the root document contract", 
   expect(
     rootLayoutSource.match(/weight:\s*\["400", "500", "600", "700"\]/g),
   ).toHaveLength(2);
-  expect(rootLayoutSource).toContain('<html lang="es">');
+  expect(rootLayoutSource).toMatch(/<html\b[^>]*\slang="es"(?=\s|>)[^>]*>/);
   expect(rootLayoutSource).toContain('className="skip-link" href="#main-content"');
   expect(rootLayoutSource).toContain("Votus | Análisis electoral interno");
   expect(rootLayoutSource).toContain(

@@ -405,6 +405,7 @@ for (const windowWidth of [1280, 640]) {
         await expectKeyboardFocus(trigger, false, "nav-trigger");
         const realCount = page.getByRole("banner").getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)", exact: true });
         await tabTo(page, realCount, false, false, "header-count");
+        await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         await tabTo(page, region, false, true, "review-table-region");
         await expect(region).toHaveAttribute("tabindex", "0");
         const scroll = await region.evaluate((element) => ({ left: element.scrollLeft, width: element.clientWidth, total: element.scrollWidth }));
@@ -568,6 +569,7 @@ test.describe("the review route reflects the disposable database", () => {
         const realCount = page.getByRole("banner").getByRole("link", { name: /^\d+ elemento\(s\) de revisión pendiente\(s\)$/ });
         await expect(realCount).toHaveText("1 elemento(s) de revisión pendiente(s)");
         await tabTo(page, realCount, false, false, "header-count");
+        await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
         await tabTo(page, region, false, true, "review-table-region");
         if (width < 1024) {
