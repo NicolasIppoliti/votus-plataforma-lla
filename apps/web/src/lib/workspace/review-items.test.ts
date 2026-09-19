@@ -140,7 +140,7 @@ describe("authorizedReviewItems", () => {
 
     expect(markup).toContain("Mostrando 1 de 1.");
     expect(markup).toContain('class="table-cell--short">info');
-    expect(markup).toContain('class="table-cell--short">fetch_failure');
+    expect(markup).toMatch(/<th\b[^>]*\sscope="row"[^>]*>fetch_failure<\/th>/);
     expect(markup).toContain(ITEM.detected_at);
     expect(markup).not.toContain("Oculto por alcance");
     expect(markup).not.toContain(ITEM.id);

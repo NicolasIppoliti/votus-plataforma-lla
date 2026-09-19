@@ -58,6 +58,47 @@ because Button is shared. No size improvement or completed measurement is claime
 Behavioral browser GREEN remains the parent's focused auth gate; unit tests alone
 do not prove computed colors or layout.
 
+## Review table — complete-shadcn-migration Task 3A
+
+Owner: Votus. Canonical reference:
+https://ui.shadcn.com/r/styles/radix-nova/table.json (shadcn, MIT).
+The parent inspected the payload with pinned `shadcn@4.21.0` commands:
+
+- `shadcn@4.21.0 add table alert --cwd apps/web --dry-run`
+- `shadcn@4.21.0 add table alert --cwd apps/web --view`
+- `shadcn@4.21.0 add table alert --cwd apps/web --diff`
+
+These are the recorded inspection invocations, not commands run by this writer.
+The registry URL is mutable; no retained payload hash or immutable upstream
+commit is claimed. This slice manually adapts Table only; no CLI generation,
+installation, Alert, or configuration change is included.
+
+`table.tsx` retains native elements/props and canonical `data-slot` names with
+named React type imports and `@/lib/utils`. Only the seven consumed primitives
+ship; the unused footer is omitted. Canonical nested overflow, neutral styling,
+cell whitespace/padding, hover/selection styles, and client directive are omitted.
+Existing Command Ledger classes retain table/caption geometry, colgroup widths,
+wrapping, colors, and focus. Row heads reset the legacy column-head background,
+font size, and weight to the former body-cell appearance; important utilities
+are limited to overriding unlayered background/font-size rules.
+
+The populated server `/review` page is the production caller of every primitive.
+Tipo uses TableHead with `scope="row"`; Severidad/Detectado remain TableCell.
+TableRegion requires a label and one semantic Table element; it exposes no
+arbitrary region props or style/variant knobs. It alone owns the labelled,
+focusable horizontal-scroll boundary. Other TableScroll callers and all review
+safe/loading/error states are unchanged.
+
+No dependencies added. Runtime dependencies are existing React 19.2.8 (MIT),
+clsx 2.1.1 (MIT), and tailwind-merge 3.6.0 (MIT). No Radix runtime is needed for
+native tables. The canonical source MIT notice below applies to this adaptation.
+Both modules remain server-compatible without hooks, browser APIs, or hydration;
+no new client boundary or initial client JavaScript is expected. This is an
+expectation, not a bundle measurement: parent verification must compare the
+same-build route/chunk inventory, raw and deterministic gzip bytes, counting
+shared chunks once. Real browser GREEN (including 320px, native 200% zoom,
+keyboard scrolling, pagination, and text containment) also remains parent-owned.
+
 ## Canonical source license
 
 MIT License
