@@ -687,6 +687,22 @@ test.describe("the review route reflects the disposable database", () => {
       const main = page.getByRole("main");
       const alert = main.getByRole("alert", { name: "No se pudo cargar la revisión" });
       await expect(alert).toBeVisible();
+      const dangerColor = await alert.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--danger)";
+        probe.hidden = true;
+        element.append(probe);
+        try {
+          return getComputedStyle(probe).color;
+        } finally {
+          probe.remove();
+        }
+      });
+      await expect(alert).toHaveCSS("border-block-start-color", dangerColor);
+      await expect(alert).toHaveCSS("border-block-start-style", "solid");
+      await expect.poll(() => alert.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).borderBlockStartWidth),
+      )).toBeGreaterThan(0);
       expect(matched).toBeGreaterThan(0);
       await expect(main).not.toContainText(/\d|Mostrando|elementos requieren revisión|Oculto por alcance/);
       await expect(page.locator("body")).not.toContainText(sentinel);

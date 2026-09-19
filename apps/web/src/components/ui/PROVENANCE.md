@@ -99,6 +99,35 @@ same-build route/chunk inventory, raw and deterministic gzip bytes, counting
 shared chunks once. Real browser GREEN (including 320px, native 200% zoom,
 keyboard scrolling, pagination, and text containment) also remains parent-owned.
 
+## Review evidence states — complete-shadcn-migration Task 3B
+
+Owner: Votus. Alert manually adapts the canonical radix-nova reference
+https://ui.shadcn.com/r/styles/radix-nova/alert.json (shadcn, MIT), inspected by
+the parent with the pinned `shadcn@4.21.0` commands recorded in Task 3A above.
+No CLI generation, dependency installation, or configuration change was performed.
+The mutable registry URL is not an immutable source pin; no retained payload hash
+or upstream commit is claimed.
+
+`alert.tsx` retains the native div props, `data-slot`, local `@/lib/utils`, and
+named React type import. Only the consumed root ships: no unused title,
+description, action, variant exports, default card styling, shadow, or hardcoded
+announcement role. Project-owned EvidenceState owns the six migrated states,
+status/alert semantics, labelled heading, optional operational eyebrow, children,
+and explicit action. Its real callers are the review server safe-state branch,
+loading boundary, and technical-error boundary. Existing Spanish copy and
+suppression remain; error details/digests are not read. The error rail uses
+`--danger`; unavailable/denied/truncated use warning treatment; empty/loading
+remain neutral. Loading retains visible announcement and hidden static geometry.
+Populated attention, table, pagination, and placeholder CSS remain unchanged.
+
+No dependencies added: React 19.2.8 (MIT), clsx 2.1.1 (MIT), and
+tailwind-merge 3.6.0 (MIT) are existing dependencies. The MIT notice below covers
+canonical source adaptation. The components have no hooks or client directive;
+the existing error boundary imports them into its client graph. No bundle-size
+claim is made. Parent production-build route/chunk measurements and real-browser
+GREEN (computed danger rail, keyboard retry, suppression, responsive/loading
+geometry) remain pending; passing focused units is not browser evidence.
+
 ## Canonical source license
 
 MIT License

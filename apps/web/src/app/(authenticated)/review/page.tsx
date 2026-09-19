@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { EvidenceState } from "@/components/EvidenceState";
 import { TableRegion } from "@/components/TableRegion";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
@@ -20,6 +21,13 @@ const REVIEW_STATE_TITLE = {
   unavailable: "Cola no disponible",
 } as const satisfies Record<Exclude<AuthorizedReviewItems["status"], "ok">, string>;
 
+const REVIEW_EVIDENCE_STATE = {
+  authorization_denied: "denied",
+  authorized_empty: "empty",
+  payload_too_large: "truncated",
+  unavailable: "unavailable",
+} as const;
+
 /**
  * Authorized review queue — shares the exact scoped predicate used by the
  * authenticated layout count.
@@ -35,15 +43,14 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
           <p className="eyebrow">Operaciones · revisión</p>
           <h1>Cola de revisión</h1>
         </header>
-        <aside
-          className="review-queue__attention review-queue__state"
-          role={payload.status === "authorized_empty" ? "status" : "alert"}
-          aria-labelledby="review-state-heading"
+        <EvidenceState
+          state={REVIEW_EVIDENCE_STATE[payload.status]}
+          title={REVIEW_STATE_TITLE[payload.status]}
+          titleId="review-state-heading"
+          eyebrow="Atención operativa"
         >
-          <p className="eyebrow">Atención operativa</p>
-          <h2 id="review-state-heading">{REVIEW_STATE_TITLE[payload.status]}</h2>
           <p>{REVIEW_STATE_COPY[payload.status]}</p>
-        </aside>
+        </EvidenceState>
       </main>
     );
   }
