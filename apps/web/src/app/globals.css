@@ -921,38 +921,16 @@ select option {
   gap: 1.25rem;
 }
 
-.login-form input,
-.login-form__submit {
-  width: 100%;
-  min-width: 0;
-  min-height: 3rem;
-}
-
-.login-form input[aria-invalid="true"] {
-  border-color: var(--color-focus);
-}
-
-.login-form__submit:active:not(:disabled) {
-  background: var(--color-accent-dark);
-}
-
-.login-form__submit:disabled {
-  border-color: var(--color-line-strong);
-  background: var(--color-surface-muted);
-  color: var(--color-muted);
-  cursor: not-allowed;
-}
-
 .login-form__feedback {
   min-height: 1.55em;
-  color: var(--color-focus);
+  color: var(--danger);
   font-size: 0.9rem;
   font-weight: 600;
 }
 
 .login-form__feedback:not(:empty) {
   padding-inline-start: 0.75rem;
-  border-inline-start: 3px solid var(--color-focus);
+  border-inline-start: 3px solid var(--danger);
 }
 
 .table-scroll {
