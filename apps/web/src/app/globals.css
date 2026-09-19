@@ -1626,7 +1626,7 @@ select option {
   font-weight: 400;
 }
 
-.official-compare__selection :where(select, .button) {
+.official-compare__selection :where(select, [data-slot="button"]) {
   min-height: 2.75rem;
   max-width: 100%;
   font-size: 0.875rem;
@@ -1636,7 +1636,7 @@ select option {
   min-width: 0;
 }
 
-.official-compare__selection .button {
+.official-compare__selection [data-slot="button"] {
   white-space: normal;
 }
 
@@ -1649,6 +1649,11 @@ select option {
 .official-compare__selection select {
   width: 100%;
   min-width: 0;
+}
+
+.official-compare__results > h2 {
+  font-size: var(--text-command-h2);
+  line-height: var(--text-command-h2--line-height);
 }
 
 .official-compare__results > :where(h2, p, .table-scroll),

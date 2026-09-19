@@ -1,8 +1,10 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { ComparisonSelectionForm } from "./ComparisonSelectionForm";
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
-import { TableScroll } from "@/components/TableScroll";
+import { EvidenceState } from "@/components/EvidenceState";
+import { TableRegion } from "@/components/TableRegion";
+import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
 import type { ExplorationFacets, FacetOption } from "@/lib/results/exploration";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
@@ -126,6 +128,17 @@ function optionLabel(option: FacetOption): string {
   return `${option.code} — nombres contradictorios`;
 }
 
+type ComparisonEvidenceNotice = Pick<ComponentProps<typeof EvidenceState>, "state" | "title">;
+
+// Only these refusals have an unambiguous shared evidence-state meaning.
+// EMPTY means no complete pair, not necessarily zero rows on both sides.
+const EVIDENCE_NOTICES: Partial<Record<string, ComparisonEvidenceNotice>> = {
+  [OFFICIAL_COMPARISON_EVIDENCE_STATUS.AUTHORIZATION_DENIED]: { state: "denied", title: "Acceso denegado" },
+  [OFFICIAL_COMPARISON_EVIDENCE_STATUS.PAYLOAD_TOO_LARGE]: { state: "truncated", title: "Comparación incompleta" },
+  [OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED]: { state: "error", title: "Error de validación" },
+  [OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNAVAILABLE]: { state: "unavailable", title: "Evidencia no disponible" },
+};
+
 interface CompareSelectorProps {
   elections: ExplorationFacets["elections"];
   leftCategories: ExplorationFacets["categories"];
@@ -136,6 +149,7 @@ interface CompareSelectorProps {
   unique?: LoadedFacetUniqueCounts;
   message: string;
   alert?: boolean;
+  evidenceNotice?: ComparisonEvidenceNotice | undefined;
   children?: ReactNode;
 }
 
@@ -149,6 +163,7 @@ function CompareSelector({
   unique,
   message,
   alert = false,
+  evidenceNotice,
   children,
 }: CompareSelectorProps): ReactNode {
   const leftElectionId = selected[QUERY_KEY.LEFT_ELECTION_ID];
@@ -245,7 +260,13 @@ function CompareSelector({
                 </aside>
               )}
         </section>
-        <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+        {evidenceNotice ? (
+          <EvidenceState {...evidenceNotice} titleId="compare-evidence-state-heading">
+            <p>{message}</p>
+          </EvidenceState>
+        ) : (
+          <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+        )}
         {children}
       </div>
     </main>
@@ -498,7 +519,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     return refusalPage(unmappedPartiesRefusal(evidence.sides));
   }
   if (evidence.status !== OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK) {
-    return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} message={evidenceRefusal(evidence.status)} alert />;
+    return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} message={evidenceRefusal(evidence.status)} evidenceNotice={EVIDENCE_NOTICES[evidence.status]} alert />;
   }
   if (!hasOnlyOfficialRenderedEvidence(evidence.left) || !hasOnlyOfficialRenderedEvidence(evidence.right)) {
     return refusalPage("La evidencia oficial autorizada no superó la validación integral y no se muestran cifras.");
@@ -545,8 +566,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           <h2 id="compare-results-heading">Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
         <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "sin cambio"}.</p>
-        <TableScroll label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
-          <table className="data-table">
+        <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
+          <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>
             <thead><tr><th scope="col">Partido izquierdo</th><th scope="col">Participación izquierda</th><th scope="col">Partido derecho</th><th scope="col">Participación derecha</th><th scope="col">Variación</th></tr></thead>
             <tbody>
@@ -564,8 +585,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
                 );
               })}
             </tbody>
-          </table>
-        </TableScroll>
+          </Table>
+        </TableRegion>
         </section>
         <aside className="official-compare__evidence" aria-labelledby="compare-evidence-heading">
           <h2 id="compare-evidence-heading">Evidencia oficial por lado</h2>

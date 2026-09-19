@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 
 const KEYS = ["leftElectionId", "rightElectionId", "leftCategoryId", "rightCategoryId", "distritoCode", "seccionCode"] as const;
 type Key = (typeof KEYS)[number];
@@ -56,8 +57,8 @@ export function ComparisonSelectionForm({ selected, options, applied, children }
     <form action="/compare" method="get" onChange={change}>
       {children}
       <div className="form-actions">
-        <button className="button button--primary" type="submit" formNoValidate>Actualizar opciones</button>
-        {ready && <button className="button button--primary" type="submit">Comparar resultados</button>}
+        <Button variant="solid" type="submit" formNoValidate>Actualizar opciones</Button>
+        {ready && <Button variant="solid" type="submit">Comparar resultados</Button>}
       </div>
       {dirty && <p role="status">Cambios sin aplicar</p>}
     </form>
