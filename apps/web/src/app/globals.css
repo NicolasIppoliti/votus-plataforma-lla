@@ -1954,18 +1954,43 @@ select option {
   background: var(--surface-muted);
 }
 
-.review-queue__state {
+.evidence-state {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-block-start: 3px solid var(--accent);
+  background: var(--surface-muted);
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 
-.review-queue__state[role="alert"] {
+.evidence-state[data-treatment="warning"] {
   border-block-start-color: var(--warning-ink);
   background: var(--warning-surface);
 }
 
-.review-queue__state h2 {
+.evidence-state[data-treatment="danger"] {
+  border-block-start-color: var(--danger);
+}
+
+.evidence-state h2 {
   font-size: 1.5rem;
   line-height: 1.2;
+}
+
+.evidence-state[data-state="loading"] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-ink);
+}
+
+.evidence-state[data-state="loading"] h2 {
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
 }
 
 .review-queue__attention > p:nth-child(2) {

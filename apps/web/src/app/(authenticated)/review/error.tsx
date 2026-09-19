@@ -1,5 +1,8 @@
 "use client";
 
+import { EvidenceState } from "@/components/EvidenceState";
+import { Button } from "@/components/ui/button";
+
 interface ReviewErrorProps {
   error: Error & { digest?: string };
   unstable_retry: () => void;
@@ -12,12 +15,15 @@ export default function ReviewError({ unstable_retry }: ReviewErrorProps) {
         <p className="eyebrow">Operaciones · revisión</p>
         <h1>Cola de revisión</h1>
       </header>
-      <section className="review-queue__attention review-queue__state" role="alert" aria-labelledby="review-error-heading">
-        <p className="eyebrow">Atención operativa</p>
-        <h2 id="review-error-heading">No se pudo cargar la revisión</h2>
+      <EvidenceState
+        state="error"
+        title="No se pudo cargar la revisión"
+        titleId="review-error-heading"
+        eyebrow="Atención operativa"
+        action={<Button variant="solid" type="button" onClick={unstable_retry}>Reintentar carga</Button>}
+      >
         <p>Revise la conexión y vuelva a intentar la carga.</p>
-        <button className="button button--primary" type="button" onClick={unstable_retry}>Reintentar carga</button>
-      </section>
+      </EvidenceState>
     </main>
   );
 }

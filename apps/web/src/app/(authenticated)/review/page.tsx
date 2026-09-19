@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { TableScroll } from "@/components/TableScroll";
+import { EvidenceState } from "@/components/EvidenceState";
+import { TableRegion } from "@/components/TableRegion";
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import type { AuthorizedReviewItems } from "@/lib/workspace/review-items";
@@ -19,6 +21,13 @@ const REVIEW_STATE_TITLE = {
   unavailable: "Cola no disponible",
 } as const satisfies Record<Exclude<AuthorizedReviewItems["status"], "ok">, string>;
 
+const REVIEW_EVIDENCE_STATE = {
+  authorization_denied: "denied",
+  authorized_empty: "empty",
+  payload_too_large: "truncated",
+  unavailable: "unavailable",
+} as const;
+
 /**
  * Authorized review queue — shares the exact scoped predicate used by the
  * authenticated layout count.
@@ -34,15 +43,14 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
           <p className="eyebrow">Operaciones · revisión</p>
           <h1>Cola de revisión</h1>
         </header>
-        <aside
-          className="review-queue__attention review-queue__state"
-          role={payload.status === "authorized_empty" ? "status" : "alert"}
-          aria-labelledby="review-state-heading"
+        <EvidenceState
+          state={REVIEW_EVIDENCE_STATE[payload.status]}
+          title={REVIEW_STATE_TITLE[payload.status]}
+          titleId="review-state-heading"
+          eyebrow="Atención operativa"
         >
-          <p className="eyebrow">Atención operativa</p>
-          <h2 id="review-state-heading">{REVIEW_STATE_TITLE[payload.status]}</h2>
           <p>{REVIEW_STATE_COPY[payload.status]}</p>
-        </aside>
+        </EvidenceState>
       </main>
     );
   }
@@ -71,32 +79,32 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         {items.length === 0 ? (
           <p>{total > 0 ? "No hay elementos de revisión en esta página." : "No hay elementos de revisión pendientes."}</p>
         ) : (
-          <TableScroll label="Elementos de revisión pendientes">
-            <table className="data-table data-table--review">
-              <caption>Elementos de revisión pendientes</caption>
+          <TableRegion label="Elementos de revisión pendientes">
+            <Table className="data-table data-table--review">
+              <TableCaption>Elementos de revisión pendientes</TableCaption>
               <colgroup>
                 <col className="review-column review-column--kind" />
                 <col className="review-column review-column--severity" />
                 <col className="review-column review-column--detected" />
               </colgroup>
-              <thead>
-                <tr>
-                  <th scope="col">Tipo</th>
-                  <th scope="col">Severidad</th>
-                  <th scope="col">Detectado</th>
-                </tr>
-              </thead>
-              <tbody>
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col">Tipo</TableHead>
+                  <TableHead scope="col">Severidad</TableHead>
+                  <TableHead scope="col">Detectado</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {items.map((item, index) => (
-                  <tr key={`${item.kind}:${item.severity}:${item.detectedAt}:${index}`}>
-                    <td className="table-cell--short">{item.kind}</td>
-                    <td className="table-cell--short">{item.severity}</td>
-                    <td className="table-cell--timestamp">{item.detectedAt}</td>
-                  </tr>
+                  <TableRow key={`${item.kind}:${item.severity}:${item.detectedAt}:${index}`}>
+                    <TableHead scope="row" className="table-cell--short">{item.kind}</TableHead>
+                    <TableCell className="table-cell--short">{item.severity}</TableCell>
+                    <TableCell className="table-cell--timestamp">{item.detectedAt}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </TableScroll>
+              </TableBody>
+            </Table>
+          </TableRegion>
         )}
         {offset > 0 || (truncated && offset <= 1_999_999_950) ? (
           <nav className="review-queue__pagination" aria-label="Paginación de la cola de revisión">

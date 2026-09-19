@@ -30,7 +30,7 @@ async function expectDocumentNotToOverflow(page: Page): Promise<void> {
 }
 
 async function expectCellTextContained(row: Locator): Promise<void> {
-  const violations = await row.getByRole("cell").evaluateAll((cells) =>
+  const violations = await row.getByRole("rowheader").or(row.getByRole("cell")).evaluateAll((cells) =>
     cells.flatMap((cell, cellIndex) => {
       const cellRect = cell.getBoundingClientRect();
       const range = document.createRange();
@@ -184,10 +184,11 @@ async function expectPopulatedReviewLayout(
   const cells = row.getByRole("cell");
   await expect(table.getByRole("columnheader")).toHaveText(["Tipo", "Severidad", "Detectado"]);
   await expect(table.getByRole("columnheader", { name: /Asunto|Nota|Subject|Note/i })).toHaveCount(0);
-  await expect(cells).toHaveCount(3);
-  await expect(cells.nth(0)).toHaveText(REVIEW_ITEM.kind);
-  await expect(cells.nth(1)).toHaveText(REVIEW_ITEM.severity);
-  await expect(cells.nth(2)).toContainText("2026-08-13T12:34:56.789");
+  await expect(row.getByRole("rowheader")).toHaveCount(1);
+  await expect(row.getByRole("rowheader")).toHaveText(REVIEW_ITEM.kind);
+  await expect(cells).toHaveCount(2);
+  await expect(cells.nth(0)).toHaveText(REVIEW_ITEM.severity);
+  await expect(cells.nth(1)).toContainText("2026-08-13T12:34:56.789");
   await expect(table).not.toContainText("Oculto por alcance");
   await expect(page.locator("body")).not.toContainText(REVIEW_ITEM.subject_ref);
   await expect(page.locator("body")).not.toContainText(REVIEW_ITEM.note);
@@ -293,10 +294,17 @@ async function expectReviewWindow(page: Page, count: number, firstDetected: stri
   const rows = main.getByRole("table").locator("tbody").getByRole("row");
   await expect(rows).toHaveCount(count);
   await expect(main.getByRole("columnheader")).toHaveText(["Tipo", "Severidad", "Detectado"]);
-  await expect(rows.getByRole("cell")).toHaveCount(count * 3);
-  await expect(rows.first().getByRole("cell").nth(2)).toHaveText(firstDetected);
+  await expect(rows.getByRole("rowheader")).toHaveCount(count);
+  await expect(rows.getByRole("cell")).toHaveCount(count * 2);
+  for (let index = 0; index < count; index += 1) {
+    const row = rows.nth(index);
+    await expect(row.getByRole("rowheader")).toHaveCount(1);
+    await expect(row.getByRole("rowheader")).toHaveText("content_drift");
+    await expect(row.getByRole("cell")).toHaveCount(2);
+    await expect(row.getByRole("cell").nth(0)).toHaveText("warning");
+  }
+  await expect(rows.first().getByRole("cell").nth(1)).toHaveText(firstDetected);
   await expect(rows.getByRole("cell", { name: "Oculto por alcance", exact: true })).toHaveCount(0);
-  await expect(rows.getByRole("cell", { name: "content_drift", exact: true })).toHaveCount(count);
   await expect(rows.getByRole("cell", { name: "warning", exact: true })).toHaveCount(count);
   await expect(main).not.toContainText("00000000-0000-4000-8000-");
 }
@@ -679,6 +687,22 @@ test.describe("the review route reflects the disposable database", () => {
       const main = page.getByRole("main");
       const alert = main.getByRole("alert", { name: "No se pudo cargar la revisión" });
       await expect(alert).toBeVisible();
+      const dangerColor = await alert.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--danger)";
+        probe.hidden = true;
+        element.append(probe);
+        try {
+          return getComputedStyle(probe).color;
+        } finally {
+          probe.remove();
+        }
+      });
+      await expect(alert).toHaveCSS("border-block-start-color", dangerColor);
+      await expect(alert).toHaveCSS("border-block-start-style", "solid");
+      await expect.poll(() => alert.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).borderBlockStartWidth),
+      )).toBeGreaterThan(0);
       expect(matched).toBeGreaterThan(0);
       await expect(main).not.toContainText(/\d|Mostrando|elementos requieren revisión|Oculto por alcance/);
       await expect(page.locator("body")).not.toContainText(sentinel);

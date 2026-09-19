@@ -58,6 +58,76 @@ because Button is shared. No size improvement or completed measurement is claime
 Behavioral browser GREEN remains the parent's focused auth gate; unit tests alone
 do not prove computed colors or layout.
 
+## Review table — complete-shadcn-migration Task 3A
+
+Owner: Votus. Canonical reference:
+https://ui.shadcn.com/r/styles/radix-nova/table.json (shadcn, MIT).
+The parent inspected the payload with pinned `shadcn@4.21.0` commands:
+
+- `shadcn@4.21.0 add table alert --cwd apps/web --dry-run`
+- `shadcn@4.21.0 add table alert --cwd apps/web --view`
+- `shadcn@4.21.0 add table alert --cwd apps/web --diff`
+
+These are the recorded inspection invocations, not commands run by this writer.
+The registry URL is mutable; no retained payload hash or immutable upstream
+commit is claimed. This slice manually adapts Table only; no CLI generation,
+installation, Alert, or configuration change is included.
+
+`table.tsx` retains native elements/props and canonical `data-slot` names with
+named React type imports and `@/lib/utils`. Only the seven consumed primitives
+ship; the unused footer is omitted. Canonical nested overflow, neutral styling,
+cell whitespace/padding, hover/selection styles, and client directive are omitted.
+Existing Command Ledger classes retain table/caption geometry, colgroup widths,
+wrapping, colors, and focus. Row heads reset the legacy column-head background,
+font size, and weight to the former body-cell appearance; important utilities
+are limited to overriding unlayered background/font-size rules.
+
+The populated server `/review` page is the production caller of every primitive.
+Tipo uses TableHead with `scope="row"`; Severidad/Detectado remain TableCell.
+TableRegion requires a label and one semantic Table element; it exposes no
+arbitrary region props or style/variant knobs. It alone owns the labelled,
+focusable horizontal-scroll boundary. Other TableScroll callers and all review
+safe/loading/error states are unchanged.
+
+No dependencies added. Runtime dependencies are existing React 19.2.8 (MIT),
+clsx 2.1.1 (MIT), and tailwind-merge 3.6.0 (MIT). No Radix runtime is needed for
+native tables. The canonical source MIT notice below applies to this adaptation.
+Both modules remain server-compatible without hooks, browser APIs, or hydration;
+no new client boundary or initial client JavaScript is expected. This is an
+expectation, not a bundle measurement: parent verification must compare the
+same-build route/chunk inventory, raw and deterministic gzip bytes, counting
+shared chunks once. Real browser GREEN (including 320px, native 200% zoom,
+keyboard scrolling, pagination, and text containment) also remains parent-owned.
+
+## Review evidence states — complete-shadcn-migration Task 3B
+
+Owner: Votus. Alert manually adapts the canonical radix-nova reference
+https://ui.shadcn.com/r/styles/radix-nova/alert.json (shadcn, MIT), inspected by
+the parent with the pinned `shadcn@4.21.0` commands recorded in Task 3A above.
+No CLI generation, dependency installation, or configuration change was performed.
+The mutable registry URL is not an immutable source pin; no retained payload hash
+or upstream commit is claimed.
+
+`alert.tsx` retains the native div props, `data-slot`, local `@/lib/utils`, and
+named React type import. Only the consumed root ships: no unused title,
+description, action, variant exports, default card styling, shadow, or hardcoded
+announcement role. Project-owned EvidenceState owns the six migrated states,
+status/alert semantics, labelled heading, optional operational eyebrow, children,
+and explicit action. Its real callers are the review server safe-state branch,
+loading boundary, and technical-error boundary. Existing Spanish copy and
+suppression remain; error details/digests are not read. The error rail uses
+`--danger`; unavailable/denied/truncated use warning treatment; empty/loading
+remain neutral. Loading retains visible announcement and hidden static geometry.
+Populated attention, table, pagination, and placeholder CSS remain unchanged.
+
+No dependencies added: React 19.2.8 (MIT), clsx 2.1.1 (MIT), and
+tailwind-merge 3.6.0 (MIT) are existing dependencies. The MIT notice below covers
+canonical source adaptation. The components have no hooks or client directive;
+the existing error boundary imports them into its client graph. No bundle-size
+claim is made. Parent production-build route/chunk measurements and real-browser
+GREEN (computed danger rail, keyboard retry, suppression, responsive/loading
+geometry) remain pending; passing focused units is not browser evidence.
+
 ## Canonical source license
 
 MIT License

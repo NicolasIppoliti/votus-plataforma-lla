@@ -61,17 +61,22 @@ describe("review page — responsive review evidence", () => {
       /<div class="table-scroll" role="region" aria-label="Elementos de revisión pendientes" tabindex="0">/,
     );
     expect(markup).toMatch(
-      /<table class="data-table data-table--review">/,
+      /<table[^>]* class="data-table data-table--review"[^>]*>/,
     );
     expect(markup).toMatch(
-      /<caption>Elementos de revisión pendientes<\/caption>/,
+      /<caption[^>]*>Elementos de revisión pendientes<\/caption>/,
     );
-    expect([...markup.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map((match) => match[1])).toEqual([
+    expect([...markup.matchAll(/<th\b[^>]*scope="col"[^>]*>([^<]+)<\/th>/g)].map((match) => match[1])).toEqual([
       "Tipo",
       "Severidad",
       "Detectado",
     ]);
-    expect(markup).toContain('class="table-cell--short">fetch_failure');
+    expect(markup).toMatch(/<th\b[^>]*scope="row"[^>]*class="[^"]*\btable-cell--short"[^>]*>fetch_failure<\/th>/);
+    expect(markup.match(/scope="row"/g)).toHaveLength(1);
+    expect(markup.match(/<td\b/g)).toHaveLength(2);
+    expect(markup.match(/class="table-scroll"/g)).toHaveLength(1);
+    expect(markup).toMatch(/tabindex="0"><table\b/);
+    expect(markup).not.toContain('data-slot="table-container"');
     expect(markup).toContain('class="table-cell--short">warning');
     expect(markup).toContain(
       'class="table-cell--timestamp">2026-02-01T12:00:00Z',
@@ -141,11 +146,11 @@ describe("review page — responsive review evidence", () => {
   });
 
   it.each([
-    ["authorized_empty", "status", "Sin elementos pendientes", AUTHORIZED_EMPTY],
-    ["authorization_denied", "alert", "Acceso no autorizado", AUTHORIZATION_DENIED],
-    ["payload_too_large", "alert", "Respuesta fuera del límite seguro", PAYLOAD_TOO_LARGE],
-    ["unavailable", "alert", "Cola no disponible", UNAVAILABLE],
-  ])("announces %s with operational hierarchy and no evidence", async (status, role, title, copy) => {
+    ["authorized_empty", "status", "Sin elementos pendientes", AUTHORIZED_EMPTY, "empty", "neutral"],
+    ["authorization_denied", "alert", "Acceso no autorizado", AUTHORIZATION_DENIED, "denied", "warning"],
+    ["payload_too_large", "alert", "Respuesta fuera del límite seguro", PAYLOAD_TOO_LARGE, "truncated", "warning"],
+    ["unavailable", "alert", "Cola no disponible", UNAVAILABLE, "unavailable", "warning"],
+  ])("announces %s with operational hierarchy and no evidence", async (status, role, title, copy, state, treatment) => {
     reviewState.status = status;
     reviewState.total = 8675309;
     reviewState.truncated = true;
@@ -163,7 +168,8 @@ describe("review page — responsive review evidence", () => {
     );
 
     expect(markup).toMatch(/<header[^>]*>[\s\S]*Operaciones · revisión[\s\S]*<h1>Cola de revisión<\/h1>[\s\S]*<\/header>/);
-    expect(markup).toMatch(new RegExp(`<aside[^>]+role="${role}"[^>]+aria-labelledby="review-state-heading"[^>]*>`));
+    expect(markup).toMatch(new RegExp(`<div[^>]+role="${role}"[^>]+aria-labelledby="review-state-heading"[^>]*>`));
+    expect(markup).toContain(`data-state="${state}" data-treatment="${treatment}"`);
     expect(markup).toContain("Atención operativa");
     expect(markup).toContain(`<h2 id="review-state-heading">${title}</h2>`);
     expect(markup).toContain(copy);
