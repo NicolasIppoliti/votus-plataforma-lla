@@ -105,6 +105,46 @@ describe("authorized comparison page", () => {
     const ids = [...markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
     expect(new Set(ids).size).toBe(ids.length);
   });
+  it.each([
+    ["authorization_denied", "Acceso denegado"],
+    ["payload_too_large", "Comparación incompleta"],
+    ["malformed", "Error de validación"],
+    ["unavailable", "Evidencia no disponible"],
+  ] as const)("names the %s refusal without exposing either side", async (status, title) => {
+    mocks.evidence.mockResolvedValue({ status });
+    const markup = await render(PARAMS);
+    expect(markup).toMatch(/role="alert" aria-labelledby="compare-evidence-state-heading"/);
+    expect(markup).toContain(`<h2 id="compare-evidence-state-heading">${title}</h2>`);
+    expect(markup).not.toMatch(/<table|PARTIDO A|official\/archive|puntos porcentuales|Referencia oficial|Procedencia oficial|Opciones no compartidas/);
+  });
+  it("preserves incomplete selection as guidance rather than empty evidence", async () => {
+    const markup = await render({});
+    expect(markup).toContain('role="status">Complete ambas selecciones y una sección exacta compartida para comparar.');
+    expect(markup).not.toContain('data-state="empty"');
+    expect(mocks.evidence).not.toHaveBeenCalled();
+  });
+  it("does not describe a missing complete pair as an authorized zero-row result", async () => {
+    mocks.evidence.mockResolvedValue({ status: "empty" });
+    const markup = await render(PARAMS);
+    expect(markup).toContain("No hay evidencia oficial completa para ambas selecciones.");
+    expect(markup).not.toContain('data-state="empty"');
+    expect(markup).not.toMatch(/<table|official\/archive|puntos porcentuales/);
+  });
+  it("keeps both native GET submit actions with validation bypass only for options", async () => {
+    const markup = await render(PARAMS);
+    const buttons = [...markup.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(([html]) => html);
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toContain('type="submit"');
+    expect(buttons[0]).toContain('formNoValidate=""');
+    expect(buttons[0]).toContain("Actualizar opciones");
+    expect(buttons[1]).toContain('type="submit"');
+    expect(buttons[1]).not.toContain("formNoValidate");
+    expect(buttons[1]).toContain("Comparar resultados");
+    expect(markup).toContain('<form action="/compare" method="get">');
+    expect(markup.match(/class="table-scroll"/g)).toHaveLength(1);
+    expect(markup).toContain("Participación oficial y variación en puntos porcentuales</caption>");
+    expect(markup.match(/scope="row"/g)).toHaveLength(2);
+  });
   it("keeps the selector context while a denied comparison removes both sides of evidence", async () => {
     mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
     const markup = await render(PARAMS);

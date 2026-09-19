@@ -103,6 +103,7 @@ test.describe("authorized official comparison", () => {
       await expect(main.getByRole("combobox")).toHaveCount(6);
       for (const side of ["A", "B"]) await expect(main.getByRole("group", { name: new RegExp(`^Lado ${side}\\b`) })).toHaveCount(1);
       const appliedHeading = main.getByRole("heading", { name: "Resultados exactos", exact: true });
+      await expect(appliedHeading).toHaveCSS("font-size", "24px");
       const table = tableRegion.getByRole("table");
       const rails = main.getByRole("complementary", { name: "Evidencia oficial por lado" }).getByRole("article");
       await expect(rails).toHaveCount(2);
