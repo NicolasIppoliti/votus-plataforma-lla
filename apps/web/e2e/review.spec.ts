@@ -532,9 +532,13 @@ test.describe("the review route reflects the disposable database", () => {
         await page.goto("/review?offset=50");
         await expectReviewWindow(page, 50, "2026-01-01T00:00:50.000Z");
         await tabTo(page, page.getByRole("link", { name: "Ir al contenido principal" }), false, false, "skip-link");
+        const realCount = page.getByRole("banner").getByRole("link", { name: /^\d+ elemento\(s\) de revisión pendiente\(s\)$/ });
+        await expect(realCount).toHaveText("1 elemento(s) de revisión pendiente(s)");
         if (width === 1440) {
           await tabTo(page, page.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, page.getByRole("navigation", { name: "principal", exact: true }).getByRole("link", { name, exact: true }));
+          await tabTo(page, realCount, false, false, "header-count");
+          await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         } else {
           const trigger = page.getByRole("button", { name: "Abrir navegación" });
           await tabTo(page, trigger, false, false, "nav-trigger");
@@ -553,7 +557,7 @@ test.describe("the review route reflects the disposable database", () => {
         await expect(submit).toBeEnabled();
         await tabTo(page, organization, false, false, "org-select");
         await tabTo(page, submit, false, false, "org-submit");
-        const account = page.getByRole("contentinfo", { name: "Organización y cuenta" }).locator("summary");
+        const account = page.getByRole("group", { name: "Organización y cuenta", exact: true }).locator("summary");
         await tabTo(page, account);
         await page.keyboard.press("Enter");
         await tabTo(page, page.getByRole("button", { name: "Cerrar sesión" }), false, false, "sign-out");
@@ -565,11 +569,9 @@ test.describe("the review route reflects the disposable database", () => {
           await page.keyboard.press("Escape");
           await expect(drawer).not.toBeVisible();
           await expectKeyboardFocus(page.getByRole("button", { name: "Abrir navegación" }), false, "nav-trigger");
+          await tabTo(page, realCount, false, false, "header-count");
+          await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         }
-        const realCount = page.getByRole("banner").getByRole("link", { name: /^\d+ elemento\(s\) de revisión pendiente\(s\)$/ });
-        await expect(realCount).toHaveText("1 elemento(s) de revisión pendiente(s)");
-        await tabTo(page, realCount, false, false, "header-count");
-        await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
         await tabTo(page, region, false, true, "review-table-region");
         if (width < 1024) {

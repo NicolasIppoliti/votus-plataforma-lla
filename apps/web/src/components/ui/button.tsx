@@ -9,6 +9,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        solid: "border-command-accent-strong bg-command-accent-strong! text-command-surface! font-bold! hover:bg-command-accent! active:enabled:bg-command-accent-strong! disabled:border-command-muted-ink disabled:bg-command-surface-muted! disabled:text-command-muted-ink! disabled:opacity-100",
         outline: "border-command-accent-strong bg-command-surface text-command-accent-strong",
         ghost: "border-command-surface-muted bg-transparent text-command-surface",
       },

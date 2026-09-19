@@ -3,7 +3,7 @@ import Link from "next/link";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 
-export function SituationSidebar({ footer }: { footer: ReactNode }): ReactNode {
+export function SituationSidebar({ children }: { children?: ReactNode }): ReactNode {
   return (
     <aside className="situation-sidebar">
       <Link className="site-brand" href="/" aria-label="Panel de Votus">
@@ -14,7 +14,7 @@ export function SituationSidebar({ footer }: { footer: ReactNode }): ReactNode {
       <div className="source-disclaimer">
         <SourceDisclaimer />
       </div>
-      {footer}
+      {children}
     </aside>
   );
 }

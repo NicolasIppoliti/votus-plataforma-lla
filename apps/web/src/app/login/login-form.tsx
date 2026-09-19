@@ -3,6 +3,9 @@
 import { useActionState, type ReactNode } from "react";
 import { signIn } from "@/app/actions/sign-in";
 import { INITIAL_SIGN_IN_STATE } from "@/app/actions/sign-in-state";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 /**
  * Password sign-in form for the single authenticated role this change
@@ -22,8 +25,8 @@ export function LoginForm(): ReactNode {
       aria-busy={isPending || undefined}
     >
       <div className="field">
-        <label htmlFor="email">Correo electrónico</label>
-        <input
+        <Label htmlFor="email">Correo electrónico</Label>
+        <Input
           id="email"
           name="email"
           type="email"
@@ -34,8 +37,8 @@ export function LoginForm(): ReactNode {
         />
       </div>
       <div className="field">
-        <label htmlFor="password">Contraseña</label>
-        <input
+        <Label htmlFor="password">Contraseña</Label>
+        <Input
           id="password"
           name="password"
           type="password"
@@ -45,14 +48,15 @@ export function LoginForm(): ReactNode {
           required
         />
       </div>
-      <button
-        className="button button--primary login-form__submit"
+      <Button
+        variant="solid"
+        className="min-h-12 w-full min-w-0"
         type="submit"
         formAction={formAction}
         disabled={isPending}
       >
         {isPending ? "Iniciando sesión…" : "Iniciar sesión"}
-      </button>
+      </Button>
       <p
         id="login-error"
         className="login-form__feedback"

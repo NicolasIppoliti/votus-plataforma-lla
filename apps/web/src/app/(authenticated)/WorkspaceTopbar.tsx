@@ -4,10 +4,12 @@ import { WorkspaceReviewStatus, WorkspaceIdentity } from "./WorkspacePresentatio
 
 interface WorkspaceTopbarProps {
   mobileNavigation: ReactNode;
+  accountControls: ReactNode;
 }
 
 export function WorkspaceTopbar({
   mobileNavigation,
+  accountControls,
 }: WorkspaceTopbarProps): ReactNode {
   return (
     <header className="workspace-topbar">
@@ -16,6 +18,7 @@ export function WorkspaceTopbar({
         <WorkspaceIdentity />
         <div className="review-alert" role="status"><WorkspaceReviewStatus /></div>
         <ThemeSelector />
+        <div className="workspace-topbar__controls">{accountControls}</div>
       </div>
     </header>
   );

@@ -150,6 +150,24 @@ test.describe("no anonymous read path", () => {
           "login-error",
         );
 
+        const dangerColor = await loginForm.evaluate((form) => {
+          const token = getComputedStyle(form).getPropertyValue("--danger").trim();
+          if (!token) throw new Error("The Votus --danger token must be defined");
+          const probe = document.createElement("span");
+          probe.style.color = "var(--danger)";
+          probe.hidden = true;
+          form.append(probe);
+          const resolvedColor = getComputedStyle(probe).color;
+          probe.remove();
+          return resolvedColor;
+        });
+        for (const input of [emailInput, passwordInput]) {
+          await expect(input).toBeVisible();
+          await expect.soft(input).toHaveCSS("border-color", dangerColor);
+        }
+        await expect(errorMessage).toBeVisible();
+        await expect.soft(errorMessage).toHaveCSS("color", dangerColor);
+
         const [formAfterErrorBox, errorBox] = await Promise.all([
           loginForm.boundingBox(),
           errorMessage.boundingBox(),
@@ -194,7 +212,7 @@ test.describe("no anonymous read path", () => {
       await page.goto(route);
       const trigger = page.getByRole("button", { name: "Abrir navegación" });
       if (await trigger.isVisible()) await trigger.click();
-      await page.getByRole("contentinfo", { name: "Organización y cuenta" }).locator("summary").press("Enter");
+      await page.getByRole("group", { name: "Organización y cuenta", exact: true }).locator("summary").press("Enter");
       const signOutControl = page.getByRole("button", {
         name: "Cerrar sesión",
         exact: true,

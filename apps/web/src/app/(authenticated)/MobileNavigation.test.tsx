@@ -5,9 +5,9 @@ import { MobileNavigation } from "./MobileNavigation";
 
 // Portal interaction, resize, queued focus and disclosure precedence are exercised
 // through the real Root/Review browser entrypoints, not a mocked React scheduler.
-test("the closed navigation exposes an opener without a second inline footer", () => {
+test("the closed navigation exposes an opener without a second inline account group", () => {
   const markup = renderToStaticMarkup(
-    <MobileNavigation sidebar={<footer>Server-composed account controls</footer>} />,
+    <MobileNavigation sidebar={<div role="group" aria-label="Organización y cuenta">Server-composed account controls</div>} />,
   );
   expect(markup).toContain("Abrir navegación");
   expect(markup).toContain('aria-haspopup="dialog"');

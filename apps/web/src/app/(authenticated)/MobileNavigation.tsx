@@ -52,7 +52,7 @@ export function MobileNavigation({ sidebar }: MobileNavigationProps): ReactNode 
           // The mobile opener is hidden after a breakpoint change. Return to
           // the existing desktop account path instead of stranding focus.
           event.preventDefault();
-          document.querySelector<HTMLElement>(".app-shell > .situation-sidebar .workspace-account summary")?.focus();
+          document.querySelector<HTMLElement>(".workspace-topbar .workspace-account summary")?.focus();
         }}
         onEscapeKeyDown={(event) => {
           // Radix listens in document capture; let the existing disclosure's
