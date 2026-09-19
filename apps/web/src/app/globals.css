@@ -1853,7 +1853,7 @@ select option {
 .official-municipal__context-list div { gap: 0.15rem; }
 .official-municipal__context-list dd { margin: 0; font-weight: 700; }
 .official-municipal__form { max-width: 28rem; }
-.official-municipal__form :where(select, .button) { width: 100%; min-height: 2.75rem; }
+.official-municipal__form :where(select) { width: 100%; min-height: 2.75rem; }
 
 .official-municipal__results [role="status"] { padding-inline-start: 0.75rem; border-inline-start: 3px solid var(--official); font-weight: 700; }
 .official-municipal__results [role="alert"] { padding: 0.8rem 1rem; border-inline-start: 4px solid var(--danger); background: var(--warning-surface); }
@@ -1880,6 +1880,9 @@ select option {
   }
   .official-municipal__results {
     grid-column: 1;
+  }
+  .official-municipal .official-municipal__results h2 {
+    font-size: 1.5rem;
   }
   .official-municipal__evidence {
     grid-column: 2;
