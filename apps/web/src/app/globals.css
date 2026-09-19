@@ -765,7 +765,6 @@ select option {
   margin-block-start: 1.25rem;
 }
 
-.briefing-action,
 .briefing-workflow a,
 .briefing-attention a {
   display: inline-flex;
@@ -773,18 +772,6 @@ select option {
   min-height: 2.75rem;
   font-weight: 600;
 }
-
-.briefing-action {
-  padding: 0.5rem 0.875rem;
-  border: 1px solid var(--border);
-  border-radius: 0.1875rem;
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.briefing-action:hover { background: var(--surface-muted); }
-.briefing-action--primary { background: var(--accent); color: var(--surface); }
-.briefing-action--primary:hover { background: var(--accent-strong); color: var(--surface); }
 
 .briefing-panel ul {
   margin: 0.75rem 0 0;
@@ -821,6 +808,10 @@ select option {
 .briefing-context dd { margin: 0.25rem 0 1rem; }
 
 @media (min-width: 50rem) {
+  .operational-briefing h1 {
+    font-size: 3rem;
+    line-height: 0.98;
+  }
   .briefing-grid {
     grid-template-columns: minmax(0, 1.55fr) minmax(15.625rem, 0.65fr);
     grid-template-areas: "intro attention" "work context" "separate context";
