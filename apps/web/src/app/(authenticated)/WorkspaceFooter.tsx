@@ -11,9 +11,9 @@ export function WorkspaceFooter({ selection, children }: {
 }) {
   const onSwitchStart = useWorkspaceSwitchStart();
   return (
-    <footer className="workspace-footer" role="contentinfo" aria-label="Organización y cuenta">
+    <div className="workspace-footer" role="group" aria-label="Organización y cuenta">
       <WorkspaceSelector initialSelection={selection} onSwitchStart={onSwitchStart} />
       {children}
-    </footer>
+    </div>
   );
 }

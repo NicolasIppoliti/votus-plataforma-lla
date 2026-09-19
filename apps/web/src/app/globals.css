@@ -469,6 +469,10 @@ select option {
   color: var(--muted-ink);
 }
 
+.workspace-topbar__controls {
+  display: none;
+}
+
 .workspace-footer {
   display: grid;
   gap: 1rem;
@@ -1140,7 +1144,46 @@ select option {
 
   .workspace-topbar__inner {
     flex-wrap: nowrap;
+    gap: 0.5rem;
     min-height: calc(4rem - 1px);
+  }
+
+  .workspace-topbar__inner > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .workspace-topbar__controls {
+    display: block;
+    flex: 1 1 26rem;
+    min-width: 0;
+    max-width: 32rem;
+  }
+
+  .workspace-topbar .workspace-footer {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .workspace-topbar .workspace-footer > form {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .workspace-topbar .workspace-footer :is([role="status"], [role="note"]) {
+    grid-column: 1 / -1;
+  }
+
+  .workspace-topbar .workspace-account summary:hover {
+    background: var(--color-surface-muted);
+  }
+
+  .workspace-topbar .workspace-account summary:focus-visible {
+    outline-color: var(--color-focus);
   }
 
   .workspace-topbar__inner > div p {

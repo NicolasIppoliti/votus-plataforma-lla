@@ -73,7 +73,7 @@ it.each([
 it("renders a closed mobile drawer from the shared navigation contract", async () => {
   const markup = await renderLayout("/dashboard");
   // Closed portal content is absent from SSR; Root E2E verifies its shared
-  // navigation and footer after opening the real production drawer.
+  // navigation and account group after opening the real production drawer.
   expect(markup).toContain('aria-controls="mobile-navigation-drawer"');
   expect(markup).toContain('aria-expanded="false"');
   expect(markup).not.toContain('role="dialog"');
@@ -95,27 +95,25 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
 
 it("renders the real desktop sign-out action and label while the drawer is closed", async () => {
   const markup = await renderLayout("/");
-  const footers = markup.match(/<footer\b[^>]*>[\s\S]*?<\/footer>/g) ?? [];
-  expect(footers).toHaveLength(1);
-  const selectorIds: string[] = [];
-  for (const footer of footers) {
-    expect(footer).toContain('aria-label="Organización y cuenta"');
-    const account = footer.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
-    expect(account).not.toMatch(/<details[^>]*\sopen(?:\s|=|>)/);
-    expect(account).toContain("<summary>Cuenta</summary>");
-    const forms = account.match(/<form\b[^>]*>[\s\S]*?<\/form>/g) ?? [];
-    expect(forms).toHaveLength(1);
-    expect(forms[0]).toMatch(/<form[^>]*\saction=/);
-    expect(forms[0]).toContain('type="submit">Cerrar sesión</button>');
-    const id = footer.match(/<select id="([^"]+)"/)?.[1] ?? "";
-    expect(id).not.toBe("");
-    expect(footer).toContain(`<label for="${id}">Organización</label>`);
-    selectorIds.push(id);
-    expect(footer.indexOf("<select")).toBeLessThan(footer.indexOf("<details"));
-  }
-  expect(new Set(selectorIds).size).toBe(1);
-  const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0];
-  expect(topbar).not.toContain("<form");
+  const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
+  const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
+  expect(markup).not.toContain("<footer");
+  expect(sidebar).not.toContain('aria-label="Organización y cuenta"');
+  expect(sidebar).not.toContain("<form");
+  expect(topbar.match(/role="group" aria-label="Organización y cuenta"/g)).toHaveLength(1);
+  const account = topbar.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
+  expect(account).not.toMatch(/<details[^>]*\sopen(?:\s|=|>)/);
+  expect(account).toContain("<summary>Cuenta</summary>");
+  const forms = account.match(/<form\b[^>]*>[\s\S]*?<\/form>/g) ?? [];
+  expect(forms).toHaveLength(1);
+  expect(forms[0]).toMatch(/<form[^>]*\saction=/);
+  expect(forms[0]).toContain('type="submit">Cerrar sesión</button>');
+  const selectors = [...topbar.matchAll(/<select id="([^"]+)"/g)];
+  expect(selectors).toHaveLength(1);
+  const id = selectors[0]?.[1] ?? "";
+  expect(id).not.toBe("");
+  expect(topbar).toContain(`<label for="${id}">Organización</label>`);
+  expect(topbar.indexOf("<select id=")).toBeLessThan(topbar.indexOf("<details"));
   expect(topbar).toContain("Organización activa:");
 });
 

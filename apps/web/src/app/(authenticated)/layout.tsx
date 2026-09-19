@@ -71,13 +71,12 @@ export default async function AuthenticatedLayout({
     ? selection.organizations.find((organization) => organization.id === selection.activeOrganizationId)
     : undefined;
 
-  const sidebar = (
-    <SituationSidebar footer={
-      <WorkspaceFooter selection={selection}>
-        <AccountDisclosure><SignOutForm /></AccountDisclosure>
-      </WorkspaceFooter>
-    } />
+  const accountControls = (
+    <WorkspaceFooter selection={selection}>
+      <AccountDisclosure><SignOutForm /></AccountDisclosure>
+    </WorkspaceFooter>
   );
+  const sidebar = <SituationSidebar />;
 
   return (
     <WorkspacePresentation snapshot={{
@@ -91,7 +90,8 @@ export default async function AuthenticatedLayout({
       sidebar={sidebar}
       topbar={
         <WorkspaceTopbar
-          mobileNavigation={<MobileNavigation sidebar={sidebar} />}
+          accountControls={accountControls}
+          mobileNavigation={<MobileNavigation sidebar={<SituationSidebar>{accountControls}</SituationSidebar>} />}
         />
       }
     >

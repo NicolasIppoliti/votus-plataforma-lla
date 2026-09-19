@@ -158,7 +158,7 @@ test("real workspace A to B replaces identity and authorized count, while B to A
   });
 });
 
-test("the short mobile drawer keeps the real organization and account footer keyboard reachable", async ({ page }) => {
+test("the short mobile drawer keeps the real organization and account group keyboard reachable", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 320, height: 400 });
     await page.goto("/");
@@ -193,7 +193,7 @@ test("the short mobile drawer keeps the real organization and account footer key
   });
 });
 
-test("resizing an open drawer to desktop preserves one visible keyboard footer path", async ({ page }) => {
+test("resizing an open drawer to desktop preserves one visible topbar account path", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 320, height: 400 });
     await page.goto("/");
@@ -216,14 +216,15 @@ test("resizing an open drawer to desktop preserves one visible keyboard footer p
       return box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth;
     });
     await expect.poll(activeIsVisible).toBe(true);
-    await expect(page.getByRole("contentinfo", { name: "Organización y cuenta" })).toHaveCount(1);
+    await expect(page.getByRole("group", { name: "Organización y cuenta" })).toHaveCount(1);
+    await expect(page.getByRole("banner").locator("summary", { hasText: "Cuenta" })).toBeFocused();
     await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
     await page.keyboard.press("Tab");
     await expect.poll(activeIsVisible).toBe(true);
   });
 });
 
-test("account controls live in the visible sidebar footer and preserve drawer keyboard operation", async ({ page, context }) => {
+test("account controls live in the desktop topbar and mobile drawer and preserve keyboard operation", async ({ page, context }) => {
   // Sign out only a new login session, never the harness's shared storage session.
   await context.clearCookies();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -233,13 +234,17 @@ test("account controls live in the visible sidebar footer and preserve drawer ke
   await page.getByRole("button", { name: "Iniciar sesión" }).click();
   await expect(page).toHaveURL(/\/$/);
   const sidebar = page.locator(".app-shell > aside.situation-sidebar");
-  const footer = sidebar.getByRole("contentinfo", { name: "Organización y cuenta" });
-  const account = footer.locator("summary", { hasText: "Cuenta" });
+  const topbar = page.getByRole("banner");
+  const controls = topbar.getByRole("group", { name: "Organización y cuenta", exact: true });
+  await expect(controls).toHaveCount(1);
+  await expect(controls.getByRole("status").filter({ hasText: /^Seleccioná una organización para continuar\.$/ })).toBeVisible();
+  await expect(controls.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+  await expect(sidebar.getByRole("group", { name: "Organización y cuenta", exact: true, includeHidden: true })).toHaveCount(0);
+  const account = controls.locator("summary").filter({ hasText: /^Cuenta$/ });
   await expect(account).toBeVisible();
-  await expect(page.locator("header.workspace-topbar").getByRole("button", { name: "Cerrar sesión" })).toHaveCount(0);
   await account.focus();
   await account.press("Enter");
-  const signOut = footer.getByRole("button", { name: "Cerrar sesión" });
+  const signOut = controls.getByRole("button", { name: "Cerrar sesión", exact: true });
   await expect(signOut).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(signOut).toBeFocused();
@@ -252,13 +257,17 @@ test("account controls live in the visible sidebar footer and preserve drawer ke
   await trigger.click();
   const drawer = page.getByRole("dialog", { name: "Navegación principal" });
   const close = drawer.getByRole("button", { name: "Cerrar navegación" });
-  const mobileAccount = drawer.locator("summary", { hasText: "Cuenta" });
+  const mobileControls = drawer.getByRole("group", { name: "Organización y cuenta", exact: true });
+  await expect(mobileControls).toHaveCount(1);
+  await expect(mobileControls.getByRole("status").filter({ hasText: /^Seleccioná una organización para continuar\.$/ })).toBeVisible();
+  await expect(mobileControls.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
+  const mobileAccount = mobileControls.locator("summary").filter({ hasText: /^Cuenta$/ });
   await expect(close).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(mobileAccount).toBeFocused();
   await page.keyboard.press("Enter");
   await page.keyboard.press("Tab");
-  const mobileSignOut = drawer.getByRole("button", { name: "Cerrar sesión" });
+  const mobileSignOut = mobileControls.getByRole("button", { name: "Cerrar sesión", exact: true });
   await expect(mobileSignOut).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
@@ -290,7 +299,7 @@ for (const [status, httpStatus, message] of [
       await page.route("**/api/workspace", route => route.fulfill({ status: httpStatus, json: { status } }));
       try {
         await page.getByRole("button", { name: "Cambiar organización" }).click();
-        await expect(page.getByRole("contentinfo", { name: "Organización y cuenta" })).toContainText(message);
+        await expect(page.getByRole("group", { name: "Organización y cuenta" })).toContainText(message);
         await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeEnabled();
         for (const reader of readers) {
           await expect(reader).toContainText("No se pudo verificar el estado de revisión.");
@@ -512,7 +521,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       }),
     ).toBeVisible();
     await drawerTrigger.click();
-    const footer = drawer.getByRole("contentinfo", { name: "Organización y cuenta" });
+    const footer = drawer.getByRole("group", { name: "Organización y cuenta" });
     await expect(footer.getByRole("status").filter({ hasText: "Seleccioná una organización para continuar." })).toBeVisible();
     await expect(footer.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
     await expect(
