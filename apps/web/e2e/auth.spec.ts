@@ -212,7 +212,7 @@ test.describe("no anonymous read path", () => {
       await page.goto(route);
       const trigger = page.getByRole("button", { name: "Abrir navegación" });
       if (await trigger.isVisible()) await trigger.click();
-      await page.getByRole("contentinfo", { name: "Organización y cuenta" }).locator("summary").press("Enter");
+      await page.getByRole("group", { name: "Organización y cuenta", exact: true }).locator("summary").press("Enter");
       const signOutControl = page.getByRole("button", {
         name: "Cerrar sesión",
         exact: true,
