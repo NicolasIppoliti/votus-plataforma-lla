@@ -136,7 +136,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(evidence).toContain("Referencia electoral autorizada");
     expect(evidence).toContain(`SHA-256 ${"a".repeat(64)}`);
     expect(markup).toContain("300 votos a nivel mesa");
-    expect(markup).toContain("<td>300 votos</td><td>100.00%</td>");
+    expect(markup).toMatch(/<td\b[^>]*>300 votos<\/td><td\b[^>]*>100\.00%<\/td>/);
     expect(mocks.bundle).toHaveBeenCalledWith(expect.anything(), {
       electionId: COMPLETE_SECTION.electionId, categoryId: COMPLETE_SECTION.categoryId,
       distritoCode: "02", seccionCode: "027", circuitoCode: "00001",
@@ -365,6 +365,19 @@ describe("DrilldownPage authorized official evidence", () => {
     ]) expect(markup).toContain(text);
     expect(markup).toContain('aria-labelledby="official-results-heading"');
     expect(markup).toContain('aria-labelledby="official-evidence-heading"');
+    expect(markup.match(/role="region"/g)).toHaveLength(3);
+    expect(markup.match(/<table\b/g)).toHaveLength(3);
+    expect(markup.match(/data-slot="table"/g)).toHaveLength(3);
+    expect(markup.match(/<caption\b/g)).toHaveLength(3);
+    expect(markup).toMatch(/<th\b[^>]*scope="row"[^>]*>LLA<\/th>/);
+    expect(markup).toMatch(/<th\b[^>]*scope="row"[^>]*>30000000-0000-4000-8000-000000000001<\/th>/);
+    // A school repeats across party rows; it is not the row's unique identity.
+    expect(markup).toMatch(/<td\b[^>]*>Circuito 00001 — E1 — School<\/td>/);
+    expect(markup.match(/scope="row"/g)).toHaveLength(2);
+    expect(markup).toContain('<form action="/drilldown" method="get">');
+    expect(markup).toMatch(/<button\b[^>]*data-slot="button"[^>]*type="submit"[^>]*>Aplicar selección<\/button>/);
+    expect(markup.match(/<select\b/g)).toHaveLength(8);
+    expect(markup).not.toContain('class="button button--primary"');
   });
 
   it("keeps a denied result status-only inside the explorer state region", async () => {

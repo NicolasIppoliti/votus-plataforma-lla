@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { ReviewAttention, WorkspaceIdentity } from "./WorkspacePresentation";
 
 function Workflow({ href, title, children }: { href: string; title: string; children: ReactNode }) {
@@ -21,8 +22,12 @@ export function OperationalBriefing(): ReactNode {
           <h2 id="briefing-next-heading">Elegir la próxima consulta</h2>
           <p>Definir una selección oficial o contrastar dos elecciones en una misma sección. Las cifras aparecen en su flujo, no en este panel.</p>
           <div className="briefing-actions">
-            <Link className="briefing-action briefing-action--primary" href="/drilldown">Explorar resultados</Link>
-            <Link className="briefing-action" href="/compare">Comparar elecciones</Link>
+            <Button asChild variant="solid">
+              <Link href="/drilldown">Explorar resultados</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/compare">Comparar elecciones</Link>
+            </Button>
           </div>
         </section>
         <ReviewAttention />

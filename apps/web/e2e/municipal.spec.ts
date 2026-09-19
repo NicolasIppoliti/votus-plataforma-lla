@@ -152,6 +152,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
       await expect(main).toContainText("Distrito 02 · Sección 027");
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeVisible();
+      await expect(main.getByRole("heading", { name: "Resultados exactos" })).toHaveCSS("font-size", "24px");
       await expect(main.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
       await expect(main.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
       await expect(main).toContainText(`1 fila fiscalización / ${FISCALIZACION_VOTES} votos`);

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { GranularityBadge } from "@/components/GranularityBadge";
-import { TableScroll } from "@/components/TableScroll";
+import { TableRegion } from "@/components/TableRegion";
+import { Button } from "@/components/ui/button";
+import { Table } from "@/components/ui/table";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
 import {
@@ -293,8 +295,8 @@ export function renderMunicipalView(
                   ? { requestedGranularity: requestedLevel }
                   : {})}
               />
-              <TableScroll label="Tabla de resultados oficiales exactos por partido">
-                <table className="data-table official-municipal__table">
+              <TableRegion label="Tabla de resultados oficiales exactos por partido">
+                <Table className="data-table official-municipal__table">
                   <caption>Resultados oficiales exactos por partido y votos</caption>
                   <thead>
                     <tr>
@@ -310,8 +312,8 @@ export function renderMunicipalView(
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </TableScroll>
+                </Table>
+              </TableRegion>
             </>
           )}
         </section>
@@ -428,7 +430,7 @@ export default async function MunicipalPage({
               <option value={configuredElectionId}>2025 · Provinciales · Concejales</option>
             </select>
           </div>
-          <button className="button button--primary" type="submit">Ver resultados oficiales</button>
+          <Button variant="solid" type="submit" className="w-full">Ver resultados oficiales</Button>
         </form>
       </section>
       <p className="official-municipal__state" role="status">La consulta muestra solo resultados oficiales autorizados.</p>

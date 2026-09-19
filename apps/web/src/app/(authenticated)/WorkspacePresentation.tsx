@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import type { WorkspaceSelectionStatus } from "@/lib/workspace/selection";
 
 export interface WorkspaceSnapshot {
@@ -59,7 +60,9 @@ export function ReviewAttention() {
       <h2 id="review-attention-heading">Atención operativa</h2>
       <WorkspaceReviewStatus />
       <p>La revisión es de solo lectura y corresponde al alcance autorizado.</p>
-      <Link href="/review">Consultar revisión</Link>
+      <Button asChild variant="ghost">
+        <Link href="/review">Consultar revisión</Link>
+      </Button>
     </aside>
   );
 }
