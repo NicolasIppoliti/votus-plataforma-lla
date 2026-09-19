@@ -7,7 +7,11 @@ import {
   scopeControlStates,
   serializeScopeDraft,
 } from "@/components/scope-selector-behavior";
-import { TableScroll } from "@/components/TableScroll";
+import { Button } from "@/components/ui/button";
+import { TableRegion } from "@/components/TableRegion";
+import {
+  Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
 import {
   EXPLORATION_LEVEL,
   formatFacetOptionLabel,
@@ -154,7 +158,7 @@ function ExplorerForm({ facets, selected, submitted = false }: ExplorerFormProps
           </div>
         </fieldset>
         <div className="form-actions">
-          <button className="button button--primary" type="submit">Aplicar selección</button>
+          <Button variant="solid" className="w-full lg:w-auto" type="submit">Aplicar selección</Button>
         </div>
       </ScopeSelectorForm>
       {facetExclusionNotes(facets.exclusions ?? [])}
@@ -265,23 +269,23 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
       </p>
       <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
       {sourceExclusionNotes(result.sourceExclusions, "oficial")}
-      <TableScroll label="Votos oficiales y porcentaje por partido">
-        <table className="data-table">
-          <caption>Votos oficiales y porcentaje por partido</caption>
-          <thead><tr><th scope="col">Identidad del partido</th><th scope="col">Votos</th><th scope="col">Porcentaje</th></tr></thead>
-          <tbody>
+      <TableRegion label="Votos oficiales y porcentaje por partido">
+        <Table className="data-table">
+          <TableCaption>Votos oficiales y porcentaje por partido</TableCaption>
+          <TableHeader><TableRow><TableHead scope="col">Identidad del partido</TableHead><TableHead scope="col">Votos</TableHead><TableHead scope="col">Porcentaje</TableHead></TableRow></TableHeader>
+          <TableBody>
             {result.parties.map((party, index) => (
-              <tr key={party.canonicalPartyId ?? `${party.listId ?? "missing-list"}-${index}`}>
-                <th className="evidence-text" scope="row">
+              <TableRow key={party.canonicalPartyId ?? `${party.listId ?? "missing-list"}-${index}`}>
+                <TableHead className="evidence-text" scope="row">
                   {party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}
-                </th>
-                <td>{party.votes} votos</td>
-                <td>{formatShare(party.voteShare)}</td>
-              </tr>
+                </TableHead>
+                <TableCell>{party.votes} votos</TableCell>
+                <TableCell>{formatShare(party.voteShare)}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </TableScroll>
+          </TableBody>
+        </Table>
+      </TableRegion>
 
       <section aria-labelledby="school-breakdown-heading">
         <h2 id="school-breakdown-heading">Desglose oficial autorizado por establecimiento</h2>
@@ -292,23 +296,23 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
             </>
           : <>
               {schoolExclusionNotes(schools.exclusions, schools.sourceExclusions)}
-              <TableScroll label="Votos oficiales por circuito y establecimiento">
-                <table className="data-table">
-                  <caption>Votos oficiales por circuito y establecimiento</caption>
-                  <thead><tr><th scope="col">Establecimiento</th><th scope="col">Mesas</th><th scope="col">Identidad del partido</th><th scope="col">Votos</th><th scope="col">Porcentaje</th></tr></thead>
-                  <tbody>
+              <TableRegion label="Votos oficiales por circuito y establecimiento">
+                <Table className="data-table">
+                  <TableCaption>Votos oficiales por circuito y establecimiento</TableCaption>
+                  <TableHeader><TableRow><TableHead scope="col">Establecimiento</TableHead><TableHead scope="col">Mesas</TableHead><TableHead scope="col">Identidad del partido</TableHead><TableHead scope="col">Votos</TableHead><TableHead scope="col">Porcentaje</TableHead></TableRow></TableHeader>
+                  <TableBody>
                     {schools.schools.flatMap((school) => school.parties.map((party, index) => (
-                      <tr key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
-                        <th className="evidence-text" scope="row">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</th>
-                        <td>{school.mesaCount} mesas</td>
-                        <td className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</td>
-                        <td>{party.votes} votos</td>
-                        <td>{formatShare(party.voteShare)}</td>
-                      </tr>
+                      <TableRow key={`${school.circuitoCode}-${school.code}-${party.canonicalPartyId ?? party.listId ?? index}`}>
+                        <TableCell className="evidence-text">Circuito {school.circuitoCode} — {school.code}{school.name ? ` — ${school.name}` : ""}</TableCell>
+                        <TableCell>{school.mesaCount} mesas</TableCell>
+                        <TableCell className="evidence-text">{party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`}</TableCell>
+                        <TableCell>{party.votes} votos</TableCell>
+                        <TableCell>{formatShare(party.voteShare)}</TableCell>
+                      </TableRow>
                     )))}
-                  </tbody>
-                </table>
-              </TableScroll>
+                  </TableBody>
+                </Table>
+              </TableRegion>
             </>}
       </section>
       </section>
@@ -336,20 +340,20 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
             Se excluyeron {entry.rows} fila(s) de referencia de fuente {displaySourceKind(entry.kind)}: {entry.reason}.
           </p>
         ))}
-        <TableScroll label="Referencia electoral autorizada">
-          <table className="data-table">
-            <caption>Referencia electoral autorizada</caption>
-            <thead><tr><th scope="col">Jurisdicción</th><th scope="col">Elección</th><th scope="col">Categoría</th><th scope="col">Alcance</th></tr></thead>
-            <tbody>{reference.items.map((item) => (
-              <tr key={item.jurisdictionId}>
-                <th className="evidence-text" scope="row">{item.jurisdictionId}</th>
-                <td>{item.year} {item.round} ({item.electionId})</td>
-                <td>{item.categoryName} ({item.categoryId})</td>
-                <td>Distrito {item.distritoCode}{item.distritoName ? ` — ${item.distritoName}` : ""}; sección {item.seccionCode}{item.seccionName ? ` — ${item.seccionName}` : ""}{item.circuitoCode ? `; circuito ${item.circuitoCode}` : ""}{item.establecimientoCode ? `; establecimiento ${item.establecimientoCode}` : ""}{item.mesaCode !== null ? `; mesa ${item.mesaCode}` : ""}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </TableScroll>
+        <TableRegion label="Referencia electoral autorizada">
+          <Table className="data-table">
+            <TableCaption>Referencia electoral autorizada</TableCaption>
+            <TableHeader><TableRow><TableHead scope="col">Jurisdicción</TableHead><TableHead scope="col">Elección</TableHead><TableHead scope="col">Categoría</TableHead><TableHead scope="col">Alcance</TableHead></TableRow></TableHeader>
+            <TableBody>{reference.items.map((item) => (
+              <TableRow key={item.jurisdictionId}>
+                <TableHead className="evidence-text" scope="row">{item.jurisdictionId}</TableHead>
+                <TableCell>{item.year} {item.round} ({item.electionId})</TableCell>
+                <TableCell>{item.categoryName} ({item.categoryId})</TableCell>
+                <TableCell>Distrito {item.distritoCode}{item.distritoName ? ` — ${item.distritoName}` : ""}; sección {item.seccionCode}{item.seccionName ? ` — ${item.seccionName}` : ""}{item.circuitoCode ? `; circuito ${item.circuitoCode}` : ""}{item.establecimientoCode ? `; establecimiento ${item.establecimientoCode}` : ""}{item.mesaCode !== null ? `; mesa ${item.mesaCode}` : ""}</TableCell>
+              </TableRow>
+            ))}</TableBody>
+          </Table>
+        </TableRegion>
       </section>
 
         <section aria-labelledby="provenance-heading">

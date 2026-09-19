@@ -223,6 +223,8 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const results = explorer.getByRole("region", { name: "Desglose oficial autorizado", exact: true });
       const evidence = explorer.getByRole("region", { name: "Referencias de la consulta", exact: true });
       const submittedHeading = results.getByRole("heading", { name: "Desglose oficial autorizado", exact: true });
+      await expect(submittedHeading).toBeVisible();
+      await expect(submittedHeading).toHaveCSS("font-size", "24px");
       await expect(submittedScope).toBeVisible();
       const submitted = {
         scope: await submittedScope.innerText(), heading: await submittedHeading.innerText(),

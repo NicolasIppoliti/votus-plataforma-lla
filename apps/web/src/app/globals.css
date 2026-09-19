@@ -1455,10 +1455,6 @@ select option {
   color: var(--muted-ink);
 }
 
-.official-explorer__filters .button {
-  min-width: 100%;
-}
-
 .official-explorer__filters [role="status"] {
   color: var(--warning-ink);
   font-weight: 700;
@@ -1483,7 +1479,7 @@ select option {
 
 .official-explorer__results > h2,
 .official-explorer__evidence > h2 {
-  font-size: clamp(1.35rem, 3vw, 1.75rem);
+  font-size: clamp(1.35rem, 3vw, 1.5rem);
 }
 
 .official-explorer__results [role="status"] {
@@ -1520,10 +1516,6 @@ select option {
   .official-explorer__filters .selector-form {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.5rem 0.75rem;
-  }
-
-  .official-explorer__filters .button {
-    min-width: auto;
   }
 
   .official-explorer__results {
