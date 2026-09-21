@@ -1,6 +1,7 @@
 "use client";
 import { useId, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
 import type { WorkspaceSelection } from "@/lib/workspace/selection";
 
 interface WorkspaceSelectorProps { initialSelection: WorkspaceSelection; onSwitchStart?: () => void; }
@@ -56,7 +57,7 @@ export function WorkspaceSelector({ initialSelection, onSwitchStart }: Workspace
       <option value="" disabled>Seleccionar organización</option>
       {initialSelection.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
     </select>{" "}
-    <button className="button button--secondary" type="submit" disabled={pending || !selected}>{pending ? "Cambiando…" : "Cambiar organización"}</button>
+    <Button variant="outline" type="submit" disabled={pending || !selected}>{pending ? "Cambiando…" : "Cambiar organización"}</Button>
     {message ? <p role="status">{message}</p> : null}
     {initialSelection.truncated && initialSelection.total !== null ? <p role="note">La lista está limitada a las primeras 100 de {initialSelection.total} organizaciones autorizadas; la organización activa puede aparecer adicionalmente.</p> : null}
   </form>;

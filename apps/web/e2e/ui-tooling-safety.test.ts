@@ -3,8 +3,9 @@ import {
 	spawnSync,
 	type SpawnSyncOptionsWithStringEncoding,
 } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import ts from "typescript";
 
 interface TestApi {
 	describe: (name: string, callback: () => void) => void;
@@ -271,6 +272,62 @@ describe("UI tooling supply-chain contract", () => {
 				`Impeccable provider hook remains at ${forbiddenPath}`,
 			);
 		}
+	});
+
+	it("rejects legacy button className tokens in production app and components", () => {
+		const violations: string[] = [];
+		const legacyTokens = new Set([
+			"button",
+			"button--primary",
+			"button--secondary",
+		]);
+
+		function inspectDirectory(directory: string): void {
+			for (const entry of readdirSync(directory, { withFileTypes: true })) {
+				const path = resolve(directory, entry.name);
+				if (entry.isDirectory()) {
+					if (!["__tests__", "__specs__"].includes(entry.name)) {
+						inspectDirectory(path);
+					}
+					continue;
+				}
+				if (
+					!entry.isFile() ||
+					!/\.tsx?$/.test(entry.name) ||
+					/\.(test|spec)\.tsx?$/.test(entry.name)
+				) {
+					continue;
+				}
+				const source = ts.createSourceFile(
+					path,
+					readFileSync(path, "utf8"),
+					ts.ScriptTarget.Latest,
+					true,
+				);
+				function inspectClassValue(node: ts.Node): void {
+					if (ts.isStringLiteralLike(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) {
+						for (const token of node.text.split(/\s+/)) {
+							if (legacyTokens.has(token)) {
+								const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+								violations.push(`${relative(WEB_ROOT, path)}:${line + 1}: ${token}`);
+							}
+						}
+					}
+					ts.forEachChild(node, inspectClassValue);
+				}
+				function visit(node: ts.Node): void {
+					if (ts.isJsxAttribute(node) && node.name.getText(source) === "className" && node.initializer) {
+						inspectClassValue(node.initializer);
+					}
+					ts.forEachChild(node, visit);
+				}
+				visit(source);
+			}
+		}
+
+		inspectDirectory(resolve(WEB_ROOT, "src/app"));
+		inspectDirectory(resolve(WEB_ROOT, "src/components"));
+		assert.deepEqual(violations, [], "Legacy button className tokens remain");
 	});
 
 	it("retains the production legacy CSS contracts during progressive migration", () => {

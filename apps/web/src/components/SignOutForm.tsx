@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { signOut } from "@/app/actions/sign-out";
+import { Button } from "@/components/ui/button";
 
 export function SignOutForm(): ReactNode {
   return (
     <form action={signOut}>
-      <button className="button button--secondary" type="submit">
+      <Button variant="outline" type="submit">
         Cerrar sesión
-      </button>
+      </Button>
     </form>
   );
 }
