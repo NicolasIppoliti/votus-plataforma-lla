@@ -1293,13 +1293,9 @@ select option {
   min-width: 0;
 }
 
-.simulation-form :where(input, select) {
+.simulation-form select {
   width: 100%;
   min-width: 0;
-}
-
-.simulation-form__list > .button {
-  justify-self: start;
 }
 
 .simulation-form .form-actions {

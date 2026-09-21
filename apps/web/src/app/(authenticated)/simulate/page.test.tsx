@@ -68,8 +68,8 @@ describe("simulate page — normal-user entry", () => {
     expect(markup).toContain(
       '<form aria-label="Formulario de simulación de bancas"',
     );
-    expect(markup).toContain(
-      '<label for="simulation-level">Tipo de elección</label>',
+    expect(markup).toMatch(
+      /<label[^>]*for="simulation-level"[^>]*>Tipo de elección<\/label>/,
     );
     expect(markup).toMatch(/<form[^>]+class="simulation-form"/);
     expect(
@@ -107,8 +107,8 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toContain("Bancas iniciales por cociente");
     expect(markup).toContain("Residuo exacto");
     expect(markup).toContain("Bancas por residuo");
-    expect(markup).toMatch(/<caption>Asignación Hare por lista<\/caption>/);
-    expect(markup).toMatch(/<caption>Evidencia de asignación por banca<\/caption>/);
+    expect(markup).toMatch(/<caption[^>]*>Asignación Hare por lista<\/caption>/);
+    expect(markup).toMatch(/<caption[^>]*>Evidencia de asignación por banca<\/caption>/);
     expect(markup).toContain("mayor residuo");
     expect(markup).toContain("table-scroll");
   });
@@ -118,12 +118,12 @@ describe("simulate page — complete statutory evidence", () => {
 
         expect(
           markup.match(
-            /<table class="data-table data-table--allocation-[^"]+"/g,
+            /<table[^>]* class="data-table data-table--allocation-[^"]+"/g,
           ),
         ).toHaveLength(2);
         expect(
           markup.match(
-            /<table class="data-table data-table--allocation-wide"/g,
+            /<table[^>]* class="data-table data-table--allocation-wide"/g,
           ),
         ).toHaveLength(2);
         expect(markup).toContain(
@@ -181,7 +181,7 @@ describe("simulate page — complete statutory evidence", () => {
         { listId: "C", listName: "Lista C", votes: 20 },
       ],
     });
-    expect(halving).toMatch(/<caption>Rastreo de reducciones del cociente Hare<\/caption>/);
+    expect(halving).toMatch(/<caption[^>]*>Rastreo de reducciones del cociente Hare<\/caption>/);
     expect(halving).toContain("Cociente inicial");
     expect(halving).toContain("Iteración 1");
     expect(halving).toContain("Iteración 2");
@@ -233,16 +233,16 @@ describe("simulate page — complete statutory evidence", () => {
     expect(markup).toContain("3% del padrón 100.000 = 3.000 votos");
     expect(markup).toContain("Lista C");
     expect(markup).toContain("excluida: 2.000 votos están por debajo de 3.000");
-        expect(markup).toMatch(/<caption>Tabla de cocientes D’Hondt<\/caption>/);
+        expect(markup).toMatch(/<caption[^>]*>Tabla de cocientes D’Hondt<\/caption>/);
         expect(markup).toMatch(
-          /<table class="data-table data-table--allocation-standard">/,
+          /<table[^>]* class="data-table data-table--allocation-standard">/,
         );
         expect(markup).toMatch(
-          /<table class="data-table data-table--allocation-compact">/,
+          /<table[^>]* class="data-table data-table--allocation-compact">/,
         );
         expect(markup).toContain("Divisor 1");
     expect(markup).toContain("Divisor 2");
-    expect(markup).toMatch(/<caption>Cocientes ganadores ordenados<\/caption>/);
+    expect(markup).toMatch(/<caption[^>]*>Cocientes ganadores ordenados<\/caption>/);
     expect(markup).toContain("Banca 1");
     expect(markup).toContain("Banca 2");
 
