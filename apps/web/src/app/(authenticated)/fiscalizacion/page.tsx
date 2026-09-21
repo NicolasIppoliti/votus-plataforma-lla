@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 
 import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
-import { TableScroll } from "@/components/TableScroll";
+import { EvidenceState } from "@/components/EvidenceState";
+import { TableRegion } from "@/components/TableRegion";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   SCOPE_FORM_KIND,
   scopeControlStates,
@@ -159,9 +162,9 @@ function CoverageExplorerForm({
           </div>
         </fieldset>
         <div className="form-actions">
-          <button className="button button--primary" type="submit">
+          <Button variant="solid" className="w-full" type="submit">
             Mostrar cobertura
-          </button>
+          </Button>
         </div>
       </ScopeSelectorForm>
     </section>
@@ -185,9 +188,9 @@ function refusal(reason: string): ReactNode {
     <main className="page-shell fiscalizacion-workspace">
       <div className="shell-container fiscalizacion-workspace__layout">
         <PageHeader />
-        <section className="fiscalizacion-workspace__state" role="alert">
+        <EvidenceState state="unavailable" title="Solicitud no disponible" titleId="workspace-request-refusal">
           <p>Se rechazó la solicitud: {reason}.</p>
-        </section>
+        </EvidenceState>
       </div>
     </main>
   );
@@ -531,31 +534,31 @@ function ResultEvidence({
             denominador {value.reference.denominator_units}.
           </p>
           <p>Denominador oficial: {value.reference.denominator_units}.</p>
-          <TableScroll label="Resultados de fiscalización">
-            <table className="data-table">
-              <caption>Resultados de fiscalización</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Partido</th>
-                  <th scope="col">Lista</th>
-                  <th scope="col">Nivel</th>
-                  <th scope="col">Votos</th>
-                  <th scope="col">Filas</th>
-                </tr>
-              </thead>
-              <tbody>
+          <TableRegion label="Resultados de fiscalización">
+            <Table>
+              <TableCaption>Resultados de fiscalización</TableCaption>
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col">Partido</TableHead>
+                  <TableHead scope="col">Lista</TableHead>
+                  <TableHead scope="col">Nivel</TableHead>
+                  <TableHead scope="col">Votos</TableHead>
+                  <TableHead scope="col">Filas</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {value.rows.items.map((row, index) => (
-                  <tr key={`${row.list_id}-${row.canonical_party_id}-${index}`}>
-                    <td>{row.party_name ?? "Sin mapeo"}</td>
-                    <td>{row.list_id ?? "Sin lista"}</td>
-                    <td>{row.granularity}</td>
-                    <td>{row.votes}</td>
-                    <td>{row.rows}</td>
-                  </tr>
+                  <TableRow key={`${row.list_id}-${row.canonical_party_id}-${index}`}>
+                    <TableCell>{row.party_name ?? "Sin mapeo"}</TableCell>
+                    <TableCell>{row.list_id ?? "Sin lista"}</TableCell>
+                    <TableCell>{row.granularity}</TableCell>
+                    <TableCell>{row.votes}</TableCell>
+                    <TableCell>{row.rows}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </TableScroll>
+              </TableBody>
+            </Table>
+          </TableRegion>
           {collectionNotice("Resultados", value.rows)}
           <ul aria-label="Listas no mapeadas">
             {value.unmapped.items.map((item, index) => (
@@ -604,27 +607,24 @@ function AuthorizedEvidence({
 
   const state =
     presentation.kind === PRESENTATION_KIND.EMPTY ? (
-      <section className="fiscalizacion-workspace__state" role="status" aria-labelledby="workspace-evidence-empty">
-        <h2 id="workspace-evidence-empty">Evidencia sin filas</h2>
+      <EvidenceState state="empty" title="Evidencia sin filas" titleId="workspace-evidence-empty">
         <p>La consulta autorizada no devolvió resultados de fiscalización.</p>
-      </section>
+      </EvidenceState>
     ) : presentation.kind === PRESENTATION_KIND.TECHNICAL_ERROR ? (
-      <section className="fiscalizacion-workspace__state" role="alert" aria-labelledby="workspace-evidence-error">
-        <h2 id="workspace-evidence-error">Error técnico de evidencia</h2>
+      <EvidenceState state="error" title="Error técnico de evidencia" titleId="workspace-evidence-error">
         <p>No se pudo cargar la pareja de evidencia. Reintente la consulta.</p>
         {/* Native navigation deliberately reloads the document and its evidence requests. */}
-        <a className="button button--primary" href={`/fiscalizacion?${new URLSearchParams({
+        <Button variant="solid" asChild><a href={`/fiscalizacion?${new URLSearchParams({
           electionId: selection.electionId,
           categoryId: selection.categoryId,
           distritoCode: selection.distritoCode,
           seccionCode: selection.seccionCode,
-        })}`}>Reintentar carga</a>
-      </section>
+        })}`}>Reintentar carga</a></Button>
+      </EvidenceState>
     ) : presentation.kind === PRESENTATION_KIND.REFUSED ? (
-      <section className="fiscalizacion-workspace__state" role="alert" aria-labelledby="workspace-evidence-refusal">
-        <h2 id="workspace-evidence-refusal">Evidencia no disponible</h2>
+      <EvidenceState state="unavailable" title="Evidencia no disponible" titleId="workspace-evidence-refusal">
         <p>Estado de evidencia: {presentation.reason}.</p>
-      </section>
+      </EvidenceState>
     ) : (
       <section className="fiscalizacion-workspace__evidence" aria-label="Evidencia fiscal autorizada">
         <CoverageQualification
@@ -691,7 +691,7 @@ async function renderFiscalizacionPage(
    try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }
    catch (error) { return refusal(error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones" : "No se pudieron cargar las opciones"); }
    const form = <CoverageExplorerForm facets={facets} selected={selected} />;
-   return <main className="page-shell fiscalizacion-workspace"><div className="shell-container fiscalizacion-workspace__layout"><PageHeader />{form}<section className="fiscalizacion-workspace__state" role="status"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></div></main>;
+   return <main className="page-shell fiscalizacion-workspace"><div className="shell-container fiscalizacion-workspace__layout"><PageHeader />{form}<section className="panel" aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></div></main>;
 }
 
 export default async function FiscalizacionPage({

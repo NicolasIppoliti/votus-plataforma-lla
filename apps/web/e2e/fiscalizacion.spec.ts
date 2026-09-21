@@ -66,6 +66,8 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(page).toHaveURL(new URL("/", baseURL).toString());
       await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await expect(page.getByRole("heading", { level: 1, name: "Fiscalización (no oficial)", exact: true })).toHaveCSS("font-size", "36px");
       await expect(page.getByRole("main")).not.toContainText("No tiene autorización");
       const coldUrl = page.url();
       await page.getByRole("button", { name: "Mostrar cobertura" }).click();

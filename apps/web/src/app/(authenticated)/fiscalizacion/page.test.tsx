@@ -306,7 +306,7 @@ describe("FiscalizacionPage", () => {
 
     const qualification = markup.indexOf('class="fiscalizacion-workspace__qualification"');
     const resultHeading = markup.indexOf('id="workspace-result"');
-    const voteTable = markup.indexOf('<caption>Resultados de fiscalización</caption>');
+    const voteTable = markup.indexOf('<caption data-slot="table-caption"');
     const coverageDetail = markup.indexOf('id="workspace-coverage"');
     expect(qualification).toBeGreaterThanOrEqual(0);
     expect(qualification).toBeLessThan(resultHeading);
@@ -508,7 +508,8 @@ describe("FiscalizacionPage", () => {
 
     const markup = await renderPage({ ...COMPLETE_SELECTION, distritoCode: "2", seccionCode: "27" });
     const href = `/fiscalizacion?electionId=${COMPLETE_SELECTION.electionId}&amp;categoryId=${COMPLETE_SELECTION.categoryId}&amp;distritoCode=02&amp;seccionCode=027`;
-    expect(markup).toContain(`<a class="button button--primary" href="${href}">Reintentar carga</a>`);
+    expect(markup).toContain(`<a href="${href}" data-slot="button"`);
+    expect(markup).toContain('>Reintentar carga</a>');
     expect(markup).toContain('role="alert"');
     expect(markup).toContain('<option value="027" selected="">');
     expect(markup).not.toContain("unsafe remote detail");
@@ -520,7 +521,9 @@ describe("FiscalizacionPage", () => {
   it("renders stable labelled loading geometry", () => {
     const markup = renderToStaticMarkup(<FiscalizacionLoading />);
 
-    expect(markup).toContain('aria-label="Cargando fiscalización"');
+    expect(markup).toContain('aria-labelledby="fiscalizacion-loading-heading"');
+    expect(markup).toContain('data-state="loading"');
+    expect(markup).toContain('id="fiscalizacion-loading-heading">Cargando fiscalización</h2>');
     expect(markup).toContain("Cargando el espacio de fiscalización");
     expect(markup).toContain("fiscalizacion-loading__block");
   });
