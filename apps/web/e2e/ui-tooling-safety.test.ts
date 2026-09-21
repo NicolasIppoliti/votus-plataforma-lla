@@ -330,23 +330,42 @@ describe("UI tooling supply-chain contract", () => {
 		assert.deepEqual(violations, [], "Legacy button className tokens remain");
 	});
 
-	it("retains the production legacy CSS contracts during progressive migration", () => {
+	it("removes obsolete zero-caller CSS selectors including responsive definitions", () => {
+		const css = readWebFile("src/app/globals.css");
+		const obsoleteSelectors = [
+			".site-header",
+			".site-header__inner",
+			".site-context",
+			".status-label",
+			".public-shell",
+			".page-header__supporting",
+			".text-link",
+			".button",
+			".button--primary",
+			".button--secondary",
+			".data-number",
+			".long-content",
+			".evidence-container",
+		];
+		// Scan the entire stylesheet, including nested media queries, with exact class boundaries.
+		const remaining = obsoleteSelectors.filter((selector) =>
+			new RegExp(`\\${selector}(?![\\w-])`).test(css),
+		);
+		assert.deepEqual(remaining, [], "Obsolete CSS selectors remain in globals.css");
+	});
+
+	it("retains critical CSS surfaces and Tailwind 4 imports after migration", () => {
 		const css = readWebFile("src/app/globals.css");
 		for (const selector of [
-			".skip-link",
 			".app-shell",
-			".site-header",
-			".navigation-list",
-			".page-shell",
-			".panel",
-			".button--primary",
-			".login-form",
 			".table-scroll",
 			".data-table",
 			".simulation-form",
-			".evidence-container",
+			".evidence-state",
 		]) {
-			assert.ok(css.includes(selector));
+			assert.match(css, new RegExp(`\\${selector}(?![\\w-])`), selector);
 		}
+		assert.ok(css.includes('@import "tailwindcss/theme.css" layer(theme);'));
+		assert.ok(css.includes('@import "tailwindcss/utilities.css" layer(utilities);'));
 	});
 });
