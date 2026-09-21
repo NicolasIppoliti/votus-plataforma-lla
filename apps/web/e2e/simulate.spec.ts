@@ -330,6 +330,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     }
 
     await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(result.getByRole("heading", { name: "Resultado (municipal de PBA)" })).toHaveCSS("font-size", "24px");
     await page.goto("/simulate");
     await expect(page).toHaveURL(/\/simulate$/);
     const desktopForm = page.getByRole("form", {

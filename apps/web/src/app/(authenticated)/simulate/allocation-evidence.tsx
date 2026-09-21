@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
-import { TableScroll } from "@/components/TableScroll";
+import { TableRegion } from "@/components/TableRegion";
+import {
+  Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
 import { UNMODELED_VOTE_REASON } from "@/domain/seat-allocation/source-coverage";
 import {
   THRESHOLD_POLICY,
@@ -100,9 +103,9 @@ function EvidenceTable({
   const headerLabels = headers.split("|");
 
   return (
-    <TableScroll label={caption}>
-      <table className={`data-table data-table--allocation-${variant}`}>
-        <caption>{caption}</caption>
+    <TableRegion label={caption}>
+      <Table className={`data-table data-table--allocation-${variant}`}>
+        <TableCaption>{caption}</TableCaption>
         <colgroup>
           {headerLabels.map((header, index) => {
             const kind = columnKinds[index] ?? TABLE_COLUMN_KIND.EVIDENCE;
@@ -114,41 +117,41 @@ function EvidenceTable({
             );
           })}
         </colgroup>
-        <thead>
-          <tr>
+        <TableHeader>
+          <TableRow>
             {headerLabels.map((header) => (
-              <th key={header} scope="col">
+              <TableHead key={header} scope="col">
                 {header}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map(([key, label, ...cells]) => (
-            <tr key={String(key)}>
-              <th
+            <TableRow key={String(key)}>
+              <TableHead
                 className={tableRowHeaderClass(
                   columnKinds[0] ?? TABLE_COLUMN_KIND.EVIDENCE,
                 )}
                 scope="row"
               >
                 {label}
-              </th>
+              </TableHead>
               {cells.map((cell, index) => (
-                <td
+                <TableCell
                   className={tableCellClass(
                     columnKinds[index + 1] ?? TABLE_COLUMN_KIND.EVIDENCE,
                   )}
                   key={index}
                 >
                   {cell}
-                </td>
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-    </TableScroll>
+        </TableBody>
+      </Table>
+    </TableRegion>
   );
 }
 

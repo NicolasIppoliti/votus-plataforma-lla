@@ -7,6 +7,9 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ALLOCATION_LEVEL } from "@/domain/seat-allocation/types";
 import { GRANULARITY } from "@/lib/results/types";
 import { projectionGranularitySchema } from "./projection-input";
@@ -62,8 +65,8 @@ function NumberField({
 }: NumberFieldProps) {
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <input
+      <Label htmlFor={id}>{label}</Label>
+      <Input
         aria-describedby={describedBy}
         id={id}
         inputMode="numeric"
@@ -210,7 +213,7 @@ export function SimulationForm() {
         <fieldset className="simulation-form__section panel form-grid">
           <legend className="simulation-form__legend">Elección y alcance</legend>
           <div className="field">
-            <label htmlFor="simulation-level">Tipo de elección</label>
+            <Label htmlFor="simulation-level">Tipo de elección</Label>
             <select
               aria-describedby="simulation-form-help simulation-form-errors"
               id="simulation-level"
@@ -227,7 +230,7 @@ export function SimulationForm() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="simulation-granularity">Granularidad</label>
+            <Label htmlFor="simulation-granularity">Granularidad</Label>
             <select
               aria-describedby="granularity-help simulation-form-errors"
               id="simulation-granularity"
@@ -329,8 +332,8 @@ export function SimulationForm() {
           ) : null}
           {isNational ? (
             <div className="field">
-              <label htmlFor="simulation-threshold">Porcentaje de umbral</label>
-              <input
+              <Label htmlFor="simulation-threshold">Porcentaje de umbral</Label>
+              <Input
                 aria-describedby="threshold-help simulation-form-errors"
                 id="simulation-threshold"
                 inputMode="decimal"
@@ -370,8 +373,8 @@ export function SimulationForm() {
                 <h3>Lista {index + 1}</h3>
                 <div className="simulation-form__list-fields form-grid">
                   <div className="field">
-                    <label htmlFor={listNameId}>Nombre de la lista</label>
-                    <input
+                    <Label htmlFor={listNameId}>Nombre de la lista</Label>
+                    <Input
                       aria-describedby="simulation-lists-help simulation-form-errors"
                       id={listNameId}
                       onChange={(event) =>
@@ -399,33 +402,34 @@ export function SimulationForm() {
                     value={list.votes}
                   />
                 </div>
-                <button
+                <Button
                   aria-label={`Quitar ${list.name.trim() || `lista ${index + 1}`}`}
-                  className="button button--secondary"
+                  className="justify-self-start"
+                  variant="outline"
                   disabled={values.lists.length === 1}
                   onClick={() => removeList(list.id)}
                   type="button"
                 >
                   Quitar lista
-                </button>
+                </Button>
               </div>
             );
           })}
           <div className="form-actions">
-            <button
-              className="button button--secondary"
+            <Button
+              variant="outline"
               onClick={addList}
               type="button"
             >
               Agregar lista
-            </button>
+            </Button>
           </div>
         </fieldset>
 
         <div className="form-actions">
-          <button className="button button--primary" type="submit">
+          <Button variant="solid" type="submit">
             Simular bancas
-          </button>
+          </Button>
         </div>
       </form>
     </section>

@@ -128,6 +128,24 @@ claim is made. Parent production-build route/chunk measurements and real-browser
 GREEN (computed danger rail, keyboard retry, suppression, responsive/loading
 geometry) remain pending; passing focused units is not browser evidence.
 
+## Simulation — complete-shadcn-migration Task 8
+
+Owner: Votus. The production `/simulate` route reuses the existing Button,
+Input, Label, and Table adaptations documented above; no registry generation,
+new primitive, dependency, or license change. Dynamic fields retain native
+props, refs, add/remove focus handling, validation, and query serialization.
+Selects remain native. TableRegion owns the single labelled, keyboard-focusable
+scroll boundary; semantic Table primitives retain captions, scopes, colgroups,
+and existing allocation widths. Domain layout and shared CSS remain; retired
+simulation button alignment and redundant input sizing selectors are removed.
+The result heading uses the Command Ledger 24px major-section scale.
+
+Statutory dispatch, exact evidence, hypothetical copy, input trace, and fixed
+municipal 18/9 configuration are unchanged. Focused units and static checks are
+reported by the implementation handoff. The retained browser heading RED needs
+parent-owned browser GREEN; responsive/keyboard and bundle measurements are not
+claimed by this slice. Existing dependencies and the MIT notice below apply.
+
 ## Canonical source license
 
 MIT License

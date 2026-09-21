@@ -241,12 +241,10 @@ select option {
   transform: translateY(0);
 }
 
-.public-shell#main-content,
 .app-content#main-content {
   scroll-margin-block-start: 1rem;
 }
 
-.public-shell#main-content:focus-visible,
 .app-content#main-content:focus-visible {
   outline: 3px solid var(--color-focus);
   outline-offset: 3px;
@@ -364,8 +362,7 @@ select option {
   color: var(--surface-muted);
 }
 
-.situation-sidebar .site-brand__descriptor,
-.situation-sidebar .site-context {
+.situation-sidebar .site-brand__descriptor {
   color: var(--surface-muted);
 }
 
@@ -496,8 +493,7 @@ select option {
   scroll-margin-block: 0.75rem;
 }
 
-.workspace-footer select,
-.workspace-footer .button {
+.workspace-footer select {
   width: 100%;
   min-width: 0;
   min-height: 2.75rem;
@@ -531,19 +527,6 @@ select option {
   min-height: 2.75rem;
 }
 
-.site-header {
-  border-block-end: 1px solid var(--color-line-strong);
-  background: var(--color-surface);
-}
-
-.site-header__inner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.4rem 1.25rem;
-  padding-block: 1rem 0.85rem;
-}
-
 .site-brand {
   display: inline-flex;
   min-height: 2.75rem;
@@ -565,22 +548,15 @@ select option {
 }
 
 .site-brand__descriptor,
-.site-context,
-.eyebrow,
-.status-label {
+.eyebrow {
   font-family: var(--font-mono);
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.site-brand__descriptor,
-.site-context {
+.site-brand__descriptor {
   color: var(--color-muted);
-}
-
-.site-context {
-  margin: 0;
 }
 
 .main-navigation {
@@ -646,13 +622,7 @@ select option {
   font-weight: 700;
 }
 
-.status-label {
-  color: var(--color-accent-dark);
-  font-weight: 700;
-}
-
-.page-shell,
-.public-shell {
+.page-shell {
   padding-block: 1rem 3rem;
 }
 
@@ -666,11 +636,6 @@ select option {
   max-width: 60ch;
   color: var(--color-muted);
   font-size: clamp(1.1rem, 2.5vw, 1.35rem);
-}
-
-.page-header__supporting {
-  max-width: 68ch;
-  color: var(--color-muted);
 }
 
 .eyebrow {
@@ -820,51 +785,10 @@ select option {
   .briefing-attention { padding: 1.5rem; }
 }
 
-.text-link {
-  display: inline-flex;
-  min-height: 2.75rem;
-  align-items: center;
-  font-weight: 700;
-}
-
-.button {
-  display: inline-flex;
-  min-height: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  padding: 0.65rem 0.95rem;
-  border: 1px solid var(--color-accent-dark);
-  border-radius: 0.15rem;
-  font-weight: 700;
-  text-align: center;
-  text-decoration: none;
-}
-
-.button--primary {
-  background: var(--color-accent-dark);
-  color: var(--color-surface);
-}
-
-.button--primary:hover {
-  background: var(--color-accent);
-  color: var(--color-surface);
-}
-
-.button--secondary {
-  background: var(--color-surface);
-  color: var(--color-accent-dark);
-}
-
-.button--secondary:hover {
-  background: var(--color-accent-soft);
-}
-
-.data-number,
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-.long-content,
 .evidence-text {
   overflow-wrap: anywhere;
 }
@@ -1082,23 +1006,12 @@ select option {
   word-break: normal;
 }
 
-.data-table td.data-number,
-.data-table th.data-number {
-  text-align: end;
-}
-
 @media (min-width: 48rem) {
-  .site-header__inner {
-    align-items: center;
-    padding-block: 1.2rem 1rem;
-  }
-
   .navigation-list {
     gap: 0.3rem 0.6rem;
   }
 
-  .page-shell,
-  .public-shell {
+  .page-shell {
     padding-block: 2rem 4rem;
   }
 
@@ -1293,13 +1206,9 @@ select option {
   min-width: 0;
 }
 
-.simulation-form :where(input, select) {
+.simulation-form select {
   width: 100%;
   min-width: 0;
-}
-
-.simulation-form__list > .button {
-  justify-self: start;
 }
 
 .simulation-form .form-actions {
@@ -1311,16 +1220,6 @@ select option {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-block-start: 1rem;
-}
-
-.evidence-container {
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-.evidence-container :where(a, code, span, time) {
-  overflow-wrap: anywhere;
 }
 
 .official-explorer {
@@ -2020,11 +1919,6 @@ select option {
   border-block-start: 1px solid var(--border);
 }
 
-.review-queue__pagination .button {
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-}
-
 @media (max-width: 47.999rem) {
   .review-queue__header {
     padding-block-end: 1rem;
@@ -2037,9 +1931,5 @@ select option {
 
   .review-queue__results-heading {
     display: grid;
-  }
-
-  .review-queue__pagination .button {
-    flex: 1 1 auto;
   }
 }

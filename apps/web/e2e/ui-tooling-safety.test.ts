@@ -3,8 +3,9 @@ import {
 	spawnSync,
 	type SpawnSyncOptionsWithStringEncoding,
 } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import ts from "typescript";
 
 interface TestApi {
 	describe: (name: string, callback: () => void) => void;
@@ -273,23 +274,98 @@ describe("UI tooling supply-chain contract", () => {
 		}
 	});
 
-	it("retains the production legacy CSS contracts during progressive migration", () => {
+	it("rejects legacy button className tokens in production app and components", () => {
+		const violations: string[] = [];
+		const legacyTokens = new Set([
+			"button",
+			"button--primary",
+			"button--secondary",
+		]);
+
+		function inspectDirectory(directory: string): void {
+			for (const entry of readdirSync(directory, { withFileTypes: true })) {
+				const path = resolve(directory, entry.name);
+				if (entry.isDirectory()) {
+					if (!["__tests__", "__specs__"].includes(entry.name)) {
+						inspectDirectory(path);
+					}
+					continue;
+				}
+				if (
+					!entry.isFile() ||
+					!/\.tsx?$/.test(entry.name) ||
+					/\.(test|spec)\.tsx?$/.test(entry.name)
+				) {
+					continue;
+				}
+				const source = ts.createSourceFile(
+					path,
+					readFileSync(path, "utf8"),
+					ts.ScriptTarget.Latest,
+					true,
+				);
+				function inspectClassValue(node: ts.Node): void {
+					if (ts.isStringLiteralLike(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) {
+						for (const token of node.text.split(/\s+/)) {
+							if (legacyTokens.has(token)) {
+								const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+								violations.push(`${relative(WEB_ROOT, path)}:${line + 1}: ${token}`);
+							}
+						}
+					}
+					ts.forEachChild(node, inspectClassValue);
+				}
+				function visit(node: ts.Node): void {
+					if (ts.isJsxAttribute(node) && node.name.getText(source) === "className" && node.initializer) {
+						inspectClassValue(node.initializer);
+					}
+					ts.forEachChild(node, visit);
+				}
+				visit(source);
+			}
+		}
+
+		inspectDirectory(resolve(WEB_ROOT, "src/app"));
+		inspectDirectory(resolve(WEB_ROOT, "src/components"));
+		assert.deepEqual(violations, [], "Legacy button className tokens remain");
+	});
+
+	it("removes obsolete zero-caller CSS selectors including responsive definitions", () => {
+		const css = readWebFile("src/app/globals.css");
+		const obsoleteSelectors = [
+			".site-header",
+			".site-header__inner",
+			".site-context",
+			".status-label",
+			".public-shell",
+			".page-header__supporting",
+			".text-link",
+			".button",
+			".button--primary",
+			".button--secondary",
+			".data-number",
+			".long-content",
+			".evidence-container",
+		];
+		// Scan the entire stylesheet, including nested media queries, with exact class boundaries.
+		const remaining = obsoleteSelectors.filter((selector) =>
+			new RegExp(`\\${selector}(?![\\w-])`).test(css),
+		);
+		assert.deepEqual(remaining, [], "Obsolete CSS selectors remain in globals.css");
+	});
+
+	it("retains critical CSS surfaces and Tailwind 4 imports after migration", () => {
 		const css = readWebFile("src/app/globals.css");
 		for (const selector of [
-			".skip-link",
 			".app-shell",
-			".site-header",
-			".navigation-list",
-			".page-shell",
-			".panel",
-			".button--primary",
-			".login-form",
 			".table-scroll",
 			".data-table",
 			".simulation-form",
-			".evidence-container",
+			".evidence-state",
 		]) {
-			assert.ok(css.includes(selector));
+			assert.match(css, new RegExp(`\\${selector}(?![\\w-])`), selector);
 		}
+		assert.ok(css.includes('@import "tailwindcss/theme.css" layer(theme);'));
+		assert.ok(css.includes('@import "tailwindcss/utilities.css" layer(utilities);'));
 	});
 });

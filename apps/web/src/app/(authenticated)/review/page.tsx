@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { EvidenceState } from "@/components/EvidenceState";
 import { TableRegion } from "@/components/TableRegion";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
@@ -108,8 +109,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         )}
         {offset > 0 || (truncated && offset <= 1_999_999_950) ? (
           <nav className="review-queue__pagination" aria-label="Paginación de la cola de revisión">
-            {offset > 0 ? <Link className="button button--secondary" href={`/review?offset=${Math.max(0, offset - 50)}`} aria-label="Página anterior de la cola de revisión">Anterior</Link> : null}
-            {truncated && offset <= 1_999_999_950 ? <Link className="button button--secondary" href={`/review?offset=${offset + 50}`} aria-label="Página siguiente de la cola de revisión">Siguiente</Link> : null}
+            {offset > 0 ? <Button variant="outline" asChild><Link href={`/review?offset=${Math.max(0, offset - 50)}`} aria-label="Página anterior de la cola de revisión">Anterior</Link></Button> : null}
+            {truncated && offset <= 1_999_999_950 ? <Button variant="outline" asChild><Link href={`/review?offset=${offset + 50}`} aria-label="Página siguiente de la cola de revisión">Siguiente</Link></Button> : null}
           </nav>
         ) : null}
       </section>
