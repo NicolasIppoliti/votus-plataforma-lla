@@ -16,7 +16,7 @@
 - **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
 - **Layout:** Grid-disciplined analytical routes with controlled asymmetry on the operational briefing.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
-- **Current delivery scope:** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now continues that direction with automatic territorial selection and full-width result evidence. Municipal, fiscalización and review remain later route-specific slices.
+- **Current delivery scope:** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now continues that direction with automatic territorial selection and full-width result evidence. Municipal now loads its fixed official scope automatically with an identified-party raw-vote chart and full-width exact evidence. Fiscalización and review remain later route-specific slices.
 
 ## Design Principles
 
@@ -68,7 +68,7 @@
 | Token | Size / line-height | Usage |
 | --- | --- | --- |
 | Briefing title | `2rem / 1.2` | Operational home; `1.75rem` on mobile |
-| Redesigned route title | `2rem / 1.2` | Comparison and official explorer; login uses `1.5rem` |
+| Redesigned route title | `2rem / 1.2` | Comparison, official explorer and Municipal; login uses `1.5rem` |
 | Redesigned section | `1.25rem / 1.3` | Exact comparison/explorer results; applied-context headings use `1rem` |
 | `h3` | `1rem / 1.3` | Panel and table section |
 | `body` | `0.875rem / 1.55` | Primary explanatory copy |
@@ -129,6 +129,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Tables:** Exact tables remain available inside labelled, focusable horizontal-scroll regions.
 - **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, context, chart, exact table, and evidence stack in reading order. Selector changes automatically update the authorized comparison; there is no Apply step. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
 - **Official explorer:** Group election, territory and report depth controls; automatically load existing authorized data without an Apply step. Applied scope precedes full-width distribution and exact result/school tables; reference evidence follows, never competes in a narrow sidebar. Only supporting archive details start collapsed. Source exclusions, granularity and unavailable school qualifiers stay inline.
+- **Municipal:** The single configured official election loads automatically on route entry, after existing query and authorization guards. Compact fixed context precedes full-width raw identified-party votes and the exact table. Source audits, exclusions, unresolved identities and granularity remain inline; supporting archive references follow in native disclosures, with missing-hash/non-OK status qualifications outside.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
 - **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
 - **Touch targets:** At least `44×44px`.
@@ -189,6 +190,7 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 - Exact-value tables are the canonical representation.
 - Comparison pairs Side A/Side B on one 0–100% scale, retaining each side's party name. Its denominator is the supplied party-vote total, not turnout or all ballots. Include every compared party.
 - Official exploration uses one 0–100% scale and the supplied party-vote shares with the explicit result total denominator. Include every party, including zero and unmapped identities. A null share at a zero denominator is unavailable, not zero percent; no mark implies a fabricated share. Exact tables stay canonical.
+- Municipal shows raw votes for identified parties only on a common zero-to-largest-party scale, labelled explicitly as that subset. Both endpoints use exact counts, including a one-vote maximum; no percentages or new total are derived. Keep zero parties; all-zero and no-identified-party states differ. Unresolved/without-ID rows remain a separate visible breakdown, never silently assigned or folded into ranked parties. No chart is rendered for mixed, unorderable, conflicting or unauthorized evidence.
 - Simulation seat bars use the requested seats-to-fill denominator, show zero-seat lists and unallocated seats, and distinguish renewed seats from the whole council. Keep hypothetical status and incomplete/tie qualifications visible.
 - Horizontal bars support distribution and seat allocation.
 - Delta bars/markers support cross-election comparison.
@@ -318,6 +320,7 @@ New product features discovered during design become separate future work units.
 - All source data is queried through the existing authorized server pipeline; automatic UI reactions do not imply incoming realtime data or newly ingested results.
 - Comparison preserves six native controls and canonical query keys; changing an ancestor clears its descendants. Soft replace navigation avoids history entries for every control adjustment, with no scroll reset.
 - Official exploration preserves eight canonical keys and existing hierarchy/normalization through a route-owned controlled boundary. Ancestor changes clear only the required descendants and invalid report levels; every edit uses soft replace with stable focus and scroll. Facets and all result/refusal/provenance evidence belong to the served selection. Intermediate responses cannot replace newer independent edits, and returning to a served selection supersedes an outstanding request. Fiscalización retains its separate manual shared-selector contract.
+- Municipal has no meaningful selection to submit: its fixed configured election loads through the existing authorized server pipeline on bare entry. Explicit matching election links and native unavailable-state retry remain valid; invalid query/config guards still run before reads. There is no client controller, polling or simulated chart activity.
 - Simulation debounces typing for 350ms, validates the form shape, then reuses the authoritative server allocation, council checks and input trace. There is no duplicate browser allocation pipeline.
 - The current draft, pending request and served result must agree before figures appear. Pending/invalid state is explicit, not a faded stale result. Inputs remain usable and focused.
 - Reload restores exactly representable editor scenarios. Rich supplied links that cannot round-trip through the editor remain intact in a clearly labelled provided-scenario mode; starting another scenario is explicit and does not silently coerce missing totals or discard held-over/unmodeled data.

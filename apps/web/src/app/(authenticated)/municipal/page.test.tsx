@@ -184,6 +184,7 @@ describe("municipal page — the badge describes the rows, not a memory of them"
     // beside the refusal names one of the mixed levels as if it were the set's.
     expect(html).not.toContain('aria-label="granularidad:');
     expect(html).not.toContain("8400 voto(s)");
+    expect(html).not.toContain('aria-labelledby="municipal-distribution-heading"');
   });
 });
 
@@ -319,8 +320,7 @@ describe("municipal page — the real entry point", () => {
           })) as ReactElement,
         );
 
-        expect(markup).toContain('class="page-shell official-municipal"');
-        expect(markup).toContain('class="official-municipal__results"');
+        expect(markup).toContain('aria-labelledby="municipal-results-heading"');
         expect(markup).toContain('role="region" aria-label="Tabla de resultados oficiales exactos por partido" tabindex="0"');
         expect(markup).toContain("<caption>Resultados oficiales exactos por partido y votos</caption>");
         expect(markup).toContain('<th scope="col">Partido</th>');
@@ -328,7 +328,13 @@ describe("municipal page — the real entry point", () => {
         expect(markup).toContain('<th scope="row">ALIANZA LA LIBERTAD AVANZA</th>');
         expect(markup).toContain('<td class="table-cell--number">4200</td>');
         expect(markup).not.toContain("ALIANZA LA LIBERTAD AVANZA: 4200 voto(s)");
-        expect(markup).toContain('class="official-municipal__evidence"');
+        expect(markup).toContain('aria-labelledby="municipal-distribution-heading"');
+        expect(markup).toContain('aria-label="ALIANZA LA LIBERTAD AVANZA: 4.200 votos"');
+        expect(markup).toContain("2025 · Provinciales");
+        expect(markup).toContain("<summary>Archivo y procedencia</summary>");
+        const positions = ["Contexto de la consulta", "Votos por partido identificado", "<caption>", "<summary>"].map((label) => markup.indexOf(label));
+        expect(positions).toEqual([...positions].sort((a, b) => a - b));
+        expect(markup).not.toContain("<aside");
         expect(markup).toContain("aaaabbbbccccdddd");
       });
 
@@ -374,24 +380,54 @@ describe("municipal page — the real entry point", () => {
         }
       });
 
-      it("test_bare_route_identifies_the_fixed_race_before_loading_figures", async () => {
+      it("test_bare_route_loads_the_configured_authorized_evidence_without_a_submit", async () => {
         const { default: Page } = await import("./page");
+        entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
         const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
 
-        for (const fact of [
-          "Coronel Rosales",
-          "Municipal · Concejales · Oficial",
-          "Distrito 02 · Sección 027",
-          "Esquema nacional: distrito es la provincia; sección es el partido.",
-          '<label for="municipal-election">Elección configurada</label>',
-          'name="electionId"',
-          "Ver resultados oficiales",
-        ]) expect(html).toContain(fact);
-        expect(html.match(/<option/g)).toHaveLength(1);
-        expect(loadMunicipalOfficialEvidence).not.toHaveBeenCalled();
-        expect(html).not.toContain("ALIANZA LA LIBERTAD AVANZA");
-        expect(html).not.toContain("sha256");
+        expect(loadMunicipalOfficialEvidence).toHaveBeenCalledExactlyOnceWith();
+        for (const fact of ["Coronel Rosales", "Distrito 02 · Sección 027", "Concejales", "ALIANZA LA LIBERTAD AVANZA", '<td class="table-cell--number">4200</td>'])
+          expect(html).toContain(fact);
+        expect(html).not.toContain("<form");
+        expect(html).not.toContain("Ver resultados oficiales");
         expect(html).not.toContain("UUID");
+      });
+
+      it("test_bare_route_keeps_authorized_failure_states_distinct_and_closed", async () => {
+        const { default: Page } = await import("./page");
+        entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+        for (const [status, message] of [
+          ["denied", "no autoriza"], ["empty", "No hay resultados oficiales"],
+          ["unavailable", "no está disponible"], ["malformed", "formato inválido"],
+          ["truncated", "truncada"],
+        ] as const) {
+          authorizedEvidenceState = { status };
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+          expect(html).toContain(message);
+          for (const sentinel of ["ALIANZA LA LIBERTAD AVANZA", "4200", "procedencia", "<table", "<form"])
+            expect(html).not.toContain(sentinel);
+          expect(html.includes("Reintentar misma consulta")).toBe(status === "unavailable");
+          if (status === "unavailable")
+            expect(html).toContain('<a href="/municipal?electionId=2025-municipal">Reintentar misma consulta</a>');
+        }
+      });
+
+      it("test_query_and_config_guards_refuse_before_the_automatic_read", async () => {
+        const { default: Page } = await import("./page");
+        for (const params of [
+          { electionId: ["2025-municipal", "2025-municipal"] },
+          { electionId: "other-election" }, { unexpected: "x" },
+          { jurisdictionId: "j-027" }, { categoryId: "c-concejales" },
+          { partyJurisdiction: "national" }, { partyCategory: "CONCEJALES" },
+        ]) {
+          const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve(params) })) as ReactElement);
+          expect(html).toContain("Se rechazó la solicitud");
+          expect(loadMunicipalOfficialEvidence).not.toHaveBeenCalled();
+        }
+        delete process.env["MUNICIPAL_CATEGORY_ID"];
+        const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+        expect(html).toContain("deben estar configurados");
+        expect(loadMunicipalOfficialEvidence).not.toHaveBeenCalled();
       });
 
       it("test_matching_legacy_scope_is_not_used_as_authority", async () => {
@@ -563,6 +599,7 @@ describe("municipal page — path 3 fires when the repository filter regresses",
         "1 fila fiscalización / 90 votos"])
         expect(html).toContain(fact);
       expect(html).not.toContain("8400 voto(s)");
+    expect(html).not.toContain('aria-labelledby="municipal-distribution-heading"');
     });
 
 describe("municipal evidence — the rendered-page defense boundary", () => {
@@ -746,5 +783,74 @@ describe("municipal page — no mapping source is not a claim about the data", (
 
     expect(html).toContain("no hay una fuente de mapeo curado configurada");
     expect(html).not.toContain("se resolvieron sin un partido curado");
+  });
+});
+
+
+describe("municipal page — truthful identified-party distribution", () => {
+  const identified = { ...MUNICIPAL_ROWS[0]!, canonicalPartyId: "first", partyName: "Partido identificado", votes: 1 };
+
+  it("keeps zero parties and unresolved evidence without assigning or aggregating it into the chart", () => {
+    const html = renderToStaticMarkup(renderMunicipalView({
+      status: "ok",
+      rows: [identified,
+        { ...identified, canonicalPartyId: "zero", partyName: "Partido sin votos", votes: 0 },
+        { ...MUNICIPAL_ROWS[0]!, listId: "unmapped", votes: 3 },
+        { ...MUNICIPAL_ROWS[0]!, listId: null, votes: 2 },
+      ],
+      excluded: { fiscalizacion: { rows: 1, votes: 9 } },
+      sourceAudit: { official: { rows: 4, votes: 6 } },
+      partyMappingConfigured: true,
+    }));
+
+    expect(html).toContain("Votos por partido identificado");
+    expect(html).toContain("Escala común: de 0 a 1 votos");
+    expect(html).toContain('aria-label="Partido identificado: 1 votos"');
+    expect(html).toContain('aria-label="Partido sin votos: 0 votos"');
+    expect(html).toContain('width="100"');
+    expect(html).toContain('width="0"');
+    expect(html.match(/role="img"/g)).toHaveLength(2);
+    expect(html).toContain("Las filas sin partido identificado se informan por separado");
+    expect(html).toContain("unmapped: 1 filas, 3 votos");
+    expect(html).toContain("Por tipo de fuente: 1 fila oficial / 2 votos");
+    expect(html).toContain("1 fila fiscalización / 9 votos");
+    expect(html).not.toContain(" %");
+    const details = html.slice(html.indexOf("<details"));
+    expect(details).not.toContain("unmapped");
+    expect(details).not.toContain("fiscalización");
+  });
+
+  it("keeps verification warnings outside the supporting archive disclosure", () => {
+    const html = renderToStaticMarkup(renderMunicipalView({
+      status: "ok", rows: [identified], excluded: {},
+      sourceAudit: { official: { rows: 1, votes: 1 } }, partyMappingConfigured: true,
+    }, [{ archiveEntryId: "synthetic-source", sha256: "", fetchedAt: "2026-01-01", status: "unavailable" }]));
+    expect(html).toContain("<summary>Archivo y procedencia</summary>");
+    const visible = html.slice(0, html.indexOf("<details"));
+    expect(visible).toContain("sin hash");
+    expect(visible).toContain("estado: unavailable");
+  });
+
+  it("states an all-zero distribution without inventing a positive axis maximum", () => {
+    const html = renderToStaticMarkup(renderMunicipalView({
+      status: "ok", rows: [{ ...identified, votes: 0 }], excluded: {},
+      sourceAudit: { official: { rows: 1, votes: 0 } }, partyMappingConfigured: true,
+    }));
+    expect(html).toContain("Todos los partidos identificados tienen 0 votos");
+    expect(html).toContain("Partido identificado");
+    expect(html).not.toContain("Escala común: de 0 a 1 votos");
+    expect(html).not.toContain("<svg");
+    expect(html).toContain('<td class="table-cell--number">0</td>');
+  });
+
+  it("distinguishes no identified parties from a zero-vote distribution", () => {
+    const html = renderToStaticMarkup(renderMunicipalView({
+      status: "ok", rows: [{ ...MUNICIPAL_ROWS[0]!, listId: "unmapped" }],
+      excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } }, partyMappingConfigured: true,
+    }));
+    expect(html).toContain("No hay partidos identificados para representar");
+    expect(html).toContain("unmapped: 1 filas, 4200 votos");
+    expect(html).not.toContain("Todos los partidos identificados tienen 0 votos");
+    expect(html).not.toContain("<svg");
   });
 });
