@@ -5,6 +5,19 @@ Votus is an internal electoral-analysis platform: a Python/uv ETL archives publi
 application reads through Auth and authorization boundaries. Official results and
 opt-in fiscalización must remain separate.
 
+## Product direction and documentation
+
+Votus targets map-first territorial electoral intelligence: territorial dominance
+and election comparison, with separate specialized modules. Today's application is
+still selector/chart/table-first; the map is not yet delivered.
+
+- [Product](PRODUCT.md): purpose, capability hierarchy and hard boundaries.
+- [Design](DESIGN.md): current presentation and target map-first workspace.
+- [Glossary](CONTEXT.md): shared domain vocabulary.
+- [Territorial 3D proposal](docs/proposals/2026-09-22-3d-electoral-heroes-and-navigation.md): proposed scope and research gates.
+- [Roadmap](docs/roadmap.md): priorities, not implementation authorization.
+- [Delivery slices](docs/plans/territorial-intelligence-slices.md): sequential, independently reviewed and merge-gated PRs.
+
 ## Choose your task
 
 | Task | Start here |

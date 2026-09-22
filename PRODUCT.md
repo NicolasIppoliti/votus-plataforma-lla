@@ -2,6 +2,37 @@
 
 <!-- impeccable:product-schema 1 -->
 
+## Product Purpose
+
+Votus is an internal **territorial electoral intelligence platform**. The primary
+outcome is to understand where electoral support dominates, how it changes between
+elections, and which conclusions the evidence can support. The map is the target
+analytical workspace, not a decorative hero; exact tables and provenance remain
+canonical verification and accessible alternatives.
+
+## Delivery state and capability hierarchy
+
+**Current:** selector/chart/table-first analysis of public official 2023/2025 results.
+Complete source-backed geometry and child-unit scene contracts are not yet available.
+**Target:** map-first territorial dominance and election comparison using deck.gl +
+MapLibre, delivered through the [merge-gated slice plan](docs/plans/territorial-intelligence-slices.md).
+This direction does not claim a delivered map or authorize implementation.
+
+| Priority | Capability and boundary |
+| --- | --- |
+| Core | Territorial dominance and election comparison: Argentina → Buenos Aires Province → Coronel Rosales, then circuits, establishments and mesas only where source-backed. |
+| Separate module | Fiscalización: operational coverage/heat, with its denominator and non-random sample; never an official-results aggregate. |
+| Separate module | Simulación: hypothetical 3D council/seat scenarios with statutory allocation and conditional vote ranges, not false exact thresholds. |
+| Future module | Análisis/Prospectiva: probabilistic, evidence-bound analysis with explicit assumptions, confidence and limitations; municipal/intra-municipal recommendations, not deterministic prediction. |
+
+Modules share geographic and evidence foundations, not blended numerical outputs.
+Physical terrain and electoral extrusion are independent layers. Height expresses a
+declared electoral metric, not physical elevation. Canonical winning party/alliance
+colors encode factual identity while election-specific ballot labels stay visible.
+Tie, unmapped, missing, unavailable and incomplete states are explicit and never
+color-only. Electoral detail may exceed geographic detail: establishment-anchored,
+labelled non-geographic mesa layouts are permitted, never invented boundaries.
+
 ## Platform
 
 web
@@ -9,10 +40,6 @@ web
 ## Users
 
 The primary user is an internal electoral analyst/operator who repeatedly inspects official results, fiscalización coverage, cross-election comparisons, municipal detail, review queues, and hypothetical scenarios. Leadership is a secondary audience that consumes summarized findings rather than governing the operator workflow.
-
-## Product Purpose
-
-Votus supports internal electoral analysis for 2023 and 2025 public official results at national, Buenos Aires provincial, and municipal levels, plus explicitly separated fiscalización evidence and hypothetical 2027 scenarios. Success means an analyst can move quickly from a question to an exact, reproducible result without losing authorization, source, jurisdiction, election, or granularity boundaries.
 
 ## Positioning
 
@@ -36,7 +63,7 @@ Analysts work inside an authenticated workspace, moving among operational briefi
 
 ## Brand Commitments
 
-The product name is Votus. Product language is direct, neutral, operational Spanish. Party identity may appear as factual institutional context but never becomes a semantic color or interface assumption.
+The product name is Votus. Product language is direct, neutral, operational Spanish. Canonical party/alliance color may encode factual electoral identity, never UI actions, source kinds or status semantics; labels and non-color cues are mandatory.
 
 ## Evidence on Hand
 
@@ -53,7 +80,7 @@ Evidence is trusted by the internal users and should not dominate every primary 
 1. Optimize for the analyst/operator's repeated task, not a public-facing presentation.
 2. Preserve exact electoral meaning and source boundaries before visual consistency.
 3. Keep primary views fast and legible; move trusted supporting evidence into an obvious detail layer rather than deleting it.
-4. Replace interface primitives progressively, with behavioral parity before workflow redesign.
+4. Deliver reachable territorial workflows progressively, preserving existing evidence and access contracts.
 5. Surface degraded, denied, conflicting, truncated, or unmapped states truthfully and actionably.
 
 ## Accessibility & Inclusion
