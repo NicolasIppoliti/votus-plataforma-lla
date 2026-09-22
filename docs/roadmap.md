@@ -55,6 +55,28 @@ Current PBA ETL scope is `027` Coronel Rosales and `113` Tigre;
 municipal UI remains `02/027`. Registry/ETL support does not prove hosted/UI availability.
 An all-135-partido program is unapproved; establish the second complete municipal path first.
 
+## FUTURE — Territorial intelligence program
+
+**Direction approved; implementation not authorized.** Current routes remain
+selector/chart/table-first, without complete source-backed geometry or child-unit
+scene contracts. The map becomes the main workspace, not a decorative hero.
+
+Follow the [sequential slice plan](plans/territorial-intelligence-slices.md):
+
+1. Documentation alignment (Slice 0), then source/geometry/terrain feasibility.
+2. Immutable geographic archive and reachable validation CLI.
+3. Smallest complete Coronel Rosales map, then provincial and national expansion.
+4. Territorial election comparison alongside dominance as the core product.
+5. Separate Fiscalización heat layer and statutory seat simulation.
+6. Future Análisis/Prospectiva foundations, then conditional recommendations.
+
+Each slice must be committed, pushed, reviewed in its own PR and merged before the
+next starts. Exact coverage is a feasibility finding, not a roadmap promise.
+Provincial/national expansion is not authorization for all-135-partido ingestion;
+the existing municipal-expansion workstream must be reconciled with these slices
+before overlapping work starts. Specialized modules share foundations, never mix
+source kinds, and do not delay the first useful official municipal workspace.
+
 ## Boundaries
 
 Preserve source isolation, privacy, statutory algorithms and persisted archive/database contracts.

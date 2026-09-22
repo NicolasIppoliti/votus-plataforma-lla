@@ -2,7 +2,7 @@
 
 ## Product Context
 
-- **What this is:** An authenticated electoral-analysis platform that combines immutable public official results, explicitly opt-in internal fiscalización evidence, review workflows, cross-election comparison, and hypothetical 2027 scenarios.
+- **What this is:** An authenticated territorial electoral intelligence platform; territorial dominance and election comparison are core, with separate Fiscalización, Simulación and future Análisis/Prospectiva modules.
 - **Primary user:** Electoral analyst/operator. Leadership consumes an executive briefing as a secondary progressive-disclosure layer.
 - **Space:** Internal political and electoral analysis.
 - **Project type:** Data-dense internal web application and decision-support dashboard.
@@ -10,13 +10,15 @@
 
 ## Approved Direction
 
-- **Name:** Votus analytical workspace (2026-09-21 redesign)
+- **Name:** Votus map-first territorial workspace (target direction; not yet delivered)
+- **Primary workspace:** Real geographic anchors for Argentina, Buenos Aires Province and Coronel Rosales; source-backed drilldown, not a decorative 3D hero.
+- **Planned stack:** deck.gl + MapLibre. This supersedes chart-first constraints only for the territorial path; existing charts remain valid verification aids.
 - **Aesthetic:** Palantir-inspired information organization with Vercel-inspired visual precision: neutral work surfaces, compact typography, explicit context, exact tables, and progressive supporting detail. No vendor branding or assets.
 - **Decoration:** Intentional and minimal. Typography, hairline borders, tonal surfaces, and evidence structure do the visual work.
 - **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
-- **Layout:** Grid-disciplined analytical routes with controlled asymmetry on the operational briefing.
+- **Layout:** Target map-led exploration with persistent scope, layer legends, exact-results access and supporting evidence; retain the grid-disciplined shell.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
-- **Current delivery scope:** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now continues that direction with automatic territorial selection and full-width result evidence. Municipal now loads its fixed official scope automatically with an identified-party raw-vote chart and full-width exact evidence. Fiscalización continues with automatic four-field scope and raw unit coverage beside exact, separately qualified results. Review remains a later route-specific slice.
+- **Current implementation (not the target map):** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now continues that direction with automatic territorial selection and full-width result evidence. Municipal now loads its fixed official scope automatically with an identified-party raw-vote chart and full-width exact evidence. Fiscalización continues with automatic four-field scope and raw unit coverage beside exact, separately qualified results. Review remains a later route-specific slice.
 
 ## Design Principles
 
@@ -38,7 +40,16 @@
 - **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch, theme and account actions.
 - **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Desktop and mobile share the theme preference; crossing the breakpoint restores focus to a visible control.
 
-### Navigation groups
+### Target workspace and module boundaries
+
+Explore is the primary territorial workspace; Compare is the core paired-election
+workflow. Geographic level belongs in workspace scope and camera navigation, not
+in empty sidebar destinations. Municipal retains its saved Coronel Rosales entry.
+Fiscalización coverage, Simulación seats and future Análisis/Prospectiva stay separate
+modules sharing evidence/geography foundations. Do not publish future navigation
+until its authorized production entry point works.
+
+### Current navigation groups
 
 - **Situation**
   - Operational briefing — `/`
@@ -110,7 +121,7 @@ Dark neutrals: canvas `#0A0A0A`, shell/surface `#141414`, secondary surface `#22
 | `--warning-ink` | `#7A4D00` | Warning text |
 | `--warning-surface` | `#FFF4DB` | Warning surface |
 
-Color is never the only carrier of meaning. Every source/status color is paired with text, structure, or iconography. Do not use party colors as chart or state semantics.
+Color is never the only carrier of meaning. Every source/status color is paired with text, structure, or iconography. Canonical party/alliance colors may encode electoral identity in the planned territorial views, never UI, source or status semantics. Election-specific labels remain visible; no identity is inferred from color.
 
 ## Spacing and Shape
 
@@ -202,10 +213,43 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 - Official and fiscalización can be juxtaposed but cannot share an aggregated series.
 - Essential source and interpretation-changing provenance, coverage, exclusion, and granularity qualifiers remain adjacent to the visualization; supporting detail may open in native disclosures or the existing contextual Sheet, depending on the route.
 
+## Target Territorial Workspace
+
+**Delivery state:** not implemented. Existing routes remain selector/chart/table-first;
+complete geometry and child-unit scene contracts are future work. The
+[proposal](docs/proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) defines the
+scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates delivery.
+
+- **Layers:** Physical terrain depicts sourced elevation; electoral extrusion depicts
+  a declared metric with units, denominator and scale. Independently enable and
+  explain each; neither visual height nor terrain relief implies electoral strength.
+- **Color:** Geographic units use the canonical winning party/alliance color with
+  ballot label and legend. Ties have no selected winner; unmapped identity, missing
+  observation, unavailable view and incomplete coverage each have distinct text and
+  non-color cues. No missing value becomes zero; incomplete totals imply no winner.
+- **Interaction:** Select/focus a unit to synchronize detail and exact evidence;
+  explicit drilldown changes served scope and camera together. Breadcrumbs, back,
+  reset-view and non-pointer controls preserve orientation. No hover-only evidence.
+- **Truthful depth:** Argentina → Buenos Aires Province → Coronel Rosales → supported
+  circuits/establishments/mesas. Never invent geometry; an establishment-anchored mesa
+  sublayout is explicitly non-geographic. Electoral and geographic granularity are
+  displayed separately.
+- **Compare:** Synchronized cameras and comparable scales, with paired exact values;
+  explain incompatible boundaries/metrics and unmatched units, never zero-fill.
+- **Mobile/accessibility:** At 320px stack scope, map, legend, detail and exact table;
+  retain all analytical actions without requiring drag, tilt or a WebGL canvas.
+  Provide keyboard selection, visible focus, screen-reader summaries and a 2D/table
+  alternative. Reduced motion removes camera flights; preserve 44×44px targets.
+- **Performance:** Lazy-load the planned renderer; bound geometry and visible detail.
+  The feasibility slice must measure desktop/mobile load, memory, interaction and
+  bundle cost and establish budgets before integration. WebGL failure retains exact
+  evidence; geometry simplification must preserve identity and disclose limitations.
+  Existing initial-JavaScript growth gate remains applicable.
+
 ## Motion
 
 - **Approach:** Reactive and functional: control edits cause the meaningful visual change; the interface does not simulate incoming activity.
-- **Focal interaction:** Chart marks explain changes in comparison share or scenario allocation. Exact numbers change without counting animations.
+- **Focal interaction:** Current charts explain comparison/scenario changes; planned map selection and camera drilldown explain territorial context. Exact numbers never count up.
 - **Continuity:** Soft navigation preserves control focus and scroll. Pending or invalid edits suppress stale figures, evidence and trace until the served selection matches the current request.
 - **Budget:** No polling/subscriptions, decorative loops or new motion libraries; short bounded geometry transitions only.
 - **Duration:** `120–180ms` for focus, hover, menus, drawer, filter continuity, evidence expansion, and row reordering.
@@ -258,6 +302,11 @@ Every external addition records owner, exact version/commit or registry payload,
 
 ## Migration and Delivery Strategy
 
+The following redesign history describes the current presentation baseline, not
+territorial completion. Future map delivery follows the sequential
+[slice plan](docs/plans/territorial-intelligence-slices.md); each PR must merge before
+the next starts. This document does not authorize dependencies or runtime changes.
+
 The shadcn migration is complete at base commit `146bacf1dad38b76c54a27ccc38bff5c1fad48c9`. This redesign changes presentation rather than repeating component replacement.
 
 1. Deliver branded login, neutral shared shell, task-first home, and exact-results-first comparison.
@@ -297,7 +346,7 @@ New product features discovered during design become separate future work units.
 - Existing suite and redesign tests are green.
 - Initial JavaScript grows by no more than `10%` without explicit approval.
 - No obsolete presentation path remains in a redesigned route; still-used styles for pending routes are retained.
-- This document matches the delivered implementation bytes.
+- Delivered behavior matches the sections labelled current; target sections are not completion claims.
 
 ## Decisions Log
 
@@ -313,9 +362,11 @@ New product features discovered during design become separate future work units.
 | 2026-09-18 | Keep exact `b5aq` baseline (Nova, Radix, neutral base/theme/chart, Lucide, IBM Plex Sans); no global apply | Preserve Command Ledger's Votus-owned semantic/source/status palette, Mono, focus, compact density, and 3/6/10px geometry |
 | 2026-09-18 | Support light and dark themes, initialized from OS preference with an in-app selector and persistent per-user override | Replace the earlier light-first/no-selector restriction with explicit user control |
 | 2026-09-18 | On-demand right-side contextual evidence Sheet; essential qualifiers remain inline; migration stays parity-first | Reduce primary-view load without hiding source, granularity, refusal/degraded states, or interpretation-changing evidence; separate behavior changes from component parity |
-
 | 2026-09-21 | Palantir information structure + Vercel neutral precision, retaining Plex and shadcn | User-approved redesign beyond the completed parity migration; validate login/home/comparison before other routes |
 | 2026-09-21 | Full-width exact comparison with native supporting-provenance disclosures | Give real tabular evidence space while keeping interpretation-changing context visible; preserve native controls and GET contracts |
+| 2026-09-22 | Map-first territorial workspace supersedes chart-first product direction | Geographic dominance and comparison become core; existing route behavior remains current until separately delivered |
+| 2026-09-22 | Plan deck.gl + MapLibre; separate physical terrain from electoral extrusion | Supersedes the no-new-chart-library constraint only for this planned path; feasibility and dependency review remain gates |
+| 2026-09-22 | Canonical party/alliance color is factual electoral encoding | Supersedes the blanket party-chart-color restriction, never source/status/UI semantics; ballot labels and non-color states remain required |
 
 ## Automatic Interaction Contract
 
@@ -327,7 +378,7 @@ New product features discovered during design become separate future work units.
 - Simulation debounces typing for 350ms, validates the form shape, then reuses the authoritative server allocation, council checks and input trace. There is no duplicate browser allocation pipeline.
 - The current draft, pending request and served result must agree before figures appear. Pending/invalid state is explicit, not a faded stale result. Inputs remain usable and focused.
 - Reload restores exactly representable editor scenarios. Rich supplied links that cannot round-trip through the editor remain intact in a clearly labelled provided-scenario mode; starting another scenario is explicit and does not silently coerce missing totals or discard held-over/unmodeled data.
-- Charts use existing React/CSS/SVG and data contracts; no new runtime chart library. Reduced motion preserves feedback without spatial interpolation.
+- Current charts use existing React/CSS/SVG and data contracts; no new runtime chart library outside the separately planned deck.gl + MapLibre territorial path. Reduced motion preserves feedback without spatial interpolation.
 - Native review approval for the earlier static slice does not approve new interaction bytes. A fresh candidate assessment applies at the revised deliverable boundary.
 
 ## Session Continuity Contract
