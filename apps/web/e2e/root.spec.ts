@@ -334,7 +334,7 @@ test("briefing places attention beside desktop actions and after mobile actions"
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   await expect(heading).toBeVisible();
-  await expect(heading).toHaveCSS("font-size", "48px");
+  await expect(heading).toHaveCSS("font-size", "32px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();
   const attention = main.getByRole("complementary", { name: "Atención operativa" });

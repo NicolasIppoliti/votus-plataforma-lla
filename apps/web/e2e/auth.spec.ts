@@ -57,7 +57,7 @@ test.describe("no anonymous read path", () => {
     const anonymousBody = await anonymousResponse.text();
     expect(anonymousBody).not.toContain(IN_SCOPE_MARKER);
 
-    // 3. The real login form remains centered, stacked, touch-sized, and
+    // 3. The branded login composition remains centered, stacked, touch-sized, and
     //    overflow-free at the two release viewports. Its persistent feedback
     //    row keeps an invalid sign-in from shifting or overlapping controls.
     const viewports = [
@@ -71,6 +71,9 @@ test.describe("no anonymous read path", () => {
 
       const loginCard = page.getByRole("region", { name: "Iniciar sesión" });
       const loginForm = page.getByRole("form", { name: "Iniciar sesión" });
+      const brand = page.locator(".login-brand");
+      await expect(brand).toContainText("Votus");
+      await expect(brand).toContainText("Análisis electoral, con evidencia.");
       const emailInput = page.getByLabel("Correo electrónico");
       const passwordInput = page.getByLabel("Contraseña");
       const submitButton = page.getByRole("button", {
@@ -101,10 +104,17 @@ test.describe("no anonymous read path", () => {
       const password = passwordBox!;
       const submit = submitBox!;
       const cardRightGap = viewport.width - card.x - card.width;
-      const cardBottomGap = viewport.height - card.y - card.height;
+      const brandBox = await brand.boundingBox();
+      const pageBox = await page.getByRole("main").boundingBox();
+      expect(brandBox).not.toBeNull();
+      expect(pageBox).not.toBeNull();
+      const compositionTopGap = brandBox!.y - pageBox!.y;
+      const compositionBottomGap = pageBox!.y + pageBox!.height - card.y - card.height;
 
       expect(Math.abs(card.x - cardRightGap)).toBeLessThanOrEqual(2);
-      expect(Math.abs(card.y - cardBottomGap)).toBeLessThanOrEqual(2);
+      expect(Math.abs(compositionTopGap - compositionBottomGap)).toBeLessThanOrEqual(2);
+      expect(compositionTopGap).toBeGreaterThanOrEqual(32);
+      expect(brandBox!.y + brandBox!.height).toBeLessThan(card.y);
       expect(card.y).toBeGreaterThanOrEqual(0);
       expect(card.width).toBeLessThanOrEqual(
         Math.min(512, viewport.width - 32) + 1,

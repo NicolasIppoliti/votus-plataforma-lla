@@ -9,10 +9,10 @@ it("renders the root operational briefing with evidence and review routes", () =
   );
 
   expect(markup).toContain("<h1>Panel operativo</h1>");
-  expect(markup).toContain("Elegir la próxima consulta");
+  expect(markup).toContain("Consulte resultados, contraste elecciones y explore escenarios.");
   expect(markup).toContain("Resultados oficiales");
   expect(markup).toContain("Flujos separados");
-  expect(markup).toContain("Contexto del workspace");
+  expect(markup).toContain("La disponibilidad depende del territorio y del acceso autorizado.");
   const hrefs = [...markup.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
   expect([...new Set(hrefs)].sort()).toEqual(["/compare", "/drilldown", "/fiscalizacion", "/municipal", "/review", "/simulate"]);
   expect(markup.indexOf("Explorar resultados")).toBeLessThan(markup.indexOf("Atención operativa"));

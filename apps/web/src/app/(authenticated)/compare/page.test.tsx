@@ -155,3 +155,24 @@ describe("authorized comparison page", () => {
     expect(markup).not.toMatch(/PARTIDO A|official\/archive|puntos porcentuales|100 votos/);
   });
 });
+
+it("progressively discloses archive detail without hiding source exclusions or result context", async () => {
+  const markup = await render(PARAMS);
+  const disclosures = [...markup.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)].map(([html]) => html);
+  expect(disclosures).toHaveLength(2);
+  for (const [index, side] of ["A", "B"].entries()) {
+    const disclosure = disclosures[index]!;
+    expect(disclosure).toContain(`>Procedencia oficial — Lado ${side}</summary>`);
+    expect(disclosure).not.toMatch(/<details[^>]*\sopen(?:\s|=|>)/);
+    expect(disclosure).toContain("SHA-256");
+    expect(disclosure).toContain(`official/archive-${index === 0 ? 2023 : 2025}`);
+    expect(disclosure).not.toContain("excluidas de todas las cifras");
+  }
+  const visibleMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, "");
+  expect(visibleMarkup).toContain("Izquierda: 1 fila(s) de fuente fiscalizacion excluidas de todas las cifras.");
+  expect(visibleMarkup).toContain("Derecha: 1 fila(s) de fuente fiscalizacion excluidas de todas las cifras.");
+  expect(visibleMarkup).toContain("Resultados exactos");
+  expect(visibleMarkup).toContain("60,00 %");
+  expect(visibleMarkup).toContain("sumado a partir de filas de nivel mesa");
+  expect(markup).not.toContain("official-compare__section-label");
+});

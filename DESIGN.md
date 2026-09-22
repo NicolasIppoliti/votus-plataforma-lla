@@ -10,17 +10,17 @@
 
 ## Approved Direction
 
-- **Name:** Command Ledger
-- **Aesthetic:** Editorial Operative — industrial discipline for data, editorial hierarchy for decisions.
+- **Name:** Votus analytical workspace (2026-09-21 redesign)
+- **Aesthetic:** Palantir-inspired information organization with Vercel-inspired visual precision: neutral work surfaces, compact typography, explicit context, exact tables, and progressive supporting detail. No vendor branding or assets.
 - **Decoration:** Intentional and minimal. Typography, hairline borders, tonal surfaces, and evidence structure do the visual work.
 - **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
 - **Layout:** Grid-disciplined analytical routes with controlled asymmetry on the operational briefing.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
-- **Approved prototype screens:** Authenticated shell + operational briefing, and official comparison dense route.
+- **Current delivery scope:** Login, shared shell, operational briefing, and official comparison. Route-specific redesign of explore, municipal, fiscalización, simulation, and review follows user validation of this first slice; those routes inherit shared neutral tokens now.
 
 ## Design Principles
 
-1. **Evidence stays beside the figure it qualifies.** Essential source, granularity, refusal/degraded-state, and interpretation-changing qualifiers remain inline. Supporting contextual evidence opens on demand in a right-side Sheet, never the sole location of essential qualifiers.
+1. **Evidence stays beside the figure it qualifies.** Essential source, granularity, refusal/degraded-state, and interpretation-changing qualifiers remain inline. Supporting contextual evidence opens on demand, never as the sole location of essential qualifiers. Comparison uses native provenance disclosures; existing evidence Sheets elsewhere remain unchanged.
 2. **Denied is not empty.** Empty, denied, unavailable, truncated, technical error, and loading states share structure but never meaning or disclosure behavior.
 3. **Tables are canonical.** Visualizations accelerate interpretation but do not replace exact values or accessible alternatives.
 4. **Density follows the task.** Briefing and shell are calm; exploration and comparison are compact; simulation balances controls and technical evidence.
@@ -32,7 +32,7 @@
 
 ### Global shell
 
-- **Desktop:** Persistent `15rem` sidebar and `4rem` topbar.
+- **Desktop:** Persistent `15rem` sidebar and compact wrapping topbar, with distinct workspace-context and account-control groups. Chrome follows the selected light/dark theme.
 - **Mobile:** Sidebar becomes a drawer; workspace context remains visible in the topbar.
 - **Topbar responsibility:** Active workspace, authorization/verification state, workspace switch, account actions.
 - **Sidebar responsibility:** Product identity, domain navigation, current-route indication, and source-separation reminder.
@@ -66,16 +66,16 @@
 
 | Token | Size / line-height | Usage |
 | --- | --- | --- |
-| `display` | `3rem / 0.98` | Briefing focal statement on large screens |
-| `h1` | `2.25rem / 1.05` | Route title |
-| `h2` | `1.5rem / 1.2` | Major section |
+| Briefing title | `2rem / 1.2` | Operational home; `1.75rem` on mobile |
+| Redesigned route title | `2rem / 1.2` | Comparison; login uses `1.5rem` |
+| Redesigned section | `1.25rem / 1.3` | Exact comparison results; applied-context headings use `1rem` |
 | `h3` | `1rem / 1.3` | Panel and table section |
 | `body` | `0.875rem / 1.55` | Primary explanatory copy |
 | `small` | `0.75rem / 1.45` | Secondary copy |
 | `label` | `0.6875rem / 1.2` | Controls and metadata |
 | `micro` | `0.625rem / 1.2` | Compact machine evidence only |
 
-Mobile display and route headings step down one level; body copy never drops below `0.8125rem` for dense analytical surfaces.
+Existing non-redesigned routes retain their route-specific heading scales until their own delivery slice. Body copy never drops below `0.8125rem` for dense analytical surfaces; comparison controls remain at least `0.875rem`.
 
 ## Color
 
@@ -85,15 +85,17 @@ The values below describe the light-theme reference. Both themes retain Votus-ow
 
 | Token | Value | Meaning |
 | --- | --- | --- |
-| `--shell` | `#121B1E` | Sidebar and deep application chrome |
-| `--canvas` | `#F4F3EE` | Warm analytical background |
+| `--shell` | `#FFFFFF` | Theme-consistent sidebar and application chrome |
+| `--canvas` | `#FAFAFA` | Neutral analytical background |
 | `--surface` | `#FFFFFF` | Primary work surface |
-| `--surface-muted` | `#E9ECE8` | Filter bars and secondary groupings |
-| `--ink` | `#162124` | Primary text |
-| `--muted-ink` | `#556366` | Secondary text; AA on canvas |
-| `--border` | `#D2D9D5` | Hairline structure |
-| `--accent` | `#0B6B63` | Product action and active navigation |
-| `--accent-strong` | `#084F4A` | Hover/pressed action |
+| `--surface-muted` | `#F2F2F2` | Filter bars and secondary groupings |
+| `--ink` | `#171717` | Primary text |
+| `--muted-ink` | `#646464` | Secondary text; AA on canvas |
+| `--border` | `#E2E2E2` | Hairline structure |
+| `--accent` | `#333333` | Product action and active navigation |
+| `--accent-strong` | `#171717` | Hover/pressed action |
+
+Dark neutrals: canvas `#0A0A0A`, shell/surface `#141414`, secondary surface `#222222`, ink `#EDEDED`, muted ink `#A8A8A8`, border `#383838`, action `#D4D4D4`. Semantic source/status tokens keep their separate accessible dark variants.
 
 ### Source and semantic palette
 
@@ -124,7 +126,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Minimum supported viewport:** `320px` without page-level horizontal overflow.
 - **Mobile:** Full product capability, not a read-only subset.
 - **Tables:** Exact tables remain available inside labelled, focusable horizontal-scroll regions.
-- **Comparison:** Side A and Side B stack before controls or values are compressed.
+- **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, action, context, table, and evidence stack in reading order. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
 - **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment.
 - **Touch targets:** At least `44×44px`.
@@ -135,7 +137,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 
 Use a pinned shadcn CLI version and allow only the canonical `@shadcn` registry initially. Source is copied into the repository and becomes project-owned.
 
-**Reviewed baseline (2026-09-18):** Exact preset [`b5aq`](https://ui.shadcn.com/create?preset=b5aq): Nova, Radix, neutral base/theme/chart, Lucide, and IBM Plex Sans. Do not apply it globally. Votus-owned tokens remain authoritative for the Command Ledger semantic/source/status palette, IBM Plex Mono, visible focus, compact density, and low-radius geometry (`3/6/10px`).
+**Reviewed baseline (2026-09-18):** Exact preset [`b5aq`](https://ui.shadcn.com/create?preset=b5aq): Nova, Radix, neutral base/theme/chart, Lucide, and IBM Plex Sans. Do not apply it globally. Votus-owned tokens remain authoritative for the semantic/source/status palette, IBM Plex Mono, visible focus, compact density, and low-radius geometry (`3/6/10px`).
 
 Expected primitives:
 
@@ -189,7 +191,7 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 - No pie charts, gauges, decorative KPI visualizations, or animated numbers.
 - Every chart includes an accessible table or textual equivalent.
 - Official and fiscalización can be juxtaposed but cannot share an aggregated series.
-- Essential source and interpretation-changing provenance, coverage, exclusion, and granularity qualifiers remain adjacent to the visualization; supporting detail may open in the contextual Sheet.
+- Essential source and interpretation-changing provenance, coverage, exclusion, and granularity qualifiers remain adjacent to the visualization; supporting detail may open in native disclosures or the existing contextual Sheet, depending on the route.
 
 ## Motion
 
@@ -229,7 +231,7 @@ WCAG 2.2 AA is a blocking merge gate.
 ### Adopt
 
 - **shadcn/ui:** Pinned CLI, local MCP, only `@shadcn` initially.
-- **Impeccable (optional):** Pi-only local skill for design critique and consistency detection. It is not required in a clean checkout and must not install hooks.
+- **Impeccable (optional):** Existing Pi-only local skill, v4.3.1, used in Operate mode for this redesign. No new hooks or runtime dependencies. It is not required in a clean checkout and must not install hooks.
 
 ### Reference only
 
@@ -244,20 +246,16 @@ Every external addition records owner, exact version/commit or registry payload,
 
 ## Migration and Delivery Strategy
 
-Migration remains parity-first: component replacement preserves navigation, URLs, authorization, calculations, source boundaries, and workflows. The approved theme activation and contextual Sheet interactions are direction for explicit later slices, not permission to introduce behavior changes during primitive replacement.
+The shadcn migration is complete at base commit `146bacf1dad38b76c54a27ccc38bff5c1fad48c9`. This redesign changes presentation rather than repeating component replacement.
 
-Use one isolated feature-branch chain with one sequential writer:
+1. Deliver branded login, neutral shared shell, task-first home, and exact-results-first comparison.
+2. Validate these actual screens with the user before extending route-specific changes.
+3. Redesign the remaining routes in coherent, tested slices, preserving their distinct domain states.
+4. Complete whole-product responsive, accessibility, and regression validation.
 
-1. Pinned tooling, Tailwind 4, tokens, and primitives.
-2. Application shell, sidebar, and workspace context.
-3. Operational briefing and `/dashboard → /` redirect.
-4. Official routes: explore, municipal, compare.
-5. Fiscalización, review, and shared evidence states.
-6. Simulation and data visualizations.
-7. Selective motion, accessibility gate, and legacy CSS removal.
-8. Accumulated tracker to `main`.
+Track implementation in `odd/tasks/product-ui-redesign.md` and its project-scoped Engram mirror. Use strict TDD against production entry points. Visual previews use actual production components with explicitly fictional adapters and no real session; they do not replace functional browser tests. The authenticated E2E screenshot/trace policy remains off.
 
-Legacy global CSS remains only while it has real production callers. The final tracker rejects any legacy visual caller. Production retains the current coherent UI until the accumulated tracker lands.
+Taste's project-local `redesign-existing-projects` skill is pinned to `Leonxlnx/taste-skill@5217fb45be2c0b302f29c9cd31cbd3237501c684`. Its general guidance is subordinate to product truth, accessibility, the operational brief, and the prohibition on invented metrics or decorative effects.
 
 ## Functional Non-goals
 
@@ -283,10 +281,10 @@ New product features discovered during design become separate future work units.
 - No page-level overflow at `320px`.
 - Existing deep links and query parameters remain valid.
 - Denied/unavailable/truncated states remain fail-closed.
-- Desktop/mobile visual regression covers every primary route.
+- Desktop/mobile visual inspection and functional geometry coverage cover every delivered route; synthetic previews never claim authenticated-data proof.
 - Existing suite and redesign tests are green.
 - Initial JavaScript grows by no more than `10%` without explicit approval.
-- No production caller uses the legacy visual system.
+- No obsolete presentation path remains in a redesigned route; still-used styles for pending routes are retained.
 - This document matches the delivered implementation bytes.
 
 ## Decisions Log
@@ -303,3 +301,6 @@ New product features discovered during design become separate future work units.
 | 2026-09-18 | Keep exact `b5aq` baseline (Nova, Radix, neutral base/theme/chart, Lucide, IBM Plex Sans); no global apply | Preserve Command Ledger's Votus-owned semantic/source/status palette, Mono, focus, compact density, and 3/6/10px geometry |
 | 2026-09-18 | Support light and dark themes, initialized from OS preference with an in-app selector and persistent per-user override | Replace the earlier light-first/no-selector restriction with explicit user control |
 | 2026-09-18 | On-demand right-side contextual evidence Sheet; essential qualifiers remain inline; migration stays parity-first | Reduce primary-view load without hiding source, granularity, refusal/degraded states, or interpretation-changing evidence; separate behavior changes from component parity |
+
+| 2026-09-21 | Palantir information structure + Vercel neutral precision, retaining Plex and shadcn | User-approved redesign beyond the completed parity migration; validate login/home/comparison before other routes |
+| 2026-09-21 | Full-width exact comparison with native supporting-provenance disclosures | Give real tabular evidence space while keeping interpretation-changing context visible; preserve native controls and GET contracts |

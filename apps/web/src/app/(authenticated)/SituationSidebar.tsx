@@ -8,7 +8,7 @@ export function SituationSidebar({ children }: { children?: ReactNode }): ReactN
     <aside className="situation-sidebar">
       <Link className="site-brand" href="/" aria-label="Panel de Votus">
         <span className="site-brand__name">Votus</span>
-        <span className="site-brand__descriptor">espacio de evidencia</span>
+        <span className="site-brand__descriptor">Análisis electoral</span>
       </Link>
       <PrimaryNavigation />
       <div className="source-disclaimer">

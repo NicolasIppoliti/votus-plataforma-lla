@@ -57,7 +57,7 @@ export function ComparisonSelectionForm({ selected, options, applied, children }
     <form action="/compare" method="get" onChange={change}>
       {children}
       <div className="form-actions">
-        <Button variant="solid" type="submit" formNoValidate>Actualizar opciones</Button>
+        <Button variant={ready ? "outline" : "solid"} type="submit" formNoValidate>Actualizar opciones</Button>
         {ready && <Button variant="solid" type="submit">Comparar resultados</Button>}
       </div>
       {dirty && <p role="status">Cambios sin aplicar</p>}

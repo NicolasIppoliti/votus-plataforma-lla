@@ -113,6 +113,7 @@ async function expectPopulatedReviewLayout(
     // Registration is acknowledged before the existing reset and keyboard input.
     const completion = await region.evaluateHandle((element) => {
       let armed = false, moved = false, released = false, complete = false;
+      let settled = false;
       let resetPending = false;
       let resetComplete = false;
       const completeInteraction = () => {
@@ -121,14 +122,16 @@ async function expectPopulatedReviewLayout(
       const key = (event: Event) => {
         if (!resetComplete || !(event instanceof KeyboardEvent) || event.target !== element || !event.isTrusted || event.key !== "ArrowRight"
           || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-        if (event.type === "keydown") { armed = true; moved = released = complete = false; }
+        if (event.type === "keydown") { armed = true; moved = released = complete = settled = false; }
         else if (armed) { released = true; completeInteraction(); }
       };
       const scroll = () => {
+        settled = false;
         complete = false;
         if (armed && element.scrollLeft > 0) { moved = true; completeInteraction(); }
       };
       const end = () => {
+        if (armed && moved && element.scrollLeft > 0) settled = true;
         if (resetPending) {
           if (element.scrollLeft === 0) {
             resetPending = false;
@@ -153,6 +156,7 @@ async function expectPopulatedReviewLayout(
         },
         resetCompleted: () => resetComplete,
         completed: () => complete,
+        settled: () => settled,
         dispose: () => {
           element.removeEventListener("keydown", key);
           element.removeEventListener("keyup", key);
@@ -168,6 +172,9 @@ async function expectPopulatedReviewLayout(
       await region.press("ArrowRight");
       await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
       await expect.poll(() => completion.evaluate(state => state.completed())).toBe(true);
+      // Key release plus movement proves usability, not animation settlement.
+      // Wait separately so the next viewport cannot interrupt this native scroll.
+      await expect.poll(() => completion.evaluate(state => state.settled())).toBe(true);
     } finally {
       try { await completion.evaluate(state => state.dispose()); }
       finally { await completion.dispose(); }
@@ -765,7 +772,7 @@ test.describe("the review route reflects the disposable database", () => {
             return { rail: style.borderBlockStartWidth, background: style.backgroundColor };
           });
           expect(panelStyle.rail).toBe("3px");
-          expect(panelStyle.background).toBe(state.role === "alert" ? "rgb(255, 244, 219)" : "rgb(233, 236, 232)");
+          expect(panelStyle.background).toBe(state.role === "alert" ? "rgb(255, 244, 219)" : "rgb(242, 242, 242)");
           await expectDocumentNotToOverflow(page);
           await expectReducedMotion(page, attention);
         }

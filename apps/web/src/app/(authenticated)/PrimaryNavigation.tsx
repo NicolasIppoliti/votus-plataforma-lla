@@ -1,12 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { House, Search, Columns2, MapPin, ClipboardCheck, SlidersHorizontal, ListChecks } from "lucide-react";
 import { usePathname } from "next/navigation";
 import {
   isRouteActive,
   NAVIGATION_GROUPS,
   type NavigationGroup,
 } from "./navigation";
+
+const navigationIcons = {
+  "/": House,
+  "/drilldown": Search,
+  "/compare": Columns2,
+  "/municipal": MapPin,
+  "/fiscalizacion": ClipboardCheck,
+  "/simulate": SlidersHorizontal,
+  "/review": ListChecks,
+} as const;
 
 const navigationGroups = Object.entries(NAVIGATION_GROUPS) as readonly (
   readonly [string, NavigationGroup]
@@ -38,6 +49,7 @@ export function PrimaryNavigation() {
                 <ul>
                   {items.map(({ href, label: itemLabel }) => {
                     const isActive = isRouteActive(pathname, href);
+                    const Icon = navigationIcons[href];
 
                     return (
                       <li key={href}>
@@ -45,7 +57,8 @@ export function PrimaryNavigation() {
                           href={href}
                           aria-current={isActive ? "page" : undefined}
                         >
-                          {itemLabel}
+                          <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+                          <span>{itemLabel}</span>
                         </Link>
                       </li>
                     );

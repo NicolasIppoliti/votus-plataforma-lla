@@ -64,10 +64,12 @@ function formatSwing(value: number): string {
 
 function refusalPage(message: ReactNode): ReactNode {
   return (
-    <main className="page-shell">
-      <div className="shell-container">
-        <h1>Comparación oficial autorizada</h1>
-        <p role="alert">{message}</p>
+    <main className="page-shell official-compare">
+      <div className="shell-container official-compare__layout">
+        <header className="official-compare__header">
+          <h1>Comparación oficial autorizada</h1>
+        </header>
+        <p className="official-compare__state" role="alert">{message}</p>
       </div>
     </main>
   );
@@ -184,7 +186,6 @@ function CompareSelector({
     <main className="page-shell official-compare">
       <div className="shell-container official-compare__layout">
         <header className="page-header official-compare__header">
-          <p className="official-compare__section-label">Resultados oficiales / comparación autorizada</p>
           <h1>Comparación oficial autorizada</h1>
           <p className="official-compare__context">
             Compare dos selecciones oficiales independientes dentro de una misma sección autorizada.
@@ -348,8 +349,8 @@ function sourceNotes(side: AuthorizedOfficialComparisonSideEvidence, label: stri
 
 function provenance(side: AuthorizedOfficialComparisonSideEvidence, sideId: string, sideLabel: string): ReactNode {
   return (
-    <section className="official-compare__side-evidence" aria-labelledby={`provenance-${sideId}`}>
-      <h3 id={`provenance-${sideId}`}>Procedencia oficial — {sideLabel}</h3>
+    <details className="official-compare__provenance">
+      <summary id={`provenance-${sideId}`}>Procedencia oficial — {sideLabel}</summary>
       <ul aria-label={`procedencia ${sideLabel}`}>
         {side.provenance.items.map((item) => (
           <li key={item.archiveEntryId}>
@@ -357,7 +358,7 @@ function provenance(side: AuthorizedOfficialComparisonSideEvidence, sideId: stri
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 }
 

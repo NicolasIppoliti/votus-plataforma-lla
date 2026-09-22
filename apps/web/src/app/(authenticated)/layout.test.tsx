@@ -306,3 +306,32 @@ it("renders all seven shared destinations in contract order with explicit source
   expect(navigationMarkup).toContain("Simulación 2027");
   expect(navigationMarkup).toContain("Revisión de datos");
 });
+
+it("groups workspace context separately from persistent account controls", async () => {
+  const markup = await renderLayout("/compare");
+  const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
+  expect(topbar).toContain('class="workspace-topbar__context"');
+  expect(topbar).toContain('class="workspace-topbar__actions"');
+  expect(topbar.indexOf('class="workspace-identity"')).toBeLessThan(topbar.indexOf('class="workspace-topbar__actions"'));
+  expect(topbar).toContain("Tema");
+  expect(topbar).toContain("Cambiar organización");
+  expect(topbar).toContain("Cerrar sesión");
+  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(7);
+  expect(currentPrimaryHrefs(markup)).toEqual(["/compare"]);
+});
+
+it("offers each home workflow once and keeps source qualifications next to its task", async () => {
+  navigation.pathname = "/";
+  const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
+  const main = markup.match(/<main\b[^>]*>[\s\S]*?<\/main>/)?.[0] ?? "";
+  for (const href of ["/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"]) {
+    expect(main.match(new RegExp(`href="${href}"`, "g")), href).toHaveLength(1);
+  }
+  expect(main).toContain("Resultados oficiales");
+  expect(main).toContain("La cobertura no es una muestra aleatoria.");
+  expect(main).toContain("No es una predicción ni un resultado histórico.");
+  expect(main).toContain('aria-describedby="workflow-fiscalizacion-description"');
+  expect(main).not.toContain("Elegir la próxima consulta");
+  expect(main).not.toContain("Contexto del workspace");
+  expect(main).toContain("Atención operativa");
+});

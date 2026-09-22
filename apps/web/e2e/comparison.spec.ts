@@ -103,10 +103,20 @@ test.describe("authorized official comparison", () => {
       await expect(main.getByRole("combobox")).toHaveCount(6);
       for (const side of ["A", "B"]) await expect(main.getByRole("group", { name: new RegExp(`^Lado ${side}\\b`) })).toHaveCount(1);
       const appliedHeading = main.getByRole("heading", { name: "Resultados exactos", exact: true });
-      await expect(appliedHeading).toHaveCSS("font-size", "24px");
+      await expect(appliedHeading).toHaveCSS("font-size", "20px");
+      await expect(leftSide.getByRole("heading", { name: "Lado A", exact: true })).toHaveCSS("font-size", "16px");
       const table = tableRegion.getByRole("table");
       const rails = main.getByRole("complementary", { name: "Evidencia oficial por lado" }).getByRole("article");
       await expect(rails).toHaveCount(2);
+      for (const side of ["A", "B"]) {
+        const evidence = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true });
+        const provenance = evidence.locator("details");
+        await expect(provenance).not.toHaveAttribute("open", "");
+        await expect(provenance.getByText(/SHA-256/)).toBeHidden();
+        await evidence.getByText(`Procedencia oficial — Lado ${side}`, { exact: true }).press("Enter");
+        await expect(provenance).toHaveAttribute("open", "");
+        await expect(provenance.getByText(/SHA-256/)).toBeVisible();
+      }
       const appliedContexts = main.getByRole("region", { name: "Contexto de comparación autorizada" });
       const applied = { contexts: await appliedContexts.innerText(), heading: await appliedHeading.innerText(), table: await table.innerText(), rails: await rails.allInnerTexts() };
       const expectAppliedUnchanged = async (): Promise<void> => {
@@ -150,27 +160,33 @@ test.describe("authorized official comparison", () => {
         if (!afterElement) throw new Error("Missing ordered comparison region");
         expect(await before.evaluate((element, next) => Boolean(element.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING), afterElement)).toBe(true);
       };
-      await test.step("1440px equal editors, shared strip and dominant exact table beside evidence", async () => {
+      await test.step("1440px aligned editors and territory above full-width exact results and evidence", async () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         const a = await bounds(editA), b = await bounds(editB), territory = await bounds(shared);
         expect(Math.abs(a.width - b.width)).toBeLessThanOrEqual(2);
         expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(2);
         expect(Math.abs(a.height - b.height)).toBeLessThanOrEqual(2);
         expect(a.x + a.width).toBeLessThanOrEqual(b.x + 2);
-        expect(territory.y).toBeGreaterThanOrEqual(Math.max(a.y + a.height, b.y + b.height) - 2);
-        expect(territory.width).toBeGreaterThan(a.width);
+        expect(Math.abs(territory.y - a.y)).toBeLessThanOrEqual(2);
+        expect(Math.abs(territory.width - a.width)).toBeLessThanOrEqual(2);
+        expect(b.x + b.width).toBeLessThanOrEqual(territory.x + 2);
         await expect(shared).toHaveCount(1);
         const exact = await bounds(tableRegion);
         for (const evidence of [evidenceA, evidenceB]) {
           await expect(evidence).toHaveCount(1);
           const rail = await bounds(evidence);
           expect(exact.width).toBeGreaterThan(rail.width);
-          expect(rail.x).toBeGreaterThanOrEqual(exact.x + exact.width - 2);
+          expect(rail.y).toBeGreaterThanOrEqual(exact.y + exact.height - 2);
           await expect(evidence).toContainText("SHA-256");
         }
         const evidence = await bounds(main.getByRole("complementary", { name: "Evidencia oficial por lado" }));
         const results = await bounds(main.getByRole("region", { name: "Resultados exactos", exact: true }));
-        expect(Math.min(evidence.y + evidence.height, results.y + results.height)).toBeGreaterThan(Math.max(evidence.y, results.y));
+        expect(evidence.y).toBeGreaterThanOrEqual(results.y + results.height - 2);
+        expect(Math.abs(evidence.width - results.width)).toBeLessThanOrEqual(2);
+        const railA = await bounds(evidenceA), railB = await bounds(evidenceB);
+        expect(Math.abs(railA.y - railB.y)).toBeLessThanOrEqual(2);
+        expect(Math.abs(railA.width - railB.width)).toBeLessThanOrEqual(2);
+        expect(railA.x + railA.width).toBeLessThanOrEqual(railB.x + 2);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
       });
       await test.step("390px preserves reading order from editors through both evidence rails", async () => {
