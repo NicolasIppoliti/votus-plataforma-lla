@@ -16,7 +16,7 @@
 - **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
 - **Layout:** Grid-disciplined analytical routes with controlled asymmetry on the operational briefing.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
-- **Current delivery scope:** Login, shared shell, operational briefing, and official comparison. Route-specific redesign of explore, municipal, fiscalización, simulation, and review follows user validation of this first slice; those routes inherit shared neutral tokens now.
+- **Current delivery scope:** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user requested automatic reactions to existing data and more explanatory graphics before accepting the first slice. Explore, municipal, fiscalización and review remain later route-specific slices.
 
 ## Design Principles
 
@@ -128,7 +128,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Tables:** Exact tables remain available inside labelled, focusable horizontal-scroll regions.
 - **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, context, chart, exact table, and evidence stack in reading order. Selector changes automatically update the authorized comparison; there is no Apply step. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
-- **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment.
+- **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
 - **Touch targets:** At least `44×44px`.
 
 ## Component Architecture
@@ -186,6 +186,7 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 
 - Exact-value tables are the canonical representation.
 - Comparison pairs Side A/Side B on one 0–100% scale, retaining each side's party name. Its denominator is the supplied party-vote total, not turnout or all ballots. Include every compared party.
+- Simulation seat bars use the requested seats-to-fill denominator, show zero-seat lists and unallocated seats, and distinguish renewed seats from the whole council. Keep hypothetical status and incomplete/tie qualifications visible.
 - Horizontal bars support distribution and seat allocation.
 - Delta bars/markers support cross-election comparison.
 - Time series require a genuine temporal dimension.
@@ -196,7 +197,10 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 
 ## Motion
 
-- **Approach:** Minimal-functional.
+- **Approach:** Reactive and functional: control edits cause the meaningful visual change; the interface does not simulate incoming activity.
+- **Focal interaction:** Chart marks explain changes in comparison share or scenario allocation. Exact numbers change without counting animations.
+- **Continuity:** Soft navigation preserves control focus and scroll. Pending or invalid edits suppress stale figures, evidence and trace until the served selection matches the current request.
+- **Budget:** No polling/subscriptions, decorative loops or new motion libraries; short bounded geometry transitions only.
 - **Duration:** `120–180ms` for focus, hover, menus, drawer, filter continuity, evidence expansion, and row reordering.
 - **No global page transitions.**
 - **No animated totals, parallax, decorative blobs, or pulsing skeletons.**
@@ -250,7 +254,7 @@ Every external addition records owner, exact version/commit or registry payload,
 The shadcn migration is complete at base commit `146bacf1dad38b76c54a27ccc38bff5c1fad48c9`. This redesign changes presentation rather than repeating component replacement.
 
 1. Deliver branded login, neutral shared shell, task-first home, and exact-results-first comparison.
-2. Validate these actual screens with the user before extending route-specific changes.
+2. Incorporate the requested automatic comparison/simulation interactions and truthful charts, then validate the actual revised screens with the user.
 3. Redesign the remaining routes in coherent, tested slices, preserving their distinct domain states.
 4. Complete whole-product responsive, accessibility, and regression validation.
 
@@ -310,6 +314,8 @@ New product features discovered during design become separate future work units.
 
 - All source data is queried through the existing authorized server pipeline; automatic UI reactions do not imply incoming realtime data or newly ingested results.
 - Comparison preserves six native controls and canonical query keys; changing an ancestor clears its descendants. Soft replace navigation avoids history entries for every control adjustment, with no scroll reset.
+- Simulation debounces typing for 350ms, validates the form shape, then reuses the authoritative server allocation, council checks and input trace. There is no duplicate browser allocation pipeline.
 - The current draft, pending request and served result must agree before figures appear. Pending/invalid state is explicit, not a faded stale result. Inputs remain usable and focused.
+- Reload restores exactly representable editor scenarios. Rich supplied links that cannot round-trip through the editor remain intact in a clearly labelled provided-scenario mode; starting another scenario is explicit and does not silently coerce missing totals or discard held-over/unmodeled data.
 - Charts use existing React/CSS/SVG and data contracts; no new runtime chart library. Reduced motion preserves feedback without spatial interpolation.
 - Native review approval for the earlier static slice does not approve new interaction bytes. A fresh candidate assessment applies at the revised deliverable boundary.

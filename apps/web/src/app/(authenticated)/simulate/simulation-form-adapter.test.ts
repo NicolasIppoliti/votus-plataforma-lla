@@ -78,7 +78,7 @@ describe("simulation form adapter", () => {
     });
   });
 
-  it("rejects inconsistent PBA totals through domain validation", () => {
+  it("prepares shape-valid PBA totals for authoritative server validation", () => {
     expect(() =>
       createSimulationScenario({
         ...MUNICIPAL_VALUES,
@@ -87,7 +87,7 @@ describe("simulation form adapter", () => {
         annulledVotes: "50",
         lists: [{ id: "list-1", name: "Lista A", votes: "0" }],
       }),
-    ).toThrowError(/totales de votos/i);
+    ).not.toThrow();
   });
 
   it("rejects missing and duplicate lists with Spanish errors", () => {

@@ -225,10 +225,10 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await form.getByLabel("Votos en blanco").fill("0");
     await form.getByLabel("Votos anulados").fill("0");
 
-    await form.getByRole("button", { name: "Simular bancas" }).click();
-    const validationAlert = form.getByRole("alert");
+    const validationAlert = page.getByRole("main").getByRole("alert");
+    await expect(validationAlert).toHaveCount(1);
     await expect(validationAlert).toContainText(
-      "Los totales de votos no son consistentes entre sí ni con los votos de las listas.",
+      /totales|reglas|consistentes/i,
     );
     await expect(form.getByLabel("Total de votos")).toHaveValue("9000");
     await expect(listNames.nth(0)).toHaveValue("Lista A");
@@ -237,8 +237,12 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(listVotes.nth(1)).toHaveValue("4000");
 
     await form.getByLabel("Total de votos").fill("10000");
-    await form.getByRole("button", { name: "Simular bancas" }).click();
-    await expect(page).toHaveURL(/\/simulate\?/);
+    await expect.poll(() => {
+      const input = new URL(page.url()).searchParams.get("input");
+      return input ? JSON.parse(input).totalVotes : null;
+    }).toBe(10000);
+    await expect(form.getByRole("button", { name: "Simular bancas" })).toHaveCount(0);
+    await expect(form.getByLabel("Total de votos")).toBeFocused();
 
     const submittedUrl = new URL(page.url());
     expect(submittedUrl.pathname).toBe("/simulate");
@@ -308,6 +312,38 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       .locator("..");
     await expect(listARow.getByRole("cell").last()).toHaveText("5");
     await expect(listBRow.getByRole("cell").last()).toHaveText("4");
+    const seatChart = result.getByRole("region", { name: "Distribución de bancas", exact: true });
+    await expect(seatChart).toBeVisible();
+    await expect(seatChart).toContainText("Lista A");
+    await expect(seatChart).toContainText("Lista B");
+    await expect(seatChart).toContainText(/9/);
+    // Invalid edits remove the preceding result immediately, including its trace.
+    await listVotes.nth(0).fill("");
+    await expect(result).toHaveCount(0);
+    await expect(page.getByText(/Huella de los datos proporcionados/)).toHaveCount(0);
+    await expect(listVotes.nth(0)).toBeFocused();
+    await listVotes.nth(0).fill("5000");
+    await listVotes.nth(0).fill("6000");
+    await expect(result).toBeVisible();
+    await expect(listARow.getByRole("cell").last()).toHaveText("5");
+    await expect(listVotes.nth(0)).toHaveValue("6000");
+    await expect(listVotes.nth(0)).toBeFocused();
+    await listVotes.nth(0).fill("8000");
+    await listVotes.nth(1).fill("2000");
+    await expect(listARow.getByRole("cell").last()).toHaveText("7");
+    await expect(listBRow.getByRole("cell").last()).toHaveText("2");
+    await expect(seatChart).toBeVisible();
+    await listVotes.nth(0).fill("6000");
+    await listVotes.nth(1).fill("4000");
+    await expect(listARow.getByRole("cell").last()).toHaveText("5");
+    await expect(listBRow.getByRole("cell").last()).toHaveText("4");
+    await page.reload();
+    await expect(listNames.nth(0)).toHaveValue("Lista A");
+    await expect(listVotes.nth(0)).toHaveValue("6000");
+    await expect(seatChart).toBeVisible();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expectNoHorizontalOverflow(page);
+
 
     await expect(result.getByRole("link", { name: /archivo|fuente/i })).toHaveCount(
       0,
@@ -329,8 +365,11 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       await expect(evidenceScroll).toBeFocused();
     }
 
+    await page.setViewportSize({ width: 320, height: 720 });
+    await expectNoHorizontalOverflow(page);
+    await expect(seatChart).toBeVisible();
     await page.setViewportSize({ width: 1280, height: 800 });
-    await expect(result.getByRole("heading", { name: "Resultado (municipal de PBA)" })).toHaveCSS("font-size", "24px");
+    await expect(result.getByRole("heading", { name: "Resultado (municipal de PBA)" })).toHaveCSS("font-size", "20px");
     await page.goto("/simulate");
     await expect(page).toHaveURL(/\/simulate$/);
     const desktopForm = page.getByRole("form", {
@@ -415,4 +454,104 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       desktopGeometry.clientWidth,
     );
   });
+});
+
+
+test("preserves a rich supplied scenario until another scenario is explicitly started", async ({ page }) => {
+  const input = {
+    level: "pba_municipal",
+    voteTotals: { kind: "valid_votes_only", validVotes: 10000 },
+    unmodeledVotes: 1000,
+    unmodeledVoteBreakdown: [{ reason: "omitted_non_qualifying_lists", votes: 1000 }],
+    seatsToFill: 9, councilTotal: 18, isProjection: true, granularity: "seccion",
+    lists: [
+      { listId: "provided-a", listName: "Lista A", votes: 6000 },
+      { listId: "provided-b", listName: "Lista B", votes: 3000 },
+    ],
+  };
+  const query = new URLSearchParams({ input: JSON.stringify(input) });
+  await page.goto(`/simulate?${query.toString()}`);
+  const suppliedUrl = page.url();
+  const result = page.getByRole("region", { name: "Resultado de la asignación" });
+  await expect(page.getByText("Escenario proporcionado", { exact: true })).toBeVisible();
+  await expect(result).toContainText("1.000 explícitamente fuera del modelo");
+  await expect(result.getByRole("region", { name: "Distribución de bancas", exact: true })).toBeVisible();
+  await expect(page.getByRole("form", { name: "Formulario de simulación de bancas" })).toHaveCount(0);
+  await page.reload();
+  await expect(page).toHaveURL(suppliedUrl);
+  await expect(result).toContainText("1.000 explícitamente fuera del modelo");
+  await page.getByRole("button", { name: "Crear otro escenario", exact: true }).click();
+  await expect(page.getByRole("form", { name: "Formulario de simulación de bancas" })).toBeVisible();
+  await expect(result).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Nombre de la lista" }).first()).toHaveValue("");
+  await expect(page).toHaveURL(/\/simulate$/);
+});
+
+test("restores the served scenario while a superseded response is pending", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/simulate");
+  const form = page.getByRole("form", { name: "Formulario de simulación de bancas" });
+  const names = form.getByLabel("Nombre de la lista");
+  const votes = form.getByLabel("Votos de la lista");
+  await names.first().fill("Lista A");
+  await votes.first().fill("6000");
+  await form.getByRole("button", { name: "Agregar lista" }).click();
+  await names.nth(1).fill("Lista B");
+  await votes.nth(1).fill("4000");
+  await form.getByLabel("Total de votos").fill("10000");
+  const result = page.getByRole("region", { name: "Resultado de la asignación" });
+  const chart = result.getByRole("region", { name: "Distribución de bancas", exact: true });
+  const trace = result.getByText(/Huella de los datos proporcionados/);
+  await expect(chart).toBeVisible();
+  const servedUrl = page.url();
+  const servedTrace = await trace.innerText();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+
+  let responseReady = false;
+  let responseDelivered = false;
+  let releaseResponse: () => void = () => {};
+  const responseDelay = new Promise<void>((resolve) => { releaseResponse = resolve; });
+  await page.route("**/simulate?**", async (route) => {
+    const input = new URL(route.request().url()).searchParams.get("input");
+    if (!input?.includes('"listName":"Lista pendiente"')) {
+      await route.continue();
+      return;
+    }
+    // Delay the actual server response, not a fabricated result or calculation.
+    const response = await route.fetch();
+    responseReady = true;
+    await responseDelay;
+    await route.fulfill({ response });
+    responseDelivered = true;
+  });
+  try {
+    await names.first().fill("Lista pendiente");
+    await expect(result).toHaveCount(0);
+    await expect(page.getByText(/Huella de los datos proporcionados/)).toHaveCount(0);
+    await page.clock.runFor(400);
+    await expect.poll(() => responseReady).toBe(true);
+    await names.first().fill("Lista A");
+    await expect(result).toHaveCount(0);
+    await expect(names.first()).toBeFocused();
+    await page.clock.runFor(400);
+    await expect(names.first()).toHaveValue("Lista A");
+    releaseResponse();
+    await expect.poll(() => responseDelivered).toBe(true);
+    await page.clock.resume();
+    await expect(chart).toBeVisible();
+    await expect(page).toHaveURL(servedUrl);
+    await expect(names.first()).toHaveValue("Lista A");
+    await expect(names.first()).toBeFocused();
+    await expect(chart.getByRole("img", { name: "Lista A: 5 de 9 bancas", exact: true })).toBeVisible();
+    await expect(chart.getByRole("img", { name: "Lista B: 4 de 9 bancas", exact: true })).toBeVisible();
+    await expect(result).not.toContainText("Lista pendiente");
+    await expect(trace).toHaveText(servedTrace);
+    const allocation = result.getByRole("table", { name: "Asignación Hare por lista" });
+    await expect(allocation.getByRole("rowheader", { name: "Lista A", exact: true }).locator("..").getByRole("cell").last()).toHaveText("5");
+    await expect(allocation.getByRole("rowheader", { name: "Lista B", exact: true }).locator("..").getByRole("cell").last()).toHaveText("4");
+  } finally {
+    releaseResponse();
+    await page.clock.resume();
+    await page.unrouteAll({ behavior: "wait" });
+  }
 });
