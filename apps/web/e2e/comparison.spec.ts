@@ -41,12 +41,6 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, cleanupError], "comparison assertions and cleanup failed"); throw outcome.error; }
   if (cleanupError) throw cleanupError; return outcome.value;
 }
-async function submitOptions(page: Page): Promise<void> {
-  const navigation = page.waitForResponse((response) => response.request().isNavigationRequest() && new URL(response.url()).pathname === "/compare");
-  await page.getByRole("button", { name: "Actualizar opciones" }).click();
-  expect((await navigation).ok()).toBe(true);
-  await expect(page.getByRole("main")).toBeVisible();
-}
 test.describe("authorized official comparison", () => {
   test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
@@ -54,41 +48,35 @@ test.describe("authorized official comparison", () => {
         if (!leftOnlySection) throw new Error("comparison fixture left-only section is missing");
         const comparisonNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparar", exact: true });
       await comparisonNavigationLink.click(); await expect(page).toHaveURL(/\/compare$/); await expect(comparisonNavigationLink).toHaveAttribute("aria-current", "page");
-      const compare = page.getByRole("button", { name: "Comparar resultados", exact: true });
-      const unavailableCompare = () => expect(compare.filter({ visible: true }).and(page.locator(":enabled"))).toHaveCount(0);
       const leftCategory = page.getByLabel("Categoría izquierda", { exact: true });
       const rightCategory = page.getByLabel("Categoría derecha", { exact: true });
-      await unavailableCompare();
-      await page.getByLabel("Elección izquierda (2023)").selectOption(identity.electionIds[0]!);
-      await page.getByLabel("Elección derecha (2025)").selectOption(identity.electionIds[1]!);
-      await unavailableCompare();
-      await submitOptions(page);
-      await expect(page).toHaveURL(new RegExp(`leftElectionId=${identity.electionIds[0]}`));
+      const leftElection = page.getByLabel("Elección izquierda (2023)");
+      const rightElection = page.getByLabel("Elección derecha (2025)");
+      // Independent rapid edits must survive overlapping automatic navigations.
+      await leftElection.selectOption(identity.electionIds[0]!);
+      await rightElection.focus();
+      await rightElection.selectOption(identity.electionIds[1]!);
       for (const category of [leftCategory, rightCategory]) {
         await expect(category).toBeEnabled();
         await expect(category).toHaveAttribute("required", "");
         await expect(category).toHaveValue("");
       }
-      // Required, empty descendants must not block an options-only GET.
-      await submitOptions(page);
-      await unavailableCompare();
+      await expect(rightElection).toBeFocused();
+      await expect(page.getByRole("button", { name: /Actualizar opciones|Comparar resultados/ })).toHaveCount(0);
       await leftCategory.selectOption(identity.categoryId);
-      await expect(rightCategory).toHaveValue("");
-      await unavailableCompare();
       await rightCategory.selectOption(identity.categoryId);
-      await expect(leftCategory).toHaveValue(identity.categoryId);
-      await unavailableCompare();
-      await submitOptions(page);
-      await page.getByLabel("Distrito compartido").selectOption(identity.distritoCode);
-      await unavailableCompare();
-      await submitOptions(page);
-        const sharedSection = page.getByRole("combobox", { name: "Sección compartida", exact: true });
-        await expect(sharedSection.getByRole("option", { name: leftOnlySection.seccionCode, exact: false })).toHaveCount(0);
-        await expect(page.getByRole("main")).toContainText("Opciones no compartidas — Sección: 1 Lado A / 0 Lado B (disponibles solo en ese lado).");
-        await unavailableCompare();
-        await sharedSection.selectOption(identity.seccionCode);
-        await expect(compare).toBeEnabled();
-        await compare.click();
+      const sharedDistrict = page.getByLabel("Distrito compartido");
+      await expect(sharedDistrict).toBeEnabled();
+      await sharedDistrict.selectOption(identity.distritoCode);
+      const sharedSection = page.getByRole("combobox", { name: "Sección compartida", exact: true });
+      await expect(sharedSection).toBeEnabled();
+      await expect(sharedSection.getByRole("option", { name: leftOnlySection.seccionCode, exact: false })).toHaveCount(0);
+      await expect(page.getByRole("main")).toContainText("Opciones no compartidas — Sección: 1 Lado A / 0 Lado B (disponibles solo en ese lado).");
+      await sharedSection.focus();
+      await sharedSection.selectOption(identity.seccionCode);
+      await expect(page).toHaveURL(new RegExp(`seccionCode=${identity.seccionCode}`));
+      await expect(page.getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+      await expect(sharedSection).toBeFocused();
       const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ leftElectionId: identity.electionIds[0], leftCategoryId: identity.categoryId, rightElectionId: identity.electionIds[1], rightCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
       const main = page.getByRole("main"); await expect(main).toContainText("sin cambio"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
       await expect(main).toContainText(identity.archiveEntryIds[0]!); await expect(main).toContainText(identity.archiveEntryIds[1]!); await expect(main).toContainText("SHA-256"); await expect(main).not.toContainText("https://"); await expect(main).not.toContainText("example.test");
@@ -103,10 +91,20 @@ test.describe("authorized official comparison", () => {
       await expect(main.getByRole("combobox")).toHaveCount(6);
       for (const side of ["A", "B"]) await expect(main.getByRole("group", { name: new RegExp(`^Lado ${side}\\b`) })).toHaveCount(1);
       const appliedHeading = main.getByRole("heading", { name: "Resultados exactos", exact: true });
-      await expect(appliedHeading).toHaveCSS("font-size", "24px");
+      await expect(appliedHeading).toHaveCSS("font-size", "20px");
+      await expect(leftSide.getByRole("heading", { name: "Lado A", exact: true })).toHaveCSS("font-size", "16px");
       const table = tableRegion.getByRole("table");
       const rails = main.getByRole("complementary", { name: "Evidencia oficial por lado" }).getByRole("article");
       await expect(rails).toHaveCount(2);
+      for (const side of ["A", "B"]) {
+        const evidence = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true });
+        const provenance = evidence.locator("details");
+        await expect(provenance).not.toHaveAttribute("open", "");
+        await expect(provenance.getByText(/SHA-256/)).toBeHidden();
+        await evidence.getByText(`Procedencia oficial — Lado ${side}`, { exact: true }).press("Enter");
+        await expect(provenance).toHaveAttribute("open", "");
+        await expect(provenance.getByText(/SHA-256/)).toBeVisible();
+      }
       const appliedContexts = main.getByRole("region", { name: "Contexto de comparación autorizada" });
       const applied = { contexts: await appliedContexts.innerText(), heading: await appliedHeading.innerText(), table: await table.innerText(), rails: await rails.allInnerTexts() };
       const expectAppliedUnchanged = async (): Promise<void> => {
@@ -119,18 +117,44 @@ test.describe("authorized official comparison", () => {
       };
       const hashes = applied.rails.flatMap((rail) => [...rail.matchAll(/SHA-256 ([a-f0-9]{64})/g)].map((match) => match[1]));
       expect(hashes).toHaveLength(2);
-      for (const category of [leftCategory, rightCategory]) {
-        await category.selectOption("");
-        await expect(main.getByText("Cambios sin aplicar", { exact: true })).toBeVisible();
-        await unavailableCompare();
-        await expect(page).toHaveURL(servedUrl.toString());
-        await expectAppliedUnchanged();
-        await category.selectOption(identity.categoryId);
-        await expect(main.getByText("Cambios sin aplicar", { exact: true })).toHaveCount(0);
-        await expect(compare).toBeEnabled();
-        await expect(page).toHaveURL(servedUrl.toString());
-        await expectAppliedUnchanged();
+      const chart = main.getByRole("region", { name: "Participación por partido", exact: true });
+      await expect(chart).toBeVisible();
+      await expect(chart).toContainText("100,00 %");
+      await expect(chart).toContainText(/votos.*partidos/i);
+      // While a new selection is being served, no old figures or evidence remain current.
+      let releaseSelection: () => void = () => {};
+      const selectionDelay = new Promise<void>((resolve) => { releaseSelection = resolve; });
+      await page.route("**/compare?**", async (route) => {
+        await selectionDelay;
+        await route.continue();
+      });
+      try {
+        await leftCategory.focus();
+        await leftCategory.selectOption("");
+        await expect(chart).toHaveCount(0);
+        await expect(tableRegion).toHaveCount(0);
+        await expect(rails).toHaveCount(0);
+        await expect(leftCategory).toBeFocused();
+        await expect(sharedDistrict).toHaveValue("");
+        await expect(sharedSection).toHaveValue("");
+      } finally {
+        releaseSelection();
       }
+      await expect(page).not.toHaveURL(/leftCategoryId=/);
+      await page.unroute("**/compare?**");
+      await leftCategory.selectOption(identity.categoryId);
+      await expect(sharedDistrict).toBeEnabled();
+      await sharedDistrict.selectOption(identity.distritoCode);
+      await expect(sharedSection).toBeEnabled();
+      await sharedSection.focus();
+      await sharedSection.selectOption(identity.seccionCode);
+      await expect(page).toHaveURL(servedUrl.toString());
+      await expect(chart).toBeVisible();
+      for (const side of ["A", "B"]) {
+        const details = main.getByRole("article", { name: `Evidencia oficial — Lado ${side}`, exact: true }).locator("details");
+        if (!await details.getAttribute("open").then((value) => value !== null)) await details.locator("summary").click();
+      }
+      await expectAppliedUnchanged();
       await tableRegion.focus();
       await expect(tableRegion).toBeFocused();
       const editA = main.getByRole("group", { name: /^Lado A\b/ });
@@ -150,32 +174,38 @@ test.describe("authorized official comparison", () => {
         if (!afterElement) throw new Error("Missing ordered comparison region");
         expect(await before.evaluate((element, next) => Boolean(element.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING), afterElement)).toBe(true);
       };
-      await test.step("1440px equal editors, shared strip and dominant exact table beside evidence", async () => {
+      await test.step("1440px aligned editors and territory above full-width exact results and evidence", async () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         const a = await bounds(editA), b = await bounds(editB), territory = await bounds(shared);
         expect(Math.abs(a.width - b.width)).toBeLessThanOrEqual(2);
         expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(2);
         expect(Math.abs(a.height - b.height)).toBeLessThanOrEqual(2);
         expect(a.x + a.width).toBeLessThanOrEqual(b.x + 2);
-        expect(territory.y).toBeGreaterThanOrEqual(Math.max(a.y + a.height, b.y + b.height) - 2);
-        expect(territory.width).toBeGreaterThan(a.width);
+        expect(Math.abs(territory.y - a.y)).toBeLessThanOrEqual(2);
+        expect(Math.abs(territory.width - a.width)).toBeLessThanOrEqual(2);
+        expect(b.x + b.width).toBeLessThanOrEqual(territory.x + 2);
         await expect(shared).toHaveCount(1);
         const exact = await bounds(tableRegion);
         for (const evidence of [evidenceA, evidenceB]) {
           await expect(evidence).toHaveCount(1);
           const rail = await bounds(evidence);
           expect(exact.width).toBeGreaterThan(rail.width);
-          expect(rail.x).toBeGreaterThanOrEqual(exact.x + exact.width - 2);
+          expect(rail.y).toBeGreaterThanOrEqual(exact.y + exact.height - 2);
           await expect(evidence).toContainText("SHA-256");
         }
         const evidence = await bounds(main.getByRole("complementary", { name: "Evidencia oficial por lado" }));
         const results = await bounds(main.getByRole("region", { name: "Resultados exactos", exact: true }));
-        expect(Math.min(evidence.y + evidence.height, results.y + results.height)).toBeGreaterThan(Math.max(evidence.y, results.y));
+        expect(evidence.y).toBeGreaterThanOrEqual(results.y + results.height - 2);
+        expect(Math.abs(evidence.width - results.width)).toBeLessThanOrEqual(2);
+        const railA = await bounds(evidenceA), railB = await bounds(evidenceB);
+        expect(Math.abs(railA.y - railB.y)).toBeLessThanOrEqual(2);
+        expect(Math.abs(railA.width - railB.width)).toBeLessThanOrEqual(2);
+        expect(railA.x + railA.width).toBeLessThanOrEqual(railB.x + 2);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
       });
       await test.step("390px preserves reading order from editors through both evidence rails", async () => {
         await page.setViewportSize({ width: 390, height: 844 });
-        const ordered = [editA, editB, shared, compare, contexts, tableRegion, evidenceA, evidenceB];
+        const ordered = [editA, editB, shared, contexts, chart, tableRegion, evidenceA, evidenceB];
         for (let index = 1; index < ordered.length; index++) {
           const before = ordered[index - 1]!, after = ordered[index]!;
           await precedes(before, after);
@@ -216,8 +246,18 @@ test.describe("authorized official comparison", () => {
         await expect.poll(() => tableRegion.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
         await expectAppliedUnchanged();
       });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect(chart).toBeVisible();
+      await page.goto(new URL("/", baseURL).toString());
+      await page.goto(servedUrl.toString());
+      await page.goBack();
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
+      await page.goForward();
+      await expect(page).toHaveURL(servedUrl.toString());
+      await expect(sharedSection).toHaveValue(identity.seccionCode);
+      await expect(chart).toBeVisible();
       await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
-      await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
+      await expect(chart).toHaveCount(0); await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");
     }));
   });

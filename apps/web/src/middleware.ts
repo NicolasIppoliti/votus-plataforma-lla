@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { isAuthApiError, isAuthSessionMissingError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
 
@@ -10,6 +11,19 @@ import { resolveSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
  * without authentication").
  */
 const PUBLIC_ROUTES = new Set(["/login", "/auth/callback"]);
+const ENDED_SESSION_CODES = new Set([
+  "bad_jwt", "session_not_found", "session_expired", "refresh_token_not_found",
+  "refresh_token_already_used", "user_not_found", "user_banned",
+]);
+
+function sessionProbeResponse(response: NextResponse, ended: boolean): NextResponse {
+  const result = NextResponse.json({ status: ended ? "unauthenticated" : "unavailable" }, {
+    status: ended ? 401 : 503,
+    headers: { "Cache-Control": "private, no-store, max-age=0" },
+  });
+  for (const cookie of response.cookies.getAll()) result.cookies.set(cookie);
+  return result;
+}
 
 /**
  * Supabase Auth session gate for every route in this app, per
@@ -68,11 +82,27 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // getUser() (not getSession()) so the session is revalidated against
   // Supabase Auth on every request rather than trusted from an unverified
   // cookie — required for a hard authentication gate at the edge.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let verified;
+  try {
+    verified = await supabase.auth.getUser();
+  } catch (error) {
+    if (pathname === "/api/session") return sessionProbeResponse(response, false);
+    throw error;
+  }
+  const { data: { user }, error } = verified;
+
+  // getUser already attempts server-side renewal. Only definitive loss ends an
+  // idle page; a transport failure or unrecognized Auth error is not logout.
+  if (pathname === "/api/session" && error) {
+    const ended = isAuthSessionMissingError(error) || (isAuthApiError(error) &&
+      (error.status === 401 || (error.status < 500 && ENDED_SESSION_CODES.has(error.code ?? ""))));
+    return sessionProbeResponse(response, ended);
+  }
 
   if (!user) {
+    if (pathname === "/api/session") {
+      return sessionProbeResponse(response, true);
+    }
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }

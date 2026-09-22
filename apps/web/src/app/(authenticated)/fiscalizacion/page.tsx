@@ -1,14 +1,12 @@
 import type { ReactNode } from "react";
+import styles from "./fiscalizacion.module.css";
+import { CoverageChart } from "./CoverageChart";
 
-import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
+import { FiscalizacionSelectionForm, type CoverageField } from "./FiscalizacionSelectionForm";
 import { EvidenceState } from "@/components/EvidenceState";
 import { TableRegion } from "@/components/TableRegion";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import {
-  SCOPE_FORM_KIND,
-  scopeControlStates,
-} from "@/components/scope-selector-behavior";
 import {
   formatFacetOptionLabel,
   normalizeExplorationParams,
@@ -62,121 +60,37 @@ interface EvidenceExclusion {
   rows: number;
 }
 
-function CoverageExplorerForm({
-  facets,
-  selected,
-}: {
-  facets: ExplorationFacets;
+function FiscalizacionWorkspace({ facets, selected, children }: {
+  facets: ExplorationFacets | null;
   selected: CoverageFormSelection;
+  children: ReactNode;
 }): ReactNode {
-  const controlStates = scopeControlStates(SCOPE_FORM_KIND.COVERAGE, {
-    electionId: selected.electionId ?? "",
-    categoryId: selected.categoryId ?? "",
-    distritoCode: selected.distritoCode ?? "",
-    seccionCode: selected.seccionCode ?? "",
-  });
-
-  return (
-    <section className="fiscalizacion-workspace__filters panel" aria-labelledby="coverage-form-heading">
-      <div className="panel__heading">
-        <p className="fiscalizacion-workspace__section-label">Alcance y control</p>
-        <h2 id="coverage-form-heading">Elegir el alcance de la cobertura</h2>
-        <p>
-          Mantenga la presencia no oficial separada del denominador de resultados
-          oficiales.
-        </p>
-      </div>
-      <ScopeSelectorForm
-        action="/fiscalizacion"
-        kind={SCOPE_FORM_KIND.COVERAGE}
-      >
-        <fieldset className="form-grid selector-form">
-          <legend className="selector-form__legend">Selectores de cobertura</legend>
-          <div className="field">
-            <label htmlFor="coverage-election">Elección</label>
-            <select
-              id="coverage-election"
-              name="electionId"
-              defaultValue={selected.electionId ?? ""}
-              required={controlStates.electionId.required}
-              disabled={controlStates.electionId.disabled}
-            >
-              <option value="">Elegir una elección</option>
-              {facets.elections.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="coverage-category">Categoría</label>
-            <select
-              id="coverage-category"
-              name="categoryId"
-              defaultValue={selected.categoryId ?? ""}
-              required={controlStates.categoryId.required}
-              disabled={controlStates.categoryId.disabled}
-            >
-              <option value="">Elegir una categoría</option>
-              {facets.categories.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="coverage-distrito">Distrito</label>
-            <select
-              id="coverage-distrito"
-              name="distritoCode"
-              defaultValue={selected.distritoCode ?? ""}
-              required={controlStates.distritoCode.required}
-              disabled={controlStates.distritoCode.disabled}
-            >
-              <option value="">Elegir un distrito</option>
-              {facets.distritos.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {formatFacetOptionLabel(option)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="coverage-seccion">Sección</label>
-            <select
-              id="coverage-seccion"
-              name="seccionCode"
-              defaultValue={selected.seccionCode ?? ""}
-              required={controlStates.seccionCode.required}
-              disabled={controlStates.seccionCode.disabled}
-            >
-              <option value="">Elegir una sección</option>
-              {facets.secciones.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {formatFacetOptionLabel(option)}
-                </option>
-              ))}
-            </select>
-          </div>
-        </fieldset>
-        <div className="form-actions">
-          <Button variant="solid" className="w-full" type="submit">
-            Mostrar cobertura
-          </Button>
-        </div>
-      </ScopeSelectorForm>
-    </section>
-  );
+  const fields: CoverageField[] | null = facets ? [
+    { name: "electionId", id: "coverage-election", label: "Elección", placeholder: "Elegir una elección",
+      options: facets.elections.map((option) => ({ value: option.id, label: option.label })) },
+    { name: "categoryId", id: "coverage-category", label: "Categoría", placeholder: "Elegir una categoría",
+      options: facets.categories.map((option) => ({ value: option.id, label: option.name })) },
+    { name: "distritoCode", id: "coverage-distrito", label: "Distrito", placeholder: "Elegir un distrito",
+      options: facets.distritos.map((option) => ({ value: option.code, label: formatFacetOptionLabel(option) })) },
+    { name: "seccionCode", id: "coverage-seccion", label: "Sección", placeholder: "Elegir una sección",
+      options: facets.secciones.map((option) => ({ value: option.code, label: formatFacetOptionLabel(option) })) },
+  ] : null;
+  return <main className={`page-shell ${styles.root}`}>
+    <div className={`shell-container ${styles.layout}`}>
+      <PageHeader />
+      <FiscalizacionSelectionForm selected={{ electionId: selected.electionId ?? "", categoryId: selected.categoryId ?? "",
+        distritoCode: selected.distritoCode ?? "", seccionCode: selected.seccionCode ?? "" }} fields={fields}>
+        {children}
+      </FiscalizacionSelectionForm>
+    </div>
+  </main>;
 }
 
 function PageHeader(): ReactNode {
   return (
-    <header className="page-header fiscalizacion-workspace__header">
-      <p className="eyebrow">Fiscalización / evidencia autorizada</p>
+    <header className={styles.header}>
       <h1>Fiscalización (no oficial)</h1>
-      <p className="page-header__lede">
+      <p className={styles.lede}>
         Examine la presencia no oficial sin perder de vista el denominador oficial.
       </p>
     </header>
@@ -185,8 +99,8 @@ function PageHeader(): ReactNode {
 
 function refusal(reason: string): ReactNode {
   return (
-    <main className="page-shell fiscalizacion-workspace">
-      <div className="shell-container fiscalizacion-workspace__layout">
+    <main className={`page-shell ${styles.root}`}>
+      <div className={`shell-container ${styles.layout}`}>
         <PageHeader />
         <EvidenceState state="unavailable" title="Solicitud no disponible" titleId="workspace-request-refusal">
           <p>Se rechazó la solicitud: {reason}.</p>
@@ -426,10 +340,9 @@ function CoverageQualification({
 
   return (
     <section
-      className="fiscalizacion-workspace__qualification"
+      className={styles.qualification}
       aria-labelledby="workspace-qualification"
     >
-      <p className="fiscalizacion-workspace__section-label">Cobertura y resultados</p>
       <h2 id="workspace-qualification">Calificación de la evidencia</h2>
       <p role="status">
         {coverage.observed_units} unidades observadas de {coverage.denominator_units} del
@@ -443,6 +356,7 @@ function CoverageQualification({
         {result.reference.distrito_code}, sección {result.reference.seccion_code}.
       </p>
       <p>Denominador oficial: {coverage.denominator_units}.</p>
+      <CoverageChart observedUnits={coverage.observed_units} denominatorUnits={coverage.denominator_units} />
       {coverage.uncovered.truncated ? (
         <p role="note">
           Detalle acotado: {coverage.uncovered.items.length} de {coverage.uncovered.total}{" "}
@@ -466,8 +380,7 @@ function CoverageEvidence({
 }): ReactNode {
   const value = settledValue(result);
   return (
-    <section className="fiscalizacion-workspace__coverage" aria-labelledby="workspace-coverage">
-      <p className="fiscalizacion-workspace__section-label">Fuente fiscal</p>
+    <section className={styles.coverage} aria-labelledby="workspace-coverage">
       <h2 id="workspace-coverage">Cobertura autorizada</h2>
       <p role={value ? "status" : "alert"}>
         Estado de cobertura: {settledStatus(result)}.
@@ -517,8 +430,7 @@ function ResultEvidence({
 }): ReactNode {
   const value = settledValue(result);
   return (
-    <section className="fiscalizacion-workspace__result" aria-labelledby="workspace-result">
-      <p className="fiscalizacion-workspace__section-label">Resultado y procedencia</p>
+    <section className={styles.result} aria-labelledby="workspace-result">
       <h2 id="workspace-result">Resultado autorizado</h2>
       <p role={value ? "status" : "alert"}>
         Estado del resultado: {settledStatus(result)}.
@@ -535,7 +447,7 @@ function ResultEvidence({
           </p>
           <p>Denominador oficial: {value.reference.denominator_units}.</p>
           <TableRegion label="Resultados de fiscalización">
-            <Table>
+            <Table className="data-table">
               <TableCaption>Resultados de fiscalización</TableCaption>
               <TableHeader>
                 <TableRow>
@@ -570,14 +482,22 @@ function ResultEvidence({
           </ul>
           {collectionNotice("Listas no mapeadas", value.unmapped)}
           {renderExclusions("Exclusiones del resultado", value.exclusions)}
-          <ul aria-label="Procedencia del resultado">
-            {value.provenance.items.map((item) => (
-              <li key={item.id}>
-                {item.id}: {item.status}, SHA-256 {item.sha256 ?? "no disponible"},
-                obtenido {item.fetched_at}
-              </li>
-            ))}
-          </ul>
+          {value.provenance.items.filter((item) => !item.sha256 || item.status !== "ok").map((item) => (
+            <p role="alert" key={item.id}>
+              {item.id}: estado {item.status}; SHA-256 {item.sha256 ? "disponible" : "no disponible"}.
+            </p>
+          ))}
+          <details className={styles.provenance}>
+            <summary>Archivo de respaldo</summary>
+            <ul aria-label="Procedencia del resultado">
+              {value.provenance.items.map((item) => (
+                <li key={item.id}>
+                  {item.id}: {item.status}, SHA-256 {item.sha256 ?? "no disponible"},
+                  obtenido {item.fetched_at}
+                </li>
+              ))}
+            </ul>
+          </details>
           {collectionNotice("Procedencia", value.provenance)}
           {value.truncated ? (
             <p role="alert">La evidencia del resultado está truncada.</p>
@@ -593,12 +513,10 @@ function ResultEvidence({
 }
 
 function AuthorizedEvidence({
-  form,
   selection,
   coverage,
   result,
 }: {
-  form: ReactNode;
   selection: FiscalizacionEvidenceSelection;
   coverage: PromiseSettledResult<AuthorizedFiscalizacionCoverage>;
   result: PromiseSettledResult<AuthorizedFiscalizacionResult>;
@@ -626,7 +544,7 @@ function AuthorizedEvidence({
         <p>Estado de evidencia: {presentation.reason}.</p>
       </EvidenceState>
     ) : (
-      <section className="fiscalizacion-workspace__evidence" aria-label="Evidencia fiscal autorizada">
+      <section className={styles.evidence} aria-label="Evidencia fiscal autorizada">
         <CoverageQualification
           coverage={presentation.coverage}
           result={presentation.result}
@@ -636,15 +554,7 @@ function AuthorizedEvidence({
       </section>
     );
 
-  return (
-    <main className="page-shell fiscalizacion-workspace">
-      <div className="shell-container fiscalizacion-workspace__layout">
-        <PageHeader />
-        {form}
-        {state}
-      </div>
-    </main>
-  );
+  return state;
 }
 
 async function renderFiscalizacionPage(
@@ -685,13 +595,12 @@ async function renderFiscalizacionPage(
    if (electionId && categoryId && distritoCode && seccionCode) {
      const selection: FiscalizacionEvidenceSelection = { electionId, categoryId, distritoCode, seccionCode };
      const [coverage, result, facets] = await Promise.all([Promise.allSettled([loadSafeFiscalizacionCoverage(selection, true), loadSafeFiscalizacionResult(selection, true)]), createAuthorizedOfficialFacetRepository().facets(selected).catch(() => null)]).then(([evidence, loadedFacets]) => [evidence[0], evidence[1], loadedFacets] as const);
-     return <AuthorizedEvidence selection={selection} form={facets ? <CoverageExplorerForm facets={facets} selected={selected} /> : null} coverage={coverage} result={result} />;
+     return <FiscalizacionWorkspace facets={facets} selected={selected}><AuthorizedEvidence selection={selection} coverage={coverage} result={result} /></FiscalizacionWorkspace>;
    }
    let facets: ExplorationFacets;
    try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }
    catch (error) { return refusal(error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones" : "No se pudieron cargar las opciones"); }
-   const form = <CoverageExplorerForm facets={facets} selected={selected} />;
-   return <main className="page-shell fiscalizacion-workspace"><div className="shell-container fiscalizacion-workspace__layout"><PageHeader />{form}<section className="panel" aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></div></main>;
+   return <FiscalizacionWorkspace facets={facets} selected={selected}><section className={styles.state} aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></FiscalizacionWorkspace>;
 }
 
 export default async function FiscalizacionPage({

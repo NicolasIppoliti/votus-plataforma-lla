@@ -31,7 +31,7 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 // explicit unofficial opt-in may ever contain it.
 const FISCALIZACION_MARKER = "party-internal, unofficial";
 
-nextTest("retries unavailable official evidence with the submitted selection after a draft edit", async ({ page, next }) => {
+nextTest("retries unavailable official evidence with the served canonical selection", async ({ page, next }) => {
     const bodies: unknown[] = [];
     const origin = new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin;
     next.onFetch(async (request) => {
@@ -56,12 +56,6 @@ nextTest("retries unavailable official evidence with the submitted selection aft
     await page.goto(submittedUrl);
     await expect(page.getByRole("main").getByRole("alert")).toContainText("no está disponible");
     expect(bodies).toEqual([expectedBody]);
-    const options = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === "/api/drilldown/scope-options" && response.request().method() === "POST");
-    await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).selectOption("establecimiento");
-    expect((await options).ok()).toBe(true);
-    await expect(page.locator('form[action="/drilldown"]')).not.toHaveAttribute("aria-busy", "true");
-    await expect(page).toHaveURL(submittedUrl);
     await page.locator("html").evaluate((element) => { element.dataset.retrySentinel = "original-document"; });
     const retry = page.getByRole("link", { name: "Reintentar carga", exact: true });
     await expect(retry).toHaveCount(1);
@@ -75,10 +69,36 @@ nextTest("retries unavailable official evidence with the submitted selection aft
     await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
     await expect(page.getByRole("combobox", { name: "Nivel del informe", exact: true })).toHaveValue("mesa");
     await expect(page.getByRole("main")).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa`);
+    await expect(page.getByText("Archivo y procedencia", { exact: true })).toBeVisible();
+    await page.getByText("Archivo y procedencia", { exact: true }).click();
     await expect(page.getByRole("list", { name: "procedencia" })).toContainText("SHA-256");
     await expect(retry).toHaveCount(0);
   }));
 });
+
+async function expectDistributionScaleAligned(page: Page): Promise<void> {
+  const chart = page.getByRole("region", { name: "Distribución del voto oficial", exact: true });
+  await expect(chart).toBeVisible();
+  // Compare rendered text centers with actual SVG grid lines, not only shared CSS names.
+  await expect.poll(() => chart.evaluate((element) => {
+    const ticks = [...element.querySelectorAll('[aria-hidden="true"] > div > span')];
+    const axis = element.querySelector('[aria-hidden="true"]');
+    const series = element.querySelector("ul");
+    const bars = [...element.querySelectorAll('svg[role="img"]')];
+    const offsets = bars.flatMap((bar) => ticks.map((tick, index) => {
+      const line = bar.querySelectorAll("line")[index];
+      if (!line) return Infinity;
+      const label = tick.getBoundingClientRect();
+      return Math.abs(label.left + label.width / 2 - line.getBoundingClientRect().left);
+    }));
+    return {
+      fiveTicks: ticks.length === 5,
+      hasBars: bars.length > 0,
+      fullWidth: Boolean(axis && series && Math.abs(axis.getBoundingClientRect().width - series.getBoundingClientRect().width) <= 1),
+      aligned: offsets.length > 0 && offsets.every((offset) => offset <= 1),
+    };
+  })).toEqual({ fiveTicks: true, hasBars: true, fullWidth: true, aligned: true });
+}
 
 async function expectNoBlankSearchParams(page: Page): Promise<void> {
   const url = new URL(page.url());
@@ -127,11 +147,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         .getByRole("link", { name: "Explorar", exact: true })
         .click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
-      const coldUrl = page.url();
-      let draftUrl = coldUrl;
-      await page.getByRole("button", { name: "Aplicar selección" }).click();
-      await expect(page).toHaveURL(coldUrl);
-      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
+      await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
       for (const label of [
         "Categoría", "Distrito", "Sección", "Circuito", "Establecimiento", "Mesa",
         "Nivel del informe",
@@ -148,35 +164,33 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const draft = async (label: string, value: string, dependent?: string, optionText?: string): Promise<void> => {
         const control = page.getByRole("combobox", { name: label, exact: true });
         if (optionText) await expect(control.getByRole("option", { name: optionText, exact: true })).toHaveAttribute("value", value);
-        const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/drilldown/scope-options");
-        await control.focus(); await control.selectOption(value);
-        expect(page.url()).toBe(draftUrl); await expect(control).toBeFocused();
-        if (dependent) {
-          const child = page.getByRole("combobox", { name: dependent, exact: true }); await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
-        }
-        expect(await (await responsePromise).json()).toMatchObject({ capability: "official-exploration", meaning: "scope-options-only" });
+        const name = await control.getAttribute("name");
+        await control.focus();
+        await control.selectOption(value);
+        await expect(page).toHaveURL((url) => (url.searchParams.get(name!) ?? "") === value);
+        await expect(form).not.toHaveAttribute("aria-busy", "true");
+        await expect(control).toBeFocused();
+        await expect(control).toHaveValue(value);
         if (dependent && value) await expect(page.getByRole("combobox", { name: dependent, exact: true })).toBeEnabled();
-        await expect(form).not.toHaveAttribute("aria-busy", "true"); await expect(form.locator('[aria-live="polite"]')).toHaveText(""); await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
+        await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
       await draft("Elección", SOURCE_SCOPE.electionId, "Categoría"); await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito");
       await draft("Distrito", identity.distritoCode, "Sección", `${identity.distritoCode} — Buenos Aires`); await draft("Sección", identity.seccionCode, "Circuito", `${identity.seccionCode} — Coronel de Marina L. Rosales`);
-      await draft("Nivel del informe", "seccion"); await draft("Circuito", "00001", "Establecimiento", "00001 — 00001"); expect(page.url()).toBe(draftUrl);
+      await draft("Nivel del informe", "seccion"); await draft("Circuito", "00001", "Establecimiento", "00001 — 00001");
       await draft("Establecimiento", "E1", "Mesa", "E1 — Synthetic school"); await draft("Mesa", "1"); await draft("Nivel del informe", "");
-      const clearResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/drilldown/scope-options");
-      const section = page.getByRole("combobox", { name: "Sección", exact: true }); await section.focus(); await section.selectOption("");
-      expect(page.url()).toBe(draftUrl); await expect(section).toBeFocused();
+      const section = page.getByRole("combobox", { name: "Sección", exact: true });
+      await section.focus(); await section.selectOption("");
+      await expect(section).toBeFocused();
       for (const label of ["Circuito", "Establecimiento", "Mesa"]) {
         const child = page.getByRole("combobox", { name: label, exact: true });
         await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
       }
-      await clearResponse;
+      await expect(page).toHaveURL((url) => !url.searchParams.has("seccionCode"));
+      await expect(form).not.toHaveAttribute("aria-busy", "true");
       await draft("Sección", identity.seccionCode, "Circuito");
       await draft("Circuito", "00001", "Establecimiento");
       await draft("Establecimiento", "E1", "Mesa");
       await draft("Mesa", "1"); await draft("Nivel del informe", "mesa");
-      const navigations: string[] = [];
-      page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
-      await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expectNoBlankSearchParams(page);
       const explorerUrl = new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
@@ -186,8 +200,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         baseURL,
       ).toString();
       await expect(page).toHaveURL(explorerUrl);
-      expect(navigations).toEqual([explorerUrl]);
-      expect(navigations.some((href) => href.includes("circuitoCode=") && href.includes("level=seccion"))).toBe(false); await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
+      await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       const explorer = page.getByRole("main");
       await expect(explorer).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa, obtenidos de filas de fuente mesa`);
       await expect(explorer).toContainText(
@@ -202,15 +215,22 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(voteTable).toBeFocused();
       expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
+      for (const width of [1440, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expectDistributionScaleAligned(page);
+      }
+
       await page.setViewportSize({ width: 320, height: 720 });
       await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toBeVisible();
-      await expect(explorer.getByText("Resultados y evidencia", { exact: true })).toBeVisible();
+      await expect(explorer.getByRole("region", { name: "Distribución del voto oficial", exact: true })).toBeVisible();
       await expect(voteTable).toBeVisible();
       await voteTable.focus();
       await expect(voteTable).toBeFocused();
       expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       await page.setViewportSize({ width: 1440, height: 900 });
 
+      await expect(page.getByText("Archivo y procedencia", { exact: true })).toBeVisible();
+    await page.getByText("Archivo y procedencia", { exact: true }).click();
       const provenance = page.getByRole("list", { name: "procedencia" });
       await expect(provenance.getByRole("listitem")).toHaveCount(1);
       await expect(provenance).toContainText(identity.archiveEntryIds[0]!);
@@ -224,33 +244,67 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const evidence = explorer.getByRole("region", { name: "Referencias de la consulta", exact: true });
       const submittedHeading = results.getByRole("heading", { name: "Desglose oficial autorizado", exact: true });
       await expect(submittedHeading).toBeVisible();
-      await expect(submittedHeading).toHaveCSS("font-size", "24px");
+      await expect(submittedHeading).toHaveCSS("font-size", "20px");
+      await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toHaveCSS("font-size", "32px");
       await expect(submittedScope).toBeVisible();
-      const submitted = {
-        scope: await submittedScope.innerText(), heading: await submittedHeading.innerText(),
-        votes: await voteTable.innerText(), provenance: await provenance.innerText(),
-        results: await results.innerText(), evidence: await evidence.innerText(),
-      };
-      const dirty = form.getByText("Cambios sin aplicar", { exact: true });
       const level = form.getByRole("combobox", { name: "Nivel del informe", exact: true });
-      await expect(level).toHaveValue("mesa");
-      await expect(dirty).toHaveCount(0);
-      for (const value of ["establecimiento", "mesa"]) {
-        const options = page.waitForResponse((response) =>
-          new URL(response.url()).pathname === "/api/drilldown/scope-options" && response.request().method() === "POST");
-        await level.selectOption(value);
-        expect((await options).ok()).toBe(true);
-        await expect(form).not.toHaveAttribute("aria-busy", "true");
-        await expect(level).toHaveValue(value);
-        if (value === "establecimiento") await expect(dirty).toBeVisible();
-        else await expect(dirty).toHaveCount(0);
+      // Keep a real server response outstanding during an independent edit.
+      let ready = false;
+      let delivered = false;
+      let release: () => void = () => {};
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route("**/drilldown?**", async (route) => {
+        const params = new URL(route.request().url()).searchParams;
+        if (params.get("level") !== "establecimiento" || params.get("mesaCode") !== "1") {
+          await route.continue(); return;
+        }
+        const response = await route.fetch();
+        ready = true;
+        await held;
+        await route.fulfill({ response });
+        delivered = true;
+      });
+      try {
+        await level.selectOption("establecimiento");
+        await expect.poll(() => ready).toBe(true);
+        await expect(results).toHaveCount(0);
+        await expect(evidence).toHaveCount(0);
+        await expect(provenance).toHaveCount(0);
+        // Mesa and report depth are independently editable at this scope.
+        await form.getByRole("combobox", { name: "Mesa", exact: true }).selectOption("");
+        release();
+        await expect.poll(() => delivered).toBe(true);
+        await expect(page).toHaveURL(explorerUrl.replace("&mesaCode=1&level=mesa", "&level=establecimiento"));
+        await expect(level).toHaveValue("establecimiento");
+        await expect(form.getByRole("combobox", { name: "Mesa", exact: true })).toHaveValue("");
+        await expect(explorer).toContainText("votos a nivel establecimiento");
+      } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
+
+      await draft("Mesa", "1");
+      await draft("Nivel del informe", "mesa");
+      // Returning A → pending B → A must supersede B, not merely clear a dirty flag.
+      ready = false; delivered = false;
+      let releaseReversal: () => void = () => {};
+      const reversal = new Promise<void>((resolve) => { releaseReversal = resolve; });
+      await page.route("**/drilldown?**", async (route) => {
+        if (new URL(route.request().url()).searchParams.get("level") !== "establecimiento") {
+          await route.continue(); return;
+        }
+        const response = await route.fetch(); ready = true;
+        await reversal; await route.fulfill({ response }); delivered = true;
+      });
+      try {
+        await level.selectOption("establecimiento");
+        await expect.poll(() => ready).toBe(true);
+        await expect(results).toHaveCount(0);
+        await level.focus(); await level.selectOption("mesa");
+        releaseReversal();
+        await expect.poll(() => delivered).toBe(true);
         await expect(page).toHaveURL(explorerUrl);
-        await expect.poll(async () => ({
-          scope: await submittedScope.innerText(), heading: await submittedHeading.innerText(),
-          votes: await voteTable.innerText(), provenance: await provenance.innerText(),
-          results: await results.innerText(), evidence: await evidence.innerText(),
-        })).toEqual(submitted);
-      }
+        await expect(explorer).toContainText("votos a nivel mesa");
+        await expect(level).toHaveValue("mesa");
+        await expect(level).toBeFocused();
+      } finally { releaseReversal(); await page.unrouteAll({ behavior: "wait" }); }
       const filters = explorer.getByRole("region", { name: "Elegir el alcance de los resultados", exact: true });
       await expect.poll(async () => {
         const [filterBox, resultBox, evidenceBox] = await Promise.all(
@@ -261,21 +315,15 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         );
         return {
           filtersAbove: filterBox!.bottom <= Math.min(resultBox!.top, evidenceBox!.top),
-          adjacent: resultBox!.right <= evidenceBox!.left,
-          aligned: Math.abs(resultBox!.top - evidenceBox!.top) <= 2,
-          resultsDominant: resultBox!.width > evidenceBox!.width,
+          evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
+          fullWidth: Math.abs(resultBox!.width - evidenceBox!.width) <= 2 && Math.abs(resultBox!.width - filterBox!.width) <= 2,
         };
-      }).toEqual({ filtersAbove: true, adjacent: true, aligned: true, resultsDominant: true });
+      }).toEqual({ filtersAbove: true, evidenceBelow: true, fullWidth: true });
 
-      await page.goBack(); await expect(page).toHaveURL(draftUrl);
-      await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
-      draftUrl = coldUrl; navigations.length = 0;
-      await draft("Elección", SOURCE_SCOPE.electionId, "Categoría"); await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito"); await draft("Distrito", identity.distritoCode, "Sección");
-      await draft("Sección", identity.seccionCode, "Circuito"); await draft("Circuito", "00001", "Establecimiento"); await draft("Establecimiento", "E1", "Mesa"); await draft("Nivel del informe", "establecimiento");
+      await draft("Mesa", "");
+      await draft("Nivel del informe", "establecimiento");
       const secondUrl = explorerUrl.replace("&mesaCode=1&level=mesa", "&level=establecimiento");
-      await page.getByRole("button", { name: "Aplicar selección" }).click();
       await expect(page).toHaveURL(secondUrl); await expectNoBlankSearchParams(page);
-      expect(navigations).toEqual([secondUrl]);
       await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       await expect(explorer).toContainText("votos a nivel establecimiento");
       await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();

@@ -1,9 +1,7 @@
-import { allocateSeats } from "@/domain/seat-allocation/allocate";
 import type { AllocationLevel } from "@/domain/seat-allocation/types";
 import type { Granularity } from "@/lib/results/types";
 import {
   projectionInputSchema,
-  projectionToAllocationInput,
   type ProjectionInput,
 } from "./projection-input";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
@@ -29,6 +27,45 @@ export interface SimulationFormValues {
 export interface SimulationScenario {
   input: ProjectionInput;
   council?: typeof SIMULATION_COUNCIL.JURISDICTION;
+}
+
+export function simulationScenarioQuery(scenario: SimulationScenario): string {
+  const query = new URLSearchParams({ input: JSON.stringify(scenario.input) });
+  if (scenario.council) query.set("council", scenario.council);
+  query.sort();
+  return query.toString();
+}
+
+/** Only restore scenarios the editor can reproduce without losing evidence. */
+export function simulationValuesFromQuery(query: string): SimulationFormValues | null {
+  const params = new URLSearchParams(query);
+  if ([...params.keys()].some((key) => key !== "input" && key !== "council")) return null;
+  if (params.getAll("input").length !== 1 || params.getAll("council").length > 1) return null;
+  try {
+    const input = projectionInputSchema.parse(JSON.parse(params.get("input") ?? ""));
+    const values: SimulationFormValues = {
+      level: input.level,
+      granularity: input.granularity,
+      seatsToFill: String(input.seatsToFill),
+      totalVotes: input.totalVotes === undefined ? "" : String(input.totalVotes),
+      blankVotes: input.level === "national" ? "0" : String(input.blankVotes ?? ""),
+      annulledVotes: input.level === "national" ? "0" : String(input.annulledVotes ?? ""),
+      padron: input.level === "national" ? String(input.padron) : "",
+      thresholdPercent: input.level === "national" ? String(input.threshold.value) : "3",
+      lists: input.lists.map((list) => ({
+        id: list.listId,
+        name: list.listName,
+        votes: String(list.votes),
+      })),
+    };
+    const restored = createSimulationScenario(values);
+    return JSON.stringify(restored.input) === JSON.stringify(input) &&
+      restored.council === (params.get("council") ?? undefined)
+      ? values
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export class SimulationFormError extends Error {
@@ -118,23 +155,6 @@ function parsePbaVoteTotals(values: SimulationFormValues) {
   };
 }
 
-function domainErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (
-    message.includes("totalVotes") ||
-    message.includes("blank") ||
-    message.includes("annulled") ||
-    message.includes("vote-coverage basis") ||
-    message.includes("padrón")
-  ) {
-    return "Los totales de votos no son consistentes entre sí ni con los votos de las listas.";
-  }
-  if (message.includes("positive-vote list clears")) {
-    return "Ninguna lista con votos supera el umbral indicado.";
-  }
-  return "Los datos ingresados no permiten realizar una asignación de bancas válida.";
-}
-
 export function createSimulationScenario(
   values: SimulationFormValues,
 ): SimulationScenario {
@@ -185,12 +205,6 @@ export function createSimulationScenario(
     throw new SimulationFormError([
       "Revise los campos del escenario: contienen valores no admitidos.",
     ]);
-  }
-
-  try {
-    allocateSeats(projectionToAllocationInput(parsed.data));
-  } catch (error) {
-    throw new SimulationFormError([domainErrorMessage(error)]);
   }
 
   return parsed.data.level === "pba_municipal"

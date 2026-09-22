@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
+import styles from "./drilldown.module.css";
+import { DrilldownDistribution } from "./DrilldownDistribution";
 
-import { ScopeSelectorForm } from "@/components/ScopeSelectorForm";
+import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
 import {
-  SCOPE_FORM_KIND,
   canonicalScopeSearchParams,
-  scopeControlStates,
-  serializeScopeDraft,
 } from "@/components/scope-selector-behavior";
-import { Button } from "@/components/ui/button";
 import { TableRegion } from "@/components/TableRegion";
 import {
   Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow,
@@ -41,7 +39,7 @@ interface DrilldownPageProps {
 
 interface ExplorerFormProps {
   facets: ExplorationFacets;
-  submitted?: boolean;
+  children: ReactNode;
   selected: {
     electionId?: string;
     categoryId?: string;
@@ -68,7 +66,7 @@ type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusalWithDetails = Exclude<EvidenceRefusal, { status: "authorization_denied" }>;
 
-function ExplorerForm({ facets, selected, submitted = false }: ExplorerFormProps): ReactNode {
+function ExplorerForm({ facets, selected, children }: ExplorerFormProps): ReactNode {
   const values = {
     electionId: selected.electionId ?? "",
     categoryId: selected.categoryId ?? "",
@@ -79,91 +77,22 @@ function ExplorerForm({ facets, selected, submitted = false }: ExplorerFormProps
     mesaCode: selected.mesaCode?.toString() ?? "",
     level: selected.level ?? "",
   };
-  const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, values);
-
-  return (
-    <section className="official-explorer__filters panel" aria-labelledby="explorer-form-heading">
-      <div className="panel__heading">
-        <p className="official-explorer__section-label">Definir el alcance</p>
-        <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>
-        <p>Use los selectores para crear un enlace directo reutilizable a resultados oficiales.</p>
-      </div>
-      <ScopeSelectorForm key={serializeScopeDraft(values)} action="/drilldown" kind={SCOPE_FORM_KIND.DRILLDOWN}
-        {...(submitted ? { submittedValues: values } : {})}>
-        <fieldset className="form-grid selector-form">
-          <legend className="selector-form__legend">Selectores de resultados</legend>
-          <div className="field">
-            <label htmlFor="explorer-election">Elección</label>
-            <select id="explorer-election" name="electionId" defaultValue={selected.electionId ?? ""}
-              required={controlStates.electionId.required} disabled={controlStates.electionId.disabled}>
-              <option value="">Elegir una elección</option>
-              {facets.elections.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-category">Categoría</label>
-            <select id="explorer-category" name="categoryId" defaultValue={selected.categoryId ?? ""}
-              required={controlStates.categoryId.required} disabled={controlStates.categoryId.disabled}>
-              <option value="">Elegir una categoría</option>
-              {facets.categories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-distrito">Distrito</label>
-            <select id="explorer-distrito" name="distritoCode" defaultValue={selected.distritoCode ?? ""}
-              required={controlStates.distritoCode.required} disabled={controlStates.distritoCode.disabled}>
-              <option value="">Elegir un distrito</option>
-              {facets.distritos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-seccion">Sección</label>
-            <select id="explorer-seccion" name="seccionCode" defaultValue={selected.seccionCode ?? ""}
-              required={controlStates.seccionCode.required} disabled={controlStates.seccionCode.disabled}>
-              <option value="">Elegir una sección</option>
-              {facets.secciones.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-circuito">Circuito</label>
-            <select id="explorer-circuito" name="circuitoCode" defaultValue={selected.circuitoCode ?? ""}
-              required={controlStates.circuitoCode.required} disabled={controlStates.circuitoCode.disabled}>
-              <option value="">Cualquier circuito</option>
-              {facets.circuitos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-establecimiento">Establecimiento</label>
-            <select id="explorer-establecimiento" name="establecimientoCode" defaultValue={selected.establecimientoCode ?? ""}
-              required={controlStates.establecimientoCode.required} disabled={controlStates.establecimientoCode.disabled}>
-              <option value="">Cualquier establecimiento</option>
-              {facets.establecimientos.map((option) => <option key={option.code} value={option.code}>{formatFacetOptionLabel(option)}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-mesa">Mesa</label>
-            <select id="explorer-mesa" name="mesaCode" defaultValue={selected.mesaCode?.toString() ?? ""}
-              required={controlStates.mesaCode.required} disabled={controlStates.mesaCode.disabled}>
-              <option value="">Cualquier mesa</option>
-              {facets.mesas.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="explorer-level">Nivel del informe</label>
-            <select id="explorer-level" name="level" defaultValue={selected.level ?? ""}
-              required={controlStates.level.required} disabled={controlStates.level.disabled}>
-              <option value="">Elegir un nivel</option>
-              {facets.availableLevels.map((level) => <option key={level} value={level}>{level}</option>)}
-            </select>
-          </div>
-        </fieldset>
-        <div className="form-actions">
-          <Button variant="solid" className="w-full lg:w-auto" type="submit">Aplicar selección</Button>
-        </div>
-      </ScopeSelectorForm>
-      {facetExclusionNotes(facets.exclusions ?? [])}
-    </section>
-  );
+  const namedOptions = (options: ExplorationFacets["distritos"]) => options.map((option) => ({
+    value: option.code, label: formatFacetOptionLabel(option),
+  }));
+  const fields: SelectionField[] = [
+    { name: "electionId", id: "explorer-election", label: "Elección", placeholder: "Elegir una elección", options: facets.elections.map((option) => ({ value: option.id, label: option.label })) },
+    { name: "categoryId", id: "explorer-category", label: "Categoría", placeholder: "Elegir una categoría", options: facets.categories.map((option) => ({ value: option.id, label: option.name })) },
+    { name: "distritoCode", id: "explorer-distrito", label: "Distrito", placeholder: "Elegir un distrito", options: namedOptions(facets.distritos) },
+    { name: "seccionCode", id: "explorer-seccion", label: "Sección", placeholder: "Elegir una sección", options: namedOptions(facets.secciones) },
+    { name: "circuitoCode", id: "explorer-circuito", label: "Circuito", placeholder: "Cualquier circuito", options: namedOptions(facets.circuitos) },
+    { name: "establecimientoCode", id: "explorer-establecimiento", label: "Establecimiento", placeholder: "Cualquier establecimiento", options: namedOptions(facets.establecimientos) },
+    { name: "mesaCode", id: "explorer-mesa", label: "Mesa", placeholder: "Cualquier mesa", options: facets.mesas.map((option) => ({ value: String(option.code), label: String(option.code) })) },
+    { name: "level", id: "explorer-level", label: "Nivel del informe", placeholder: "Elegir un nivel", options: facets.availableLevels.map((level) => ({ value: level, label: level })) },
+  ];
+  return <DrilldownSelectionForm selected={values} fields={fields} notes={facetExclusionNotes(facets.exclusions ?? [])}>
+    {children}
+  </DrilldownSelectionForm>;
 }
 
 function formatShare(share: string | null): string {
@@ -255,11 +184,23 @@ function refusalMessage(status: EvidenceRefusal["status"]): string {
 
 function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selection: OfficialSelection }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
-  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className="official-explorer__state" role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
+  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className={styles.state} role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
   return (
     <>
-      <section className="official-explorer__results" aria-labelledby="official-results-heading">
-        <p className="official-explorer__section-label">Resultados y evidencia</p>
+        <section className={styles.context} aria-labelledby="submitted-scope-heading">
+          <h3 id="submitted-scope-heading">Alcance aplicado</h3>
+          <dl className={styles.scope}>
+            <div><dt>Elección</dt><dd>{selection.electionId}</dd></div>
+            <div><dt>Categoría</dt><dd>{selection.categoryId}</dd></div>
+            <div><dt>Distrito</dt><dd>{selection.distritoCode}</dd></div>
+            <div><dt>Sección</dt><dd>{selection.seccionCode}</dd></div>
+            <div><dt>Circuito</dt><dd>{selection.circuitoCode ?? "Cualquier circuito"}</dd></div>
+            <div><dt>Establecimiento</dt><dd>{selection.establecimientoCode ?? "Cualquier establecimiento"}</dd></div>
+            <div><dt>Mesa</dt><dd>{selection.mesaCode ?? "Cualquier mesa"}</dd></div>
+            <div><dt>Nivel del informe</dt><dd>{selection.requestedLevel}</dd></div>
+          </dl>
+        </section>
+      <section className={styles.results} aria-labelledby="official-results-heading">
         <h2 id="official-results-heading">Desglose oficial autorizado</h2>
       <p role="status">
         {result.totalVotes} votos a nivel {result.level}, obtenidos de filas de fuente {result.sourceGranularity}
@@ -269,6 +210,7 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
       </p>
       <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
       {sourceExclusionNotes(result.sourceExclusions, "oficial")}
+      <DrilldownDistribution result={result} />
       <TableRegion label="Votos oficiales y porcentaje por partido">
         <Table className="data-table">
           <TableCaption>Votos oficiales y porcentaje por partido</TableCaption>
@@ -317,22 +259,8 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
       </section>
       </section>
 
-      <section className="official-explorer__evidence" aria-labelledby="official-evidence-heading">
-        <p className="official-explorer__section-label">Evidencia y archivo</p>
+      <section className={styles.evidence} aria-labelledby="official-evidence-heading">
         <h2 id="official-evidence-heading">Referencias de la consulta</h2>
-        <section aria-labelledby="submitted-scope-heading">
-          <h3 id="submitted-scope-heading">Alcance aplicado</h3>
-          <dl className="official-explorer__submitted-scope evidence-text">
-            <dt>Elección</dt><dd>{selection.electionId}</dd>
-            <dt>Categoría</dt><dd>{selection.categoryId}</dd>
-            <dt>Distrito</dt><dd>{selection.distritoCode}</dd>
-            <dt>Sección</dt><dd>{selection.seccionCode}</dd>
-            <dt>Circuito</dt><dd>{selection.circuitoCode ?? "Cualquier circuito"}</dd>
-            <dt>Establecimiento</dt><dd>{selection.establecimientoCode ?? "Cualquier establecimiento"}</dd>
-            <dt>Mesa</dt><dd>{selection.mesaCode ?? "Cualquier mesa"}</dd>
-            <dt>Nivel del informe</dt><dd>{selection.requestedLevel}</dd>
-          </dl>
-        </section>
         <section aria-labelledby="reference-heading">
           <h3 id="reference-heading">Referencia electoral autorizada</h3>
         {reference.sourceExclusions.map((entry) => (
@@ -359,6 +287,8 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
         <section aria-labelledby="provenance-heading">
           <h3 id="provenance-heading">Procedencia segura</h3>
         {sourceExclusionNotes(provenance.sourceExclusions, "procedencia")}
+        <details className={styles.provenance}>
+          <summary>Archivo y procedencia</summary>
         <ul aria-label="procedencia">
           {provenance.items.map((item) => (
             <li key={item.archiveEntryId}>
@@ -366,6 +296,7 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
             </li>
           ))}
         </ul>
+        </details>
         </section>
       </section>
     </>
@@ -374,22 +305,19 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
 
 function ExplorerHeader(): ReactNode {
   return (
-    <header className="official-explorer__header page-header">
-      <p className="eyebrow">Resultados oficiales / explorador</p>
+    <header className={styles.header}>
       <h1>Explorador oficial</h1>
-      <p className="page-header__lede">Seleccione un alcance publicado y examine evidencia oficial autorizada sin exponer ubicaciones de origen.</p>
-      <p className="official-explorer__context">Las cifras, exclusiones y referencias se conservan junto a la evidencia que las califica.</p>
+      <p className="page-header__lede">Explore el territorio, compare la distribución del voto y consulte la evidencia oficial de cada selección.</p>
     </header>
   );
 }
 
-function PageShell({ form, children }: { form: ReactNode; children: ReactNode }): ReactNode {
+function PageShell({ facets, selected, children }: ExplorerFormProps): ReactNode {
   return (
-    <main className="page-shell official-explorer">
-      <div className="shell-container official-explorer__layout">
+    <main className={`page-shell ${styles.root}`}>
+      <div className={`shell-container ${styles.layout}`}>
         <ExplorerHeader />
-        {form}
-        {children}
+        <ExplorerForm facets={facets} selected={selected}>{children}</ExplorerForm>
       </div>
     </main>
   );
@@ -397,10 +325,10 @@ function PageShell({ form, children }: { form: ReactNode; children: ReactNode })
 
 function refusalPage(message: ReactNode): ReactNode {
   return (
-    <main className="page-shell official-explorer">
-      <div className="shell-container official-explorer__layout">
+    <main className={`page-shell ${styles.root}`}>
+      <div className={`shell-container ${styles.layout}`}>
         <ExplorerHeader />
-        <section className="official-explorer__state" role="alert">{message}</section>
+        <section className={styles.state} role="alert">{message}</section>
       </div>
     </main>
   );
@@ -487,7 +415,6 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     ...effectiveCodes,
     ...(level ? { level } : {}),
   };
-  const form = <ExplorerForm facets={facets} selected={selected} />;
 
   const baseReady = Boolean(electionId && categoryId && effectiveCodes.distritoCode && effectiveCodes.seccionCode && level);
   const levelReady = level === EXPLORATION_LEVEL.SECCION ||
@@ -495,7 +422,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     level === EXPLORATION_LEVEL.ESTABLECIMIENTO && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode) ||
     level === EXPLORATION_LEVEL.MESA && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode && typeof effectiveCodes.mesaCode === "number");
   if (!hierarchyMatches || !baseReady || !levelReady || !electionId || !categoryId || !effectiveCodes.distritoCode || !effectiveCodes.seccionCode || !level) {
-    return <PageShell form={form}><section className="official-explorer__state" role="status">Elija una sección exacta y los selectores requeridos para el nivel del informe.</section></PageShell>;
+    return <PageShell facets={facets} selected={selected}><section className={styles.state} role="status">Elija una sección exacta y los selectores requeridos para el nivel del informe.</section></PageShell>;
   }
 
   const selection: OfficialSelection = {
@@ -511,8 +438,8 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   const evidence = await loadAuthorizedOfficialDrilldownEvidence(selection);
   if (evidence.status !== OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK) {
     return (
-      <PageShell form={form}>
-        <section className="official-explorer__state" role="alert">
+      <PageShell facets={facets} selected={selected}>
+        <section className={styles.state} role="alert">
           <p>{refusalMessage(evidence.status)}</p>
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE
             ? <a href={`/drilldown?${canonicalScopeSearchParams({
@@ -534,7 +461,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     );
   }
 
-  return <PageShell form={<ExplorerForm facets={facets} selected={selected} submitted />}>
+  return <PageShell facets={facets} selected={selected}>
     <ResultEvidence evidence={evidence} selection={selection} />
   </PageShell>;
 }

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/lib/supabase/server-client", () => ({
@@ -125,7 +125,8 @@ describe("DrilldownPage authorized official evidence", () => {
     });
     expect(markup).toContain("300 votos a nivel mesa");
     expect(markup).toContain('aria-labelledby="official-evidence-heading"');
-    const evidence = markup.slice(markup.indexOf('aria-labelledby="official-evidence-heading"'));
+    const evidence = markup;
+    expect(markup.indexOf('aria-labelledby="submitted-scope-heading"')).toBeLessThan(markup.indexOf('aria-labelledby="official-results-heading"'));
     expect(evidence).toContain('<h3 id="submitted-scope-heading">Alcance aplicado</h3>');
     for (const entry of [
       `Elección</dt><dd>${COMPLETE_SECTION.electionId}`,
@@ -344,8 +345,8 @@ describe("DrilldownPage authorized official evidence", () => {
     });
     const markup = await render();
     expect(markup).toContain("0 votos a nivel seccion");
-    expect(markup.match(/Lista sin mapear 999/g)).toHaveLength(2);
-    expect(markup.match(/porcentaje no disponible/g)).toHaveLength(2);
+    expect(markup.match(/Lista sin mapear 999/g)).toHaveLength(4);
+    expect(markup.match(/porcentaje no disponible/g)).toHaveLength(4);
     expect(markup).not.toMatch(/>999<|\d+\.\d+%/);
     expect(markup).toContain("SHA-256");
     expect(markup).not.toContain("no superó la validación");
@@ -356,9 +357,8 @@ describe("DrilldownPage authorized official evidence", () => {
 
     for (const text of [
       "<h1>Explorador oficial</h1>",
-      "Definir el alcance",
-      "Resultados y evidencia",
-      "Evidencia y archivo",
+      "Distribución del voto oficial",
+      "Archivo y procedencia",
       'role="region" aria-label="Votos oficiales y porcentaje por partido" tabindex="0"',
       'role="region" aria-label="Votos oficiales por circuito y establecimiento" tabindex="0"',
       'role="region" aria-label="Referencia electoral autorizada" tabindex="0"',
@@ -375,9 +375,34 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).toMatch(/<td\b[^>]*>Circuito 00001 — E1 — School<\/td>/);
     expect(markup.match(/scope="row"/g)).toHaveLength(2);
     expect(markup).toContain('<form action="/drilldown" method="get">');
-    expect(markup).toMatch(/<button\b[^>]*data-slot="button"[^>]*type="submit"[^>]*>Aplicar selección<\/button>/);
+    expect(markup).not.toContain("Aplicar selección");
+    expect(markup).toContain("Los resultados se actualizan al cambiar la selección.");
     expect(markup.match(/<select\b/g)).toHaveLength(8);
     expect(markup).not.toContain('class="button button--primary"');
+  });
+
+  it("renders every authorized party on a common share scale beside the exact table", async () => {
+    const bundle = authorizedBundle();
+    mocks.bundle.mockResolvedValueOnce({ ...bundle, result: { ...bundle.result, parties: [
+      { identity_status: "canonical", canonical_party_id: "a", display_name: "Partido A", list_id: null, votes: 225, vote_share: "0.75" },
+      { identity_status: "unmapped", canonical_party_id: null, display_name: null, list_id: "999", votes: 75, vote_share: "0.25" },
+      { identity_status: "canonical", canonical_party_id: "zero", display_name: "Sin votos", list_id: null, votes: 0, vote_share: "0" },
+    ] } });
+    const markup = await render();
+    const chart = markup.slice(markup.indexOf('aria-labelledby="drilldown-distribution-heading"'), markup.indexOf('role="region" aria-label="Votos oficiales y porcentaje por partido"'));
+    expect(chart).toContain("Base: 300 votos partidarios");
+    expect(chart).toContain("No representa el padrón ni todos los votos emitidos");
+    for (const label of ["Partido A: 225 votos, 75,00 %", "Lista sin mapear 999: 75 votos, 25,00 %", "Sin votos: 0 votos, 0,00 %"]) {
+      expect(chart).toContain(`aria-label="${label}"`);
+    }
+    expect(chart.match(/role="img"/g)).toHaveLength(3);
+    for (const width of [75, 25, 0]) expect(chart).toContain(`width="${width}"`);
+    expect(chart).toContain("100 %");
+    expect(markup).toContain("75.00%");
+    expect(markup).toContain("25.00%");
+    const disclosure = markup.slice(markup.indexOf("<details"));
+    expect(disclosure).toContain("SHA-256");
+    expect(disclosure).not.toContain("Se excluyeron");
   });
 
   it("keeps a denied result status-only inside the explorer state region", async () => {
@@ -392,5 +417,6 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("Reintentar carga");
     expect(markup).not.toContain("href=");
     expect(markup).not.toContain("300 votos a nivel seccion");
+    expect(markup).not.toContain("Distribución del voto oficial");
   });
 });

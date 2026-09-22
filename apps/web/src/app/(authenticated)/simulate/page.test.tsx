@@ -1,7 +1,9 @@
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import SimulatePage from "./page";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 
 /**
  * `composeCouncil` and `CouncilCompositionError` were complete, tested, and
@@ -51,17 +53,27 @@ const OFFICIAL_PBA_2025_INPUT = {
   ],
 };
 
-async function renderSimulation(input?: object): Promise<string> {
+async function renderSimulation(
+  input?: object,
+  params: Record<string, string> = {},
+): Promise<string> {
   return renderToStaticMarkup(
     (await SimulatePage({
       searchParams: Promise.resolve(
-        input ? { input: JSON.stringify(input) } : {},
+        input ? { ...params, input: JSON.stringify(input) } : params,
       ),
     })) as ReactElement,
   );
 }
 
 describe("simulate page — normal-user entry", () => {
+  it("explains automatic server calculation without an apply button", async () => {
+    const markup = await renderSimulation();
+
+    expect(markup).toContain("Los resultados se actualizan automáticamente");
+    expect(markup).not.toContain(">Simular bancas</button>");
+  });
+
   it("renders a labelled form on a cold route instead of raw JSON instructions", async () => {
     const markup = await renderSimulation();
 
@@ -85,9 +97,90 @@ describe("simulate page — normal-user entry", () => {
     );
     expect(markup).not.toContain("Proporcione un parámetro de consulta");
   });
+
+  it("restores an exactly representable scenario without changing list identities", async () => {
+    const markup = await renderSimulation(
+      { ...ALLOCATION_INPUT, councilTotal: 18 },
+      { council: "Coronel de Marina Leonardo Rosales" },
+    );
+
+    expect(markup).toContain('aria-label="Formulario de simulación de bancas"');
+    expect(markup).toMatch(/id="simulation-list-votes-110"[^>]*value="6000"/);
+    expect(markup).toMatch(/id="simulation-list-name-999"[^>]*value="FUERZA PATRIA"/);
+    expect(markup).toMatch(/id="simulation-total-votes"[^>]*value="10000"/);
+    expect(markup).toContain('value="mesa" selected=""');
+    expect(markup).not.toContain('aria-label="Escenario proporcionado"');
+    expect(markup).toContain('data-testid="allocation-result"');
+  });
+
+  it("preserves rich input as a supplied scenario instead of inventing editable totals", async () => {
+    const markup = await renderSimulation(OFFICIAL_PBA_2025_INPUT);
+
+    expect(markup).toContain('aria-label="Escenario proporcionado"');
+    expect(markup).toContain("Crear otro escenario");
+    expect(markup).not.toContain('aria-label="Formulario de simulación de bancas"');
+    expect(markup).toContain("5.901 explícitamente fuera del modelo");
+    expect(markup).toContain("32.291 votos válidos");
+    expect(markup).toContain("Huella de los datos proporcionados");
+  });
+
+  it("keeps held-over council evidence outside the narrower editor", async () => {
+    const markup = await renderSimulation(
+      { ...ALLOCATION_INPUT, councilTotal: 18 },
+      {
+        council: "Coronel de Marina Leonardo Rosales",
+        heldOver: JSON.stringify(HELD_OVER),
+      },
+    );
+
+    expect(markup).toContain('aria-label="Escenario proporcionado"');
+    expect(markup).not.toContain('aria-label="Formulario de simulación de bancas"');
+    expect(markup).toContain('data-testid="council-composition"');
+    expect(markup).toContain("18 bancas, 9 renovadas en esta elección");
+    expect(markup).toContain("Huella de los datos proporcionados");
+  });
+
+  it.each([
+    {
+      totalVotes: 100,
+      blankVotes: 60,
+      annulledVotes: 50,
+      lists: [{ listId: "A", listName: "Lista A", votes: 0 }],
+    },
+    {
+      totalVotes: 9000,
+      blankVotes: 0,
+      annulledVotes: 0,
+      lists: [
+        { listId: "list-1", listName: "Lista A", votes: 6000 },
+        { listId: "list-2", listName: "Lista B", votes: 4000 },
+      ],
+    },
+  ])("refuses inconsistent totals on the server without a chart or trace", async (totals) => {
+    const markup = await renderSimulation(
+      { ...ALLOCATION_INPUT, ...totals, councilTotal: 18 },
+      { council: "Coronel de Marina Leonardo Rosales" },
+    );
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("no cumplen sus reglas");
+    expect(markup).not.toContain('data-testid="allocation-result"');
+    expect(markup).not.toContain('aria-label="Distribución de bancas"');
+    expect(markup).not.toContain("Huella de los datos proporcionados");
+  });
 });
 
 describe("simulate page — complete statutory evidence", () => {
+  it("shows actual renewal-seat proportions beside the canonical evidence", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+
+    expect(markup).toContain('aria-label="Distribución de bancas"');
+    expect(markup).toContain('aria-label="LA LIBERTAD AVANZA: 5 de 9 bancas"');
+    expect(markup).toContain('aria-label="FUERZA PATRIA: 4 de 9 bancas"');
+    expect(markup).toContain("No representa la composición total del concejo");
+    expect(markup).toMatch(/<caption[^>]*>Asignación Hare por lista<\/caption>/);
+  });
+
   it("renders a published PBA vote scenario without relabelling it D’Hondt", async () => {
     const markup = await renderSimulation(OFFICIAL_PBA_2025_INPUT);
 
@@ -227,6 +320,9 @@ describe("simulate page — complete statutory evidence", () => {
     });
 
     expect(markup).toContain("D’Hondt");
+    expect(markup).toContain('aria-label="Lista A: 2 de 2 bancas"');
+    expect(markup).toContain('aria-label="Lista B: 0 de 2 bancas"');
+    expect(markup).toContain('aria-label="Lista C: 0 de 2 bancas"');
     expect(markup).toContain("Ley 19.945, arts. 160–161");
     expect(markup).not.toContain("Ley 5109");
     expect(markup).toContain("Base del umbral definida por el escenario");

@@ -109,16 +109,8 @@ test.describe("the municipal route requires workspace-authorized official result
         "page",
       );
       const main = page.getByRole("main");
-      await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
-      await expect(main).toContainText("Municipal · Concejales · Oficial");
-      await expect(main).toContainText("Distrito 02 · Sección 027");
-      await expect(main).toContainText("Esquema nacional: distrito es la provincia; sección es el partido.");
-      await expect(main.getByRole("table")).toHaveCount(0);
-      await expect(main).not.toContainText("sha256");
-      await page.getByLabel("Elección configurada").selectOption(MUNICIPAL_SCOPE.electionId);
-      await page.getByRole("button", { name: "Ver resultados oficiales" }).click();
-      const url = new URL(page.url());
-      expect([[...url.searchParams.keys()], url.searchParams.get("electionId")]).toEqual([["electionId"], MUNICIPAL_SCOPE.electionId]);
+      await expect(main.getByRole("button", { name: "Ver resultados oficiales" })).toHaveCount(0);
+      expect(new URL(page.url()).search).toBe("");
 
       await expect(main.getByRole("heading", { name: "Municipal (Concejales)" })).toBeVisible();
       await expect(main.getByRole("alert")).toContainText("El espacio de trabajo no autoriza esta sección municipal");
@@ -145,17 +137,22 @@ test.describe("the municipal route requires workspace-authorized official result
       const coldMain = page.getByRole("main");
       await expect(coldMain.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
       await expect(coldMain).toContainText("Distrito 02 · Sección 027");
-      await page.getByLabel("Elección configurada").selectOption(MUNICIPAL_SCOPE.electionId);
-      await page.getByRole("button", { name: "Ver resultados oficiales" }).click();
-      expect(new URL(page.url()).searchParams.toString()).toBe(`electionId=${MUNICIPAL_SCOPE.electionId}`);
+      await expect(coldMain.getByRole("button", { name: "Ver resultados oficiales" })).toHaveCount(0);
+      expect(new URL(page.url()).search).toBe("");
       const main = page.getByRole("main");
       await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
       await expect(main).toContainText("Distrito 02 · Sección 027");
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeVisible();
-      await expect(main.getByRole("heading", { name: "Resultados exactos" })).toHaveCSS("font-size", "24px");
+      await expect(main.getByRole("heading", { name: "Resultados exactos" })).toHaveCSS("font-size", "20px");
       await expect(main.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
       await expect(main.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
       await expect(main).toContainText(`1 fila fiscalización / ${FISCALIZACION_VOTES} votos`);
+      const archiveSummary = main.locator("summary").filter({ hasText: "Archivo y procedencia" });
+      await expect(archiveSummary).toBeVisible();
+      await expect(main.getByRole("list", { name: "procedencia" })).not.toBeVisible();
+      await archiveSummary.focus();
+      await expect(archiveSummary).toBeFocused();
+      await archiveSummary.press("Enter");
       await expect(main.getByRole("list", { name: "procedencia" })).toContainText(`${identity.archiveEntryIds[0]} — sha256: ${MUNICIPAL_SOURCE_ISOLATION_FIXTURE.archiveEntries![0]!["sha256"]}`);
       await expect(main.getByRole("list", { name: "procedencia" })).not.toContainText(identity.archiveEntryIds[1]!);
       await expect(main.getByRole("list", { name: "procedencia" })).not.toContainText(identity.archiveEntryIds[2]!);
@@ -173,99 +170,85 @@ test.describe("the municipal route requires workspace-authorized official result
       const results = main.getByRole("region", {
         name: "Resultados exactos", exact: true,
       });
-      const evidence = main.getByRole("complementary", {
-        name: "Evidencia oficial",
-      });
+      const evidence = main.getByRole("region", { name: "Referencias de la consulta", exact: true });
+      const coverage = main.getByRole("region", { name: "Cobertura y exclusiones", exact: true });
+      const distribution = main.getByRole("region", { name: "Votos por partido identificado", exact: true });
+      await expect(distribution).toBeVisible();
+      await expect(distribution.getByRole("img")).toHaveCount(1);
+      await expect(distribution.getByRole("img")).toHaveAttribute("aria-label", "ALIANZA LA LIBERTAD AVANZA: 11.111 votos");
+      await expect(distribution).toContainText("Las filas sin partido identificado se informan por separado");
       const selection = main.getByRole("region", {
         name: "Contexto de la consulta",
       });
 
-      await expect(evidence.getByRole("alert")).toContainText(
+      await expect(coverage.getByRole("alert")).toContainText(
         "1 de 2 filas (3333 votos) se resolvieron sin un partido curado",
       );
-      await expect(evidence.getByRole("listitem").filter({
+      await expect(coverage.getByRole("listitem").filter({
         hasText: /^110: 1 filas, 3333 votos$/,
       })).toHaveCount(1);
 
-      const expectEffectiveLayoutWidth = async () => {
-        const layout = main.locator(":scope > .official-municipal__layout");
-        await expect(layout).toBeVisible();
-        await expect(page.locator(".app-shell__workspace")).toBeVisible();
-        await expect.poll(async () => layout.evaluate((element) => {
+      for (const width of [1710, 1440, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(heading).toHaveCSS("font-size", "32px");
+        await expect.poll(() => main.locator(":scope > .shell-container").evaluate((element) => {
           const workspace = element.closest(".app-shell__workspace");
-          if (!(workspace instanceof HTMLElement)) {
-            throw new Error("Municipal layout requires an application workspace");
-          }
+          if (!(workspace instanceof HTMLElement)) throw new Error("Municipal requires an application workspace");
           const style = getComputedStyle(workspace);
-          const availableWidth = workspace.clientWidth
-            - Number.parseFloat(style.paddingLeft)
-            - Number.parseFloat(style.paddingRight);
-          const expectedWidth = Math.min(1540, availableWidth);
-          return Math.abs(element.getBoundingClientRect().width - expectedWidth);
-        }), {
-          message: "Municipal layout fills the workspace up to its 1540px cap",
-        }).toBeLessThanOrEqual(1);
-      };
-
-      await page.setViewportSize({ width: 1710, height: 906 });
-      await expect(heading).toBeVisible();
-      await expect(heading).toHaveCSS("font-size", "36px");
-      await expect(heading).toHaveCSS("line-height", "36px");
-      await expect(heading).toHaveCSS("letter-spacing", "-1.62px");
-      await expect(main.locator(":scope > .shell-container")).toHaveCSS(
-        "max-width", "1540px",
-      );
-      await expectEffectiveLayoutWidth();
-      const desktopResults = await results.evaluate((element) => {
-        const { x, y, right } = element.getBoundingClientRect();
-        return { x, y, right };
-      });
-      const desktopEvidence = await evidence.evaluate((element) => {
-        const { x, y, right, width } = element.getBoundingClientRect();
-        return { x, y, right, width };
-      });
-      const desktopSelection = await selection.evaluate((element) => {
-        const { x, right, bottom } = element.getBoundingClientRect();
-        return { x, right, bottom };
-      });
-      expect(desktopEvidence.x).toBeGreaterThanOrEqual(desktopResults.right);
-      expect(Math.abs(desktopEvidence.y - desktopResults.y)).toBeLessThanOrEqual(1);
-      expect(desktopEvidence.width).toBeCloseTo(304, 0);
-      expect(desktopSelection.bottom).toBeLessThanOrEqual(desktopResults.y);
-      expect(Math.abs(desktopSelection.x - desktopResults.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(desktopSelection.right - desktopEvidence.right))
-        .toBeLessThanOrEqual(1);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth))
-        .toBeLessThanOrEqual(1710);
-
-      await page.setViewportSize({ width: 390, height: 844 });
-      await expect(heading).toHaveCSS("font-size", "28px");
-      await expectEffectiveLayoutWidth();
-      const mobileResults = await results.evaluate((element) => {
-        const { x, bottom, width } = element.getBoundingClientRect();
-        return { x, bottom, width };
-      });
-      const mobileEvidence = await evidence.evaluate((element) => {
-        const { x, y, width } = element.getBoundingClientRect();
-        return { x, y, width };
-      });
-      expect(mobileEvidence.y).toBeGreaterThanOrEqual(mobileResults.bottom);
-      expect(Math.abs(mobileEvidence.x - mobileResults.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(mobileEvidence.width - mobileResults.width))
-        .toBeLessThanOrEqual(1);
-      await expect(tableRegion).toHaveAttribute("tabindex", "0");
-      await tableRegion.focus();
-      await expect(tableRegion).toBeFocused();
-      expect(await tableRegion.evaluate(
-        (element) => element.scrollWidth > element.clientWidth,
-      )).toBe(true);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth))
-        .toBeLessThanOrEqual(390);
+          const availableWidth = workspace.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          return Math.abs(element.getBoundingClientRect().width - Math.min(1540, availableWidth));
+        }), { message: "Municipal keeps its full workspace width up to1540px" }).toBeLessThanOrEqual(1);
+        await expect.poll(async () => {
+          const boxes = await Promise.all([selection, results, evidence].map((region) => region.evaluate((element) => {
+            const { x, y, width, bottom } = element.getBoundingClientRect();
+            return { x, y, width, bottom };
+          })));
+          return {
+            contextBefore: boxes[0]!.bottom <= boxes[1]!.y,
+            evidenceAfter: boxes[1]!.bottom <= boxes[2]!.y,
+            aligned: Math.abs(boxes[1]!.x - boxes[2]!.x) <= 1,
+            fullWidth: Math.abs(boxes[1]!.width - boxes[2]!.width) <= 1,
+          };
+        }).toEqual({ contextBefore: true, evidenceAfter: true, aligned: true, fullWidth: true });
+        await expect.poll(() => distribution.evaluate((element) => {
+          const axis = element.querySelector('[aria-hidden="true"] > div');
+          const svg = element.querySelector("svg");
+          if (!axis || !svg) return false;
+          const axisBox = axis.getBoundingClientRect();
+          const svgBox = svg.getBoundingClientRect();
+          const ticks = [...axis.children].map((tick) => {
+            const box = tick.getBoundingClientRect();
+            return box.x + box.width / 2;
+          });
+          const mark = svg.querySelector("rect")?.getBoundingClientRect();
+          return ticks.length === 2 && Math.abs(axisBox.x - svgBox.x) <= 1
+            && Math.abs(axisBox.width - svgBox.width) <= 1
+            && Math.abs(ticks[0]! - svgBox.x) <= 1
+            && Math.abs(ticks[1]! - svgBox.right) <= 1
+            && !!mark && Math.abs(mark.width - svgBox.width) <= 1;
+        }), { message: "Municipal zero/max tick centers, plot and largest bar share one scale" }).toBe(true);
+        await expect(tableRegion).toHaveAttribute("tabindex", "0");
+        await tableRegion.focus();
+        await expect(tableRegion).toBeFocused();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      }
 
       await page.setViewportSize({ width: 1440, height: 900 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
-      await page.setViewportSize({ width: 320, height: 720 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await expect(distribution).toBeVisible();
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      expect(await distribution.locator("rect").evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).transitionDuration),
+      )).toBeLessThanOrEqual(0.00001);
+      await page.locator("html").evaluate((element) => { element.style.zoom = "2"; });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await tableRegion.focus();
+      await expect(tableRegion).toBeFocused();
+      await page.locator("html").evaluate((element) => { element.style.zoom = ""; });
+      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("light");
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+
     }));
   });
 });

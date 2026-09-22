@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -171,6 +171,7 @@ const FIGURE_SENTINELS = [
 type PageParams = Record<string, string | string[] | undefined>;
 
 function expectFigureFree(markup: string): void {
+  expect(markup).not.toContain('aria-labelledby="fiscal-unit-coverage-heading"');
   for (const sentinel of FIGURE_SENTINELS) {
     expect(markup).not.toContain(sentinel);
   }
@@ -216,7 +217,8 @@ describe("FiscalizacionPage", () => {
     expect(cold).toContain("Elegir una elección");
     expect(cold).toContain("02 — Buenos Aires");
     expect(cold).toContain("027 — Coronel Rosales");
-    expect(cold).toContain(">Mostrar cobertura</button>");
+    expect(cold).not.toContain(">Mostrar cobertura</button>");
+    expect(cold).toContain("La cobertura y los resultados se actualizan al cambiar la selección.");
 
     const selected = await renderPage(COMPLETE_SELECTION);
     expect(selected).toContain(
@@ -225,6 +227,19 @@ describe("FiscalizacionPage", () => {
     expect(selected).toContain('<option value="02" selected="">');
     expect(selected).toContain('<option value="027" selected="">');
     expect(mocks.createFacetRepository).toHaveBeenCalled();
+  });
+
+  it("loads only facets for each incomplete automatic selection, without opting into either evidence loader", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    for (const selected of [{}, { electionId: COMPLETE_SELECTION.electionId },
+      { electionId: COMPLETE_SELECTION.electionId, categoryId: COMPLETE_SELECTION.categoryId },
+      { electionId: COMPLETE_SELECTION.electionId, categoryId: COMPLETE_SELECTION.categoryId, distritoCode: "02" }]) {
+      const markup = await renderPage(selected);
+      expect(markup).toContain("La cobertura y los resultados se actualizan al cambiar la selección.");
+      expectFigureFree(markup);
+    }
+    expect(mocks.coverage).not.toHaveBeenCalled();
+    expect(mocks.result).not.toHaveBeenCalled();
   });
 
   it("renders authorization denial distinctly from unavailable or empty facets", async () => {
@@ -304,7 +319,7 @@ describe("FiscalizacionPage", () => {
       'aria-label="Resultados de fiscalización" tabindex="0"',
     );
 
-    const qualification = markup.indexOf('class="fiscalizacion-workspace__qualification"');
+    const qualification = markup.indexOf('aria-labelledby="workspace-qualification"');
     const resultHeading = markup.indexOf('id="workspace-result"');
     const voteTable = markup.indexOf('<caption data-slot="table-caption"');
     const coverageDetail = markup.indexOf('id="workspace-coverage"');
@@ -318,6 +333,49 @@ describe("FiscalizacionPage", () => {
     expect(markup).toContain("Detalle acotado: 100 de 101 filas de resultado");
   });
 
+  it("charts supplied observed units against the exact official denominator, never the uncovered collection", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+    const markup = await renderComplete();
+    expect(markup).toContain('aria-labelledby="fiscal-unit-coverage-heading"');
+    expect(markup).toContain("Escala: de 0 a 8 unidades");
+    expect(markup).toContain('aria-label="7 de 8 unidades observadas"');
+    expect(markup).toContain('width="87.5"');
+    expect(markup).toContain("La longitud representa unidades observadas, no votos ni una muestra aleatoria.");
+    expect(markup).not.toContain("87,5%");
+    expect(markup).not.toMatch(/(?:^|[^\d])1 unidades sin cobertura/);
+    expect(markup).toContain("Unidades sin cobertura: se muestran 100 de 101; respuesta truncada");
+    expect(markup.indexOf('id="fiscal-unit-coverage-heading"')).toBeLessThan(markup.indexOf('id="workspace-result"'));
+    expect(markup).toContain("<summary>Archivo de respaldo</summary>");
+    const archive = markup.slice(markup.indexOf("<details"), markup.indexOf("</details>") + 10);
+    expect(archive).not.toMatch(/<details[^>]* open/);
+    expect(archive).toContain("fiscal/a");
+    expect(archive).not.toContain("mixed_granularity");
+  });
+
+  it("renders zero denominator without inventing a proportional scale", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue({ ...AUTHORIZED_COVERAGE, observed_units: 0, denominator_units: 0 });
+    mocks.result.mockResolvedValue({ ...AUTHORIZED_RESULT, reference: { ...AUTHORIZED_RESULT.reference, denominator_units: 0 } });
+    const markup = await renderComplete();
+    expect(markup).toContain("0 unidades observadas de 0 del denominador oficial");
+    expect(markup).toContain("El denominador oficial es 0; no hay una escala proporcional que representar.");
+    expect(markup).not.toContain('<svg');
+    expect(markup).not.toContain("Escala: de 0 a 1");
+  });
+
+  it("keeps archive verification warnings outside the closed supporting disclosure", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue({ ...AUTHORIZED_RESULT, provenance: {
+      items: [{ ...AUTHORIZED_RESULT.provenance.items[0], sha256: null, status: "unavailable" }], total: 1, truncated: false,
+    } });
+    const markup = await renderComplete();
+    expect(markup).toContain("fiscal/a: estado unavailable; SHA-256 no disponible.");
+    expect(markup.indexOf("fiscal/a: estado unavailable")).toBeLessThan(markup.indexOf("<details"));
+  });
+
   it("keeps accepted paired evidence visible when authorized facets are unavailable", async () => {
     mocks.facets.mockRejectedValue(new Error("controlled facets unavailable"));
     mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
@@ -325,7 +383,7 @@ describe("FiscalizacionPage", () => {
 
     const markup = await renderComplete();
 
-    expect(markup).toContain('class="fiscalizacion-workspace__qualification"');
+    expect(markup).toContain('aria-labelledby="workspace-qualification"');
     expect(markup).toContain("7 unidades observadas de 8 del denominador oficial");
     expect(markup).toContain("Guardian Party");
     expect(markup).toContain("South school");
@@ -525,7 +583,7 @@ describe("FiscalizacionPage", () => {
     expect(markup).toContain('data-state="loading"');
     expect(markup).toContain('id="fiscalizacion-loading-heading">Cargando fiscalización</h2>');
     expect(markup).toContain("Cargando el espacio de fiscalización");
-    expect(markup).toContain("fiscalizacion-loading__block");
+    expect(markup).toContain('aria-hidden="true"');
   });
 
   it("renders a safe keyboard-operable retry without error or evidence contents", () => {

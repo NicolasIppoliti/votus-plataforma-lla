@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
  * specs/access-control/spec.md, "No anonymous read path exists": no route
@@ -36,7 +36,127 @@ const PROTECTED_ROUTES = [
   "/simulate",
 ] as const;
 
+async function signInToMonitoredPage(page: Page): Promise<void> {
+  await page.clock.install();
+  await page.goto("/login");
+  await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
+  await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
+  const initialProbe = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/session");
+  await page.getByRole("button", { name: "Iniciar sesión" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  expect((await initialProbe).status()).toBe(200);
+}
+
+const isSessionProbe = (request: { url(): string }): boolean => new URL(request.url()).pathname === "/api/session";
+
 test.describe("no anonymous read path", () => {
+  test("an already-open protected page returns to login when its session disappears", async ({ page, context }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.clock.install();
+    await page.goto("/login");
+    const beforeLogin = await context.cookies();
+    await page.getByLabel("Correo electrónico").fill(TEST_USER_EMAIL);
+    await page.getByLabel("Contraseña").fill(TEST_USER_PASSWORD);
+    const initialProbe = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/session");
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toBeVisible();
+
+    // A real hydrated control establishes that the protected shell is running.
+    await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    const healthy = await initialProbe;
+    expect(healthy.status()).toBe(200);
+    expect(healthy.headers()["cache-control"]).toBe("private, no-store, max-age=0");
+    const healthyBody = await healthy.json();
+    expect(Object.keys(healthyBody)).toEqual(["status"]);
+    expect(["active", "selection_required"]).toContain(healthyBody.status);
+    const sessionCookies = assertLoopbackSessionCookieDelta(beforeLogin, await context.cookies(), environment.VOTUS_E2E_BASE_URL);
+    for (const cookie of sessionCookies) {
+      await context.clearCookies({ name: cookie.name, domain: cookie.domain, path: cookie.path });
+    }
+
+    // No click or page navigation: only the bounded lifecycle timer advances.
+    await page.clock.fastForward(60_000);
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toHaveCount(0);
+  });
+
+  test("temporary failures and changed membership do not end an idle session; fixed expiry does", async ({ page }) => {
+    await signInToMonitoredPage(page);
+    let state = "active";
+    await page.route("**/api/session", async (route) => {
+      if (state === "network") return route.abort("failed");
+      await route.fulfill({ status: state === "unavailable" ? 503 : 200, json: { status: state } });
+    });
+
+    for (state of ["network", "unavailable", "stale", "denied", "mismatch", "selection_required", "unknown", "active"]) {
+      const settled = state === "network"
+        ? page.waitForEvent("requestfailed", isSessionProbe)
+        : page.waitForResponse(isSessionProbe).then((response) => response.finished());
+      await page.clock.fastForward(60_000);
+      await settled;
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toBeVisible();
+    }
+
+    state = "expired";
+    await page.clock.fastForward(60_000);
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toHaveCount(0);
+  });
+
+  test("a focus check detects workspace revocation without waiting for the interval", async ({ page }) => {
+    await signInToMonitoredPage(page);
+    await page.route("**/api/session", (route) => route.fulfill({ status: 200, json: { status: "revoked" } }));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test("session checks are single-flight, time out safely, and pause while hidden", async ({ page }) => {
+    await signInToMonitoredPage(page);
+    let requests = 0;
+    let delayed: Route | undefined;
+    let delay = true;
+    await page.route("**/api/session", async (route) => {
+      requests += 1;
+      if (delay) { delayed = route; return; }
+      await route.fulfill({ status: 200, json: { status: "active" } });
+    });
+
+    await page.clock.fastForward(60_000);
+    await expect.poll(() => requests).toBe(1);
+    await page.evaluate(() => {
+      for (let index = 0; index < 3; index += 1) window.dispatchEvent(new Event("focus"));
+    });
+    expect(requests).toBe(1);
+    const timedOut = page.waitForEvent("requestfailed", isSessionProbe);
+    await page.clock.fastForward(10_000);
+    await timedOut;
+    await expect(page).toHaveURL(/\/$/);
+
+    // The browser visibility API is controlled at its environmental boundary;
+    // no production monitor state, tokens or private counters are accessed.
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.fastForward(60_000);
+    expect(requests).toBe(1);
+    delay = false;
+    const recovered = page.waitForResponse(isSessionProbe);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect((await recovered).status()).toBe(200);
+    expect(requests).toBe(2);
+    // A response arriving after its request was aborted cannot end the page.
+    await delayed!.fulfill({ status: 401, json: { status: "unauthenticated" } });
+    await expect(page).toHaveURL(/\/$/);
+    await page.evaluate(() => { Reflect.deleteProperty(document, "hidden"); });
+  });
+
   test("test_no_anonymous_read_path_including_cached_content", async ({
     page,
     context,
@@ -57,7 +177,7 @@ test.describe("no anonymous read path", () => {
     const anonymousBody = await anonymousResponse.text();
     expect(anonymousBody).not.toContain(IN_SCOPE_MARKER);
 
-    // 3. The real login form remains centered, stacked, touch-sized, and
+    // 3. The branded login composition remains centered, stacked, touch-sized, and
     //    overflow-free at the two release viewports. Its persistent feedback
     //    row keeps an invalid sign-in from shifting or overlapping controls.
     const viewports = [
@@ -71,6 +191,9 @@ test.describe("no anonymous read path", () => {
 
       const loginCard = page.getByRole("region", { name: "Iniciar sesión" });
       const loginForm = page.getByRole("form", { name: "Iniciar sesión" });
+      const brand = page.locator(".login-brand");
+      await expect(brand).toContainText("Votus");
+      await expect(brand).toContainText("Análisis electoral, con evidencia.");
       const emailInput = page.getByLabel("Correo electrónico");
       const passwordInput = page.getByLabel("Contraseña");
       const submitButton = page.getByRole("button", {
@@ -101,10 +224,17 @@ test.describe("no anonymous read path", () => {
       const password = passwordBox!;
       const submit = submitBox!;
       const cardRightGap = viewport.width - card.x - card.width;
-      const cardBottomGap = viewport.height - card.y - card.height;
+      const brandBox = await brand.boundingBox();
+      const pageBox = await page.getByRole("main").boundingBox();
+      expect(brandBox).not.toBeNull();
+      expect(pageBox).not.toBeNull();
+      const compositionTopGap = brandBox!.y - pageBox!.y;
+      const compositionBottomGap = pageBox!.y + pageBox!.height - card.y - card.height;
 
       expect(Math.abs(card.x - cardRightGap)).toBeLessThanOrEqual(2);
-      expect(Math.abs(card.y - cardBottomGap)).toBeLessThanOrEqual(2);
+      expect(Math.abs(compositionTopGap - compositionBottomGap)).toBeLessThanOrEqual(2);
+      expect(compositionTopGap).toBeGreaterThanOrEqual(32);
+      expect(brandBox!.y + brandBox!.height).toBeLessThan(card.y);
       expect(card.y).toBeGreaterThanOrEqual(0);
       expect(card.width).toBeLessThanOrEqual(
         Math.min(512, viewport.width - 32) + 1,

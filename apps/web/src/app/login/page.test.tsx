@@ -27,3 +27,16 @@ it("groups the login form with its heading and supporting guidance", () => {
     '<form aria-labelledby="login-heading" class="login-form">',
   );
 });
+
+it("presents Votus identity and product purpose before the protected sign-in form", () => {
+  const markup = renderToStaticMarkup(<LoginPage /> as ReactElement);
+
+  expect(markup).toContain('class="login-brand"');
+  expect(markup).toContain('class="login-brand__name">Votus</span>');
+  expect(markup).toContain("Análisis electoral, con evidencia.");
+  expect(markup).toContain("Resultados oficiales, comparación de elecciones y escenarios en un mismo espacio de trabajo.");
+  expect(markup.indexOf('class="login-brand"')).toBeLessThan(markup.indexOf('id="login-heading"'));
+  expect(markup).toContain("Acceso exclusivo para usuarios autorizados.");
+  expect(markup).toContain('type="email"');
+  expect(markup).toContain('type="password"');
+});

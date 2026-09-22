@@ -22,6 +22,8 @@ import {
 } from "./projection-input";
 import { SimulationForm } from "./simulation-form";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
+import { SeatDistribution } from "./seat-distribution";
+import "./simulation.css";
 
 interface SimulatePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -334,10 +336,17 @@ export default async function SimulatePage({
       )
     : undefined;
 
+  const requestQuery = new URLSearchParams(
+    Object.entries(params).flatMap(([key, value]) =>
+      typeof value === "string" ? [[key, value]] : [],
+    ),
+  );
+  requestQuery.sort();
+
   return (
-    <main>
+    <main className="simulation-page">
       <h1>Simulación de bancas</h1>
-      <SimulationForm />
+      <SimulationForm requestKey={requestQuery.toString()}>
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}
@@ -390,7 +399,7 @@ export default async function SimulatePage({
       ) : null}
       {result ? (
         <section data-testid="allocation-result" aria-label="Resultado de la asignación">
-          <h2 className="text-2xl! leading-[1.2]">Resultado ({allocationLevelLabel(result.level)})</h2>
+          <h2>Resultado ({allocationLevelLabel(result.level)})</h2>
           <p>Proyección hipotética aportada por quien realiza la consulta</p>
           {granularity ? (
             <p>
@@ -403,9 +412,11 @@ export default async function SimulatePage({
               Huella de los datos proporcionados (no es procedencia de archivo): sha256 {inputTrace}
             </p>
           ) : null}
+          <SeatDistribution result={result} />
           <AllocationEvidence result={result} />
         </section>
       ) : null}
+      </SimulationForm>
     </main>
   );
 }

@@ -4,9 +4,11 @@ import {
   useEffect,
   useRef,
   useState,
+  useTransition,
   type ChangeEvent,
-  type FormEvent,
+  type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +18,8 @@ import { projectionGranularitySchema } from "./projection-input";
 import {
   createSimulationScenario,
   SimulationFormError,
+  simulationScenarioQuery,
+  simulationValuesFromQuery,
   type SimulationFormListValues,
   type SimulationFormValues,
 } from "./simulation-form-adapter";
@@ -81,12 +85,125 @@ function NumberField({
   );
 }
 
-export function SimulationForm() {
-  const [values, setValues] = useState<SimulationFormValues>(INITIAL_VALUES);
-  const [errors, setErrors] = useState<readonly string[]>([]);
+interface SimulationFormProps {
+  requestKey: string;
+  children: ReactNode;
+}
+
+interface EditorState {
+  observedKey: string;
+  targetKey: string;
+  values: SimulationFormValues | null;
+  dirty: boolean;
+  errors: readonly string[];
+  requests: string[];
+}
+
+function restoredEditor(requestKey: string): EditorState {
+  return {
+    observedKey: requestKey,
+    targetKey: requestKey,
+    values: requestKey ? simulationValuesFromQuery(requestKey) : INITIAL_VALUES,
+    dirty: false,
+    errors: [],
+    requests: [],
+  };
+}
+
+export function SimulationForm({ requestKey, children }: SimulationFormProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [editor, setEditor] = useState(() => restoredEditor(requestKey));
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revision = useRef(0);
   const nextListId = useRef(2);
   const listNameInputRefs = useRef(new Map<string, HTMLInputElement>());
   const pendingListNameFocusId = useRef<string | null>(null);
+
+  // Preserve controls across our own server responses, including superseded
+  // requests. An external navigation restores its scenario instead.
+  if (editor.observedKey !== requestKey) {
+    const ownResponse = editor.requests.includes(requestKey);
+    setEditor({
+      ...(ownResponse ? editor : restoredEditor(requestKey)),
+      observedKey: requestKey,
+      requests: editor.requests.filter((key) => key !== requestKey),
+    });
+  }
+
+  const values = editor.values ?? INITIAL_VALUES;
+  const errors = editor.errors;
+
+  function cancelScheduledRequest() {
+    revision.current += 1;
+    if (timer.current !== null) clearTimeout(timer.current);
+  }
+
+  function setValues(update: (current: SimulationFormValues) => SimulationFormValues) {
+    cancelScheduledRequest();
+    setEditor((current) => ({
+      ...current,
+      values: update(current.values ?? INITIAL_VALUES),
+      dirty: true,
+      errors: [],
+    }));
+  }
+
+  useEffect(() => {
+    function restoreHistory() {
+      cancelScheduledRequest();
+      const query = new URLSearchParams(window.location.search);
+      query.sort();
+      const restored = restoredEditor(query.toString());
+      setEditor((current) => ({
+        ...restored,
+        observedKey: current.observedKey,
+        requests: current.requests,
+      }));
+    }
+    window.addEventListener("popstate", restoreHistory);
+    return () => {
+      window.removeEventListener("popstate", restoreHistory);
+      cancelScheduledRequest();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!editor.dirty || !editor.values) return;
+    const scheduledRevision = revision.current;
+    timer.current = setTimeout(() => {
+      if (scheduledRevision !== revision.current) return;
+      try {
+        const scenario = createSimulationScenario(editor.values!);
+        const targetKey = simulationScenarioQuery(scenario);
+        // Returning to the served scenario must also supersede a different
+        // in-flight target; equality with the served key alone is not a no-op.
+        const shouldNavigate = targetKey !== requestKey || targetKey !== editor.targetKey;
+        setEditor((current) => ({
+          ...current,
+          targetKey,
+          dirty: false,
+          requests: shouldNavigate
+            ? [...current.requests, targetKey]
+            : current.requests,
+        }));
+        if (shouldNavigate) {
+          startTransition(() => router.replace(`/simulate?${targetKey}`, { scroll: false }));
+        }
+      } catch (error) {
+        setEditor((current) => ({
+          ...current,
+          dirty: false,
+          errors: error instanceof SimulationFormError
+            ? error.messages
+            : ["No se pudo preparar la simulación. Revise los datos ingresados."],
+        }));
+      }
+    }, 350);
+    return () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    };
+  }, [editor.dirty, editor.values, editor.targetKey, requestKey, router]);
 
   useEffect(() => {
     const focusId = pendingListNameFocusId.current;
@@ -105,7 +222,6 @@ export function SimulationForm() {
       level === ALLOCATION_LEVEL.NATIONAL
     ) {
       setValues((current) => ({ ...current, level }));
-      setErrors([]);
     }
   }
 
@@ -113,7 +229,6 @@ export function SimulationForm() {
     const granularity = projectionGranularitySchema.safeParse(event.target.value);
     if (granularity.success) {
       setValues((current) => ({ ...current, granularity: granularity.data }));
-      setErrors([]);
     }
   }
 
@@ -127,6 +242,9 @@ export function SimulationForm() {
   }
 
   function addList() {
+    while (values.lists.some((list) => list.id === `list-${nextListId.current}`)) {
+      nextListId.current += 1;
+    }
     const list: SimulationFormListValues = {
       id: `list-${nextListId.current}`,
       name: "",
@@ -155,28 +273,34 @@ export function SimulationForm() {
     }));
   }
 
-  function submitSimulation(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      const scenario = createSimulationScenario(values);
-      const query = new URLSearchParams();
-      query.set("input", JSON.stringify(scenario.input));
-      if (scenario.council) query.set("council", scenario.council);
-      window.location.assign(`/simulate?${query.toString()}`);
-    } catch (error) {
-      setErrors(
-        error instanceof SimulationFormError
-          ? error.messages
-          : ["No se pudo preparar la simulación. Revise los datos ingresados."],
-      );
-    }
+  function createAnotherScenario() {
+    cancelScheduledRequest();
+    setEditor((current) => ({
+      ...restoredEditor(""),
+      observedKey: current.observedKey,
+      requests: [...current.requests, ""],
+    }));
+    startTransition(() => router.replace("/simulate", { scroll: false }));
   }
 
   const isNational = values.level === ALLOCATION_LEVEL.NATIONAL;
   const isMunicipal = values.level === ALLOCATION_LEVEL.PBA_MUNICIPAL;
   const totalsHelpId = isNational ? "national-totals-help" : "pba-totals-help";
+  const showResult = !editor.dirty && errors.length === 0 && !isPending &&
+    editor.targetKey === requestKey;
 
   return (
+    <div className={`simulation-workspace${editor.values === null ? " simulation-workspace--supplied" : ""}`}>
+    {editor.values === null ? (
+      <section aria-label="Escenario proporcionado" className="simulation-supplied panel">
+        <h2>Escenario proporcionado</h2>
+        <p>Este enlace incluye datos que el editor no puede representar sin cambios.
+          Se conservan el escenario completo, su evidencia y su dirección original.</p>
+        <Button variant="outline" type="button" onClick={createAnotherScenario}>
+          Crear otro escenario
+        </Button>
+      </section>
+    ) : (
     <section
       aria-labelledby="simulation-form-heading"
       className="simulation-builder"
@@ -185,12 +309,13 @@ export function SimulationForm() {
       <p className="simulation-builder__help" id="simulation-form-help">
         Ingrese los datos del escenario. La simulación no guarda información ni
         representa un resultado histórico oficial.
+        {" "}Los resultados se actualizan automáticamente al completar o modificar los campos.
       </p>
       <form
         aria-label="Formulario de simulación de bancas"
         className="simulation-form"
         noValidate
-        onSubmit={submitSimulation}
+        onSubmit={(event) => event.preventDefault()}
       >
         <div
           aria-atomic="true"
@@ -426,12 +551,17 @@ export function SimulationForm() {
           </div>
         </fieldset>
 
-        <div className="form-actions">
-          <Button variant="solid" type="submit">
-            Simular bancas
-          </Button>
-        </div>
       </form>
     </section>
+    )}
+    <div className="simulation-output" aria-busy={editor.dirty || isPending}>
+      <p role="status" className="simulation-output__status">
+        {showResult ? "Escenario actual" : errors.length
+          ? "Complete o corrija los campos para actualizar el resultado. El resultado anterior no se muestra."
+          : "Actualizando escenario… El resultado anterior no se muestra."}
+      </p>
+      {showResult ? children : null}
+    </div>
+    </div>
   );
 }

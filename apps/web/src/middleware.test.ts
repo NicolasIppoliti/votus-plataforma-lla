@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { AuthApiError, AuthRetryableFetchError, AuthSessionMissingError } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface CookieTuple {
@@ -48,6 +49,49 @@ afterEach(() => {
 });
 
 describe("middleware", () => {
+  it("returns a private status-only 401 for an unauthenticated session probe", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const response = await middleware(new NextRequest("http://localhost:3000/api/session"));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+    await expect(response.json()).resolves.toEqual({ status: "unauthenticated" });
+  });
+
+  it.each([
+    new AuthRetryableFetchError("private network details", 503),
+    new AuthApiError("private service details", 500, "unexpected_failure"),
+    new AuthApiError("private rate limit details", 429, "over_request_rate_limit"),
+    new AuthApiError("unrecognized response", 400, "unknown_future_code"),
+  ])("keeps uncertain probe failures retryable rather than ending the session: $name/$status", async (error) => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error });
+    const response = await middleware(new NextRequest("http://localhost:3000/api/session"));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+    await expect(response.json()).resolves.toEqual({ status: "unavailable" });
+  });
+
+  it("bounds thrown probe transport failures without redirecting or leaking details", async () => {
+    mocks.getUser.mockRejectedValue(new Error("private transport details"));
+    const response = await middleware(new NextRequest("http://localhost:3000/api/session"));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ status: "unavailable" });
+  });
+
+  it.each([
+    new AuthSessionMissingError(),
+    ...["bad_jwt", "session_not_found", "session_expired", "refresh_token_not_found", "refresh_token_already_used", "user_not_found", "user_banned"].map((code) => new AuthApiError("private authentication details", 400, code)),
+    new AuthApiError("unauthorized", 401, undefined),
+  ])("reports definitive authentication loss without exposing Auth errors: $code", async (error) => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error });
+    const response = await middleware(new NextRequest("http://localhost:3000/api/session"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ status: "unauthenticated" });
+  });
+
   it("test_unauthenticated_request_rejected_without_data", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: null } });
 
@@ -110,7 +154,7 @@ describe("middleware", () => {
     });
   });
 
-  it("forwards every chunk and deletion tuple without replacing Supabase options", async () => {
+  it.each(["/dashboard", "/api/session"])("forwards refreshed chunks and deletions without replacing Supabase options at %s", async (pathname) => {
     const expires = new Date(0);
     const tuples: CookieTuple[] = [
       {
@@ -131,7 +175,7 @@ describe("middleware", () => {
         data: { user: { id: "11111111-1111-1111-1111-111111111111" } },
       };
     });
-    const request = new NextRequest("https://votus.example/dashboard");
+    const request = new NextRequest(`https://votus.example${pathname}`);
 
     const response = await middleware(request);
 

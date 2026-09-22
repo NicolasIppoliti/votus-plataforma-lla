@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
+import { MunicipalDistribution } from "./MunicipalDistribution";
+import styles from "./municipal.module.css";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { TableRegion } from "@/components/TableRegion";
-import { Button } from "@/components/ui/button";
 import { Table } from "@/components/ui/table";
 import { UnmappedListIds } from "@/components/UnmappedListIds";
 import { UnorderableLevels } from "@/components/UnorderableLevels";
@@ -132,7 +133,7 @@ export function renderMunicipalView(
       view.status === "read_failed" ? (view.excluded ?? {}) : {},
     );
     return (
-      <main>
+      <main className={`page-shell ${styles.root}`}>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">Se rechazó la lectura: {view.reason}</p>
         {view.status === "read_failed" && (view.unmapped || view.withoutListId) ? (
@@ -204,7 +205,7 @@ export function renderMunicipalView(
   const foreignRows = rows.filter((row) => row.sourceKind !== "official");
   if (foreignRows.length > 0) {
     return (
-      <main>
+      <main className={`page-shell ${styles.root}`}>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
           Se rechazó la solicitud: {describeExcluded(tallyByKind(foreignRows))} de{" "}
@@ -232,7 +233,7 @@ export function renderMunicipalView(
   try {
     partyTotals = unsummable !== null ? [] : votesByParty(rows);
   } catch {
-    return <main>
+    return <main className={`page-shell ${styles.root}`}>
       <h1>Municipal (Concejales)</h1>
       <p role="alert">Se rechazó la solicitud: un mismo partido canónico tiene nombres
         incompatibles. No se muestran cifras hasta resolver el conflicto.</p>
@@ -252,30 +253,49 @@ export function renderMunicipalView(
   }
 
   return (
-    <main className="page-shell official-municipal">
-      <div className="shell-container official-municipal__layout">
-        <header className="page-header official-municipal__header">
-          <p className="official-municipal__section-label">Municipal · Concejales · Oficial</p>
+    <main className={`page-shell ${styles.root}`}>
+      <div className={`shell-container ${styles.layout}`}>
+        <header className={styles.header}>
           <h1>Coronel Rosales</h1>
-          <p className="official-municipal__context">Distrito 02 · Sección 027</p>
-          <p className="official-municipal__context">
-            Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.
-          </p>
+          <p>Resultados municipales · Concejales · Fuente oficial</p>
+          <p>Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.</p>
         </header>
-        <section className="official-municipal__selection" aria-labelledby="municipal-context-heading">
+        <section className={styles.context} aria-labelledby="municipal-context-heading">
           <h2 id="municipal-context-heading">Contexto de la consulta</h2>
-          <dl className="official-municipal__context-list">
-            <div><dt>Territorio autorizado</dt><dd>Coronel Rosales</dd></div>
-            <div><dt>Identidad nacional</dt><dd>Distrito 02 · Sección 027</dd></div>
+          <dl className={styles.scope}>
+            <div><dt>Elección</dt><dd>2025 · Provinciales</dd></div>
             <div><dt>Categoría</dt><dd>Concejales</dd></div>
+            <div><dt>Territorio autorizado</dt><dd>Coronel Rosales</dd></div>
+            <div><dt>Identidad nacional</dt><dd><code>Distrito 02 · Sección 027</code></dd></div>
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
           </dl>
         </section>
-        <section className="official-municipal__results" aria-labelledby="municipal-results-heading">
-          <div className="official-municipal__section-heading">
+        <section className={styles.results} aria-labelledby="municipal-results-heading">
+          <header className={styles.sectionHeading}>
             <h2 id="municipal-results-heading">Resultados exactos</h2>
             <p role="status">Resultados oficiales autorizados por partido.</p>
-          </div>
+          </header>
+          <section className={styles.coverage} aria-labelledby="municipal-coverage-heading">
+            <h3 id="municipal-coverage-heading">Cobertura y exclusiones</h3>
+            {sourceAuditNote}
+            {excludedNote}
+            <UnmappedListIds
+              entries={unmapped.entries}
+              withoutListId={unmapped.withoutListId}
+              totalRows={rows.length}
+              unsummable={unsummable}
+              mappingConfigured={view.partyMappingConfigured}
+            />
+            <UnorderableLevels entries={unrecognized} />
+            {unsummable === null ? (
+              <GranularityBadge
+                granularity={totalLevel.granularity}
+                {...(totalLevel.summedFrom !== undefined ? { summedFrom: totalLevel.summedFrom } : {})}
+                {...(totalLevel.degradedFrom !== undefined ? { degradedFrom: totalLevel.degradedFrom } : {})}
+                {...(requestedLevel !== undefined && requestedLevel !== levels.granularity ? { requestedGranularity: requestedLevel } : {})}
+              />
+            ) : null}
+          </section>
           {unsummable !== null ? (
             <p role="alert">
               No hay cifras por partido: {unsummable}. Un total que duplica el
@@ -283,20 +303,9 @@ export function renderMunicipalView(
             </p>
           ) : (
             <>
-              <GranularityBadge
-                granularity={totalLevel.granularity}
-                {...(totalLevel.summedFrom !== undefined
-                  ? { summedFrom: totalLevel.summedFrom }
-                  : {})}
-                {...(totalLevel.degradedFrom !== undefined
-                  ? { degradedFrom: totalLevel.degradedFrom }
-                  : {})}
-                {...(requestedLevel !== undefined && requestedLevel !== levels.granularity
-                  ? { requestedGranularity: requestedLevel }
-                  : {})}
-              />
+              <MunicipalDistribution parties={partyTotals} />
               <TableRegion label="Tabla de resultados oficiales exactos por partido">
-                <Table className="data-table official-municipal__table">
+                <Table className="data-table">
                   <caption>Resultados oficiales exactos por partido y votos</caption>
                   <thead>
                     <tr>
@@ -317,26 +326,19 @@ export function renderMunicipalView(
             </>
           )}
         </section>
-        <aside className="official-municipal__evidence" aria-labelledby="municipal-evidence-heading">
-          <h2 id="municipal-evidence-heading">Evidencia oficial</h2>
-          <section aria-labelledby="municipal-coverage-heading">
-            <h3 id="municipal-coverage-heading">Cobertura y exclusiones</h3>
-            {sourceAuditNote}
-            {excludedNote}
-            <UnmappedListIds
-              entries={unmapped.entries}
-              withoutListId={unmapped.withoutListId}
-              totalRows={rows.length}
-              unsummable={unsummable}
-              mappingConfigured={view.partyMappingConfigured}
-            />
-            <UnorderableLevels entries={unrecognized} />
-          </section>
-          <section aria-labelledby="municipal-provenance-heading">
-            <h3 id="municipal-provenance-heading">Archivo y procedencia</h3>
+        <section className={styles.evidence} aria-labelledby="municipal-evidence-heading">
+          <h2 id="municipal-evidence-heading">Referencias de la consulta</h2>
+          {sources.some((source) => !source.sha256) ? (
+            <p role="alert">Hay entradas sin hash; su procedencia no puede verificarse.</p>
+          ) : null}
+          {sources.filter((source) => source.status && source.status !== "ok").map((source) => (
+            <p role="note" key={source.archiveEntryId}>{source.archiveEntryId} — estado: {source.status}</p>
+          ))}
+          <details className={styles.provenance}>
+            <summary>Archivo y procedencia</summary>
             <OfficialProvenance sources={sources} />
-          </section>
-        </aside>
+          </details>
+        </section>
       </div>
     </main>
   );
@@ -344,13 +346,12 @@ export function renderMunicipalView(
 
 function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode {
   return (
-    <main className="page-shell official-municipal">
-      <div className="shell-container official-municipal__layout">
-        <header className="page-header official-municipal__header">
-          <p className="official-municipal__section-label">Resultados oficiales / municipal autorizado</p>
+    <main className={`page-shell ${styles.root}`}>
+      <div className={`shell-container ${styles.layout}`}>
+        <header className={styles.header}>
           <h1>Municipal (Concejales)</h1>
         </header>
-        <section className="official-municipal__state" role={role} aria-labelledby="municipal-state-heading">
+        <section className={styles.state} role={role} aria-labelledby="municipal-state-heading">
           <h2 id="municipal-state-heading">Estado de la evidencia</h2>
           <p>{message}</p>
         </section>
@@ -382,7 +383,7 @@ export default async function MunicipalPage({
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
     return (
-      <main>
+      <main className={`page-shell ${styles.root}`}>
         <h1>Municipal (Concejales)</h1>
         <p role="alert">
           Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
@@ -411,30 +412,6 @@ export default async function MunicipalPage({
   const unknownKeys = suppliedKeys.filter((key) => key !== "electionId");
   if (unknownKeys.length > 0) {
     return municipalRefusal(<>parámetros de consulta no admitidos: {unknownKeys.join(", ")}.</>);
-  }
-
-  if (!electionId) {
-    return <main className="page-shell official-municipal"><div className="shell-container official-municipal__layout">
-      <header className="page-header official-municipal__header">
-        <p className="official-municipal__section-label">Municipal · Concejales · Oficial</p>
-        <h1>Coronel Rosales</h1>
-        <p className="official-municipal__context">Distrito 02 · Sección 027</p>
-        <p className="official-municipal__context">Esquema nacional: distrito es la provincia; sección es el partido.</p>
-      </header>
-      <section className="official-municipal__selection" aria-labelledby="municipal-selection-heading">
-        <h2 id="municipal-selection-heading">Selección oficial</h2>
-        <form method="get" action="/municipal" className="official-municipal__form">
-          <div className="field">
-            <label htmlFor="municipal-election">Elección configurada</label>
-            <select id="municipal-election" name="electionId" defaultValue={configuredElectionId}>
-              <option value={configuredElectionId}>2025 · Provinciales · Concejales</option>
-            </select>
-          </div>
-          <Button variant="solid" type="submit" className="w-full">Ver resultados oficiales</Button>
-        </form>
-      </section>
-      <p className="official-municipal__state" role="status">La consulta muestra solo resultados oficiales autorizados.</p>
-    </div></main>;
   }
 
   const evidence = await loadMunicipalOfficialEvidence();
