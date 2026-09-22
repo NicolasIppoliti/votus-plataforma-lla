@@ -67,12 +67,10 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Fiscalización (no oficial)", exact: true }).click();
       await expect(page).toHaveURL(/\/fiscalizacion/);
       await page.setViewportSize({ width: 1440, height: 900 });
-      await expect(page.getByRole("heading", { level: 1, name: "Fiscalización (no oficial)", exact: true })).toHaveCSS("font-size", "36px");
+      await expect(page.getByRole("heading", { level: 1, name: "Fiscalización (no oficial)", exact: true })).toHaveCSS("font-size", "32px");
       await expect(page.getByRole("main")).not.toContainText("No tiene autorización");
-      const coldUrl = page.url();
-      await page.getByRole("button", { name: "Mostrar cobertura" }).click();
-      await expect(page).toHaveURL(coldUrl);
-      await expect(page.getByLabel("Elección")).toBeFocused();
+      await expect(page.getByRole("button", { name: "Mostrar cobertura" })).toHaveCount(0);
+      await expect(page.getByText("La cobertura y los resultados se actualizan al cambiar la selección.")).toBeVisible();
       for (const label of ["Categoría", "Distrito", "Sección"]) {
         const descendant = page.getByLabel(label);
         await expect(descendant).toBeDisabled();
@@ -83,23 +81,27 @@ test.describe("the fiscalizacion route explores coverage", () => {
       }
 
       const form = page.locator('form[action="/fiscalizacion"]'); await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
-      const draft = async (label: string, value: string, dependent: string): Promise<void> => {
+      const selection = new URLSearchParams();
+      const draft = async (label: string, name: string, value: string, dependent: string): Promise<void> => {
         const control = page.getByLabel(label), child = page.getByLabel(dependent);
-        const scopeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fiscalizacion/scope-options");
         await control.focus(); await control.selectOption(value);
-        expect(page.url()).toBe(coldUrl); await expect(child).toHaveValue("");
-        const response = await scopeResponse;
-        expect(response.ok()).toBe(true);
-        expect(await response.json()).toMatchObject({ capability: "coverage-scope-options", meaning: "scope-options-only" });
-        await expect(child).toBeEnabled(); await expect(form).not.toHaveAttribute("aria-busy", "true"); await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
+        selection.set(name, value);
+        await expect(child).toHaveValue("");
+        await expect(page).toHaveURL(new URL(`/fiscalizacion?${selection}`, baseURL).toString());
+        await expect(child).toBeEnabled(); await expect(form).not.toHaveAttribute("aria-busy", "true");
+        await expect(control).toBeFocused();
+        await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
+        expect(matched).toEqual([]);
       };
-      await draft("Elección", COVERAGE_SCOPE.electionId, "Categoría");
-      await draft("Categoría", COVERAGE_SCOPE.categoryId, "Distrito");
-      await draft("Distrito", COVERAGE_SCOPE.distritoCode, "Sección");
-      await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode); await expect(form).not.toHaveAttribute("aria-busy", "true");
+      await draft("Elección", "electionId", COVERAGE_SCOPE.electionId, "Categoría");
+      await draft("Categoría", "categoryId", COVERAGE_SCOPE.categoryId, "Distrito");
+      await draft("Distrito", "distritoCode", COVERAGE_SCOPE.distritoCode, "Sección");
+      await page.getByLabel("Sección").focus();
+      await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode);
       const expectedUrl = new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL).toString();
-      await page.getByRole("button", { name: "Mostrar cobertura" }).click();
       await expect(page).toHaveURL(expectedUrl); await expectNoBlankSearchParams(page);
+      await expect(form).not.toHaveAttribute("aria-busy", "true");
+      await expect(page.getByLabel("Sección")).toBeFocused();
 
       const primaryNavigation = page.getByRole("navigation", { name: "principal" });
       await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
@@ -117,64 +119,61 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(main).toContainText("Estado del resultado: ok"); await expect(main).toContainText("Fuente: fiscalización; no es una muestra aleatoria"); await expect(main).toContainText("denominador 2");
       await expect(main).toContainText("22222 votos"); await expect(main).not.toContainText(/11111|33333/); await expect(main).toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[1]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[0]?.["id"])); await expect(main).not.toContainText(String(COVERAGE_FIXTURE.archiveEntries?.[2]?.["id"]));
       const tableRegion = page.getByRole("region", { name: "Resultados de fiscalización" });
-      await page.setViewportSize({ width: 390, height: 844 });
       const qualification = main.getByRole("region", { name: "Calificación de la evidencia", exact: true });
       const resultRegion = main.getByRole("region", { name: "Resultado autorizado", exact: true });
       const coverageDetail = main.getByRole("region", { name: "Cobertura autorizada", exact: true });
+      const unitChart = main.getByRole("region", { name: "Cobertura de unidades", exact: true });
+      const archiveSummary = main.locator("summary").filter({ hasText: "Archivo de respaldo" });
       await expect(qualification).toContainText("1 unidades observadas de 2 del denominador oficial");
       await expect(qualification).toContainText("No es una muestra aleatoria");
-      const mobileQualification = await qualification.evaluate((element) => {
-        const { y, bottom } = element.getBoundingClientRect();
-        return { y, bottom };
-      });
-      const mobileResult = await resultRegion.evaluate((element) => {
-        const { y, bottom } = element.getBoundingClientRect();
-        return { y, bottom };
-      });
-      const mobileCoverage = await coverageDetail.evaluate((element) => {
-        const { y } = element.getBoundingClientRect();
-        return { y };
-      });
-      expect(mobileQualification.bottom).toBeLessThanOrEqual(mobileResult.y);
-      expect(mobileResult.bottom).toBeLessThanOrEqual(mobileCoverage.y);
-
-      await page.setViewportSize({ width: 1440, height: 900 });
-      const desktopQualification = await qualification.evaluate((element) => {
-        const { x, y, right, bottom, width } = element.getBoundingClientRect();
-        return { x, y, right, bottom, width };
-      });
-      const desktopResult = await resultRegion.evaluate((element) => {
-        const { x, y, right, width } = element.getBoundingClientRect();
-        return { x, y, right, width };
-      });
-      const desktopCoverage = await coverageDetail.evaluate((element) => {
-        const { x, y, right, width } = element.getBoundingClientRect();
-        return { x, y, right, width };
-      });
-      expect(Math.abs(desktopQualification.y - desktopResult.y)).toBeLessThanOrEqual(1);
-      expect(desktopResult.x).toBeGreaterThanOrEqual(desktopQualification.right);
-      expect(desktopCoverage.y).toBeGreaterThanOrEqual(desktopQualification.bottom);
-      expect(Math.abs(desktopCoverage.x - desktopQualification.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(desktopCoverage.right - desktopQualification.right)).toBeLessThanOrEqual(1);
-      expect(desktopResult.width).toBeGreaterThan(desktopQualification.width);
-      expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-
-      await page.setViewportSize({ width: 390, height: 844 });
-      await tableRegion.focus(); await expect(tableRegion).toBeFocused();
-      const submitBounds = await page.getByRole("button", { name: "Mostrar cobertura" }).boundingBox();
-      if (!submitBounds) throw new Error("coverage submit button has no rendered bounds");
-      expect(submitBounds.width).toBeGreaterThanOrEqual(44);
-      expect(submitBounds.height).toBeGreaterThanOrEqual(44);
-      for (const width of [320, 1440]) {
-        await page.setViewportSize({ width, height: 800 });
+      await expect(unitChart.getByRole("img")).toHaveAttribute("aria-label", "1 de 2 unidades observadas");
+      await expect(main.getByRole("list", { name: "Procedencia del resultado" })).not.toBeVisible();
+      await archiveSummary.focus(); await expect(archiveSummary).toBeFocused();
+      await archiveSummary.press("Enter");
+      await expect(main.getByRole("list", { name: "Procedencia del resultado" })).toBeVisible();
+      await archiveSummary.press("Enter");
+      for (const width of [1710, 1440, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(main.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
+        await expect(main.getByRole("heading", { name: "Resultado autorizado", exact: true })).toHaveCSS("font-size", "20px");
+        await expect(main.getByRole("heading", { name: "Elegir el alcance de la cobertura", exact: true })).toHaveCSS("font-size", "16px");
+        await expect.poll(() => main.locator(":scope > .shell-container").evaluate((element) => {
+          const workspace = element.closest(".app-shell__workspace");
+          if (!(workspace instanceof HTMLElement)) throw new Error("Fiscalización requires an application workspace");
+          const style = getComputedStyle(workspace);
+          const available = workspace.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          return Math.abs(element.getBoundingClientRect().width - Math.min(1540, available));
+        })).toBeLessThanOrEqual(1);
+        const boxes = await Promise.all([qualification, resultRegion, coverageDetail].map((region) => region.evaluate((element) => {
+          const { x, y, width, bottom } = element.getBoundingClientRect(); return { x, y, width, bottom };
+        })));
+        expect(boxes[0]!.bottom).toBeLessThanOrEqual(boxes[1]!.y);
+        expect(boxes[1]!.bottom).toBeLessThanOrEqual(boxes[2]!.y);
+        expect(Math.abs(boxes[1]!.x - boxes[2]!.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(boxes[1]!.width - boxes[2]!.width)).toBeLessThanOrEqual(1);
+        await expect.poll(() => unitChart.evaluate((element) => {
+          const axis = element.querySelector('[aria-hidden="true"]');
+          const svg = element.querySelector("svg");
+          if (!axis || !svg) return false;
+          const plot = svg.getBoundingClientRect();
+          const ticks = [...axis.children].map((tick) => { const box = tick.getBoundingClientRect(); return box.x + box.width / 2; });
+          const mark = svg.querySelector("rect")?.getBoundingClientRect();
+          return ticks.length === 2 && Math.abs(ticks[0]! - plot.x) <= 1 && Math.abs(ticks[1]! - plot.right) <= 1
+            && !!mark && Math.abs(mark.width - plot.width / 2) <= 1;
+        })).toBe(true);
+        await tableRegion.focus(); await expect(tableRegion).toBeFocused();
         expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       }
-      await page.setViewportSize({ width: 320, height: 800 });
       expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await expect(unitChart).toBeVisible();
       await page.emulateMedia({ reducedMotion: "reduce" });
-      const transitionDuration = await tableRegion.evaluate((element) => getComputedStyle(element).transitionDuration);
-      const transitionMilliseconds = transitionDuration.endsWith("ms") ? Number.parseFloat(transitionDuration) : Number.parseFloat(transitionDuration) * 1_000;
-      expect(transitionMilliseconds).toBeLessThanOrEqual(0.01);
+      const duration = await unitChart.locator("rect").evaluate((element) => getComputedStyle(element).transitionDuration);
+      expect(duration.endsWith("ms") ? Number.parseFloat(duration) : Number.parseFloat(duration) * 1000).toBeLessThanOrEqual(0.01);
+      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("light");
+      await page.emulateMedia({ reducedMotion: "no-preference" });
       const reusableUrl = page.url();
       await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
       await expect(page).toHaveURL(reusableUrl);
@@ -320,10 +319,75 @@ for (const width of [640, 1280]) {
         expect(await page.evaluate(() => outerWidth)).toBe(baseline.outer);
         expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
         await tabTo(page, page.getByLabel("Elección"));
-        await tabTo(page, page.getByRole("button", { name: "Mostrar cobertura" }));
+        await tabTo(page, page.getByLabel("Sección"));
         await tabTo(page, page.getByRole("region", { name: "Resultados de fiscalización" }));
+        await tabTo(page, page.locator("summary").filter({ hasText: "Archivo de respaldo" }));
+        await page.keyboard.press("Enter");
+        await expect(page.getByRole("list", { name: "Procedencia del resultado" })).toBeVisible();
         await expectReady(page);
       }));
     });
+  });
+}
+
+for (const action of ["revert", "independent edit"] as const) {
+  test(`suppresses stale paired evidence during a delayed scope response and ${action}`, async ({ page, next }) => {
+    let responseReady = false;
+    let responseDelivered = false;
+    let delayEnabled = false;
+    let release: () => void = () => {};
+    const deferred = new Promise<void>((resolve) => { release = resolve; });
+    const handler = createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE,
+      (side) => Response.json(pair[side]));
+    next.onFetch(async (request) => {
+      const delay = delayEnabled && new URL(request.url).pathname === "/rest/v1/rpc/official_facets"
+        && await request.clone().json().then((body) => body.p_distrito_code === COVERAGE_SCOPE.distritoCode && body.p_seccion_code === null);
+      const response = await handler(request);
+      // Delay the actual authorized facet response without bypassing the test-mode transport.
+      if (delay) {
+        responseReady = true;
+        await deferred;
+        responseDelivered = true;
+      }
+      return response;
+    });
+    await withResultFixture(SPEC, COVERAGE_FIXTURE, () => withAuthorizedFiscalWorkspace(page, async () => {
+      await page.goto(fiscalUrl);
+      await expectReady(page);
+      const section = page.getByLabel("Sección");
+      await section.focus();
+      delayEnabled = true;
+      try {
+        await section.selectOption("");
+        await expectSuppressed(page);
+        await expect.poll(() => responseReady).toBe(true);
+        await expect(section).toBeFocused();
+        const control = action === "revert" ? section : page.getByLabel("Categoría");
+        await control.focus();
+        await control.selectOption(action === "revert" ? COVERAGE_SCOPE.seccionCode : "");
+        // Restoring the exact served scope may show its already verified cached pair immediately.
+        if (action === "independent edit") await expectSuppressed(page);
+        release();
+        await expect.poll(() => responseDelivered).toBe(true);
+        await expect(control).toBeFocused();
+        if (action === "revert") await expect(page).toHaveURL(fiscalUrl);
+        await expect(page.locator('form[action="/fiscalizacion"]')).not.toHaveAttribute("aria-busy", "true");
+        if (action === "revert") {
+          await expect(page).toHaveURL(fiscalUrl);
+          await expect(section).toHaveValue(COVERAGE_SCOPE.seccionCode);
+          await expectReady(page);
+        } else {
+          await expect(page).toHaveURL(new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}`, baseURL).toString());
+          await expect(control).toHaveValue("");
+          await expect(page.getByLabel("Distrito")).toHaveValue("");
+          await expect(section).toHaveValue("");
+          await expect(page.getByLabel("Distrito")).toBeDisabled();
+          await expect(section).toBeDisabled();
+          await expectSuppressed(page);
+        }
+      } finally {
+        release();
+      }
+    }));
   });
 }
