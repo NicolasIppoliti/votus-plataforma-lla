@@ -403,7 +403,11 @@ for (const windowWidth of [1280, 640]) {
         await tabTo(page, account, true);
         await tabTo(page, submit, true, false, "org-submit");
         await tabTo(page, organization, true, false, "org-select");
+        const theme = drawer.getByRole("combobox", { name: "Tema", exact: true });
+        await tabTo(page, theme, true);
+        await expectControlSize(theme);
         await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true, false, "last-drawer-link");
+        await tabTo(page, theme);
         await tabTo(page, organization, false, false, "org-select");
         await expectControlSize(organization);
         await tabTo(page, submit, false, false, "org-submit");
@@ -420,7 +424,6 @@ for (const windowWidth of [1280, 640]) {
         await expectKeyboardFocus(trigger, false, "nav-trigger");
         const realCount = page.getByRole("banner").getByRole("link", { name: "1 elemento(s) de revisión pendiente(s)", exact: true });
         await tabTo(page, realCount, false, false, "header-count");
-        await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         await tabTo(page, region, false, true, "review-table-region");
         await expect(region).toHaveAttribute("tabindex", "0");
         const scroll = await region.evaluate((element) => ({ left: element.scrollLeft, width: element.clientWidth, total: element.scrollWidth }));
@@ -552,8 +555,6 @@ test.describe("the review route reflects the disposable database", () => {
         if (width === 1440) {
           await tabTo(page, page.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, page.getByRole("navigation", { name: "principal", exact: true }).getByRole("link", { name, exact: true }));
-          await tabTo(page, realCount, false, false, "header-count");
-          await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         } else {
           const trigger = page.getByRole("button", { name: "Abrir navegación" });
           await tabTo(page, trigger, false, false, "nav-trigger");
@@ -566,6 +567,7 @@ test.describe("the review route reflects the disposable database", () => {
           await tabTo(page, drawer.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, drawer.getByRole("link", { name, exact: true }));
         }
+        await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         const organization = page.getByRole("combobox", { name: "Organización" });
         const submit = page.getByRole("button", { name: "Cambiar organización" });
         await expect(organization).toBeEnabled();
@@ -584,9 +586,8 @@ test.describe("the review route reflects the disposable database", () => {
           await page.keyboard.press("Escape");
           await expect(drawer).not.toBeVisible();
           await expectKeyboardFocus(page.getByRole("button", { name: "Abrir navegación" }), false, "nav-trigger");
-          await tabTo(page, realCount, false, false, "header-count");
-          await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         }
+        await tabTo(page, realCount, false, false, "header-count");
         const region = page.getByRole("region", { name: REVIEW_REGION_LABEL });
         await tabTo(page, region, false, true, "review-table-region");
         if (width < 1024) {

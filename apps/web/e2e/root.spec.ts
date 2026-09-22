@@ -51,6 +51,57 @@ test("the authenticated page follows the system theme and persists explicit them
   await expect(page).toHaveURL(/\/$/);
 });
 
+test("sidebar footer anchors workspace controls and shares the theme across desktop and mobile", async ({ page }) => {
+  await withReviewItem(page, async () => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.setViewportSize({ width: 1440, height: 1400 });
+    await page.goto("/");
+    const sidebar = page.locator(".app-shell > aside.situation-sidebar");
+    const controls = sidebar.getByRole("group", { name: "Organización y cuenta", exact: true });
+    const topbar = page.getByRole("banner");
+    await expect(controls).toBeVisible();
+    await expect(controls).toContainText("Organización activa: E2E Authorized Review Browser");
+    await expect(topbar.getByRole("combobox")).toHaveCount(0);
+    await expect(topbar.locator("summary")).toHaveCount(0);
+    const navigationBox = await sidebar.getByRole("navigation", { name: "principal" }).boundingBox();
+    const controlsBox = await controls.boundingBox();
+    const sidebarBox = await sidebar.boundingBox();
+    expect(navigationBox).not.toBeNull();
+    expect(controlsBox).not.toBeNull();
+    expect(sidebarBox).not.toBeNull();
+    expect(controlsBox!.y).toBeGreaterThan(navigationBox!.y + navigationBox!.height);
+    expect(sidebarBox!.y + sidebarBox!.height - controlsBox!.y - controlsBox!.height).toBeLessThanOrEqual(25);
+
+    const desktopTheme = sidebar.getByRole("combobox", { name: "Tema", exact: true, includeHidden: true });
+    await page.setViewportSize({ width: 320, height: 400 });
+    await page.getByRole("button", { name: "Abrir navegación" }).click();
+    const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+    const mobileTheme = drawer.getByRole("combobox", { name: "Tema", exact: true });
+    await mobileTheme.selectOption("dark");
+    await expect(desktopTheme).toHaveValue("dark");
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await page.setViewportSize({ width: 1440, height: 400 });
+    await expect(drawer).toBeHidden();
+    const account = controls.locator("summary", { hasText: "Cuenta" });
+    await expect(account).toBeFocused();
+    await expect(account).toBeInViewport({ ratio: 1 });
+    await expect(desktopTheme).toHaveValue("dark");
+    await desktopTheme.selectOption("light");
+    await page.setViewportSize({ width: 320, height: 400 });
+    await page.getByRole("button", { name: "Abrir navegación" }).click();
+    await expect(mobileTheme).toHaveValue("light");
+    await mobileTheme.selectOption("system");
+    await expect(desktopTheme).toHaveValue("system");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.keyboard.press("Escape");
+  });
+});
+
 test("a real same-workspace POST hides both counts until an equal-valued RSC snapshot arrives", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.goto("/");
@@ -110,11 +161,12 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       expect(typeof fixture?.organization_id).toBe("string");
       await page.goto("/");
       const topbar = page.locator("header.workspace-topbar");
+      const sidebar = page.locator(".app-shell > aside.situation-sidebar");
       const attention = page.getByRole("complementary", { name: "Atención operativa" });
       const organization = page.getByRole("combobox", { name: "Organización", exact: true });
       const firstId = await organization.inputValue();
       expect(firstId).not.toBe(fixture.organization_id);
-      await expect(topbar).toContainText("Organización activa: E2E Authorized Review Browser");
+      await expect(sidebar).toContainText("Organización activa: E2E Authorized Review Browser");
       for (const reader of [topbar, attention]) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
       await organization.selectOption(fixture.organization_id);
       const switched = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
@@ -124,13 +176,13 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       expect(response.ok()).toBe(true);
       expect(await response.json()).toMatchObject({ status: "active" });
       await expect(organization).toHaveValue(fixture.organization_id);
-      await expect(topbar.locator(".workspace-identity")).toHaveText("Organización activa: E2E Authorized Fiscal Browser");
+      await expect(sidebar.locator(".workspace-identity")).toHaveText("Organización activa: E2E Authorized Fiscal Browser");
       for (const reader of [topbar, attention]) {
         await expect(reader).toContainText("Sin elementos pendientes");
         await expect(reader).not.toContainText("1 elemento(s) de revisión pendiente(s)");
         await expect(reader).not.toContainText("No se pudo verificar");
       }
-      await expect(topbar.locator(".workspace-identity")).not.toContainText("E2E Authorized Review Browser");
+      await expect(sidebar.locator(".workspace-identity")).not.toContainText("E2E Authorized Review Browser");
 
       await page.goto("/simulate");
       const draft = page.getByLabel("Total de votos", { exact: true });
@@ -141,7 +193,7 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       const returnResponse = await returned;
       expect(returnResponse.request().postDataJSON().organizationId).toBe(firstId);
       expect(returnResponse.ok()).toBe(true);
-      await expect(topbar).toContainText("Organización activa: E2E Authorized Review Browser");
+      await expect(sidebar).toContainText("Organización activa: E2E Authorized Review Browser");
       await expect(topbar).toContainText("1 elemento(s) de revisión pendiente(s)");
       await expect(draft).toHaveValue("12345");
       await expect(page).toHaveURL(/\/simulate$/);
@@ -182,7 +234,11 @@ test("the short mobile drawer keeps the real organization and account group keyb
     await expect(organization).toBeFocused();
     await expect(organization).toBeInViewport({ ratio: 1 });
     await expect(organization.locator("option:checked")).toHaveText("E2E Authorized Review Browser");
-    const selectorIds = await page.locator(".workspace-footer select").evaluateAll(elements => elements.map(element => element.id));
+    await page.keyboard.press("Shift+Tab");
+    const theme = drawer.getByRole("combobox", { name: "Tema", exact: true });
+    await expect(theme).toBeFocused();
+    await expect(theme).toBeInViewport({ ratio: 1 });
+    const selectorIds = await page.locator(".workspace-footer form select").evaluateAll(elements => elements.map(element => element.id));
     expect(selectorIds).toHaveLength(2);
     expect(new Set(selectorIds).size).toBe(2);
     expect(selectorIds.every(Boolean)).toBe(true);
@@ -193,7 +249,7 @@ test("the short mobile drawer keeps the real organization and account group keyb
   });
 });
 
-test("resizing an open drawer to desktop preserves one visible topbar account path", async ({ page }) => {
+test("resizing an open drawer to desktop focuses the visible sidebar account", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 320, height: 400 });
     await page.goto("/");
@@ -217,14 +273,14 @@ test("resizing an open drawer to desktop preserves one visible topbar account pa
     });
     await expect.poll(activeIsVisible).toBe(true);
     await expect(page.getByRole("group", { name: "Organización y cuenta" })).toHaveCount(1);
-    await expect(page.getByRole("banner").locator("summary", { hasText: "Cuenta" })).toBeFocused();
+    await expect(page.locator(".app-shell > aside.situation-sidebar").locator("summary", { hasText: "Cuenta" })).toBeFocused();
     await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
     await page.keyboard.press("Tab");
     await expect.poll(activeIsVisible).toBe(true);
   });
 });
 
-test("account controls live in the desktop topbar and mobile drawer and preserve keyboard operation", async ({ page, context }) => {
+test("account controls live in the sidebar footer and mobile drawer and preserve keyboard operation", async ({ page, context }) => {
   // Sign out only a new login session, never the harness's shared storage session.
   await context.clearCookies();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -235,11 +291,11 @@ test("account controls live in the desktop topbar and mobile drawer and preserve
   await expect(page).toHaveURL(/\/$/);
   const sidebar = page.locator(".app-shell > aside.situation-sidebar");
   const topbar = page.getByRole("banner");
-  const controls = topbar.getByRole("group", { name: "Organización y cuenta", exact: true });
+  const controls = sidebar.getByRole("group", { name: "Organización y cuenta", exact: true });
   await expect(controls).toHaveCount(1);
   await expect(controls.getByRole("status").filter({ hasText: /^Seleccioná una organización para continuar\.$/ })).toBeVisible();
   await expect(controls.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
-  await expect(sidebar.getByRole("group", { name: "Organización y cuenta", exact: true, includeHidden: true })).toHaveCount(0);
+  await expect(topbar.getByRole("group", { name: "Organización y cuenta", exact: true, includeHidden: true })).toHaveCount(0);
   const account = controls.locator("summary").filter({ hasText: /^Cuenta$/ });
   await expect(account).toBeVisible();
   await account.focus();
@@ -517,7 +573,7 @@ test.describe("the production root preserves its authentication boundary", () =>
 
     await page.setViewportSize({ width: 320, height: 844 });
     await expect(topbar).toBeVisible();
-    await expect(topbar).toContainText("Organización sin verificar");
+    await expect(topbar).not.toContainText("Organización sin verificar");
     await expect(
       topbar.getByRole("status").filter({
         hasText: "No se pudo verificar el estado de revisión.",
@@ -525,6 +581,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     ).toBeVisible();
     await drawerTrigger.click();
     const footer = drawer.getByRole("group", { name: "Organización y cuenta" });
+    await expect(footer).toContainText("Organización sin verificar");
     await expect(footer.getByRole("status").filter({ hasText: "Seleccioná una organización para continuar." })).toBeVisible();
     await expect(footer.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
     await expect(

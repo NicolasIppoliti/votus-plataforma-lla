@@ -11,6 +11,7 @@ import { WorkspacePresentation } from "./WorkspacePresentation";
 import { WorkspaceFooter } from "./WorkspaceFooter";
 import { AccountDisclosure } from "./AccountDisclosure";
 import { SignOutForm } from "@/components/SignOutForm";
+import SessionMonitor from "@/components/SessionMonitor";
 
 /**
  * Layout gate for every in-scope route (task 9.6).
@@ -52,6 +53,9 @@ export default async function AuthenticatedLayout({
   }
 
   const selection = await loadWorkspaceSelection();
+  if (selection.status === "expired" || selection.status === "revoked") {
+    redirect("/login");
+  }
 
   // A denied or failed workspace check is "unknown", never a false clean queue.
   let unresolvedCount: number | undefined;
@@ -76,7 +80,7 @@ export default async function AuthenticatedLayout({
       <AccountDisclosure><SignOutForm /></AccountDisclosure>
     </WorkspaceFooter>
   );
-  const sidebar = <SituationSidebar />;
+  const sidebar = <SituationSidebar>{accountControls}</SituationSidebar>;
 
   return (
     <WorkspacePresentation snapshot={{
@@ -86,12 +90,12 @@ export default async function AuthenticatedLayout({
       revision: selection.revision,
       unresolvedCount: activeOrganization ? unresolvedCount : undefined,
     }}>
+    <SessionMonitor />
     <ApplicationShell
       sidebar={sidebar}
       topbar={
         <WorkspaceTopbar
-          accountControls={accountControls}
-          mobileNavigation={<MobileNavigation sidebar={<SituationSidebar>{accountControls}</SituationSidebar>} />}
+          mobileNavigation={<MobileNavigation sidebar={sidebar} />}
         />
       }
     >

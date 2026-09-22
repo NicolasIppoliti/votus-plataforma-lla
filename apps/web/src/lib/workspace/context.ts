@@ -108,6 +108,11 @@ export async function observeWorkspace(client: SupabaseClient) {
   return { bootstrap, available, current };
 }
 
+/** Observe validity without initializing context or exposing organization choices. */
+export async function observeCurrentWorkspace(client: SupabaseClient): Promise<unknown> {
+  return rpcData(await verifiedWorkspaceApi(client), "current_workspace");
+}
+
 export async function authorizedOfficialFacets(client: SupabaseClient, selection: ExplorationFacetSelection = {}) {
   return rpcData(await verifiedWorkspaceApi(client), "official_facets", {
     p_election_id: selection.electionId ?? null,

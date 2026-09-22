@@ -16,7 +16,7 @@
 - **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
 - **Layout:** Grid-disciplined analytical routes with controlled asymmetry on the operational briefing.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
-- **Current delivery scope:** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user requested automatic reactions to existing data and more explanatory graphics before accepting the first slice. Explore, municipal, fiscalización and review remain later route-specific slices.
+- **Current delivery scope:** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. Explore, municipal, fiscalización and review remain later route-specific slices.
 
 ## Design Principles
 
@@ -32,10 +32,11 @@
 
 ### Global shell
 
-- **Desktop:** Persistent `15rem` sidebar and compact wrapping topbar, with distinct workspace-context and account-control groups. Chrome follows the selected light/dark theme.
-- **Mobile:** Sidebar becomes a drawer; workspace context remains visible in the topbar.
-- **Topbar responsibility:** Active workspace, authorization/verification state, workspace switch, account actions.
-- **Sidebar responsibility:** Product identity, domain navigation, current-route indication, and source-separation reminder.
+- **Desktop:** Persistent `15rem` sidebar with a bottom workspace/account cluster and a lightweight topbar. Chrome follows the selected light/dark theme.
+- **Mobile:** Sidebar becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
+- **Topbar responsibility:** Mobile navigation trigger and authorized review status only.
+- **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch, theme and account actions.
+- **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Desktop and mobile share the theme preference; crossing the breakpoint restores focus to a visible control.
 
 ### Navigation groups
 
@@ -319,3 +320,10 @@ New product features discovered during design become separate future work units.
 - Reload restores exactly representable editor scenarios. Rich supplied links that cannot round-trip through the editor remain intact in a clearly labelled provided-scenario mode; starting another scenario is explicit and does not silently coerce missing totals or discard held-over/unmodeled data.
 - Charts use existing React/CSS/SVG and data contracts; no new runtime chart library. Reduced motion preserves feedback without spatial interpolation.
 - Native review approval for the earlier static slice does not approve new interaction bytes. A fresh candidate assessment applies at the revised deliverable boundary.
+
+## Session Continuity Contract
+
+- An already-open protected page verifies session validity on mount, when it becomes visible/focused, and at a bounded 60-second interval while visible. This is an access check, not a realtime electoral-data feed.
+- Verified ended authentication or fixed workspace expiration/revocation replaces the page with login, discarding the protected client-router cache. Healthy token renewal remains transparent.
+- Temporary connection/service failures and workspace membership/selection states are not evidence of a logged-out session. They must not cause automatic logout.
+- The read-only, private/no-store session probe returns status only, using the existing verified workspace boundary without bootstrapping a context or listing organizations. Tokens remain in HttpOnly cookies; database lifetime rules and the explicit signout action remain unchanged.

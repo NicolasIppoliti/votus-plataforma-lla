@@ -1,6 +1,8 @@
-import type { ReactElement } from "react";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
+import SessionMonitor from "@/components/SessionMonitor";
 import AuthenticatedLayout from "./layout";
 import OperationalBriefingPage from "./page";
 
@@ -41,6 +43,16 @@ async function renderLayout(pathname: string): Promise<string> {
   );
 }
 
+it("mounts exactly one session monitor at the shared authenticated entry point", async () => {
+  function countMonitors(node: ReactNode): number {
+    return Children.toArray(node).reduce<number>((count, child) => {
+      if (!isValidElement<{ children?: ReactNode }>(child)) return count;
+      return count + (child.type === SessionMonitor ? 1 : 0) + countMonitors(child.props.children);
+    }, 0);
+  }
+  expect(countMonitors(await AuthenticatedLayout({ children: <p>Protected page</p> }))).toBe(1);
+});
+
 it("renders the Command Ledger shell in keyboard order", async () => {
   const markup = await renderLayout("/dashboard");
   const sidebarIndex = markup.indexOf('<aside class="situation-sidebar">');
@@ -59,8 +71,6 @@ it("renders the Command Ledger shell in keyboard order", async () => {
 it.each([
   [{ status: "active", total: 1, truncated: false }, ["Organización", "Municipalidad", "Cambiar organización"]],
   [{ status: "stale", total: 1, truncated: false }, ["Tu acceso a la organización activa cambió. Seleccioná una organización autorizada nuevamente."]],
-  [{ status: "revoked", total: 1, truncated: false }, ["El contexto de organización fue revocado. Volvé a iniciar sesión."]],
-  [{ status: "expired", total: 1, truncated: false }, ["El contexto de organización venció. Volvé a iniciar sesión."]],
   [{ status: "mismatch", total: null, truncated: null }, ["No se pudo verificar que este contexto pertenezca a tu sesión."]],
   [{ status: "selection_required", total: 0, truncated: false }, ["No hay organizaciones disponibles."]],
   [{ status: "active", total: 101, truncated: true }, ["La lista está limitada a las primeras 100 de 101 organizaciones autorizadas"]],
@@ -68,6 +78,18 @@ it.each([
   workspace.selection.mockResolvedValueOnce({ revision: 2, activeOrganizationId: state.status === "active" ? "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13" : null, organizations: state.total === 0 ? [] : [{ id: "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13", name: "Municipalidad" }], ...state });
   const markup = await renderLayout("/dashboard");
   for (const message of messages) expect(markup).toContain(message);
+});
+
+it.each(["expired", "revoked"])("redirects an ended %s workspace session before rendering protected content", async (status) => {
+  workspace.selection.mockResolvedValueOnce({ status, revision: 2, activeOrganizationId: null, organizations: [], total: 0, truncated: false });
+  const redirected = new Error("redirected to login");
+  vi.mocked(redirect).mockImplementationOnce(() => { throw redirected; });
+  try {
+    await expect(renderLayout("/")).rejects.toBe(redirected);
+    expect(redirect).toHaveBeenLastCalledWith("/login");
+  } finally {
+    vi.mocked(redirect).mockReset();
+  }
 });
 
 it("renders a closed mobile drawer from the shared navigation contract", async () => {
@@ -93,28 +115,28 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
     ]);
 });
 
-it("renders the real desktop sign-out action and label while the drawer is closed", async () => {
+it("renders the real desktop account controls in the sidebar footer while the drawer is closed", async () => {
   const markup = await renderLayout("/");
   const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
   const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
   expect(markup).not.toContain("<footer");
-  expect(sidebar).not.toContain('aria-label="Organización y cuenta"');
-  expect(sidebar).not.toContain("<form");
-  expect(topbar.match(/role="group" aria-label="Organización y cuenta"/g)).toHaveLength(1);
-  const account = topbar.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
+  expect(topbar).not.toContain('aria-label="Organización y cuenta"');
+  expect(topbar).not.toContain("<form");
+  expect(sidebar.match(/role="group" aria-label="Organización y cuenta"/g)).toHaveLength(1);
+  const account = sidebar.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
   expect(account).not.toMatch(/<details[^>]*\sopen(?:\s|=|>)/);
   expect(account).toContain("<summary>Cuenta</summary>");
   const forms = account.match(/<form\b[^>]*>[\s\S]*?<\/form>/g) ?? [];
   expect(forms).toHaveLength(1);
   expect(forms[0]).toMatch(/<form[^>]*\saction=/);
   expect(forms[0]).toContain('type="submit">Cerrar sesión</button>');
-  const selectors = [...topbar.matchAll(/<select id="([^"]+)"/g)];
+  const selectors = [...sidebar.matchAll(/<select id="([^"]+)"/g)];
   expect(selectors).toHaveLength(1);
   const id = selectors[0]?.[1] ?? "";
   expect(id).not.toBe("");
-  expect(topbar).toContain(`<label for="${id}">Organización</label>`);
-  expect(topbar.indexOf("<select id=")).toBeLessThan(topbar.indexOf("<details"));
-  expect(topbar).toContain("Organización activa:");
+  expect(sidebar).toContain(`<label for="${id}">Organización</label>`);
+  expect(sidebar.indexOf("<select id=")).toBeLessThan(sidebar.indexOf("<details"));
+  expect(sidebar).toContain("Organización activa:");
 });
 
 function primaryNavigation(markup: string): string {
@@ -234,7 +256,7 @@ it.each([
   }
 });
 
-it.each(["stale", "revoked", "expired", "mismatch", "selection_required", "denied", "conflict", "unavailable"])(
+it.each(["stale", "mismatch", "selection_required", "denied", "conflict", "unavailable"])(
   "suppresses a returned count when workspace selection is %s", async (status) => {
     workspace.selection.mockResolvedValueOnce({ status, revision: 2, activeOrganizationId: null, organizations: [], total: 0, truncated: false });
     workspace.reviewItems.mockClear();
@@ -307,15 +329,18 @@ it("renders all seven shared destinations in contract order with explicit source
   expect(navigationMarkup).toContain("Revisión de datos");
 });
 
-it("groups workspace context separately from persistent account controls", async () => {
+it("keeps workspace, theme and account below navigation and only review status in the header", async () => {
   const markup = await renderLayout("/compare");
   const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
-  expect(topbar).toContain('class="workspace-topbar__context"');
-  expect(topbar).toContain('class="workspace-topbar__actions"');
-  expect(topbar.indexOf('class="workspace-identity"')).toBeLessThan(topbar.indexOf('class="workspace-topbar__actions"'));
-  expect(topbar).toContain("Tema");
-  expect(topbar).toContain("Cambiar organización");
-  expect(topbar).toContain("Cerrar sesión");
+  const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
+  for (const label of ["Organización activa:", "Tema", "Cambiar organización", "Cerrar sesión"]) {
+    expect(sidebar).toContain(label);
+    expect(topbar).not.toContain(label);
+  }
+  expect(sidebar.indexOf('class="workspace-identity"')).toBeGreaterThan(sidebar.indexOf("</nav>"));
+  expect(sidebar).toContain("Esta herramienta no es una fuente electoral oficial.");
+  expect(topbar).toContain("Sin elementos pendientes");
+  expect(topbar).toContain("Abrir navegación");
   expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(7);
   expect(currentPrimaryHrefs(markup)).toEqual(["/compare"]);
 });

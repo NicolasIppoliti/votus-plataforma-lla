@@ -11,10 +11,10 @@ export function SituationSidebar({ children }: { children?: ReactNode }): ReactN
         <span className="site-brand__descriptor">Análisis electoral</span>
       </Link>
       <PrimaryNavigation />
-      <div className="source-disclaimer">
-        <SourceDisclaimer />
+      <div className="situation-sidebar__footer">
+        <div className="source-disclaimer"><SourceDisclaimer /></div>
+        {children}
       </div>
-      {children}
     </aside>
   );
 }
