@@ -126,7 +126,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Minimum supported viewport:** `320px` without page-level horizontal overflow.
 - **Mobile:** Full product capability, not a read-only subset.
 - **Tables:** Exact tables remain available inside labelled, focusable horizontal-scroll regions.
-- **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, action, context, table, and evidence stack in reading order. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
+- **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, context, chart, exact table, and evidence stack in reading order. Selector changes automatically update the authorized comparison; there is no Apply step. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
 - **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment.
 - **Touch targets:** At least `44×44px`.
@@ -185,6 +185,7 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 ## Data Visualization
 
 - Exact-value tables are the canonical representation.
+- Comparison pairs Side A/Side B on one 0–100% scale, retaining each side's party name. Its denominator is the supplied party-vote total, not turnout or all ballots. Include every compared party.
 - Horizontal bars support distribution and seat allocation.
 - Delta bars/markers support cross-election comparison.
 - Time series require a genuine temporal dimension.
@@ -304,3 +305,11 @@ New product features discovered during design become separate future work units.
 
 | 2026-09-21 | Palantir information structure + Vercel neutral precision, retaining Plex and shadcn | User-approved redesign beyond the completed parity migration; validate login/home/comparison before other routes |
 | 2026-09-21 | Full-width exact comparison with native supporting-provenance disclosures | Give real tabular evidence space while keeping interpretation-changing context visible; preserve native controls and GET contracts |
+
+## Automatic Interaction Contract
+
+- All source data is queried through the existing authorized server pipeline; automatic UI reactions do not imply incoming realtime data or newly ingested results.
+- Comparison preserves six native controls and canonical query keys; changing an ancestor clears its descendants. Soft replace navigation avoids history entries for every control adjustment, with no scroll reset.
+- The current draft, pending request and served result must agree before figures appear. Pending/invalid state is explicit, not a faded stale result. Inputs remain usable and focused.
+- Charts use existing React/CSS/SVG and data contracts; no new runtime chart library. Reduced motion preserves feedback without spatial interpolation.
+- Native review approval for the earlier static slice does not approve new interaction bytes. A fresh candidate assessment applies at the revised deliverable boundary.

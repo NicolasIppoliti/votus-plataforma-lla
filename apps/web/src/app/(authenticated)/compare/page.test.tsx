@@ -2,7 +2,8 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { FacetOption } from "@/lib/results/exploration";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));
+const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn(), replace: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: mocks.replace }) }));
 vi.mock("@/lib/workspace/official-facets", () => ({ AuthorizedOfficialFacetsError: class AuthorizedOfficialFacetsError extends Error {}, OFFICIAL_FACETS_ERROR: { AUTHORIZATION_DENIED: "authorization_denied" }, createAuthorizedOfficialFacetRepository: () => ({ facets: mocks.facets }) }));
 vi.mock("@/lib/workspace/official-comparison-evidence", () => ({ OFFICIAL_COMPARISON_EVIDENCE_STATUS: { OK: "ok", EMPTY: "empty", AUTHORIZATION_DENIED: "authorization_denied", UNAVAILABLE: "unavailable", PAYLOAD_TOO_LARGE: "payload_too_large", MALFORMED: "malformed", UNMAPPED_PARTIES: "unmapped_parties" }, loadAuthorizedOfficialComparisonEvidence: mocks.evidence }));
 const { default: ComparePage } = await import("./page");
@@ -130,16 +131,10 @@ describe("authorized comparison page", () => {
     expect(markup).not.toContain('data-state="empty"');
     expect(markup).not.toMatch(/<table|official\/archive|puntos porcentuales/);
   });
-  it("keeps both native GET submit actions with validation bypass only for options", async () => {
+  it("keeps the native GET field contract and exact table without manual submit actions", async () => {
     const markup = await render(PARAMS);
-    const buttons = [...markup.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(([html]) => html);
-    expect(buttons).toHaveLength(2);
-    expect(buttons[0]).toContain('type="submit"');
-    expect(buttons[0]).toContain('formNoValidate=""');
-    expect(buttons[0]).toContain("Actualizar opciones");
-    expect(buttons[1]).toContain('type="submit"');
-    expect(buttons[1]).not.toContain("formNoValidate");
-    expect(buttons[1]).toContain("Comparar resultados");
+    expect(markup).not.toMatch(/<button\b/);
+    expect(markup.match(/<select\b[^>]*required=""/g)).toHaveLength(6);
     expect(markup).toContain('<form action="/compare" method="get">');
     expect(markup.match(/class="table-scroll"/g)).toHaveLength(1);
     expect(markup).toContain("Participación oficial y variación en puntos porcentuales</caption>");
@@ -175,4 +170,48 @@ it("progressively discloses archive detail without hiding source exclusions or r
   expect(visibleMarkup).toContain("60,00 %");
   expect(visibleMarkup).toContain("sumado a partir de filas de nivel mesa");
   expect(markup).not.toContain("official-compare__section-label");
+});
+
+it("reacts through six native selectors without manual refresh or apply buttons", async () => {
+  const markup = await render(PARAMS);
+  expect(markup.match(/<select\b/g)).toHaveLength(6);
+  expect(markup).not.toContain("Actualizar opciones");
+  expect(markup).not.toContain("Comparar resultados");
+  expect(markup).not.toContain("Cambios sin aplicar");
+  expect(markup).toContain("La comparación se actualiza al cambiar la selección.");
+});
+
+it("renders paired party-share bars on one scale with an explicit party-vote denominator", async () => {
+  const markup = await render(PARAMS);
+  expect(markup).toContain('aria-labelledby="compare-chart-heading"');
+  expect(markup).toContain("Participación por partido");
+  expect(markup).toContain("No representa el padrón ni todos los votos emitidos.");
+  expect(markup).toContain("Lado A: 100 votos partidarios");
+  expect(markup).toContain("Lado B: 100 votos partidarios");
+  for (const label of ["Lado A: PARTIDO A 2023, 60,00 %", "Lado B: PARTIDO A 2025, 55,00 %", "Lado A: PARTIDO B 2023, 40,00 %", "Lado B: PARTIDO B 2025, 45,00 %"]) {
+    expect(markup).toContain(`aria-label="${label}"`);
+  }
+  expect(markup.match(/viewBox="0 0 100 12"/g)).toHaveLength(4);
+  expect(markup).toContain('width="60"');
+  expect(markup).toMatch(/width="55(?:\.0+1)?"/);
+  expect(markup).toContain('aria-label="Tabla exacta de participación y variación por partido en 02/027"');
+});
+
+it.each(["authorization_denied", "payload_too_large", "malformed", "unavailable", "empty"])("does not create a chart for %s evidence", async (status) => {
+  mocks.evidence.mockResolvedValue({ status });
+  const markup = await render(PARAMS);
+  expect(markup).not.toContain("compare-chart-heading");
+  expect(markup).not.toContain('viewBox="0 0 100 12"');
+});
+
+it("charts the full canonical union without inventing a vote share for an absent party", async () => {
+  const value = evidence();
+  value.right.result.parties[1]!.canonicalPartyId = "party-c";
+  value.right.result.parties[1]!.displayName = "PARTIDO C 2025";
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  expect(markup.match(/viewBox="0 0 100 12"/g)).toHaveLength(6);
+  expect(markup).toContain('aria-label="Lado B: PARTIDO B 2023, 0,00 %"');
+  expect(markup).toContain('aria-label="Lado A: PARTIDO C 2025, 0,00 %"');
+  expect(markup).toContain('aria-label="Lado B: PARTIDO C 2025, 45,00 %"');
 });

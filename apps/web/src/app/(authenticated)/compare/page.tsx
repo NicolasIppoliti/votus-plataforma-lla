@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
-import { ComparisonSelectionForm } from "./ComparisonSelectionForm";
+import { ComparisonSelectionForm, type SelectionGroup } from "./ComparisonSelectionForm";
+import { ComparisonChart } from "./ComparisonChart";
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { EvidenceState } from "@/components/EvidenceState";
@@ -168,19 +169,29 @@ function CompareSelector({
   evidenceNotice,
   children,
 }: CompareSelectorProps): ReactNode {
-  const leftElectionId = selected[QUERY_KEY.LEFT_ELECTION_ID];
-  const rightElectionId = selected[QUERY_KEY.RIGHT_ELECTION_ID];
-  const leftCategoryId = selected[QUERY_KEY.LEFT_CATEGORY_ID];
-  const rightCategoryId = selected[QUERY_KEY.RIGHT_CATEGORY_ID];
-  const distritoCode = selected[QUERY_KEY.DISTRITO_CODE];
-  const options = {
-    leftElectionId: elections.filter((option) => option.year === 2023).map((option) => option.id),
-    rightElectionId: elections.filter((option) => option.year === 2025).map((option) => option.id),
-    leftCategoryId: leftCategories.map((option) => option.id),
-    rightCategoryId: rightCategories.map((option) => option.id),
-    distritoCode: distritos.map((option) => option.code),
-    seccionCode: secciones.map((option) => option.code),
-  };
+  const groups: SelectionGroup[] = [
+    {
+      id: "compare-edit-a-heading", title: "Lado A", description: "Selección oficial de 2023", className: "official-compare__side",
+      fields: [
+        { key: "leftElectionId", id: "compare-left-election", label: "Elección izquierda (2023)", placeholder: "Elegir elección de 2023", options: elections.filter((option) => option.year === 2023).map((option) => ({ value: option.id, label: option.label })) },
+        { key: "leftCategoryId", id: "compare-left-category", label: "Categoría izquierda", placeholder: "Elegir categoría izquierda", options: leftCategories.map((option) => ({ value: option.id, label: option.name })) },
+      ],
+    },
+    {
+      id: "compare-edit-b-heading", title: "Lado B", description: "Selección oficial de 2025", className: "official-compare__side",
+      fields: [
+        { key: "rightElectionId", id: "compare-right-election", label: "Elección derecha (2025)", placeholder: "Elegir elección de 2025", options: elections.filter((option) => option.year === 2025).map((option) => ({ value: option.id, label: option.label })) },
+        { key: "rightCategoryId", id: "compare-right-category", label: "Categoría derecha", placeholder: "Elegir categoría derecha", options: rightCategories.map((option) => ({ value: option.id, label: option.name })) },
+      ],
+    },
+    {
+      id: "compare-shared-heading", title: "Jurisdicción compartida", description: "Solo opciones presentes en ambos lados", className: "official-compare__shared",
+      fields: [
+        { key: "distritoCode", id: "compare-distrito", label: "Distrito compartido", placeholder: "Elegir distrito compartido", options: distritos.map((option) => ({ value: option.code, label: optionLabel(option) })) },
+        { key: "seccionCode", id: "compare-seccion", label: "Sección compartida", placeholder: "Elegir sección compartida", options: secciones.map((option) => ({ value: option.code, label: optionLabel(option) })) },
+      ],
+    },
+  ];
 
   return (
     <main className="page-shell official-compare">
@@ -191,84 +202,22 @@ function CompareSelector({
             Compare dos selecciones oficiales independientes dentro de una misma sección autorizada.
           </p>
         </header>
-        <section className="panel official-compare__selection" aria-labelledby="compare-selector-heading">
-          <div className="panel__heading">
-            <h2 id="compare-selector-heading">Elegir selecciones y sección compartida</h2>
-          </div>
-          <ComparisonSelectionForm key={JSON.stringify(selected)} selected={selected} options={options} applied={Boolean(children)}>
-            <div className="official-compare__selector-grid">
-              <fieldset className="official-compare__side" aria-labelledby="compare-edit-a-heading">
-                <legend id="compare-edit-a-heading">Lado A <span>Selección oficial de 2023</span></legend>
-                <div className="field">
-                  <label htmlFor="compare-left-election">Elección izquierda (2023)</label>
-                  <select id="compare-left-election" name={QUERY_KEY.LEFT_ELECTION_ID} defaultValue={leftElectionId ?? ""} required>
-                    <option value="">Elegir elección de 2023</option>
-                    {elections.filter((option) => option.year === 2023).map((option) => (
-                      <option key={option.id} value={option.id}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="compare-left-category">Categoría izquierda</label>
-                  <select id="compare-left-category" name={QUERY_KEY.LEFT_CATEGORY_ID} defaultValue={leftCategoryId ?? ""} disabled={!leftElectionId} required>
-                    <option value="">Elegir categoría izquierda</option>
-                    {leftCategories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-                  </select>
-                </div>
-              </fieldset>
-              <fieldset className="official-compare__side" aria-labelledby="compare-edit-b-heading">
-                <legend id="compare-edit-b-heading">Lado B <span>Selección oficial de 2025</span></legend>
-                <div className="field">
-                  <label htmlFor="compare-right-election">Elección derecha (2025)</label>
-                  <select id="compare-right-election" name={QUERY_KEY.RIGHT_ELECTION_ID} defaultValue={rightElectionId ?? ""} required>
-                    <option value="">Elegir elección de 2025</option>
-                    {elections.filter((option) => option.year === 2025).map((option) => (
-                      <option key={option.id} value={option.id}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="compare-right-category">Categoría derecha</label>
-                  <select id="compare-right-category" name={QUERY_KEY.RIGHT_CATEGORY_ID} defaultValue={rightCategoryId ?? ""} disabled={!rightElectionId} required>
-                    <option value="">Elegir categoría derecha</option>
-                    {rightCategories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-                  </select>
-                </div>
-              </fieldset>
-              <fieldset className="official-compare__shared" aria-labelledby="compare-shared-heading">
-                <legend id="compare-shared-heading">Jurisdicción compartida <span>Solo opciones presentes en ambos lados</span></legend>
-                <div className="field">
-                  <label htmlFor="compare-distrito">Distrito compartido</label>
-                  <select id="compare-distrito" name={QUERY_KEY.DISTRITO_CODE} defaultValue={distritoCode ?? ""} disabled={!leftCategoryId || !rightCategoryId} required>
-                    <option value="">Elegir distrito compartido</option>
-                    {distritos.map((option) => <option key={option.code} value={option.code}>{optionLabel(option)}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="compare-seccion">Sección compartida</label>
-                  <select id="compare-seccion" name={QUERY_KEY.SECCION_CODE} defaultValue={selected[QUERY_KEY.SECCION_CODE] ?? ""} disabled={!distritoCode} required>
-                    <option value="">Elegir sección compartida</option>
-                    {secciones.map((option) => <option key={option.code} value={option.code}>{optionLabel(option)}</option>)}
-                  </select>
-                </div>
-              </fieldset>
-            </div>
-          </ComparisonSelectionForm>
-              {!alert && unique && (
-                <aside aria-label="Opciones no compartidas">
-                  {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
-                  {unique.seccion && <p>Opciones no compartidas — Sección: {unique.seccion.leftOnly} Lado A / {unique.seccion.rightOnly} Lado B (disponibles solo en ese lado).</p>}
-                </aside>
-              )}
-        </section>
-        {evidenceNotice ? (
-          <EvidenceState {...evidenceNotice} titleId="compare-evidence-state-heading">
-            <p>{message}</p>
-          </EvidenceState>
-        ) : (
-          <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
-        )}
-        {children}
+        <ComparisonSelectionForm selected={selected} groups={groups}>
+          {!alert && unique && (
+            <aside className="official-compare__state" aria-label="Opciones no compartidas">
+              {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
+              {unique.seccion && <p>Opciones no compartidas — Sección: {unique.seccion.leftOnly} Lado A / {unique.seccion.rightOnly} Lado B (disponibles solo en ese lado).</p>}
+            </aside>
+          )}
+          {evidenceNotice ? (
+            <EvidenceState {...evidenceNotice} titleId="compare-evidence-state-heading">
+              <p>{message}</p>
+            </EvidenceState>
+          ) : (
+            <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+          )}
+          {children}
+        </ComparisonSelectionForm>
       </div>
     </main>
   );
@@ -567,6 +516,11 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           <h2 id="compare-results-heading">Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
         <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "sin cambio"}.</p>
+        <ComparisonChart
+          swing={swing}
+          leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
+          rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
+        />
         <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
           <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>
