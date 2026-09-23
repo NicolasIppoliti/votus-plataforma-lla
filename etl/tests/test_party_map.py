@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import os
 import re
 import uuid
@@ -25,6 +24,7 @@ from etl.db import load_party_map_rows
 from etl.ingest.national import iter_national_rows
 from etl.ingest.pba import ingest_pba
 from etl.jurisdiction import make_result_row
+from etl.manifest import load_manifest
 from etl.party_map import (
     CanonicalPartyDeclaration,
     DuplicatePartyMappingKeyError,
@@ -915,7 +915,7 @@ def test_national_2023_president_primary_source_identities_are_curated_exactly()
     ]
     assert fixture_rows == expected_rows
 
-    manifest = json.loads((CURATED.parent / "archive-manifest.json").read_text(encoding="utf-8"))
+    manifest = load_manifest(CURATED.parent / "archive-manifest.json")
     manifest_sha_by_id = {entry["id"]: entry["sha256"] for entry in manifest}
     expected_archives = {
         "national/2023-generales": (

@@ -13,7 +13,7 @@ canonical verification and accessible alternatives.
 ## Delivery state and capability hierarchy
 
 **Current:** selector/chart/table-first analysis of public official 2023/2025 results.
-Complete source-backed geometry and child-unit scene contracts are not yet available.
+Slice 1 has one checksum-backed ARBA Coronel Rosales partido reference and a standalone non-production evaluator, not a delivered map. Child-unit geometry, terrain and historical boundary applicability remain unsupported or unverified.
 **Target:** map-first territorial dominance and election comparison using deck.gl +
 MapLibre, delivered through the [merge-gated slice plan](docs/plans/territorial-intelligence-slices.md).
 This direction does not claim a delivered map or authorize implementation.
@@ -71,6 +71,7 @@ The product name is Votus. Product language is direct, neutral, operational Span
 - Curated party, crosswalk, election, and jurisdiction mappings.
 - Exact result tables, provenance, coverage, granularity, exclusion, and source metadata.
 - Real route-level unit, SQL, and browser release gates.
+- Slice 1 candidate: 69,544-byte ARBA WFS partido MultiPolygon (SHA-256 `b502009185a5d6b1666312d2d91aa9b79053b2ee8a06f0aa683029b925c3ed13`), PBA `027` → national `(02,027)`; standalone renderer lab budgets pass, pending final whole-candidate verification and merge.
 - Historical CI/CD research and operational-verification documentation.
 
 Evidence is trusted by the internal users and should not dominate every primary view. It must remain available through a clear dedicated detail surface and stay attached to degraded or disputed results where omission would change interpretation.

@@ -42,8 +42,11 @@ coverage/
 *.swp
 *.swo
 
-# Raw immutable archive (D2) — sha256-tracked via archive-manifest.json, not git
-/archive/
+# Raw immutable archive (D2) — manifest-hashed; only the partido snapshot is versioned.
+/archive/*
+!/archive/geography/
+/archive/geography/*
+!/archive/geography/arba-coronel-rosales-partido.b502009185a5d6b1666312d2d91aa9b79053b2ee8a06f0aa683029b925c3ed13.geojson
 
 # Python
 __pycache__/

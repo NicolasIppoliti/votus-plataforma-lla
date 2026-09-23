@@ -1476,6 +1476,11 @@ describe("base contracts", () => {
 		expect(e2eRelease).toContain("persist-credentials: false");
 		expect(e2eRelease.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
 		expect(e2eRelease.match(/pnpm exec playwright install --with-deps chromium/g)).toHaveLength(1);
+		expect(e2eRelease.match(/^\s*- run: pnpm evaluate:territorial-renderer -- --verify$/gm)).toHaveLength(1);
+		expect(e2eRelease.indexOf("pnpm exec playwright install --with-deps chromium"))
+			.toBeLessThan(e2eRelease.indexOf("pnpm evaluate:territorial-renderer -- --verify"));
+		expect(e2eRelease.indexOf("pnpm evaluate:territorial-renderer -- --verify"))
+			.toBeLessThan(e2eRelease.indexOf("pnpm test:e2e:gate --lane browser"));
 		expect(e2eRelease.match(/^\s*- run: pnpm test:e2e:gate --lane browser$/gm)).toHaveLength(1);
 		expect(e2eRelease).not.toMatch(/services:|setup-uv|uv run|postgres:17/);
 

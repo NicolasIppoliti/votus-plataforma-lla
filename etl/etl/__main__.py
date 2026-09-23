@@ -22,6 +22,7 @@ import argparse
 import contextlib
 import csv
 import io
+import json
 import os
 import sys
 import tempfile
@@ -142,7 +143,7 @@ DEFAULT_LOCAL_ROOT = REPO_ROOT / "archive"
 DEFAULT_MANIFEST_PATH = REPO_ROOT / "archive-manifest.json"
 DEFAULT_CROSSWALK_PATH = REPO_ROOT / "curated" / "crosswalk.yaml"
 DEFAULT_PARTY_MAP_PATH = REPO_ROOT / "curated" / "party_map.yaml"
-SUPPORTED_SOURCE_CAPABILITIES = frozenset({"national", "pba", "fiscalizacion"})
+SUPPORTED_SOURCE_CAPABILITIES = frozenset({"national", "pba", "fiscalizacion", "geography"})
 
 # Never a hardcoded fallback DSN -- see `resolve_database_url` (task 12.6).
 DATABASE_URL_ENV_VAR = "ETL_DATABASE_URL"
@@ -270,6 +271,10 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                         f"sources.yaml capability {capability!r} entry {index} upload "
                         "must be exactly 'never'"
                     )
+            if capability == "geography":
+                if "election_year" in entry or "election_round" in entry:
+                    raise SourcesValidationError("geography entries must be election-free")
+                continue
             try:
                 registered_source_election(entry)
             except SourcesValidationError as exc:
@@ -607,6 +612,42 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     print(f"archived {args.source} -> {result.record['archived_path']}")
     return 0
+
+
+def cmd_validate_partido_geometry(args: argparse.Namespace) -> int:
+    from .partido_geometry import inspect_partido_geometry, rejected_geometry
+
+    entry = find_source_entry(load_sources(Path(args.sources_path)), args.source)
+    if entry is None:
+        raise UnknownSourceError(f"no registered source with id {args.source!r}")
+    record = latest_ok_record(load_manifest(Path(args.manifest_path)), args.source)
+    if record is None:
+        print(json.dumps(rejected_geometry(entry, {}, "missing_snapshot"), sort_keys=True))
+        return 1
+    if entry["capability"] != "geography" or entry.get("reference_kind") != "partido_geometry":
+        reason = (
+            "unsupported_capability"
+            if entry["capability"] != "geography"
+            else "unsupported_reference_kind"
+        )
+        print(json.dumps(rejected_geometry(entry, record, reason), sort_keys=True))
+        return 1
+    try:
+        payload = read_archived_source(
+            entry,
+            manifest_record=record,
+            capability=entry["capability"],
+            local_store=LocalArchiveStore(root=Path(args.local_root)),
+            filename=archived_filename(record, source_id=args.source),
+        )
+    except ArchiveIntegrityError:
+        result = rejected_geometry(entry, record, "archive_integrity")
+    else:
+        result = inspect_partido_geometry(
+            payload, entry, record, load_crosswalk(DEFAULT_CROSSWALK_PATH)
+        )
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["counts"]["accepted"] == 1 else 1
 
 
 def cmd_archive_history(args: argparse.Namespace) -> int:
@@ -3314,6 +3355,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-root", default=str(DEFAULT_LOCAL_ROOT))
     parser.add_argument("--manifest-path", default=str(DEFAULT_MANIFEST_PATH))
     subparsers = parser.add_subparsers(dest="command", required=True)
+    geometry = subparsers.add_parser("validate-partido-geometry")
+    geometry.add_argument("--source", required=True)
+    geometry.set_defaults(func=cmd_validate_partido_geometry)
 
     fetch_parser = subparsers.add_parser("fetch", help="Archive one registered source.")
     fetch_parser.add_argument("--source", required=True)
