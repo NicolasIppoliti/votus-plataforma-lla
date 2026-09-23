@@ -1285,7 +1285,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "66 as migration_inventory_count",
+        "67 as migration_inventory_count",
         "0037 internal facets base remained directly executable",
         (
             "canonical authorized official facet metadata reapply did not restore "
