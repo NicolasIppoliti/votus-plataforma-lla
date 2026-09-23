@@ -24,6 +24,18 @@
 # if robots.txt ever starts returning 200
 # (etl.http_client.check_robots_txt_still_absent). See design.md D10.
 
+geography:
+  - id: geography/arba-coronel-rosales-partido
+    source: geo.arba.gov.ar
+    source_url: "https://geo.arba.gov.ar/geoserver/idera/wfs?service=WFS&version=2.0.0&request=GetFeature&typeNames=idera%3ADepartamento&outputFormat=application%2Fjson&srsName=EPSG%3A4326&count=2&CQL_FILTER=cde%3D%2706182%27%20AND%20cca%3D%27113%27&sortBy=cde%20A"
+    mime: application/json
+    filename: arba-coronel-rosales-partido.geojson
+    reference_kind: partido_geometry
+    feature_type: idera:Departamento
+    expected_identity: {cca: '113', cde: '06182', nam: Coronel Rosales}
+    pba_distrito_code: '027'
+    notes: "Official ARBA WFS partido reference; structural geometry only, no election-date applicability established. Child electoral depths unsupported."
+
 national:
   - id: national/2023-generales
     election_year: 2023

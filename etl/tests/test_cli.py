@@ -99,6 +99,246 @@ class FakeFetcher:
         return FetchResponse(status_code=200, content=self.payload, headers={})
 
 
+def test_validate_coronel_rosales_partido_geometry_is_reachable_through_main(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    payload = json.dumps({
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}},
+        "features": [{
+            "type": "Feature", "id": "Departamento.482",
+            "properties": {"cca": "113", "cde": "06182", "nam": "Coronel Rosales"},
+            "geometry": {"type": "MultiPolygon", "coordinates": [
+                [[[-62.1, -38.9], [-62.0, -38.9], [-62.0, -38.8], [-62.1, -38.9]]]
+            ]},
+        }],
+    }).encode()
+    root = tmp_path / "archive"
+    (root / "geography").mkdir(parents=True)
+    (root / "geography" / "partido.json").write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    save_manifest(manifest, [{
+        "id": "geography/arba-coronel-rosales-partido", "status": "ok",
+        "sha256": digest, "archived_path": "archive/geography/partido.json",
+        "fetched_at": "2026-09-22T00:00:00Z",
+    }], events=[])
+    assert main([
+        "--local-root", str(root), "--manifest-path", str(manifest),
+        "validate-partido-geometry", "--source", "geography/arba-coronel-rosales-partido",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "counts": {"accepted": 1, "invalid": 0, "conflict": 0}, "reasons": {},
+        "snapshot": {"source": "geography/arba-coronel-rosales-partido",
+                     "sha256": digest, "timestamp": "2026-09-22T00:00:00Z"},
+        "feature": "Departamento.482", "feature_type": "idera:Departamento",
+        "geometry": "MultiPolygon", "crs": "EPSG:4326",
+        "jurisdiction": {"pba_distrito": "027", "national_distrito": "02",
+                         "national_seccion": "027"},
+        "unsupported_depths": ["circuit", "establishment", "mesa"],
+    }
+
+
+def partido_cli_fixture(tmp_path: Path, *, features: list | None = None) -> tuple:
+    source_id = "geography/arba-coronel-rosales-partido"
+    document = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}},
+        "features": features if features is not None else [{
+            "type": "Feature", "id": "Departamento.482",
+            "properties": {"cca": "113", "cde": "06182", "nam": "Coronel Rosales"},
+            "geometry": {"type": "Polygon", "coordinates": [
+                [[0, 0], [1, 0], [1, 1], [0, 0]]
+            ]},
+        }],
+    }
+    root = tmp_path / "archive"
+    (root / "geography").mkdir(parents=True)
+    archive = root / "geography" / "partido.json"
+    payload = json.dumps(document).encode()
+    archive.write_bytes(payload)
+    record = {
+        "id": source_id, "status": "ok", "sha256": hashlib.sha256(payload).hexdigest(),
+        "archived_path": "archive/geography/partido.json", "fetched_at": "2026-09-22T00:00:00Z",
+    }
+    manifest = tmp_path / "manifest.json"
+    save_manifest(manifest, [record], events=[])
+    args = ["--local-root", str(root), "--manifest-path", str(manifest),
+            "validate-partido-geometry", "--source", source_id]
+    return document, record, archive, manifest, args
+
+
+def partido_rejection(record: dict, reason: str, *, conflict: int = 0) -> dict:
+    return {
+        "counts": {"accepted": 0, "invalid": 0 if conflict else 1, "conflict": conflict},
+        "reasons": {reason: conflict or 1},
+        "snapshot": {"source": record["id"], "sha256": record.get("sha256"),
+                     "timestamp": record["fetched_at"]},
+        "feature": None, "feature_type": None, "geometry": None, "crs": None,
+        "jurisdiction": None, "unsupported_depths": ["circuit", "establishment", "mesa"],
+    }
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt"])
+def test_partido_geometry_checksum_precedes_json(tmp_path, capsys, failure):
+    _, record, archive, manifest, args = partido_cli_fixture(tmp_path)
+    archive.write_bytes(b"not JSON")
+    if failure == "missing":
+        record.pop("sha256")
+        save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(record, "archive_integrity")
+
+
+@pytest.mark.parametrize("count,reason", [(0, "missing_feature"), (2, "multiple_features")])
+def test_partido_geometry_never_picks_first(tmp_path, capsys, count, reason):
+    _, record, _, _, args = partido_cli_fixture(tmp_path, features=[{}] * count)
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(
+        record, reason, conflict=count
+    )
+
+
+@pytest.mark.parametrize("field,value,reason", [
+    ("crs", "EPSG:3857", "wrong_crs"),
+    ("id", "Other.482", "wrong_feature_type"),
+    ("cca", "027", "wrong_identity"),
+    ("cde", "6182", "wrong_identity"),
+    ("nam", "Other", "wrong_identity"),
+    ("geometry", "Point", "wrong_geometry_type"),
+    ("geometry", [], "wrong_geometry_type"),
+    ("geometry", {}, "wrong_geometry_type"),
+    ("geometry", 1, "wrong_geometry_type"),
+])
+def test_partido_geometry_rejects_wrong_evidence(tmp_path, capsys, field, value, reason):
+    document, record, archive, manifest, args = partido_cli_fixture(tmp_path)
+    feature = document["features"][0]
+    if field == "crs":
+        document["crs"]["properties"]["name"] = value
+    elif field == "id":
+        feature["id"] = value
+    elif field == "geometry":
+        feature["geometry"]["type"] = value
+    else:
+        feature["properties"][field] = value
+    payload = json.dumps(document).encode()
+    archive.write_bytes(payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(record, reason)
+
+
+@pytest.mark.parametrize("change,reason", [
+    ({"reference_kind": "circuit_geometry"}, "unsupported_reference_kind"),
+    ({"capability": "national"}, "unsupported_capability"),
+    ({"feature_type": "other:Departamento"}, "wrong_feature_type"),
+    ({"pba_distrito_code": "182"}, "unmapped_jurisdiction"),
+    ({"expected_identity": {}}, "invalid_source_metadata"),
+])
+def test_partido_geometry_checks_registered_contract(tmp_path, capsys, change, reason):
+    _, record, _, _, args = partido_cli_fixture(tmp_path)
+    entry = dict(load_sources()["geography"][0])
+    capability = change.get("capability", "geography")
+    entry.update({key: value for key, value in change.items() if key != "capability"})
+    if capability == "national":
+        entry.update(election_year=2025, election_round="legislativas")
+    sources = tmp_path / "sources.yaml"
+    sources.write_text(yaml.safe_dump({capability: [entry]}))
+    assert main(["--sources-path", str(sources), *args]) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(record, reason)
+
+
+@pytest.mark.parametrize("coordinates", [
+    [], [[]], [[[0, 0], [1, 0], [0, 0]]],
+    [[[0, 0], [10**400, 0], [1, 1], [0, 0]]],
+    [[[0, 0], [1, 0], [1, 1], [2, 2]]],
+    [[[0, 0], [True, 0], [1, 1], [0, 0]]],
+    [[[0, 0], [float("nan"), 0], [1, 1], [0, 0]]],
+    [[[0, 0], [float("inf"), 0], [1, 1], [0, 0]]],
+    [[[0, 0], ["1", 0], [1, 1], [0, 0]]],
+    [[[0, 0], [1, 0, 3], [1, 1], [0, 0]]],
+])
+def test_partido_geometry_requires_finite_closed_rings(tmp_path, capsys, coordinates):
+    document, record, archive, manifest, args = partido_cli_fixture(tmp_path)
+    document["features"][0]["geometry"]["coordinates"] = coordinates
+    payload = json.dumps(document).encode()
+    archive.write_bytes(payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(record, "invalid_coordinates")
+
+
+@pytest.mark.parametrize("payload,reason", [
+    (b"not JSON", "invalid_json"),
+    (b"[]", "invalid_feature_collection"),
+    (b'{"type":"Feature","features":[]}', "invalid_feature_collection"),
+    (b'{"type":"FeatureCollection","features":{}}', "invalid_feature_collection"),
+    (b'{"type":"FeatureCollection","features":[null]}', "invalid_feature"),
+    (b'{"type":"FeatureCollection","features":[{"type":"Other"}]}', "invalid_feature"),
+])
+def test_partido_geometry_rejects_malformed_documents(tmp_path, capsys, payload, reason):
+    _, record, archive, manifest, args = partido_cli_fixture(tmp_path)
+    archive.write_bytes(payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(record, reason)
+
+
+def test_partido_geometry_reports_missing_snapshot(tmp_path, capsys):
+    _, record, _, manifest, args = partido_cli_fixture(tmp_path)
+    save_manifest(manifest, [], events=[])
+    assert main(args) == 1
+    record.update(sha256=None, fetched_at=None)
+    assert json.loads(capsys.readouterr().out) == partido_rejection(record, "missing_snapshot")
+
+
+@pytest.mark.parametrize("code", [None, ""])
+def test_partido_geometry_requires_pba_metadata(tmp_path, capsys, code):
+    _, record, _, _, args = partido_cli_fixture(tmp_path)
+    entry = dict(load_sources()["geography"][0])
+    if code is None:
+        entry.pop("pba_distrito_code")
+    else:
+        entry["pba_distrito_code"] = code
+    sources = tmp_path / "sources.yaml"
+    sources.write_text(yaml.safe_dump({"geography": [entry]}))
+    assert main(["--sources-path", str(sources), *args]) == 1
+    assert json.loads(capsys.readouterr().out) == partido_rejection(
+        record, "invalid_source_metadata"
+    )
+
+
+@pytest.mark.parametrize("field", ["election_year", "election_round"])
+@pytest.mark.parametrize("value", [None, "", 2025, "legislativas"])
+def test_sources_geography_rejects_election_metadata(tmp_path, field, value):
+    from etl.__main__ import SourcesValidationError
+
+    entry = dict(load_sources()["geography"][0])
+    entry[field] = value
+    sources = tmp_path / "sources.yaml"
+    sources.write_text(yaml.safe_dump({"geography": [entry]}))
+    with pytest.raises(SourcesValidationError, match="geography entries must be election-free"):
+        load_sources(sources)
+
+
+def test_partido_geometry_accepts_polygon_through_main(tmp_path, capsys):
+    _, record, _, _, args = partido_cli_fixture(tmp_path)
+    assert main(args) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "counts": {"accepted": 1, "invalid": 0, "conflict": 0}, "reasons": {},
+        "snapshot": {"source": record["id"], "sha256": record["sha256"],
+                     "timestamp": "2026-09-22T00:00:00Z"},
+        "feature": "Departamento.482", "feature_type": "idera:Departamento",
+        "geometry": "Polygon", "crs": "EPSG:4326",
+        "jurisdiction": {"pba_distrito": "027", "national_distrito": "02",
+                         "national_seccion": "027"},
+        "unsupported_depths": ["circuit", "establishment", "mesa"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # 12.1 -- fetch archives a registered source, no network
 # ---------------------------------------------------------------------------
@@ -7328,13 +7568,18 @@ def test_sources_boundary_accepts_only_supported_capability_families(
         load_sources(path)
 
 
-def test_registered_sources_declare_an_explicit_election() -> None:
+def test_registered_electoral_sources_declare_an_explicit_election() -> None:
     from etl.__main__ import load_sources
 
     sources = load_sources(REPO_ROOT / "etl" / "sources.yaml")
 
-    for entries in sources.values():
+    for capability, entries in sources.items():
         for entry in entries:
+            if capability == "geography":
+                assert entry["reference_kind"] == "partido_geometry"
+                assert "election_year" not in entry
+                assert "election_round" not in entry
+                continue
             assert isinstance(entry.get("election_year"), int)
             assert isinstance(entry.get("election_round"), str)
             assert entry["election_round"].strip()
