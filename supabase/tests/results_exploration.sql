@@ -1,7 +1,7 @@
 -- Runtime proof for the PR1 official explorer. Synthetic rows contain no
 -- personal data and the pgTAP transaction rolls every fixture back.
 begin;
-select plan(148);
+select plan(155);
 insert into election (id, year, round) values
   ('20000000-0000-0000-0000-000000000001', 2025, 'legislativas'),
   ('20000000-0000-0000-0000-000000000002', 2023, 'generales'),
@@ -12,7 +12,8 @@ values ('20000000-0000-0000-0000-000000000003', 'DIPUTADO NACIONAL'),
   ('20000000-0000-0000-0000-000000000006', 'CONCEJALES'),
   ('20000000-0000-0000-0000-000000000007', 'MESA IDENTITY FIXTURE'),
   ('20000000-0000-0000-0000-000000000008', 'DIPUTADOS PROVINCIALES'),
-  ('20000000-0000-0000-0000-000000000009', 'SENADORES PROVINCIALES');
+  ('20000000-0000-0000-0000-000000000009', 'SENADORES PROVINCIALES'),
+  ('20000000-0000-0000-0000-000000000018', 'INTENDENTE');
 insert into jurisdiction (
   id, distrito_code, distrito_name, seccion_code, seccion_name, circuito_code,
   circuito_name, establecimiento_code, establecimiento_name, mesa_code
@@ -39,6 +40,7 @@ insert into jurisdiction (
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL'),
 ('wu2-pba-municipal', 'WU2 PBA MUNICIPAL'), ('wu2-pba-provincial', 'WU2 PBA PROVINCIAL'),
+('wu23-dine-municipal', 'WU23 DINE MUNICIPAL'),
 ('FUERZA_PATRIA', 'ALIANZA FUERZA PATRIA'),
 ('LLA_PRO_ALLIANCE', 'ALIANZA LA LIBERTAD AVANZA'),
 ('SOMOS_BUENOS_AIRES', 'ALIANZA SOMOS BUENOS AIRES'),
@@ -59,6 +61,7 @@ insert into party_mapping (
   (2023, 'national', 'DIPUTADO NACIONAL', '135', 'wu1-canonical', true),
   (2023, 'national', 'DIPUTADO NACIONAL', '20135', 'wu1-canonical', true),
   (2023, 'coronel_rosales_municipal', 'CONCEJALES', '135', 'wu1-municipal', true),
+  (2023, 'coronel_rosales_municipal', 'INTENDENTE', '20135', 'wu23-dine-municipal', true),
   (2025, 'coronel_rosales_municipal', 'CONCEJALES', '2206', 'wu2-pba-municipal', true),
   (2025, 'pba_provincial', 'DIPUTADOS PROVINCIALES', '2206', 'wu2-pba-provincial', true),
   (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2200', 'FUERZA_PATRIA', true),
@@ -120,7 +123,8 @@ insert into result_row (
   ('20000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000027', '20000000-0000-0000-0000-000000000003', 'mesa', null, 91, 'fiscalizacion', 'fiscalizacion/only-runtime', 23),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000003', 'seccion', null, 43, 'fiscalizacion', 'pba/2025-distrito-027', 24),
   ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000006', 'seccion', '2206', 101, 'official', 'pba/2025-distrito-027', 25),
-  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000008', 'seccion', '2206', 202, 'official', 'pba/2025-distrito-027', 26);
+  ('20000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000014', '20000000-0000-0000-0000-000000000008', 'seccion', '2206', 202, 'official', 'pba/2025-distrito-027', 26),
+  ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000018', 'mesa', '20135', 37, 'official', 'national/2023-generales', 27);
 insert into result_row (
   election_id, jurisdiction_id, category_id, granularity, list_id, votes,
   source_kind, archive_entry_id, source_row_index
@@ -500,6 +504,22 @@ from (values
   ('PBA provincial outside curated section', 'pba/2025-distrito-028', 2025, 'provinciales', 'DIPUTADOS PROVINCIALES', '02', '028', null),
   ('unmapped PBA category', 'pba/2025-distrito-027', 2025, 'provinciales', 'DIPUTADO NACIONAL', '02', '027', null)
 ) cases(label,archive_entry_id,year,round,category,distrito_code,seccion_code,expected);
+select is(results_exploration_party_jurisdiction(
+  archive_entry_id, year, round, category, distrito_code, seccion_code), expected,
+  '2023 INTENDENTE mapping is source and section scoped: ' || label)
+from (values
+  ('DINE 2023 general', 'national/2023-generales', 2023, 'generales', 'INTENDENTE', '02', '027', 'coronel_rosales_municipal'),
+  ('wrong source', 'national/2023-paso', 2023, 'generales', 'INTENDENTE', '02', '027', 'national'),
+  ('wrong section', 'national/2023-generales', 2023, 'generales', 'INTENDENTE', '02', '028', 'national'),
+  ('wrong category', 'national/2023-generales', 2023, 'generales', 'DIPUTADO NACIONAL', '02', '027', 'national'),
+  ('wrong year', 'national/2023-generales', 2024, 'generales', 'INTENDENTE', '02', '027', 'national'),
+  ('wrong round', 'national/2023-generales', 2023, 'paso', 'INTENDENTE', '02', '027', 'national')
+) cases(label,archive_entry_id,year,round,category,distrito_code,seccion_code,expected);
+select is((select party->>'canonical_party_id' from jsonb_array_elements(
+  results_exploration_official('20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000018', '02', '027')->'parties') party),
+  'wu23-dine-municipal',
+  'authorized official RPC resolves DINE municipal INTENDENTE list through curated identity');
 select is(results_exploration_party_jurisdiction(
   archive_entry_id, year, round, category, distrito_code, seccion_code), expected,
   'distrito 113 mapping is exact and closed: ' || label)
