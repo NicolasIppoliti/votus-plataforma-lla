@@ -173,6 +173,39 @@ mappings:
     party_name: AGRUPACION MUNICIPAL PRIMERO ROSALES
     source: "https://www.juntaelectoral.gba.gov.ar/resultados-generales/2023027.pdf"
 
+  # --- 2023 DINE provisional municipal ballot (raw INTENDENTE) -----------
+  # Exact positive agrupacion_id/name pairs observed in the checksum-verified
+  # national/2023-generales ZIP, distrito 2 / seccion 27 / INTENDENTE.
+  # These keys do not replace the separate definitive CONCEJALES identities.
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: INTENDENTE
+    list_id: "20132"
+    canonical_party: JXC
+    party_name: JUNTOS POR EL CAMBIO
+    source: "archive/national/2023-generales.zip -> 2023_Generales/ResultadoElectorales_2023_Generales.csv (02/027)"
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: INTENDENTE
+    list_id: "20134"
+    canonical_party: UP
+    party_name: UNION POR LA PATRIA
+    source: "archive/national/2023-generales.zip -> 2023_Generales/ResultadoElectorales_2023_Generales.csv (02/027)"
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: INTENDENTE
+    list_id: "20135"
+    canonical_party: LLA
+    party_name: LA LIBERTAD AVANZA
+    source: "archive/national/2023-generales.zip -> 2023_Generales/ResultadoElectorales_2023_Generales.csv (02/027)"
+  - year: 2023
+    jurisdiction: coronel_rosales_municipal
+    category: INTENDENTE
+    list_id: "20962"
+    canonical_party: PRIMERO_ROSALES
+    party_name: PRIMERO ROSALES
+    source: "archive/national/2023-generales.zip -> 2023_Generales/ResultadoElectorales_2023_Generales.csv (02/027)"
+
   # --- 2023 generales, national (agrupacion_id, 5-digit space) ------------
   # Verified live against archive/national/2023-generales.zip ->
   # 2023_Generales/ResultadoElectorales_2023_Generales.csv, distrito 2,

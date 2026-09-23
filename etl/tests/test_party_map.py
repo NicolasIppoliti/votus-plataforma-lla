@@ -50,6 +50,28 @@ def _load_party_map_table() -> PartyMappingTable:
     return load_party_map(CURATED / "party_map.yaml")
 
 
+@pytest.mark.parametrize(
+    ("list_id", "canonical_id", "source_name"),
+    [
+        ("20132", "JXC", "JUNTOS POR EL CAMBIO"),
+        ("20134", "UP", "UNION POR LA PATRIA"),
+        ("20135", "LLA", "LA LIBERTAD AVANZA"),
+        ("20962", "PRIMERO_ROSALES", "PRIMERO ROSALES"),
+    ],
+)
+def test_curated_2023_dine_municipal_identity_is_distinct_from_national(
+    list_id: str, canonical_id: str, source_name: str
+) -> None:
+    table = _load_party_map_table()
+    entry = next(
+        mapping
+        for mapping in table.entries
+        if (mapping.year, mapping.jurisdiction, mapping.category, mapping.list_id)
+        == (2023, "coronel_rosales_municipal", "INTENDENTE", list_id)
+    )
+    assert (entry.canonical_party, entry.party_name) == (canonical_id, source_name)
+
+
 def _canonical_party(
     canonical_id: str = "LLA", display_name: str = "LA LIBERTAD AVANZA"
 ) -> dict[str, object]:
@@ -1031,7 +1053,7 @@ def test_tigre_curated_party_map_has_exact_present_identities_and_omits_absences
 def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
     table = _load_party_map_table()
 
-    assert len(table.entries) == 83
+    assert len(table.entries) == 87
     labels = {declaration.id: declaration.display_name for declaration in table.canonical_parties}
     assert labels == {
         "JXC": "JUNTOS POR EL CAMBIO",
