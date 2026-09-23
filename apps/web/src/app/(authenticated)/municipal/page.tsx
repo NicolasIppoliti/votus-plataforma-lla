@@ -22,8 +22,9 @@ import {
   unrecognizedLevels,
 } from "@/lib/results/granularity";
 import {
-  loadMunicipalOfficialEvidence, MUNICIPAL_JURISDICTION_ID,
+  loadMunicipalOfficialEvidence, MUNICIPAL_JURISDICTION_ID, MUNICIPAL_2023_ARCHIVE,
   type MunicipalOfficialEvidence,
+  type MunicipalYear,
   type OfficialProvenanceMetadata,
 } from "@/lib/workspace/official-evidence";
 
@@ -68,7 +69,7 @@ export type MunicipalView =
       /** Archive entries known before party mapping failed. */
       archiveEntryIds?: string[];
     };
-const MUNICIPAL_EVIDENCE_IDENTITY = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" } as const;
+const MUNICIPAL_EVIDENCE_IDENTITIES = { 2025: { year: 2025, round: "provinciales", categoryName: "CONCEJALES" }, 2023: { year: 2023, round: "generales", categoryName: "INTENDENTE" } } as const;
 function auditByKind(entries: { kind: string; rows: number; votes: number }[]): ExcludedByKind { return entries.reduce<ExcludedByKind>((totals, { kind, rows, votes }) => ({ ...totals, [kind]: { rows: (totals[kind]?.rows ?? 0) + rows, votes: (totals[kind]?.votes ?? 0) + votes } }), {}); }
 function hasValidOfficialSourceAudit(rows: ResultRow[], sourceAudit: ExcludedByKind | undefined): boolean {
   if (!sourceAudit || typeof sourceAudit !== "object") return false;
@@ -84,9 +85,10 @@ function hasValidOfficialSourceAudit(rows: ResultRow[], sourceAudit: ExcludedByK
   }
   return officialAudit.votes === renderedVotes;
 }
-export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOfficialEvidence, { status: "ok" }>, categoryId: string): MunicipalView {
+export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOfficialEvidence, { status: "ok" }>, categoryId: string, year: MunicipalYear = 2025): MunicipalView {
   const { result } = evidence;
-  if (result.electionYear !== MUNICIPAL_EVIDENCE_IDENTITY.year || result.electionRound !== MUNICIPAL_EVIDENCE_IDENTITY.round || result.categoryName !== MUNICIPAL_EVIDENCE_IDENTITY.categoryName) return { status: "read_failed", reason: "No se pudo leer la evidencia municipal autorizada." };
+  if (result.electionYear !== MUNICIPAL_EVIDENCE_IDENTITIES[year].year || result.electionRound !== MUNICIPAL_EVIDENCE_IDENTITIES[year].round || result.categoryName !== MUNICIPAL_EVIDENCE_IDENTITIES[year].categoryName) return { status: "read_failed", reason: "No se pudo leer la evidencia municipal autorizada." };
+  if (year === 2023 && (result.archiveEntryIds.length !== 1 || result.archiveEntryIds[0] !== MUNICIPAL_2023_ARCHIVE.id || evidence.provenance.length !== 1 || evidence.provenance[0]?.archiveEntryId !== MUNICIPAL_2023_ARCHIVE.id || evidence.provenance[0]?.sha256 !== MUNICIPAL_2023_ARCHIVE.sha256)) return { status: "read_failed", reason: "la procedencia municipal 2023 no coincide con el archivo DINE verificado" };
   if (result.sourceKind !== "official") return { status: "read_failed", reason: "la evidencia municipal no es de fuente oficial" };
   const officialAudit = result.sourceAudit[0];
   const partyVotes = result.parties.reduce((sum, party) => sum + party.votes, 0);
@@ -127,6 +129,7 @@ function OfficialProvenance({ sources }: { sources: MunicipalProvenance[] }): Re
 export function renderMunicipalView(
   view: MunicipalView,
   sources: MunicipalProvenance[] = [],
+  year: MunicipalYear = 2025,
 ): ReactNode {
   if (view.status !== "ok") {
     const carried = describeExcluded(
@@ -160,6 +163,7 @@ export function renderMunicipalView(
   }
 
   const { rows } = view;
+  const is2023 = year === 2023;
   if (!hasValidOfficialSourceAudit(rows, view.sourceAudit)) return municipalRefusal("la auditoría de fuente oficial no es válida.");
   // Computed BEFORE the path-3 guard, for the same reason it is carried
   // through `read_failed`: a drop already counted must not vanish behind a
@@ -257,14 +261,16 @@ export function renderMunicipalView(
       <div className={`shell-container ${styles.layout}`}>
         <header className={styles.header}>
           <h1>Coronel Rosales</h1>
-          <p>Resultados municipales · Concejales · Fuente oficial</p>
+          <p>Resultados municipales · {is2023 ? "Cuerpo municipal (rótulo DINE: INTENDENTE)" : "Concejales"} · Fuente oficial</p>
+          <nav aria-label="Elección municipal"><a href="/municipal">2025 · Provinciales</a>{" · "}<a href="/municipal?year=2023">2023 · Generales</a></nav>
           <p>Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.</p>
+          {is2023 ? <p role="note">El archivo DINE 2023 registra 153 mesas y 10 códigos de circuito para 02/027; son datos del archivo, no cobertura confirmada de esta proyección ni límites geográficos vigentes.</p> : null}
         </header>
         <section className={styles.context} aria-labelledby="municipal-context-heading">
           <h2 id="municipal-context-heading">Contexto de la consulta</h2>
           <dl className={styles.scope}>
-            <div><dt>Elección</dt><dd>2025 · Provinciales</dd></div>
-            <div><dt>Categoría</dt><dd>Concejales</dd></div>
+            <div><dt>Elección</dt><dd>{is2023 ? "2023 · Generales · escrutinio provisorio" : "2025 · Provinciales · escrutinio definitivo"}</dd></div>
+            <div><dt>Categoría</dt><dd>{is2023 ? "INTENDENTE (rótulo de fuente para el cuerpo municipal)" : "Concejales"}</dd></div>
             <div><dt>Territorio autorizado</dt><dd>Coronel Rosales</dd></div>
             <div><dt>Identidad nacional</dt><dd><code>Distrito 02 · Sección 027</code></dd></div>
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
@@ -273,7 +279,7 @@ export function renderMunicipalView(
         <section className={styles.results} aria-labelledby="municipal-results-heading">
           <header className={styles.sectionHeading}>
             <h2 id="municipal-results-heading">Resultados exactos</h2>
-            <p role="status">Resultados oficiales autorizados por partido.</p>
+            <p role="status">Resultados oficiales autorizados por partido · {is2023 ? "provisorio" : "definitivo"} · sección 02/027.</p>
           </header>
           <section className={styles.coverage} aria-labelledby="municipal-coverage-heading">
             <h3 id="municipal-coverage-heading">Cobertura y exclusiones</h3>
@@ -398,29 +404,33 @@ export default async function MunicipalPage({
   const legacyCategoryId = stringParam(params, "categoryId");
   const legacyPartyFamily = stringParam(params, "partyJurisdiction");
   const legacyPartyCategory = stringParam(params, "partyCategory");
-  const configuredElectionId = process.env["MUNICIPAL_ELECTION_ID"] || undefined;
-  const categoryId = process.env["MUNICIPAL_CATEGORY_ID"] || undefined;
+  const suppliedYear = stringParam(params, "year");
+  if (suppliedYear !== undefined && suppliedYear !== "2023" && suppliedYear !== "2025")
+    return municipalRefusal("el año debe ser 2023 o 2025.");
+  const year: MunicipalYear = suppliedYear === "2023" ? 2023 : 2025;
+  const configuredElectionId = year === 2023 ? process.env["MUNICIPAL_2023_ELECTION_ID"] : process.env["MUNICIPAL_ELECTION_ID"];
+  const categoryId = year === 2023 ? process.env["MUNICIPAL_2023_CATEGORY_ID"] : process.env["MUNICIPAL_CATEGORY_ID"];
 
   if (!configuredElectionId || !categoryId) {
-    return municipalRefusal("MUNICIPAL_ELECTION_ID y MUNICIPAL_CATEGORY_ID deben estar configurados.");
+    return municipalRefusal(year === 2023 ? "MUNICIPAL_2023_ELECTION_ID y MUNICIPAL_2023_CATEGORY_ID deben estar configurados." : "MUNICIPAL_ELECTION_ID y MUNICIPAL_CATEGORY_ID deben estar configurados.");
   }
   if (electionId && electionId !== configuredElectionId)
     return municipalRefusal(<>esta ruta solo ofrece la elección municipal configurada; se recibió {electionId}.</>);
   if (legacyJurisdictionId || legacyCategoryId || legacyPartyFamily || legacyPartyCategory) {
     return municipalRefusal(<>la sección 02/027, la categoría y la elección son fijas; no se aceptan parámetros de identidad o autorización: {legacyJurisdictionId} {legacyCategoryId} {legacyPartyFamily} {legacyPartyCategory}.</>);
   }
-  const unknownKeys = suppliedKeys.filter((key) => key !== "electionId");
+  const unknownKeys = suppliedKeys.filter((key) => key !== "electionId" && key !== "year");
   if (unknownKeys.length > 0) {
     return municipalRefusal(<>parámetros de consulta no admitidos: {unknownKeys.join(", ")}.</>);
   }
 
-  const evidence = await loadMunicipalOfficialEvidence();
+  const evidence = year === 2023 ? await loadMunicipalOfficialEvidence(2023) : await loadMunicipalOfficialEvidence();
   if (evidence.status === "denied")
     return municipalRefusal("El espacio de trabajo no autoriza esta sección municipal.");
   if (evidence.status === "empty")
     return municipalState("No hay resultados oficiales autorizados para esta sección.", "status");
   if (evidence.status === "unavailable") {
-    const retryHref = `/municipal?electionId=${encodeURIComponent(configuredElectionId)}`;
+    const retryHref = year === 2023 ? "/municipal?year=2023" : `/municipal?electionId=${encodeURIComponent(configuredElectionId)}`;
     return municipalState(
       <>
         Se rechazó la solicitud: La evidencia oficial autorizada no está disponible.{" "}
@@ -436,6 +446,6 @@ export default async function MunicipalPage({
     return municipalRefusal("La evidencia oficial autorizada fue truncada; no se muestran cifras parciales.");
   if (evidence.status !== "ok") return municipalRefusal("La evidencia oficial autorizada no es utilizable.");
 
-  const view = municipalViewFromOfficialEvidence(evidence, categoryId);
-  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : []);
+  const view = municipalViewFromOfficialEvidence(evidence, categoryId, year);
+  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : [], year);
 }

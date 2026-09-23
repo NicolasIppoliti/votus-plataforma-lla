@@ -107,6 +107,7 @@ let authorizedEvidenceState: Exclude<MunicipalOfficialEvidence, { status: "ok" }
 let authorizedEvidenceSource: "official" | "fiscalizacion" = "official";
 let authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
 let authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
+let authorized2023Canonical = false;
 
 afterEach(() => {
   entryPointRows = [];
@@ -115,11 +116,14 @@ afterEach(() => {
   authorizedEvidenceSource = "official";
   authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
   authorizedEvidenceAudit = [{ kind: "official", rows: 1, votes: 4200 }];
+  authorized2023Canonical = false;
   vi.mocked(loadMunicipalOfficialEvidence).mockClear();
   redirectMock.mockClear();
   delete process.env["CORONEL_ROSALES_JURISDICTION_ID"];
   delete process.env["MUNICIPAL_ELECTION_ID"];
   delete process.env["MUNICIPAL_CATEGORY_ID"];
+  delete process.env["MUNICIPAL_2023_ELECTION_ID"];
+  delete process.env["MUNICIPAL_2023_CATEGORY_ID"];
 });
 
 describe("municipal page — the badge describes the rows, not a memory of them", () => {
@@ -198,14 +202,73 @@ vi.mock("@/lib/supabase/server-client", () => ({
   createSupabaseServerClient: () => Promise.resolve({}),
 }));
 
-vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027",
+vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID: "02/027", MUNICIPAL_2023_ARCHIVE: { id: "national/2023-generales", sha256: "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b" },
   loadMunicipalOfficialEvidence: vi.fn(() => Promise.resolve(authorizedEvidenceState ?? (process.env["MUNICIPAL_ELECTION_ID"]?.startsWith("2023") ? { status: "malformed" } : { status: "ok", result: {
     status: "ok", sourceKind: authorizedEvidenceSource, level: "seccion", sourceGranularity: "seccion", categoryName: authorizedEvidenceIdentity.categoryName, electionYear: authorizedEvidenceIdentity.year, electionRound: authorizedEvidenceIdentity.round, totalVotes: entryPointRows.filter((row) => row.sourceKind === "official").reduce((sum, row) => sum + row.votes, 0), mesaCount: null,
-    parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: row.listId === "2206" ? "lla" : null, displayName: row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: authorizedEvidenceAudit, sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
+    parties: entryPointRows.filter((row) => row.sourceKind === "official").map((row) => ({ identityStatus: authorized2023Canonical || row.listId === "2206" ? "canonical" : "unmapped", canonicalPartyId: authorized2023Canonical ? "LLA" : row.listId === "2206" ? "lla" : null, displayName: authorized2023Canonical ? "LA LIBERTAD AVANZA" : row.listId === "2206" ? "ALIANZA LA LIBERTAD AVANZA" : null, listId: authorized2023Canonical || row.listId === "2206" ? null : row.listId, votes: row.votes, voteShare: "1" })), archiveEntryIds: [...new Set(entryPointRows.map((row) => row.archiveEntryId))], sourceAudit: authorizedEvidenceAudit, sourceExclusions: entryPointRows.filter((row) => row.sourceKind !== "official").map((row) => ({ kind: row.sourceKind, rows: 1, votes: row.votes })),
   }, provenance: entryPointSources.map(({ archiveEntryId, sha256, fetchedAt }) => ({ archiveEntryId, sha256, fetchedAt, status: "ok" })) }))),
 }));
 
 describe("municipal page — the real entry point", () => {
+  it("selects the authorized 2023 provisional ballot and displays its raw category", async () => {
+    process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+    process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+    authorizedEvidenceIdentity = { year: 2023, round: "generales", categoryName: "INTENDENTE" };
+    authorized2023Canonical = true;
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "20135" }];
+    entryPointRows[0]!.archiveEntryId = "national/2023-generales";
+    entryPointSources = [{ archiveEntryId: "national/2023-generales", sha256: "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b", url: "https://example.test/2023.zip", fetchedAt: "2026-01-01" }];
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
+    expect(loadMunicipalOfficialEvidence).toHaveBeenCalledWith(2023);
+    for (const text of ["2023", "Generales", "INTENDENTE", "provisorio", "LA LIBERTAD AVANZA", "Distrito 02 · Sección 027"])
+      expect(html).toContain(text);
+    expect(html).toContain('<th scope="row">LA LIBERTAD AVANZA</th>');
+    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).not.toContain("20135");
+    expect(html).not.toContain("<dd>2025 · Provinciales");
+    expect(html).toContain("153 mesas y 10 códigos de circuito");
+    expect(html).toContain("no cobertura confirmada de esta proyección");
+  });
+  it("displays an unknown 2023 list as unmapped, never as a bare number", async () => {
+    process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+    process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+    authorizedEvidenceIdentity = { year: 2023, round: "generales", categoryName: "INTENDENTE" };
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "99999", archiveEntryId: "national/2023-generales" }];
+    entryPointSources = [{ archiveEntryId: "national/2023-generales", sha256: "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b", url: "https://example.test/2023.zip", fetchedAt: "2026-01-01" }];
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
+    expect(html).toContain("se resolvieron sin un partido curado");
+    expect(html).toContain("Por id de lista:</p><ul><li>99999: 1 filas, 4200 votos</li>");
+    expect(html).not.toContain('<th scope="row">99999</th>');
+  });
+
+  it("refuses a 2025 result returned for the 2023 selection without exposing provenance", async () => {
+    process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+    process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+    authorizedEvidenceIdentity = { year: 2025, round: "provinciales", categoryName: "CONCEJALES" };
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, archiveEntryId: "national/2023-generales" }];
+    entryPointSources = [{ archiveEntryId: "national/2023-generales", sha256: "a".repeat(64), url: "https://example.test", fetchedAt: "2026-01-01" }];
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
+    expect(html).toContain("Se rechazó");
+    expect(html).toContain("No se pudo leer la evidencia municipal autorizada");
+    expect(html).not.toContain("national/2023-generales");
+    expect(html).not.toContain("4200");
+  });
+
+  it.each(["denied", "empty", "malformed", "unavailable"] as const)("2023 %s never displays figures or archive facts", async (status) => {
+    process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+    process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]! }];
+    authorizedEvidenceState = { status };
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
+    expect(html).not.toContain("4200");
+    expect(html).not.toContain("153 mesas");
+    if (status === "unavailable") expect(html).toContain('href="/municipal?year=2023"');
+  });
+
   beforeEach(() => {
     process.env["CORONEL_ROSALES_JURISDICTION_ID"] = "j-027";
     process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";

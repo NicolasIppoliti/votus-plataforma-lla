@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { sanitizeMunicipalOfficialBundle } = await import("./official-evidence");
+const { bundleMock, clientMock, client } = vi.hoisted(() => {
+  const client = { mocked: true };
+  return { bundleMock: vi.fn(), clientMock: vi.fn(async () => client), client };
+});
+vi.mock("@/lib/workspace/context", () => ({ authorizedOfficialBundle: bundleMock }));
+vi.mock("@/lib/supabase/server-client", () => ({ createSupabaseServerClient: clientMock }));
+
+const { sanitizeMunicipalOfficialBundle, loadMunicipalOfficialEvidence } = await import("./official-evidence");
 
 const ELECTION_ID = "2025-municipal";
 const CATEGORY_ID = "c-concejales";
@@ -65,6 +72,49 @@ function validBundle() {
   };
 }
 
+describe("loadMunicipalOfficialEvidence", () => {
+  it("requests and accepts archive-backed 2023 INTENDENTE evidence at the municipal section", async () => {
+    const previousElection = process.env["MUNICIPAL_2023_ELECTION_ID"];
+    const previousCategory = process.env["MUNICIPAL_2023_CATEGORY_ID"];
+    try {
+      process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+      process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+      bundleMock.mockReset();
+      clientMock.mockClear();
+      const bundle = validBundle();
+      bundle.result.election_year = 2023;
+      bundle.result.election_round = "generales";
+      bundle.result.category_name = "INTENDENTE";
+      bundle.reference.items[0]!.year = 2023;
+      bundle.reference.items[0]!.category_name = "INTENDENTE";
+      bundle.reference.items[0]!.election_id = "e-2023";
+      bundle.reference.items[0]!.category_id = "c-intendente";
+      bundle.result.archive_entry_ids = ["national/2023-generales"];
+      bundle.provenance.archive_entry_ids = ["national/2023-generales"];
+      bundle.provenance.sources[0]!.id = "national/2023-generales";
+      bundle.provenance.sources[0]!.sha256 = "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b";
+      bundleMock.mockResolvedValueOnce(bundle);
+
+      await expect(loadMunicipalOfficialEvidence(2023)).resolves.toMatchObject({
+        status: "ok", result: { electionYear: 2023, categoryName: "INTENDENTE" },
+        provenance: [{ archiveEntryId: "national/2023-generales" }],
+      });
+      expect(clientMock).toHaveBeenCalledOnce();
+      expect(bundleMock).toHaveBeenCalledWith(client, {
+        electionId: "e-2023", categoryId: "c-intendente",
+        distritoCode: "02", seccionCode: "027",
+        circuitoCode: null, establecimientoCode: null, mesaCode: null,
+        requestedLevel: "seccion",
+      });
+    } finally {
+      if (previousElection === undefined) delete process.env["MUNICIPAL_2023_ELECTION_ID"];
+      else process.env["MUNICIPAL_2023_ELECTION_ID"] = previousElection;
+      if (previousCategory === undefined) delete process.env["MUNICIPAL_2023_CATEGORY_ID"];
+      else process.env["MUNICIPAL_2023_CATEGORY_ID"] = previousCategory;
+    }
+  });
+});
+
 async function expectMalformed(bundle: ReturnType<typeof validBundle>) {
   await expect(
     sanitizeMunicipalOfficialBundle(bundle, ELECTION_ID, CATEGORY_ID),
@@ -72,6 +122,40 @@ async function expectMalformed(bundle: ReturnType<typeof validBundle>) {
 }
 
 describe("sanitizeMunicipalOfficialBundle", () => {
+  it("accepts the selected 2023 provisional INTENDENTE bundle but rejects a mismatched reference", async () => {
+    const bundle = validBundle();
+    bundle.result.archive_entry_ids = ["national/2023-generales"];
+    bundle.provenance.archive_entry_ids = ["national/2023-generales"];
+    bundle.provenance.sources[0]!.id = "national/2023-generales";
+    bundle.provenance.sources[0]!.sha256 = "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b";
+    bundle.result.election_year = 2023;
+    bundle.result.election_round = "generales";
+    bundle.result.category_name = "INTENDENTE";
+    bundle.reference.items[0]!.year = 2023;
+    bundle.reference.items[0]!.category_name = "INTENDENTE";
+    bundle.reference.items[0]!.election_id = "e-2023";
+    bundle.reference.items[0]!.category_id = "c-intendente";
+    await expect(sanitizeMunicipalOfficialBundle(bundle, "e-2023", "c-intendente", 2023)).resolves.toMatchObject({ status: "ok", result: { electionYear: 2023, categoryName: "INTENDENTE" } });
+    bundle.reference.items[0]!.category_name = "CONCEJALES";
+    await expect(sanitizeMunicipalOfficialBundle(bundle, "e-2023", "c-intendente", 2023)).resolves.toEqual({ status: "malformed" });
+  });
+  it("rejects verified 2023 archive metadata whose provenance status is not ok", async () => {
+    const bundle = validBundle();
+    bundle.result.election_year = 2023;
+    bundle.result.election_round = "generales";
+    bundle.result.category_name = "INTENDENTE";
+    bundle.reference.items[0]!.year = 2023;
+    bundle.reference.items[0]!.category_name = "INTENDENTE";
+    bundle.reference.items[0]!.election_id = "e-2023";
+    bundle.reference.items[0]!.category_id = "c-intendente";
+    bundle.result.archive_entry_ids = ["national/2023-generales"];
+    bundle.provenance.archive_entry_ids = ["national/2023-generales"];
+    bundle.provenance.sources[0]!.id = "national/2023-generales";
+    bundle.provenance.sources[0]!.sha256 = "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b";
+    bundle.provenance.sources[0]!.status = "source_unavailable";
+    await expect(sanitizeMunicipalOfficialBundle(bundle, "e-2023", "c-intendente", 2023)).resolves.toEqual({ status: "malformed" });
+  });
+
   it("accepts only the complete exact official municipal fixture", async () => {
     await expect(
       sanitizeMunicipalOfficialBundle(validBundle(), ELECTION_ID, CATEGORY_ID),
@@ -79,6 +163,23 @@ describe("sanitizeMunicipalOfficialBundle", () => {
       status: "ok",
       result: { electionYear: 2025, electionRound: "provinciales", categoryName: "CONCEJALES" },
     });
+  });
+
+  it.each(["wrong archive", "wrong hash"])("refuses 2023 %s despite an otherwise valid official bundle", async (fault) => {
+    const bundle = validBundle();
+    bundle.result.election_year = 2023;
+    bundle.result.election_round = "generales";
+    bundle.result.category_name = "INTENDENTE";
+    bundle.reference.items[0]!.year = 2023;
+    bundle.reference.items[0]!.category_name = "INTENDENTE";
+    bundle.reference.items[0]!.election_id = "e-2023";
+    bundle.reference.items[0]!.category_id = "c-intendente";
+    const archiveId = fault === "wrong archive" ? ARCHIVE_ENTRY_ID : "national/2023-generales";
+    bundle.result.archive_entry_ids = [archiveId];
+    bundle.provenance.archive_entry_ids = [archiveId];
+    bundle.provenance.sources[0]!.id = archiveId;
+    bundle.provenance.sources[0]!.sha256 = fault === "wrong hash" ? "a".repeat(64) : "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b";
+    await expect(sanitizeMunicipalOfficialBundle(bundle, "e-2023", "c-intendente", 2023)).resolves.toEqual({ status: "malformed" });
   });
 
   it("keeps a valid multi-party official total when the source audit has one aggregate row", async () => {
