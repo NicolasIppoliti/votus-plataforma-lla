@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir ../migrations/down/20260923000001_curate_2023_municipal_identities.down.sql
 \ir ../migrations/down/20260923000000_map_2023_dine_municipal_party.down.sql
 \ir ../migrations/down/20260910212254_canonical_authorized_official_facet_metadata.down.sql
 \ir ../migrations/down/20260904035355_add_official_category_name.down.sql
@@ -479,6 +480,23 @@ select :'schools_sqlstate' = '42501' as expected_school_anon_denial \gset
 \ir ../migrations/20260904035355_add_official_category_name.sql
 \ir ../migrations/20260910212254_canonical_authorized_official_facet_metadata.sql
 \ir ../migrations/20260923000000_map_2023_dine_municipal_party.sql
+\ir ../migrations/20260923000001_curate_2023_municipal_identities.sql
+do $$
+begin
+  if (select count(*) from public.party_mapping pm join public.party_canonical pc on pc.id=pm.canonical_party_id
+      join (values ('20132','JXC','JUNTOS POR EL CAMBIO'),('20134','UP','UNION POR LA PATRIA'),
+        ('20135','LLA','LA LIBERTAD AVANZA'),('20962','PRIMERO_ROSALES','AGRUPACION MUNICIPAL PRIMERO ROSALES')) expected(list_id,party_id,display_name)
+        on (pm.list_id,pm.canonical_party_id,pc.display_name)=(expected.list_id,expected.party_id,expected.display_name)
+      where pm.year=2023 and pm.jurisdiction='coronel_rosales_municipal' and pm.category='INTENDENTE'
+        and pm.verified and pm.source='archive/national/2023-generales.zip -> 2023_Generales/ResultadoElectorales_2023_Generales.csv (02/027)') <> 4
+    or (select count(*) from public.list_identity li join (values
+      ('20132','JUNTOS POR EL CAMBIO'),('20134','UNION POR LA PATRIA'),
+      ('20135','LA LIBERTAD AVANZA'),('20962','PRIMERO ROSALES')) expected(list_id,source_name)
+      on (li.list_id,li.source_name)=(expected.list_id,expected.source_name)
+      where li.year=2023 and li.jurisdiction='coronel_rosales_municipal' and li.category='INTENDENTE') <> 4 then
+    raise exception 'curated 2023 municipal identities were not restored exactly';
+  end if;
+end $$;
 do $$ declare facets_definition text; begin
       if to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') is null or not has_function_privilege('workspace_platform_admin','workspace_private.platform_review_breakdown(integer,integer)','EXECUTE') or has_function_privilege('authenticated','workspace_private.platform_review_breakdown(integer,integer)','EXECUTE') or (select r.rolname from pg_proc p join pg_roles r on r.oid=p.proowner where p.oid='workspace_private.platform_review_breakdown(integer,integer)'::regprocedure)<>'workspace_review_ingest_owner' or (select count(*) from pg_policies where policyname in ('workspace_review_ingest_owner_breakdown_election_select','workspace_review_ingest_owner_breakdown_category_select'))<>2 then raise exception 'platform review breakdown reapply did not restore exact operator-only interface'; end if;
   select lower(pg_get_functiondef(
@@ -508,4 +526,4 @@ grant workspace_platform_admin to current_user;
 set local role workspace_platform_admin;
 \ir ../scripts/workspace_authority_status.sql
 rollback;
-select 'release-proof' as evidence, 67 as migration_inventory_count, '20260923000000-down,20260910212254-down,20260904035355-down,20260831160422-down,20260831150450-down,20260831055357-down,20260831032044-down,20260830203643-down,20260830180653-down,20260829232200-down,20260829032228-down,20260827220000-down,20260827200000-down,20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0038-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,0038-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up,20260827200000-up,20260827220000-up,20260829032228-up,20260829232200-up,20260830180653-up,20260830203643-up,20260831032044-up,20260831055357-up,20260831150450-up,20260831160422-up,20260904035355-up,20260910212254-up,20260923000000-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;
+select 'release-proof' as evidence, 68 as migration_inventory_count, '20260923000001-down,20260923000000-down,20260910212254-down,20260904035355-down,20260831160422-down,20260831150450-down,20260831055357-down,20260831032044-down,20260830203643-down,20260830180653-down,20260829232200-down,20260829032228-down,20260827220000-down,20260827200000-down,20260827170000-down,20260827160000-down,20260827130000-down,20260827112658-down,20260827040000-down,20260827000000-down,20260826200000-down,20260826160000-down,20260826120000-down,20260826050000-down,20260826033130-down,20260825180048-down,20260825165116-down,20260825144358-down,20260824193650-down,0038-down,0037-down,0036-down,0035-down,0034-down,0033-down,0032-down,0031-down,0030-down,0029-down,0028-down,0027-down,0026-down,0025-down,0023-down,0022-down,0021-down,0020-down,0020-up,0021-up,0022-up,0023-up,0025-up,0026-up,0027-up,0028-up,0029-up,0030-up,0031-up,0032-up,0033-up,0034-up,0035-up,0036-up,0037-up,0038-up,20260824193650-up,20260825144358-up,20260825165116-up,20260825180048-up,20260826033130-up,20260826050000-up,20260826120000-up,20260826160000-up,20260826200000-up,20260827000000-up,20260827040000-up,20260827112658-up,20260827130000-up,20260827160000-up,20260827170000-up,20260827200000-up,20260827220000-up,20260829032228-up,20260829232200-up,20260830180653-up,20260830203643-up,20260831032044-up,20260831055357-up,20260831150450-up,20260831160422-up,20260904035355-up,20260910212254-up,20260923000000-up,20260923000001-up' as migration_sequence, 'tenant-rpc/platform-operator-only/direct-review-denied' as grant_state;

@@ -919,12 +919,19 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
     context_guard = cleanup_sql.index("exists(select 1 from workspace_private.review_item_context)")
     assert cleanup_sql.index("lock table workspace_private.review_item_context") < context_guard
     assert context_guard < cleanup_sql.index("truncate table workspace_private.review_item_context")
-    assert "truncate table result_row, jurisdiction, party_mapping, party_canonical;" in cleanup_sql
-    assert "delete from category; delete from election;" in cleanup_sql
-    assert not any(
-        f"delete from {table}" in cleanup_sql
-        for table in ("result_row", "jurisdiction", "party_mapping", "party_canonical")
+    assert "truncate table result_row, jurisdiction;" in cleanup_sql
+    assert not re.search(r"truncate\s+table\s+[^;]*(?:party_mapping|party_canonical)", cleanup_sql)
+    fixture_mapping_delete = "delete from party_mapping where canonical_party_id='scale-canonical';"
+    fixture_canonical_delete = "delete from party_canonical where id='scale-canonical';"
+    assert cleanup_sql.count(fixture_mapping_delete) == 1
+    assert cleanup_sql.count(fixture_canonical_delete) == 1
+    assert cleanup_sql.index(fixture_mapping_delete) < cleanup_sql.index(fixture_canonical_delete)
+    assert cleanup_sql.index("scale cleanup refused non-fixture rows") < cleanup_sql.index(
+        fixture_mapping_delete
     )
+    assert "delete from category; delete from election;" in cleanup_sql
+    assert not any(f"delete from {table}" in cleanup_sql for table in ("result_row", "jurisdiction"))
+    assert len(re.findall(r"delete\s+from\s+(?:party_mapping|party_canonical)\b", cleanup_sql)) == 2
     assert "truncate table" not in plan_sql
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
     # Only the owned post-pgTAP cleanup phase may restore it after deleting the committed fixture.
@@ -1181,6 +1188,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20260923000001_curate_2023_municipal_identities.down.sql",
+        "\\ir ../migrations/down/20260923000000_map_2023_dine_municipal_party.down.sql",
         f"\\ir ../migrations/down/{canonical_authorized_official_facet_metadata_migration_version}"
         "_canonical_authorized_official_facet_metadata.down.sql",
         f"\\ir ../migrations/down/{official_category_name_migration_version}"
@@ -1271,6 +1280,8 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "_add_official_category_name.sql",
         f"\\ir ../migrations/{canonical_authorized_official_facet_metadata_migration_version}"
         "_canonical_authorized_official_facet_metadata.sql",
+        "\\ir ../migrations/20260923000000_map_2023_dine_municipal_party.sql",
+        "\\ir ../migrations/20260923000001_curate_2023_municipal_identities.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1285,7 +1296,9 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "67 as migration_inventory_count",
+        "68 as migration_inventory_count",
+        "20260923000001-down,20260923000000-down",
+        "20260923000000-up,20260923000001-up",
         "0037 internal facets base remained directly executable",
         (
             "canonical authorized official facet metadata reapply did not restore "
