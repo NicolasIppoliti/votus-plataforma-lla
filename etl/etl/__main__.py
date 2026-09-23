@@ -625,13 +625,18 @@ def cmd_validate_partido_geometry(args: argparse.Namespace) -> int:
         print(json.dumps(rejected_geometry(entry, {}, "missing_snapshot"), sort_keys=True))
         return 1
     if entry["capability"] != "geography" or entry.get("reference_kind") != "partido_geometry":
-        reason = ("unsupported_capability" if entry["capability"] != "geography"
-                  else "unsupported_reference_kind")
+        reason = (
+            "unsupported_capability"
+            if entry["capability"] != "geography"
+            else "unsupported_reference_kind"
+        )
         print(json.dumps(rejected_geometry(entry, record, reason), sort_keys=True))
         return 1
     try:
         payload = read_archived_source(
-            entry, manifest_record=record, capability=entry["capability"],
+            entry,
+            manifest_record=record,
+            capability=entry["capability"],
             local_store=LocalArchiveStore(root=Path(args.local_root)),
             filename=archived_filename(record, source_id=args.source),
         )

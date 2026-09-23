@@ -10,10 +10,17 @@ def rejected_geometry(entry: dict, record: dict, reason: str, *, conflict: int =
     return {
         "counts": {"accepted": 0, "invalid": 0 if conflict else 1, "conflict": conflict},
         "reasons": {reason: conflict or 1},
-        "snapshot": {"source": entry["id"], "sha256": record.get("sha256"),
-                     "timestamp": record.get("fetched_at")},
-        "feature": None, "feature_type": None, "geometry": None, "crs": None,
-        "jurisdiction": None, "unsupported_depths": ["circuit", "establishment", "mesa"],
+        "snapshot": {
+            "source": entry["id"],
+            "sha256": record.get("sha256"),
+            "timestamp": record.get("fetched_at"),
+        },
+        "feature": None,
+        "feature_type": None,
+        "geometry": None,
+        "crs": None,
+        "jurisdiction": None,
+        "unsupported_depths": ["circuit", "establishment", "mesa"],
     }
 
 
@@ -39,14 +46,20 @@ def _valid_polygon(polygon: object) -> bool:
 
 
 def inspect_partido_geometry(
-    payload: bytes, entry: dict, record: dict, crosswalk: CrosswalkTable,
+    payload: bytes,
+    entry: dict,
+    record: dict,
+    crosswalk: CrosswalkTable,
 ) -> dict:
     try:
         document = json.loads(payload)
     except (ValueError, UnicodeDecodeError):
         return rejected_geometry(entry, record, "invalid_json")
-    if (not isinstance(document, dict) or document.get("type") != "FeatureCollection"
-            or not isinstance(document.get("features"), list)):
+    if (
+        not isinstance(document, dict)
+        or document.get("type") != "FeatureCollection"
+        or not isinstance(document.get("features"), list)
+    ):
         return rejected_geometry(entry, record, "invalid_feature_collection")
     features = document["features"]
     if not features:
@@ -57,20 +70,26 @@ def inspect_partido_geometry(
     if not isinstance(feature, dict) or feature.get("type") != "Feature":
         return rejected_geometry(entry, record, "invalid_feature")
     if document.get("crs") != {
-        "type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}
+        "type": "name",
+        "properties": {"name": "urn:ogc:def:crs:EPSG::4326"},
     }:
         return rejected_geometry(entry, record, "wrong_crs")
     # GeoJSON omits the namespace; bind the local feature-id prefix to the
     # registered WFS type rather than pretending the payload declares a QName.
     feature_id = feature.get("id")
-    if (entry.get("feature_type") != "idera:Departamento"
-            or not isinstance(feature_id, str)
-            or not feature_id.startswith("Departamento.")
-            or not feature_id.removeprefix("Departamento.")):
+    if (
+        entry.get("feature_type") != "idera:Departamento"
+        or not isinstance(feature_id, str)
+        or not feature_id.startswith("Departamento.")
+        or not feature_id.removeprefix("Departamento.")
+    ):
         return rejected_geometry(entry, record, "wrong_feature_type")
     expected = entry.get("expected_identity")
-    if (not isinstance(expected, dict) or set(expected) != {"cca", "cde", "nam"}
-            or not all(isinstance(value, str) and value for value in expected.values())):
+    if (
+        not isinstance(expected, dict)
+        or set(expected) != {"cca", "cde", "nam"}
+        or not all(isinstance(value, str) and value for value in expected.values())
+    ):
         return rejected_geometry(entry, record, "invalid_source_metadata")
     properties = feature.get("properties")
     if not isinstance(properties, dict) or any(
@@ -91,13 +110,21 @@ def inspect_partido_geometry(
     if jurisdiction is None:
         return rejected_geometry(entry, record, "unmapped_jurisdiction")
     return {
-        "counts": {"accepted": 1, "invalid": 0, "conflict": 0}, "reasons": {},
-        "snapshot": {"source": entry["id"], "sha256": record["sha256"],
-                     "timestamp": record["fetched_at"]},
-        "feature": feature["id"], "feature_type": entry["feature_type"],
-        "geometry": feature["geometry"]["type"], "crs": "EPSG:4326",
-        "jurisdiction": {"pba_distrito": jurisdiction.pba_distrito_code,
-                         "national_distrito": jurisdiction.national_distrito_code,
-                         "national_seccion": jurisdiction.national_seccion_code},
+        "counts": {"accepted": 1, "invalid": 0, "conflict": 0},
+        "reasons": {},
+        "snapshot": {
+            "source": entry["id"],
+            "sha256": record["sha256"],
+            "timestamp": record["fetched_at"],
+        },
+        "feature": feature["id"],
+        "feature_type": entry["feature_type"],
+        "geometry": feature["geometry"]["type"],
+        "crs": "EPSG:4326",
+        "jurisdiction": {
+            "pba_distrito": jurisdiction.pba_distrito_code,
+            "national_distrito": jurisdiction.national_distrito_code,
+            "national_seccion": jurisdiction.national_seccion_code,
+        },
         "unsupported_depths": ["circuit", "establishment", "mesa"],
     }
