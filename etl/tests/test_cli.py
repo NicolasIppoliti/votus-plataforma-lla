@@ -1415,6 +1415,147 @@ def test_ingest_extracts_the_results_csv_from_a_zip_archived_national_source(
         conn.close()
 
 
+def test_ingest_2023_generales_municipal_rows_preserves_raw_categories_and_provenance(
+    tmp_path: Path,
+) -> None:
+    _require_ephemeral_postgres()
+    from etl.ingest_metrics import IngestMetrics
+
+    header = (
+        "año,distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        "circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,agrupacion_nombre,"
+        "lista_numero,votos_tipo,votos_cantidad\n"
+    )
+
+    def row(category: str, list_id: str, vote_type: str, votes: int) -> str:
+        return (
+            f"2023,02,BUENOS AIRES,027,CORONEL ROSALES,00248,00248,1,"
+            f"{category},{list_id},SYNTHETIC,,{vote_type},{votes}\n"
+        )
+
+    csv_text = (
+        header
+        + "".join(
+            row("INTENDENTE", list_id, "POSITIVO", votes)
+            for list_id, votes in [("20132", 10), ("20134", 12), ("20135", 15), ("20962", 3)]
+        )
+        + row("INTENDENTE", "", "NULO", 2)
+        + row("PRESIDENTE Y VICE", "20135", "POSITIVO", 7)
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("2023_Generales/ResultadoElectorales_2023_Generales.csv", csv_text)
+    source_id = f"national/municipal-2023-{uuid.uuid4()}"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/municipal-2023.zip",
+                "mime": "application/zip",
+                "election_year": 2023,
+                "election_round": "generales",
+                "notes": "synthetic municipal fixture",
+                "filename": "municipal-2023.zip",
+            }
+        ]
+    }
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=FakeFetcher(payload=buffer.getvalue()),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        for _ in range(2):
+            metrics = IngestMetrics()
+            assert (
+                ingest_source(
+                    source_id,
+                    database_url=TEST_DSN,
+                    year=2023,
+                    round_="generales",
+                    sources=sources,
+                    local_root=local_root,
+                    manifest_path=manifest_path,
+                    metrics=metrics,
+                )
+                == 5
+            )
+            assert metrics.data["records_seen"] == 6
+            assert metrics.data["rows_emitted"] == 5
+            assert metrics.data["categories"]["INTENDENTE"]["records_seen"] == 5
+            assert metrics.data["categories"]["INTENDENTE"]["rows_emitted"] == 4
+            assert metrics.data["categories"]["PRESIDENTE Y VICE"]["rows_emitted"] == 1
+            assert metrics.data["exclusions"] == {
+                "votos_tipo='NULO'": {
+                    "rows": 1,
+                    "parseable_votes": 2,
+                    "unreadable_vote_rows": 0,
+                },
+            }
+            assert (
+                metrics.data["categories"]["INTENDENTE"]["exclusions"] == metrics.data["exclusions"]
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select c.name, rr.list_id, rr.votes, rr.source_row_index,
+                           rr.source_kind, rr.granularity, j.distrito_code, j.seccion_code,
+                           e.year, e.round
+                    from result_row rr
+                    join category c on c.id = rr.category_id
+                    join jurisdiction j on j.id = rr.jurisdiction_id
+                    join election e on e.id = rr.election_id
+                    where rr.archive_entry_id = %s
+                    order by rr.source_row_index
+                """,
+                    (source_id,),
+                )
+                assert cur.fetchall() == [
+                    (
+                        category,
+                        list_id,
+                        votes,
+                        index,
+                        "official",
+                        "mesa",
+                        "02",
+                        "027",
+                        2023,
+                        "generales",
+                    )
+                    for index, category, list_id, votes in [
+                        (0, "INTENDENTE", "20132", 10),
+                        (1, "INTENDENTE", "20134", 12),
+                        (2, "INTENDENTE", "20135", 15),
+                        (3, "INTENDENTE", "20962", 3),
+                        (5, "PRESIDENTE Y VICE", "20135", 7),
+                    ]
+                ]
+                cur.execute(
+                    "select status, source_kind, sha256, source_url "
+                    "from archive_entry where id = %s",
+                    (source_id,),
+                )
+                assert cur.fetchone() == (
+                    "ok",
+                    "official",
+                    hashlib.sha256(buffer.getvalue()).hexdigest(),
+                    sources["national"][0]["source_url"],
+                )
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("delete from result_row where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
+        conn.commit()
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # review_item persistence reaches production through `ingest_source`
 # ---------------------------------------------------------------------------
@@ -5148,6 +5289,57 @@ def test_validate_curated_streams_selected_results_member_through_main(
         "excluded 1 row(s) as out of scope for normalized list votes -- "
         "votos_tipo='EN BLANCO': 1 rows / 4 votes"
     ) in reported
+
+
+def test_validate_curated_cli_reports_dine_intendente_as_national_unmapped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sources_path, local_root, manifest_path = _archived_national_zip_corpus(
+        tmp_path,
+        election_year=2023,
+        election_round="generales",
+        member_name="2023_Generales/ResultadoElectorales_2023_Generales.csv",
+        lista_numero="",
+        agrupacion_id="20135",
+    )
+    # Replace the synthetic archive member with the four source-verified list
+    # identities while retaining the checksum-validated production CLI path.
+    csv_text = (
+        "año,distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,"
+        "circuito_nombre,mesa_id,cargo_nombre,agrupacion_id,agrupacion_nombre,"
+        "lista_numero,votos_tipo,votos_cantidad\n"
+        + "".join(
+            "2023,2,Buenos Aires,27,Coronel de Marina L. Rosales,00248,00248,1,"
+            f"INTENDENTE,{list_id},{name},,POSITIVO,{votes}\n"
+            for list_id, name, votes in (
+                ("20132", "JUNTOS POR EL CAMBIO", 10),
+                ("20134", "UNION POR LA PATRIA", 12),
+                ("20135", "LA LIBERTAD AVANZA", 15),
+                ("20962", "PRIMERO ROSALES", 3),
+            )
+        )
+    )
+    source = yaml.safe_load(sources_path.read_text())["national"][0]
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("2023_Generales/ResultadoElectorales_2023_Generales.csv", csv_text)
+    archive_bytes = archive_buffer.getvalue()
+    (local_root / "national" / source["filename"]).write_bytes(archive_bytes)
+    manifest = json.loads(manifest_path.read_text())
+    manifest[0]["sha256"] = hashlib.sha256(archive_bytes).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    exit_code = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["validate-curated", "--party-map-path", str(PARTY_MAP_PATH)]
+    )
+    output = capsys.readouterr()
+    # CLI archive validation currently classifies DINE rows as national.
+    # Municipal identity is reachable through the section-scoped official SQL
+    # RPC instead; never treat this negative CLI result as its GREEN proof.
+    assert exit_code == 1
+    for list_id in ("20132", "20134", "20135", "20962"):
+        assert f"jurisdiction=national category=INTENDENTE list_id={list_id}" in output.err
 
 
 def test_validate_curated_is_reachable_through_main(tmp_path: Path, capsys) -> None:
