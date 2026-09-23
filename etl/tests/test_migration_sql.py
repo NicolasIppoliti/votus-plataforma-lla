@@ -930,7 +930,9 @@ def test_results_exploration_scale_proofs_split_semantics_from_real_plans() -> N
         fixture_mapping_delete
     )
     assert "delete from category; delete from election;" in cleanup_sql
-    assert not any(f"delete from {table}" in cleanup_sql for table in ("result_row", "jurisdiction"))
+    assert not any(
+        f"delete from {table}" in cleanup_sql for table in ("result_row", "jurisdiction")
+    )
     assert len(re.findall(r"delete\s+from\s+(?:party_mapping|party_canonical)\b", cleanup_sql)) == 2
     assert "truncate table" not in plan_sql
     # Setup relaxes the 0002 source-kind contract to exercise unknown-source auditing.
@@ -1181,6 +1183,22 @@ def test_record_review_item_v2_sql_uses_the_existing_ingest_owner_and_exact_gran
     assert all(token not in down for token in ("revoke all on public.election", "delete from workspace_private.review_item_context", "truncate"))  # noqa: E501
     assert all(f"drop function workspace_private.{signature}" in down for signature in (signatures[0], signatures[2]))  # noqa: E501
 # fmt: on
+
+
+def test_curated_rollback_locks_both_tables_before_guard_and_deletes() -> None:
+    sql = (
+        (MIGRATIONS / "down" / "20260923000001_curate_2023_municipal_identities.down.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    statements = re.sub(r"--[^\n]*", "", sql)
+    lock = "lock table public.list_identity, public.party_mapping in share row exclusive mode;"
+    normalized = " ".join(statements.split())
+
+    assert lock in normalized
+    assert normalized.index("begin;") < normalized.index(lock) < normalized.index("do $$")
+    assert normalized.index(lock) < normalized.index("delete from public.party_mapping")
+    assert normalized.index(lock) < normalized.index("delete from public.list_identity")
 
 
 def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() -> None:

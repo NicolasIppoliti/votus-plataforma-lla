@@ -1,4 +1,6 @@
 begin;
+-- Hold both tables against concurrent DML through the guarded deletes.
+lock table public.list_identity, public.party_mapping in share row exclusive mode;
 
 -- Never remove a changed row or a row outside the four versioned tuples.
 do $$
