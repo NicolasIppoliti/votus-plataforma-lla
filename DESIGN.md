@@ -216,7 +216,8 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 ## Target Territorial Workspace
 
 **Delivery state:** not implemented. Existing routes remain selector/chart/table-first;
-complete geometry and child-unit scene contracts are future work. The
+one partido reference is archived and structurally validated, but terrain, child
+geography and production scene contracts remain future work. The
 [proposal](docs/proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) defines the
 scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates delivery.
 
@@ -241,10 +242,14 @@ scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates del
   Provide keyboard selection, visible focus, screen-reader summaries and a 2D/table
   alternative. Reduced motion removes camera flights; preserve 44×44px targets.
 - **Performance:** Lazy-load the planned renderer; bound geometry and visible detail.
-  The feasibility slice must measure desktop/mobile load, memory, interaction and
-  bundle cost and establish budgets before integration. WebGL failure retains exact
+  The standalone Slice 1 evaluator passed accepted lab gates: gzip ≤800 KiB,
+  desktop ready ≤2s/interaction ≤150ms, mobile Chromium emulation ready ≤25s/
+  interaction ≤150ms, heap ≤16MiB and production initial-JS growth ≤10%. Final
+  retained-build comparison found no growth: eight route inventories were identical;
+  `/login` raw bytes were equal and gzip decreased 2 bytes (26,167 → 26,165) from a
+  build-specific server-action/minifier difference. These are not physical-device results or production
+  renderer SLOs; native browser zoom is unverified. WebGL failure retains exact
   evidence; geometry simplification must preserve identity and disclose limitations.
-  Existing initial-JavaScript growth gate remains applicable.
 
 ## Motion
 
@@ -367,6 +372,7 @@ New product features discovered during design become separate future work units.
 | 2026-09-22 | Map-first territorial workspace supersedes chart-first product direction | Geographic dominance and comparison become core; existing route behavior remains current until separately delivered |
 | 2026-09-22 | Plan deck.gl + MapLibre; separate physical terrain from electoral extrusion | Supersedes the no-new-chart-library constraint only for this planned path; feasibility and dependency review remain gates |
 | 2026-09-22 | Canonical party/alliance color is factual electoral encoding | Supersedes the blanket party-chart-color restriction, never source/status/UI semantics; ballot labels and non-color states remain required |
+| 2026-09-22 | Slice 1 partido-only archive/CLI and standalone feasibility evaluator are implementation candidates | Next production scope after merge is only Coronel Rosales partido-boundary municipal evidence with exact fallback; terrain, child geography and expansion need separate validation |
 
 ## Automatic Interaction Contract
 

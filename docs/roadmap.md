@@ -57,21 +57,27 @@ An all-135-partido program is unapproved; establish the second complete municipa
 
 ## FUTURE — Territorial intelligence program
 
-**Direction approved; implementation not authorized.** Current routes remain
-selector/chart/table-first, without complete source-backed geometry or child-unit
-scene contracts. The map becomes the main workspace, not a decorative hero.
+**Direction approved; Slice 1 feasibility is an unmerged implementation candidate.**
+Current routes remain selector/chart/table-first. One ARBA partido reference has a
+checksum-backed archive/CLI and a standalone non-production renderer evaluator;
+child geometry, terrain and production map scenes are not delivered. The map becomes the main workspace, not a decorative hero.
 
 Follow the [sequential slice plan](plans/territorial-intelligence-slices.md):
 
-1. Documentation alignment (Slice 0), then source/geometry/terrain feasibility.
-2. Immutable geographic archive and reachable validation CLI.
-3. Smallest complete Coronel Rosales map, then provincial and national expansion.
+1. Documentation alignment (Slice 0), then Slice 1 source/geometry/terrain feasibility;
+   final whole-candidate verification, review and merge remain pending.
+2. The user pulled partido-only archive/CLI into Slice 1. Remaining Slice 2 work
+   validates any newly accepted child/terrain source before that source is used.
+3. After Slice 1 merges, the smallest production scope may start without unavailable
+   sources: Coronel Rosales partido boundary with existing authorized exact municipal
+   results, table/text fallback and explicit unsupported child/terrain states. No
+   generic municipality, extrusion or comparison is included.
 4. Territorial election comparison alongside dominance as the core product.
 5. Separate Fiscalización heat layer and statutory seat simulation.
 6. Future Análisis/Prospectiva foundations, then conditional recommendations.
 
-Each slice must be committed, pushed, reviewed in its own PR and merged before the
-next starts. Exact coverage is a feasibility finding, not a roadmap promise.
+Each slice requires its own reviewed PR and merge before the next starts; none of
+those delivery actions has occurred for Slice 1. Exact coverage is a feasibility finding, not a roadmap promise.
 Provincial/national expansion is not authorization for all-135-partido ingestion;
 the existing municipal-expansion workstream must be reconciled with these slices
 before overlapping work starts. Specialized modules share foundations, never mix

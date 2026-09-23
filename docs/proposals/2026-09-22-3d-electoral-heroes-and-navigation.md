@@ -1,7 +1,8 @@
 # Territorial Electoral Workspace
 
-**Status: Proposed — no implementation authorized.** Product direction is approved;
-this proposal describes future delivery, not a map already available in Votus.
+**Status: Target proposed; Slice 1 feasibility is an unmerged implementation candidate.**
+Product direction is approved; the partido archive/CLI and standalone evaluator are
+not a production map. Final whole-candidate verification and merge remain pending.
 The filename is retained for existing references; a decorative “3D hero” is superseded.
 
 ## Decision
@@ -22,7 +23,8 @@ See [Product](../../PRODUCT.md), [Design](../../DESIGN.md) and the
 | Municipal `/municipal` | Fixed, server-validated Coronel Rosales 2025 provincial Concejales briefing at national codes `02/027`, not a generic municipal browser. |
 
 Selector depth is not proof of available geometry, child-unit results or geographic
-coverage. Complete source-backed geometry and scene contracts remain future work.
+coverage. One checksum-backed partido reference exists in the Slice 1 candidate; complete
+source-backed child geography, terrain and production scene contracts remain future work.
 
 ## Workspace and navigation
 
@@ -118,17 +120,26 @@ No client-side identity inference, source merging or duplicate allocation algori
 
 ## Research gates before implementation specifications
 
+Maintainer evidence: [Slice 1 feasibility report](../research/territorial-source-geometry-terrain-feasibility.md)
+— Slice 1 feasibility evidence complete as an implementation candidate pending final
+whole-candidate verification and later merge; not proof of delivered map coverage.
+
 1. Verify authoritative boundaries, coordinates and terrain sources, licenses,
    versions, election applicability and coverage per level; no assumed complete coverage.
 2. Prove joinability against canonical administrative identities and child-unit results;
    record missing, conflicting and incomplete units rather than manufacturing continuity.
 3. Evaluate terrain/extrusion legibility, device performance, accessibility and graceful
    degradation with the chosen stack; do not reopen the renderer choice silently.
-4. Define the smallest source-backed municipal vertical slice and its measured budgets.
-   Define APIs/schemas and exact commands only in the separately authorized slice.
+4. After Slice 1 merges, start only a Coronel Rosales partido-boundary municipal
+   workspace using existing authorized exact results and table/text fallback. Circuit,
+   establishment, mesa and terrain remain unsupported. The user explicitly absorbed
+   the partido-only archive/CLI part of planned Slice 2 into Slice 1; each newly
+   accepted child/terrain source still requires its own archive/validation gate.
+   The standalone evaluator passes accepted lab budgets, not production SLOs or
+   physical-device/native-zoom proof. Production APIs/schemas require separate scope.
 
 Reference starting points, **not proof of coverage or a completed source audit**:
-[DNE results standard](https://www.argentina.gob.ar/sites/default/files/preservacionresultadoselectorales_1.0.6.pdf),
+[DNE results standard](https://www.argentina.gob.ar/sites/default/files/preservacionresultadoselectorales_1.0.8.pdf),
 [IGN SIG layers](https://www.ign.gob.ar/NuestrasActividades/InformacionGeoespacial/CapasSIG),
 [deck.gl GeoJsonLayer](https://deck.gl/docs/api-reference/layers/geojson-layer),
 [deck.gl + MapLibre](https://deck.gl/docs/developer-guide/base-maps/using-with-maplibre).
