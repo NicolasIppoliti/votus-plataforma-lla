@@ -73,6 +73,41 @@ function validBundle() {
 }
 
 describe("loadMunicipalOfficialEvidence", () => {
+  it("accepts all 153 authorized 2023 mesa references with official result and archive provenance", async () => {
+    const previousElection = process.env["MUNICIPAL_2023_ELECTION_ID"];
+    const previousCategory = process.env["MUNICIPAL_2023_CATEGORY_ID"];
+    try {
+      process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+      process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+      bundleMock.mockReset();
+      const bundle = validBundle();
+      bundle.result.election_year = 2023;
+      bundle.result.election_round = "generales";
+      bundle.result.category_name = "INTENDENTE";
+      bundle.result.archive_entry_ids = ["national/2023-generales"];
+      bundle.provenance.archive_entry_ids = ["national/2023-generales"];
+      bundle.provenance.sources[0]!.id = "national/2023-generales";
+      bundle.provenance.sources[0]!.sha256 = "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b";
+      bundle.reference.items = Array.from({ length: 153 }, (_, index) => ({
+        election_id: "e-2023", category_id: "c-intendente", year: 2023,
+        category_name: "INTENDENTE", distrito_code: "02", seccion_code: "027",
+        mesa_code: String(index + 1).padStart(4, "0"),
+      }));
+      bundle.reference.total = 153;
+      bundleMock.mockResolvedValueOnce(bundle);
+
+      await expect(loadMunicipalOfficialEvidence(2023)).resolves.toMatchObject({
+        status: "ok", result: { electionYear: 2023, categoryName: "INTENDENTE", totalVotes: 4200 },
+        provenance: [{ archiveEntryId: "national/2023-generales", sha256: "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b" }],
+      });
+    } finally {
+      if (previousElection === undefined) delete process.env["MUNICIPAL_2023_ELECTION_ID"];
+      else process.env["MUNICIPAL_2023_ELECTION_ID"] = previousElection;
+      if (previousCategory === undefined) delete process.env["MUNICIPAL_2023_CATEGORY_ID"];
+      else process.env["MUNICIPAL_2023_CATEGORY_ID"] = previousCategory;
+    }
+  });
+
   it("requests and accepts archive-backed 2023 INTENDENTE evidence at the municipal section", async () => {
     const previousElection = process.env["MUNICIPAL_2023_ELECTION_ID"];
     const previousCategory = process.env["MUNICIPAL_2023_CATEGORY_ID"];
