@@ -40,7 +40,6 @@ insert into jurisdiction (
 insert into party_canonical (id, display_name)
 values ('wu1-canonical', 'WU1 CANONICAL'), ('wu1-municipal', 'WU1 MUNICIPAL'),
 ('wu2-pba-municipal', 'WU2 PBA MUNICIPAL'), ('wu2-pba-provincial', 'WU2 PBA PROVINCIAL'),
-('wu23-dine-municipal', 'WU23 DINE MUNICIPAL'),
 ('FUERZA_PATRIA', 'ALIANZA FUERZA PATRIA'),
 ('LLA_PRO_ALLIANCE', 'ALIANZA LA LIBERTAD AVANZA'),
 ('SOMOS_BUENOS_AIRES', 'ALIANZA SOMOS BUENOS AIRES'),
@@ -61,7 +60,6 @@ insert into party_mapping (
   (2023, 'national', 'DIPUTADO NACIONAL', '135', 'wu1-canonical', true),
   (2023, 'national', 'DIPUTADO NACIONAL', '20135', 'wu1-canonical', true),
   (2023, 'coronel_rosales_municipal', 'CONCEJALES', '135', 'wu1-municipal', true),
-  (2023, 'coronel_rosales_municipal', 'INTENDENTE', '20135', 'wu23-dine-municipal', true),
   (2025, 'coronel_rosales_municipal', 'CONCEJALES', '2206', 'wu2-pba-municipal', true),
   (2025, 'pba_provincial', 'DIPUTADOS PROVINCIALES', '2206', 'wu2-pba-provincial', true),
   (2025, 'pba_provincial', 'SENADORES PROVINCIALES', '2200', 'FUERZA_PATRIA', true),
@@ -518,8 +516,8 @@ from (values
 select is((select party->>'canonical_party_id' from jsonb_array_elements(
   results_exploration_official('20000000-0000-0000-0000-000000000002',
     '20000000-0000-0000-0000-000000000018', '02', '027')->'parties') party),
-  'wu23-dine-municipal',
-  'authorized official RPC resolves DINE municipal INTENDENTE list through curated identity');
+  'LLA',
+  'authorized official RPC resolves DINE municipal INTENDENTE list through versioned curated identity');
 select is(results_exploration_party_jurisdiction(
   archive_entry_id, year, round, category, distrito_code, seccion_code), expected,
   'distrito 113 mapping is exact and closed: ' || label)
