@@ -567,6 +567,24 @@ def _migration_files(migrations: Path) -> list[Path]:
     return files
 
 
+class MigrationApplyError(RuntimeError):
+    """Bounded migration identity; the original database error remains chained privately."""
+
+    def __init__(self, filename: str, sqlstate: str | None) -> None:
+        self.filename = (
+            filename
+            if len(filename) <= 128
+            and re.fullmatch(r"(?:[0-9]{4}|[0-9]{14})_[a-z0-9_]+\.sql", filename)
+            else ""
+        )
+        self.sqlstate = (
+            sqlstate
+            if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate)
+            else None
+        )
+        super().__init__("migration execution failed; details redacted")
+
+
 def apply_migrations(
     database_dsn: str,
     migrations: Path,
@@ -579,8 +597,12 @@ def apply_migrations(
             migration_sql = migration.read_text(encoding="utf-8").encode("utf-8")
         except OSError as exc:
             raise RuntimeError(f"failed to read migration file: {migration.name}") from exc
-        with connect(database_dsn) as connection:
-            connection.execute(migration_sql)
+        try:
+            with connect(database_dsn) as connection:
+                connection.execute(migration_sql)
+        except Exception as exc:
+            state = exc.sqlstate if isinstance(exc, psycopg.Error) else None
+            raise MigrationApplyError(migration.name, state) from exc
     return len(files)
 
 
@@ -692,24 +714,55 @@ def main() -> int:
     for handled in handled_signals:
         previous_handlers[handled] = signal.signal(handled, termination_as_interrupt)
 
+    stage = "disposable_database_setup"
+    body_failure: BaseException | None = None
+    body_stage = stage
     try:
         with database as database_dsn:
-            if args.migration_atomicity:
-                run_migration_atomicity(database, migrations, args.migration_atomicity)
-                summary = f"migration atomicity {args.migration_atomicity}"
-            else:
-                migration_dsn = _require_dsn(database.migration_dsn, "migration")
-                migration_count = apply_migrations(migration_dsn, migrations)
-                database.grant_test_privileges()
-                result = run_pytest(database_dsn, etl_root)
-                summary = (
-                    f"{migration_count} migrations, "
-                    f"{result.executed} executed, {result.skipped} skipped"
-                )
+            try:
+                if args.migration_atomicity:
+                    stage = "apply_migrations"
+                    run_migration_atomicity(database, migrations, args.migration_atomicity)
+                    summary = f"migration atomicity {args.migration_atomicity}"
+                else:
+                    stage = "apply_migrations"
+                    migration_dsn = _require_dsn(database.migration_dsn, "migration")
+                    migration_count = apply_migrations(migration_dsn, migrations)
+                    stage = "grant_test_privileges"
+                    database.grant_test_privileges()
+                    stage = "pytest"
+                    result = run_pytest(database_dsn, etl_root)
+                    summary = (
+                        f"{migration_count} migrations, "
+                        f"{result.executed} executed, {result.skipped} skipped"
+                    )
+            except BaseException as exc:
+                body_failure = exc
+                body_stage = stage
+                raise
+            finally:
+                stage = "owned_database_cleanup"
         print(f"ETL verification passed: {summary}; cleaned {database.identity.name}")
         return 0
     except (Exception, KeyboardInterrupt) as exc:
-        print(f"ETL verification failed: {database.safe_error(exc)}", file=sys.stderr)
+        # A body failure remains causal unless cleanup replaced it with a new exception.
+        reported_stage = body_stage if exc is body_failure else stage
+        if os.environ.get("ETL_VERIFY_STAGE_REPORT") == "1":
+            print(f"E2E_ETL_STAGE {reported_stage}", file=sys.stderr)
+            if (
+                reported_stage == "apply_migrations"
+                and isinstance(exc, MigrationApplyError)
+                and exc.filename
+            ):
+                print(f"E2E_ETL_MIGRATION {exc.filename} {exc.sqlstate or '-'}", file=sys.stderr)
+        detail = (
+            "migration preparation failed; details redacted"
+            if not args.migration_atomicity
+            and reported_stage == "apply_migrations"
+            and not isinstance(exc, MigrationApplyError)
+            else database.safe_error(exc)
+        )
+        print(f"ETL verification failed: {detail}", file=sys.stderr)
         return 1
     finally:
         for handled, previous in previous_handlers.items():
