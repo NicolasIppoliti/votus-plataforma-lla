@@ -177,6 +177,27 @@ def _assert_sql_lane(job: dict[str, Any]) -> None:
     assert all("if" not in step and "continue-on-error" not in step for step in steps)
 
 
+def test_scope_disables_automatic_pnpm_cache_without_changing_downstream_caches() -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    setup_steps = {
+        name: next(
+            step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@")
+        )
+        for name, job in jobs.items()
+        if any(step.get("uses", "").startswith("actions/setup-node@") for step in job["steps"])
+    }
+    assert setup_steps["scope"]["with"] == {
+        "node-version-file": ".node-version",
+        "package-manager-cache": False,
+    }
+    for name in ("web-static", "e2e-release", "e2e-sql"):
+        assert setup_steps[name]["with"] == {
+            "node-version-file": ".node-version",
+            "cache": "pnpm",
+            "cache-dependency-path": "apps/web/pnpm-lock.yaml",
+        }
+
+
 def test_sql_lane_has_only_pinned_setup_install_and_complete_sql_command() -> None:
     jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
     assert "e2e-sql" in jobs
