@@ -41,8 +41,8 @@ def test_node_and_package_manager_pins_agree_with_install_requirements() -> None
     assert node_file.is_file(), "the Node runtime needs a shared version file"
     assert workspace_file.is_file(), "pnpm must reject mismatched tools instead of downloading them"
     node = node_file.read_text().strip()
-    assert re.fullmatch(r"\d+\.\d+\.\d+", node)
-    assert manifest["engines"]["node"] == node
+    assert node == "24.21.0"
+    assert manifest["engines"]["node"] == f"{node.split('.')[0]}.x"
     manager = manifest["packageManager"]
     assert manager == f"pnpm@{manifest['engines']['pnpm']}"
     workspace = yaml.safe_load(workspace_file.read_text())
@@ -50,6 +50,15 @@ def test_node_and_package_manager_pins_agree_with_install_requirements() -> None
     assert workspace["engineStrict"] is True
     assert workspace["saveExact"] is True
     assert workspace["packages"] == ["."]
+
+
+def test_repository_root_exposes_the_same_pnpm_pin_without_a_new_workspace() -> None:
+    root_manifest = ROOT / "package.json"
+    assert root_manifest.is_file(), "Corepack must discover the pin from the repository root"
+    root = json.loads(root_manifest.read_text())
+    web = json.loads((WEB / "package.json").read_text())
+    assert root == {"private": True, "packageManager": "pnpm@12.3.4"}
+    assert root["packageManager"] == web["packageManager"]
 
 
 def test_python_direct_dependencies_match_exact_locked_versions() -> None:

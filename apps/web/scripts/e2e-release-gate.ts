@@ -483,15 +483,25 @@ export async function assertSourceInventory(
 }
 const exactToolVersion = z.string().regex(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/);
 const toolchainPinsSchema = z.object({
-	engines: z.object({ node: exactToolVersion, pnpm: exactToolVersion }),
+	engines: z.object({ node: z.string(), pnpm: exactToolVersion }),
 	devDependencies: z.object({ supabase: exactToolVersion }),
 });
-function readToolchainPins(): z.infer<typeof toolchainPinsSchema> {
+function readToolchainPins() {
+	let node: string;
 	try {
-		return toolchainPinsSchema.parse(JSON.parse(readFileSync(path.join(WEB_ROOT, "package.json"), "utf8")));
+		node = exactToolVersion.parse(readFileSync(path.join(REPO_ROOT, ".node-version"), "utf8").trim());
 	} catch {
-		throw new Error("Invalid project toolchain pins; exact Node, pnpm and Supabase CLI versions are required");
+		throw new Error("Invalid project toolchain pins; exact Node pin is missing or malformed");
 	}
+	let pins: z.infer<typeof toolchainPinsSchema>;
+	try {
+		pins = toolchainPinsSchema.parse(JSON.parse(readFileSync(path.join(WEB_ROOT, "package.json"), "utf8")));
+	} catch {
+		throw new Error("Invalid project toolchain pins; package declarations are missing or malformed");
+	}
+	if (pins.engines.node !== `${node.split(".")[0]}.x`)
+		throw new Error("Invalid project toolchain pins; Node compatibility must match the exact pin's major");
+	return { ...pins, node };
 }
 function assertPinnedVersion(actual: string, expected: string, label: string): void {
 	if (actual.trim() !== expected)
@@ -501,7 +511,7 @@ function assertIsolationCapabilities(requireBrowser: boolean): void {
 	if (process.env.SUPABASE_EXPERIMENTAL_STACK !== undefined)
 		throw new Error("Unset SUPABASE_EXPERIMENTAL_STACK; the owned gate requires the verified legacy backend");
 	const pins = readToolchainPins();
-	assertPinnedVersion(process.versions.node, pins.engines.node, "Node.js");
+	assertPinnedVersion(process.versions.node, pins.node, "Node.js");
 	assertPinnedVersion(requireCommand("pnpm", ["--version"], "pnpm", WEB_ROOT), pins.engines.pnpm, "pnpm");
 	assertPinnedVersion(requireCommand("supabase", ["--version"], "Supabase CLI", WEB_ROOT), pins.devDependencies.supabase, "Supabase CLI");
 	requireCommand("docker", ["info", "--format", "{{.ServerVersion}}"], "Docker");

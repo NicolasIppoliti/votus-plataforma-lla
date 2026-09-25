@@ -35,8 +35,11 @@ not permission to contact a hosted project, ingest data, or deploy a release.
 
 ## Web quick path
 
-Use Node.js **24.20.0** from [.node-version](.node-version) and **pnpm 12.3.4**,
-as declared in [the web package](apps/web/package.json). Each example explicitly selects pnpm so
+Use Node.js **24.21.0** from [.node-version](.node-version) and **pnpm 12.3.4**,
+as declared in the [root](package.json) and [web package](apps/web/package.json).
+The web package declares Node `24.x` compatibility for managed Vercel updates;
+local release verification and CI still require the exact shared Node pin.
+Each example explicitly selects pnpm so
 later commands do not fall back to an older global installation:
 
 ```sh

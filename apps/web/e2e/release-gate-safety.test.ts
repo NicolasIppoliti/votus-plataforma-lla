@@ -73,7 +73,8 @@ import {
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
-const { createServer, randomUUID, spawn, spawnSync, tmpdir, open, sidecarFault, prelaunchRead } = vi.hoisted(() => ({
+const { createServer, randomUUID, spawn, spawnSync, tmpdir, open, sidecarFault, prelaunchRead, toolchainReads } = vi.hoisted(() => ({
+	toolchainReads: new Map<string, string | Error>(),
 	sidecarFault: { kind: "" as string, renamed: false, linked: false, descriptors: new Map<number, string>() },
 	prelaunchRead: { armed: false, gate: undefined as Promise<void> | undefined, entered: undefined as (() => void) | undefined },
 	spawn: vi.fn(),
@@ -87,6 +88,11 @@ const { createServer, randomUUID, spawn, spawnSync, tmpdir, open, sidecarFault, 
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
 	return { ...actual,
+		readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+			const fixture = toolchainReads.get(String(args[0]));
+			if (fixture instanceof Error) throw fixture;
+			return fixture ?? actual.readFileSync(...args);
+		},
 		openSync: (file: Parameters<typeof actual.openSync>[0], flags: Parameters<typeof actual.openSync>[1], mode?: number) => {
 			const fd = actual.openSync(file, flags, mode);
 			sidecarFault.descriptors.set(fd, String(file));
@@ -919,6 +925,76 @@ describe("explicit release-gate lanes", () => {
 			rmSync(tempRoot, { force: true, recursive: true });
 		}
 	}
+
+	it("accepts the actual Node runtime only through its exact file pin and compatible declared major", async () => {
+		const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+		const manifestPath = join(root, "apps/web/package.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+		toolchainReads.set(join(root, ".node-version"), `${process.versions.node}\n`);
+		toolchainReads.set(manifestPath, JSON.stringify({
+			...manifest, engines: { ...manifest.engines, node: `${process.versions.node.split(".")[0]}.x` },
+		}));
+		try {
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release");
+				expect(result.failure).toBeUndefined();
+				expect(result.trace).toContain("cleanup");
+				expect(result.workdirExists).toBe(false);
+			}
+		} finally { toolchainReads.clear(); }
+	});
+
+	it.each([
+		["missing exact pin", new Error("PRIVATE_OUTPUT_MARKER"), "24.x", "exact Node pin is missing or malformed"],
+		["empty exact pin", "", "24.x", "exact Node pin is missing or malformed"],
+		["ranged exact pin", "24.x", "24.x", "exact Node pin is missing or malformed"],
+		["suffixed exact pin", "24.21.0-private", "24.x", "exact Node pin is missing or malformed"],
+		["noncanonical exact pin", "024.21.0", "24.x", "exact Node pin is missing or malformed"],
+		["private exact pin", "24.21.0\nPRIVATE_OUTPUT_MARKER", "24.x", "exact Node pin is missing or malformed"],
+		["incompatible major", "24.21.0", "25.x", "Node compatibility must match the exact pin's major"],
+		["open compatibility range", "24.21.0", ">=24", "Node compatibility must match the exact pin's major"],
+		["private compatibility range", "24.21.0", "24.x\nPRIVATE_OUTPUT_MARKER", "Node compatibility must match the exact pin's major"],
+	] as const)("rejects %s before any command, ownership or stale cleanup", async (_name, nodePin, nodeRange, reason) => {
+		const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+		const manifestPath = join(root, "apps/web/package.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+		toolchainReads.set(join(root, ".node-version"), nodePin);
+		toolchainReads.set(manifestPath, JSON.stringify({ ...manifest, engines: { ...manifest.engines, node: nodeRange } }));
+		try {
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release", true);
+				expect(result.failure).toEqual(new Error(`Invalid project toolchain pins; ${reason}`));
+				expect(result.commands).toEqual([]);
+				expect(result.trace).toEqual([]);
+				expect(result.workdirExists).toBe(false);
+				expect(result.recoverySidecarExists).toBe(false);
+				expect(result.staleSidecarExists).toBe(true);
+				expect(`${result.output}${String(result.failure)}`).not.toContain("PRIVATE_OUTPUT_MARKER");
+			}
+		} finally { toolchainReads.clear(); }
+	});
+
+	it("rejects a different exact Node file pin even within the declared compatible major", async () => {
+		const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+		const manifestPath = join(root, "apps/web/package.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+		toolchainReads.set(join(root, ".node-version"), "24.0.0\n");
+		toolchainReads.set(manifestPath, JSON.stringify({ ...manifest, engines: { ...manifest.engines, node: "24.x" } }));
+		try {
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release", true);
+				expect(String(result.failure)).toMatch(/Node.js version mismatch; expected 24\.0\.0/);
+				expect(result.commands).toEqual([]);
+				expect(result.trace).toEqual([]);
+				expect(result.workdirExists).toBe(false);
+				expect(result.recoverySidecarExists).toBe(false);
+				expect(result.staleSidecarExists).toBe(true);
+			}
+		} finally { toolchainReads.clear(); }
+	});
 
 	it.each([
 		["pnpm", "12.3.5"],

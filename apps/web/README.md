@@ -5,10 +5,17 @@ Commands below run from the repository root.
 
 ## Prerequisites and development
 
-Use Node.js **24.20.0** from [the shared pin](../../.node-version) and
+Use Node.js **24.21.0** from [the shared pin](../../.node-version) and
 **pnpm 12.3.4**, declared by [package.json](package.json) and used in
 [CI](../../.github/workflows/release-gates.yml). Keep the committed lockfile;
 a pnpm 10 lockfile parsing failure is not a reason to regenerate it.
+
+The [root package](../../package.json) repeats the same package-manager pin so
+Corepack can discover it from either directory. `engines.node` declares Node
+`24.x` compatibility, not an exact runtime pin: Vercel manages minor and patch
+updates within that major. Local release verification and CI require exactly
+the version in `.node-version`; preflight rejects a mismatch before creating
+resources. Vercel Preview uses Corepack to select the exact pnpm version.
 
 Use the pinned invocation for every command, not only installation:
 
