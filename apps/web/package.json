@@ -15,6 +15,7 @@
     "test:e2e": "playwright test",
     "test:e2e:gate": "node --experimental-strip-types ./scripts/e2e-release-gate.ts",
     "test:e2e:focused": "node --experimental-strip-types ./scripts/e2e-release-gate.ts --focused",
+    "verify:etl-isolated": "node --experimental-strip-types ./scripts/etl-verification.ts",
     "evaluate:territorial-renderer": "node --experimental-strip-types ./scripts/territorial-renderer-evaluation.ts"
   },
   "dependencies": {

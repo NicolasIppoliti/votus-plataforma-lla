@@ -69,6 +69,7 @@ export const RELEASE_GATE_MODE = {
 	RELEASE_PROOF_ONLY: "release-proof-only",
 	SCALE_PROOF_ONLY: "scale-proof-only",
 	ROLLBACK_PROOFS_ONLY: "rollback-proofs-only",
+	ETL: "etl",
 } as const;
 
 export type ReleaseGateMode =
@@ -148,6 +149,7 @@ export interface ReleaseGateCliDependencies {
 export interface ReleaseGateProductionPhaseEffects {
 	runProductionMigrations(): Promise<void>;
 	startApplicationServices(): Promise<void>;
+	validateOwnedEtlDatabase?(): Promise<void>;
 	validateStackStatus(): Promise<StackStatus>;
 	runSetupProof(proof: ReleaseGateSetupProof): Promise<void>;
 	runPgTapProof(proof: ReleaseGatePgTapProof): Promise<void>;
@@ -158,17 +160,30 @@ export interface ReleaseGateProductionPhaseEffects {
 	installSyntheticMigration(
 		migration: ReleaseGateSyntheticMigration,
 	): Promise<void>;
+	runOwnedEtl?(stack: StackStatus): Promise<void>;
 }
 
 export interface ReleaseGateCleanupState<TServer> {
 	ownership?: GateOwnership;
 	stackMutationAttempted: boolean;
+	stopOwnedEtlChild?: () => Promise<void>;
+	pendingEtlRecovery?: boolean;
 	servers?: readonly TServer[];
 	reservations?: readonly PortReservation[];
 }
 
+export interface ReleaseGateRecoveryRecord extends GateOwnership {
+	repositoryRoot: string;
+	ownerPid: number;
+	status?: "pending_child";
+}
+
 export interface ReleaseGateCleanupDependencies<TServer> {
 	tempRoot(): string;
+	repositoryRoot: string;
+	persistRecoveryRecord(record: ReleaseGateRecoveryRecord): Promise<void>;
+	retireRecoveryRecord(record: ReleaseGateRecoveryRecord): Promise<void>;
+	promotePendingRecoveryRecord?(record: ReleaseGateRecoveryRecord): Promise<void>;
 	readOwnershipMarker(workdir: string): Promise<string>;
 	stopServer(server: TServer): Promise<void>;
 	verifyServerStopped(server: TServer): Promise<void>;
@@ -181,6 +196,9 @@ export interface ReleaseGateCleanupDependencies<TServer> {
 	removeNetworks(names: readonly string[]): Promise<void>;
 	removeWorkdir(workdir: string): Promise<void>;
 	workdirExists(workdir: string): boolean;
+	validatedRecoveryMarker?: GateOwnership;
+	recoveryOwnerPid?: number;
+	skipStackStop?: boolean;
 }
 
 const PBA_113_MIGRATION_VERSION = "20260824193650";
@@ -472,10 +490,10 @@ export function createReleaseGatePlan(
 	selectedSpecs: readonly string[] = EXPECTED_E2E_SPECS,
 ): ReleaseGatePlan {
 	const resolvedSelectedSpecs =
-		mode === RELEASE_GATE_MODE.FOCUSED
+		mode === RELEASE_GATE_MODE.ETL ? [] : mode === RELEASE_GATE_MODE.FOCUSED
 			? parseFocusedE2eSelection(selectedSpecs)
 			: mode === RELEASE_GATE_MODE.SQL ? [] : [...EXPECTED_E2E_SPECS];
-	const omitPgTap = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY || mode === RELEASE_GATE_MODE.BROWSER;
+	const omitPgTap = mode === RELEASE_GATE_MODE.ROLLBACK_PROOFS_ONLY || mode === RELEASE_GATE_MODE.BROWSER || mode === RELEASE_GATE_MODE.ETL;
 	const scaleProofOnly = mode === RELEASE_GATE_MODE.SCALE_PROOF_ONLY;
 	return {
 		mode,
@@ -500,7 +518,7 @@ export function createReleaseGatePlan(
 		postPgTapCleanupProofs: omitPgTap
 			? []
 			: POST_PG_TAP_CLEANUP_PROOFS.map((proof) => ({ ...proof })),
-		rollbackReapplyProofs: scaleProofOnly
+		rollbackReapplyProofs: scaleProofOnly || mode === RELEASE_GATE_MODE.ETL
 			? []
 			: ROLLBACK_REAPPLY_PROOFS.map((proof) => ({ ...proof })),
 		requireBrowserCapability:
@@ -518,9 +536,21 @@ export async function runProductionReleasePhases(
 	plan: ReleaseGatePlan,
 	effects: ReleaseGateProductionPhaseEffects,
 ): Promise<StackStatus> {
-	await effects.runProductionMigrations();
-	await effects.startApplicationServices();
+	// ETL owns the full migration replay in its disposable sibling database.
+	// The database startup already applied the staged bootstrap migrations;
+	// replaying the remainder here would recreate cluster-global roles.
+	if (plan.mode !== RELEASE_GATE_MODE.ETL)
+		await effects.runProductionMigrations();
+	if (plan.mode === RELEASE_GATE_MODE.ETL) {
+		if (!effects.validateOwnedEtlDatabase) throw new Error("owned ETL database validation effect missing");
+		await effects.validateOwnedEtlDatabase();
+	} else await effects.startApplicationServices();
 	const stack = await effects.validateStackStatus();
+	if (plan.mode === RELEASE_GATE_MODE.ETL) {
+		if (!effects.runOwnedEtl) throw new Error("owned ETL effect missing");
+		await effects.runOwnedEtl(stack);
+		return stack;
+	}
 	for (const proof of plan.pgTapProofs) {
 		for (const setup of plan.setupProofs)
 			if (setup.beforePgTapPath === proof.path)
@@ -555,6 +585,13 @@ export async function runReleaseGateCli(
 		mode === RELEASE_GATE_MODE.FOCUSED
 			? parseFocusedE2eCliSelection(argv)
 			: EXPECTED_E2E_SPECS;
+	if (mode !== RELEASE_GATE_MODE.FOCUSED) {
+		const allowed = mode === RELEASE_GATE_MODE.SQL || mode === RELEASE_GATE_MODE.BROWSER
+			? ["--inspect-plan", "--lane", mode]
+			: ["--inspect-plan", "--release-proof-only", "--scale-proof-only", "--rollback-proofs-only"];
+		if (argv.some((arg) => !allowed.includes(arg)))
+			throw new Error("unknown release-gate option; use --inspect-plan for a read-only plan");
+	}
 	const plan = createReleaseGatePlan(mode, selectedSpecs);
 	if (argv.includes("--inspect-plan")) {
 		dependencies.writeOutput(`${JSON.stringify(plan, null, 2)}\n`);
@@ -572,10 +609,13 @@ export async function runReleaseGateCli(
 }
 
 export const CLEANUP_CATEGORY = {
+	ETL_CHILD_STOP: "ETL_CHILD_STOP",
 	SERVER_STOP: "SERVER_STOP",
 	SERVER_VERIFICATION: "SERVER_VERIFICATION",
 	RESERVATION_RELEASE: "RESERVATION_RELEASE",
 	OWNERSHIP_MARKER: "OWNERSHIP_MARKER",
+	RECOVERY_RECORD_PERSIST: "RECOVERY_RECORD_PERSIST",
+	RECOVERY_RECORD_RETIRE: "RECOVERY_RECORD_RETIRE",
 	STACK_STOP: "STACK_STOP",
 	OWNED_CONTAINER_CLEANUP: "OWNED_CONTAINER_CLEANUP",
 	OWNED_VOLUME_CLEANUP: "OWNED_VOLUME_CLEANUP",
@@ -722,10 +762,9 @@ function removeOwnedContainers<TServer>(
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
 ): Promise<void> {
 	const containers = dependencies.listOwnedContainers(projectId);
-	if (containers.some((name) => !name.endsWith(`_${projectId}`)))
-		throw new Error(
-			"refusing to remove a container without the exact owned project suffix",
-		);
+	const allowed = new Set(["db", "kong", "auth", "rest"].map((service) => `supabase_${service}_${projectId}`));
+	if (containers.some((name) => !allowed.has(name)))
+		throw new Error("refusing to remove an unexpected container; details redacted");
 	return containers.length > 0
 		? dependencies.removeContainers(containers)
 		: Promise.resolve();
@@ -736,10 +775,8 @@ function removeOwnedVolumes<TServer>(
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
 ): Promise<void> {
 	const volumes = dependencies.listOwnedVolumes(projectId);
-	if (volumes.some((name) => !name.endsWith(`_${projectId}`)))
-		throw new Error(
-			"refusing to remove a volume without the exact owned project suffix",
-		);
+	if (volumes.some((name) => name !== `supabase_db_${projectId}`))
+		throw new Error("refusing to remove an unexpected volume; details redacted");
 	return volumes.length > 0
 		? dependencies.removeVolumes(volumes)
 		: Promise.resolve();
@@ -800,6 +837,14 @@ export async function cleanupReleaseGate<TServer>(
 	dependencies: ReleaseGateCleanupDependencies<TServer>,
 ): Promise<void> {
 	const failures: CleanupFailure[] = [];
+	let etlChildStopped = true;
+	if (state.stopOwnedEtlChild)
+		try {
+			await state.stopOwnedEtlChild();
+		} catch (error) {
+			etlChildStopped = false;
+			recordCleanupFailure(failures, CLEANUP_CATEGORY.ETL_CHILD_STOP, error);
+		}
 	await runOwnedServerCleanup(
 		state.servers ?? [],
 		async (server) => {
@@ -832,9 +877,23 @@ export async function cleanupReleaseGate<TServer>(
 		return;
 	}
 	const ownership = state.ownership;
+	if (!etlChildStopped) {
+		if (state.pendingEtlRecovery) throw new ReleaseGateCleanupError(failures);
+		try {
+			const marker = JSON.parse(await dependencies.readOwnershipMarker(ownership.workdir)) as GateOwnership;
+			planOwnedCleanup(dependencies.tempRoot(), ownership.workdir, ownership, marker);
+			await dependencies.persistRecoveryRecord({
+				...ownership, repositoryRoot: dependencies.repositoryRoot,
+				ownerPid: dependencies.recoveryOwnerPid ?? process.pid, status: "pending_child",
+			});
+		} catch (error) {
+			recordCleanupFailure(failures, CLEANUP_CATEGORY.RECOVERY_RECORD_PERSIST, error);
+		}
+		throw new ReleaseGateCleanupError(failures);
+	}
 	let actions: CleanupAction[] = [];
 	try {
-		const marker = JSON.parse(
+		const marker = dependencies.validatedRecoveryMarker ?? JSON.parse(
 			await dependencies.readOwnershipMarker(ownership.workdir),
 		) as GateOwnership;
 		actions = planOwnedCleanup(
@@ -846,11 +905,27 @@ export async function cleanupReleaseGate<TServer>(
 	} catch (error) {
 		recordCleanupFailure(failures, CLEANUP_CATEGORY.OWNERSHIP_MARKER, error);
 	}
+	if (failures.some(({ category }) => category === CLEANUP_CATEGORY.OWNERSHIP_MARKER)) {
+		await verifyCleanupResiduals(ownership, dependencies, failures);
+		throw new ReleaseGateCleanupError(failures);
+	}
+	const record = { ...ownership, repositoryRoot: dependencies.repositoryRoot, ownerPid: dependencies.recoveryOwnerPid ?? process.pid };
+	try {
+		if (state.pendingEtlRecovery) {
+			if (!dependencies.promotePendingRecoveryRecord) throw new Error("pending recovery promotion unavailable");
+			await dependencies.promotePendingRecoveryRecord(record);
+		} else await dependencies.persistRecoveryRecord(record);
+	} catch (error) {
+		recordCleanupFailure(failures, CLEANUP_CATEGORY.RECOVERY_RECORD_PERSIST, error);
+		throw new ReleaseGateCleanupError(failures);
+	}
+	let teardownUnconfirmed = false;
 	await runOwnedCleanup(
 		actions,
 		async (action) => {
 			try {
-				if (action.kind === "stop-stack" && state.stackMutationAttempted)
+				if (action.kind === "remove-workdir" && teardownUnconfirmed) return;
+				if (action.kind === "stop-stack" && state.stackMutationAttempted && !dependencies.skipStackStop)
 					await dependencies.stopStack(ownership.workdir, action.projectId);
 				else if (
 					action.kind === "remove-owned-containers" &&
@@ -867,9 +942,22 @@ export async function cleanupReleaseGate<TServer>(
 					state.stackMutationAttempted
 				)
 					await removeOwnedNetworks(action.projectId, dependencies);
-				else if (action.kind === "remove-workdir")
-					await dependencies.removeWorkdir(action.workdir);
+				else if (action.kind === "remove-workdir") {
+					if (state.stackMutationAttempted) {
+						for (const listResources of [
+							dependencies.listOwnedContainers,
+							dependencies.listOwnedVolumes,
+							dependencies.listOwnedNetworks,
+						])
+							if (listResources(ownership.projectId).length > 0) {
+								teardownUnconfirmed = true;
+								break;
+							}
+					}
+					if (!teardownUnconfirmed) await dependencies.removeWorkdir(action.workdir);
+				}
 			} catch (error) {
+				if (action.kind !== "remove-workdir") teardownUnconfirmed = true;
 				const category =
 					action.kind === "stop-stack"
 						? CLEANUP_CATEGORY.STACK_STOP
@@ -886,6 +974,12 @@ export async function cleanupReleaseGate<TServer>(
 		() => verifyCleanupResiduals(ownership, dependencies, failures),
 	);
 	if (failures.length > 0) throw new ReleaseGateCleanupError(failures);
+	try {
+		await dependencies.retireRecoveryRecord(record);
+	} catch (error) {
+		recordCleanupFailure(failures, CLEANUP_CATEGORY.RECOVERY_RECORD_RETIRE, error);
+		throw new ReleaseGateCleanupError(failures);
+	}
 }
 
 export function establishOwnership(
