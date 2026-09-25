@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -133,24 +133,42 @@ function verify(gates: string, results: string[]) {
 		},
 	});
 }
-function publish(input: string) {
+function publish(input: string, supabase: unknown = "2.116.0", python = "3.13.12\n") {
 	const directory = mkdtempSync(join(tmpdir(), "ci-scope-output-"));
 	try {
+		mkdirSync(join(directory, "apps/web"), { recursive: true });
+		writeFileSync(join(directory, "apps/web/package.json"), JSON.stringify({ devDependencies: { supabase } }));
+		writeFileSync(join(directory, ".python-version"), python);
 		const outputPath = join(directory, "github-output");
 		writeFileSync(outputPath, "");
 		const result = spawnSync("bash", ["-euc", shellFor("Publish scope gates")], {
 			encoding: "utf8",
+			cwd: directory,
 			env: {
 				NODE_ENV: "test", PATH: process.env.PATH,
 				SCOPE_JSON: input, GITHUB_OUTPUT: outputPath,
 			},
 		});
-		return { ...result, publishedOutput: readFileSync(outputPath, "utf8") };
+		const output = readFileSync(outputPath, "utf8");
+		return { ...result, output, publishedOutput: output.match(/^gates=.*\n/m)?.[0] ?? "" };
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
 }
 describe("workflow scope boundaries", () => {
+	it("publishes shared toolchain versions from repository declarations", () => {
+		const result = publish(JSON.stringify({ schemaVersion: 1, decision: "all", gates: ALL_GATES }));
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.output).toBe(`gates=${JSON.stringify(ALL_GATES)}\nsupabase=2.116.0\npython=3.13.12\n`);
+	});
+	it.each([
+		["latest", "3.13.12"], ["^2.116.0", "3.13.12"], [null, "3.13.12"],
+		["2.116.0\nextra=1", "3.13.12"], ["2.116.0", "3.13"], ["2.116.0", "3.13.12\nextra=1"],
+	])("rejects non-exact toolchain declaration %j / %j before publishing", (supabase, python) => {
+		const result = publish(JSON.stringify({ schemaVersion: 1, decision: "all", gates: ALL_GATES }), supabase, python);
+		expect(result.status).not.toBe(0);
+		expect(result.output).toBe("");
+	});
 	it.each([["e2e-release", "browser"], ["e2e-sql", "sql"]])(
 		"reaches the %s lane through its workflow command",
 		(job, lane) => {
@@ -218,7 +236,8 @@ describe("workflow scope boundaries", () => {
 		"", "malformed", "M\0etl/a.py", "D\0etl/a.py\0", "R100\0etl/a.py\0etl/b.py\0",
 		...[
 			"etl/uv.lock", "apps/web/pnpm-lock.yaml", ".github/workflows/release-gates.yml",
-			"README.md", "shared/a.ts", "supabase/tests/a.sql", "unknown/a",
+			"README.md", ".node-version", ".python-version", "apps/web/package.json",
+			"shared/a.ts", "supabase/tests/a.sql", "unknown/a",
 			"etl/archive/a", "etl/curated/a",
 		].map((path) => `M\0${path}\0`),
 		"M\0etl/a.py\0M\0apps/web/app/page.tsx\0", "M\0etl/a.py\0M\0etl/a.py\0",

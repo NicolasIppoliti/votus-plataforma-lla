@@ -35,8 +35,8 @@ not permission to contact a hosted project, ingest data, or deploy a release.
 
 ## Web quick path
 
-Use Node.js 24 (the CI major) and **pnpm 12.3.4**, as declared in
-[the web package](apps/web/package.json). Each example explicitly selects pnpm so
+Use Node.js **24.20.0** from [.node-version](.node-version) and **pnpm 12.3.4**,
+as declared in [the web package](apps/web/package.json). Each example explicitly selects pnpm so
 later commands do not fall back to an older global installation:
 
 ```sh
@@ -51,16 +51,18 @@ Supabase stack. See the [web guide](apps/web/README.md) before running E2E.
 
 ## ETL development and verification
 
-Use Python 3.12 or newer and uv; [pyproject.toml](etl/pyproject.toml) declares the
-runtime and `etl-verify` entry point. The [ETL package](etl/etl/) contains ingestion
+Use Python **3.13.12** from [.python-version](.python-version) and uv **0.12.17**;
+[pyproject.toml](etl/pyproject.toml) enforces the uv version and declares the
+`etl-verify` entry point. The package remains compatible with Python 3.12+, but
+local release verification and CI use the same exact interpreter. The [ETL package](etl/etl/) contains ingestion
 and archive logic; [tests](etl/tests/) describe the source-shape contracts.
 
 Database-independent checks are useful, but are not the disposable database gate:
 
 ```sh
-uv run --project etl --frozen ruff check etl
-uv run --project etl --frozen ruff format --check etl
-uv --directory etl run --frozen pytest tests/test_migration_sql.py -q
+uv run --project etl --locked ruff check etl
+uv run --project etl --locked ruff format --check etl
+uv --directory etl run --locked pytest tests/test_migration_sql.py -q
 ```
 
 For full ETL verification, first obtain an approved **local disposable Postgres
@@ -77,7 +79,7 @@ privately; never print or commit a DSN, or manually create the runner. With the
 approved prerequisite satisfied:
 
 ```sh
-uv run --project etl etl-verify
+uv run --project etl --locked etl-verify
 ```
 
 The [runner](etl/etl/verify.py) creates its own UUID-named database, applies
@@ -112,8 +114,8 @@ From the repository root, with the checksum-addressed files present under
 `archive/geography/`, replay the two local-only validation modes:
 
 ```sh
-uv run --project etl --frozen python -m etl validate-circuit-geometry --source geography/cne-pba-circuits
-uv run --project etl --frozen python -m etl validate-circuit-geometry --source geography/cne-pba-circuits --use reference-only
+uv run --project etl --locked python -m etl validate-circuit-geometry --source geography/cne-pba-circuits
+uv run --project etl --locked python -m etl validate-circuit-geometry --source geography/cne-pba-circuits --use reference-only
 ```
 
 These commands read the registered CNE circuit and electoral-section snapshots
@@ -157,9 +159,28 @@ do not modify either archived geometry to force agreement.
 
 ## Local CI and release verification
 
-The [release workflow](.github/workflows/release-gates.yml) is authoritative for
-job prerequisites, tool versions and scope selection. Its `verify` job checks
-that the selected gates succeeded and unselected gates were skipped.
+The [release workflow](.github/workflows/release-gates.yml) consumes the same
+repository-owned pins as local development: `.node-version`, `.python-version`,
+`apps/web/package.json` (pnpm and Supabase CLI **2.116.0**), and
+`etl/pyproject.toml` (uv). The JavaScript Supabase SDK has its own independent
+version; it is not the CLI. Use the web package runner to select the local CLI,
+not a separately updated global installation. The gate rejects mismatching
+Node, pnpm or CLI versions before provisioning its stack.
+
+Commit both lockfiles. Use `pnpm install --frozen-lockfile` and `uv sync --project
+etl --locked`; verification must not regenerate dependency resolutions. ETL
+build requirements are included in the default `build` dependency group and
+`uv.lock`. Do not exclude that group during a fresh install: only the ETL package
+build runs without isolation, after its locked build dependencies are installed.
+
+Update pins and locks together in a reviewed change, then run all release gates.
+CI also fixes Action commit SHAs, the Postgres image digest and the Ubuntu 24.04
+runner family. The hosted runner's patch image and local Docker/OS remain managed
+prerequisites, not immutable copies of each other. Playwright controls its browser
+revision through its locked package.
+
+The workflow remains authoritative for job prerequisites and scope selection. Its
+`verify` job checks that selected gates succeeded and unselected gates were skipped.
 
 - **Web static:** `lint`, `typecheck`, and `test`; commands are in the web guide.
 - **ETL release:** disposable `etl-verify`, including migration-atomicity cases.

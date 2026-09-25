@@ -481,10 +481,30 @@ export async function assertSourceInventory(
 	await assertE2eSpecInventory();
 	return migrationNames;
 }
+const exactToolVersion = z.string().regex(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/);
+const toolchainPinsSchema = z.object({
+	engines: z.object({ node: exactToolVersion, pnpm: exactToolVersion }),
+	devDependencies: z.object({ supabase: exactToolVersion }),
+});
+function readToolchainPins(): z.infer<typeof toolchainPinsSchema> {
+	try {
+		return toolchainPinsSchema.parse(JSON.parse(readFileSync(path.join(WEB_ROOT, "package.json"), "utf8")));
+	} catch {
+		throw new Error("Invalid project toolchain pins; exact Node, pnpm and Supabase CLI versions are required");
+	}
+}
+function assertPinnedVersion(actual: string, expected: string, label: string): void {
+	if (actual.trim() !== expected)
+		throw new Error(`${label} version mismatch; expected ${expected}. Use the project-pinned toolchain`);
+}
 function assertIsolationCapabilities(requireBrowser: boolean): void {
-	requireCommand("pnpm", ["--version"], "pnpm");
+	if (process.env.SUPABASE_EXPERIMENTAL_STACK !== undefined)
+		throw new Error("Unset SUPABASE_EXPERIMENTAL_STACK; the owned gate requires the verified legacy backend");
+	const pins = readToolchainPins();
+	assertPinnedVersion(process.versions.node, pins.engines.node, "Node.js");
+	assertPinnedVersion(requireCommand("pnpm", ["--version"], "pnpm", WEB_ROOT), pins.engines.pnpm, "pnpm");
+	assertPinnedVersion(requireCommand("supabase", ["--version"], "Supabase CLI", WEB_ROOT), pins.devDependencies.supabase, "Supabase CLI");
 	requireCommand("docker", ["info", "--format", "{{.ServerVersion}}"], "Docker");
-	requireCommand("supabase", ["--version"], "Supabase CLI");
 	assertTs7Version(
 		requireCommand(
 			"pnpm",

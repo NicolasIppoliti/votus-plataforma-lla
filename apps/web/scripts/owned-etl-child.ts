@@ -80,7 +80,7 @@ export function startOwnedEtlChild({ cwd, env }: OwnedEtlOptions): {
   stop: () => Promise<void>;
 } {
   if (process.platform === "win32") throw new Error("POSIX process groups required; details redacted");
-  const child = spawn("uv", ["run", "--project", "etl", "etl-verify"], {
+  const child = spawn("uv", ["run", "--locked", "--project", "etl", "etl-verify"], {
     cwd, env: env as NodeJS.ProcessEnv, detached: true, stdio: ["ignore", "ignore", "pipe"],
   });
   // Drain all stderr while retaining only one bounded line and validated stage evidence.

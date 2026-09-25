@@ -85,6 +85,8 @@ function classifyPath(path: string, status: string, duplicate: boolean): Reason 
 	if (!/^[AM]$/.test(status)) return REASON.STATUS;
 	if (LOCKFILE.test(path)) return REASON.LOCKFILE;
 	if (path.startsWith(".github/workflows/")) return REASON.WORKFLOW;
+	// The ETL job also consumes the CLI pin in the web manifest.
+	if (path === "apps/web/package.json") return REASON.SHARED;
 	if (path.startsWith("supabase/")) return REASON.SUPABASE;
 	if (path === "archive" || path.startsWith("archive/") || path.includes("/archive/"))
 		return REASON.ARCHIVE;

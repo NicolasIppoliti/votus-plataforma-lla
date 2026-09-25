@@ -160,7 +160,7 @@ describe("owned ETL child", () => {
 		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null });
 		spawn.mockReturnValueOnce(child);
 		const job = startOwnedEtlChild({ cwd: "/workspace", env: { DATABASE_URL: "private" } });
-		expect(spawn).toHaveBeenCalledWith("uv", ["run", "--project", "etl", "etl-verify"], {
+		expect(spawn).toHaveBeenCalledWith("uv", ["run", "--locked", "--project", "etl", "etl-verify"], {
 			cwd: "/workspace", env: { DATABASE_URL: "private" }, detached: true, stdio: ["ignore", "ignore", "pipe"],
 		});
 		let settled = false;
@@ -548,7 +548,7 @@ describe("explicit release-gate lanes", () => {
 	});
 
 	// Reuse the existing isolated-workdir lifecycle with fake process/network boundaries.
-	async function runLane(argv: string[], fault = "", entry: "release" | "etl" = "release", staleSidecar: boolean | "missing-marker" | "conflicting-marker" | "active-owner" | "unknown-owner" | "legacy" | "malformed" | "unknown-docker" | "same-suffix-container" | "same-suffix-volume" | "pending-child" | "pending-corrupt" | "pending-conflict" = false, etlStderr?: readonly string[]) {
+	async function runLane(argv: string[], fault = "", entry: "release" | "etl" = "release", staleSidecar: boolean | "missing-marker" | "conflicting-marker" | "active-owner" | "unknown-owner" | "legacy" | "malformed" | "unknown-docker" | "same-suffix-container" | "same-suffix-volume" | "pending-child" | "pending-corrupt" | "pending-conflict" = false, etlStderr?: readonly string[], versions: { pnpm?: string; supabase?: string } = {}) {
 		const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
 		sidecarFault.kind = fault.startsWith("sidecar-") ? fault.slice("sidecar-".length) : "";
 		sidecarFault.renamed = false; sidecarFault.linked = false;
@@ -704,7 +704,7 @@ describe("explicit release-gate lanes", () => {
 			let phase = "";
 			let text = "";
 			if (command === "pnpm") {
-				text = args[0] === "--version" ? "10.0.0" : "Version 7.0.0";
+				text = args[0] === "--version" ? versions.pnpm ?? "12.3.4\n" : "Version 7.0.2\n";
 				if (args[0] === "build:next") phase = "build";
 				if (args[1] === "playwright") {
 					phase = "playwright";
@@ -805,7 +805,8 @@ describe("explicit release-gate lanes", () => {
 				} else phase = `sql${++sqlCount}`;
 			}
 			if (command === "supabase") {
-				if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
+				if (args[0] === "--version") text = versions.supabase ?? "2.116.0\n";
+				else if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
 				else if (args[0] === "db" && args[1] === "start") phase = "db-start";
 				else if (args[0] === "start") phase = "start";
 				else if (args[0] === "migration") phase = `migration${++migrationCount}`;
@@ -918,6 +919,68 @@ describe("explicit release-gate lanes", () => {
 			rmSync(tempRoot, { force: true, recursive: true });
 		}
 	}
+
+	it.each([
+		["pnpm", "12.3.5"],
+		["pnpm", ""],
+		["pnpm", "12.3.4\nPRIVATE_OUTPUT_MARKER"],
+		["pnpm", "12.3.4-private"],
+		["supabase", "2.117.0"],
+		["supabase", ""],
+		["supabase", "2.116.0\nPRIVATE_OUTPUT_MARKER"],
+		["supabase", "2.116.0-private"],
+		["node", "24.20.1"],
+		["node", "PRIVATE_OUTPUT_MARKER"],
+	] as const)("rejects %s version %j at every public lane before ownership or stale cleanup", async (tool, version) => {
+		const originalNode = Object.getOwnPropertyDescriptor(process.versions, "node")!;
+		try {
+			if (tool === "node") Object.defineProperty(process.versions, "node", { ...originalNode, value: version });
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(
+					lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release", true, undefined,
+					tool === "node" ? {} : { [tool]: version },
+				);
+				expect(result.failure).toBeInstanceOf(Error);
+				expect(String(result.failure)).toMatch(/version mismatch/i);
+				expect(result.trace).toEqual([]);
+				expect(result.workdirExists).toBe(false);
+				expect(result.recoverySidecarExists).toBe(false);
+				expect(result.staleSidecarExists).toBe(true);
+				expect(result.commands.every(({ args }) => args[0] === "--version" || args[0] === "info")).toBe(true);
+				expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+				expect(String(result.failure)).not.toContain("PRIVATE_OUTPUT_MARKER");
+			}
+		} finally {
+			Object.defineProperty(process.versions, "node", originalNode);
+		}
+	});
+
+	it.each(["1", "true", "0", "false", "", "PRIVATE_OUTPUT_MARKER"])(
+		"refuses an explicitly configured experimental stack backend %j before owned effects",
+		async (value) => {
+			vi.stubEnv("SUPABASE_EXPERIMENTAL_STACK", value);
+			try {
+				for (const lane of ["sql", "browser", "etl"] as const) {
+					const result = await runLane(
+						lane === "etl" ? ["--run"] : ["--lane", lane], "",
+						lane === "etl" ? "etl" : "release", true,
+					);
+					expect(result.failure).toBeInstanceOf(Error);
+					expect(String(result.failure)).toContain("Unset SUPABASE_EXPERIMENTAL_STACK");
+					expect(result.commands).toEqual([]);
+					expect(result.trace).toEqual([]);
+					expect(result.workdirExists).toBe(false);
+					expect(result.recoverySidecarExists).toBe(false);
+					expect(result.staleSidecarExists).toBe(true);
+					expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+					expect(String(result.failure)).not.toContain("PRIVATE_OUTPUT_MARKER");
+				}
+			} finally {
+				vi.unstubAllEnvs();
+			}
+		},
+	);
 
 	it("does not publish incomplete ordinary recovery evidence after a partial write", async () => {
 		const result = await runLane(["--lane", "sql"], "sidecar-ordinary-partial-write", "release");
@@ -1215,7 +1278,7 @@ describe("explicit release-gate lanes", () => {
 		expect(result.readinessRequests).toHaveLength(0);
 		const etl = result.commands.find(({ command }) => command === "uv");
 		expect(etl).toEqual(expect.objectContaining({
-			command: "uv", args: ["run", "--project", "etl", "etl-verify"],
+			command: "uv", args: ["run", "--locked", "--project", "etl", "etl-verify"],
 			cwd: expect.any(String),
 			env: expect.objectContaining({ ETL_TEST_ADMIN_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:46006/template1" }),
 		}));
@@ -2818,15 +2881,15 @@ describe("base contracts", () => {
 		expect(scope).toContain("timeout-minutes: 2");
 		expect(scope).toContain("persist-credentials: false");
 		expect(scope).toContain("fetch-depth: 0");
-		expect(scope).toContain("node-version: 24");
+		expect(scope).toContain("node-version-file: .node-version");
 		expect(scope).toContain("--all");
 		expect(scope).toContain("--base \"${{ github.event.pull_request.base.sha }}\"");
 		expect(scope).toContain("--head \"${{ github.sha }}\"");
 
 		expect(webStatic).toContain("timeout-minutes: 10");
 		expect(webStatic).toContain("persist-credentials: false");
-		expect(webStatic).toContain("version: 12.3.4");
-		expect(webStatic).toContain("node-version: 24");
+		expect(webStatic).toContain("package_json_file: apps/web/package.json");
+		expect(webStatic).toContain("node-version-file: .node-version");
 		expect(webStatic).toContain("pnpm/action-setup@");
 		expect(webStatic).toContain("actions/setup-node@");
 		expect(webStatic.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
@@ -2837,24 +2900,25 @@ describe("base contracts", () => {
 
 		expect(etlRelease).toContain("timeout-minutes: 15");
 		expect(etlRelease).toContain("services:");
-		expect(etlRelease).toContain("image: postgres:17");
+		expect(etlRelease).toContain("image: postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f");
 		expect(etlRelease).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
 		expect(etlRelease).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(etlRelease).toContain("astral-sh/setup-uv@");
-		expect(etlRelease).toContain('version: "0.8.8"');
+		expect(etlRelease).toContain("version-file: etl/pyproject.toml");
+		expect(etlRelease).toContain("python-version: ${{ needs.scope.outputs.python }}");
 		expect(etlRelease).toContain("persist-credentials: false");
 		expect(etlRelease).toContain("create role anon nologin");
 		expect(etlRelease).toContain("create role authenticated nologin");
 		expect(etlRelease).toContain("create role etl_writer login bypassrls password null");
-		expect(etlRelease.match(/uv run --project \. --frozen ruff check \./g)).toHaveLength(1);
-		expect(etlRelease.match(/uv run --project \. --frozen ruff format --check \./g)).toHaveLength(1);
-		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(2);
+		expect(etlRelease.match(/uv run --project \. --locked ruff check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project \. --locked ruff format --check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project etl --locked etl-verify/g)).toHaveLength(2);
 		expect(etlRelease).toContain("supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf");
-		expect(etlRelease).toContain("version: 2.116.0");
+		expect(etlRelease).toContain("version: ${{ needs.scope.outputs.supabase }}");
 		expect(etlRelease).toContain("ETL_CASE: ${{ matrix.case }}");
 		expect(etlRelease).toContain('if [ "$ETL_CASE" = "ordinary" ]; then');
-		expect(etlRelease).toMatch(/^\s+uv run --project etl etl-verify$/m);
-		expect(etlRelease).toContain('uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"');
+		expect(etlRelease).toMatch(/^\s+uv run --project etl --locked etl-verify$/m);
+		expect(etlRelease).toContain('uv run --project etl --locked etl-verify --migration-atomicity "$ETL_CASE"');
 		expect(etlRelease).not.toMatch(/pnpm|setup-node|playwright/);
 		expect(workflow).not.toMatch(/^\s+continue-on-error:/m);
 
@@ -2862,9 +2926,9 @@ describe("base contracts", () => {
 		expect(e2eRelease).toContain("pnpm/action-setup@");
 		expect(e2eRelease).toContain("actions/setup-node@");
 		expect(e2eRelease).toContain("supabase/setup-cli@");
-		expect(e2eRelease).toContain("version: 12.3.4");
-		expect(e2eRelease).toContain("node-version: 24");
-		expect(e2eRelease).toContain("version: 2.112.0");
+		expect(e2eRelease).toContain("package_json_file: apps/web/package.json");
+		expect(e2eRelease).toContain("node-version-file: .node-version");
+		expect(e2eRelease).toContain("version: ${{ needs.scope.outputs.supabase }}");
 		expect(e2eRelease).toContain("persist-credentials: false");
 		expect(e2eRelease.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
 		expect(e2eRelease.match(/pnpm exec playwright install --with-deps chromium/g)).toHaveLength(1);
@@ -2877,12 +2941,12 @@ describe("base contracts", () => {
 		expect(e2eRelease).not.toMatch(/services:|setup-uv|uv run|postgres:17/);
 
 		expect(e2eSql).toContain("timeout-minutes: 20");
-		expect(e2eSql).toContain("runs-on: ubuntu-latest");
-		expect(e2eSql).toContain("version: 12.3.4");
-		expect(e2eSql).toContain("node-version: 24");
+		expect(e2eSql).toContain("runs-on: ubuntu-24.04");
+		expect(e2eSql).toContain("package_json_file: apps/web/package.json");
+		expect(e2eSql).toContain("node-version-file: .node-version");
 		expect(e2eSql).toContain("cache: pnpm");
 		expect(e2eSql).toContain("cache-dependency-path: apps/web/pnpm-lock.yaml");
-		expect(e2eSql).toContain("version: 2.112.0");
+		expect(e2eSql).toContain("version: ${{ needs.scope.outputs.supabase }}");
 		expect(e2eSql).toContain("persist-credentials: false");
 		expect(e2eSql.match(/^\s*- run: .*$/gm)?.map((line) => line.trim())).toEqual([
 			"- run: pnpm install --frozen-lockfile",
@@ -3274,7 +3338,7 @@ describe("base contracts", () => {
 			spawnSync.mockImplementation((command, args) => {
 				if (command === "pnpm")
 					return successfulCommand(
-						args[0] === "--version" ? "10.0.0\n" : "Version 7.0.0\n",
+						args[0] === "--version" ? "12.3.4\n" : "Version 7.0.2\n",
 					);
 				if (command === "docker" && args[0] === "info")
 					return successfulCommand("29.7.2\n");
@@ -3350,7 +3414,7 @@ describe("base contracts", () => {
 					};
 				}
 				if (command === "supabase" && args[0] === "--version")
-					return successfulCommand("2.115.0\n");
+					return successfulCommand("2.116.0\n");
 				if (command === "supabase" && args[0] === "stop")
 					return successfulCommand("--project-id --no-backup\n");
 				return successfulCommand();
