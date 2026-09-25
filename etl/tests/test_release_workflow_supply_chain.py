@@ -85,7 +85,7 @@ def test_etl_matrix_cannot_cancel_or_change_required_cases(strategy: dict[str, A
         _assert_independent_release_jobs(jobs)
 
 
-def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
+def test_review_diagnostic_upload_is_failure_only_and_narrowly_scoped() -> None:
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
     _assert_independent_release_jobs(workflow["jobs"])
     assert workflow["jobs"]["verify"]["if"] == "${{ always() }}"
@@ -94,7 +94,11 @@ def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
     for name in aggregate["needs"]:
         variable = name.upper().replace("-", "_") + "_RESULT"
         assert aggregate["env"][variable] == f"${{{{ needs.{name}.result }}}}"
-    assert workflow["jobs"]["scope"]["outputs"] == {"gates": "${{ steps.publish.outputs.gates }}"}
+    assert workflow["jobs"]["scope"]["outputs"] == {
+        "gates": "${{ steps.publish.outputs.gates }}",
+        "supabase": "${{ steps.publish.outputs.supabase }}",
+        "python": "${{ steps.publish.outputs.python }}",
+    }
     assert aggregate["env"]["SCOPE_GATES"] == "${{ needs.scope.outputs.gates }}"
     # Runtime permutations are exercised by the web workflow-boundary tests.
     assert aggregate["steps"][0]["shell"] == "bash"
@@ -133,7 +137,10 @@ test "$E2E_SQL_RESULT" = "$e2e"
     assert upload["if"] == "${{ failure() }}"
     assert upload["with"] == {
         "name": "review-focus-geometry",
-        "path": "apps/web/test-results/**/review-focus-geometry.json",
+        "path": (
+            "apps/web/test-results/**/review-focus-geometry.json\n"
+            "apps/web/test-results/**/review-scroll-completion.json\n"
+        ),
         "retention-days": 1,
         "include-hidden-files": False,
         "if-no-files-found": "ignore",
@@ -143,7 +150,7 @@ test "$E2E_SQL_RESULT" = "$e2e"
 
 
 def _assert_sql_lane(job: dict[str, Any]) -> None:
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == "ubuntu-24.04"
     assert job["timeout-minutes"] == 20
     assert "services" not in job
     assert "continue-on-error" not in job
@@ -156,18 +163,39 @@ def _assert_sql_lane(job: dict[str, Any]) -> None:
         "supabase/setup-cli",
     ]
     assert steps[0]["with"] == {"persist-credentials": False}
-    assert steps[1]["with"] == {"version": "12.3.4"}
+    assert steps[1]["with"] == {"package_json_file": "apps/web/package.json"}
     assert steps[2]["with"] == {
-        "node-version": 24,
+        "node-version-file": ".node-version",
         "cache": "pnpm",
         "cache-dependency-path": "apps/web/pnpm-lock.yaml",
     }
-    assert steps[3]["with"] == {"version": "2.112.0"}
+    assert steps[3]["with"] == {"version": "${{ needs.scope.outputs.supabase }}"}
     assert steps[4:] == [
         {"run": "pnpm install --frozen-lockfile", "working-directory": "apps/web"},
         {"run": "pnpm test:e2e:gate --lane sql", "working-directory": "apps/web"},
     ]
     assert all("if" not in step and "continue-on-error" not in step for step in steps)
+
+
+def test_scope_disables_automatic_pnpm_cache_without_changing_downstream_caches() -> None:
+    jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
+    setup_steps = {
+        name: next(
+            step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@")
+        )
+        for name, job in jobs.items()
+        if any(step.get("uses", "").startswith("actions/setup-node@") for step in job["steps"])
+    }
+    assert setup_steps["scope"]["with"] == {
+        "node-version-file": ".node-version",
+        "package-manager-cache": False,
+    }
+    for name in ("web-static", "e2e-release", "e2e-sql"):
+        assert setup_steps[name]["with"] == {
+            "node-version-file": ".node-version",
+            "cache": "pnpm",
+            "cache-dependency-path": "apps/web/pnpm-lock.yaml",
+        }
 
 
 def test_sql_lane_has_only_pinned_setup_install_and_complete_sql_command() -> None:
@@ -237,9 +265,9 @@ def test_supabase_cli_versions_are_pinned_to_their_exact_release_jobs() -> None:
     ]
     reference = "supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf"
     assert setups == [
-        ("etl-release", reference, {"version": "2.116.0"}),
-        ("e2e-release", reference, {"version": "2.112.0"}),
-        ("e2e-sql", reference, {"version": "2.112.0"}),
+        ("etl-release", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
+        ("e2e-release", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
+        ("e2e-sql", reference, {"version": "${{ needs.scope.outputs.supabase }}"}),
     ]
 
 

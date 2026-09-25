@@ -10,7 +10,9 @@ jobs:
     name: scope
     outputs:
       gates: ${{ steps.publish.outputs.gates }}
-    runs-on: ubuntu-latest
+      supabase: ${{ steps.publish.outputs.supabase }}
+      python: ${{ steps.publish.outputs.python }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       # v5.1.0
@@ -21,7 +23,8 @@ jobs:
       # v5.0.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
-          node-version: 24
+          node-version-file: .node-version
+          package-manager-cache: false
       - name: Classify changed paths
         id: classify
         shell: bash
@@ -43,7 +46,7 @@ jobs:
           SCOPE_JSON: ${{ steps.classify.outputs.json }}
         run: |
           node <<'NODE'
-          const { appendFileSync } = require('node:fs');
+          const { appendFileSync, readFileSync } = require('node:fs');
           const scope = JSON.parse(process.env.SCOPE_JSON);
           const choices = new Map([
             ['all', ['web-static', 'etl-release', 'e2e-release']],
@@ -55,13 +58,19 @@ jobs:
               JSON.stringify(scope.gates) !== JSON.stringify(gates)) {
             throw new Error('Invalid scope contract');
           }
-          appendFileSync(process.env.GITHUB_OUTPUT, `gates=${JSON.stringify(gates)}\n`);
+          const supabase = JSON.parse(readFileSync('apps/web/package.json', 'utf8')).devDependencies?.supabase;
+          const python = readFileSync('.python-version', 'utf8').trim();
+          if ([supabase, python].some(value => typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value))) {
+            throw new Error('Toolchain versions must be exact releases');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            `gates=${JSON.stringify(gates)}\nsupabase=${supabase}\npython=${python}\n`);
           NODE
 
   web-static:
     needs: scope
     if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'web-static') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # v5.1.0
@@ -71,11 +80,11 @@ jobs:
       # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 12.3.4
+          package_json_file: apps/web/package.json
       # v5.0.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -91,7 +100,7 @@ jobs:
   etl-release:
     needs: scope
     if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'etl-release') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -99,7 +108,7 @@ jobs:
         case: [ordinary, success, ledger, sql]
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -117,18 +126,19 @@ jobs:
       # v7.6.0
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
         with:
-          version: "0.8.8"
+          version-file: etl/pyproject.toml
+          python-version: ${{ needs.scope.outputs.python }}
           enable-cache: true
       - name: Ruff lint
-        run: uv run --project . --frozen ruff check .
+        run: uv run --project . --locked ruff check .
         working-directory: etl
       - name: Ruff format check
-        run: uv run --project . --frozen ruff format --check .
+        run: uv run --project . --locked ruff format --check .
         working-directory: etl
       # v2.1.1
       - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf
         with:
-          version: 2.116.0
+          version: ${{ needs.scope.outputs.supabase }}
       - name: Run disposable ETL gate
         shell: bash
         env:
@@ -143,15 +153,15 @@ jobs:
             create role etl_writer login bypassrls password null; \
             grant etl_writer to postgres;"
           if [ "$ETL_CASE" = "ordinary" ]; then
-            uv run --project etl etl-verify
+            uv run --project etl --locked etl-verify
           else
-            uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"
+            uv run --project etl --locked etl-verify --migration-atomicity "$ETL_CASE"
           fi
 
   e2e-release:
     needs: scope
     if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'e2e-release') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       # v5.1.0
@@ -161,17 +171,17 @@ jobs:
       # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 12.3.4
+          package_json_file: apps/web/package.json
       # v5.0.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
       # v2.1.1
       - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf
         with:
-          version: 2.112.0
+          version: ${{ needs.scope.outputs.supabase }}
       - run: pnpm install --frozen-lockfile
         working-directory: apps/web
       - run: pnpm exec playwright install --with-deps chromium
@@ -185,7 +195,9 @@ jobs:
         if: ${{ failure() }}
         with:
           name: review-focus-geometry
-          path: apps/web/test-results/**/review-focus-geometry.json
+          path: |
+            apps/web/test-results/**/review-focus-geometry.json
+            apps/web/test-results/**/review-scroll-completion.json
           retention-days: 1
           include-hidden-files: false
           if-no-files-found: ignore
@@ -193,7 +205,7 @@ jobs:
   e2e-sql:
     needs: scope
     if: ${{ !cancelled() && needs.scope.result == 'success' && contains(fromJSON(needs.scope.outputs.gates || '[]'), 'e2e-release') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       # v5.1.0
@@ -203,17 +215,17 @@ jobs:
       # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 12.3.4
+          package_json_file: apps/web/package.json
       # v5.0.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
       # v2.1.1
       - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf
         with:
-          version: 2.112.0
+          version: ${{ needs.scope.outputs.supabase }}
       - run: pnpm install --frozen-lockfile
         working-directory: apps/web
       - run: pnpm test:e2e:gate --lane sql
@@ -228,7 +240,7 @@ jobs:
       - e2e-release
       - e2e-sql
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     env:
       SCOPE_GATES: ${{ needs.scope.outputs.gates }}

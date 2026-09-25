@@ -1,8 +1,9 @@
 import { chromium } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type {
 	FullConfig,
@@ -12,6 +13,10 @@ import type {
 	TestResult,
 } from "@playwright/test/reporter";
 import ReleaseGateReporter from "./release-gate-reporter";
+import { etlVerificationMain } from "../scripts/etl-verification";
+import { startOwnedEtlChild } from "../scripts/owned-etl-child";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { PlaywrightFailure, playwrightFailure } from "./playwright-failure-diagnostics";
 import {
 	assertSourceInventory,
@@ -20,6 +25,8 @@ import {
 	listOwnedNetworks,
 	removeOwnedNetworks,
 	releaseGateMain,
+	persistReleaseGateRecoveryRecord,
+	retireReleaseGateRecoveryRecord,
 	runPlaywright,
 } from "../scripts/e2e-release-gate";
 import {
@@ -44,6 +51,7 @@ import {
 } from "./gate-contract";
 import {
 	RELEASE_GATE_MODE,
+	createReleaseGatePlan,
 	ReleaseGateCleanupError,
 	assertExactMigrationInventory,
 	assertStackStatus,
@@ -65,7 +73,10 @@ import {
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
-const { createServer, randomUUID, spawn, spawnSync, tmpdir, open } = vi.hoisted(() => ({
+const { createServer, randomUUID, spawn, spawnSync, tmpdir, open, sidecarFault, prelaunchRead, toolchainReads } = vi.hoisted(() => ({
+	toolchainReads: new Map<string, string | Error>(),
+	sidecarFault: { kind: "" as string, renamed: false, linked: false, descriptors: new Map<number, string>() },
+	prelaunchRead: { armed: false, gate: undefined as Promise<void> | undefined, entered: undefined as (() => void) | undefined },
 	spawn: vi.fn(),
 	open: vi.fn(),
 	createServer: vi.fn(),
@@ -74,9 +85,64 @@ const { createServer, randomUUID, spawn, spawnSync, tmpdir, open } = vi.hoisted(
 	tmpdir: vi.fn(),
 }));
 
-vi.mock("node:fs/promises", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:fs/promises")>()), open,
-}));
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	return { ...actual,
+		readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+			const fixture = toolchainReads.get(String(args[0]));
+			if (fixture instanceof Error) throw fixture;
+			return fixture ?? actual.readFileSync(...args);
+		},
+		openSync: (file: Parameters<typeof actual.openSync>[0], flags: Parameters<typeof actual.openSync>[1], mode?: number) => {
+			const fd = actual.openSync(file, flags, mode);
+			sidecarFault.descriptors.set(fd, String(file));
+			return fd;
+		},
+		closeSync: (fd: number) => { sidecarFault.descriptors.delete(fd); return actual.closeSync(fd); },
+		writeFileSync: (file: Parameters<typeof actual.writeFileSync>[0], data: string, options?: Parameters<typeof actual.writeFileSync>[2]) => {
+			const name = typeof file === "number" ? sidecarFault.descriptors.get(file) ?? "" : String(file);
+			if ((sidecarFault.kind === "pending-partial-write" && name.endsWith(".pending.tmp")) ||
+				(sidecarFault.kind === "ordinary-partial-write" && name.includes(".recovery.json"))) {
+				actual.writeFileSync(file, data.slice(0, 5));
+				throw new Error("PRIVATE_FAULT_WRITE");
+			}
+			if (sidecarFault.kind === "promotion-write" && name.endsWith(".tmp") && !name.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_WRITE");
+			return actual.writeFileSync(file, data, options);
+		},
+		fsyncSync: (fd: number) => {
+			const name = sidecarFault.descriptors.get(fd) ?? "";
+			if (sidecarFault.kind === "pending-fsync" && name.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "ordinary-fsync" && name.includes(".recovery.json")) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "ordinary-dir-fsync" && sidecarFault.linked && actual.fstatSync(fd).isDirectory()) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "promotion-fsync" && name.endsWith(".tmp") && !name.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "pending-dir-fsync" && sidecarFault.linked && actual.fstatSync(fd).isDirectory()) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "promotion-dir-fsync" && sidecarFault.renamed && actual.fstatSync(fd).isDirectory()) throw new Error("PRIVATE_FAULT_FSYNC");
+			return actual.fsyncSync(fd);
+		},
+		linkSync: (from: string, to: string) => {
+			if (sidecarFault.kind === "ordinary-link") throw new Error("PRIVATE_FAULT_LINK");
+			actual.linkSync(from, to); sidecarFault.linked = true;
+		},
+		renameSync: (from: string, to: string) => {
+			if (sidecarFault.kind === "promotion-rename" && from.endsWith(".tmp") && !from.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_RENAME");
+			actual.renameSync(from, to);
+			if (from.endsWith(".tmp") && !from.endsWith(".pending.tmp")) sidecarFault.renamed = true;
+		},
+	};
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...actual, open, readFile: async (...args: Parameters<typeof actual.readFile>) => {
+		const value = await actual.readFile(...args);
+		if (prelaunchRead.armed && prelaunchRead.gate && String(args[0]).endsWith("/.votus-e2e-owner.json")) {
+			const gate = prelaunchRead.gate;
+			prelaunchRead.gate = undefined;
+			prelaunchRead.entered?.();
+			await gate;
+		}
+		return value;
+	} };
+});
 vi.mock("node:child_process", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:child_process")>()),
 	spawn,
@@ -86,10 +152,221 @@ vi.mock("node:crypto", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:crypto")>()),
 	randomUUID,
 }));
-vi.mock("node:net", () => ({ default: { createServer } }));
+vi.mock("node:net", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:net")>();
+	return { ...actual, default: { ...actual, createServer } };
+});
 vi.mock("node:os", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:os")>();
 	return { ...actual, default: { ...actual, tmpdir }, tmpdir };
+});
+
+describe("owned ETL child", () => {
+	it("spawns the isolated verification asynchronously and completes only on close", async () => {
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null });
+		spawn.mockReturnValueOnce(child);
+		const job = startOwnedEtlChild({ cwd: "/workspace", env: { DATABASE_URL: "private" } });
+		expect(spawn).toHaveBeenCalledWith("uv", ["run", "--locked", "--project", "etl", "etl-verify"], {
+			cwd: "/workspace", env: { DATABASE_URL: "private" }, detached: true, stdio: ["ignore", "ignore", "pipe"],
+		});
+		let settled = false;
+		void job.completed.then(() => { settled = true; });
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		child.emit("close", 0);
+		await expect(job.completed).resolves.toBeUndefined();
+		spawn.mockReset();
+	});
+
+	it("stops only the owned child and confirms close and group absence", async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null, kill: vi.fn(() => true) });
+		spawn.mockReturnValueOnce(child);
+		let exists = true;
+		const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			expect(pid).toBe(-321);
+			if (signal === 0 && !exists) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+			expect(signal).toBe(0);
+			return true;
+		});
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			const stopping = job.stop();
+			expect(job.stop()).toBe(stopping);
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+			expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+			expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
+			exists = false;
+			let settled = false;
+			void stopping.then(() => { settled = true; });
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			child.emit("close", 0);
+			await expect(stopping).resolves.toBeUndefined();
+			await expect(job.completed).resolves.toBeUndefined();
+		} finally { kill.mockRestore(); spawn.mockReset(); vi.clearAllTimers(); vi.useRealTimers(); }
+	});
+
+	it.each([undefined, 0, -1])("rejects invalid group PID %s without signaling", async (pid) => {
+		const child = Object.assign(new EventEmitter(), { pid, exitCode: null });
+		spawn.mockReturnValueOnce(child);
+		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			await expect(job.stop()).rejects.toThrow("identity invalid");
+			expect(kill).not.toHaveBeenCalled();
+			child.emit("close", 0);
+			await job.completed;
+		} finally { kill.mockRestore(); spawn.mockReset(); }
+	});
+
+	it("redacts a spawn error and never signals an unowned group", async () => {
+		const child = Object.assign(new EventEmitter(), { pid: undefined, exitCode: null });
+		spawn.mockReturnValueOnce(child);
+		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			child.emit("error", new Error("private command and environment"));
+			await expect(job.completed).rejects.toThrow("details redacted");
+			child.emit("close", null);
+			await expect(job.stop()).resolves.toBeUndefined();
+			expect(kill).not.toHaveBeenCalled();
+		} finally { kill.mockRestore(); spawn.mockReset(); }
+	});
+
+	it("rejects timeout even if the child closes successfully during cleanup", async () => {
+		vi.useFakeTimers();
+		let exists = true;
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null, kill: vi.fn(() => {
+			exists = false;
+			queueMicrotask(() => child.emit("close", 0));
+			return true;
+		}) });
+		spawn.mockReturnValueOnce(child);
+		const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			expect(pid).toBe(-321);
+			if (signal === 0 && !exists) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+			if (signal === "SIGTERM") exists = false;
+			return true;
+		});
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			const outcome = expect(job.completed).rejects.toThrow("timed out");
+			await vi.advanceTimersByTimeAsync(600_000);
+			expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+			await outcome;
+			await expect(job.stop()).resolves.toBeUndefined();
+			expect(kill).toHaveBeenCalledWith(-321, 0);
+		} finally { kill.mockRestore(); spawn.mockReset(); vi.clearAllTimers(); vi.useRealTimers(); }
+	});
+
+	it("does not signal an already signal-exited owner and rejects unconfirmed settlement", async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), {
+			pid: 321, exitCode: null, signalCode: "SIGTERM", kill: vi.fn(() => true),
+		});
+		spawn.mockReturnValueOnce(child);
+		const probe = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			expect([pid, signal]).toEqual([-321, 0]);
+			return true;
+		});
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			const stopping = expect(job.stop()).rejects.toThrow(/group remains|settlement unconfirmed/);
+			await vi.advanceTimersByTimeAsync(10_000);
+			await stopping;
+			expect(child.kill).not.toHaveBeenCalled();
+			child.emit("close", 1);
+			await expect(job.completed).rejects.toThrow("details redacted");
+		} finally { probe.mockRestore(); spawn.mockReset(); vi.clearAllTimers(); vi.useRealTimers(); }
+	});
+
+	it("rejects stop when the group remains after escalation and close is unconfirmed", async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null, kill: vi.fn(() => true) });
+		spawn.mockReturnValueOnce(child);
+		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			const stopping = expect(job.stop()).rejects.toThrow("settlement unconfirmed");
+			await vi.advanceTimersByTimeAsync(10_000);
+			await stopping;
+			expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+			child.emit("close", 0);
+			await job.completed;
+		} finally { kill.mockRestore(); spawn.mockReset(); vi.clearAllTimers(); vi.useRealTimers(); }
+	});
+
+	it.each(["EACCES", "EPERM"])("refuses an unconfirmed group probe %s without signaling", async (code) => {
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null, kill: vi.fn(() => true) });
+		spawn.mockReturnValueOnce(child);
+		const probe = vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("private probe"), { code }); });
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			await expect(job.stop()).rejects.toThrow("status unconfirmed; details redacted");
+			expect(child.kill).not.toHaveBeenCalled();
+			child.emit("close", 1);
+			await expect(job.completed).rejects.toThrow("details redacted");
+		} finally { probe.mockRestore(); spawn.mockReset(); }
+	});
+
+	it.each(["false", "throws"])("redacts a failed child signal when kill %s", async (behavior) => {
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null, kill: vi.fn(() => {
+			if (behavior === "throws") throw new Error("private child signal");
+			return false;
+		}) });
+		spawn.mockReturnValueOnce(child);
+		const probe = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			expect([pid, signal]).toEqual([-321, 0]);
+			return true;
+		});
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			await expect(job.stop()).rejects.toThrow("ETL child signal unconfirmed; details redacted");
+			expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+			child.emit("close", 1);
+			await expect(job.completed).rejects.toThrow("details redacted");
+		} finally { probe.mockRestore(); spawn.mockReset(); }
+	});
+
+	it("rejects child error without treating it as close and clears its timeout", async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null, kill: vi.fn(() => true) });
+		spawn.mockReturnValueOnce(child);
+		const probe = vi.spyOn(process, "kill").mockImplementation(() => true);
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			child.emit("error", new Error("private spawn failure"));
+			await expect(job.completed).rejects.toThrow("ETL child failed; details redacted");
+			expect(vi.getTimerCount()).toBe(0);
+			const stopped = expect(job.stop()).rejects.toThrow("settlement unconfirmed");
+			await vi.advanceTimersByTimeAsync(10_000);
+			await stopped;
+			expect(probe.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
+		} finally { probe.mockRestore(); spawn.mockReset(); vi.clearAllTimers(); vi.useRealTimers(); }
+	});
+
+	it("rejects unsupported platforms before spawning", () => {
+		const platform = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+		try {
+			expect(() => startOwnedEtlChild({ cwd: "/workspace", env: {} })).toThrow("POSIX process groups required");
+			expect(spawn).not.toHaveBeenCalled();
+		} finally { platform.mockRestore(); spawn.mockReset(); }
+	});
+
+	it("fails closed when the owner closes but its group remains", async () => {
+		const child = Object.assign(new EventEmitter(), { pid: 321, exitCode: null });
+		spawn.mockReturnValueOnce(child);
+		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+		try {
+			const job = startOwnedEtlChild({ cwd: "/workspace", env: {} });
+			child.emit("close", 0);
+			await job.completed;
+			await expect(job.stop()).rejects.toThrow("group remains");
+			expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
+		} finally { kill.mockRestore(); spawn.mockReset(); }
+	});
 });
 
 const OWNERSHIP: GateOwnership = {
@@ -244,6 +521,11 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("explicit release-gate lanes", () => {
+	it.each(["--plan", "--unknown"]) ("rejects unsupported release-gate flags %s before effects", async (flag) => {
+		const executePlan = vi.fn();
+		await expect(releaseGateMain([flag], { executePlan })).rejects.toThrow(/unknown|unsupported/);
+		expect(executePlan).not.toHaveBeenCalled();
+	});
 	it.each(["sql", "browser"])("inspects the complete %s lane without effects", async (lane) => {
 		const full = await inspectReleaseGatePlan();
 		const plan = await inspectReleaseGatePlan(["--lane", lane]);
@@ -272,17 +554,48 @@ describe("explicit release-gate lanes", () => {
 	});
 
 	// Reuse the existing isolated-workdir lifecycle with fake process/network boundaries.
-	async function runLane(argv: string[], fault = "") {
+	async function runLane(argv: string[], fault = "", entry: "release" | "etl" = "release", staleSidecar: boolean | "missing-marker" | "conflicting-marker" | "active-owner" | "unknown-owner" | "legacy" | "malformed" | "unknown-docker" | "same-suffix-container" | "same-suffix-volume" | "pending-child" | "pending-corrupt" | "pending-conflict" = false, etlStderr?: readonly string[], versions: { pnpm?: string; supabase?: string } = {}) {
 		const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
+		sidecarFault.kind = fault.startsWith("sidecar-") ? fault.slice("sidecar-".length) : "";
+		sidecarFault.renamed = false; sidecarFault.linked = false;
 		const token = "12345678-1234-4123-8123-123456789abc";
+		const staleToken = "87654321-4321-4321-8321-abcdefabcdef";
+		const staleWorkdir = join(tempRoot, `votus-e2e-${staleToken}`);
+		const staleRecord = `${staleWorkdir}.recovery.json`;
+		if (staleSidecar) {
+			if (["missing-marker", "conflicting-marker", "pending-conflict"].includes(String(staleSidecar))) {
+				mkdirSync(staleWorkdir);
+				writeFileSync(join(staleWorkdir, "partial"), "partial");
+				if (staleSidecar === "conflicting-marker" || staleSidecar === "pending-conflict")
+					writeFileSync(join(staleWorkdir, ".votus-e2e-owner.json"), JSON.stringify({ workdir: staleWorkdir, projectId: "other", token: staleToken }));
+			}
+			writeFileSync(staleRecord, staleSidecar === "malformed" || staleSidecar === "pending-corrupt" ? "PRIVATE_RECOVERY_CONTENT{invalid" : `${JSON.stringify({
+				schemaVersion: staleSidecar === "legacy" ? 1 : 2, ...(staleSidecar === "legacy" ? {} : { ownerPid: 987654321 }), ...(staleSidecar === "pending-child" || staleSidecar === "pending-conflict" ? { status: "pending_child" } : {}), workdir: staleWorkdir,
+				projectId: `votus-e2e-${staleToken.replaceAll("-", "").slice(0, 20)}`,
+				token: staleToken, repositoryRoot: resolve(fileURLToPath(import.meta.url), "../../../.."),
+			})}\n`, { mode: 0o600 });
+			const old = new Date(Date.now() - 31 * 60_000);
+			utimesSync(staleRecord, old, old);
+		}
 		const trace: string[] = [];
-		const commands: { command: string; args: readonly string[] }[] = [];
+		const commands: { command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }[] = [];
 		const output: string[] = [];
+		const runnerBootstraps: { args: readonly string[]; input: string; stdio: unknown; pending: unknown }[] = [];
+		let recoveryAtStop: { record: unknown; mode: number } | undefined;
+		const cleanupEvidenceChecks: { resource: string; recordExists: boolean; workdirExists: boolean }[] = [];
 		let port = 46000;
 		let sqlCount = 0;
 		let migrationCount = 0;
 		let interrupt: (() => void) | undefined;
 		let failure: unknown;
+		let releasePrelaunch!: () => void;
+		let markPrelaunchEntered!: () => void;
+		let cleanupBeforePrelaunchSettlement = false;
+		const prelaunchEntered = new Promise<void>((resolve) => { markPrelaunchEntered = resolve; });
+		if (fault === "etl-prelaunch-signal") {
+			prelaunchRead.gate = new Promise<void>((resolve) => { releasePrelaunch = resolve; });
+			prelaunchRead.entered = markPrelaunchEntered;
+		}
 		vi.useFakeTimers();
 		tmpdir.mockReturnValue(tempRoot);
 		randomUUID.mockReturnValue(token);
@@ -308,7 +621,64 @@ describe("explicit release-gate lanes", () => {
 			}
 			return new Response(null, { status: 200 });
 		});
-		spawn.mockImplementation(() => {
+		let groupExists = true;
+		let markEtlStarted!: () => void;
+		const etlStarted = new Promise<void>((resolve) => { markEtlStarted = resolve; });
+		const groupProbe = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+			if (pid === 987654321) {
+				expect(signal).toBe(0);
+				if (staleSidecar === "active-owner") return true;
+				throw Object.assign(new Error("owner status"), { code: staleSidecar === "unknown-owner" ? "EPERM" : "ESRCH" });
+			}
+			expect(pid).toBe(-321);
+			expect(signal).toBe(0);
+			if (!groupExists) throw Object.assign(new Error("group gone"), { code: "ESRCH" });
+			return true;
+		});
+		spawn.mockImplementation((command, args, options) => {
+			if (entry === "etl") {
+				if (fault === "etl-launch-throw") throw new Error("SECRET_LAUNCH_PRIVATE");
+				expect(command).toBe("uv");
+				const pendingPath = join(tempRoot, `votus-e2e-${token}.recovery.json`);
+				trace.push(existsSync(pendingPath) && (statSync(pendingPath).mode & 0o777) === 0o600 && JSON.parse(readFileSync(pendingPath, "utf8")).status === "pending_child" ? "pending-before-uv" : "missing-pending-before-uv");
+				trace.push("etl");
+				markEtlStarted();
+				commands.push({ command, args: [...args], cwd: options.cwd, env: options.env });
+				const child = Object.assign(new EventEmitter(), { pid: fault.startsWith("etl-enoent") ? undefined : 321, exitCode: null, stderr: new PassThrough(), kill: (signal: NodeJS.Signals) => {
+					trace.push(signal === "SIGTERM" ? "child-term" : "child-kill");
+					groupExists = false;
+					void Promise.resolve().then(() => { trace.push("child-close"); child.emit("close", 0); });
+					return true;
+				} });
+				if (etlStderr) void Promise.resolve().then(() => {
+					for (const chunk of etlStderr) child.stderr.write(chunk);
+				});
+				if (fault !== "etl-signal" && fault !== "etl-timeout")
+					void Promise.resolve().then(() => {
+						groupExists = fault === "etl-group-remains";
+						if (fault === "etl-spawn-error" || fault.startsWith("etl-enoent")) child.emit("error", Object.assign(new Error("PRIVATE_OUTPUT_MARKER"), { code: "ENOENT" }));
+						if (etlStderr) child.stderr.end();
+						else if (fault === "etl-failure") child.stderr.end("private postgres:postgres\nE2E_ETL_STAGE apply_migrations\nE2E_ETL_MIGRATION 0022_results_exploration_scale.sql 42710\nPRIVATE_OUTPUT_MARKER\n");
+						else if (fault.startsWith("etl-migration-")) {
+							const migration = fault === "etl-migration-bad-name" ? "../private.sql 42710" : fault === "etl-migration-bad-state" ? "0022_results_exploration_scale.sql PRIVATE" : "0022_results_exploration_scale.sql 42710";
+							child.stderr.end(`private_secret\nE2E_ETL_STAGE ${fault === "etl-migration-other-stage" ? "pytest" : "apply_migrations"}\nE2E_ETL_MIGRATION ${migration}\n${fault === "etl-migration-duplicate" ? `E2E_ETL_MIGRATION ${migration}\n` : ""}`);
+						}
+						else if (fault === "etl-stage-unknown") child.stderr.end("E2E_ETL_STAGE private_secret\n");
+						else if (fault === "etl-stage-malformed") child.stderr.end("E2E_ETL_STAGE pytest;private_secret\n");
+						else if (fault === "etl-stage-oversized") child.stderr.end(`E2E_ETL_STAGE pytest${"private_secret".repeat(100)}\n`);
+						else if (fault === "etl-stage-midline") child.stderr.end("private_secret E2E_ETL_STAGE pytest\n");
+						else if (fault === "etl-stage-duplicate") child.stderr.end("E2E_ETL_STAGE pytest\nE2E_ETL_STAGE pytest\n");
+						else if (fault === "etl-long-private") {
+							child.stderr.write(`${"private_secret".repeat(200)}\nE2E_ETL_STA`);
+							child.stderr.write("GE pytest\n");
+							child.stderr.end(`${"PRIVATE_OUTPUT_MARKER".repeat(200)}\n`);
+						}
+						else child.stderr.end();
+						if (fault !== "etl-enoent-no-close") { if (fault === "etl-enoent-close") trace.push("etl-close"); child.emit("close", fault === "etl-failure" || fault === "etl-long-private" || fault.startsWith("etl-stage-") || fault.startsWith("etl-migration-") ? 1 : fault === "etl-exit-999" ? 999 : 0); }
+					});
+				if (fault === "etl-signal") void Promise.resolve().then(() => interrupt?.());
+				return child;
+			}
 			trace.push("server");
 			return {
 				exitCode: null as number | null,
@@ -334,12 +704,13 @@ describe("explicit release-gate lanes", () => {
 			output.push(String(chunk)); return true;
 		});
 		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const staleResources = new Set(["ps", "volume", "network"]);
 		spawnSync.mockImplementation((command, args, options) => {
 			commands.push({ command, args: [...args] });
 			let phase = "";
 			let text = "";
 			if (command === "pnpm") {
-				text = args[0] === "--version" ? "10.0.0" : "Version 7.0.0";
+				text = args[0] === "--version" ? versions.pnpm ?? "12.3.4\n" : "Version 7.0.2\n";
 				if (args[0] === "build:next") phase = "build";
 				if (args[1] === "playwright") {
 					phase = "playwright";
@@ -347,7 +718,18 @@ describe("explicit release-gate lanes", () => {
 					expect(options.env.VOTUS_E2E_GATE_MODE).toBe("full");
 				}
 			}
+			if (staleSidecar && staleResources.has("ps") && command === "docker" && args[0] === "ps") {
+				if (staleSidecar === "unknown-docker") return { status: 1, stdout: "PRIVATE_DOCKER_CONTENT" };
+				text = `${staleSidecar === "same-suffix-container" ? "unrelated" : "supabase_db"}_votus-e2e-87654321432143218321\n`;
+			}
+			if (staleSidecar && staleResources.has("volume") && command === "docker" && args[0] === "volume" && args[1] === "ls") text = `${staleSidecar === "same-suffix-volume" ? "unrelated" : "supabase_db"}_votus-e2e-87654321432143218321\n`;
+			if (staleSidecar && staleResources.has("network") && command === "docker" && args[0] === "network" && args[1] === "ls") text = "supabase_network_votus-e2e-87654321432143218321\n";
+			if (staleSidecar && command === "docker" && args.some((arg: string) => arg.includes("87654321432143218321")) && args.includes("rm")) {
+				staleResources.delete(args[0] === "rm" ? "ps" : args[0]!);
+				trace.push(`stale-remove:${args.join(" ")}`);
+			}
 			if (command === "docker" && args[0] === "network" && args[1] === "create") {
+				if (staleSidecar) trace.push(existsSync(staleRecord) ? "stale-sidecar-present" : "stale-sidecar-retired");
 				phase = "network";
 				text = fault === "network-id-empty" ? "\n"
 					: fault === "network-id-malformed" ? "PRIVATE_OUTPUT_MARKER"
@@ -357,7 +739,7 @@ describe("explicit release-gate lanes", () => {
 			if (command === "docker" && args[0] === "container" && args[1] === "inspect") {
 				phase = "db-inspect";
 				text = fault === "identity-json" ? "PRIVATE_OUTPUT_MARKER" : JSON.stringify({
-					id: fault === "identity-id" ? "a".repeat(12) : "a".repeat(64),
+					id: fault === "identity-id" ? "a".repeat(12) : fault === "etl-runner-identity-replaced" && trace.includes("status") ? "c".repeat(64) : "a".repeat(64),
 					name: fault === "identity-name" ? "/supabase_db_unowned" : "/supabase_db_votus-e2e-12345678123441238123",
 					project: fault === "identity-project" ? "unowned" : "votus-e2e-12345678123441238123",
 					networks: fault === "identity-network" ? { unowned: { NetworkID: "b".repeat(64) } }
@@ -373,47 +755,523 @@ describe("explicit release-gate lanes", () => {
 			if (command === "docker" && args[0] === "container" && args[1] === "rm") phase = "db-remove";
 			if (command === "docker" && args[0] === "inspect") {
 				phase = "publication";
-				text = ["5432/tcp", "8000/tcp"]
-					.map((key) => JSON.stringify({ [key]: [{ HostIp: "127.0.0.1", HostPort: "46000" }] })).join("\n");
+				const additionalBindings: Record<string, unknown> = {
+					"etl-multiple-bindings": { HostIp: "127.0.0.1", HostPort: "46006" },
+					"etl-requested-multiple-bindings": { HostIp: "127.0.0.1", HostPort: "46006" },
+					"etl-mixed-bindings": { HostIp: "::1", HostPort: "46006" },
+					"etl-dual-loopback-reversed": { HostIp: "127.0.0.1", HostPort: "46006" },
+					"etl-dual-duplicate-v6": { HostIp: "::1", HostPort: "46006" },
+					"etl-dual-extra-v6": { HostIp: "::1", HostPort: "46006" },
+					"etl-dual-wrong-ipv4-port": { HostIp: "::1", HostPort: "46006" },
+					"etl-dual-wrong-ipv6-port": { HostIp: "::1", HostPort: "46007" },
+					"etl-dual-missing-field": { HostIp: "::1" },
+					"etl-dual-extra-field": { HostIp: "::1", HostPort: "46006", note: "PRIVATE_OUTPUT_MARKER" },
+					"etl-wildcard-v4-bindings": { HostIp: "0.0.0.0", HostPort: "46006" },
+					"etl-wildcard-v6-bindings": { HostIp: "::", HostPort: "46006" },
+					"etl-other-v4-loopback-bindings": { HostIp: "127.0.0.2", HostPort: "46006" },
+					"etl-other-host-bindings": { HostIp: "192.0.2.1", HostPort: "46006" },
+					"etl-malformed-host-bindings": { HostIp: "PRIVATE_OUTPUT_MARKER", HostPort: "46006" },
+					"etl-empty-port-bindings": { HostIp: "127.0.0.1", HostPort: "" },
+					"etl-other-port-bindings": { HostIp: "127.0.0.1", HostPort: "46007" },
+					"etl-malformed-port-bindings": { HostIp: "127.0.0.1", HostPort: "PRIVATE_OUTPUT_MARKER" },
+					"etl-malformed-entry-bindings": "PRIVATE_OUTPUT_MARKER",
+				};
+				text = entry === "etl"
+					? fault === "etl-public-json" ? "PRIVATE_OUTPUT_MARKER{" : fault === "etl-public-lines" ? "{}\n{}" : JSON.stringify({ ...(fault === "etl-missing-binding" ? {} : { "5432/tcp": fault === "etl-null-binding" ? null : fault === "etl-zero-bindings" ? [] : [
+						fault === "etl-binding-scalar" ? "PRIVATE_OUTPUT_MARKER" : fault === "etl-binding-missing-field" ? { HostIp: "127.0.0.1" } : { HostIp: ["etl-dual-loopback-reversed", "etl-dual-ipv6-only", "etl-dual-duplicate-v6"].includes(fault) ? "::1" : fault === "etl-public-ip" ? "0.0.0.0" : "127.0.0.1", HostPort: ["etl-public-port", "etl-dual-wrong-ipv4-port"].includes(fault) ? "46007" : fault === "etl-port-type" ? 46006 : "46006" },
+						...(Object.hasOwn(additionalBindings, fault) ? [additionalBindings[fault]] : []),
+						...(fault === "etl-dual-extra-v6" ? [{ HostIp: "::1", HostPort: "46006" }] : []),
+					] }), ...(fault === "etl-extra-port" ? { "8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "46005" }] } : fault === "etl-extra-null-port" ? { "8000/tcp": null } : {}) })
+					: ["5432/tcp", "8000/tcp"]
+						.map((key) => JSON.stringify({ [key]: [{ HostIp: "127.0.0.1", HostPort: "46000" }] })).join("\n");
+				if (entry === "etl" && fault !== "etl-public-json" && fault !== "etl-public-lines") {
+					const requested = { "5432/tcp": [
+						{ HostIp: "", HostPort: "46006" },
+						...(fault === "etl-requested-multiple-bindings" ? [{ HostIp: "", HostPort: "46006" }] : []),
+					] };
+					text = JSON.stringify({ requested, observed: fault === "etl-runner-publication" && trace.includes("status")
+						? { "5432/tcp": [{ HostIp: "0.0.0.0", HostPort: "46006" }] } : JSON.parse(text) });
+				}
 			}
-			if (command === "docker" && args[0] === "exec") phase = `sql${++sqlCount}`;
+			if (command === "docker" && args[0] === "exec") {
+				if (entry === "etl") {
+					phase = "runner-bootstrap";
+					const pendingPath = join(tempRoot, `votus-e2e-${token}.recovery.json`);
+					runnerBootstraps.push({ args: [...args], input: options.input, stdio: options.stdio,
+						pending: existsSync(pendingPath) ? JSON.parse(readFileSync(pendingPath, "utf8")) : null });
+					const outputs: Record<string, string> = {
+						"empty": "", "zero": "0\n", "overflow": "4294967296\n", "negative": "-1\n",
+						"fraction": "1.5\n", "leading-zero": "016384\n", "duplicate": "16384\n16384\n",
+						"noise": "PRIVATE_OUTPUT_MARKER\n16384\n", "missing-newline": "16384", "nul": "16384\0\n",
+					};
+					text = outputs[fault.replace("etl-runner-oid-", "")] ?? "16384\n";
+					if (fault === "etl-runner-throw") throw new Error(options.input);
+					if (fault === "etl-runner-spawn-error") return { status: null, error: new Error(options.input), stdout: options.input, stderr: options.input };
+					if (fault === "etl-runner-sql-error") return { status: 3, stdout: options.input, stderr: options.input };
+				} else phase = `sql${++sqlCount}`;
+			}
 			if (command === "supabase") {
-				if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
+				if (args[0] === "--version") text = versions.supabase ?? "2.116.0\n";
+				else if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
 				else if (args[0] === "db" && args[1] === "start") phase = "db-start";
 				else if (args[0] === "start") phase = "start";
 				else if (args[0] === "migration") phase = `migration${++migrationCount}`;
 				else if (args[0] === "test") phase = `pgtap:${String(args[2]).split("/").at(-1)}`;
 				else if (args[0] === "status") {
 					phase = "status";
-					text = JSON.stringify({ API_URL: "http://127.0.0.1:46005", DB_URL: "postgresql://postgres:postgres@127.0.0.1:46006/postgres", ANON_KEY: "synthetic-anon", SERVICE_ROLE_KEY: "synthetic-service" });
+					if (fault === "etl-prelaunch-signal") prelaunchRead.armed = true;
+					if (fault === "etl-sidecar-collision") writeFileSync(join(tempRoot, `votus-e2e-${token}.recovery.json`), '{"foreign":true}', { mode: 0o600 });
+					if (fault === "etl-sidecar-symlink") {
+						const foreign = join(tempRoot, "foreign.json");
+						writeFileSync(foreign, '{"foreign":true}', { mode: 0o600 });
+						symlinkSync(foreign, join(tempRoot, `votus-e2e-${token}.recovery.json`));
+					}
+					text = fault === "etl-malformed-status" && entry === "etl" ? "PRIVATE_OUTPUT_MARKER{"
+						: JSON.stringify(entry === "etl"
+							? fault === "etl-nonobject-status" ? null
+								: { ...(fault === "etl-missing-url" ? {} : { DB_URL: `postgresql://postgres:postgres@127.0.0.1:${fault === "etl-wrong-port" ? 46007 : 46006}/${fault === "etl-wrong-path" ? "wrong" : "postgres"}` }) }
+							: { API_URL: "http://127.0.0.1:46005", DB_URL: "postgresql://postgres:postgres@127.0.0.1:46006/postgres", ANON_KEY: "synthetic-anon", SERVICE_ROLE_KEY: "synthetic-service" });
 				} else if (args[0] === "stop") phase = "cleanup";
 			}
+			const recoveryPath = join(tempRoot, `votus-e2e-${token}.recovery.json`);
+			if (phase === "status" && sidecarFault.kind.startsWith("ordinary-") && ["ordinary-collision", "ordinary-symlink", "ordinary-temp-collision"].includes(sidecarFault.kind)) {
+				const foreign = join(tempRoot, "foreign.json");
+				if (sidecarFault.kind === "ordinary-symlink") {
+					writeFileSync(foreign, '{"foreign":true}', { mode: 0o600 });
+					symlinkSync(foreign, recoveryPath);
+				} else writeFileSync(sidecarFault.kind === "ordinary-temp-collision" ? `${recoveryPath}.${token}.tmp` : recoveryPath, '{"foreign":true}', { mode: 0o600 });
+			}
+			if (phase === "cleanup" && existsSync(recoveryPath)) recoveryAtStop = {
+				record: JSON.parse(readFileSync(recoveryPath, "utf8")) as unknown,
+				mode: statSync(recoveryPath).mode & 0o777,
+			};
+			if (trace.includes("cleanup") && command === "docker" && (args[0] === "ps" || (["volume", "network"].includes(args[0]) && args[1] === "ls"))) cleanupEvidenceChecks.push({
+				resource: args[0], recordExists: existsSync(recoveryPath), workdirExists: existsSync(join(tempRoot, `votus-e2e-${token}`)),
+			});
 			if (phase) trace.push(phase);
+			if (phase === "db-inspect" && trace.includes("status") && fault === "etl-runner-revalidation-signal") interrupt?.();
+			if (phase === "db-start" && entry === "etl" && fault.startsWith("etl-marker-")) {
+				const marker = join(tempRoot, `votus-e2e-${token}`, ".votus-e2e-owner.json");
+				if (fault === "etl-marker-corrupt") writeFileSync(marker, "PRIVATE_MARKER_CONTENT{");
+				else if (fault === "etl-marker-missing") rmSync(marker);
+			}
 			if (phase === "cleanup" && fault === "signal") interrupt?.();
 			return phase && phase === fault
 				? { status: 1, stdout: "PRIVATE_OUTPUT_MARKER", stderr: "PRIVATE_OUTPUT_MARKER" }
 				: { status: 0, stdout: text };
 		});
 		try {
-			await releaseGateMain(argv).catch((error: unknown) => {
+			const execution = (entry === "etl" ? etlVerificationMain(argv) : releaseGateMain(argv)).catch((error: unknown) => {
 				failure = error;
 				reportReleaseGateFailure("test gate failure", error, (line) => output.push(line));
 			});
+			if (entry === "etl") {
+				if (fault === "etl-prelaunch-signal") {
+					await prelaunchEntered;
+					interrupt?.();
+					for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(1);
+					cleanupBeforePrelaunchSettlement = trace.includes("cleanup");
+					releasePrelaunch();
+					await vi.runAllTimersAsync();
+				} else if (fault === "etl-enoent-no-close") {
+					await etlStarted;
+					for (let i = 0; i < 20; i++) await Promise.resolve();
+					await vi.advanceTimersByTimeAsync(5_000);
+				} else if (fault === "etl-timeout") {
+					await Promise.race([
+						etlStarted,
+						execution.then(() => { throw new Error("ETL child never started"); }),
+					]);
+					await vi.advanceTimersByTimeAsync(10 * 60_000);
+				} else {
+					await vi.runAllTimersAsync();
+				}
+			}
+			await execution;
 			if (fault === "signal") {
 				await signalExit;
 				expect(exit).toHaveBeenCalledWith(143);
 			}
-			expect(existsSync(`${tempRoot}/votus-e2e-${token}`)).toBe(false);
-			return { trace, commands, readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure };
+			const workdirExists = existsSync(`${tempRoot}/votus-e2e-${token}`);
+			if (fault === "cleanup" || fault.startsWith("etl-marker-") || fault === "etl-enoent-no-close" || fault === "etl-launch-throw" || fault.startsWith("etl-sidecar-") || fault.startsWith("sidecar-") || fault === "etl-group-remains") expect(workdirExists).toBe(true);
+			else if (staleSidecar !== "active-owner" && staleSidecar !== "unknown-owner" && staleSidecar !== "legacy" && staleSidecar !== "malformed" && staleSidecar !== "unknown-docker" && staleSidecar !== "same-suffix-container" && staleSidecar !== "same-suffix-volume" && staleSidecar !== "pending-child" && staleSidecar !== "pending-corrupt" && staleSidecar !== "pending-conflict")
+				expect(workdirExists).toBe(false);
+			const sidecar = `${tempRoot}/votus-e2e-${token}.recovery.json`;
+			let recoveryRecord: unknown;
+			if (existsSync(sidecar)) {
+				try { recoveryRecord = JSON.parse(readFileSync(sidecar, "utf8")) as unknown; }
+				catch { recoveryRecord = "malformed"; }
+			}
+			const recoveryMode = existsSync(sidecar) ? statSync(sidecar).mode & 0o777 : undefined;
+			const recoverySymlink = existsSync(sidecar) && lstatSync(sidecar).isSymbolicLink();
+			const foreignPath = join(tempRoot, "foreign.json");
+			const foreignContent = existsSync(foreignPath) ? readFileSync(foreignPath, "utf8") : undefined;
+			const markerPath = join(tempRoot, `votus-e2e-${token}`, ".votus-e2e-owner.json");
+			let ownershipMarker: unknown;
+			if (existsSync(markerPath)) {
+				try { ownershipMarker = JSON.parse(readFileSync(markerPath, "utf8")) as unknown; }
+				catch { ownershipMarker = "malformed"; }
+			}
+			const temporarySidecars = readdirSync(tempRoot).filter((name) => name.includes(".recovery.json.")).map((name) => ({ name, content: readFileSync(join(tempRoot, name), "utf8") }));
+			return { trace, commands, runnerBootstraps, recoveryAtStop, cleanupEvidenceChecks, recoverySymlink, foreignContent, ownershipMarker, temporarySidecars, cleanupBeforePrelaunchSettlement, workdirExists, recoverySidecarExists: existsSync(sidecar), recoveryRecord, recoveryMode, ownedWorkdir: join(tempRoot, `votus-e2e-${token}`), staleSidecarExists: existsSync(staleRecord), readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure, exitCode: exit.mock.calls.at(-1)?.[0], killCalls: groupProbe?.mock.calls.map(([pid, signal]) => [pid, signal]) };
 		} finally {
-			stdout.mockRestore(); stderr.mockRestore(); signals.mockRestore(); exit.mockRestore();
+			prelaunchRead.armed = false; prelaunchRead.gate = undefined; prelaunchRead.entered = undefined;
+			stdout.mockRestore(); stderr.mockRestore(); signals.mockRestore(); exit.mockRestore(); groupProbe?.mockRestore();
 			browser.mockRestore(); fetchMock.mockRestore(); timeout.mockRestore();
 			vi.clearAllTimers(); vi.useRealTimers();
+			sidecarFault.kind = ""; sidecarFault.renamed = false; sidecarFault.linked = false;
 			spawnSync.mockReset(); spawn.mockReset(); createServer.mockReset();
 			randomUUID.mockReset(); tmpdir.mockReset();
 			rmSync(tempRoot, { force: true, recursive: true });
 		}
 	}
+
+	it("accepts the actual Node runtime only through its exact file pin and compatible declared major", async () => {
+		const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+		const manifestPath = join(root, "apps/web/package.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+		toolchainReads.set(join(root, ".node-version"), `${process.versions.node}\n`);
+		toolchainReads.set(manifestPath, JSON.stringify({
+			...manifest, engines: { ...manifest.engines, node: `${process.versions.node.split(".")[0]}.x` },
+		}));
+		try {
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release");
+				expect(result.failure).toBeUndefined();
+				expect(result.trace).toContain("cleanup");
+				expect(result.workdirExists).toBe(false);
+			}
+		} finally { toolchainReads.clear(); }
+	});
+
+	it.each([
+		["missing exact pin", new Error("PRIVATE_OUTPUT_MARKER"), "24.x", "exact Node pin is missing or malformed"],
+		["empty exact pin", "", "24.x", "exact Node pin is missing or malformed"],
+		["ranged exact pin", "24.x", "24.x", "exact Node pin is missing or malformed"],
+		["suffixed exact pin", "24.21.0-private", "24.x", "exact Node pin is missing or malformed"],
+		["noncanonical exact pin", "024.21.0", "24.x", "exact Node pin is missing or malformed"],
+		["private exact pin", "24.21.0\nPRIVATE_OUTPUT_MARKER", "24.x", "exact Node pin is missing or malformed"],
+		["incompatible major", "24.21.0", "25.x", "Node compatibility must match the exact pin's major"],
+		["open compatibility range", "24.21.0", ">=24", "Node compatibility must match the exact pin's major"],
+		["private compatibility range", "24.21.0", "24.x\nPRIVATE_OUTPUT_MARKER", "Node compatibility must match the exact pin's major"],
+	] as const)("rejects %s before any command, ownership or stale cleanup", async (_name, nodePin, nodeRange, reason) => {
+		const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+		const manifestPath = join(root, "apps/web/package.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+		toolchainReads.set(join(root, ".node-version"), nodePin);
+		toolchainReads.set(manifestPath, JSON.stringify({ ...manifest, engines: { ...manifest.engines, node: nodeRange } }));
+		try {
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release", true);
+				expect(result.failure).toEqual(new Error(`Invalid project toolchain pins; ${reason}`));
+				expect(result.commands).toEqual([]);
+				expect(result.trace).toEqual([]);
+				expect(result.workdirExists).toBe(false);
+				expect(result.recoverySidecarExists).toBe(false);
+				expect(result.staleSidecarExists).toBe(true);
+				expect(`${result.output}${String(result.failure)}`).not.toContain("PRIVATE_OUTPUT_MARKER");
+			}
+		} finally { toolchainReads.clear(); }
+	});
+
+	it("rejects a different exact Node file pin even within the declared compatible major", async () => {
+		const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+		const manifestPath = join(root, "apps/web/package.json");
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+		toolchainReads.set(join(root, ".node-version"), "24.0.0\n");
+		toolchainReads.set(manifestPath, JSON.stringify({ ...manifest, engines: { ...manifest.engines, node: "24.x" } }));
+		try {
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release", true);
+				expect(String(result.failure)).toMatch(/Node.js version mismatch; expected 24\.0\.0/);
+				expect(result.commands).toEqual([]);
+				expect(result.trace).toEqual([]);
+				expect(result.workdirExists).toBe(false);
+				expect(result.recoverySidecarExists).toBe(false);
+				expect(result.staleSidecarExists).toBe(true);
+			}
+		} finally { toolchainReads.clear(); }
+	});
+
+	it.each([
+		["pnpm", "12.3.5"],
+		["pnpm", ""],
+		["pnpm", "12.3.4\nPRIVATE_OUTPUT_MARKER"],
+		["pnpm", "12.3.4-private"],
+		["supabase", "2.117.0"],
+		["supabase", ""],
+		["supabase", "2.116.0\nPRIVATE_OUTPUT_MARKER"],
+		["supabase", "2.116.0-private"],
+		["node", "24.20.1"],
+		["node", "PRIVATE_OUTPUT_MARKER"],
+	] as const)("rejects %s version %j at every public lane before ownership or stale cleanup", async (tool, version) => {
+		const originalNode = Object.getOwnPropertyDescriptor(process.versions, "node")!;
+		try {
+			if (tool === "node") Object.defineProperty(process.versions, "node", { ...originalNode, value: version });
+			for (const lane of ["sql", "browser", "etl"] as const) {
+				const result = await runLane(
+					lane === "etl" ? ["--run"] : ["--lane", lane], "",
+					lane === "etl" ? "etl" : "release", true, undefined,
+					tool === "node" ? {} : { [tool]: version },
+				);
+				expect(result.failure).toBeInstanceOf(Error);
+				expect(String(result.failure)).toMatch(/version mismatch/i);
+				expect(result.trace).toEqual([]);
+				expect(result.workdirExists).toBe(false);
+				expect(result.recoverySidecarExists).toBe(false);
+				expect(result.staleSidecarExists).toBe(true);
+				expect(result.commands.every(({ args }) => args[0] === "--version" || args[0] === "info")).toBe(true);
+				expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+				expect(String(result.failure)).not.toContain("PRIVATE_OUTPUT_MARKER");
+			}
+		} finally {
+			Object.defineProperty(process.versions, "node", originalNode);
+		}
+	});
+
+	it.each(["1", "true", "0", "false", "", "PRIVATE_OUTPUT_MARKER"])(
+		"refuses an explicitly configured experimental stack backend %j before owned effects",
+		async (value) => {
+			vi.stubEnv("SUPABASE_EXPERIMENTAL_STACK", value);
+			try {
+				for (const lane of ["sql", "browser", "etl"] as const) {
+					const result = await runLane(
+						lane === "etl" ? ["--run"] : ["--lane", lane], "",
+						lane === "etl" ? "etl" : "release", true,
+					);
+					expect(result.failure).toBeInstanceOf(Error);
+					expect(String(result.failure)).toContain("Unset SUPABASE_EXPERIMENTAL_STACK");
+					expect(result.commands).toEqual([]);
+					expect(result.trace).toEqual([]);
+					expect(result.workdirExists).toBe(false);
+					expect(result.recoverySidecarExists).toBe(false);
+					expect(result.staleSidecarExists).toBe(true);
+					expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+					expect(String(result.failure)).not.toContain("PRIVATE_OUTPUT_MARKER");
+				}
+			} finally {
+				vi.unstubAllEnvs();
+			}
+		},
+	);
+
+	it("does not publish incomplete ordinary recovery evidence after a partial write", async () => {
+		const result = await runLane(["--lane", "sql"], "sidecar-ordinary-partial-write", "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toEqual({
+			workdir: result.ownedWorkdir,
+			projectId: "votus-e2e-12345678123441238123",
+			token: "12345678-1234-4123-8123-123456789abc",
+		});
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it.each(["ordinary-fsync", "ordinary-link"])("retains ownership without publishing evidence after %s", async (fault) => {
+		const result = await runLane(["--lane", "sql"], `sidecar-${fault}`, "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toMatchObject({ workdir: result.ownedWorkdir });
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it("retains complete private evidence without teardown when publication directory fsync fails", async () => {
+		const result = await runLane(["--lane", "sql"], "sidecar-ordinary-dir-fsync", "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toMatchObject({ workdir: result.ownedWorkdir });
+		expect(result.recoveryRecord).toEqual({
+			schemaVersion: 2, ownerPid: process.pid, workdir: result.ownedWorkdir,
+			projectId: "votus-e2e-12345678123441238123", token: "12345678-1234-4123-8123-123456789abc",
+			repositoryRoot: resolve(fileURLToPath(import.meta.url), "../../../.."),
+		});
+		expect(result.recoveryMode).toBe(0o600);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it.each(["ordinary-collision", "ordinary-symlink", "ordinary-temp-collision"])("preserves existing evidence at %s during ordinary cleanup", async (fault) => {
+		const result = await runLane(["--lane", "sql"], `sidecar-${fault}`, "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toMatchObject({ workdir: result.ownedWorkdir });
+		expect(result.recoverySidecarExists).toBe(fault !== "ordinary-temp-collision");
+		expect(result.recoveryRecord).toEqual(fault === "ordinary-temp-collision" ? undefined : { foreign: true });
+		expect(result.recoverySymlink).toBe(fault === "ordinary-symlink");
+		expect(result.foreignContent).toBe(fault === "ordinary-symlink" ? '{"foreign":true}' : undefined);
+		expect(result.temporarySidecars).toEqual(fault === "ordinary-temp-collision" ? [{
+			name: "votus-e2e-12345678-1234-4123-8123-123456789abc.recovery.json.12345678-1234-4123-8123-123456789abc.tmp",
+			content: '{"foreign":true}',
+		}] : []);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|foreign|postgres:postgres/);
+	});
+
+	it("publishes complete ordinary evidence before teardown and retires it only after residual checks", async () => {
+		const result = await runLane(["--lane", "sql"], "", "release");
+		expect(result.failure).toBeUndefined();
+		expect(result.recoveryAtStop).toEqual({
+			mode: 0o600,
+			record: {
+				schemaVersion: 2, ownerPid: process.pid, workdir: result.ownedWorkdir,
+				projectId: "votus-e2e-12345678123441238123", token: "12345678-1234-4123-8123-123456789abc",
+				repositoryRoot: resolve(fileURLToPath(import.meta.url), "../../../.."),
+			},
+		});
+		expect(result.cleanupEvidenceChecks.filter(({ workdirExists }) => !workdirExists)).toEqual([
+			{ resource: "ps", recordExists: true, workdirExists: false },
+			{ resource: "volume", recordExists: true, workdirExists: false },
+			{ resource: "network", recordExists: true, workdirExists: false },
+		]);
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.workdirExists).toBe(false);
+	});
+
+	it("persists pending ownership before uv and promotes it before successful teardown", async () => {
+		const result = await runLane(["--run"], "", "etl");
+		expect(result.trace).toContain("pending-before-uv");
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.workdirExists).toBe(false);
+	});
+
+	it.each(["etl-sidecar-collision", "etl-sidecar-symlink"])("refuses %s before child spawn and retains the owned stack", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.workdirExists).toBe(true);
+		expect(result.recoverySidecarExists).toBe(true);
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it.each(["pending-partial-write", "pending-fsync", "pending-dir-fsync"])("does not spawn or tear down after %s", async (fault) => {
+		const result = await runLane(["--run"], `sidecar-${fault}`, "etl");
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.workdirExists).toBe(true);
+		expect(result.recoverySidecarExists).toBe(fault === "pending-dir-fsync");
+		if (fault === "pending-dir-fsync") expect(result.recoveryRecord).toMatchObject({ status: "pending_child" });
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it("retains pending ownership when close occurs but the child group remains", async () => {
+		const result = await runLane(["--run"], "etl-group-remains", "etl");
+		expect(result.trace).toContain("pending-before-uv");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.recoveryRecord).toMatchObject({ status: "pending_child" });
+		expect(result.workdirExists).toBe(true);
+	});
+
+	it.each(["promotion-write", "promotion-fsync", "promotion-rename", "promotion-dir-fsync"])("refuses teardown after %s", async (fault) => {
+		const result = await runLane(["--run"], `sidecar-${fault}`, "etl");
+		expect(result.trace).toContain("pending-before-uv");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.recoveryRecord).toMatchObject(fault === "promotion-dir-fsync" ? { schemaVersion: 2, ownerPid: expect.any(Number) } : { status: "pending_child" });
+		if (fault === "promotion-dir-fsync") expect(result.recoveryRecord).not.toHaveProperty("status");
+		expect(result.recoveryMode).toBe(0o600);
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+		expect(result.workdirExists).toBe(true);
+	});
+
+	it("refuses pending-child evidence after owner death even with matching resources", async () => {
+		const result = await runLane(["--run"], "", "etl", "pending-child");
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.trace).not.toContain("stale-sidecar-retired");
+		expect(result.commands.filter(({ command, args }) => command === "docker" && args.some((arg) => ["rm", "stop"].includes(arg)))).toEqual([]);
+	});
+
+	it.each(["pending-corrupt", "pending-conflict"] as const)("refuses %s without stale resource removal even when owner is absent", async (kind) => {
+		const result = await runLane(["--run"], "", "etl", kind);
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.trace.some((phase) => phase.startsWith("stale-remove:"))).toBe(false);
+		expect(result.trace).not.toContain("stale-sidecar-retired");
+	});
+
+	it("refuses malformed recovery sidecar before any new network or old resource deletion", async () => {
+		const result = await runLane(["--lane", "browser"], "", "release", "malformed");
+		expect(result.failure).toBeInstanceOf(Error);
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.trace.some((event) => event.startsWith("stale-remove:") || event === "network")).toBe(false);
+		expect((result.failure as Error).message).toMatch(/recovery.*redacted/i);
+		expect(result.output).not.toContain("PRIVATE_RECOVERY_CONTENT");
+	});
+
+	it("retains stale recovery when Docker ownership evidence is unknown", async () => {
+		const result = await runLane(["--lane", "browser"], "", "release", "unknown-docker");
+		expect(result.failure).toBeInstanceOf(Error);
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.trace.some((event) => event.startsWith("stale-remove:") || event === "network")).toBe(false);
+		expect(result.output).not.toContain("PRIVATE_DOCKER_CONTENT");
+	});
+
+	it.each(["active-owner", "unknown-owner", "legacy"] as const)("retains %s recovery sidecar without deleting old resources", async (owner) => {
+		const result = await runLane(["--lane", "browser"], "", "release", owner);
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.trace.some((event) => event.startsWith("stale-remove:"))).toBe(false);
+		if (owner !== "legacy") expect(result.killCalls).toContainEqual([987654321, 0]);
+	});
+
+	it.each(["same-suffix-container", "same-suffix-volume"] as const)("recovery sidecar refuses %s without old removal or new network", async (resource) => {
+		const result = await runLane(["--lane", "browser"], "", "release", resource);
+		expect(result.failure).toBeInstanceOf(Error);
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.commands.some(({ command, args }) => command === "docker" && args.includes("rm") && args.some((arg) => arg.startsWith("unrelated_")))).toBe(false);
+		expect(result.trace).not.toContain("network");
+		expect(result.output).not.toContain("unrelated_");
+	});
+
+	it("recovers stale sidecar with missing marker before new network", async () => {
+		const result = await runLane(["--lane", "browser"], "", "release", "missing-marker");
+		expect(result.failure).toBeUndefined();
+		expect(result.trace.slice(0, 3).every((event) => event.startsWith("stale-remove:"))).toBe(true);
+		expect(result.trace[3]).toBe("stale-sidecar-retired");
+		expect(result.staleSidecarExists).toBe(false);
+		expect(result.commands.filter(({ command, args }) => command === "docker" && args.includes("rm") && args.some((arg) => arg.includes("87654321432143218321")))).toHaveLength(3);
+	});
+
+	it("refuses conflicting stale sidecar marker before new network", async () => {
+		const result = await runLane(["--lane", "browser"], "", "release", "conflicting-marker");
+		expect(result.failure).toBeDefined();
+		expect(result.staleSidecarExists).toBe(true);
+		expect(result.trace.some((event) => event.startsWith("stale-remove:") || event === "network")).toBe(false);
+	});
+
+	it("recovers stale sidecar with missing workdir before creating a new network", async () => {
+		const result = await runLane(["--lane", "browser"], "", "release", true);
+		expect(result.failure).toBeUndefined();
+		expect(result.trace.indexOf("stale-sidecar-retired")).toBe(3);
+		expect(result.staleSidecarExists).toBe(false);
+		expect(result.commands.some(({ command, args }) => command === "supabase" && args[0] === "stop" && args.includes("votus-e2e-87654321432143218321"))).toBe(false);
+	});
+
+	it("removes only the old sidecar project's exact resources before new network creation", async () => {
+		const result = await runLane(["--lane", "browser"], "", "release", true);
+		const oldProject = "votus-e2e-87654321432143218321";
+		const removals = result.commands.filter(({ command, args }) => command === "docker" && args.includes("rm"));
+		expect(result.failure).toBeUndefined();
+		expect(removals.filter(({ args }) => args.includes(oldProject) || args.some((arg) => arg.includes(oldProject)))).toEqual([
+			{ command: "docker", args: ["rm", "-f", `supabase_db_${oldProject}`] },
+			{ command: "docker", args: ["volume", "rm", `supabase_db_${oldProject}`] },
+			{ command: "docker", args: ["network", "rm", "--", `supabase_network_${oldProject}`] },
+		]);
+		expect(result.trace.indexOf("stale-sidecar-retired")).toBeGreaterThan(2);
+		expect(result.trace.slice(0, 3).every((event) => event.startsWith("stale-remove:"))).toBe(true);
+		expect(result.commands.some(({ command, args }) => command === "supabase" && args[0] === "stop" && args.includes(oldProject))).toBe(false);
+	});
 
 	it.each(["sql", "browser", "full"])("executes %s through the production CLI and owned cleanup", async (lane) => {
 		const result = await runLane(lane === "full" ? [] : ["--lane", lane]);
@@ -481,9 +1339,644 @@ describe("explicit release-gate lanes", () => {
 			expect(result.output).not.toContain(value);
 	});
 
+	it("ETL leaves post-bootstrap migrations to its disposable database, without REST readiness", async () => {
+		for (const key of ["DATABASE_URL", "PGHOST", "ETL_TEST_DATABASE_URL", "SUPABASE_DB_URL"])
+			vi.stubEnv(key, `ambient-${key}`);
+		let result: Awaited<ReturnType<typeof runLane>>;
+		try {
+			result = await runLane(["--run"], "", "etl");
+		} finally {
+			vi.unstubAllEnvs();
+		}
+		expect(result.failure).toBeUndefined();
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
+		expect(result.commands.filter(({ command, args }) => command === "supabase" && args[0] === "migration" && args[1] === "up")).toHaveLength(0);
+		expect(result.readinessRequests).toHaveLength(0);
+		const etl = result.commands.find(({ command }) => command === "uv");
+		expect(etl).toEqual(expect.objectContaining({
+			command: "uv", args: ["run", "--locked", "--project", "etl", "etl-verify"],
+			cwd: expect.any(String),
+			env: expect.objectContaining({ ETL_TEST_ADMIN_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:46006/template1" }),
+		}));
+		expect(etl?.env?.ETL_TEST_ADMIN_DATABASE_URL).toBe("postgresql://postgres:postgres@127.0.0.1:46006/template1");
+		for (const key of ["DATABASE_URL", "PGHOST", "ETL_TEST_DATABASE_URL", "SUPABASE_DB_URL"])
+			expect(etl?.env).not.toHaveProperty(key);
+		for (const key of ["PATH", "HOME", "TMPDIR"])
+			if (process.env[key] !== undefined) expect(etl?.env?.[key]).toBe(process.env[key]);
+		expect(result.trace.some((phase) => phase.startsWith("sql") || phase.startsWith("pgtap") || phase === "playwright" || phase === "migration2")).toBe(false);
+		expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+	});
+
+	it("ETL does not require workspace_api REST readiness before its migrations", async () => {
+		const result = await runLane(["--run"], "http-503", "etl");
+		expect(result.failure).toBeUndefined();
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
+		expect(result.readinessRequests).toHaveLength(0);
+	});
+
+	it("ETL default executor cleans up a failing child without success or secret output", async () => {
+		const result = await runLane(["--run"], "etl-failure", "etl");
+		expect(result.output).toContain('E2E_ETL_DIAGNOSTIC {"schemaVersion":1,"reason":"child_exit","exitCode":1,"stage":"apply_migrations","migration":"0022_results_exploration_scale.sql","sqlstate":"42710"}');
+		expect(result.failure).toMatchObject({ stage: "apply_migrations" });
+		expect(result.failure).toMatchObject({ message: "ETL child failed; details redacted", reason: "child_exit", exitCode: 1 });
+		expect(result.trace.slice(-2)).toEqual(["etl", "cleanup"]);
+		expect(result.output).not.toMatch(/passed:|PRIVATE_OUTPUT_MARKER|postgres:postgres|synthetic-service/);
+	});
+
+
+
+	it("reports safe pytest counts through the public ETL executor", async () => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"PRIVATE_OUTPUT_MARKER postgres:postgres\nE2E_ETL_STAGE pytest\n",
+			"E2E_ETL_PYTEST pytest_failed 1 5 0 3\n",
+		]);
+		const diagnostics = result.output.split("\n").filter((line) => line.startsWith("E2E_ETL_DIAGNOSTIC "));
+		expect(diagnostics).toHaveLength(1);
+		expect(JSON.parse(diagnostics[0]!.slice("E2E_ETL_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, reason: "child_exit", exitCode: 1, stage: "pytest",
+			pytest: { outcome: "pytest_failed", exitCode: 1, tests: 5, skipped: 0, failed: 3 },
+		});
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|E2E_ETL_PYTEST/);
+	});
+
+
+	it.each([
+		"skips_rejected", "pytest_failed", "report_missing", "report_invalid",
+		"runner_error", "interrupted", "unexpected",
+	])("preserves safe pytest %s evidence across chunks without a final newline", async (outcome) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			`${"private_secret".repeat(200)}\nE2E_ETL_STA`, "GE pytest\nE2E_ETL_PY",
+			`TEST ${outcome} - - - -`,
+		]);
+		expect(result.output).toContain(`"pytest":{"outcome":"${outcome}","exitCode":null,"tests":null,"skipped":null,"failed":null}`);
+		expect(result.output).not.toMatch(/private_secret|E2E_ETL_PYTEST/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each([
+		["zero", "0 0 0 0", { exitCode: 0, tests: 0, skipped: 0, failed: 0 }],
+		["maximum", "255 9007199254740991 9007199254740991 9007199254740991",
+			{ exitCode: 255, tests: 9007199254740991, skipped: 9007199254740991, failed: 9007199254740991 }],
+		["partial null", "1 - 0 -", { exitCode: 1, tests: null, skipped: 0, failed: null }],
+	])("reports %s pytest numeric evidence without coercion", async (_name, numbers, expected) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			`E2E_ETL_STAGE pytest\nE2E_ETL_PYTEST pytest_failed ${numbers}\n`,
+		]);
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_ETL_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_ETL_DIAGNOSTIC ".length)).pytest).toEqual({ outcome: "pytest_failed", ...expected });
+	});
+
+	it.each([
+		["unknown outcome", "E2E_ETL_PYTEST private_secret 1 5 0 3\n"],
+		["extra field", "E2E_ETL_PYTEST pytest_failed 1 5 0 3 private_secret\n"],
+		["missing field", "E2E_ETL_PYTEST pytest_failed 1 5 0\n"],
+		["tab separator", "E2E_ETL_PYTEST pytest_failed	1 5 0 3\n"],
+		["double separator", "E2E_ETL_PYTEST pytest_failed  1 5 0 3\n"],
+		["midline marker", "private_secret E2E_ETL_PYTEST pytest_failed 1 5 0 3\n"],
+		["overlong marker", `E2E_ETL_PYTEST pytest_failed 1 5 0 3${"private_secret".repeat(100)}\n`],
+		["duplicate marker", "E2E_ETL_PYTEST pytest_failed 1 5 0 3\nE2E_ETL_PYTEST pytest_failed 1 5 0 3\n"],
+		["invalid then valid", "E2E_ETL_PYTEST private_secret\nE2E_ETL_PYTEST pytest_failed 1 5 0 3\n"],
+		["valid then invalid", "E2E_ETL_PYTEST pytest_failed 1 5 0 3\nE2E_ETL_PYTEST private_secret\n"],
+	])("rejects %s pytest evidence without leaking stderr", async (_name, evidence) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"E2E_ETL_STAGE pytest\n", evidence,
+		]);
+		expect(result.output).toContain('"stage":"pytest"');
+		expect(result.output).not.toMatch(/"outcome"|"tests"|"skipped"|"failed"|private_secret|E2E_ETL_PYTEST/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each([
+		["negative exit", "-1 5 0 3"], ["large exit", "256 5 0 3"],
+		["fractional exit", "1.5 5 0 3"], ["exponent exit", "1e2 5 0 3"],
+		["invalid exit", "private_secret 5 0 3"],
+		["negative tests", "1 -1 0 3"], ["unsafe tests", "1 9007199254740992 0 3"],
+		["fractional tests", "1 1.5 0 3"], ["exponent tests", "1 1e2 0 3"],
+		["invalid tests", "1 private_secret 0 3"],
+		["negative skipped", "1 5 -1 3"], ["unsafe skipped", "1 5 9007199254740992 3"],
+		["fractional skipped", "1 5 1.5 3"], ["invalid skipped", "1 5 private_secret 3"],
+		["negative failed", "1 5 0 -1"], ["unsafe failed", "1 5 0 9007199254740992"],
+		["fractional failed", "1 5 0 1.5"], ["invalid failed", "1 5 0 private_secret"],
+		["NaN", "1 NaN 0 3"], ["Infinity", "1 Infinity 0 3"],
+	])("rejects %s pytest number", async (_name, numbers) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			`E2E_ETL_STAGE pytest\nE2E_ETL_PYTEST pytest_failed ${numbers}\n`,
+		]);
+		expect(result.output).not.toMatch(/"outcome"|"tests"|"skipped"|"failed"|private_secret|E2E_ETL_PYTEST/);
+	});
+
+	it.each([
+		["missing stage", ""],
+		["grant stage", "E2E_ETL_STAGE grant_test_privileges\n"],
+		["migration stage", "E2E_ETL_STAGE apply_migrations\n"],
+		["cleanup stage", "E2E_ETL_STAGE owned_database_cleanup\n"],
+		["unknown stage", "E2E_ETL_STAGE private_secret\n"],
+		["duplicate stage", "E2E_ETL_STAGE pytest\nE2E_ETL_STAGE pytest\n"],
+		["mismatched stages", "E2E_ETL_STAGE pytest\nE2E_ETL_STAGE owned_database_cleanup\n"],
+		["overlong stage", `E2E_ETL_STAGE pytest${"private_secret".repeat(100)}\n`],
+	])("omits pytest detail for %s", async (_name, stage) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			stage, "E2E_ETL_PYTEST pytest_failed 1 5 0 3\n",
+		]);
+		expect(result.output).not.toMatch(/"outcome"|"tests"|"skipped"|"failed"|private_secret|E2E_ETL_PYTEST/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each(["", "etl-spawn-error", "etl-timeout"])(
+		"does not report pytest detail outside child failure: %s", async (fault) => {
+			const result = await runLane(["--run"], fault, "etl", false, [
+				"E2E_ETL_STAGE pytest\nE2E_ETL_PYTEST pytest_failed 1 5 0 3\n",
+			]);
+			if (fault === "") expect(result.failure).toBeUndefined();
+			else expect(result.failure).toMatchObject({ reason: fault === "etl-timeout" ? "timeout" : "spawn_error", stage: null });
+			expect(result.output).not.toMatch(/"outcome"|"tests"|"failed"|E2E_ETL_PYTEST/);
+			expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		},
+	);
+
+	it.each([
+		"validate_state", "connect_admin", "grant_database", "grant_etl_membership",
+		"grant_results_membership", "verify_role", "close_admin", "migration_connection",
+		"grant_public_schema", "grant_verification_schema", "grant_marker_read",
+		"grant_public_tables", "grant_public_sequences", "grant_public_functions",
+		"register_scope", "create_public_policies", "validate_target_dsn",
+		"target_connection", "verify_target_marker",
+	])("reports safe grant operation %s through the public ETL executor", async (operation) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"PRIVATE_OUTPUT_MARKER postgres:postgres\nE2E_ETL_STAGE grant_test_privileges\n",
+			`E2E_ETL_GRANT ${operation} database 42501\n`,
+		]);
+		const diagnostics = result.output.split("\n").filter((line) => line.startsWith("E2E_ETL_DIAGNOSTIC "));
+		expect(diagnostics).toHaveLength(1);
+		expect(JSON.parse(diagnostics[0]!.slice("E2E_ETL_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, reason: "child_exit", exitCode: 1, stage: "grant_test_privileges",
+			grant: { operation, category: "database", sqlstate: "42501" },
+		});
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|E2E_ETL_GRANT/);
+	});
+
+	it.each(["database", "safety", "interrupted", "unexpected"])(
+		"preserves a safe grant %s category across stderr chunks without a final newline", async (category) => {
+			const result = await runLane(["--run"], "etl-failure", "etl", false, [
+				`${"private_secret".repeat(200)}\nE2E_ETL_STA`, "GE grant_test_privileges\nE2E_ETL_GRA",
+				`NT register_scope ${category} -`,
+			]);
+			expect(result.output).toContain(`"grant":{"operation":"register_scope","category":"${category}","sqlstate":null}`);
+			expect(result.output).not.toMatch(/private_secret|E2E_ETL_GRANT/);
+			expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		},
+	);
+
+	it.each([
+		["unknown operation", "E2E_ETL_GRANT private_secret database 42501\n"],
+		["unknown category", "E2E_ETL_GRANT register_scope private_secret -\n"],
+		["malformed SQLSTATE", "E2E_ETL_GRANT register_scope database private_secret\n"],
+		["lowercase SQLSTATE", "E2E_ETL_GRANT register_scope database 42p01\n"],
+		["non-database SQLSTATE", "E2E_ETL_GRANT register_scope safety 42501\n"],
+		["extra field", "E2E_ETL_GRANT register_scope database 42501 private_secret\n"],
+		["missing field", "E2E_ETL_GRANT register_scope database\n"],
+		["tab separator", "E2E_ETL_GRANT register_scope\tdatabase 42501\n"],
+		["double separator", "E2E_ETL_GRANT register_scope  database 42501\n"],
+		["midline marker", "private_secret E2E_ETL_GRANT register_scope database 42501\n"],
+		["overlong marker", `E2E_ETL_GRANT register_scope database ${"private_secret".repeat(100)}\n`],
+		["duplicate marker", "E2E_ETL_GRANT register_scope database 42501\nE2E_ETL_GRANT register_scope database 42501\n"],
+		["invalid then valid", "E2E_ETL_GRANT private_secret database -\nE2E_ETL_GRANT register_scope database 42501\n"],
+		["valid then invalid", "E2E_ETL_GRANT register_scope database 42501\nE2E_ETL_GRANT private_secret database -\n"],
+	])("rejects %s grant evidence without leaking stderr", async (_name, evidence) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"E2E_ETL_STAGE grant_test_privileges\n", evidence,
+		]);
+		expect(result.output).toContain('"stage":"grant_test_privileges"');
+		expect(result.output).not.toMatch(/"operation"|"category"|42501|42p01|private_secret|E2E_ETL_GRANT/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each([
+		["missing stage", ""],
+		["different stage", "E2E_ETL_STAGE pytest\n"],
+		["migration stage", "E2E_ETL_STAGE apply_migrations\n"],
+		["unknown stage", "E2E_ETL_STAGE private_secret\n"],
+		["duplicate stage", "E2E_ETL_STAGE grant_test_privileges\nE2E_ETL_STAGE grant_test_privileges\n"],
+		["mismatched stages", "E2E_ETL_STAGE grant_test_privileges\nE2E_ETL_STAGE pytest\n"],
+		["overlong stage", `E2E_ETL_STAGE grant_test_privileges${"private_secret".repeat(100)}\n`],
+	])("omits grant detail for %s", async (_name, stage) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			stage, "E2E_ETL_GRANT register_scope database 42501\n",
+		]);
+		expect(result.output).not.toMatch(/"grant"|"operation"|42501|private_secret|E2E_ETL_GRANT/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each(["", "etl-spawn-error", "etl-timeout"])(
+		"does not report grant detail outside child failure: %s", async (fault) => {
+			const result = await runLane(["--run"], fault, "etl", false, [
+				"E2E_ETL_STAGE grant_test_privileges\nE2E_ETL_GRANT register_scope database 42501\n",
+			]);
+			if (fault === "") expect(result.failure).toBeUndefined();
+			else expect(result.failure).toMatchObject({ reason: fault === "etl-timeout" ? "timeout" : "spawn_error", stage: null });
+			expect(result.output).not.toMatch(/"grant"|"operation"|42501|E2E_ETL_GRANT/);
+			expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		},
+	);
+
+	it.each(["etl-migration-bad-name", "etl-migration-bad-state", "etl-migration-duplicate", "etl-migration-other-stage"])(
+		"rejects %s migration evidence without leaking stderr", async (fault) => {
+			const result = await runLane(["--run"], fault, "etl");
+			if (fault === "etl-migration-other-stage")
+				expect(result.output).toContain('"stage":"pytest"}');
+			else
+				expect(result.output).toContain('"stage":"apply_migrations","migration":null,"sqlstate":null}');
+			expect(result.output).not.toMatch(/private_secret|E2E_ETL_MIGRATION|\.\.\/private|PRIVATE_OUTPUT_MARKER/);
+		},
+	);
+
+	it("recognizes the bounded ETL stage between long private stderr lines", async () => {
+		const result = await runLane(["--run"], "etl-long-private", "etl");
+		expect(result.failure).toMatchObject({ reason: "child_exit", exitCode: 1, stage: "pytest" });
+		expect(result.output).toContain('E2E_ETL_DIAGNOSTIC {"schemaVersion":1,"reason":"child_exit","exitCode":1,"stage":"pytest"}');
+		expect(result.output).not.toMatch(/private_secret|PRIVATE_OUTPUT_MARKER|E2E_ETL_STAGE/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each(["etl-stage-unknown", "etl-stage-malformed", "etl-stage-oversized", "etl-stage-midline", "etl-stage-duplicate"]) (
+		"rejects %s stage evidence without leaking stderr", async (fault) => {
+			const result = await runLane(["--run"], fault, "etl");
+			expect(result.failure).toMatchObject({ reason: "child_exit", stage: null });
+			expect(result.output).toContain('E2E_ETL_DIAGNOSTIC {"schemaVersion":1,"reason":"child_exit","exitCode":1,"stage":null}');
+			expect(result.output).not.toMatch(/private_secret|E2E_ETL_STAGE/);
+		},
+	);
+
+	it.each([
+		["etl-spawn-error", "spawn_error"],
+		["etl-exit-999", "child_exit"],
+	] as const)("reports bounded ETL %s without leaking child details", async (fault, reason) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.failure).toMatchObject({ reason, exitCode: fault === "etl-exit-999" ? 999 : null });
+		expect(result.output).toContain(`E2E_ETL_DIAGNOSTIC {"schemaVersion":1,"reason":"${reason}","exitCode":null,"stage":null}`);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|passed;|postgres:postgres|synthetic-service|999/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.trace.at(-1)).toBe("cleanup");
+	});
+
+	it.each(["etl-enoent-close", "etl-enoent-no-close"])("bounds undefined-PID ENOENT settlement at public entry: %s", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		if (fault === "etl-enoent-close") expect(result.failure).toMatchObject({ reason: "spawn_error", exitCode: null });
+		else expect((result.failure as AggregateError).errors[0]).toMatchObject({ reason: "spawn_error", exitCode: null });
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(fault === "etl-enoent-close" ? 1 : 0);
+		if (fault === "etl-enoent-close") expect(result.trace.indexOf("etl-close")).toBeLessThan(result.trace.indexOf("cleanup"));
+		else {
+			expect(result.workdirExists).toBe(true);
+			expect(result.recoverySidecarExists).toBe(true);
+			expect(result.recoveryMode).toBe(0o600);
+			expect(result.recoveryRecord).toEqual({
+				schemaVersion: 2,
+				status: "pending_child",
+				ownerPid: process.pid,
+				projectId: "votus-e2e-12345678123441238123",
+				workdir: result.ownedWorkdir,
+				token: "12345678-1234-4123-8123-123456789abc",
+				repositoryRoot: resolve(fileURLToPath(import.meta.url), "../../../.."),
+			});
+		}
+		expect(result.killCalls).toEqual([]);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|passed;|postgres:postgres/);
+	});
+
+	it("stops the owned ETL group before stack cleanup on SIGTERM", async () => {
+		const result = await runLane(["--run"], "etl-signal", "etl");
+		expect(result.trace.slice(-4)).toEqual(["etl", "child-term", "child-close", "cleanup"]);
+		expect(result.killCalls?.every(([, signal]) => signal === 0)).toBe(true);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.exitCode).toBe(143);
+		expect(result.output).not.toMatch(/passed;|postgres:postgres|synthetic-service/);
+	});
+
+	it("revalidates loopback publication before migration runner provisioning", async () => {
+		const result = await runLane(["--run"], "etl-runner-publication", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "cleanup"]);
+		expect(result.runnerBootstraps).toHaveLength(0);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('"operation":"owned_db_publication_validate","reason":"invalid_publication"');
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it.each([
+		["throw", "command_failed", null], ["spawn-error", "command_failed", null], ["sql-error", "command_failed", 3],
+		...["empty", "zero", "overflow", "negative", "fraction", "leading-zero", "duplicate", "noise", "missing-newline", "nul"]
+			.map((reason) => [`oid-${reason}`, "invalid_identity", null] as const),
+	] as const)("rejects migration runner bootstrap %s without leaking or starting the child", async (fault, reason, exitCode) => {
+		const result = await runLane(["--run"], `etl-runner-${fault}`, "etl");
+		expect(result.runnerBootstraps).toHaveLength(1);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain(`E2E_RELEASE_GATE_FAILURE ${JSON.stringify({ schemaVersion: 1, operation: "owned_etl_runner_bootstrap", reason, exitCode })}`);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|CREATE ROLE|PASSWORD|supabase_admin|votus_etl_runner_/);
+		expect(result.failure).not.toHaveProperty("cause");
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.workdirExists).toBe(false);
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("does not provision a migration runner when interrupted during revalidation", async () => {
+		const result = await runLane(["--run"], "etl-runner-revalidation-signal", "etl");
+		expect(result.runnerBootstraps).toHaveLength(0);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.trace.at(-1)).toBe("cleanup");
+		expect(result.exitCode).toBe(143);
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("rejects a replacement container before migration runner provisioning", async () => {
+		const result = await runLane(["--run"], "etl-runner-identity-replaced", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "cleanup"]);
+		expect(result.runnerBootstraps).toHaveLength(0);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('"operation":"owned_db_identity_validate","reason":"invalid_identity"');
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("provisions one migration runner after durable ownership and before the ETL child", async () => {
+		const result = await runLane(["--run"], "", "etl");
+		expect(result.failure).toBeUndefined();
+		expect(result.runnerBootstraps).toHaveLength(1);
+		const bootstrap = result.runnerBootstraps[0]!;
+		expect(bootstrap.pending).toMatchObject({ status: "pending_child", ownerPid: process.pid });
+		expect(bootstrap.args).toEqual(["exec", "-i", "--user", "postgres", "a".repeat(64), "psql", "-U", "supabase_admin", "-d", "postgres", "-XAt", "-v", "ON_ERROR_STOP=1"]);
+		expect(bootstrap.stdio).toEqual(["pipe", "pipe", "pipe"]);
+		const env = result.commands.find(({ command }) => command === "uv")?.env;
+		const capability = JSON.parse(env!.ETL_TEST_MIGRATION_RUNNER!);
+		expect(Object.keys(capability).sort()).toEqual(["marker", "oid", "password", "role"]);
+		expect(capability).toEqual({
+			role: "votus_etl_runner_12345678123441238123123456789abc",
+			password: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+			marker: "votus-etl-runner:12345678-1234-4123-8123-123456789abc", oid: 16384,
+		});
+		expect(bootstrap.input).toContain(`CREATE ROLE "${capability.role}" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${capability.password}'`);
+		expect(bootstrap.input).toContain(`GRANT postgres TO "${capability.role}" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+		expect(bootstrap.input).toContain(`COMMENT ON ROLE "${capability.role}" IS '${capability.marker}'`);
+		expect(bootstrap.input).toMatch(/BEGIN;[\s\S]*CREATE ROLE[\s\S]*GRANT postgres[\s\S]*COMMENT ON ROLE[\s\S]*COMMIT;/);
+		expect(bootstrap.input).not.toMatch(/ON CONFLICT|IF NOT EXISTS/);
+		expect(bootstrap.input.match(/CREATE ROLE/g)).toHaveLength(1);
+		expect(bootstrap.input.match(/GRANT /g)).toHaveLength(1);
+		expect(bootstrap.input).toContain("session_user <> 'supabase_admin' OR current_user <> 'supabase_admin'");
+		expect(bootstrap.input).toContain("oid = 10 AND rolname = current_user AND rolsuper");
+		expect(bootstrap.input.indexOf("invalid bootstrap identity")).toBeLessThan(bootstrap.input.indexOf("CREATE ROLE"));
+		expect(result.trace.slice(-6)).toEqual(["db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
+		expect(JSON.stringify(result.commands.map(({ args }) => args))).not.toContain(capability.password);
+		expect(result.output).not.toMatch(/votus_etl_runner_|CREATE ROLE|GRANT postgres|supabase_admin/);
+		expect(result.output).not.toContain(capability.password);
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("prelaunch SIGTERM waits for preparation and never starts ETL", async () => {
+		const result = await runLane(["--run"], "etl-prelaunch-signal", "etl");
+		expect(result.cleanupBeforePrelaunchSettlement, JSON.stringify(result.trace)).toBe(false);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.trace).not.toContain("etl");
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.exitCode).toBe(143);
+		expect(result.output).not.toMatch(/passed;|postgres:postgres|PRIVATE_OUTPUT_MARKER/);
+	});
+
+	it("times out an unresponsive ETL child and settles it before stack cleanup", async () => {
+		const result = await runLane(["--run"], "etl-timeout", "etl");
+		expect(result.failure).toMatchObject({ message: "ETL timed out; details redacted", reason: "timeout", exitCode: null });
+		expect(result.output).toContain('E2E_ETL_DIAGNOSTIC {"schemaVersion":1,"reason":"timeout","exitCode":null,"stage":null}');
+		expect(result.trace.slice(-4)).toEqual(["etl", "child-term", "child-close", "cleanup"]);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.output).not.toMatch(/passed;|postgres:postgres|synthetic-service/);
+	});
+
+	it("identifies owned DB identity validation failure after DB start without exposing evidence", async () => {
+		const result = await runLane(["--run"], "identity-project", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_db_identity_validate","reason":"invalid_identity","exitCode":null}');
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|votus-e2e-12345678/);
+	});
+
+	it("identifies invalid owned DB port publication after identity validation", async () => {
+		const result = await runLane(["--run"], "etl-public-ip", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_db_publication_validate","reason":"invalid_publication","exitCode":null}');
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|votus-e2e-12345678/);
+	});
+
+	it.each([["db-inspect", "owned_db_identity_inspect"], ["publication", "supabase_publication_inspect"], ["status", "owned_db_status_command"]] as const)("identifies failed %s command after DB startup", async (fault, operation) => {
+		const result = await runLane(["--run"], fault, "etl");
+		const boundary = fault === "db-inspect" ? ["network", "db-start", "db-inspect", "cleanup"] : fault === "publication" ? ["network", "db-start", "db-inspect", "publication", "cleanup"] : ["network", "db-start", "db-inspect", "publication", "status", "cleanup"];
+		expect(result.trace).toEqual(boundary);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain(`E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"${operation}","reason":"command_failed","exitCode":1}`);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|votus-e2e-12345678/);
+	});
+
+	it("identifies child launch constructor failure after validated status", async () => {
+		const result = await runLane(["--run"], "etl-launch-throw", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap"]);
+		expect(result.recoveryRecord).toMatchObject({ status: "pending_child" });
+		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_etl_child_launch","reason":"launch_failed","exitCode":null}');
+		expect(result.output).not.toMatch(/SECRET_LAUNCH_PRIVATE|postgres:postgres|votus-e2e-12345678/);
+	});
+
+	it("identifies invalid DB_URL after successful status", async () => {
+		const result = await runLane(["--run"], "etl-wrong-path", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_db_status_validate","reason":"invalid_status","exitCode":null}');
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|votus-e2e-12345678/);
+	});
+
+	it.each([
+		["etl-public-json", "json", []], ["etl-public-lines", "schema", ["record_count"]],
+		["etl-missing-binding", "schema", ["shape"]], ["etl-null-binding", "schema", ["shape"]],
+		["etl-zero-bindings", "schema", ["zero_bindings"]], ["etl-multiple-bindings", "schema", ["multiple_bindings"]],
+		["etl-public-ip", "schema", ["host_ip"]], ["etl-public-port", "schema", ["host_port"]],
+		["etl-port-type", "schema", ["host_port"]], ["etl-binding-scalar", "schema", ["shape"]],
+		["etl-binding-missing-field", "schema", ["shape"]],
+		["etl-extra-port", "schema", ["extra_port_key"]], ["etl-extra-null-port", "schema", ["extra_port_key"]],
+	] as const)("reports fixed owned DB publication diagnostics for %s", async (fault, stage, issues) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_db_publication_validate","reason":"invalid_publication","exitCode":null}');
+		const diagnosticLines = result.output.split("\n").filter((line) => line.startsWith("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC "));
+		expect(diagnosticLines).toHaveLength(1);
+		const diagnostic = JSON.parse(diagnosticLines[0]!.slice("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ".length));
+		if (fault === "etl-multiple-bindings") expect(diagnostic).toMatchObject({ schemaVersion: 1, stage, issues });
+		else expect(diagnostic).toEqual({ schemaVersion: 1, stage, issues });
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|46007|127\.0\.0\.1|postgres:postgres|votus-e2e-12345678|ZodError/);
+	});
+
+	const requestedBindingSummary = {
+		count: "one", exactMatches: "zero", hosts: ["unspecified"], ports: ["expected"], malformedEntries: "zero",
+	};
+
+	it("reports duplicate expected bindings without exposing Docker values", async () => {
+		const result = await runLane(["--run"], "etl-multiple-bindings", "etl");
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1,
+			stage: "schema",
+			issues: ["multiple_bindings"],
+			bindingEvidence: {
+				requested: requestedBindingSummary,
+				observed: {
+					count: "multiple",
+					exactMatches: "multiple",
+					hosts: ["expected_ipv4_loopback"],
+					ports: ["expected"],
+					malformedEntries: "zero",
+				},
+			},
+		});
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.find(({ command, args }) => command === "docker" && args[0] === "inspect")?.args[2]).toBe('{"requested":{{json .HostConfig.PortBindings}},"observed":{{json .NetworkSettings.Ports}}}');
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|127\.0\.0\.1|postgres:postgres/);
+	});
+
+	it("distinguishes duplicate requested bindings from Docker-only duplicates", async () => {
+		const result = await runLane(["--run"], "etl-requested-multiple-bindings", "etl");
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, stage: "schema", issues: ["multiple_bindings"],
+			bindingEvidence: {
+				requested: { count: "multiple", exactMatches: "zero", hosts: ["unspecified"], ports: ["expected"], malformedEntries: "zero" },
+				observed: { count: "multiple", exactMatches: "multiple", hosts: ["expected_ipv4_loopback"], ports: ["expected"], malformedEntries: "zero" },
+			},
+		});
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|127\.0\.0\.1|postgres:postgres/);
+	});
+
+	it.each(["etl-mixed-bindings", "etl-dual-loopback-reversed"])("accepts %s exact dual-loopback publication and runs isolated ETL", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.failure).toBeUndefined();
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
+		expect(result.commands.filter(({ command }) => command === "uv")).toHaveLength(1);
+		expect(result.workdirExists).toBe(false);
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.output).toContain("Isolated ETL verification passed; owned stack cleaned");
+		expect(result.output).not.toContain("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC");
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|127\.0\.0\.1|::1|postgres:postgres/);
+	});
+
+	it.each([
+		"etl-dual-ipv6-only", "etl-multiple-bindings", "etl-dual-duplicate-v6", "etl-dual-extra-v6",
+		"etl-extra-port", "etl-extra-null-port", "etl-null-binding",
+		"etl-dual-wrong-ipv4-port", "etl-dual-wrong-ipv6-port",
+		"etl-dual-missing-field", "etl-dual-extra-field", "etl-malformed-entry-bindings",
+		"etl-wildcard-v4-bindings", "etl-wildcard-v6-bindings", "etl-other-host-bindings",
+	] as const)("rejects %s as an invalid dual-loopback publication before ETL", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.failure).toBeInstanceOf(Error);
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('"operation":"owned_db_publication_validate","reason":"invalid_publication"');
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|46007|127\.0\.0\.1|::1|0\.0\.0\.0|192\.0\.2\.1|postgres:postgres/);
+	});
+
+	it.each([
+		["etl-wildcard-v4-bindings", "wildcard_ipv4", "0.0.0.0"],
+		["etl-wildcard-v6-bindings", "wildcard_ipv6", "::"],
+	] as const)("identifies %s without leaking the host address", async (fault, hostClass, rawAddress) => {
+		const result = await runLane(["--run"], fault, "etl");
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, stage: "schema", issues: ["multiple_bindings"],
+			bindingEvidence: { requested: requestedBindingSummary, observed: {
+				count: "multiple", exactMatches: "one",
+				hosts: ["expected_ipv4_loopback", hostClass],
+				ports: ["expected"], malformedEntries: "zero",
+			} },
+		});
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|127\.0\.0\.1|postgres:postgres/);
+		expect(result.output).not.toContain(rawAddress);
+	});
+
+	it("separates a different IPv4 loopback address from the expected address", async () => {
+		const result = await runLane(["--run"], "etl-other-v4-loopback-bindings", "etl");
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, stage: "schema", issues: ["multiple_bindings"],
+			bindingEvidence: { requested: requestedBindingSummary, observed: {
+				count: "multiple", exactMatches: "one",
+				hosts: ["expected_ipv4_loopback", "other_ipv4_loopback"],
+				ports: ["expected"], malformedEntries: "zero",
+			} },
+		});
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|127\.0\.0\.[12]|postgres:postgres/);
+	});
+
+	it.each([
+		["etl-other-host-bindings", ["expected_ipv4_loopback", "other_host"], ["expected"], "zero"],
+		["etl-malformed-host-bindings", ["expected_ipv4_loopback", "malformed_host"], ["expected"], "zero"],
+		["etl-empty-port-bindings", ["expected_ipv4_loopback"], ["expected", "empty"], "zero"],
+		["etl-other-port-bindings", ["expected_ipv4_loopback"], ["expected", "other"], "zero"],
+		["etl-malformed-port-bindings", ["expected_ipv4_loopback"], ["expected", "malformed"], "zero"],
+		["etl-malformed-entry-bindings", ["expected_ipv4_loopback", "malformed_host"], ["expected", "malformed"], "one"],
+	] as const)("classifies all observed publication dimensions for %s without raw values", async (fault, hosts, ports, malformedEntries) => {
+		const result = await runLane(["--run"], fault, "etl");
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_RELEASE_GATE_PUBLICATION_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, stage: "schema", issues: ["multiple_bindings"],
+			bindingEvidence: { requested: requestedBindingSummary, observed: {
+				count: "multiple", exactMatches: "one", hosts, ports, malformedEntries,
+			} },
+		});
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|46006|46007|127\.0\.0\.1|192\.0\.2\.1|postgres:postgres/);
+	});
+
+	it.each(["etl-wrong-port", "etl-wrong-path", "etl-public-ip", "etl-public-port", "etl-extra-port", "etl-missing-url", "etl-missing-binding", "etl-multiple-bindings", "etl-malformed-status", "etl-nonobject-status"])("rejects %s before ETL spawn and cleans up", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.failure).toBeInstanceOf(Error);
+		const reachedPhase = fault.startsWith("etl-public-") || fault === "etl-extra-port" || fault === "etl-missing-binding" || fault === "etl-multiple-bindings"
+			? "publication" : "status";
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", ...(reachedPhase === "status" ? ["status"] : []), "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
+	});
+
+	it.each(["etl-marker-corrupt", "etl-marker-missing"])("reports bounded ETL ownership marker failure for %s and retains uncertain workdir", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.trace).toEqual(["network", "db-start"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.workdirExists).toBe(true);
+		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_db_marker_validate","reason":"invalid_identity","exitCode":null}');
+		expect(result.output).toContain("E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS");
+		expect(result.output).not.toMatch(/PRIVATE_MARKER_CONTENT|votus-e2e-12345678/);
+	});
+
+	it("rejects unowned ETL database identity before handoff and cleans up", async () => {
+		const result = await runLane(["--run"], "identity-project", "etl");
+		expect(result.failure).toMatchObject({ message: "owned database identity mismatch; output redacted" });
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.readinessRequests).toHaveLength(0);
+	});
+
+	it.each(["identity-id", "identity-name", "identity-network", "identity-extra-network"])("refuses ETL database identity %s before child spawn and cleans up once", async (fault) => {
+		const result = await runLane(["--run"], fault, "etl");
+		expect(result.failure).toMatchObject({ message: "owned database identity mismatch; output redacted" });
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "cleanup"]);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
 	it.each(["identity-json", "identity-id", "identity-name", "identity-project", "identity-network", "identity-extra-network"])("refuses database handoff for %s and cleans up once", async (fault) => {
 		const result = await runLane(["--lane", "browser"], fault);
-		expect(result.failure).toEqual(new Error("owned database identity mismatch; output redacted"));
+		expect(result.failure).toMatchObject({ message: "owned database identity mismatch; output redacted" });
 		expect(result.trace).toEqual(["network", "db-start", "migration1", "db-inspect", "cleanup"]);
 		expect(result.readinessRequests).toHaveLength(0);
 		expect(result.output).not.toContain("PRIVATE_OUTPUT_MARKER");
@@ -492,7 +1985,7 @@ describe("explicit release-gate lanes", () => {
 
 	it.each(["attachment-missing", "attachment-nonstring", "attachment-malformed", "attachment-different"])("refuses %s before container removal and cleans up once", async (fault) => {
 		const result = await runLane(["--lane", "browser"], fault);
-		expect(result.failure).toEqual(new Error("owned database identity mismatch; output redacted"));
+		expect(result.failure).toMatchObject({ message: "owned database identity mismatch; output redacted" });
 		expect(result.trace).toEqual(["network", "db-start", "migration1", "db-inspect", "cleanup"]);
 		expect(result.commands.filter(({ args }) => args[0] === "container" && args[1] === "rm")).toHaveLength(0);
 		expect(result.commands.filter(({ args }) => args[0] === "start" && !args.includes("--help"))).toHaveLength(0);
@@ -531,6 +2024,10 @@ describe("explicit release-gate lanes", () => {
 		expect(baseline.failure).toBeUndefined();
 		const result = await runLane(["--lane", lane], fault);
 		expect(result.failure).toBeDefined();
+		if (fault === "cleanup") {
+			expect(result.workdirExists).toBe(true);
+			expect(result.recoverySidecarExists).toBe(true);
+		}
 		expect(result.trace.at(-1)).toBe("cleanup");
 		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
 		expect(result.output).not.toContain("lane passed:");
@@ -692,6 +2189,34 @@ describe("migration release-gate integration", () => {
 		expect(names.at(-1)).toBe(
 			"20260923000001_curate_2023_municipal_identities.sql",
 		);
+	});
+	it("stages only the idempotent role bootstrap before the ETL-owned migration replay", async () => {
+		const names = await assertSourceInventory((await inspectReleaseGatePlan()).migrationVersions, (await inspectReleaseGatePlan()).syntheticMigration);
+		expect(names.slice(0, 12)).toContain("0009_etl_write_grants.sql");
+		expect(names.slice(0, 12)).toContain("0010_etl_writer_no_default_password.sql");
+		expect(names.slice(0, 12)).not.toContain("0022_results_exploration_scale.sql");
+		const sql = readFileSync(fileURLToPath(new URL("../../../supabase/migrations/0009_etl_write_grants.sql", import.meta.url)), "utf8");
+		expect(sql).toMatch(/if not exists[\s\S]*?rolname = 'etl_writer'[\s\S]*?create role etl_writer/i);
+	});
+	it("runs ETL after database ownership and status without starting application services or replaying production migrations", async () => {
+		const plan = createReleaseGatePlan(RELEASE_GATE_MODE.ETL);
+		const trace: string[] = [];
+		await runProductionReleasePhases(plan, {
+			runProductionMigrations: async () => { trace.push("migrations"); },
+			startApplicationServices: async () => { trace.push("services"); },
+			validateOwnedEtlDatabase: async () => { trace.push("database-owned"); },
+			validateStackStatus: async () => {
+				trace.push("status");
+				return { API_URL: "http://127.0.0.1:54321", DB_URL: "postgresql://postgres:postgres@127.0.0.1:54322/postgres", ANON_KEY: "anon", SERVICE_ROLE_KEY: "service" };
+			},
+			runOwnedEtl: async () => { trace.push("etl"); },
+			runSetupProof: async () => { trace.push("proof"); },
+			runPgTapProof: async () => { trace.push("proof"); },
+			runPostPgTapCleanupProof: async () => { trace.push("proof"); },
+			runRollbackReapplyProof: async () => { trace.push("proof"); },
+			installSyntheticMigration: async () => { trace.push("synthetic"); },
+		});
+		expect(trace).toEqual(["database-owned", "status", "etl"]);
 	});
 	it("runs every production phase in plan order before installing synthetic 0039", async () => {
 		const plan = await inspectReleaseGatePlan();
@@ -1432,15 +2957,15 @@ describe("base contracts", () => {
 		expect(scope).toContain("timeout-minutes: 2");
 		expect(scope).toContain("persist-credentials: false");
 		expect(scope).toContain("fetch-depth: 0");
-		expect(scope).toContain("node-version: 24");
+		expect(scope).toContain("node-version-file: .node-version");
 		expect(scope).toContain("--all");
 		expect(scope).toContain("--base \"${{ github.event.pull_request.base.sha }}\"");
 		expect(scope).toContain("--head \"${{ github.sha }}\"");
 
 		expect(webStatic).toContain("timeout-minutes: 10");
 		expect(webStatic).toContain("persist-credentials: false");
-		expect(webStatic).toContain("version: 12.3.4");
-		expect(webStatic).toContain("node-version: 24");
+		expect(webStatic).toContain("package_json_file: apps/web/package.json");
+		expect(webStatic).toContain("node-version-file: .node-version");
 		expect(webStatic).toContain("pnpm/action-setup@");
 		expect(webStatic).toContain("actions/setup-node@");
 		expect(webStatic.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
@@ -1451,24 +2976,25 @@ describe("base contracts", () => {
 
 		expect(etlRelease).toContain("timeout-minutes: 15");
 		expect(etlRelease).toContain("services:");
-		expect(etlRelease).toContain("image: postgres:17");
+		expect(etlRelease).toContain("image: postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f");
 		expect(etlRelease).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
 		expect(etlRelease).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(etlRelease).toContain("astral-sh/setup-uv@");
-		expect(etlRelease).toContain('version: "0.8.8"');
+		expect(etlRelease).toContain("version-file: etl/pyproject.toml");
+		expect(etlRelease).toContain("python-version: ${{ needs.scope.outputs.python }}");
 		expect(etlRelease).toContain("persist-credentials: false");
 		expect(etlRelease).toContain("create role anon nologin");
 		expect(etlRelease).toContain("create role authenticated nologin");
 		expect(etlRelease).toContain("create role etl_writer login bypassrls password null");
-		expect(etlRelease.match(/uv run --project \. --frozen ruff check \./g)).toHaveLength(1);
-		expect(etlRelease.match(/uv run --project \. --frozen ruff format --check \./g)).toHaveLength(1);
-		expect(etlRelease.match(/uv run --project etl etl-verify/g)).toHaveLength(2);
+		expect(etlRelease.match(/uv run --project \. --locked ruff check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project \. --locked ruff format --check \./g)).toHaveLength(1);
+		expect(etlRelease.match(/uv run --project etl --locked etl-verify/g)).toHaveLength(2);
 		expect(etlRelease).toContain("supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf");
-		expect(etlRelease).toContain("version: 2.116.0");
+		expect(etlRelease).toContain("version: ${{ needs.scope.outputs.supabase }}");
 		expect(etlRelease).toContain("ETL_CASE: ${{ matrix.case }}");
 		expect(etlRelease).toContain('if [ "$ETL_CASE" = "ordinary" ]; then');
-		expect(etlRelease).toMatch(/^\s+uv run --project etl etl-verify$/m);
-		expect(etlRelease).toContain('uv run --project etl etl-verify --migration-atomicity "$ETL_CASE"');
+		expect(etlRelease).toMatch(/^\s+uv run --project etl --locked etl-verify$/m);
+		expect(etlRelease).toContain('uv run --project etl --locked etl-verify --migration-atomicity "$ETL_CASE"');
 		expect(etlRelease).not.toMatch(/pnpm|setup-node|playwright/);
 		expect(workflow).not.toMatch(/^\s+continue-on-error:/m);
 
@@ -1476,9 +3002,9 @@ describe("base contracts", () => {
 		expect(e2eRelease).toContain("pnpm/action-setup@");
 		expect(e2eRelease).toContain("actions/setup-node@");
 		expect(e2eRelease).toContain("supabase/setup-cli@");
-		expect(e2eRelease).toContain("version: 12.3.4");
-		expect(e2eRelease).toContain("node-version: 24");
-		expect(e2eRelease).toContain("version: 2.112.0");
+		expect(e2eRelease).toContain("package_json_file: apps/web/package.json");
+		expect(e2eRelease).toContain("node-version-file: .node-version");
+		expect(e2eRelease).toContain("version: ${{ needs.scope.outputs.supabase }}");
 		expect(e2eRelease).toContain("persist-credentials: false");
 		expect(e2eRelease.match(/^\s*- run: pnpm install --frozen-lockfile$/gm)).toHaveLength(1);
 		expect(e2eRelease.match(/pnpm exec playwright install --with-deps chromium/g)).toHaveLength(1);
@@ -1491,12 +3017,12 @@ describe("base contracts", () => {
 		expect(e2eRelease).not.toMatch(/services:|setup-uv|uv run|postgres:17/);
 
 		expect(e2eSql).toContain("timeout-minutes: 20");
-		expect(e2eSql).toContain("runs-on: ubuntu-latest");
-		expect(e2eSql).toContain("version: 12.3.4");
-		expect(e2eSql).toContain("node-version: 24");
+		expect(e2eSql).toContain("runs-on: ubuntu-24.04");
+		expect(e2eSql).toContain("package_json_file: apps/web/package.json");
+		expect(e2eSql).toContain("node-version-file: .node-version");
 		expect(e2eSql).toContain("cache: pnpm");
 		expect(e2eSql).toContain("cache-dependency-path: apps/web/pnpm-lock.yaml");
-		expect(e2eSql).toContain("version: 2.112.0");
+		expect(e2eSql).toContain("version: ${{ needs.scope.outputs.supabase }}");
 		expect(e2eSql).toContain("persist-credentials: false");
 		expect(e2eSql.match(/^\s*- run: .*$/gm)?.map((line) => line.trim())).toEqual([
 			"- run: pnpm install --frozen-lockfile",
@@ -1888,7 +3414,7 @@ describe("base contracts", () => {
 			spawnSync.mockImplementation((command, args) => {
 				if (command === "pnpm")
 					return successfulCommand(
-						args[0] === "--version" ? "10.0.0\n" : "Version 7.0.0\n",
+						args[0] === "--version" ? "12.3.4\n" : "Version 7.0.2\n",
 					);
 				if (command === "docker" && args[0] === "info")
 					return successfulCommand("29.7.2\n");
@@ -1964,7 +3490,7 @@ describe("base contracts", () => {
 					};
 				}
 				if (command === "supabase" && args[0] === "--version")
-					return successfulCommand("2.115.0\n");
+					return successfulCommand("2.116.0\n");
 				if (command === "supabase" && args[0] === "stop")
 					return successfulCommand("--project-id --no-backup\n");
 				return successfulCommand();
@@ -2108,6 +3634,9 @@ describe("base contracts", () => {
 		let workdirExists = true;
 		const dependencies: ReleaseGateCleanupDependencies<never> = {
 			tempRoot: () => "/private/tmp",
+			repositoryRoot: fileURLToPath(new URL("../../", import.meta.url)),
+			persistRecoveryRecord: async () => undefined,
+			retireRecoveryRecord: async () => undefined,
 			readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
 			stopServer: async () => undefined,
 			verifyServerStopped: async () => undefined,
@@ -2160,6 +3689,9 @@ describe("base contracts", () => {
 			`remove-volumes:supabase_db_${OWNERSHIP.projectId}`,
 			"list-networks",
 			`remove-networks:supabase_network_${OWNERSHIP.projectId}`,
+			"list-containers",
+			"list-volumes",
+			"list-networks",
 			"remove-workdir",
 			"list-containers",
 			"list-volumes",
@@ -2172,6 +3704,9 @@ describe("base contracts", () => {
 		const events: string[] = [];
 		const dependencies: ReleaseGateCleanupDependencies<never> = {
 			tempRoot: () => "/private/tmp",
+			repositoryRoot: fileURLToPath(new URL("../../", import.meta.url)),
+			persistRecoveryRecord: async () => undefined,
+			retireRecoveryRecord: async () => undefined,
 			readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
 			stopServer: async () => undefined,
 			verifyServerStopped: async () => undefined,
@@ -2204,19 +3739,22 @@ describe("base contracts", () => {
 				(item) =>
 					item instanceof Error &&
 					item.message.includes(
-						"refusing to remove a container without the exact owned project suffix",
+						"refusing to remove an unexpected container",
 					),
 			),
 		);
 		expect(events).toContain("stop-stack");
 		expect(events).toContain("list-containers");
 		expect(events).not.toContain("remove-containers");
-		expect(events).toContain("remove-workdir");
+		expect(events).not.toContain("remove-workdir");
 	});
 	it("fails cleanup when residual verification still finds owned state", async () => {
 		const ownedContainer = `supabase_db_${OWNERSHIP.projectId}`;
 		const dependencies: ReleaseGateCleanupDependencies<never> = {
 			tempRoot: () => "/private/tmp",
+			repositoryRoot: fileURLToPath(new URL("../../", import.meta.url)),
+			persistRecoveryRecord: async () => undefined,
+			retireRecoveryRecord: async () => undefined,
 			readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
 			stopServer: async () => undefined,
 			verifyServerStopped: async () => undefined,
@@ -3139,10 +4677,98 @@ describe("ReleaseGateReporter", () => {
 });
 
 describe("release-gate cleanup diagnostics", () => {
+	it("persists an exclusive, private recovery sidecar outside the owned workdir", async () => {
+		const root = mkdtempSync("/tmp/votus-sidecar-test-");
+		const token = "12345678-1234-4123-8123-123456789abc";
+		const record = {
+			workdir: join(root, `votus-e2e-${token}`),
+			projectId: `votus-e2e-${token.replaceAll("-", "").slice(0, 20)}`,
+			token,
+			ownerPid: 12345,
+			repositoryRoot: resolve(fileURLToPath(new URL("../../../", import.meta.url))),
+		};
+		tmpdir.mockReturnValue(root);
+		try {
+			await persistReleaseGateRecoveryRecord(record);
+			const sidecar = `${record.workdir}.recovery.json`;
+			expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ schemaVersion: 2, ...record });
+			await expect(persistReleaseGateRecoveryRecord(record)).rejects.toThrow();
+			await retireReleaseGateRecoveryRecord(record);
+			expect(existsSync(sidecar)).toBe(false);
+		} finally {
+			tmpdir.mockReset();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+	it("persists pending-child evidence privately across restart and refuses conflicting retirement", async () => {
+		const root = mkdtempSync("/tmp/votus-sidecar-test-");
+		const token = "12345678-1234-4123-8123-123456789abc";
+		const record = {
+			workdir: join(root, `votus-e2e-${token}`),
+			projectId: `votus-e2e-${token.replaceAll("-", "").slice(0, 20)}`,
+			token, ownerPid: 12345, status: "pending_child" as const,
+			repositoryRoot: resolve(fileURLToPath(new URL("../../../", import.meta.url))),
+		};
+		tmpdir.mockReturnValue(root);
+		try {
+			await persistReleaseGateRecoveryRecord(record);
+			const sidecar = `${record.workdir}.recovery.json`;
+			expect(statSync(sidecar).mode & 0o777).toBe(0o600);
+			expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ schemaVersion: 2, ...record });
+			await expect(retireReleaseGateRecoveryRecord({ ...record, ownerPid: 12346 })).rejects.toThrow();
+			expect(existsSync(sidecar)).toBe(true);
+			await retireReleaseGateRecoveryRecord(record);
+			expect(existsSync(sidecar)).toBe(false);
+		} finally {
+			tmpdir.mockReset();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+	it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid ownerPid %s before sidecar creation", async (ownerPid) => {
+		const root = mkdtempSync("/tmp/votus-sidecar-test-");
+		const token = "12345678-1234-4123-8123-123456789abc";
+		const record = {
+			workdir: join(root, `votus-e2e-${token}`),
+			projectId: `votus-e2e-${token.replaceAll("-", "").slice(0, 20)}`,
+			token, ownerPid,
+			repositoryRoot: resolve(fileURLToPath(new URL("../../../", import.meta.url))),
+		};
+		tmpdir.mockReturnValue(root);
+		try {
+			await expect(persistReleaseGateRecoveryRecord(record)).rejects.toThrow("recovery ownership binding invalid");
+			expect(existsSync(`${record.workdir}.recovery.json`)).toBe(false);
+		} finally {
+			tmpdir.mockReset();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a regex-valid project identity that stale recovery cannot accept", async () => {
+		const root = mkdtempSync("/tmp/votus-sidecar-test-");
+		const token = "12345678-1234-4123-8123-123456789abc";
+		const record = {
+			workdir: join(root, `votus-e2e-${token}`),
+			projectId: "votus-e2e-other-valid-project",
+			token,
+			ownerPid: 12345,
+			repositoryRoot: resolve(fileURLToPath(new URL("../../../", import.meta.url))),
+		};
+		tmpdir.mockReturnValue(root);
+		try {
+			await expect(persistReleaseGateRecoveryRecord(record)).rejects.toThrow("recovery ownership binding invalid");
+			expect(existsSync(`${record.workdir}.recovery.json`)).toBe(false);
+		} finally {
+			tmpdir.mockReset();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	const dependencies = (
 		overrides: Partial<ReleaseGateCleanupDependencies<never>> = {},
 	): ReleaseGateCleanupDependencies<never> => ({
 		tempRoot: () => "/private/tmp",
+		repositoryRoot: fileURLToPath(new URL("../../", import.meta.url)),
+		persistRecoveryRecord: async () => undefined,
+		retireRecoveryRecord: async () => undefined,
 		readOwnershipMarker: async () => JSON.stringify(OWNERSHIP),
 		stopServer: async () => undefined,
 		verifyServerStopped: async () => undefined,
@@ -3158,9 +4784,155 @@ describe("release-gate cleanup diagnostics", () => {
 		...overrides,
 	});
 
-	it("continues cleanup after a failure and preserves its diagnostic category", async () => {
+	it.each(["container", "volume"])("same-suffix %s refuses cleanup and preserves recovery evidence", async (kind) => {
+		const removed: string[] = [];
+		let markerExists = true;
+		const token = "12345678-1234-4123-8123-123456789abc";
+		const ownership = { workdir: `/private/tmp/votus-e2e-${token}`, projectId: "votus-e2e-12345678123441238123", token };
+		const projectId = ownership.projectId;
+		await expect(cleanupReleaseGate(
+			{ ownership, stackMutationAttempted: true },
+			dependencies({
+				readOwnershipMarker: async () => JSON.stringify(ownership),
+				listOwnedContainers: () => kind === "container" ? [`unrelated_${projectId}`] : [],
+				listOwnedVolumes: () => kind === "volume" ? [`unrelated_${projectId}`] : [],
+				removeContainers: async () => { removed.push("container"); },
+				removeVolumes: async () => { removed.push("volume"); },
+				removeWorkdir: async () => { markerExists = false; },
+				workdirExists: () => markerExists,
+			}),
+		)).rejects.toSatisfy((error) => {
+			expect(cleanupDiagnosticsLine(error)).toContain(kind === "container" ? "CONTAINER_RESIDUAL_CHECK" : "VOLUME_RESIDUAL_CHECK");
+			expect(cleanupDiagnosticsLine(error)).not.toContain("unrelated_");
+			return true;
+		});
+		expect(removed).toEqual([]);
+		expect(markerExists).toBe(true);
+	});
+
+	it.each(["partial-removal", "residual-probe", "success"])("durable recovery record survives %s and retires only after verified cleanup", async (scenario) => {
+		const root = mkdtempSync("/tmp/votus-durable-cleanup-");
+		const workdir = join(root, "owned");
+		const sidecar = join(root, "recovery.json");
+		const ownership = { workdir, projectId: "votus-e2e-durable", token: "durable-token" };
+		const repo = fileURLToPath(new URL("../../", import.meta.url));
+		const record = { ...ownership, repositoryRoot: repo, ownerPid: process.pid };
+		const marker = join(workdir, ".votus-e2e-owner.json");
+		mkdirSync(workdir);
+		writeFileSync(marker, JSON.stringify(ownership));
+		let containerProbes = 0;
+		let removedWorkdir = false;
+		const persistRecoveryRecord = vi.fn(async (value: typeof record) => {
+			expect(value).toEqual(record);
+			writeFileSync(sidecar, JSON.stringify(value));
+		});
+		const retireRecoveryRecord = vi.fn(async () => { rmSync(sidecar); });
+		try {
+			const cleanup = cleanupReleaseGate(
+				{ ownership, stackMutationAttempted: true },
+				Object.assign(dependencies({
+					tempRoot: () => root,
+					readOwnershipMarker: async () => readFileSync(marker, "utf8"),
+					removeWorkdir: async () => {
+						expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual(record);
+						if (scenario === "partial-removal") {
+							rmSync(marker);
+							throw new Error("partial recursive removal");
+						}
+						removedWorkdir = true;
+						rmSync(workdir, { recursive: true });
+					},
+					workdirExists: () => existsSync(workdir),
+					listOwnedContainers: () => {
+						if (++containerProbes > 2 && scenario === "residual-probe") throw new Error("residual probe failed");
+						return [];
+					},
+				}), { persistRecoveryRecord, retireRecoveryRecord, repositoryRoot: repo }),
+			);
+			if (scenario === "success") await expect(cleanup).resolves.toBeUndefined();
+			else await expect(cleanup).rejects.toBeInstanceOf(ReleaseGateCleanupError);
+			expect(persistRecoveryRecord).toHaveBeenCalledOnce();
+			if (scenario === "residual-probe") expect(removedWorkdir).toBe(true);
+			if (scenario === "success") {
+				expect(retireRecoveryRecord).toHaveBeenCalledOnce();
+				expect(existsSync(sidecar)).toBe(false);
+			} else {
+				expect(retireRecoveryRecord).not.toHaveBeenCalled();
+				expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual(record);
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("settles the owned ETL child before cleaning its stack and workdir", async () => {
 		const reached: string[] = [];
-		const original = new Error("private stop failure");
+		let settle!: () => void;
+		const stopped = new Promise<void>((resolve) => { settle = resolve; });
+		const cleanup = cleanupReleaseGate(
+			{ ownership: OWNERSHIP, stackMutationAttempted: true, stopOwnedEtlChild: async () => {
+				reached.push("etl-stop");
+				await stopped;
+				reached.push("etl-settled");
+			} },
+			dependencies({
+				stopStack: async () => { reached.push("stack"); },
+				removeWorkdir: async () => { reached.push("workdir"); },
+			}),
+		);
+		await Promise.resolve();
+		expect(reached).toEqual(["etl-stop"]);
+		settle();
+		await cleanup;
+		expect(reached).toEqual(["etl-stop", "etl-settled", "stack", "workdir"]);
+	});
+
+	it("retains owned resources and bounds diagnostics when pending persistence fails", async () => {
+		const reached: string[] = [];
+		const secret = new Error("password=secret /private/path");
+		await expect(cleanupReleaseGate(
+			{ ownership: OWNERSHIP, stackMutationAttempted: true, stopOwnedEtlChild: async () => { throw new Error("child not settled"); } },
+			dependencies({
+				persistRecoveryRecord: async () => { reached.push("persist"); throw secret; },
+				stopStack: async () => { reached.push("stack"); },
+				removeContainers: async () => { reached.push("containers"); },
+				removeWorkdir: async () => { reached.push("workdir"); },
+			}),
+		)).rejects.toSatisfy((error) => {
+			expect(cleanupDiagnosticsLine(error)).toContain('"category":"RECOVERY_RECORD_PERSIST"');
+			expect(cleanupDiagnosticsLine(error)).not.toMatch(/password=secret|\/private\/path/);
+			return true;
+		});
+		expect(reached).toEqual(["persist"]);
+	});
+
+	it("preserves owned resources if the ETL child cannot be confirmed stopped", async () => {
+		const reached: string[] = [];
+		const sensitive = new Error("password=secret /private/path");
+		await expect(cleanupReleaseGate(
+			{ ownership: OWNERSHIP, stackMutationAttempted: true, stopOwnedEtlChild: async () => { throw sensitive; } },
+			dependencies({
+				stopStack: async () => { reached.push("stack"); },
+				removeContainers: async () => { reached.push("containers"); },
+				removeVolumes: async () => { reached.push("volumes"); },
+				removeNetworks: async () => { reached.push("networks"); },
+				removeWorkdir: async () => { reached.push("workdir"); },
+			}),
+		)).rejects.toSatisfy((error) => {
+			expect(error).toBeInstanceOf(ReleaseGateCleanupError);
+			expect((error as AggregateError).errors).toContain(sensitive);
+			const line = cleanupDiagnosticsLine(error);
+			expect(line).toContain('"category":"ETL_CHILD_STOP"');
+			expect(line).not.toContain("password=secret");
+			return true;
+		});
+		expect(reached).toEqual([]);
+	});
+
+	it("preserves the ownership marker after stack stop fails while continuing safe cleanup", async () => {
+		const reached: string[] = [];
+		let markerExists = true;
+		const original = new Error("password=secret /private/path");
 		await expect(
 			cleanupReleaseGate(
 				{ ownership: OWNERSHIP, stackMutationAttempted: true },
@@ -3169,20 +4941,26 @@ describe("release-gate cleanup diagnostics", () => {
 						reached.push("stack");
 						throw original;
 					},
+					listOwnedContainers: () => (reached.push("containers"), []),
+					listOwnedVolumes: () => (reached.push("volumes"), []),
+					listOwnedNetworks: () => (reached.push("networks"), []),
 					removeWorkdir: async () => {
+						markerExists = false;
 						reached.push("workdir");
 					},
+					workdirExists: () => markerExists,
 				}),
 			),
 		).rejects.toSatisfy((error) => {
 			expect(error).toBeInstanceOf(AggregateError);
 			expect((error as AggregateError).errors).toContain(original);
-			expect(cleanupDiagnosticsLine(error)).toBe(
-				'E2E_RELEASE_GATE_CLEANUP_DIAGNOSTICS {"schemaVersion":1,"failures":[{"category":"STACK_STOP","failureCount":1}]}',
-			);
+			const line = cleanupDiagnosticsLine(error);
+			expect(line).toContain('"category":"STACK_STOP","failureCount":1');
+			expect(line).not.toContain("password=secret");
 			return true;
 		});
-		expect(reached).toEqual(["stack", "workdir"]);
+		expect(markerExists).toBe(true);
+		expect(reached).toEqual(["stack", "containers", "volumes", "networks", "containers", "volumes", "networks"]);
 	});
 
 	it("flattens nested failures into canonical category counts without stopping", async () => {
@@ -3212,7 +4990,7 @@ describe("release-gate cleanup diagnostics", () => {
 			);
 			return true;
 		});
-		expect(reached).toEqual(["workdir"]);
+		expect(reached).toEqual([]);
 	});
 
 	it("continues after owned network cleanup and network residual failures", async () => {
@@ -3237,7 +5015,7 @@ describe("release-gate cleanup diagnostics", () => {
 			expect(diagnostics).toContain('"category":"NETWORK_RESIDUAL_CHECK","failureCount":1');
 			expect(diagnostics).not.toContain(network); return true;
 		});
-		expect(reached).toEqual(["container-residual", "volume-residual", "remove-network", "workdir", "container-residual", "volume-residual", "network-residual", "workdir-residual"]);
+		expect(reached).toEqual(["container-residual", "volume-residual", "remove-network", "container-residual", "volume-residual", "network-residual", "workdir-residual"]);
 	});
 
 	it("categorizes nonempty network residuals without exposing their names", async () => {

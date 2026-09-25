@@ -5,9 +5,17 @@ Commands below run from the repository root.
 
 ## Prerequisites and development
 
-Use Node.js 24 and **pnpm 12.3.4**, declared by [package.json](package.json) and
-used in [CI](../../.github/workflows/release-gates.yml). Keep the committed lockfile;
+Use Node.js **24.21.0** from [the shared pin](../../.node-version) and
+**pnpm 12.3.4**, declared by [package.json](package.json) and used in
+[CI](../../.github/workflows/release-gates.yml). Keep the committed lockfile;
 a pnpm 10 lockfile parsing failure is not a reason to regenerate it.
+
+The [root package](../../package.json) repeats the same package-manager pin so
+Corepack can discover it from either directory. `engines.node` declares Node
+`24.x` compatibility, not an exact runtime pin: Vercel manages minor and patch
+updates within that major. Local release verification and CI require exactly
+the version in `.node-version`; preflight rejects a mismatch before creating
+resources. Vercel Preview uses Corepack to select the exact pnpm version.
 
 Use the pinned invocation for every command, not only installation:
 
@@ -35,10 +43,14 @@ hosted deployment or a substitute for the release gate.
 
 ## Owned disposable release gate
 
-The [gate runner](scripts/e2e-release-gate.ts) requires Docker running, Supabase CLI
-with its checked isolation/cleanup flags, and package-supported Playwright
-Chromium installed. Consult CI for the gate's CLI version and browser setup;
-do not assume the ETL job uses the same CLI version.
+The [gate runner](scripts/e2e-release-gate.ts) requires Docker running, the
+project-local Supabase CLI **2.116.0**, and package-supported Playwright Chromium
+installed. `pnpm install --frozen-lockfile` installs the declared CLI dependency;
+run it through `pnpm --dir apps/web exec supabase`, not global Homebrew. All CI
+lanes consume this same CLI pin. Preflight checks exact Node, pnpm and CLI
+versions as well as the required isolation/cleanup flags before creating a stack.
+Keep `SUPABASE_EXPERIMENTAL_STACK` unset: these gates verify the default Docker
+backend and reject ambient selectors for unverified backends.
 
 ```sh
 npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web exec playwright install chromium

@@ -156,6 +156,32 @@
       "fetched_at": "2026-09-22T18:36:01Z",
       "status": "ok",
       "notes": "Official ARBA WFS partido reference; structural geometry only, no election-date applicability established. Child electoral depths unsupported."
+    },
+    {
+      "id": "geography/cne-pba-circuits",
+      "capability": "geography",
+      "source": "mapa2.electoral.gov.ar",
+      "source_url": "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=4d29c6a8e543b85f568f760d50f58828&typeName=descargas:circuito_02&maxFeatures=2000&outputFormat=application%2Fjson",
+      "archived_path": "archive/geography/cne-pba-circuits.215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71.geojson",
+      "sha256": "215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71",
+      "mime": "application/json",
+      "bytes": 5892420,
+      "fetched_at": "2026-09-24T02:12:13Z",
+      "status": "ok",
+      "notes": "CNE descargas page-linked full PBA WFS GeoJSON; PBA catalog attributes CC BY 4.0. Geographic reference only; election-year applicability unknown."
+    },
+    {
+      "id": "geography/cne-pba-sections",
+      "capability": "geography",
+      "source": "mapa2.electoral.gov.ar",
+      "source_url": "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=c4492e92d364f46230423ad9d1a34398&typeName=descargas:secciones_electorales&maxFeatures=2000&outputFormat=application%2Fjson",
+      "archived_path": "archive/geography/cne-pba-sections.964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673.geojson",
+      "sha256": "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673",
+      "mime": "application/json",
+      "bytes": 30269143,
+      "fetched_at": "2026-09-24T03:29:24Z",
+      "status": "ok",
+      "notes": "CNE descargas page-linked complete electoral sections GeoJSON; geographic reference only, election-year applicability unknown. CNE/PBA catalog attributes CC BY 4.0 to circuit resource, not separately verified for this layer."
     }
   ],
   "fetch_events": [
@@ -178,6 +204,48 @@
         "fetched_at": "2026-09-22T18:36:01Z",
         "status": "ok",
         "notes": "Official ARBA WFS partido reference; structural geometry only, no election-date applicability established. Child electoral depths unsupported."
+      }
+    },
+    {
+      "event_id": "09795879-7e28-4ec3-8f8c-c4fdfdbdb57c",
+      "sequence": 2,
+      "source_id": "geography/cne-pba-circuits",
+      "fetched_at": "2026-09-24T02:12:13Z",
+      "status": "ok",
+      "classification": "initial",
+      "record": {
+        "id": "geography/cne-pba-circuits",
+        "capability": "geography",
+        "source": "mapa2.electoral.gov.ar",
+        "source_url": "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=4d29c6a8e543b85f568f760d50f58828&typeName=descargas:circuito_02&maxFeatures=2000&outputFormat=application%2Fjson",
+        "archived_path": "archive/geography/cne-pba-circuits.215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71.geojson",
+        "sha256": "215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71",
+        "mime": "application/json",
+        "bytes": 5892420,
+        "fetched_at": "2026-09-24T02:12:13Z",
+        "status": "ok",
+        "notes": "CNE descargas page-linked full PBA WFS GeoJSON; PBA catalog attributes CC BY 4.0. Geographic reference only; election-year applicability unknown."
+      }
+    },
+    {
+      "event_id": "ca4dc68d-5444-43cd-b98b-737b33a76c81",
+      "sequence": 3,
+      "source_id": "geography/cne-pba-sections",
+      "fetched_at": "2026-09-24T03:29:24Z",
+      "status": "ok",
+      "classification": "initial",
+      "record": {
+        "id": "geography/cne-pba-sections",
+        "capability": "geography",
+        "source": "mapa2.electoral.gov.ar",
+        "source_url": "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=c4492e92d364f46230423ad9d1a34398&typeName=descargas:secciones_electorales&maxFeatures=2000&outputFormat=application%2Fjson",
+        "archived_path": "archive/geography/cne-pba-sections.964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673.geojson",
+        "sha256": "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673",
+        "mime": "application/json",
+        "bytes": 30269143,
+        "fetched_at": "2026-09-24T03:29:24Z",
+        "status": "ok",
+        "notes": "CNE descargas page-linked complete electoral sections GeoJSON; geographic reference only, election-year applicability unknown. CNE/PBA catalog attributes CC BY 4.0 to circuit resource, not separately verified for this layer."
       }
     }
   ]

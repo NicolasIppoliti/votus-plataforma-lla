@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -155,8 +156,9 @@ def _review_context_migration_level(database_dsn: str) -> int:
         installed = _fetchone(
             connection,
             "select to_regclass('workspace_private.review_item_context') is not null,"
-            "exists(select from information_schema.columns where table_schema='workspace_private' "
-            "and table_name='review_item_context' and column_name='context_role'),"
+            "exists(select from pg_attribute where "
+            "attrelid=to_regclass('workspace_private.review_item_context') "
+            "and attname='context_role' and attnum>0 and not attisdropped),"
             "to_regprocedure('workspace_private.record_review_item_v2"
             "(text,text,text,text,text[],text[],text,text,text,integer,"
             "uuid,uuid,text)') is not null,"
@@ -1556,30 +1558,25 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
 
 # fmt: off
 
-def test_workspace_context_selection_switching_and_session_isolation() -> None:
+@pytest.mark.owned_database
+def test_workspace_context_selection_switching_and_session_isolation(owned_database) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for workspace selection coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
     user_id, session_id, other_session = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     organizations = [uuid.uuid4() for _ in range(3)]
 
     def rpc(name: str, session: uuid.UUID, *args: object) -> dict[str, object]:
         claims = json.dumps({"sub": str(user_id), "session_id": str(session), "exp": 253402300798})
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("authenticated") as connection:
             connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,))
-            connection.execute("set role authenticated")
             row = connection.execute(f"select workspace_api.{name}({','.join(['%s'] * len(args))})", args).fetchone()  # noqa: E501, S608
             assert row is not None and isinstance(row[0], dict)
             return row[0]
 
     try:
         assert rpc("current_workspace", session_id) == {"status": "selection_required", "context_revision": 0}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.cursor().executemany(
                 "insert into workspace_private.organization(id,slug,display_name,disabled_at) values(%s,%s,%s,%s)",  # noqa: E501
                 [(organizations[0], f"active-{organizations[0].hex}", "Active", None),
@@ -1606,93 +1603,96 @@ def test_workspace_context_selection_switching_and_session_isolation() -> None:
         assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "same_state", "context_revision": 2}  # noqa: E501
         assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "conflict", "context_revision": 2}  # noqa: E501
         assert rpc("current_workspace", other_session) == {"status": "selection_required", "context_revision": 1}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute("update workspace_private.organization_membership set membership_revision=2 where organization_id=%s and user_id=%s", (organizations[0], user_id))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 2}
         assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "active", "context_revision": 3}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute("update workspace_private.organization set entitlement_revision=1 where id=%s", (organizations[0],))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 3}
         assert rpc("switch_workspace_context", session_id, organizations[0], 3) == {"status": "active", "context_revision": 4}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute("update workspace_private.organization set disabled_at=now() where id=%s", (organizations[0],))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 4}
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_context_owner")
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute("update workspace_private.workspace_context set fixed_expires_at='2000-01-01' where session_id=%s", (session_id,))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "expired", "context_revision": 4}
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_context_owner")
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute("update workspace_private.workspace_context set fixed_expires_at='2100-01-01',revoked_at=now() where session_id=%s", (session_id,))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "revoked", "context_revision": 4}
     finally:
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("delete from workspace_private.workspace_audit_event where user_id=%s", (user_id,))  # noqa: E501
+        # Forced-RLS organization/audit fixtures have no DELETE policy. Their UUID-scoped
+        # rows belong to this disposable database and disappear with its owned teardown.
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute("delete from workspace_private.workspace_context where user_id=%s", (user_id,))  # noqa: E501
-            connection.execute("delete from workspace_private.organization_membership where organization_id=any(%s)", (organizations,))  # noqa: E501
-            connection.execute("delete from workspace_private.organization where id=any(%s)", (organizations,))  # noqa: E501
 
 # fmt: on
 
 
 # fmt: off
-def test_authorized_official_operations_preserve_independent_section_scope_semantics() -> None:
+@pytest.mark.owned_database
+def test_authorized_official_operations_preserve_independent_section_scope_semantics(
+    owned_database,
+) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for authorized operation coverage")
-    params = conninfo_to_dict(database_dsn); params["user"] = "postgres"; params.pop("password", None)  # noqa: E501, E702
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
     user_id, election_id, category_id, exact_j, other_j, coarse_j, org_one, org_two, session_one, session_two = (uuid.uuid4() for _ in range(10))  # noqa: E501
     result_args = [election_id, category_id, "02", "027", None, None, None, "seccion"]
     comparison_args = [*result_args, election_id, category_id, "02", "028", None, None, None, "seccion"]  # noqa: E501
-    created_scopes: list[tuple[str, str]] = []
 
     def rpc(session_id: uuid.UUID, name: str, args: list[object]) -> dict[str, object]:
         assert name in {"official_result", "official_comparison", "official_reference"}
         claims = json.dumps({"sub": str(user_id), "session_id": str(session_id), "exp": 253402300798})  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,)); connection.execute("set role authenticated")  # noqa: E501, E702
+        with owned_database.owner_connection("authenticated") as connection:
+            connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,))  # noqa: E501, E702
             row = connection.execute(f"select workspace_api.{name}({','.join(['%s'] * len(args))})", args).fetchone()  # noqa: E501, S608
             assert row is not None and isinstance(row[0], dict); return row[0]  # noqa: E702
 
     try:
-        with psycopg.connect(admin_dsn) as connection:
+        with psycopg.connect(database_dsn) as connection:
             connection.execute("insert into election(id,year,round) values(%s,2098,%s)", (election_id, f"operations-{election_id.hex}")); connection.execute("insert into category(id,name) values(%s,%s)", (category_id, f"operations-{category_id.hex}"))  # noqa: E501, E702
             connection.cursor().executemany("insert into jurisdiction(id,distrito_code,seccion_code,seccion_name) values(%s,%s,%s,%s)", [(exact_j,"02","027","Exact"),(other_j,"02","028","Other"),(coarse_j,"02",None,None)])  # noqa: E501
             connection.cursor().executemany("insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index) values(%s,%s,%s,%s,%s,%s,%s,%s,%s)", [(election_id,exact_j,category_id,"distrito","A",1,"official","pba/2098-distrito-027",1),(election_id,exact_j,category_id,"distrito","A2",2,"official","pba/2098-distrito-027",2),(election_id,exact_j,category_id,"distrito","A",100,"fiscalizacion","fixture-fiscal",3),(election_id,other_j,category_id,"seccion","B",4,"official","national/2098",4)])  # noqa: E501
-            connection.execute("set role workspace_admin_owner"); connection.cursor().executemany("insert into workspace_private.organization(id,slug,display_name,entitlement_revision) values(%s,%s,%s,1)", [(org_one,f"operations-{org_one.hex}","Fixture One"),(org_two,f"operations-{org_two.hex}","Fixture Two")]); connection.cursor().executemany("insert into workspace_private.organization_membership(organization_id,user_id,membership_revision) values(%s,%s,1)", [(org_one,user_id),(org_two,user_id)])  # noqa: E501, E702
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
+            connection.cursor().executemany("insert into workspace_private.organization(id,slug,display_name,entitlement_revision) values(%s,%s,%s,1)", [(org_one,f"operations-{org_one.hex}","Fixture One"),(org_two,f"operations-{org_two.hex}","Fixture Two")]); connection.cursor().executemany("insert into workspace_private.organization_membership(organization_id,user_id,membership_revision) values(%s,%s,1)", [(org_one,user_id),(org_two,user_id)])  # noqa: E501, E702
             for scope in (("02","027"),("02","028")):
-                if connection.execute("insert into workspace_private.section_scope values(%s,%s) on conflict do nothing returning distrito_code", scope).fetchone(): created_scopes.append(scope)  # noqa: E501, E701
+                connection.execute("insert into workspace_private.section_scope values(%s,%s) on conflict do nothing", scope)  # noqa: E501, E701
             connection.cursor().executemany("insert into workspace_private.organization_section_entitlement(organization_id,distrito_code,seccion_code) values(%s,%s,%s)", [(org_one,"02","027"),(org_two,"02","028")])  # noqa: E501
-            connection.execute("set role workspace_context_owner"); connection.cursor().executemany("insert into workspace_private.workspace_context(session_id,user_id,organization_id,membership_revision,entitlement_revision,context_revision,fixed_expires_at) values(%s,%s,%s,1,1,1,'2100-01-01')", [(session_one,user_id,org_one),(session_two,user_id,org_two)])  # noqa: E501, E702
+        with owned_database.owner_connection("workspace_context_owner") as connection:
+            connection.cursor().executemany("insert into workspace_private.workspace_context(session_id,user_id,organization_id,membership_revision,entitlement_revision,context_revision,fixed_expires_at) values(%s,%s,%s,1,1,1,'2100-01-01')", [(session_one,user_id,org_one),(session_two,user_id,org_two)])  # noqa: E501, E702
         exact = rpc(session_one, "official_result", result_args)
         assert exact["total_votes"] == 3 and exact["source_granularity"] == "seccion" and len(exact["parties"]) == 2 and sorted(p["votes"] for p in exact["parties"]) == [1, 2]  # noqa: E501
         assert rpc(session_one, "official_result", [*result_args[:3], "028", *result_args[4:]])["authorization_status"] == "scope_denied"  # noqa: E501
         reference = rpc(session_one, "official_reference", result_args[:4]); assert reference["source_exclusions"] == [{"kind":"fiscalizacion","reason":"non_official_source","rows":1}] and "votes" not in json.dumps(reference["source_exclusions"])  # noqa: E501, E702
         denied = rpc(session_one, "official_comparison", comparison_args); assert denied == {"status":"authorization_denied","side":"right","authorization_status":"scope_denied","truncated":False} and "left" not in denied  # noqa: E501, E702
         opposite = rpc(session_two, "official_comparison", comparison_args); assert opposite["side"] == "left" and not ({"left", "right"} & opposite.keys())  # noqa: E501, E702
-        with psycopg.connect(admin_dsn) as connection:
+        with psycopg.connect(database_dsn) as connection:
             connection.execute("insert into result_row(election_id,jurisdiction_id,category_id,granularity,list_id,votes,source_kind,archive_entry_id,source_row_index) values(%s,%s,%s,'distrito','C',90,'official','national/2098-coarse',5)", (election_id,coarse_j,category_id))  # noqa: E501
         coarse = rpc(session_one, "official_result", result_args)
         assert coarse["status"] == "source_unavailable" and coarse["exclusions"] == [{"reason":"official_rows_without_section_identity"}] and coarse["truncated"] is False and not ({"total_votes", "parties", "rows", "votes"} & coarse.keys())  # noqa: E501
         unavailable = rpc(session_one, "official_comparison", [*result_args, *result_args]); assert unavailable == {"status":"operation_unavailable","side":"left","operation_status":"source_unavailable","truncated":False} and not ({"left", "right"} & unavailable.keys())  # noqa: E501, E702
     finally:
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("delete from workspace_private.workspace_context where session_id=any(%s)", ([session_one,session_two],)); connection.execute("delete from workspace_private.organization_section_entitlement where organization_id=any(%s)", ([org_one,org_two],)); connection.execute("delete from workspace_private.organization_membership where organization_id=any(%s)", ([org_one,org_two],)); connection.execute("delete from workspace_private.organization where id=any(%s)", ([org_one,org_two],)); connection.execute("delete from result_row where election_id=%s", (election_id,)); connection.execute("delete from jurisdiction where id=any(%s)", ([exact_j,other_j,coarse_j],)); connection.execute("delete from category where id=%s", (category_id,)); connection.execute("delete from election where id=%s", (election_id,)); connection.cursor().executemany("delete from workspace_private.section_scope where distrito_code=%s and seccion_code=%s", created_scopes)  # noqa: E501, E702
+        # Nondeletable organization/scope fixtures expire with this owned database.
+        with owned_database.owner_connection("workspace_context_owner") as connection:
+            connection.execute("delete from workspace_private.workspace_context where session_id=any(%s)", ([session_one,session_two],))  # noqa: E501
+        with psycopg.connect(database_dsn) as connection:
+            connection.execute("delete from result_row where election_id=%s", (election_id,))
+            connection.execute(
+                "delete from jurisdiction where id=any(%s)", ([exact_j,other_j,coarse_j],)
+            )
+            connection.execute("delete from category where id=%s", (category_id,))
+            connection.execute("delete from election where id=%s", (election_id,))
 # fmt: on
 
 
-def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
+@pytest.mark.owned_database
+def test_workspace_admin_transitions_acl_down_and_reapply(owned_database) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for workspace admin coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    admin_dsn = owned_database.dsn
+
     fixture_id = uuid.uuid4()
     actor = f"test:workspace-admin:{fixture_id}"
     slug = f"workspace-admin-{fixture_id.hex}"
@@ -1721,8 +1721,17 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
         "revoke_entitlement": ("select workspace_private.revoke_section_entitlement(%s,%s,%s,%s)"),
     }
     organization_id: uuid.UUID | None = None
+    concurrent_role = f"votus_workspace_concurrent_{uuid.uuid4().hex}"
+    concurrent_password = secrets.token_urlsafe(32)
+    concurrent_role_created = False
     original_review_context_level = _review_context_migration_level(admin_dsn)
     rolled_back_workspace_versions: list[str] = []
+    all_memberships_sql = (
+        "select roleid,member,grantor,admin_option,inherit_option,set_option "
+        "from pg_auth_members order by 1,2,3"
+    )
+    with owned_database.connect() as connection:
+        all_memberships_before = connection.execute(all_memberships_sql).fetchall()
 
     def roll_back_workspace(version: str) -> None:
         _apply_down_migration(admin_dsn, version)
@@ -1734,24 +1743,24 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             rolled_back_workspace_versions.pop()
 
     try:
-        with psycopg.connect(admin_dsn) as connection:
+        with psycopg.connect(database_dsn) as connection:
             connection.execute(
                 "insert into public.jurisdiction(id,distrito_code,seccion_code) values(%s,%s,%s)",
                 (fixture_id, distrito_code, seccion_code),
             )
-            connection.execute("set role workspace_platform_admin")
+        with owned_database.owner_connection("workspace_platform_admin") as connection:
             created = connection.execute(
                 statements["create"], (slug, display_name, actor)
             ).fetchone()
             assert created is not None and created[0]["changed"] is True
             organization_id = uuid.UUID(created[0]["organization_id"])
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute(
                 "insert into workspace_private.organization_membership(organization_id,user_id) "
                 "values(%s,%s)",
                 (organization_id, context_user_id),
             )
-            connection.execute("set role workspace_context_owner")
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             context_base = (context_user_id, organization_id, 1, 0, 1)
             connection.cursor().executemany(
                 "insert into workspace_private.workspace_context(id,session_id,user_id,"
@@ -1768,24 +1777,28 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
 
         def invalidate(payload):
             encoded = payload if isinstance(payload, str) else json.dumps(payload)
-            with psycopg.connect(admin_dsn) as rpc:
+            with owned_database.owner_connection("authenticated") as rpc:
                 rpc.execute("select set_config('request.jwt.claims',%s,false)", (encoded,))
-                rpc.execute("set role authenticated")
                 row = rpc.execute("select workspace_api.invalidate_workspace_context()").fetchone()
                 assert row is not None
                 return row[0]
 
         assert invalidate(claims(uuid.uuid4())) == {"invalidated": False}
         assert invalidate(claims(context_sessions[0])) == {"invalidated": True}
-        with psycopg.connect(admin_dsn) as connection:
-            assert connection.execute(
+        with owned_database.owner_connection("workspace_context_owner") as connection:
+            context_state = connection.execute(
                 "select (select revoked_at is not null "
                 "from workspace_private.workspace_context where id=%s),"
-                "(select revoked_at is null from workspace_private.workspace_context where id=%s),"
-                "(select count(*) from workspace_private.workspace_audit_event where context_id=%s "
-                "and session_id=%s and action='context_invalidated' and reason_code='logout')",
-                (context_ids[0], context_ids[1], context_ids[0], context_sessions[0]),
-            ).fetchone() == (True, True, 1)
+                "(select revoked_at is null from workspace_private.workspace_context where id=%s)",
+                (context_ids[0], context_ids[1]),
+            ).fetchone()
+        with owned_database.owner_connection("workspace_audit_owner") as connection:
+            audit_state = connection.execute(
+                "select count(*) from workspace_private.workspace_audit_event where context_id=%s "
+                "and session_id=%s and action='context_invalidated' and reason_code='logout'",
+                (context_ids[0], context_sessions[0]),
+            ).fetchone()
+        assert (*context_state, *audit_state) == (True, True, 1)
         assert invalidate(claims(context_sessions[0])) == {"invalidated": False}
         failures = (
             (claims(context_sessions[1], uuid.uuid4()), "VOT03"),
@@ -1798,11 +1811,34 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             assert error.value.sqlstate == sqlstate
         assert invalidate(claims(context_sessions[1])) == {"invalidated": True}
 
+        # Commit only the temporary subject's SET capability before either worker.
+        # Transaction-local GRANT bridges hold role-catalog locks until commit and
+        # would serialize setup ahead of the barrier instead of exercising concurrency.
+        with owned_database.connect() as connection:
+            connection.execute(
+                sql.SQL(
+                    "create role {} login noinherit nosuperuser nocreatedb "
+                    "nocreaterole noreplication nobypassrls password {}"
+                ).format(sql.Identifier(concurrent_role), sql.Literal(concurrent_password))
+            )
+            connection.execute(
+                sql.SQL("grant workspace_platform_admin to {} with inherit false, set true").format(
+                    sql.Identifier(concurrent_role)
+                )
+            )
+        concurrent_role_created = True
+        concurrent_dsn = make_conninfo(
+            owned_database.dsn, user=concurrent_role, password=concurrent_password
+        )
         barrier = Barrier(2)
 
         def register_concurrently() -> bool:
-            with psycopg.connect(admin_dsn) as connection:
-                connection.execute("set role workspace_platform_admin")
+            with psycopg.connect(concurrent_dsn) as connection:
+                connection.execute("set local role workspace_platform_admin")
+                assert connection.execute("select session_user,current_user").fetchone() == (
+                    concurrent_role,
+                    "workspace_platform_admin",
+                )
                 barrier.wait(timeout=10)
                 row = connection.execute(
                     statements["register_scope"],
@@ -1815,15 +1851,14 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             futures = [executor.submit(register_concurrently) for _ in range(2)]
             assert sorted(future.result() for future in futures) == [False, True]
 
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_platform_admin")
-
-            def call(name: str, *args: object) -> dict[str, object]:
+        def call(name: str, *args: object) -> dict[str, object]:
+            with owned_database.owner_connection("workspace_platform_admin") as connection:
                 row = connection.execute(statements[name], args).fetchone()
                 assert row is not None and isinstance(row[0], dict)
                 return row[0]
 
-            def audit_count() -> int:
+        def audit_count() -> int:
+            with owned_database.owner_connection("workspace_audit_owner") as connection:
                 row = connection.execute(
                     "select count(*) from workspace_private.workspace_audit_event "
                     "where actor_ref=%s",
@@ -1832,68 +1867,67 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 assert row is not None
                 return row[0]
 
-            def no_op(name: str, *args: object) -> dict[str, object]:
-                connection.execute("reset role")
-                before = audit_count()
-                connection.execute("set role workspace_platform_admin")
-                result = call(name, *args)
-                connection.execute("reset role")
-                after = audit_count()
-                connection.execute("set role workspace_platform_admin")
-                assert result["changed"] is False and after == before
-                return result
+        def no_op(name: str, *args: object) -> dict[str, object]:
+            before = audit_count()
+            result = call(name, *args)
+            after = audit_count()
+            assert result["changed"] is False and after == before
+            return result
 
-            def denied(name: str, *args: object) -> None:
-                with pytest.raises(psycopg.Error):
-                    with connection.transaction():
-                        call(name, *args)
+        def denied(name: str, *args: object) -> None:
+            with owned_database.owner_connection("workspace_platform_admin") as connection:
+                assert connection.execute("select current_user").fetchone() == (
+                    "workspace_platform_admin",
+                )
+                with pytest.raises(psycopg.Error), connection.transaction():
+                    connection.execute(statements[name], args)
 
-            denied("create", slug, f"{display_name} duplicate", actor)
-            denied("create", f"{slug}-duplicate", display_name, actor)
-            denied("disable", uuid.uuid4(), actor)
-            denied("revoke_membership", organization_id, uuid.uuid4(), actor)
-            denied("register_scope", "8", seccion_code, actor)
-            denied("register_scope", "99", "999", actor)
-            denied("revoke_entitlement", organization_id, distrito_code, seccion_code, actor)
+        denied("create", slug, f"{display_name} duplicate", actor)
+        denied("create", f"{slug}-duplicate", display_name, actor)
+        denied("disable", uuid.uuid4(), actor)
+        denied("revoke_membership", organization_id, uuid.uuid4(), actor)
+        denied("register_scope", "8", seccion_code, actor)
+        denied("register_scope", "99", "999", actor)
+        denied("revoke_entitlement", organization_id, distrito_code, seccion_code, actor)
 
-            membership = call("grant_membership", organization_id, user_id, actor)
-            assert membership["membership_revision"] == 1
-            assert no_op("grant_membership", organization_id, user_id, actor) == {
-                **membership,
-                "changed": False,
-            }
-            membership = call("revoke_membership", organization_id, user_id, actor)
-            assert membership["membership_revision"] == 2
-            assert no_op("revoke_membership", organization_id, user_id, actor) == {
-                **membership,
-                "changed": False,
-            }
-            entitlement = call(
-                "grant_entitlement", organization_id, distrito_code, seccion_code, actor
-            )
-            assert entitlement["entitlement_revision"] == 1
-            assert entitlement["organization_revision"] == 1
-            assert no_op(
-                "grant_entitlement", organization_id, distrito_code, seccion_code, actor
-            ) == {**entitlement, "changed": False}
-            entitlement = call(
-                "revoke_entitlement", organization_id, distrito_code, seccion_code, actor
-            )
-            assert entitlement["entitlement_revision"] == 2
-            assert entitlement["organization_revision"] == 2
-            assert no_op(
-                "revoke_entitlement", organization_id, distrito_code, seccion_code, actor
-            ) == {**entitlement, "changed": False}
-            disabled = call("disable", organization_id, actor)
-            assert disabled["changed"] is True
-            assert no_op("disable", organization_id, actor) == {
-                **disabled,
-                "changed": False,
-                "status": "already_disabled",
-            }
-            denied("grant_membership", organization_id, uuid.uuid4(), actor)
-            denied("grant_entitlement", organization_id, distrito_code, seccion_code, actor)
-            connection.execute("reset role")
+        membership = call("grant_membership", organization_id, user_id, actor)
+        assert membership["membership_revision"] == 1
+        assert no_op("grant_membership", organization_id, user_id, actor) == {
+            **membership,
+            "changed": False,
+        }
+        membership = call("revoke_membership", organization_id, user_id, actor)
+        assert membership["membership_revision"] == 2
+        assert no_op("revoke_membership", organization_id, user_id, actor) == {
+            **membership,
+            "changed": False,
+        }
+        entitlement = call("grant_entitlement", organization_id, distrito_code, seccion_code, actor)
+        assert entitlement["entitlement_revision"] == 1
+        assert entitlement["organization_revision"] == 1
+        assert no_op("grant_entitlement", organization_id, distrito_code, seccion_code, actor) == {
+            **entitlement,
+            "changed": False,
+        }
+        entitlement = call(
+            "revoke_entitlement", organization_id, distrito_code, seccion_code, actor
+        )
+        assert entitlement["entitlement_revision"] == 2
+        assert entitlement["organization_revision"] == 2
+        assert no_op("revoke_entitlement", organization_id, distrito_code, seccion_code, actor) == {
+            **entitlement,
+            "changed": False,
+        }
+        disabled = call("disable", organization_id, actor)
+        assert disabled["changed"] is True
+        assert no_op("disable", organization_id, actor) == {
+            **disabled,
+            "changed": False,
+            "status": "already_disabled",
+        }
+        denied("grant_membership", organization_id, uuid.uuid4(), actor)
+        denied("grant_entitlement", organization_id, distrito_code, seccion_code, actor)
+        with owned_database.owner_connection("workspace_audit_owner") as connection:
             audit = connection.execute(
                 "select count(*),array_agg(action order by action),"
                 "bool_and(actor_kind='platform_operator' and reason_code='operator_request') "
@@ -1913,11 +1947,13 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 ],
                 True,
             )
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             assert connection.execute(
                 "select count(*) from workspace_private.section_scope "
                 "where distrito_code=%s and seccion_code=%s",
                 (distrito_code, seccion_code),
             ).fetchone() == (1,)
+        with owned_database.connect() as connection:
             for signature in signatures:
                 assert connection.execute(
                     "select has_function_privilege('workspace_platform_admin',%s,'EXECUTE'),"
@@ -1930,6 +1966,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "has_function_privilege('workspace_platform_admin',"
                 "'workspace_private.append_audit_event(text,uuid,text,text,jsonb)','EXECUTE')"
             ).fetchone() == (True, False)
+        with owned_database.owner_connection("workspace_platform_admin") as connection:
             facts_before = connection.execute(
                 "select workspace_private.authorization_facts_status()"
             ).fetchone()
@@ -1942,38 +1979,33 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             "workspace_query_owner",
             "workspace_platform_admin",
         ):
-            with psycopg.connect(admin_dsn) as connection:
+            with owned_database.owner_connection(role) as connection:
+                assert connection.execute("select current_user").fetchone() == (role,)
                 with pytest.raises(psycopg.errors.InsufficientPrivilege):
                     with connection.transaction():
-                        connection.execute(
-                            sql.SQL("set local role {}").format(sql.Identifier(role))
-                        )
                         connection.execute(
                             "insert into workspace_private.organization(slug,display_name) "
                             "values('direct-dml','Direct DML')"
                         )
 
         membership_sql = (
-            "select granted.rolname,member.rolname,m.admin_option,m.inherit_option,m.set_option "
+            "select granted.rolname,member.rolname,m.grantor,"
+            "m.admin_option,m.inherit_option,m.set_option "
             "from pg_auth_members m join pg_roles granted on granted.oid=m.roleid "
             "join pg_roles member on member.oid=m.member "
             "where granted.rolname in "
             "('workspace_admin_owner','workspace_audit_owner','workspace_query_owner') "
-            "and member.rolname=current_user order by granted.rolname"
+            "and member.rolname=current_user order by granted.rolname,m.grantor"
         )
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             role_edges_before = connection.execute(membership_sql).fetchall()
-        assert [(row[0], *row[2:]) for row in role_edges_before] in (
-            [],
-            [
-                ("workspace_admin_owner", True, False, False),
-                ("workspace_audit_owner", True, False, False),
-            ],
-        )
+        # Non-superuser creators retain bootstrap-granted ADMIN-only edges for
+        # every created owner, including query_owner. They confer no INHERIT/SET.
+        assert all(row[3:] == (True, False, False) for row in role_edges_before)
         _set_latest_review_context_level(admin_dsn, 0)
         roll_back_workspace(CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION)
         roll_back_workspace(AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert connection.execute(
                 "select has_table_privilege("
                 "'workspace_query_owner','public.party_mapping','SELECT'),"
@@ -1998,13 +2030,14 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             WORKSPACE_CONTEXT_MIGRATION_VERSION,
         ):
             roll_back_workspace(version)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert connection.execute(
                 "select to_regprocedure('workspace_api.invalidate_workspace_context()') is null,"
                 "to_regclass('workspace_private.workspace_context') is null,"
                 "to_regprocedure('workspace_private.create_organization"
                 "(text,text,text,text)') is not null"
             ).fetchone() == (True, True, True)
+        with owned_database.owner_connection("workspace_platform_admin") as connection:
             assert (
                 connection.execute(
                     "select workspace_private.authorization_facts_status()"
@@ -2012,7 +2045,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 == facts_before
             )
         roll_back_workspace(WORKSPACE_ADMIN_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             policies = connection.execute(
                 "select array_agg(policyname order by policyname) from pg_policies "
                 "where schemaname='workspace_private'"
@@ -2030,7 +2063,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "is not null,to_regprocedure('workspace_private.create_organization"
                 "(text,text,text,text)') is null"
             ).fetchone() == (True, True)
-            connection.execute("set role workspace_platform_admin")
+        with owned_database.owner_connection("workspace_platform_admin") as connection:
             assert (
                 connection.execute(
                     "select workspace_private.authorization_facts_status()"
@@ -2038,7 +2071,7 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 == facts_before
             )
         restore_workspace()
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert connection.execute(membership_sql).fetchall() == role_edges_before
             assert connection.execute(
                 "select lower(pg_get_functiondef("
@@ -2068,9 +2101,17 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
                 "to_regprocedure('workspace_api.invalidate_workspace_context()') is not null"
             ).fetchone() == (True, True)
     finally:
+        if concurrent_role_created:
+            with owned_database.connect() as connection:
+                connection.execute(
+                    sql.SQL("revoke workspace_platform_admin from {}").format(
+                        sql.Identifier(concurrent_role)
+                    )
+                )
+                connection.execute(sql.SQL("drop role {}").format(sql.Identifier(concurrent_role)))
         restore_workspace()
         _set_latest_review_context_level(admin_dsn, original_review_context_level)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             admin_installed, context_installed, selection_installed, lookup_installed = (
                 connection.execute(
                     "select to_regprocedure('workspace_private.create_organization"
@@ -2096,59 +2137,31 @@ def test_workspace_admin_transitions_acl_down_and_reapply() -> None:
             _apply_migration(admin_dsn, WORKSPACE_SELECTION_MIGRATION_VERSION)
         if not lookup_installed:
             _apply_migration(admin_dsn, AUTHORIZED_SCHOOL_PARTY_LOOKUP_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute(
-                "with removed as (delete from workspace_private.workspace_audit_event "
-                "where user_id=%s and action='context_invalidated') "
                 "delete from workspace_private.workspace_context where user_id=%s",
-                (context_user_id, context_user_id),
+                (context_user_id,),
             )
-            connection.execute(
-                "delete from workspace_private.workspace_audit_event where actor_ref=%s",
-                (actor,),
-            )
-            if organization_id is not None:
-                connection.execute(
-                    "delete from workspace_private.organization_section_entitlement "
-                    "where organization_id=%s",
-                    (organization_id,),
-                )
-                connection.execute(
-                    "delete from workspace_private.organization_membership "
-                    "where organization_id=%s",
-                    (organization_id,),
-                )
-                connection.execute(
-                    "delete from workspace_private.organization where id=%s",
-                    (organization_id,),
-                )
-            connection.execute(
-                "delete from workspace_private.section_scope where distrito_code=%s "
-                "and seccion_code=%s",
-                (distrito_code, seccion_code),
-            )
-            connection.execute("delete from public.jurisdiction where id=%s", (fixture_id,))
+        # Organization, audit and scope rows intentionally have no DELETE policy;
+        # their UUID-scoped fixtures disappear with the owned database, not relaxed RLS.
+        with owned_database.connect() as connection:
+            assert connection.execute(all_memberships_sql).fetchall() == all_memberships_before
 
 
-def test_authorized_review_facade_filters_platform_and_other_section_rows() -> None:
+@pytest.mark.owned_database
+def test_authorized_review_facade_filters_platform_and_other_section_rows(owned_database) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for authorized review coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})  # noqa: E501, E702
     user_id, org, empty_org, session, empty_session = (uuid.uuid4() for _ in range(5))
     prefix = f"review-{uuid.uuid4().hex}"
-    created_scopes: list[tuple[str, str]] = []  # noqa: E501, E702
 
     def rpc(session_id: uuid.UUID, limit: int = 50, offset: int = 0) -> dict[str, object]:
         claims = json.dumps(
             {"sub": str(user_id), "session_id": str(session_id), "exp": 253402300798}
         )
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("authenticated") as connection:
             connection.execute("select set_config('request.jwt.claims',%s,true)", (claims,))
-            connection.execute("set local role authenticated")
             row = connection.execute(
                 "select workspace_api.review_items(%s::integer,%s::integer)", (limit, offset)
             ).fetchone()
@@ -2156,9 +2169,8 @@ def test_authorized_review_facade_filters_platform_and_other_section_rows() -> N
             return row[0]
 
     try:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             assert connection.info.server_version >= 170000
-            connection.execute("set role workspace_admin_owner")
             connection.cursor().executemany(
                 "insert into workspace_private.organization(id,slug,display_name,entitlement_revision) values(%s,%s,%s,1)",  # noqa: E501
                 [
@@ -2171,22 +2183,20 @@ def test_authorized_review_facade_filters_platform_and_other_section_rows() -> N
                 [(org, user_id), (empty_org, user_id)],
             )
             for scope in (("02", "027"), ("02", "028")):
-                inserted = connection.execute(
+                connection.execute(
                     "insert into workspace_private.section_scope values(%s,%s) on conflict do nothing returning distrito_code",  # noqa: E501
                     scope,
-                ).fetchone()
-                if inserted:
-                    created_scopes.append(scope)
+                )
             connection.execute(
                 "insert into workspace_private.organization_section_entitlement(organization_id,distrito_code,seccion_code) values(%s,'02','027')",  # noqa: E501
                 (org,),
             )
-            connection.execute("set role workspace_context_owner")
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.cursor().executemany(
                 "insert into workspace_private.workspace_context(session_id,user_id,organization_id,membership_revision,entitlement_revision,context_revision,fixed_expires_at) values(%s,%s,%s,1,1,1,'2100-01-01')",  # noqa: E501
                 [(session, user_id, org), (empty_session, user_id, empty_org)],
             )
-            connection.execute("set role etl_writer")
+        with psycopg.connect(database_dsn) as connection:
             connection.execute(
                 "select workspace_private.record_review_item('content_drift','warning',%s,null,array[]::text[],array[]::text[])",  # noqa: E501
                 (prefix + "-platform",),
@@ -2231,45 +2241,32 @@ def test_authorized_review_facade_filters_platform_and_other_section_rows() -> N
             and denied["total"] == 0
         )  # noqa: E501, E702
     finally:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute(
                 "delete from workspace_private.workspace_context where session_id=any(%s)",
                 ([session, empty_session],),
             )
-            connection.execute(
-                "delete from workspace_private.organization_section_entitlement where organization_id=%s",  # noqa: E501
-                (org,),
-            )
-            connection.execute(
-                "delete from workspace_private.organization_membership where organization_id=any(%s)",  # noqa: E501
-                ([org, empty_org],),
-            )
-            connection.execute(
-                "delete from workspace_private.organization where id=any(%s)",
-                ([org, empty_org],),
-            )
+        with psycopg.connect(database_dsn) as connection:
             connection.execute("delete from review_item where subject_ref like %s", (prefix + "%",))
-            connection.cursor().executemany(
-                "delete from workspace_private.section_scope where distrito_code=%s and seccion_code=%s",  # noqa: E501
-                created_scopes,
-            )
+        # Organization, membership and scope fixtures are removed by owned DROP DATABASE.
 
 
-def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> None:
+@pytest.mark.owned_database
+def test_review_item_context_foundation_runs_as_supabase_temporary_login(
+    owned_database,
+    owned_migration_runner,
+) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for Supabase migration-runner coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
-    runner_role = f"votus_supabase_cli_{uuid.uuid4().hex}"
+    admin_dsn = owned_database.dsn
+    runner_dsn = owned_migration_runner
+    runner_role = conninfo_to_dict(runner_dsn)["user"]
     bridge_role = "workspace_review_context_foundation_migrator"
     original_review_context_level = _review_context_migration_level(admin_dsn)
-    runner_created = False
 
     def authority_snapshot() -> tuple[str | None, list[tuple[object, ...]]]:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             schema_acl = connection.execute(
                 "select nspacl::text from pg_namespace where nspname='workspace_private'"
             ).fetchone()
@@ -2285,7 +2282,7 @@ def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> No
         return schema_acl[0], memberships
 
     def assert_no_foundation_state() -> None:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert connection.execute(
                 "select to_regclass('workspace_private.review_item_context'),"
                 "to_regprocedure('workspace_private.create_unknown_review_item_context()'),"
@@ -2295,39 +2292,31 @@ def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> No
             ).fetchone() == (None, None, False, None)
 
     def apply_as_supabase_runner(*, down: bool = False) -> None:
-        runner_params = conninfo_to_dict(admin_dsn)
-        runner_params["user"] = runner_role
-        runner_dsn = make_conninfo(**{key: str(value) for key, value in runner_params.items()})
         migration = _validated_migration_path(
             REVIEW_ITEM_CONTEXT_MIGRATION_VERSION, down=down
         ).read_bytes()
         with psycopg.connect(runner_dsn, autocommit=True) as connection:
             connection.execute("set role postgres")
+            assert connection.execute("select session_user,current_user").fetchone() == (
+                runner_role,
+                "postgres",
+            )
             connection.execute(migration)
 
     try:
         _set_latest_review_context_level(admin_dsn, 0)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert connection.execute(
                 "select pg_get_userbyid(nspowner),"
                 "has_schema_privilege('workspace_review_ingest_owner',oid,'CREATE') "
                 "from pg_namespace where nspname='workspace_private'"
             ).fetchone() == ("postgres", False)
-            connection.execute(
-                sql.SQL("create role {} login noinherit").format(sql.Identifier(runner_role))
-            )
-            connection.execute(
-                sql.SQL("grant postgres to {} with inherit false, set true").format(
-                    sql.Identifier(runner_role)
-                )
-            )
             assert connection.execute(
                 "select r.rolcanlogin,r.rolinherit,m.admin_option,m.inherit_option,m.set_option "
                 "from pg_roles r join pg_auth_members m on m.member=r.oid "
                 "where r.rolname=%s and m.roleid='postgres'::regrole",
                 (runner_role,),
             ).fetchone() == (True, False, False, False, True)
-        runner_created = True
         baseline_authority = authority_snapshot()
 
         try:
@@ -2337,7 +2326,7 @@ def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> No
             assert authority_snapshot() == baseline_authority
             raise
 
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert connection.execute(
                 "select to_regclass('workspace_private.review_item_context') is not null,"
                 "to_regrole(%s) is null",
@@ -2349,26 +2338,20 @@ def test_review_item_context_foundation_runs_as_supabase_temporary_login() -> No
         assert_no_foundation_state()
         assert authority_snapshot() == baseline_authority
     finally:
-        try:
-            if runner_created:
-                with psycopg.connect(admin_dsn) as connection:
-                    connection.execute(
-                        sql.SQL("revoke postgres from {}").format(sql.Identifier(runner_role))
-                    )
-                    connection.execute(sql.SQL("drop role {}").format(sql.Identifier(runner_role)))
-        finally:
-            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+        _set_latest_review_context_level(admin_dsn, original_review_context_level)
 
 
-def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -> None:
+@pytest.mark.owned_database
+def test_remaining_review_context_migrations_run_as_supabase_temporary_login(
+    owned_database,
+    owned_migration_runner,
+) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for Supabase migration-runner coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
-    runner_role = f"votus_supabase_cli_{uuid.uuid4().hex}"
+    admin_dsn = owned_database.dsn
+    runner_dsn = owned_migration_runner
+    runner_role = conninfo_to_dict(runner_dsn)["user"]
     remaining_versions = LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS[1:]
     context_policies = {
         "workspace_review_ingest_owner_context_archive_select",
@@ -2381,10 +2364,9 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -
     }
     all_policies = sorted(context_policies | breakdown_policies)
     original_review_context_level = _review_context_migration_level(admin_dsn)
-    runner_created = False
 
     def stable_authority_snapshot() -> tuple[str | None, list[tuple[object, ...]]]:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             schema_acl = connection.execute(
                 "select nspacl::text from pg_namespace where nspname='workspace_private'"
             ).fetchone()
@@ -2400,7 +2382,7 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -
         return schema_acl[0], memberships
 
     def table_acl_snapshot() -> list[tuple[str, str | None]]:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             return connection.execute(
                 "select relname,relacl::text from pg_class "
                 "where oid=any(array['public.election'::regclass,'public.category'::regclass,"
@@ -2420,7 +2402,7 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -
             5: (False, True, False),
             6: (False, True, True),
         }[level]
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             authority = connection.execute(
                 "select to_regrole('workspace_review_context_migrator'),"
                 "to_regrole('workspace_review_breakdown_migrator'),"
@@ -2455,23 +2437,10 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -
         _set_latest_review_context_level(admin_dsn, 0)
         _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
         assert _review_context_migration_level(admin_dsn) == 1
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute(
-                sql.SQL("create role {} login noinherit").format(sql.Identifier(runner_role))
-            )
-            connection.execute(
-                sql.SQL("grant postgres to {} with inherit false, set true").format(
-                    sql.Identifier(runner_role)
-                )
-            )
-        runner_created = True
         stable_authority = stable_authority_snapshot()
         baseline_table_acls = table_acl_snapshot()
         assert_level_state(1, stable_authority)
 
-        runner_params = conninfo_to_dict(admin_dsn)
-        runner_params["user"] = runner_role
-        runner_dsn = make_conninfo(**{key: str(value) for key, value in runner_params.items()})
         forward_levels: list[int] = []
         down_levels: list[int] = []
         with psycopg.connect(runner_dsn, autocommit=True) as connection:
@@ -2501,31 +2470,31 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login() -
         assert down_levels == [5, 4, 3, 2, 1]
         assert table_acl_snapshot() == baseline_table_acls
     finally:
-        try:
-            if runner_created:
-                with psycopg.connect(admin_dsn) as connection:
-                    connection.execute(
-                        sql.SQL("revoke postgres from {}").format(sql.Identifier(runner_role))
-                    )
-                    connection.execute(sql.SQL("drop role {}").format(sql.Identifier(runner_role)))
-        finally:
-            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+        _set_latest_review_context_level(admin_dsn, original_review_context_level)
 
 
-def test_review_item_context_unknown_foundation_is_reachable_and_reversible() -> None:
+@pytest.mark.owned_database
+def test_review_item_context_unknown_foundation_is_reachable_and_reversible(owned_database) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for review context migration coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    admin_dsn = owned_database.dsn
+
+    def set_role(role: str) -> None:
+        connection.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        assert _fetchone(connection, "select current_user") == (role,)
+
     prefix = f"review-context-{uuid.uuid4().hex}"
     backfill_ids = [uuid.uuid4(), uuid.uuid4()]
     direct_id, cascade_id = uuid.uuid4(), uuid.uuid4()
     context_version = REVIEW_ITEM_CONTEXT_MIGRATION_VERSION
     original_review_context_level = _review_context_migration_level(admin_dsn)
-    membership_sql = "select admin_option,inherit_option,set_option from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user)"  # noqa: E501
+    membership_sql = "select admin_option,inherit_option,set_option from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user) and grantor=(select oid from pg_roles where rolname=current_user)"  # noqa: E501
+    # PostgreSQL 17 keeps distinct bootstrap and self-granted membership edges.
+    membership_snapshot_sql = (
+        "select roleid,member,grantor,admin_option,inherit_option,set_option "
+        "from pg_auth_members order by roleid,member,grantor"
+    )
     record_signature = "workspace_private.record_review_item(text,text,text,text,text[],text[])"
     facade_signature = "workspace_api.review_items(integer,integer)"
 
@@ -2546,12 +2515,13 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
         "select workspace_private.record_review_item('content_drift','warning',%s,null,"
         "array[]::text[],array[]::text[])"
     )
-    with psycopg.connect(admin_dsn) as connection:
+    with owned_database.connect() as connection:
         original_membership = _fetchone(connection, membership_sql)
+        original_memberships = connection.execute(membership_snapshot_sql).fetchall()
     try:
         _set_latest_review_context_level(admin_dsn, 0)
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("grant workspace_review_ingest_owner to current_user with admin false,inherit true,set false")  # fmt: skip  # noqa: E501
+        with owned_database.connect() as connection:
+            connection.execute("grant workspace_review_ingest_owner to current_user with admin false,inherit true,set false granted by current_user")  # fmt: skip  # noqa: E501
             before_definitions = protected_definitions(connection)
             connection.cursor().executemany(
                 "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) "
@@ -2565,8 +2535,10 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
             assert total_row is not None
             total = total_row[0]
         _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
+            set_role(owned_database.maintenance_user)
             assert _fetchone(connection, membership_sql) == (False, True, False)
+            set_role("workspace_review_ingest_owner")
             assert connection.execute(
                 "select column_name,data_type from information_schema.columns "
                 "where table_schema='workspace_private' and table_name='review_item_context' "
@@ -2602,29 +2574,33 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                 "and tgname='review_item_context_after_insert') "
                 "from pg_class where oid='workspace_private.review_item_context'::regclass"
             ).fetchone() == (True, True, 1, True)
+            set_role(owned_database.maintenance_user)
             assert protected_definitions(connection) == before_definitions
             connection.cursor().executemany(
                 "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) "
                 "values(%s,'content_drift','warning',%s,'platform_only')",
                 [(direct_id, prefix + "-direct"), (cascade_id, prefix + "-cascade")],
             )
+            set_role("workspace_review_ingest_owner")
             assert connection.execute(
                 "select count(*) from workspace_private.review_item_context "
                 "where review_item_id=any(%s) and context_state='unknown' "
                 "and unknown_reason='writer_context_not_provided'",
                 ([direct_id, cascade_id],),
             ).fetchone() == (2,)
+            set_role(owned_database.maintenance_user)
             connection.execute("delete from public.review_item where id=%s", (cascade_id,))
+            set_role("workspace_review_ingest_owner")
             assert connection.execute(
                 "select count(*) from workspace_private.review_item_context "
                 "where review_item_id=%s",
                 (cascade_id,),
             ).fetchone() == (0,)
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             record_args = (prefix + "-record",)
             for expected in (True, False):
                 assert connection.execute(record_sql, record_args).fetchone() == (expected,)
-            connection.execute("reset role")
+            set_role("workspace_review_ingest_owner")
             assert connection.execute(
                 "select count(*),count(c.context_id),min(c.unknown_reason) "
                 "from public.review_item r join workspace_private.review_item_context c "
@@ -2646,7 +2622,7 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
             "anon authenticated service_role etl_writer workspace_query_owner "
             "workspace_admin_owner workspace_platform_admin"
         ).split():
-            with psycopg.connect(admin_dsn) as connection:
+            with owned_database.connect() as connection:
                 if connection.execute("select to_regrole(%s)", (role,)).fetchone() == (None,):
                     continue
                 assert connection.execute(
@@ -2654,14 +2630,12 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                     "'SELECT,INSERT,UPDATE,DELETE')",
                     (role,),
                 ).fetchone() == (True,)
+            with owned_database.owner_connection(role) as connection:
                 with pytest.raises(psycopg.errors.InsufficientPrivilege):
                     with connection.transaction():
-                        connection.execute(
-                            sql.SQL("set local role {}").format(sql.Identifier(role))
-                        )
                         connection.execute(context_insert_sql, (direct_id,))
         down_sql = _validated_migration_path(context_version, down=True).read_bytes()
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             with pytest.raises(psycopg.errors.CheckViolation, match="unexpected state or reason"):
                 with connection.transaction():
                     connection.execute(
@@ -2674,9 +2648,10 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                         "unknown_reason='future_reason' where review_item_id=%s",
                         (direct_id,),
                     )
+                    set_role(owned_database.maintenance_user)
                     connection.execute(down_sql)
         _apply_down_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert _fetchone(connection, membership_sql) == (False, True, False)
             assert connection.execute(
                 "select to_regclass('workspace_private.review_item_context'),"
@@ -2692,7 +2667,7 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
                     "select kind,severity from public.review_item where id=%s", (item_id,)
                 ).fetchone() == (kind, "warning")
         _apply_migration(admin_dsn, REVIEW_ITEM_CONTEXT_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             assert connection.execute(
                 "select count(*),count(distinct c.review_item_id) from public.review_item r "
                 "join workspace_private.review_item_context c on c.review_item_id=r.id "
@@ -2701,33 +2676,53 @@ def test_review_item_context_unknown_foundation_is_reachable_and_reversible() ->
             ).fetchone() == (4, 4)
     finally:
         try:
-            with psycopg.connect(admin_dsn) as connection:
+            with owned_database.connect() as connection:
                 connection.execute(
                     "delete from public.review_item where subject_ref like %s", (prefix + "%",)
                 )
                 if original_membership is None:
-                    connection.execute("revoke workspace_review_ingest_owner from current_user")
+                    connection.execute(
+                        "revoke workspace_review_ingest_owner from current_user "
+                        "granted by current_user"
+                    )
                 else:
-                    connection.execute("grant workspace_review_ingest_owner to current_user with admin {},inherit {},set {}".format(*map(str.lower, map(str, original_membership))))  # fmt: skip  # noqa: E501
+                    connection.execute("grant workspace_review_ingest_owner to current_user with admin {},inherit {},set {} granted by current_user".format(*map(str.lower, map(str, original_membership))))  # fmt: skip  # noqa: E501
         finally:
-            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+            try:
+                _set_latest_review_context_level(admin_dsn, original_review_context_level)
+            finally:
+                with owned_database.connect() as connection:
+                    assert (
+                        connection.execute(membership_snapshot_sql).fetchall()
+                        == original_memberships
+                    )
 
 
-def test_historical_review_contexts_are_classified_by_kind_without_parsing_subject_ref() -> None:
+@pytest.mark.owned_database
+def test_historical_review_contexts_are_classified_by_kind_without_parsing_subject_ref(
+    owned_database,
+) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for review context migration coverage")
-    params = conninfo_to_dict(database_dsn)
-    params.update(user="postgres")
-    params.pop("password", None)  # noqa: E501, E702
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
+    admin_dsn = owned_database.dsn
+
+    def set_role(role: str) -> None:
+        connection.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        assert _fetchone(connection, "select current_user") == (role,)
+
     version = REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION
     prefix = f"classified-context-{uuid.uuid4().hex}"
     archive_id = prefix + "-archive"
     kinds = "blank_vote_cell duplicate_collapsed mesa_absent_from_official_import mesa_discontinuity mesa_tally_divergence content_drift".split()  # noqa: E501
     ids, direct_id = [uuid.uuid4() for _ in kinds], uuid.uuid4()
-    membership_sql = "select admin_option,inherit_option,set_option from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user)"  # noqa: E501
-    capability_sql = "select (select jsonb_build_array(admin_option,inherit_option,set_option) from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user)),has_table_privilege('workspace_review_ingest_owner','public.election','REFERENCES'),has_table_privilege('workspace_review_ingest_owner','public.category','REFERENCES'),has_table_privilege('workspace_review_ingest_owner','public.archive_entry','REFERENCES'),has_schema_privilege('workspace_review_ingest_owner','workspace_private','CREATE')"  # noqa: E501
+    membership_sql = "select admin_option,inherit_option,set_option from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user) and grantor=(select oid from pg_roles where rolname=current_user)"  # noqa: E501
+    # PostgreSQL 17 keeps distinct bootstrap and self-granted membership edges.
+    membership_snapshot_sql = (
+        "select roleid,member,grantor,admin_option,inherit_option,set_option "
+        "from pg_auth_members order by roleid,member,grantor"
+    )
+    capability_sql = "select (select jsonb_build_array(admin_option,inherit_option,set_option) from pg_auth_members where roleid='workspace_review_ingest_owner'::regrole and member=(select oid from pg_roles where rolname=current_user) and grantor=(select oid from pg_roles where rolname=current_user)),has_table_privilege('workspace_review_ingest_owner','public.election','REFERENCES'),has_table_privilege('workspace_review_ingest_owner','public.category','REFERENCES'),has_table_privilege('workspace_review_ingest_owner','public.archive_entry','REFERENCES'),has_schema_privilege('workspace_review_ingest_owner','workspace_private','CREATE')"  # noqa: E501
     insert_reviews_sql = "insert into public.review_item(id,kind,severity,subject_ref,tenant_scope_state) values(%s,%s,'warning',%s,'platform_only')"  # noqa: E501
     snapshot_sql = "select coalesce(sum(n),0),jsonb_agg(jsonb_build_array(kind,severity,n) order by kind,severity) from(select kind,severity,count(*) n from public.review_item group by kind,severity)s"  # noqa: E501
     null_ids_sql = "select count(*) from workspace_private.review_item_context where review_item_id=any(%s) and (election_year is not null or election_id is not null or category_id is not null or archive_entry_id is not null)"  # noqa: E501
@@ -2740,22 +2735,25 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
     contexts = (
         "select count(*)from workspace_private.review_item_context where review_item_id=any(%s)"  # noqa: E501
     )
-    grant = "grant workspace_review_ingest_owner to current_user with admin {},inherit {},set {}"  # noqa: E501
+    grant = "grant workspace_review_ingest_owner to current_user with admin {},inherit {},set {} granted by current_user"  # noqa: E501
     delete_sql = "delete from public.review_item where subject_ref like %s"
     foundation_columns = ["context_id", "review_item_id", "context_state", "unknown_reason"]
 
     def set_membership(connection, options):
         if options is None:
-            connection.execute("revoke workspace_review_ingest_owner from current_user")
+            connection.execute(
+                "revoke workspace_review_ingest_owner from current_user granted by current_user"
+            )
         else:
             connection.execute(grant.format(*map(str.lower, map(str, options))))
 
     original_review_context_level = _review_context_migration_level(admin_dsn)
-    with psycopg.connect(admin_dsn) as connection:
+    with owned_database.connect() as connection:
         original_membership = connection.execute(membership_sql).fetchone()
+        original_memberships = connection.execute(membership_snapshot_sql).fetchall()
     try:
         _set_latest_review_context_level(admin_dsn, 1)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             set_membership(connection, (False, True, False))
             connection.execute(
                 "insert into public.archive_entry(id,capability,source,source_url,mime,fetched_at,status) values(%s,'review-context-test','fixture','https://example.invalid/review-context','application/json',now(),'ok')",  # noqa: E501
@@ -2770,9 +2768,11 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
             assert before is not None and capabilities_before is not None
             assert capabilities_before[0] == [False, True, False]
         _apply_migration(admin_dsn, version)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
+            set_role(owned_database.maintenance_user)
             assert connection.execute(snapshot_sql).fetchone() == before
             assert _fetchone(connection, capability_sql) == capabilities_before
+            set_role("workspace_review_ingest_owner")
             assert _fetchone(connection, nullability_sql) == ("YES",)
             mapping_sql = "select r.kind,c.context_role,c.source_kind,c.archive_availability,c.unknown_reason from public.review_item r join workspace_private.review_item_context c on c.review_item_id=r.id where r.id=any(%s) order by r.kind,c.context_role,c.source_kind"  # noqa: E501
             mapping_rows = "blank_vote_cell|observed|fiscalizacion|unknown|historical_archive_not_linked;content_drift|unknown|unknown|unknown|historical_unclassified;duplicate_collapsed|observed|fiscalizacion|unknown|historical_archive_not_linked;mesa_absent_from_official_import|observed|fiscalizacion|unknown|historical_archive_not_linked;mesa_discontinuity|observed|official|unknown|historical_archive_not_linked;mesa_tally_divergence|comparison|official|unknown|historical_archive_not_linked;mesa_tally_divergence|observed|fiscalizacion|unknown|historical_archive_not_linked"  # noqa: E501
@@ -2792,39 +2792,56 @@ def test_historical_review_contexts_are_classified_by_kind_without_parsing_subje
             ):
                 with pytest.raises(error), connection.transaction():
                     connection.execute(statement, parameters)
-        down_sql = _validated_migration_path(version, down=True).read_bytes()
         # fmt: off
         with pytest.raises(psycopg.errors.CheckViolation, match="non_reconstructible_items=.*authoritative_identity_items="):  # noqa: E501
             _apply_down_migration(admin_dsn, version)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             assert _fetchone(connection, "select count(*) from workspace_private.review_item_context where review_item_id=%s", (direct_id,)) == (2,)  # noqa: E501
             connection.execute("delete from workspace_private.review_item_context where review_item_id=%s and archive_entry_id=%s", (direct_id, archive_id))  # noqa: E501
             # fmt: on
-            connection.execute(down_sql)
+        _apply_down_migration(admin_dsn, version)
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             assert _fetchone(connection, collapse_sql) == (before[0] + 1, before[0] + 1, 1, 0)
             assert _fetchone(connection, columns_sql) == (foundation_columns,)
             assert _fetchone(connection, nullability_sql) == ("NO",)
+            set_role(owned_database.maintenance_user)
             assert _fetchone(connection, capability_sql) == capabilities_before
         _apply_migration(admin_dsn, version)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
+            set_role(owned_database.maintenance_user)
             assert _fetchone(connection, capability_sql) == capabilities_before
+            set_role("workspace_review_ingest_owner")
             assert _fetchone(connection, nullability_sql) == ("YES",)
             assert _fetchone(connection, contexts, ([*ids, direct_id],)) == (8,)
     finally:
         try:
-            with psycopg.connect(admin_dsn) as connection:
+            with owned_database.connect() as connection:
                 connection.execute(delete_sql, (prefix + "%",))
                 connection.execute("delete from public.archive_entry where id=%s", (archive_id,))
                 set_membership(connection, original_membership)
         finally:
-            _set_latest_review_context_level(admin_dsn, original_review_context_level)
+            try:
+                _set_latest_review_context_level(admin_dsn, original_review_context_level)
+            finally:
+                with owned_database.connect() as connection:
+                    assert (
+                        connection.execute(membership_snapshot_sql).fetchall()
+                        == original_memberships
+                    )
 
 
 # fmt: off
-def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() -> None:
-    if not (database_dsn := os.environ.get("ETL_TEST_DATABASE_URL")):
+@pytest.mark.owned_database
+def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback(
+    owned_database,
+) -> None:
+    if not os.environ.get("ETL_TEST_DATABASE_URL"):
         pytest.skip("ETL_TEST_DATABASE_URL is required for review writer v2 coverage")
-    admin_dsn = make_conninfo(**(conninfo_to_dict(database_dsn) | {"user": "postgres"}))
+    admin_dsn = owned_database.dsn
+    def set_role(role: str) -> None:
+        connection.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        assert _fetchone(connection, "select current_user") == (role,)
+
     original_review_context_level = _review_context_migration_level(admin_dsn)
     legacy, core, v2 = "workspace_private.record_review_item(text,text,text,text,text[],text[]);workspace_private.record_review_item_core(text,text,text,text,text[],text[]);workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text)".split(";")  # noqa: E501
     call, legacy_call, context_sql = "select workspace_private.record_review_item_v2('blank_vote_cell','info',%s,null,array[]::text[],array[]::text[],'observed','fiscalizacion','available',%s,%s,%s,%s);select workspace_private.record_review_item('blank_vote_cell','info',%s,null,array[]::text[],array[]::text[]);select context_role,source_kind,archive_availability,election_year,election_id,category_id,archive_entry_id,unknown_reason from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where r.subject_ref=%s".split(";")  # noqa: E501
@@ -2832,24 +2849,25 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
     fixtures_committed = False
     try:
         _set_latest_review_context_level(admin_dsn, 2)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             before_context_count = _fetchone(connection, "select count(*) from workspace_private.review_item_context")[0]  # noqa: E501
         _apply_migration(admin_dsn, RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION)
         applied = True
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
+            set_role(owned_database.maintenance_user)
             assert _fetchone(connection, "select count(*) from pg_policies where policyname in ('workspace_review_ingest_owner_context_election_select','workspace_review_ingest_owner_context_category_select','workspace_review_ingest_owner_context_archive_select')") == (3,)  # noqa: E501
             election_id = _fetchone(connection, "insert into election(year,round) values(2097,%s) returning id", ((prefix := f"v2-{uuid.uuid4()}"),))[0]  # noqa: E501
             category_ids = [_fetchone(connection, "insert into category(name) values(%s) returning id", (name,))[0] for name in (prefix, prefix + "-other")]  # noqa: E501
             archive_ids = [prefix + suffix for suffix in ("-ok", "-status", "-source")]
             connection.cursor().executemany("insert into archive_entry(id,capability,source,source_url,mime,fetched_at,status,source_kind,notes) values(%s,'fiscalizacion','test','local://test','text/csv',now(),%s,%s,'test')", [(archive_ids[0], "ok", "fiscalizacion"), (archive_ids[1], "error", "fiscalizacion"), (archive_ids[2], "ok", "official")])  # noqa: E501
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
 
             def read_context(subject: str):
-                connection.execute("reset role")
+                set_role("workspace_review_ingest_owner")
                 try:
                     return _fetchone(connection, context_sql, (subject,))
                 finally:
-                    connection.execute("set role etl_writer")
+                    set_role("etl_writer")
 
             exact = (prefix, 2097, election_id, category_ids[0], archive_ids[0])
             explicit = ("observed", "fiscalizacion", "available", *exact[1:], None)
@@ -2862,15 +2880,15 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
             assert read_context(legacy_subject) == explicit
             metadata_subject = prefix + "-metadata"
             assert _fetchone(connection, legacy_call, (metadata_subject,)) == (True,)
-            connection.execute("reset role")
+            set_role("workspace_review_ingest_owner")
             connection.execute("update workspace_private.review_item_context set election_year=%s,election_id=%s,category_id=%s where review_item_id=(select id from review_item where subject_ref=%s)", (2097, election_id, category_ids[0], metadata_subject))  # noqa: E501
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
                 connection.execute(call, (metadata_subject, *exact[1:]))
             assert read_context(metadata_subject) == ("unknown", "unknown", "unknown", 2097, election_id, category_ids[0], None, "writer_context_not_provided")  # noqa: E501
             ambiguous_subject = prefix + "-ambiguous"
             ambiguous_ids = [uuid.uuid4(), uuid.uuid4()]
-            connection.execute("reset role")
+            set_role("workspace_review_ingest_owner")
             connection.cursor().executemany(
                 "insert into public.review_item"
                 "(id,kind,severity,subject_ref,note,tenant_scope_state) "
@@ -2882,30 +2900,29 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
                 ambiguity_context_sql, (ambiguous_ids,)
             ).fetchall()
             assert len(ambiguity_before) == 2
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             for statement, parameters in (
                 (call, (ambiguous_subject, *exact[1:])),
                 (legacy_call, (ambiguous_subject,)),
             ):
                 with pytest.raises(psycopg.errors.CheckViolation, match="active review identity is ambiguous"), connection.transaction():  # noqa: E501
                     connection.execute(statement, parameters)
-            connection.execute("reset role")
+            set_role("workspace_review_ingest_owner")
             assert connection.execute(
                 ambiguity_context_sql, (ambiguous_ids,)
             ).fetchall() == ambiguity_before
             assert _fetchone(connection, "select count(*) from public.review_item where subject_ref=%s", (ambiguous_subject,)) == (2,)  # noqa: E501
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             failures = ((prefix + "-year", 2098, election_id, category_ids[0], archive_ids[0]), (prefix + "-status", 2097, election_id, category_ids[0], archive_ids[1]), (prefix + "-source", 2097, election_id, category_ids[0], archive_ids[2]), (prefix + "-category", 2097, election_id, uuid.uuid4(), archive_ids[0]), (prefix, 2097, election_id, category_ids[1], archive_ids[0]))  # noqa: E501
             for parameters in failures:
                 with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
                     connection.execute(call, parameters)
-            connection.commit()
-            fixtures_committed = True
+        fixtures_committed = True
     finally:
         try:
             if applied:
                 _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_V2_MIGRATION_VERSION)
-                with psycopg.connect(admin_dsn) as connection:
+                with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
                     assert _fetchone(connection, "select to_regprocedure(%s) is null,to_regprocedure(%s) is null", (core, v2)) == (True, True)  # noqa: E501
                     if not fixtures_committed:
                         assert _fetchone(connection, "select count(*) from workspace_private.review_item_context") == (before_context_count,)  # noqa: E501
@@ -2916,10 +2933,10 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
                         item_count_after_down = _fetchone(connection, "select count(*) from public.review_item where subject_ref=%s", (ambiguous_subject,))  # noqa: E501
                         assert ambiguity_after_down == ambiguity_before
                         assert item_count_after_down == (2,)
-                        connection.execute("set role etl_writer")
+                        set_role("etl_writer")
                         with pytest.raises(psycopg.errors.CheckViolation, match="active review identity is ambiguous"), connection.transaction():  # noqa: E501
                             connection.execute(legacy_call, (ambiguous_subject,))
-                        connection.execute("reset role")
+                        set_role("workspace_review_ingest_owner")
                         assert connection.execute(
                             ambiguity_context_sql, (ambiguous_ids,)
                         ).fetchall() == ambiguity_after_down
@@ -2927,7 +2944,7 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
         finally:
             try:
                 if fixtures_committed:
-                    with psycopg.connect(admin_dsn) as connection:
+                    with owned_database.connect() as connection:
                         connection.execute("delete from public.review_item where subject_ref like %s", (prefix + "%",))  # noqa: E501
                         connection.execute("delete from public.archive_entry where id=any(%s)", (archive_ids,))  # noqa: E501
                         connection.execute("delete from public.category where id=any(%s)", (category_ids,))  # noqa: E501
@@ -2938,21 +2955,27 @@ def test_record_review_item_v2_handles_replay_fallback_conflicts_and_rollback() 
 
 
 # fmt: off
-def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> None:
-    if not (database_dsn := os.environ.get("ETL_TEST_DATABASE_URL")):
+@pytest.mark.owned_database
+def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3(owned_database) -> None:
+    if not os.environ.get("ETL_TEST_DATABASE_URL"):
         pytest.skip("ETL_TEST_DATABASE_URL is required for review context-set coverage")
-    admin_dsn = make_conninfo(**(conninfo_to_dict(database_dsn) | {"user": "postgres"}))
+    admin_dsn = owned_database.dsn
+    def set_role(role: str) -> None:
+        connection.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        assert _fetchone(connection, "select current_user") == (role,)
+
     scalar = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],text,text,text,integer,uuid,uuid,text" + ")"  # noqa: E501
     vector = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
     original_review_context_level = _review_context_migration_level(admin_dsn)
     prefix, applied = f"contexts-{uuid.uuid4()}", False
     try:
         _set_latest_review_context_level(admin_dsn, 3)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             scalar_before = _fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (scalar,))[0]  # noqa: E501
         _apply_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
         applied = True
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
+            set_role(owned_database.maintenance_user)
             election_id = _fetchone(connection, "insert into election(year,round) values(2096,%s) returning id", (prefix,))[0]  # noqa: E501
             category_id = _fetchone(connection, "insert into category(name) values(%s) returning id", (prefix,))[0]  # noqa: E501
             fiscal, official = prefix + "-fiscal", prefix + "-official"
@@ -2962,7 +2985,7 @@ def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> 
             observed = common | {"context_role":"observed","source_kind":"fiscalizacion","archive_entry_id":fiscal}  # noqa: E501
             comparison = common | {"context_role":"comparison","source_kind":"official","archive_entry_id":official}  # noqa: E501
             call = "select workspace_private.record_review_item_v2(%s,'info',%s,null,array[]::text[],array[]::text[],%s::jsonb)"  # noqa: E501
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             assert _fetchone(connection,call,("blank_vote_cell",prefix+"-one",json.dumps([observed]))) == (True,)  # noqa: E501
             assert _fetchone(connection,call,("mesa_tally_divergence",prefix,json.dumps([observed,comparison]))) == (True,)  # noqa: E501
             assert _fetchone(connection,call,("mesa_tally_divergence",prefix,json.dumps([comparison,observed]))) == (False,)  # noqa: E501
@@ -2973,26 +2996,28 @@ def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> 
             with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
                 connection.execute(call,("mesa_tally_divergence",prefix,json.dumps([observed])))  # noqa: E501
             context_count = "select count(*) from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where r.subject_ref=%s"  # noqa: E501
-            connection.execute("reset role")
+            set_role("workspace_review_ingest_owner")
             assert _fetchone(connection, context_count, (prefix,)) == (2,)
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             legacy = "select workspace_private.record_review_item('blank_vote_cell','info',%s,null,array[]::text[],array[]::text[])"  # noqa: E501
             assert _fetchone(connection, legacy, (prefix + "-fallback",)) == (True,)
             assert _fetchone(connection,call,("blank_vote_cell",prefix+"-fallback",json.dumps([observed,comparison]))) == (False,)  # noqa: E501
-            connection.commit()
     finally:
         try:
             if applied:
                 with pytest.raises(psycopg.errors.CheckViolation, match="multi_context_active_items="):  # noqa: E501
                     _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
-                with psycopg.connect(admin_dsn) as connection:
+                with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
                     assert _fetchone(connection, "select to_regprocedure(%s) is not null", (vector,)) == (True,)  # noqa: E501
-                    connection.execute("update review_item set resolved_at=now() where starts_with(subject_ref,%s) and id in (select review_item_id from workspace_private.review_item_context group by review_item_id having count(*)>1)", (prefix,))  # noqa: E501
+                    multiple_context_ids = [row[0] for row in connection.execute("select id from review_item where starts_with(subject_ref,%s) and id in (select review_item_id from workspace_private.review_item_context group by review_item_id having count(*)>1)", (prefix,)).fetchall()]  # noqa: E501
+                    set_role(owned_database.maintenance_user)
+                    connection.execute("update review_item set resolved_at=now() where id=any(%s)", (multiple_context_ids,))  # noqa: E501
                 _apply_down_migration(admin_dsn, RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION)
-                with psycopg.connect(admin_dsn) as connection:
+                with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
                     restored = _fetchone(connection,"select pg_get_functiondef(%s::regprocedure)",(scalar,))[0]  # noqa: E501
                     retained = _fetchone(connection,"select count(*) from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where starts_with(r.subject_ref,%s)",(prefix,))[0]  # noqa: E501
                     assert restored == scalar_before and retained >= 5
+                    set_role(owned_database.maintenance_user)
                     connection.execute("delete from review_item where starts_with(subject_ref,%s)",(prefix,))  # noqa: E501
                     connection.execute(
                         "delete from archive_entry where starts_with(id,%s)", (prefix,)
@@ -3005,19 +3030,26 @@ def test_record_review_item_v2_accepts_exact_context_sets_and_restores_pr3() -> 
 
 
 # fmt: off
-def test_year_level_review_contexts_insert_replay_reject_and_rollback_safely() -> None:
-    if not (database_dsn := os.environ.get("ETL_TEST_DATABASE_URL")):
+@pytest.mark.owned_database
+def test_year_level_review_contexts_insert_replay_reject_and_rollback_safely(
+    owned_database,
+) -> None:
+    if not os.environ.get("ETL_TEST_DATABASE_URL"):
         pytest.skip("ETL_TEST_DATABASE_URL is required for year-level review context coverage")
-    admin_dsn = make_conninfo(**(conninfo_to_dict(database_dsn) | {"user": "postgres"}))
+    admin_dsn = owned_database.dsn
+    def set_role(role: str) -> None:
+        connection.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        assert _fetchone(connection, "select current_user") == (role,)
+
     vector = "workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)"
     reason, prefix = "source_archive_not_attributable", f"year-contexts-{uuid.uuid4()}"
-    with psycopg.connect(admin_dsn) as connection:
+    with owned_database.connect() as connection:
         if not _fetchone(connection, "select to_regprocedure(%s) is not null", (vector,))[0]:
             pytest.skip("PR4 context-set writer is required")
         installed = reason in _fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (vector,))[0]  # noqa: E501
     if installed:
         _apply_down_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
-    with psycopg.connect(admin_dsn) as connection:
+    with owned_database.connect() as connection:
         before_function = _fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (vector,))[0]  # noqa: E501
         before_constraint = _fetchone(connection, "select pg_get_constraintdef(oid) from pg_constraint where conrelid='workspace_private.review_item_context'::regclass and conname='review_item_context_unknown_reason_check'")[0]  # noqa: E501
     _apply_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
@@ -3025,7 +3057,8 @@ def test_year_level_review_contexts_insert_replay_reject_and_rollback_safely() -
     contexts = [base | {"election_year": year} for year in (2023, 2025)]
     call = "select workspace_private.record_review_item_v2('mesa_discontinuity','warning',%s,null,array[]::text[],array[]::text[],%s::jsonb)"  # noqa: E501
     try:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
+            set_role(owned_database.maintenance_user)
             election_id = _fetchone(connection, "insert into election(year,round) values(2095,%s) returning id", (prefix,))[0]  # noqa: E501
             category_id = _fetchone(connection, "insert into category(name) values(%s) returning id", (prefix,))[0]  # noqa: E501
             fiscal, official = prefix + "-fiscal", prefix + "-official"
@@ -3034,7 +3067,7 @@ def test_year_level_review_contexts_insert_replay_reject_and_rollback_safely() -
             common = {"archive_availability":"available","election_year":2095,"election_id":str(election_id),"category_id":str(category_id)}  # noqa: E501
             available_observed = common | {"context_role":"observed","source_kind":"fiscalizacion","archive_entry_id":fiscal}  # noqa: E501
             available_comparison = common | {"context_role":"comparison","source_kind":"official","archive_entry_id":official}  # noqa: E501
-            connection.execute("set role etl_writer")
+            set_role("etl_writer")
             assert _fetchone(connection, call, (prefix + "-available-observed", json.dumps([available_observed]))) == (True,)  # noqa: E501
             assert _fetchone(connection, call, (prefix + "-available-comparison", json.dumps([available_comparison]))) == (True,)  # noqa: E501
             assert _fetchone(connection, call, (prefix, json.dumps(contexts))) == (True,)
@@ -3046,20 +3079,19 @@ def test_year_level_review_contexts_insert_replay_reject_and_rollback_safely() -
             for index, context in enumerate(bad):
                 with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
                     connection.execute(call, (f"{prefix}-bad-{index}", json.dumps([context])))
-            connection.execute("reset role")
+            set_role("workspace_review_ingest_owner")
             assert _fetchone(connection, "select array_agg(c.election_year order by c.election_year),bool_and(c.election_id is null and c.category_id is null and c.archive_entry_id is null) from workspace_private.review_item_context c join review_item r on r.id=c.review_item_id where r.subject_ref=%s", (prefix,)) == ([2023, 2025], True)  # noqa: E501
-            connection.commit()
         with pytest.raises(psycopg.errors.CheckViolation, match="count=2.*categories="):
             _apply_down_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             connection.execute("delete from review_item where starts_with(subject_ref,%s)", (prefix,))  # noqa: E501
         _apply_down_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             assert _fetchone(connection, "select pg_get_functiondef(%s::regprocedure)", (vector,))[0] == before_function  # noqa: E501
             assert _fetchone(connection, "select pg_get_constraintdef(oid) from pg_constraint where conrelid='workspace_private.review_item_context'::regclass and conname='review_item_context_unknown_reason_check'")[0] == before_constraint  # noqa: E501
         _apply_migration(admin_dsn, YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION)
     finally:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             connection.execute("delete from review_item where starts_with(subject_ref,%s)", (prefix,))  # noqa: E501
             connection.execute("delete from archive_entry where starts_with(id,%s)", (prefix,))
             connection.execute("delete from category where name=%s", (prefix,))
@@ -3073,43 +3105,50 @@ def test_year_level_review_contexts_insert_replay_reject_and_rollback_safely() -
 
 
 # fmt: off
-def test_platform_review_breakdown_preserves_nullable_context_on_forward_and_down() -> None:
-    if not (database_dsn := os.environ.get("ETL_TEST_DATABASE_URL")):
+@pytest.mark.owned_database
+def test_platform_review_breakdown_preserves_nullable_context_on_forward_and_down(
+    owned_database,
+) -> None:
+    if not os.environ.get("ETL_TEST_DATABASE_URL"):
         pytest.skip("ETL_TEST_DATABASE_URL is required for platform review breakdown coverage")
-    admin_dsn = make_conninfo(**(conninfo_to_dict(database_dsn) | {"user": "postgres"}))
+    admin_dsn = owned_database.dsn
+    def set_role(role: str) -> None:
+        connection.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        assert _fetchone(connection, "select current_user") == (role,)
+
     signature = "workspace_private.platform_review_breakdown(integer,integer)"
     prefix = f"breakdown-migration-{uuid.uuid4()}"
     review_id = uuid.uuid4()
     archive_id = prefix + "-archive"
     state_sql = "select (select is_nullable from information_schema.columns where table_schema='workspace_private' and table_name='review_item_context' and column_name='unknown_reason'),to_regprocedure(%s) is not null,(select count(*) from pg_policies where schemaname='public' and policyname in ('workspace_review_ingest_owner_breakdown_election_select','workspace_review_ingest_owner_breakdown_category_select'))"  # noqa: E501
     row_sql = "select context_role,source_kind,archive_availability,unknown_reason from workspace_private.review_item_context where review_item_id=%s"  # noqa: E501
-    with psycopg.connect(admin_dsn) as connection:
+    with owned_database.connect() as connection:
         if _review_context_migration_level(admin_dsn) < 2:
             pytest.skip("classified review context migration is required")
         originally_installed = _fetchone(connection, "select to_regprocedure(%s) is not null", (signature,))[0]  # noqa: E501
     try:
         if originally_installed:
             _apply_down_migration(admin_dsn, PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             assert _fetchone(connection, state_sql, (signature,)) == ("YES", False, 0)
+            set_role(owned_database.maintenance_user)
             election_id = _fetchone(connection, "insert into election(year,round) values(2096,%s) returning id", (prefix,))[0]  # noqa: E501
             category_id = _fetchone(connection, "insert into category(name) values(%s) returning id", (prefix,))[0]  # noqa: E501
             connection.execute("insert into archive_entry(id,capability,source,source_url,mime,fetched_at,status,source_kind,notes) values(%s,'fiscalizacion','test','local://test','text/csv',now(),'ok','fiscalizacion','test')", (archive_id,))  # noqa: E501
             connection.execute("insert into review_item(id,kind,severity,subject_ref,tenant_scope_state) values(%s,'content_drift','warning',%s,'platform_only')", (review_id, prefix))  # noqa: E501
-            connection.execute("set role workspace_review_ingest_owner")
+            set_role("workspace_review_ingest_owner")
             connection.execute("update workspace_private.review_item_context set context_role='observed',source_kind='fiscalizacion',archive_availability='available',election_year=2096,election_id=%s,category_id=%s,archive_entry_id=%s,unknown_reason=null where review_item_id=%s", (election_id, category_id, archive_id, review_id))  # noqa: E501
-            connection.execute("reset role")
             assert _fetchone(connection, row_sql, (review_id,)) == ("observed", "fiscalizacion", "available", None)  # noqa: E501
         _apply_migration(admin_dsn, PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             assert _fetchone(connection, state_sql, (signature,)) == ("YES", True, 2)
             assert _fetchone(connection, row_sql, (review_id,)) == ("observed", "fiscalizacion", "available", None)  # noqa: E501
         _apply_down_migration(admin_dsn, PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION)
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("workspace_review_ingest_owner") as connection:
             assert _fetchone(connection, state_sql, (signature,)) == ("YES", False, 0)
             assert _fetchone(connection, row_sql, (review_id,)) == ("observed", "fiscalizacion", "available", None)  # noqa: E501
     finally:
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.connect() as connection:
             connection.execute("delete from review_item where id=%s", (review_id,))
             connection.execute("delete from archive_entry where starts_with(id,%s)", (prefix,))
             connection.execute("delete from category where name=%s", (prefix,))

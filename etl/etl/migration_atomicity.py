@@ -1,8 +1,7 @@
 """Real CLI regression proof, reachable only from the CI-owned verifier lifecycle.
 
 Operator seam: Supabase 2.116.0 `db push --db-url ... --skip-vault --yes`.
-Pinned source: github.com/supabase/cli/tree/v2.116.0/apps/cli/src/legacy
-(commands/db/push and shared/legacy-migration-{apply,history}.ts).
+Pinned source: github.com/supabase/cli/tree/v2.116.0.
 Predecessors use the existing runner, not a second migration engine. Each fresh
 CLI project contains only the pending migration, with an empty history matching
 that inventory: predecessor schema is an imported baseline, not CLI history.
@@ -27,6 +26,7 @@ from psycopg.conninfo import conninfo_to_dict
 if TYPE_CHECKING:
     from etl.verify import DisposablePostgres
 
+CLI_VERSION = "2.116.0"
 VERSION = "20260904035355"
 MIGRATION = f"{VERSION}_add_official_category_name.sql"
 FUNCTION = "results_exploration_official"
@@ -47,15 +47,20 @@ def _stage(case: str, stage: str):
     except AtomicityFailure:
         raise
     except Exception as error:
+        from etl.verify import MigrationApplyError
+
         category = "unexpected"
-        if isinstance(error, psycopg.Error):
+        state = None
+        if isinstance(error, psycopg.Error) or (
+            isinstance(error, MigrationApplyError) and isinstance(error.__cause__, psycopg.Error)
+        ):
             category = "database"
+            state = error.sqlstate
         elif isinstance(error, subprocess.TimeoutExpired):
             category = "timeout"
         elif isinstance(error, OSError):
             category = "os"
         diagnostic = f"migration_atomicity:{case}:stage={stage}:exception={category}"
-        state = error.sqlstate if isinstance(error, psycopg.Error) else None
         if isinstance(state, str) and re.fullmatch(r"[0-9A-Z]{5}", state):
             diagnostic += f":sqlstate={state}"
         print(diagnostic)
@@ -256,7 +261,7 @@ def _run_owned_proof(owned: DisposablePostgres, migrations: Path, case: str) -> 
     ) as directory:
         with _stage("success", "cli"):
             version = _cli(binary, Path(directory), params, version=True)
-        _require(version.returncode == 0 and version.stdout.strip() == "2.116.0", "cli_pin=0")
+        _require(version.returncode == 0 and version.stdout.strip() == CLI_VERSION, "cli_pin=0")
     with _stage(case, "fixture_creation"):
         fixture = DisposablePostgres(owned.admin_dsn)
     with _resource(lambda: fixture, case):

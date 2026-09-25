@@ -19,9 +19,436 @@ from etl.verify import (
     DisposablePostgres,
     UnsafeDatabaseError,
     apply_migrations,
-    run_pytest,
+    main,
     termination_as_interrupt,
 )
+from etl.verify import (
+    _run_pytest_phase as run_pytest,
+)
+
+
+def test_cli_emits_only_opted_in_fixed_stage_on_pytest_failure(monkeypatch, capsys) -> None:
+    import etl.verify as verify
+
+    class FakeDatabase:
+        def __init__(self, _dsn: str) -> None:
+            self.migration_dsn = "private-migration-url"
+            self.cleaned = False
+
+        def __enter__(self) -> str:
+            return "private-test-url"
+
+        def __exit__(self, *_args: object) -> None:
+            self.cleaned = True
+
+        def grant_test_privileges(self) -> None:
+            pass
+
+        def safe_error(self, _error: BaseException) -> str:
+            return "redacted"
+
+    instances: list[FakeDatabase] = []
+
+    def create(dsn: str) -> FakeDatabase:
+        instance = FakeDatabase(dsn)
+        instances.append(instance)
+        return instance
+
+    monkeypatch.setattr(verify, "DisposablePostgres", create)
+    monkeypatch.setattr(verify, "apply_migrations", lambda *_args: 1)
+
+    def fail_pytest(*_args: object) -> None:
+        raise RuntimeError("private-test-url")
+
+    monkeypatch.setattr(verify, "run_pytest", fail_pytest)
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "private-admin-url")
+    for opted_in in (False, True):
+        if opted_in:
+            monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1")
+        else:
+            monkeypatch.delenv("ETL_VERIFY_STAGE_REPORT", raising=False)
+        assert main() == 1
+        output = capsys.readouterr().err
+        assert ("E2E_ETL_STAGE pytest\n" in output) is opted_in
+        assert "private-test-url" not in output
+        assert "private-admin-url" not in output
+        assert instances[-1].cleaned
+
+
+@pytest.fixture
+def pytest_cli(monkeypatch, capsys):
+    """Drive the real CLI and pytest report reader with only external I/O replaced."""
+    import etl.verify as verify
+
+    class FakeDatabase:
+        migration_dsn = "private-migration-url"
+        identity = DatabaseIdentity.generate()
+        cleaned = False
+        failure = None
+        cleanup_error = None
+
+        def __enter__(self):
+            return "private-test-url"
+
+        def __exit__(self, _type, error, _traceback):
+            self.failure = error
+            self.cleaned = True
+            if self.cleanup_error is not None:
+                raise self.cleanup_error
+
+        def grant_test_privileges(self):
+            pass
+
+        def safe_error(self, error):
+            return str(error)
+
+    database = FakeDatabase()
+
+    def emit(*args, **kwargs):
+        if args and str(args[0]).startswith("E2E_ETL_"):
+            assert database.cleaned
+        print(*args, **kwargs)
+
+    monkeypatch.setattr(verify, "print", emit, raising=False)
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _dsn: database)
+    monkeypatch.setattr(verify, "apply_migrations", lambda *_args: 1)
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "private-admin-url")
+    reports = []
+
+    def invoke(report, code=1, *, error=None, opted_in=True):
+        database.cleaned = False
+
+        def external_run(command, **kwargs):
+            assert kwargs["env"] == {"ETL_TEST_DATABASE_URL": "private-test-url"}
+            path = Path(
+                next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml="))
+            )
+            reports.append(path)
+            if report is not None:
+                path.write_text(report, encoding="utf-8")
+            if error is not None:
+                raise error
+            return subprocess.CompletedProcess(command, code)
+
+        monkeypatch.setattr(
+            verify, "run_pytest", lambda dsn, root, _owned: run_pytest(dsn, root, run=external_run)
+        )
+        monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1" if opted_in else "0")
+        result = main()
+        output = capsys.readouterr()
+        assert database.cleaned
+        assert all(not path.exists() for path in reports)
+        return result, output.err, output.out
+
+    return invoke, database
+
+
+def test_cli_reports_pytest_counts_after_cleanup_without_private_report(pytest_cli):
+    invoke, _database = pytest_cli
+    result, error, output = invoke(
+        '<testsuites><testsuite tests="5" failures="1" errors="2" skipped="0">'
+        '<testcase name="private-test-id"><failure>private-assertion private-dsn</failure>'
+        "</testcase></testsuite></testsuites>"
+    )
+    assert result == 1
+    assert "E2E_ETL_STAGE pytest\n" in error
+    assert "E2E_ETL_PYTEST pytest_failed 1 5 0 3\n" in error
+    assert "private-" not in error + output
+
+
+@pytest.mark.parametrize(
+    ("report", "code", "failure", "expected"),
+    [
+        (None, 5, None, "report_missing 5 - - -"),
+        ("<private-broken", 1, None, "report_invalid 1 - - -"),
+        ('<testsuite tests="private-count"/>', 1, None, "report_invalid 1 - - -"),
+        (None, 1, OSError("private-runner-error"), "runner_error - - - -"),
+        (None, 1, ValueError("private-unexpected-runner"), "unexpected - - - -"),
+        (None, 1, KeyboardInterrupt("private-interrupt"), "interrupted - - - -"),
+        (None, 1, InterruptedError("private-signal"), "interrupted - - - -"),
+    ],
+)
+def test_cli_reports_safe_pytest_outcome_and_preserves_exception(
+    pytest_cli, report, code, failure, expected
+):
+    invoke, database = pytest_cli
+    result, error, output = invoke(report, code, error=failure)
+    assert result == 1
+    assert f"E2E_ETL_PYTEST {expected}\n" in error
+    assert "private-" not in error + output
+    if failure is not None:
+        assert database.failure is failure
+
+
+@pytest.mark.parametrize(
+    ("report", "code", "expected"),
+    [
+        ('<testsuite tests="3" skipped="1" failures="1" errors="1"/>', 1, "skips_rejected 1 3 1 2"),
+        ('<testsuite tests="1" failures="1"/>', 0, "pytest_failed 0 1 0 1"),
+        ('<testsuite tests="0"/>', 5, "pytest_failed 5 0 0 0"),
+        ('<testsuite tests="9007199254740991"/>', 255, "pytest_failed 255 9007199254740991 0 0"),
+        ('<testsuite tests="9007199254740992"/>', -9, "pytest_failed - - 0 0"),
+        ('<testsuite tests="-1"/>', 256, "pytest_failed - - 0 0"),
+        ('<testsuite tests="2" skipped="-1"/>', 1, "skips_rejected 1 2 - 0"),
+        (
+            '<testsuite tests="2" failures="9007199254740991" errors="1"/>',
+            1,
+            "pytest_failed 1 2 0 -",
+        ),
+    ],
+)
+def test_cli_bounds_pytest_evidence_and_preserves_failure_precedence(
+    pytest_cli, report, code, expected
+):
+    invoke, _database = pytest_cli
+    result, error, _output = invoke(report, code)
+    assert result == 1
+    assert f"E2E_ETL_PYTEST {expected}\n" in error
+
+
+@pytest.mark.parametrize("opted_in", [False, True])
+def test_cli_never_emits_pytest_evidence_on_success(pytest_cli, opted_in):
+    invoke, _database = pytest_cli
+    result, error, output = invoke('<testsuite tests="1"/>', 0, opted_in=opted_in)
+    assert result == 0
+    assert "1 executed, 0 skipped" in output
+    assert "E2E_ETL_" not in error
+
+
+def test_cli_pytest_opt_out_is_redacted_without_diagnostic(pytest_cli):
+    invoke, _database = pytest_cli
+    result, error, output = invoke(None, error=RuntimeError("private-error"), opted_in=False)
+    assert result == 1
+    assert "E2E_ETL_" not in error
+    assert "private-" not in error + output
+
+
+def test_cli_cleanup_replacement_does_not_emit_stale_pytest_evidence(pytest_cli):
+    invoke, database = pytest_cli
+    database.cleanup_error = RuntimeError("cleanup failed")
+    result, error, _output = invoke('<testsuite tests="2" failures="1"/>')
+    assert result == 1
+    assert "E2E_ETL_STAGE owned_database_cleanup\n" in error
+    assert "E2E_ETL_PYTEST" not in error
+
+
+@pytest.mark.parametrize(
+    "report", ['<testsuite tests="2" failures="1"/>', '<testsuite tests="1"/>']
+)
+def test_cli_report_cleanup_replacement_discards_counts(pytest_cli, monkeypatch, report):
+    import etl.verify as verify
+
+    original_temporary_directory = verify.tempfile.TemporaryDirectory
+    failure = OSError("private-report-cleanup")
+
+    class FailingCleanup(original_temporary_directory):
+        def __exit__(self, *args):
+            super().__exit__(*args)
+            raise failure
+
+    monkeypatch.setattr(verify.tempfile, "TemporaryDirectory", FailingCleanup)
+    invoke, database = pytest_cli
+    result, error, output = invoke(report, 1 if "failures" in report else 0)
+    assert result == 1
+    assert database.failure is failure
+    assert "E2E_ETL_PYTEST unexpected - - - -\n" in error
+    assert "private-" not in error + output
+
+
+def test_cli_pytest_system_exit_keeps_identity_and_cleanup(pytest_cli):
+    invoke, database = pytest_cli
+    failure = SystemExit(7)
+    with pytest.raises(SystemExit) as caught:
+        invoke(None, error=failure)
+    assert caught.value is failure
+    assert database.failure is failure
+    assert database.cleaned
+
+
+def test_cli_reports_migration_identity_on_opted_in_failure(monkeypatch, capsys) -> None:
+    import etl.verify as verify
+
+    class FakeDatabase:
+        migration_dsn = "private-migration-url"
+
+        def __init__(self, _dsn: str) -> None:
+            pass
+
+        def __enter__(self) -> str:
+            return "private-test-url"
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def safe_error(self, _error: BaseException) -> str:
+            return "redacted"
+
+    monkeypatch.setattr(verify, "DisposablePostgres", FakeDatabase)
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "private-admin-url")
+    monkeypatch.setattr(
+        verify,
+        "apply_migrations",
+        lambda *_args: (_ for _ in ()).throw(
+            verify.MigrationApplyError("0022_results_exploration_scale.sql", "42710")
+        ),
+    )
+    for opted_in in (False, True):
+        if opted_in:
+            monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1")
+        else:
+            monkeypatch.delenv("ETL_VERIFY_STAGE_REPORT", raising=False)
+        assert main() == 1
+        output = capsys.readouterr().err
+        marker = "E2E_ETL_MIGRATION 0022_results_exploration_scale.sql 42710\n"
+        assert (marker in output) is opted_in
+        assert ("E2E_ETL_STAGE apply_migrations\n" in output) is opted_in
+        assert "private-" not in output
+
+
+@pytest.mark.parametrize("failure_point", ["connect", "enter", "exit"])
+@pytest.mark.parametrize("state", ["42710", "invalid-private-state"])
+def test_cli_redacts_migration_connection_and_commit_failures(
+    monkeypatch, capsys, tmp_path: Path, failure_point: str, state: str
+) -> None:
+    import psycopg
+
+    import etl.verify as verify
+
+    class PrivateFailure(psycopg.Error):
+        @property
+        def sqlstate(self) -> str:
+            return state
+
+    class FakeConnection:
+        def __enter__(self):
+            if failure_point == "enter":
+                raise PrivateFailure("private-driver-text private-dsn")
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            if failure_point == "exit":
+                raise PrivateFailure("private-driver-text private-dsn")
+
+        def execute(self, _sql: bytes) -> None:
+            pass
+
+    def connect(_dsn: str) -> FakeConnection:
+        if failure_point == "connect":
+            raise PrivateFailure("private-driver-text private-dsn")
+        return FakeConnection()
+
+    class FakeDatabase:
+        migration_dsn = "private-dsn"
+        cleaned = False
+
+        def __init__(self, _dsn: str) -> None:
+            pass
+
+        def __enter__(self) -> str:
+            return "private-test-dsn"
+
+        def __exit__(self, *_args: object) -> None:
+            self.cleaned = True
+
+        def safe_error(self, error: BaseException) -> str:
+            return str(error)
+
+    migration = tmp_path / "0001_safe.sql"
+    migration.write_text("select 1;", encoding="utf-8")
+    database = FakeDatabase("unused")
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _dsn: database)
+    monkeypatch.setattr(verify, "_migration_files", lambda _path: [migration])
+    original_apply = verify.apply_migrations
+    monkeypatch.setattr(
+        verify, "apply_migrations", lambda dsn, paths: original_apply(dsn, paths, connect=connect)
+    )
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "private-admin-dsn")
+    monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1")
+    assert main() == 1
+    output = capsys.readouterr().err
+    assert "private-" not in output
+    assert "E2E_ETL_STAGE apply_migrations\n" in output
+    assert f"E2E_ETL_MIGRATION 0001_safe.sql {state if state == '42710' else '-'}\n" in output
+    assert database.cleaned
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "unexpected SQL migration entry: private-person.sql",
+        "failed to read migration file: private-person.sql",
+    ],
+)
+def test_cli_redacts_unvalidated_migration_filename(monkeypatch, capsys, message: str) -> None:
+    import etl.verify as verify
+
+    class FakeDatabase:
+        migration_dsn = "private-migration-dsn"
+
+        def __init__(self, _dsn: str) -> None:
+            pass
+
+        def __enter__(self) -> str:
+            return "private-test-dsn"
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def safe_error(self, error: BaseException) -> str:
+            return str(error)
+
+    def fail(_dsn: str, _migrations: Path) -> int:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(verify, "DisposablePostgres", FakeDatabase)
+    monkeypatch.setattr(verify, "apply_migrations", fail)
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "private-admin-dsn")
+    monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1")
+
+    assert verify.main() == 1
+    output = capsys.readouterr().err
+    assert "E2E_ETL_STAGE apply_migrations\n" in output
+    assert "E2E_ETL_MIGRATION" not in output
+    assert "private-" not in output
+    assert "migration preparation failed; details redacted" in output
+
+
+def test_cli_labels_cleanup_failure_after_successful_pytest(monkeypatch, capsys) -> None:
+    import etl.verify as verify
+
+    class FakeDatabase:
+        migration_dsn = "private-migration-url"
+
+        def __init__(self, _dsn: str) -> None:
+            pass
+
+        def __enter__(self) -> str:
+            return "private-test-url"
+
+        def __exit__(self, *_args: object) -> None:
+            raise RuntimeError("private-cleanup-url")
+
+        def grant_test_privileges(self) -> None:
+            pass
+
+        def safe_error(self, _error: BaseException) -> str:
+            return "redacted"
+
+    monkeypatch.setattr(verify, "DisposablePostgres", FakeDatabase)
+    monkeypatch.setattr(verify, "apply_migrations", lambda *_args: 1)
+    monkeypatch.setattr(verify, "run_pytest", lambda *_args: verify.PytestResult(1, 0))
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", "private-admin-url")
+    monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1")
+    assert main() == 1
+    output = capsys.readouterr().err
+    assert "E2E_ETL_STAGE owned_database_cleanup\n" in output
+    assert "private-" not in output
 
 
 def _query_text(query: QueryNoTemplate) -> str:
@@ -217,6 +644,8 @@ class _TargetConnection:
                 return _Result((self.name, self.user, self.marker))
             return _Result((self.name, self.marker))
         self.executed.append(statement)
+        if statement == "select current_user":
+            return _Result((self.user,))
         return _Result()
 
     def close(self) -> None:
@@ -267,6 +696,375 @@ def _identity(number: int = 1) -> DatabaseIdentity:
         marker=f"votus-etl-verify:{token}",
         token=token,
     )
+
+
+@pytest.mark.parametrize("opted_in", [False, True])
+def test_cli_reports_safe_grant_operation_without_driver_text(
+    monkeypatch: pytest.MonkeyPatch, capsys, opted_in: bool
+) -> None:
+    import psycopg
+
+    from etl import verify
+
+    connections = _Connections()
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@127.0.0.1/template1",
+        identity=_identity(),
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+    original_execute = connections.admin.execute
+
+    def execute(query: QueryNoTemplate, params: Params | None = None) -> _Result:
+        if _query_text(query).startswith("grant etl_writer to"):
+            raise psycopg.errors.InsufficientPrivilege("private-driver-text private-person")
+        return original_execute(query, params)
+
+    monkeypatch.setattr(connections.admin, "execute", execute)
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _: database)
+    monkeypatch.setattr(verify, "apply_migrations", lambda *_: 1)
+    monkeypatch.setattr(verify, "run_pytest", lambda *_: pytest.fail("pytest must not start"))
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", database.admin_dsn)
+    monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1" if opted_in else "0")
+
+    assert verify.main() == 1
+    output = capsys.readouterr().err
+    assert "private-" not in output
+    assert "privilege preparation failed; details redacted" in output
+    assert ("E2E_ETL_STAGE grant_test_privileges\n" in output) is opted_in
+    assert ("E2E_ETL_GRANT grant_etl_membership database 42501\n" in output) is opted_in
+    assert connections.admin.databases == {}
+    assert connections.admin.roles == {}
+
+
+@pytest.fixture
+def grant_cli(monkeypatch: pytest.MonkeyPatch):
+    from etl import verify
+
+    connections = _Connections()
+    database = DisposablePostgres(
+        "postgresql://admin:maintenance-value@127.0.0.1/template1",
+        identity=_identity(),
+        connect=connections,
+        secret_factory=lambda: "disposable-value",
+    )
+    events: list[str] = []
+    monkeypatch.setattr(verify, "DisposablePostgres", lambda _: database)
+    monkeypatch.setattr(verify, "apply_migrations", lambda *_: events.append("migrations") or 1)
+    monkeypatch.setattr(
+        verify,
+        "run_pytest",
+        lambda *_: events.append("pytest") or verify.PytestResult(executed=1, skipped=0),
+    )
+    monkeypatch.setattr(sys, "argv", ["etl-verify"])
+    monkeypatch.setenv("ETL_TEST_ADMIN_DATABASE_URL", database.admin_dsn)
+    monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1")
+    return database, connections, events
+
+
+@pytest.mark.parametrize(
+    ("operation", "statement", "admin"),
+    [
+        ("grant_database", "grant connect, create, temporary on database", True),
+        ("grant_etl_membership", "grant etl_writer to", True),
+        ("grant_results_membership", "grant results_exploration_executor to", True),
+        ("verify_role", "select rolcanlogin", True),
+        ("grant_public_schema", "grant usage, create on schema public", False),
+        ("grant_verification_schema", "grant usage on schema votus_verification", False),
+        ("grant_marker_read", "grant select on table votus_verification", False),
+        ("grant_public_tables", "grant all privileges on all tables", False),
+        ("grant_public_sequences", "grant all privileges on all sequences", False),
+        ("grant_public_functions", "grant all privileges on all functions", False),
+        ("register_scope", "insert into workspace_private.section_scope", False),
+        ("create_public_policies", "do $$", False),
+        ("verify_target_marker", "select current_database(), current_user", False),
+    ],
+)
+def test_cli_identifies_each_grant_statement_without_changing_cleanup(
+    monkeypatch: pytest.MonkeyPatch, capsys, grant_cli, operation: str, statement: str, admin: bool
+) -> None:
+    import psycopg
+
+    database, connections, events = grant_cli
+    connection_type = _AdminConnection if admin else _TargetConnection
+    original = connection_type.execute
+    failure = psycopg.errors.InsufficientPrivilege("private-sql private-person")
+    failed = False
+
+    def execute(self, query, params=None):
+        nonlocal failed
+        if events and not failed and _query_text(query).strip().startswith(statement):
+            failed = True
+            raise failure
+        return original(self, query, params)
+
+    monkeypatch.setattr(connection_type, "execute", execute)
+    assert main() == 1
+    output = capsys.readouterr().err
+    assert f"E2E_ETL_GRANT {operation} database 42501\n" in output
+    assert "E2E_ETL_STAGE grant_test_privileges\n" in output
+    assert "private-" not in output
+    assert events == ["migrations"]
+    assert not database.created_by_this_run and not database.role_created_by_this_run
+    assert connections.admin.databases == connections.admin.roles == {}
+
+
+@pytest.mark.parametrize(
+    ("phase", "point", "operation"),
+    [
+        ("admin", "connect", "connect_admin"),
+        ("admin", "close", "close_admin"),
+        ("migration", "connect", "migration_connection"),
+        ("migration", "enter", "migration_connection"),
+        ("migration", "exit", "migration_connection"),
+        ("target", "connect", "target_connection"),
+        ("target", "enter", "target_connection"),
+        ("target", "exit", "target_connection"),
+    ],
+)
+def test_cli_reports_grant_connection_lifecycle_failures(
+    monkeypatch: pytest.MonkeyPatch, capsys, grant_cli, phase: str, point: str, operation: str
+) -> None:
+    import psycopg
+
+    database, connections, events = grant_cli
+    failed = False
+
+    def fail_if_selected(selected: str) -> None:
+        nonlocal failed
+        if events and not failed and selected == phase:
+            failed = True
+            raise psycopg.errors.ConnectionFailure("private-connection-text")
+
+    if point == "connect":
+        original_connect = _Connections.__call__
+
+        def connect(self, dsn, *, autocommit=False):
+            selected = (
+                "admin" if autocommit else ("target" if dsn == database.target_dsn else "migration")
+            )
+            fail_if_selected(selected)
+            return original_connect(self, dsn, autocommit=autocommit)
+
+        monkeypatch.setattr(_Connections, "__call__", connect)
+    else:
+        connection_type = _AdminConnection if phase == "admin" else _TargetConnection
+        method = "close" if point == "close" else f"__{point}__"
+        original = getattr(connection_type, method)
+
+        def lifecycle(self, *args):
+            selected = (
+                "admin"
+                if isinstance(self, _AdminConnection)
+                else ("migration" if self.user == "admin" else "target")
+            )
+            fail_if_selected(selected)
+            return original(self, *args)
+
+        monkeypatch.setattr(connection_type, method, lifecycle)
+
+    assert main() == 1
+    output = capsys.readouterr().err
+    assert f"E2E_ETL_GRANT {operation} database 08006\n" in output
+    assert "private-" not in output
+    assert events == ["migrations"]
+    assert connections.admin.databases == connections.admin.roles == {}
+
+
+@pytest.mark.parametrize(
+    "guard", ["validate_state", "validate_target_dsn", "verify_role", "verify_target_marker"]
+)
+def test_cli_reports_grant_safety_guards_without_private_rows(
+    monkeypatch: pytest.MonkeyPatch, capsys, grant_cli, guard: str
+) -> None:
+    from etl import verify
+
+    database, connections, events = grant_cli
+    if guard in ("validate_state", "validate_target_dsn"):
+
+        def migrate(*_):
+            events.append("migrations")
+            if guard == "validate_state":
+                database.admin = connections.admin
+            else:
+                database.target_dsn = None
+            return 1
+
+        monkeypatch.setattr(verify, "apply_migrations", migrate)
+    else:
+        connection_type = _AdminConnection if guard == "verify_role" else _TargetConnection
+        original = connection_type.execute
+
+        def execute(self, query, params=None):
+            text = _query_text(query)
+            if events and (
+                "array_agg" in text if guard == "verify_role" else "current_user" in text
+            ):
+                return _Result(("private-catalog-row",) * 8)
+            return original(self, query, params)
+
+        monkeypatch.setattr(connection_type, "execute", execute)
+
+    assert main() == 1
+    output = capsys.readouterr().err
+    assert f"E2E_ETL_GRANT {guard} safety -\n" in output
+    assert "private-" not in output
+    assert events == ["migrations"]
+    assert connections.admin.databases == connections.admin.roles == {}
+
+
+@pytest.mark.parametrize(
+    ("kind", "state", "category", "reported_state"),
+    [
+        ("database", "42501", "database", "42501"),
+        ("database", "invalid-private-state", "database", "-"),
+        ("database", "42p01", "database", "-"),
+        ("database", None, "database", "-"),
+        ("spoofed", "42501", "unexpected", "-"),
+        ("safety", None, "safety", "-"),
+        ("keyboard", None, "interrupted", "-"),
+        ("signal", None, "interrupted", "-"),
+        ("system_exit", None, None, None),
+    ],
+)
+def test_cli_grant_categories_preserve_exception_identity_and_signal_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    grant_cli,
+    kind: str,
+    state: str | None,
+    category: str | None,
+    reported_state: str | None,
+) -> None:
+    import psycopg
+
+    _, connections, events = grant_cli
+    error_type = {
+        "database": psycopg.Error,
+        "spoofed": RuntimeError,
+        "safety": UnsafeDatabaseError,
+        "keyboard": KeyboardInterrupt,
+        "signal": InterruptedError,
+        "system_exit": SystemExit,
+    }[kind]
+    failure = error_type("private-driver-text")
+    if kind in ("database", "spoofed"):
+        failure.sqlstate = state
+    original_execute = _TargetConnection.execute
+    original_exit = _TargetConnection.__exit__
+    propagated: list[BaseException] = []
+
+    def execute(self, query, params=None):
+        if _query_text(query).startswith("insert into workspace_private.section_scope"):
+            raise failure
+        return original_execute(self, query, params)
+
+    def exit_connection(self, exc_type, exc_value, traceback):
+        if exc_value is not None:
+            assert exc_type is type(failure)
+            propagated.append(exc_value)
+        return original_exit(self, exc_type, exc_value, traceback)
+
+    monkeypatch.setattr(_TargetConnection, "execute", execute)
+    monkeypatch.setattr(_TargetConnection, "__exit__", exit_connection)
+    prior_handler = signal.getsignal(signal.SIGTERM)
+    if kind == "system_exit":
+        with pytest.raises(SystemExit) as caught:
+            main()
+        assert caught.value is failure
+    else:
+        assert main() == 1
+    output = capsys.readouterr().err
+    if category is None:
+        assert "E2E_ETL_GRANT" not in output
+    else:
+        assert f"E2E_ETL_GRANT register_scope {category} {reported_state}\n" in output
+    assert "private-" not in output
+    assert propagated == [failure]
+    assert signal.getsignal(signal.SIGTERM) is prior_handler
+    assert events == ["migrations"]
+    assert connections.admin.databases == connections.admin.roles == {}
+
+
+@pytest.mark.parametrize(
+    "replacement", ["admin_close", "migration_exit", "target_exit", "owned_cleanup"]
+)
+def test_cli_grant_replacement_errors_do_not_reuse_earlier_operation(
+    monkeypatch: pytest.MonkeyPatch, capsys, grant_cli, replacement: str
+) -> None:
+    import psycopg
+
+    _, connections, events = grant_cli
+    primary = psycopg.errors.InsufficientPrivilege("private-grant-failure")
+    replacing = psycopg.errors.ConnectionFailure("cleanup failed")
+    first_failed = False
+    replaced = False
+    admin = replacement in ("admin_close", "owned_cleanup")
+    statement = (
+        "grant etl_writer to"
+        if admin
+        else (
+            "grant usage, create on schema public"
+            if replacement == "migration_exit"
+            else "select current_database(), current_user"
+        )
+    )
+    connection_type = _AdminConnection if admin else _TargetConnection
+    original_execute = connection_type.execute
+
+    def execute(self, query, params=None):
+        nonlocal first_failed, replaced
+        text = _query_text(query)
+        if text.startswith(statement):
+            first_failed = True
+            raise primary
+        if replacement == "owned_cleanup" and text.startswith("drop database"):
+            replaced = True
+            raise replacing
+        return original_execute(self, query, params)
+
+    monkeypatch.setattr(connection_type, "execute", execute)
+    if replacement != "owned_cleanup":
+        method = "close" if admin else "__exit__"
+        original_lifecycle = getattr(connection_type, method)
+
+        def lifecycle(self, *args):
+            nonlocal replaced
+            if first_failed and not replaced:
+                replaced = True
+                raise replacing
+            return original_lifecycle(self, *args)
+
+        monkeypatch.setattr(connection_type, method, lifecycle)
+
+    assert main() == 1
+    output = capsys.readouterr().err
+    assert first_failed and replaced
+    assert "private-" not in output
+    if replacement == "owned_cleanup":
+        assert "E2E_ETL_STAGE owned_database_cleanup\n" in output
+        assert "E2E_ETL_GRANT" not in output
+    else:
+        operation = {
+            "admin_close": "close_admin",
+            "migration_exit": "migration_connection",
+            "target_exit": "target_connection",
+        }[replacement]
+        assert f"E2E_ETL_GRANT {operation} database 08006\n" in output
+        assert connections.admin.databases == connections.admin.roles == {}
+    assert sum(text.startswith("drop database") for text, _ in connections.admin.statements) == (
+        0 if replacement == "owned_cleanup" else 1
+    )
+    assert events == ["migrations"]
+
+
+def test_cli_success_has_no_grant_failure_marker(capsys, grant_cli) -> None:
+    _, connections, events = grant_cli
+    assert main() == 0
+    assert "E2E_ETL_GRANT" not in capsys.readouterr().err
+    assert events == ["migrations", "pytest"]
+    assert connections.admin.databases == connections.admin.roles == {}
 
 
 def test_identity_is_unique_and_rejects_names_or_markers_outside_the_contract() -> None:
@@ -489,6 +1287,9 @@ def test_post_migration_grants_are_complete_and_role_remains_cluster_unprivilege
         f'grant all privileges on all tables in schema public to "{identity.role_name}"',
         f'grant all privileges on all sequences in schema public to "{identity.role_name}"',
         f'grant all privileges on all functions in schema public to "{identity.role_name}"',
+        "grant workspace_admin_owner to "
+        f'"votus_etl_scope_{identity.token.hex}" with inherit false, set true',
+        f'grant "votus_etl_scope_{identity.token.hex}" to "admin" with inherit false, set true',
     ]
     policy_statement = next(
         statement
@@ -665,6 +1466,39 @@ def test_cleanup_is_idempotent_and_refuses_a_changed_ownership_marker() -> None:
     database.close()
     drops = [s for s, _ in connections.admin.statements if s.lower().startswith("drop database")]
     assert len(drops) == 1
+
+
+def test_apply_migrations_reports_collision_in_shared_role_catalog(tmp_path: Path) -> None:
+    import psycopg
+
+    from etl.verify import MigrationApplyError
+
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    (migrations / "0001_create_role.sql").write_text("CREATE ROLE disposable_role;")
+    roles: set[str] = set()
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def execute(self, _query: bytes) -> None:
+            if "disposable_role" in roles:
+                raise psycopg.errors.DuplicateObject("private DSN and SQL")
+            roles.add("disposable_role")
+
+    def connect(_dsn: str) -> FakeConnection:
+        return FakeConnection()
+
+    assert apply_migrations("disposable-one", migrations, connect=connect) == 1
+    with pytest.raises(MigrationApplyError) as caught:
+        apply_migrations("disposable-two", migrations, connect=connect)
+    assert caught.value.filename == "0001_create_role.sql"
+    assert caught.value.sqlstate == "42710"
+    assert isinstance(caught.value.__cause__, psycopg.errors.DuplicateObject)
 
 
 def test_apply_migrations_requires_a_complete_mixed_version_sequence_and_executes_every_file(
@@ -935,7 +1769,7 @@ def test_command_runs_only_selected_proof_or_full_default_and_cleans_up(
         events.append("migrations")
         return 1
 
-    def pytest_child(dsn: str, root: Path) -> verify.PytestResult:
+    def pytest_child(dsn: str, root: Path, owned: DisposablePostgres) -> verify.PytestResult:
         assert "maintenance-value" not in dsn
         assert database.identity.role_name in dsn
         assert database.admin is None
@@ -1035,3 +1869,130 @@ def test_command_is_reachable_from_the_installed_package_entry_point(tmp_path: P
     assert completed.returncode == 2
     assert completed.stdout == ""
     assert "ETL_TEST_ADMIN_DATABASE_URL must name a reachable 'template1'" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    "defect", [None, "overlap", "missing", "changed", "count", "skip", "failure"]
+)
+def test_owned_pytest_partition_is_complete_disjoint_and_credential_scoped(
+    tmp_path, defect, monkeypatch
+):
+    import json
+
+    from etl import verify
+
+    identity = _identity()
+    connections = _Connections()
+    owned = DisposablePostgres(
+        "postgresql://admin:maintenance-value@127.0.0.1/template1",
+        identity=identity,
+        connect=connections,
+        secret_factory=lambda: "test-value",
+    )
+    runner = verify.MigrationRunner(
+        f"votus_etl_runner_{identity.token.hex}",
+        "a" * 43,
+        f"votus-etl-runner:{identity.token}",
+        1234,
+    )
+    monkeypatch.setattr(owned, "prepare_migration_runner", lambda _external: runner)
+    calls = []
+    all_ids = ["tests/test_sample.py::test_ordinary", "tests/test_sample.py::test_owned"]
+
+    def child(command, **kwargs):
+        env = kwargs["env"]
+        phase = env["ETL_VERIFY_PHASE"]
+        calls.append(phase)
+        assert env["ETL_TEST_DATABASE_URL"] == owned.target_dsn
+        assert "ETL_TEST_ADMIN_DATABASE_URL" not in env
+        assert "PGPASSWORD" not in env
+        if phase == "ordinary":
+            assert "ETL_TEST_OWNED_DATABASE_URL" not in env
+            assert "ETL_TEST_OWNED_DATABASE_MARKER" not in env
+            selected = all_ids[:1]
+        else:
+            assert env["ETL_TEST_OWNED_DATABASE_URL"] == owned.migration_dsn
+            assert env["ETL_TEST_OWNED_DATABASE_MARKER"] == identity.marker
+            selected = all_ids[:1] if defect == "overlap" else all_ids[1:]
+        manifest = {"all": all_ids, "selected": selected}
+        if phase == "privileged" and defect == "changed":
+            manifest["all"] = [*all_ids, "extra"]
+        if not (phase == "privileged" and defect == "missing"):
+            Path(env["ETL_VERIFY_COLLECTION_REPORT"]).write_text(json.dumps(manifest))
+        count = 2 if phase == "privileged" and defect == "count" else 1
+        skipped = int(phase == "ordinary" and defect == "skip")
+        failed = int(phase == "ordinary" and defect == "failure")
+        report = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml="))
+        Path(report).write_text(
+            f'<testsuite tests="{count}" skipped="{skipped}" failures="{failed}"/>'
+        )
+        return subprocess.CompletedProcess(command, failed)
+
+    with owned as restricted:
+        if defect:
+            with pytest.raises(RuntimeError):
+                verify.run_pytest(restricted, tmp_path, owned, run=child)
+        else:
+            assert verify.run_pytest(restricted, tmp_path, owned, run=child) == verify.PytestResult(
+                2, 0
+            )
+    assert calls == ["ordinary", "privileged"]
+
+
+def test_owned_pytest_rejects_mismatched_target_before_launch(tmp_path):
+    from etl import verify
+
+    owned = DisposablePostgres(
+        "postgresql://admin:secret@127.0.0.1/template1", identity=_identity()
+    )
+    with pytest.raises(UnsafeDatabaseError):
+        verify.run_pytest(
+            "dbname=wrong",
+            tmp_path,
+            owned,
+            run=lambda *_args, **_kwargs: pytest.fail("unsafe target must not launch"),
+        )
+
+
+def test_collection_partition_routes_all_marked_cases_without_hidden_deselection(
+    tmp_path, monkeypatch
+):
+    import importlib.util
+    import json
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location(
+        "owned_conftest", Path(__file__).with_name("conftest.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Item:
+        def __init__(self, nodeid, privileged):
+            self.nodeid = nodeid
+            self.privileged = privileged
+
+        def get_closest_marker(self, name):
+            assert name == "owned_database"
+            return self.privileged
+
+    all_items = [Item("ordinary", False), Item("privileged", True)]
+    deselected = []
+    config = SimpleNamespace(
+        hook=SimpleNamespace(pytest_deselected=lambda items: deselected.extend(items))
+    )
+    for phase, expected in (("ordinary", "ordinary"), ("privileged", "privileged")):
+        path = tmp_path / f"{phase}.json"
+        monkeypatch.setenv("ETL_VERIFY_PHASE", phase)
+        monkeypatch.setenv("ETL_VERIFY_COLLECTION_REPORT", str(path))
+        if phase == "privileged":
+            monkeypatch.setenv("ETL_TEST_OWNED_DATABASE_URL", "explicit-target")
+            monkeypatch.setenv("ETL_TEST_OWNED_DATABASE_MARKER", "explicit-marker")
+        items = list(all_items)
+        module.pytest_collection_modifyitems(config, items)
+        assert [item.nodeid for item in items] == [expected]
+        assert json.loads(path.read_text()) == {
+            "all": ["ordinary", "privileged"],
+            "selected": [expected],
+        }
+    assert len(deselected) == 2

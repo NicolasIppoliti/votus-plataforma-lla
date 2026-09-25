@@ -174,6 +174,786 @@ def test_validate_coronel_rosales_partido_geometry_is_reachable_through_main(
     }
 
 
+CNE_SECTION_IDENTITY = {
+    "provincia": "Buenos Aires",
+    "departamen": "Cnel. de Marina L.Rosales",
+    "cabecera": "Punta Alta",
+}
+
+
+@pytest.mark.parametrize(
+    "source_id,field,value",
+    [
+        ("geography/cne-pba-circuits", "capability", "national"),
+        ("geography/cne-pba-circuits", "reference_kind", "section_geometry"),
+        ("geography/cne-pba-sections", "capability", "national"),
+        ("geography/cne-pba-sections", "reference_kind", "circuit_geometry"),
+    ],
+)
+def test_circuit_cli_rejects_wrong_registered_contract(tmp_path, capsys, source_id, field, value):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    sources = load_sources()
+    entries = [dict(entry) for entry in sources["geography"]]
+    for entry in entries:
+        if entry["id"] == source_id:
+            entry[field] = value
+    if field == "capability":
+        moved = next(entry for entry in entries if entry["id"] == source_id)
+        entries.remove(moved)
+        moved.update(election_year=2025, election_round="legislativas")
+        sources["national"] = [moved]
+    sources["geography"] = entries
+    path = tmp_path / "sources.yaml"
+    path.write_text(yaml.safe_dump(sources))
+    assert main(["--sources-path", str(path), *args]) == 1
+    assert json.loads(capsys.readouterr().out)["error"] == (
+        "unsupported_capability" if field == "capability" else "unsupported_reference_kind"
+    )
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_cli_rejects_manifest_source_url_disagreement(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    records = load_manifest(manifest)
+    section = next(record for record in records if record["id"] == "geography/cne-pba-sections")
+    section["source_url"] = "https://example.invalid/different-source"
+    save_manifest(manifest, records, events=[])
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "source_identity_mismatch",
+        "source": "geography/cne-pba-sections",
+    }
+
+
+def test_circuit_cli_reports_both_verified_snapshots(tmp_path, capsys):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    records = load_manifest(tmp_path / "manifest.json")
+    assert main(args) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["snapshots"] == {
+        record["id"]: {"sha256": record["sha256"], "fetched_at": record["fetched_at"]}
+        for record in records
+    }
+
+
+def test_circuit_geometry_main_uses_cne_section_without_arba(tmp_path, capsys):
+    assert main(circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"]["accepted"] == 1
+    assert report["election_applicability"] == "unknown"
+
+
+def rewrite_circuit_snapshot(tmp_path, name, mutate):
+    """Rewrite a test-only snapshot and its checksum; never touch source archives."""
+    archive = tmp_path / "archive" / "geography" / f"{name}.geojson"
+    document = json.loads(archive.read_bytes())
+    mutate(document)
+    payload = json.dumps(document).encode()
+    archive.write_bytes(payload)
+    manifest = tmp_path / "manifest.json"
+    records = load_manifest(manifest)
+    for record in records:
+        if record["id"] == f"geography/{name}":
+            record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, records, events=[])
+
+
+def test_circuit_small_gap_is_not_silently_accepted(tmp_path, capsys):
+    almost_square = [[0, 0], [1.999999999, 0], [1.999999999, 2], [0, 2], [0, 0]]
+    assert main(circuit_case(tmp_path, [circuit_feature("0248", almost_square)])) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reasons"] == {"gap": 1}
+    assert report["counts"]["accepted"] == 0
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_rejects_duplicate_selected_feature(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-sections",
+        lambda document: document["features"].append(document["features"][0].copy()),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "wrong_parent_identity"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_rejects_wrong_named_identity(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-sections",
+        lambda document: document["features"][0]["properties"].update(
+            {"provincia": "Another province"}
+        ),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "wrong_parent_identity"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_rejects_missing_cabecera(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-sections",
+        lambda document: document["features"][0]["properties"].pop("cabecera"),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "wrong_parent_identity"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_rejects_wrong_crs(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-sections",
+        lambda document: document["crs"]["properties"].update({"name": "EPSG:3857"}),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "invalid_collection_or_crs"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_children_reject_wrong_crs(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-circuits",
+        lambda document: document["crs"]["properties"].update({"name": "EPSG:3857"}),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "invalid_collection_or_crs"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_rejects_unsupported_collection(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-sections",
+        lambda document: document.update({"type": "GeometryCollection"}),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "invalid_collection_or_crs"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_rejects_malformed_shape(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    rewrite_circuit_snapshot(
+        tmp_path,
+        "cne-pba-sections",
+        lambda document: document["features"][0].update(
+            {"geometry": {"type": "Point", "coordinates": [0, 0]}}
+        ),
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "invalid_parent_geometry"}
+
+
+def test_circuit_children_reject_duplicate_raw_identity(tmp_path, capsys):
+    left = [[0, 0], [1, 0], [1, 2], [0, 2], [0, 0]]
+    right = [[1, 0], [2, 0], [2, 2], [1, 2], [1, 0]]
+    features = [circuit_feature("0248", left), circuit_feature("0248", right)]
+    assert main(circuit_case(tmp_path, features)) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reasons"] == {"missing_or_duplicate_circuit": 2}
+    assert report["counts"]["invalid"] == 2
+    assert report["counts"]["source_total"] == 2
+
+
+def test_circuit_children_reject_missing_selected_features(tmp_path, capsys):
+    assert main(circuit_case(tmp_path, [])) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "missing_circuits"}
+
+
+def test_circuit_children_reject_non_feature_selected_unit(tmp_path, capsys):
+    child = circuit_feature("0248", SQUARE)
+    child["type"] = "Geometry"
+    assert main(circuit_case(tmp_path, [child])) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reasons"]["invalid_geometry"] == 1
+    assert report["counts"]["invalid"] == 1
+
+
+def test_circuit_children_reject_missing_coverage(tmp_path, capsys):
+    half = [[0, 0], [1, 0], [1, 2], [0, 2], [0, 0]]
+    assert main(circuit_case(tmp_path, [circuit_feature("0248", half)])) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reasons"] == {"gap": 1}
+    assert report["counts"]["total"] == 1
+    assert report["counts"]["invalid"] == 0
+    assert report["counts"]["accepted"] == 0
+
+
+def test_circuit_children_reject_surplus_coverage(tmp_path, capsys):
+    surplus = [[0, 0], [3, 0], [3, 2], [0, 2], [0, 0]]
+    assert main(circuit_case(tmp_path, [circuit_feature("0248", surplus)])) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reasons"] == {"outside_parent": 1}
+    assert report["counts"]["invalid"] == 1
+    assert report["counts"]["accepted"] == 0
+
+
+def test_circuit_section_rejects_non_feature_even_with_matching_properties(tmp_path, capsys):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    archive = tmp_path / "archive" / "geography" / "cne-pba-sections.geojson"
+    document = json.loads(archive.read_bytes())
+    document["features"][0]["type"] = "Geometry"
+    payload = json.dumps(document).encode()
+    archive.write_bytes(payload)
+    manifest = tmp_path / "manifest.json"
+    records = load_manifest(manifest)
+    for record in records:
+        if record["id"] == "geography/cne-pba-sections":
+            record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, records, events=[])
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "wrong_parent_identity"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_archive_integrity_fails_closed(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    archive = tmp_path / "archive" / "geography" / "cne-pba-sections.geojson"
+    archive.write_bytes(b"corrupt")
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "archive_integrity",
+        "source": "geography/cne-pba-sections",
+    }
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_section_missing_snapshot_fails_closed(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    records = [
+        record for record in load_manifest(manifest) if record["id"] != "geography/cne-pba-sections"
+    ]
+    save_manifest(manifest, records, events=[])
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "missing_snapshot",
+        "source": "geography/cne-pba-sections",
+    }
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_children_missing_snapshot_fails_closed(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    records = [
+        record for record in load_manifest(manifest) if record["id"] != "geography/cne-pba-circuits"
+    ]
+    save_manifest(manifest, records, events=[])
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "missing_snapshot",
+        "source": "geography/cne-pba-circuits",
+    }
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_cli_rejects_incompatible_manifest_version(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    document = json.loads(manifest.read_text())
+    document["schema_version"] = 3
+    manifest.write_text(json.dumps(document))
+    assert main([*args, "--use", use]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "error: manifest schema_version must be exactly 2\n"
+
+
+def test_circuit_geometry_main_reads_verified_temp_archive(tmp_path, capsys):
+    parent = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}},
+        "features": [
+            {
+                "type": "Feature",
+                "id": "section.fixture",
+                "properties": CNE_SECTION_IDENTITY,
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]],
+                },
+            }
+        ],
+    }
+    child = {
+        "type": "FeatureCollection",
+        "crs": parent["crs"],
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "distrito": "02",
+                    "indec_d": "182",
+                    "departamen": "Cnel. de Marina L.Rosales",
+                    "circuito": "0248",
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]],
+                },
+            }
+        ],
+    }
+    root = tmp_path / "archive"
+    (root / "geography").mkdir(parents=True)
+    records = []
+    for name, document in [("cne-pba-sections", parent), ("cne-pba-circuits", child)]:
+        payload = json.dumps(document).encode()
+        (root / "geography" / f"{name}.geojson").write_bytes(payload)
+        records.append(
+            {
+                "id": f"geography/{name}",
+                "status": "ok",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "archived_path": f"archive/geography/{name}.geojson",
+                "fetched_at": "2026-09-22T00:00:00Z",
+            }
+        )
+    manifest = tmp_path / "manifest.json"
+    save_manifest(manifest, records, events=[])
+    assert (
+        main(
+            [
+                "--local-root",
+                str(root),
+                "--manifest-path",
+                str(manifest),
+                "validate-circuit-geometry",
+                "--source",
+                "geography/cne-pba-circuits",
+            ]
+        )
+        == 0
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"]["accepted"] == 1
+    assert report["election_applicability"] == "unknown"
+
+
+def test_circuit_geometry_reports_all_valid_shapes_even_outside(tmp_path, capsys):
+    parent = {
+        "type": "FeatureCollection",
+        "crs": {"properties": {"name": "EPSG:4326"}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": CNE_SECTION_IDENTITY,
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]],
+                },
+            }
+        ],
+    }
+
+    def circuit(name, coordinates):
+        return {
+            "type": "Feature",
+            "properties": {
+                "distrito": "02",
+                "indec_d": "182",
+                "departamen": "Cnel. de Marina L.Rosales",
+                "circuito": name,
+            },
+            "geometry": {"type": "Polygon", "coordinates": [coordinates]},
+        }
+
+    child = {
+        "type": "FeatureCollection",
+        "crs": parent["crs"],
+        "features": [
+            circuit("0248", [[0, 0], [2, 0], [2, 1], [0, 1], [0, 0]]),
+            circuit("0248A", [[0, 1], [2, 1], [2, 1.5], [0, 1.5], [0, 1]]),
+            circuit("0249", [[1.9, 1.4], [2.1, 1.4], [2.1, 2], [1.9, 2], [1.9, 1.4]]),
+        ],
+    }
+    root = tmp_path / "archive"
+    (root / "geography").mkdir(parents=True)
+    records = []
+    for name, document in [("cne-pba-sections", parent), ("cne-pba-circuits", child)]:
+        payload = json.dumps(document).encode()
+        (root / "geography" / f"{name}.geojson").write_bytes(payload)
+        records.append(
+            {
+                "id": f"geography/{name}",
+                "status": "ok",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "archived_path": f"archive/geography/{name}.geojson",
+                "fetched_at": "2026-09-22T00:00:00Z",
+            }
+        )
+    manifest = tmp_path / "manifest.json"
+    save_manifest(manifest, records, events=[])
+    assert (
+        main(
+            [
+                "--local-root",
+                str(root),
+                "--manifest-path",
+                str(manifest),
+                "validate-circuit-geometry",
+                "--source",
+                "geography/cne-pba-circuits",
+            ]
+        )
+        == 1
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"] == {
+        "accepted": 0,
+        "eligible": 1,
+        "invalid": 2,
+        "total": 3,
+        "source_total": 3,
+        "excluded": 0,
+    }
+    assert report["reasons"] == {"outside_parent": 1, "overlap": 2, "gap": 1}
+    assert report["circuits"] == ["0248", "0248A", "0249"]
+
+
+def circuit_case(tmp_path, features, *, parent_properties=None, parent_geometry=None):
+    parent = {
+        "type": "FeatureCollection",
+        "crs": {"properties": {"name": "EPSG:4326"}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": (
+                    CNE_SECTION_IDENTITY if parent_properties is None else parent_properties
+                ),
+                "geometry": parent_geometry
+                if parent_geometry is not None
+                else {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]],
+                },
+            }
+        ],
+    }
+    child = {"type": "FeatureCollection", "crs": parent["crs"], "features": features}
+    root = tmp_path / "archive"
+    (root / "geography").mkdir(parents=True, exist_ok=True)
+    records = []
+    for name, document in [("cne-pba-sections", parent), ("cne-pba-circuits", child)]:
+        payload = json.dumps(document).encode()
+        (root / "geography" / f"{name}.geojson").write_bytes(payload)
+        records.append(
+            {
+                "id": f"geography/{name}",
+                "status": "ok",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "archived_path": f"archive/geography/{name}.geojson",
+                "fetched_at": "2026-09-22T00:00:00Z",
+            }
+        )
+    manifest = tmp_path / "manifest.json"
+    save_manifest(manifest, records, events=[])
+    return [
+        "--local-root",
+        str(root),
+        "--manifest-path",
+        str(manifest),
+        "validate-circuit-geometry",
+        "--source",
+        "geography/cne-pba-circuits",
+    ]
+
+
+def circuit_feature(name, coordinates, **properties):
+    return {
+        "type": "Feature",
+        "properties": {
+            "distrito": "02",
+            "indec_d": "182",
+            "departamen": "Cnel. de Marina L.Rosales",
+            "circuito": name,
+            **properties,
+        },
+        "geometry": {"type": "Polygon", "coordinates": [coordinates]},
+    }
+
+
+SQUARE = [[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_parent_null_properties_returns_reasoned_cli_error(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)], parent_properties={})
+    # Archived bytes and manifest are rewritten together so checksum verification still runs.
+    archive = tmp_path / "archive" / "geography" / "cne-pba-sections.geojson"
+    document = json.loads(archive.read_bytes())
+    document["features"][0]["properties"] = None
+    payload = json.dumps(document).encode()
+    archive.write_bytes(payload)
+    manifest = tmp_path / "manifest.json"
+    records = load_manifest(manifest)
+    for record in records:
+        if record["id"] == "geography/cne-pba-sections":
+            record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, records, events=[])
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "wrong_parent_identity"}
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_parent_nonpolygon_returns_reasoned_cli_error(tmp_path, capsys, use):
+    args = circuit_case(
+        tmp_path,
+        [circuit_feature("0248", SQUARE)],
+        parent_geometry={"type": "Point", "coordinates": [1, 1]},
+    )
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "invalid_parent_geometry"}
+
+
+def test_circuit_overlap_flags_both_units_regardless_of_order(tmp_path, capsys):
+    a = circuit_feature("0248", SQUARE)
+    b = circuit_feature("0249", [[1, 0], [2, 0], [2, 2], [1, 2], [1, 0]])
+    for order in ([a, b], [b, a]):
+        assert main(circuit_case(tmp_path, order)) == 1
+        report = json.loads(capsys.readouterr().out)
+        assert report["reasons"]["overlap"] == 2
+        assert report["counts"]["invalid"] == 2
+        assert report["overlap_pairs"] == [["0248", "0249"]]
+
+
+def reviewed_circuit_cli_args():
+    root = Path(__file__).resolve().parents[2]
+    return [
+        "--sources-path",
+        str(root / "etl" / "sources.yaml"),
+        "--local-root",
+        str(root / "archive"),
+        "--manifest-path",
+        str(root / "archive-manifest.json"),
+        "validate-circuit-geometry",
+        "--source",
+        "geography/cne-pba-circuits",
+    ]
+
+
+def test_circuit_reviewed_originals_require_explicit_reference_use(capsys):
+    args = reviewed_circuit_cli_args()
+    assert main(args) == 1
+    strict = json.loads(capsys.readouterr().out)
+    assert main([*args, "--use", "reference-only"]) == 0
+    reference = json.loads(capsys.readouterr().out)
+    assert reference["reference_acceptance"] == {
+        "status": "accepted_with_warning",
+        "warnings": ["reviewed_source_overlap"],
+        "spatial_assignment": "unsupported",
+    }
+    assert reference["counts_basis"] == "strict-partition"
+    assert (
+        reference["counts"]
+        == strict["counts"]
+        == {
+            "accepted": 0,
+            "eligible": 8,
+            "invalid": 2,
+            "total": 10,
+            "source_total": 1146,
+            "excluded": 1136,
+        }
+    )
+    assert reference["reasons"] == strict["reasons"] == {"overlap": 2}
+    assert reference["overlap_pairs"] == strict["overlap_pairs"] == [["0248B", "0248C"]]
+    assert reference["exclusion_reasons"] == strict["exclusion_reasons"] == {"other_indec_d": 1136}
+    assert reference["geographic_coverage"] == strict["geographic_coverage"] == "unverified"
+    assert reference["election_applicability"] == strict["election_applicability"] == "unknown"
+
+
+@pytest.mark.parametrize("changed_source", ["cne-pba-circuits", "cne-pba-sections"])
+def test_circuit_reference_rejects_reexport_of_either_reviewed_original(
+    tmp_path, capsys, changed_source
+):
+    # Preserve the actual original bytes except one harmless whitespace append.
+    # Recompute the real digest: no fake document may claim a reviewed checksum.
+    args = circuit_case(tmp_path, [])
+    records = load_manifest(tmp_path / "manifest.json")
+    original_records = load_manifest(REPO_ROOT / "archive-manifest.json")
+    for record in records:
+        original = next(item for item in original_records if item["id"] == record["id"])
+        payload = (REPO_ROOT / original["archived_path"]).read_bytes()
+        if record["id"] == f"geography/{changed_source}":
+            payload += b"\n"
+        (tmp_path / record["archived_path"]).write_bytes(payload)
+        record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(tmp_path / "manifest.json", records, events=[])
+    assert main([*args, "--use", "reference-only"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["overlap_pairs"] == [["0248B", "0248C"]]
+    assert report["reasons"] == {"overlap": 2}
+    assert report["reference_acceptance"]["status"] == "blocked"
+
+
+def test_circuit_reference_rejects_unreviewed_overlap_even_with_reviewed_names(tmp_path, capsys):
+    features = [circuit_feature(name, SQUARE) for name in ("0248C", "0248B")]
+    assert main([*circuit_case(tmp_path, features), "--use", "reference-only"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["overlap_pairs"] == [["0248B", "0248C"]]
+    assert report["reference_acceptance"]["status"] == "blocked"
+    assert report["counts"]["accepted"] == 0
+
+
+def test_circuit_reference_does_not_trust_reviewed_checksum_on_fake_bytes(tmp_path, capsys):
+    args = circuit_case(tmp_path, [circuit_feature("0248B", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    records = load_manifest(manifest)
+    for record in records:
+        if record["id"] == "geography/cne-pba-circuits":
+            record["sha256"] = "215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71"
+    save_manifest(manifest, records, events=[])
+    assert main([*args, "--use", "reference-only"]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "archive_integrity",
+        "source": "geography/cne-pba-circuits",
+    }
+
+
+def test_circuit_reference_preserves_valid_partition_and_unknown_election(tmp_path, capsys):
+    assert (
+        main(
+            [
+                *circuit_case(tmp_path, [circuit_feature("0248", SQUARE)]),
+                "--use",
+                "reference-only",
+            ]
+        )
+        == 0
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["reference_acceptance"] == {
+        "status": "accepted",
+        "warnings": [],
+        "spatial_assignment": "unsupported",
+    }
+    assert report["counts"]["accepted"] == 1
+    assert report["geographic_coverage"] == "valid"
+    assert report["election_applicability"] == "unknown"
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+@pytest.mark.parametrize(
+    ("features", "reason"),
+    [
+        ([circuit_feature("0248", [[0, 0], [1, 0], [1, 2], [0, 2], [0, 0]])], "gap"),
+        ([circuit_feature("0248", [[0, 0], [3, 0], [3, 2], [0, 2], [0, 0]])], "outside_parent"),
+        ([circuit_feature("0248", [[0, 0], [2, 2], [0, 2], [2, 0], [0, 0]])], "invalid_geometry"),
+        (
+            [circuit_feature("0248", SQUARE), circuit_feature("0248", SQUARE)],
+            "missing_or_duplicate_circuit",
+        ),
+        ([circuit_feature("0248", SQUARE), {"properties": None}], "missing_scope_identity"),
+    ],
+)
+def test_circuit_reference_keeps_all_other_blockers_and_reconciliation(
+    tmp_path, capsys, use, features, reason
+):
+    assert main([*circuit_case(tmp_path, features), "--use", use]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert reason in report["reasons"] or reason in report["exclusion_reasons"]
+    if use == "reference-only":
+        assert report["reference_acceptance"]["status"] == "blocked"
+    counts = report["counts"]
+    assert (counts["accepted"], report["geographic_coverage"]) == (0, "unverified")
+    assert counts["source_total"] == counts["total"] + counts["excluded"]
+    assert counts["total"] == counts["eligible"] + counts["invalid"]
+    assert counts["excluded"] == sum(report["exclusion_reasons"].values())
+    if reason == "missing_scope_identity":
+        assert counts == {
+            "accepted": 0,
+            "eligible": 1,
+            "invalid": 0,
+            "total": 1,
+            "source_total": 2,
+            "excluded": 1,
+        }
+        assert report["reasons"] == {}
+        assert report["exclusion_reasons"] == {"missing_scope_identity": 1}
+
+
+def test_circuit_overlap_pairs_are_stable_across_multiple_feature_orders(tmp_path, capsys):
+    features = [circuit_feature(name, SQUARE) for name in ("0249", "0248C", "0248B")]
+    for order in (features, features[::-1], [features[1], features[0], features[2]]):
+        assert main(circuit_case(tmp_path, order)) == 1
+        report = json.loads(capsys.readouterr().out)
+        assert report["overlap_pairs"] == [["0248B", "0248C"], ["0248B", "0249"], ["0248C", "0249"]]
+        assert report["reasons"] == {"overlap": 3}
+        assert report["counts"]["eligible"] + report["counts"]["invalid"] == 3
+
+
+def test_circuit_numeric_padding_collision_rejects_both(tmp_path, capsys):
+    a = circuit_feature("0248", [[0, 0], [1, 0], [1, 2], [0, 2], [0, 0]])
+    b = circuit_feature("248", [[1, 0], [2, 0], [2, 2], [1, 2], [1, 0]])
+    assert main(circuit_case(tmp_path, [a, b])) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reasons"]["missing_or_duplicate_circuit"] == 2
+    assert report["circuits"] == ["0248", "248"]
+
+
+def test_circuit_malformed_selected_unit_is_reported(tmp_path, capsys):
+    assert (
+        main(
+            circuit_case(
+                tmp_path,
+                [
+                    circuit_feature("0248", SQUARE),
+                    {
+                        "properties": {
+                            "distrito": "02",
+                            "indec_d": "182",
+                            "departamen": "Cnel. de Marina L.Rosales",
+                            "circuito": "0249",
+                        },
+                        "geometry": [],
+                    },
+                ],
+            )
+        )
+        == 1
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"]["invalid"] == 1
+    assert report["reasons"]["invalid_geometry"] == 1
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_known_outside_scope_preserves_partition_and_reconciliation(tmp_path, capsys, use):
+    inside = circuit_feature("0248", SQUARE)
+    other_distrito = circuit_feature("0249", SQUARE, distrito="03")
+    other_indec_d = circuit_feature("0250", SQUARE, indec_d="183")
+    assert (
+        main([*circuit_case(tmp_path, [inside, other_distrito, other_indec_d]), "--use", use]) == 0
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"] == {
+        "accepted": 1,
+        "eligible": 1,
+        "invalid": 0,
+        "total": 1,
+        "source_total": 3,
+        "excluded": 2,
+    }
+    assert report["reasons"] == {}
+    assert report["exclusion_reasons"] == {"other_distrito": 1, "other_indec_d": 1}
+    assert report["geographic_coverage"] == "valid"
+    if use == "reference-only":
+        assert report["reference_acceptance"]["status"] == "accepted"
+
+
 def partido_cli_fixture(tmp_path: Path, *, features: list | None = None) -> tuple:
     source_id = "geography/arba-coronel-rosales-partido"
     document = {
@@ -297,7 +1077,13 @@ def test_partido_geometry_rejects_wrong_evidence(tmp_path, capsys, field, value,
 )
 def test_partido_geometry_checks_registered_contract(tmp_path, capsys, change, reason):
     _, record, _, _, args = partido_cli_fixture(tmp_path)
-    entry = dict(load_sources()["geography"][0])
+    entry = dict(
+        next(
+            entry
+            for entry in load_sources()["geography"]
+            if entry["id"] == "geography/arba-coronel-rosales-partido"
+        )
+    )
     capability = change.get("capability", "geography")
     entry.update({key: value for key, value in change.items() if key != "capability"})
     if capability == "national":
@@ -365,7 +1151,13 @@ def test_partido_geometry_reports_missing_snapshot(tmp_path, capsys):
 @pytest.mark.parametrize("code", [None, ""])
 def test_partido_geometry_requires_pba_metadata(tmp_path, capsys, code):
     _, record, _, _, args = partido_cli_fixture(tmp_path)
-    entry = dict(load_sources()["geography"][0])
+    entry = dict(
+        next(
+            entry
+            for entry in load_sources()["geography"]
+            if entry["id"] == "geography/arba-coronel-rosales-partido"
+        )
+    )
     if code is None:
         entry.pop("pba_distrito_code")
     else:
@@ -383,7 +1175,13 @@ def test_partido_geometry_requires_pba_metadata(tmp_path, capsys, code):
 def test_sources_geography_rejects_election_metadata(tmp_path, field, value):
     from etl.__main__ import SourcesValidationError
 
-    entry = dict(load_sources()["geography"][0])
+    entry = dict(
+        next(
+            entry
+            for entry in load_sources()["geography"]
+            if entry["id"] == "geography/arba-coronel-rosales-partido"
+        )
+    )
     entry[field] = value
     sources = tmp_path / "sources.yaml"
     sources.write_text(yaml.safe_dump({"geography": [entry]}))
@@ -1568,10 +2366,12 @@ def _fiscalizacion_csv(rows: list[str]) -> str:
     return FISCALIZACION_HEADER + "".join(rows)
 
 
+@pytest.mark.owned_database
 def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
+    owned_database,
 ) -> None:
     """Drives `ingest_source`, not the projection function.
 
@@ -1657,7 +2457,10 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
             written = cur.fetchall()
             cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
             assert cur.fetchone() == ("fiscalizacion",)
-        with psycopg.connect(TEST_DSN, user="postgres") as admin_conn, admin_conn.cursor() as cur:
+        with (
+            owned_database.owner_connection("workspace_review_ingest_owner") as admin_conn,
+            admin_conn.cursor() as cur,
+        ):
             cur.execute(
                 "select r.kind,c.context_role,c.source_kind,c.archive_availability,"
                 "c.election_year,c.archive_entry_id,c.unknown_reason from review_item r "
@@ -7844,7 +8647,11 @@ def test_registered_electoral_sources_declare_an_explicit_election() -> None:
     for capability, entries in sources.items():
         for entry in entries:
             if capability == "geography":
-                assert entry["reference_kind"] == "partido_geometry"
+                assert entry["reference_kind"] in {
+                    "partido_geometry",
+                    "circuit_geometry",
+                    "section_geometry",
+                }
                 assert "election_year" not in entry
                 assert "election_round" not in entry
                 continue
