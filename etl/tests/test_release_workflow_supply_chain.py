@@ -85,7 +85,7 @@ def test_etl_matrix_cannot_cancel_or_change_required_cases(strategy: dict[str, A
         _assert_independent_release_jobs(jobs)
 
 
-def test_focus_geometry_upload_is_failure_only_and_narrowly_scoped() -> None:
+def test_review_diagnostic_upload_is_failure_only_and_narrowly_scoped() -> None:
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
     _assert_independent_release_jobs(workflow["jobs"])
     assert workflow["jobs"]["verify"]["if"] == "${{ always() }}"
@@ -137,7 +137,10 @@ test "$E2E_SQL_RESULT" = "$e2e"
     assert upload["if"] == "${{ failure() }}"
     assert upload["with"] == {
         "name": "review-focus-geometry",
-        "path": "apps/web/test-results/**/review-focus-geometry.json",
+        "path": (
+            "apps/web/test-results/**/review-focus-geometry.json\n"
+            "apps/web/test-results/**/review-scroll-completion.json\n"
+        ),
         "retention-days": 1,
         "include-hidden-files": False,
         "if-no-files-found": "ignore",

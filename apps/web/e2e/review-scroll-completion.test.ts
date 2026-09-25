@@ -7,6 +7,7 @@ import { createReviewScrollObserver, withReviewScrollDiagnostics, writeReviewScr
 
 class ScrollTarget extends EventTarget {
   scrollLeft = 0;
+  scrollTop = 0;
   clientWidth = 280;
   scrollWidth = 600;
   isConnected = true;
@@ -53,7 +54,7 @@ test("the real scroll observer exposes a bounded passive event history", () => {
   observer.dispose();
 });
 
-test("the serialized browser factory preserves completion and end-then-scroll semantics", () => {
+test("the serialized browser factory preserves completion and invalidates settlement after actual movement", () => {
   const element = target();
   const factory = runInNewContext(`(${createReviewScrollObserver.toString()})`, {
     document, performance, KeyboardEvent: ArrowKey,
@@ -69,6 +70,7 @@ test("the serialized browser factory preserves completion and end-then-scroll se
   expect(observer.settled()).toBe(false);
   element.dispatchEvent(new Event("scrollend"));
   expect(observer.settled()).toBe(true);
+  element.scrollLeft = 41;
   element.dispatchEvent(new Event("scroll"));
   expect(observer.completed()).toBe(true);
   expect(observer.settled()).toBe(false);
@@ -80,6 +82,64 @@ test("the serialized browser factory preserves completion and end-then-scroll se
   observer.dispose();
   element.dispatchEvent(new Event("scrollend"));
   expect(observer.snapshot()).toEqual(trace);
+});
+
+test("the serialized observer retains settlement for the hosted same-position notification sequence", () => {
+  const element = target();
+  const factory = runInNewContext(`(${createReviewScrollObserver.toString()})`, {
+    document, performance, KeyboardEvent: ArrowKey,
+  }) as typeof createReviewScrollObserver;
+  const observer = factory(element);
+  observer.reset();
+  element.dispatchEvent(new ArrowKey("keydown"));
+  element.dispatchEvent(new ArrowKey("keyup"));
+  for (const left of [1, 4, 10, 17, 24, 31, 36, 39]) {
+    element.scrollLeft = left;
+    element.dispatchEvent(new Event("scroll"));
+  }
+  expect(observer.completed()).toBe(true);
+  expect(observer.settled()).toBe(false);
+  element.scrollLeft = 40;
+  element.dispatchEvent(new Event("scrollend"));
+  expect(observer.settled()).toBe(true);
+  element.dispatchEvent(new Event("scroll"));
+  expect(observer.settled()).toBe(true);
+  expect(observer.completed()).toBe(true);
+  expect(observer.snapshot()).toMatchObject({
+    totalEvents: 13, droppedEvents: 0, eligibleScrollEnds: 1, settlementInvalidations: 0,
+  });
+  observer.dispose();
+});
+
+test.each(["scrollLeft", "scrollTop"] as const)("fractional %s movement requires a new end before settlement can return", (coordinate) => {
+  const element = target();
+  const factory = runInNewContext(`(${createReviewScrollObserver.toString()})`, {
+    document, performance, KeyboardEvent: ArrowKey,
+  }) as typeof createReviewScrollObserver;
+  const observer = factory(element);
+  observer.reset();
+  element.dispatchEvent(new ArrowKey("keydown"));
+  element.scrollLeft = 40;
+  element.dispatchEvent(new Event("scroll"));
+  element.dispatchEvent(new ArrowKey("keyup"));
+  element.dispatchEvent(new Event("scroll"));
+  expect(observer.settled()).toBe(false);
+  element.dispatchEvent(new Event("scrollend"));
+  expect(observer.settled()).toBe(true);
+  const previous = element[coordinate];
+  element[coordinate] += 0.25;
+  element.dispatchEvent(new Event("scroll"));
+  expect(observer.settled()).toBe(false);
+  element.dispatchEvent(new Event("scroll"));
+  expect(observer.settled()).toBe(false);
+  element[coordinate] = previous;
+  element.dispatchEvent(new Event("scroll"));
+  expect(observer.settled()).toBe(false);
+  element.dispatchEvent(new Event("scrollend"));
+  element.dispatchEvent(new Event("scroll"));
+  expect(observer.settled()).toBe(true);
+  expect(observer.snapshot()).toMatchObject({ eligibleScrollEnds: 2, settlementInvalidations: 1 });
+  observer.dispose();
 });
 
 test("passive capture failures cannot alter native completion state", () => {
@@ -106,6 +166,7 @@ test("retains eligible-end and invalidation evidence after the event ring evicts
   element.dispatchEvent(new Event("scroll"));
   element.dispatchEvent(new ArrowKey("keyup"));
   element.dispatchEvent(new Event("scrollend"));
+  element.scrollLeft = 41;
   for (let index = 0; index < 20; index += 1) element.dispatchEvent(new Event("scroll"));
   const trace = observer.snapshot();
   expect(trace.events.every((event) => event.type === "scroll")).toBe(true);

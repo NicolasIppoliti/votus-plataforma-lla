@@ -68,6 +68,8 @@ export async function withReviewScrollDiagnostics(
 export function createReviewScrollObserver(element: HTMLElement) {
   let armed = false, moved = false, released = false, complete = false;
   let settled = false;
+  let settledLeft = 0;
+  let settledTop = 0;
   let resetPending = false;
   let resetComplete = false;
   const startedAt = performance.now();
@@ -103,8 +105,10 @@ export function createReviewScrollObserver(element: HTMLElement) {
     record(event.type === "keydown" ? "keydown" : "keyup", event);
   };
   const scroll = (event: Event) => {
-    if (settled) settlementInvalidations += 1;
-    settled = false;
+    if (settled && (element.scrollLeft !== settledLeft || element.scrollTop !== settledTop)) {
+      settlementInvalidations += 1;
+      settled = false;
+    }
     complete = false;
     if (armed && element.scrollLeft > 0) { moved = true; completeInteraction(); }
     record("scroll", event);
@@ -112,6 +116,8 @@ export function createReviewScrollObserver(element: HTMLElement) {
   const end = (event: Event) => {
     if (armed && moved && element.scrollLeft > 0) {
       settled = true;
+      settledLeft = element.scrollLeft;
+      settledTop = element.scrollTop;
       eligibleScrollEnds += 1;
     }
     if (resetPending) {
