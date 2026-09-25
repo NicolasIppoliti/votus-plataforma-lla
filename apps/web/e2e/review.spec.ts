@@ -8,6 +8,7 @@ import { createReviewStateHandler, reviewPagePayload, REVIEW_SAFE_STATE_PAYLOADS
 import { expect, test } from "./review-test-fixture";
 import { zoomTest } from "./review-zoom-test-fixture";
 import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focus-geometry";
+import { createReviewScrollObserver, withReviewScrollDiagnostics, type ReviewScrollPhase } from "./review-scroll-completion";
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
@@ -111,70 +112,35 @@ async function expectPopulatedReviewLayout(
     // Viewport/focus traversal may retain an earlier horizontal position.
     // Start this directional check at the left edge, never at its end stop.
     // Registration is acknowledged before the existing reset and keyboard input.
-    const completion = await region.evaluateHandle((element) => {
-      let armed = false, moved = false, released = false, complete = false;
-      let settled = false;
-      let resetPending = false;
-      let resetComplete = false;
-      const completeInteraction = () => {
-        complete = armed && moved && released && element.scrollLeft > 0;
-      };
-      const key = (event: Event) => {
-        if (!resetComplete || !(event instanceof KeyboardEvent) || event.target !== element || !event.isTrusted || event.key !== "ArrowRight"
-          || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-        if (event.type === "keydown") { armed = true; moved = released = complete = settled = false; }
-        else if (armed) { released = true; completeInteraction(); }
-      };
-      const scroll = () => {
-        settled = false;
-        complete = false;
-        if (armed && element.scrollLeft > 0) { moved = true; completeInteraction(); }
-      };
-      const end = () => {
-        if (armed && moved && element.scrollLeft > 0) settled = true;
-        if (resetPending) {
-          if (element.scrollLeft === 0) {
-            resetPending = false;
-            resetComplete = true;
-          }
-        }
-      };
-      element.addEventListener("keydown", key);
-      element.addEventListener("keyup", key);
-      element.addEventListener("scroll", scroll);
-      element.addEventListener("scrollend", end);
-      return {
-        reset: () => {
-          resetPending = element.scrollLeft !== 0;
-          resetComplete = !resetPending;
-          element.scrollLeft = 0;
-          // An immediate reset need not dispatch a later scrollend event.
-          if (element.scrollLeft === 0) {
-            resetPending = false;
-            resetComplete = true;
-          }
-        },
-        resetCompleted: () => resetComplete,
-        completed: () => complete,
-        settled: () => settled,
-        dispose: () => {
-          element.removeEventListener("keydown", key);
-          element.removeEventListener("keyup", key);
-          element.removeEventListener("scroll", scroll);
-          element.removeEventListener("scrollend", end);
-        },
-      };
-    });
+    const completion = await region.evaluateHandle(createReviewScrollObserver);
+    const diagnostic = { phase: "reset" as ReviewScrollPhase, viewport, lastSuccessful: null as unknown };
+    const predicates = { reset: "resetCompleted", completion: "completed", settlement: "settled" } as const;
+    const observe = async (predicate: typeof predicates[keyof typeof predicates]) => {
+      const result = await completion.evaluate((state, field) => {
+        const value = state[field]();
+        let snapshot: ReturnType<typeof state.snapshot> | null = null;
+        try { snapshot = state.snapshot(); } catch { /* Preserve the original predicate result. */ }
+        return { value, snapshot };
+      }, predicate);
+      if (result.snapshot !== null) diagnostic.lastSuccessful = result.snapshot;
+      return result.value;
+    };
     try {
-      await completion.evaluate(state => state.reset());
-      await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
-      await expect.poll(() => completion.evaluate(state => state.resetCompleted())).toBe(true);
-      await region.press("ArrowRight");
-      await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-      await expect.poll(() => completion.evaluate(state => state.completed())).toBe(true);
-      // Key release plus movement proves usability, not animation settlement.
-      // Wait separately so the next viewport cannot interrupt this native scroll.
-      await expect.poll(() => completion.evaluate(state => state.settled())).toBe(true);
+      await withReviewScrollDiagnostics(async () => {
+        await completion.evaluate(state => state.reset());
+        await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
+        await expect.poll(() => observe(predicates.reset)).toBe(true);
+        diagnostic.phase = "keyboard";
+        await region.press("ArrowRight");
+        diagnostic.phase = "movement";
+        await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+        diagnostic.phase = "completion";
+        await expect.poll(() => observe(predicates.completion)).toBe(true);
+        // Key release plus movement proves usability, not animation settlement.
+        // Wait separately so the next viewport cannot interrupt this native scroll.
+        diagnostic.phase = "settlement";
+        await expect.poll(() => observe(predicates.settlement)).toBe(true);
+      }, () => completion.evaluate(state => state.snapshot()), diagnostic, test.info());
     } finally {
       try { await completion.evaluate(state => state.dispose()); }
       finally { await completion.dispose(); }
