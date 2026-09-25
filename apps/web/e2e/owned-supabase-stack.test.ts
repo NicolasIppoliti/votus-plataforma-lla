@@ -6,7 +6,7 @@ const webRoot = fileURLToPath(new URL("../", import.meta.url));
 
 describe("verify:etl-isolated public command", () => {
   it("exposes the read-only plan through the package command", () => {
-    const result = spawnSync("corepack", ["pnpm", "verify:etl-isolated", "--plan"], {
+    const result = spawnSync("pnpm", ["verify:etl-isolated", "--plan"], {
       cwd: webRoot,
       env: { ...process.env, COREPACK_ENABLE_NETWORK: "0" },
       encoding: "utf8",
