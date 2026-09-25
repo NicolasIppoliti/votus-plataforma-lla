@@ -25,6 +25,20 @@
 # (etl.http_client.check_robots_txt_still_absent). See design.md D10.
 
 geography:
+  - id: geography/cne-pba-sections
+    source: mapa2.electoral.gov.ar
+    source_url: "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=c4492e92d364f46230423ad9d1a34398&typeName=descargas:secciones_electorales&maxFeatures=2000&outputFormat=application%2Fjson"
+    mime: application/json
+    filename: cne-pba-sections.geojson
+    reference_kind: section_geometry
+    notes: "CNE descargas page-linked complete electoral sections GeoJSON; geographic reference only, election-year applicability unknown. CNE/PBA catalog attributes CC BY 4.0 to circuit resource, not separately verified for this layer."
+  - id: geography/cne-pba-circuits
+    source: mapa2.electoral.gov.ar
+    source_url: "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=4d29c6a8e543b85f568f760d50f58828&typeName=descargas:circuito_02&maxFeatures=2000&outputFormat=application%2Fjson"
+    mime: application/json
+    filename: cne-pba-circuits.geojson
+    reference_kind: circuit_geometry
+    notes: "CNE descargas page-linked full PBA WFS GeoJSON; PBA catalog attributes CC BY 4.0. Geographic reference only; election-year applicability unknown."
   - id: geography/arba-coronel-rosales-partido
     source: geo.arba.gov.ar
     source_url: "https://geo.arba.gov.ar/geoserver/idera/wfs?service=WFS&version=2.0.0&request=GetFeature&typeNames=idera%3ADepartamento&outputFormat=application%2Fjson&srsName=EPSG%3A4326&count=2&CQL_FILTER=cde%3D%2706182%27%20AND%20cca%3D%27113%27&sortBy=cde%20A"

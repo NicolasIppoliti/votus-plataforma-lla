@@ -650,6 +650,72 @@ def cmd_validate_partido_geometry(args: argparse.Namespace) -> int:
     return 0 if result["counts"]["accepted"] == 1 else 1
 
 
+def cmd_validate_circuit_geometry(args: argparse.Namespace) -> int:
+    from .circuit_geometry import CircuitGeometryError, inspect_circuits, reference_acceptance
+
+    sources = load_sources(Path(args.sources_path))
+    entry = find_source_entry(sources, args.source)
+    if entry is None:
+        raise UnknownSourceError(f"no registered source with id {args.source!r}")
+    manifest = load_manifest(Path(args.manifest_path))
+    payloads = []
+    snapshots = {}
+    for source_id, expected_kind in (
+        (args.source, "circuit_geometry"),
+        ("geography/cne-pba-sections", "section_geometry"),
+    ):
+        source = find_source_entry(sources, source_id)
+        if source is None:
+            print(json.dumps({"error": "missing_snapshot", "source": source_id}))
+            return 1
+        if source["capability"] != "geography":
+            print(json.dumps({"error": "unsupported_capability", "source": source_id}))
+            return 1
+        if source.get("reference_kind") != expected_kind:
+            print(json.dumps({"error": "unsupported_reference_kind", "source": source_id}))
+            return 1
+        record = latest_ok_record(manifest, source_id)
+        if record is None:
+            print(json.dumps({"error": "missing_snapshot", "source": source_id}))
+            return 1
+        if any(
+            field in record and record[field] != source[field]
+            for field in ("id", "capability", "source", "source_url")
+        ):
+            print(json.dumps({"error": "source_identity_mismatch", "source": source_id}))
+            return 1
+        try:
+            payloads.append(
+                read_archived_source(
+                    source,
+                    manifest_record=record,
+                    capability=source["capability"],
+                    local_store=LocalArchiveStore(root=Path(args.local_root)),
+                    filename=archived_filename(record, source_id=source_id),
+                )
+            )
+        except ArchiveIntegrityError:
+            print(json.dumps({"error": "archive_integrity", "source": source_id}))
+            return 1
+        snapshots[source_id] = {"sha256": record["sha256"], "fetched_at": record["fetched_at"]}
+    try:
+        result = inspect_circuits(*payloads)
+    except CircuitGeometryError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 1
+    result["snapshots"] = snapshots
+    if args.use == "reference-only":
+        result["reference_acceptance"] = reference_acceptance(result, snapshots)
+        print(json.dumps(result, sort_keys=True))
+        return 1 if result["reference_acceptance"]["status"] == "blocked" else 0
+    print(json.dumps(result, sort_keys=True))
+    return (
+        0
+        if not result["reasons"] and not result["exclusion_reasons"].get("missing_scope_identity")
+        else 1
+    )
+
+
 def cmd_archive_history(args: argparse.Namespace) -> int:
     try:
         events = load_fetch_events(Path(args.manifest_path), args.source)
@@ -3358,6 +3424,16 @@ def build_parser() -> argparse.ArgumentParser:
     geometry = subparsers.add_parser("validate-partido-geometry")
     geometry.add_argument("--source", required=True)
     geometry.set_defaults(func=cmd_validate_partido_geometry)
+
+    circuits = subparsers.add_parser("validate-circuit-geometry")
+    circuits.add_argument("--source", required=True)
+    circuits.add_argument(
+        "--use",
+        choices=("partition", "reference-only"),
+        default="partition",
+        help="Reference-only may qualify reviewed source overlap; never spatial assignment.",
+    )
+    circuits.set_defaults(func=cmd_validate_circuit_geometry)
 
     fetch_parser = subparsers.add_parser("fetch", help="Archive one registered source.")
     fetch_parser.add_argument("--source", required=True)
