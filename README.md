@@ -69,8 +69,12 @@ service** with the roles and privileges specified by the `etl-release` job in
 modifying an existing application database.
 
 `ETL_TEST_ADMIN_DATABASE_URL` must point to that service's `template1` maintenance
-database with CREATE DATABASE privilege. Supply it privately; never print or
-commit a DSN. With that prerequisite already satisfied:
+database with CREATE DATABASE privilege. Without a separately parent-provisioned
+migration runner, direct CI-style verification also requires the existing
+parent identity to be SUPERUSER; the verifier provisions one fixed-purpose
+temporary runner and guards its cleanup by identity. Supply connection material
+privately; never print or commit a DSN, or manually create the runner. With the
+approved prerequisite satisfied:
 
 ```sh
 uv run --project etl etl-verify
@@ -81,6 +85,75 @@ migrations, runs tests, and cleans up its owned database. It does not ingest int
 an existing database. CI also runs the separate `--migration-atomicity` cases
 `success`, `ledger`, and `sql`; consult the workflow for their service setup.
 Never substitute a hosted URL or an ingestion destination for the admin DSN.
+
+The verifier selects ordinary and explicitly privileged tests into two disjoint,
+exhaustive pytest processes. Ordinary tests receive only the restricted disposable
+test-role DSN; privileged fixtures receive a verified owned-target maintenance
+capability. The outer Supabase bootstrap identity is not passed to pytest; the
+privileged maintenance capability remains administrative (SUPERUSER in CI). Two
+migration-session tests sequentially reuse one parent-owned temporary runner in
+a separate authenticated session, with SET but not ADMIN or INHERIT membership
+on `postgres`; its identity and cleanup are parent-guarded. This is trusted
+test infrastructure, **not a sandbox**:
+`SET postgres` can reach SUPERUSER in CI. None of these test capabilities or
+commands authorizes production access.
+
+For the local Supabase-isolated path, run from `apps/web`:
+`pnpm verify:etl-isolated --plan` inspects the planned gate without creating a
+stack, database, or migration; `pnpm verify:etl-isolated --run` requires an
+approved local Docker context and creates only its new owned stack, runs the
+full ETL verification, then attempts guarded cleanup (retaining recovery
+evidence if ownership is uncertain). A passing plan is not a passing ETL run.
+`test:e2e:gate --plan` is not a supported substitute.
+
+### CNE circuit reference replay (Slice 2)
+
+From the repository root, with the checksum-addressed files present under
+`archive/geography/`, replay the two local-only validation modes:
+
+```sh
+uv run --project etl --frozen python -m etl validate-circuit-geometry --source geography/cne-pba-circuits
+uv run --project etl --frozen python -m etl validate-circuit-geometry --source geography/cne-pba-circuits --use reference-only
+```
+
+These commands read the registered CNE circuit and electoral-section snapshots
+through the archive manifest and SHA-256 verifier; they do not fetch the live WFS
+or ingest votes. The default `partition` mode exits **1** for the archived originals:
+circuits `0248B` and `0248C` overlap in positive area. Do not interpret the
+section matching their union as a disjoint partition. For these overlapping
+originals, `--use reference-only` exits **0** only for the reviewed,
+checksum-pinned pair and reports
+`accepted_with_warning`, `reviewed_source_overlap`, and
+`spatial_assignment=unsupported`. It does not repair or resolve the overlap;
+arbitrary re-exports or other topology/identity failures remain blocked.
+The report retains strict-partition counts (0 accepted, 8 eligible, 2 invalid,
+10 selected and 1,136 excluded of 1,146 source features),
+`geographic_coverage=unverified`, and
+`election_applicability=unknown`. Neither mode establishes spatial vote
+attribution, area totals, or applicability to the 2023/2025 elections.
+
+The [source registry](etl/sources.yaml) records the CNE downloads-page-linked
+resources and reference kinds. The [archive manifest](archive-manifest.json)
+records retrieval timestamps and immutable digests: circuits
+`215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71`
+and sections `964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673`.
+The PBA catalog attributes CC BY 4.0 to the circuit resource; reuse terms for
+the separate section layer have not been independently established. A changed
+source requires a new provenance and geometry review, not a renamed archive file
+or an inferred numerical tolerance.
+
+**Separate ARBA comparison, informational only:** Against the archived ARBA
+Coronel Rosales partido reference (SHA-256
+`b502009185a5d6b1666312d2d91aa9b79053b2ee8a06f0aa683029b925c3ed13`),
+the CNE electoral section has `0.0016520185839670064` degree² outside ARBA
+(1.234992343% of the CNE section); ARBA has `0.0009691019666721974` degree²
+outside CNE (0.728184906% of ARBA). Six CNE circuits cross the ARBA boundary:
+`0248B`, `0249A`, `0249B`, `0248F`, `0249`, and `0248A`. These are planar
+EPSG:4326 angular-area comparisons, **not** certified metric or legal areas.
+ARBA is not the CNE validator's parent and its disagreement neither blocks nor
+excuses the independent CNE circuit overlap. The source of the disagreement,
+coordinate tolerance, legal boundary and election-year applicability are unknown;
+do not modify either archived geometry to force agreement.
 
 ## Local CI and release verification
 
