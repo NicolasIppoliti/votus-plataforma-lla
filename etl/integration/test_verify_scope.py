@@ -174,7 +174,9 @@ def test_main_registers_scope_without_changing_existing_authority(
             assert inspect_scope(connection) == []
         return count
 
-    def assert_ready(dsn: str, _etl_root: Path) -> verify.PytestResult:
+    def assert_ready(
+        dsn: str, _etl_root: Path, _owned: verify.DisposablePostgres
+    ) -> verify.PytestResult:
         nonlocal reached_pytest
         reached_pytest = True
         role = conninfo_to_dict(dsn)["user"]

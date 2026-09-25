@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import secrets
@@ -14,7 +15,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType, TracebackType
 from typing import Literal, Protocol, Self, TypeVar
@@ -137,6 +138,130 @@ class DatabaseIdentity:
             raise UnsafeDatabaseError("role name is outside the disposable identity contract")
 
 
+def _runner_record(value: str, keys: set[str]) -> dict[str, object]:
+    def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate field")
+            result[key] = item
+        return result
+
+    try:
+        if not isinstance(value, str) or not 0 < len(value) <= 4096:
+            raise ValueError("invalid size")
+        result = json.loads(value, object_pairs_hook=unique)
+        if not isinstance(result, dict) or set(result) != keys:
+            raise ValueError("invalid fields")
+        return result
+    except (ValueError, TypeError, RecursionError):
+        raise UnsafeDatabaseError("migration runner record is invalid") from None
+
+
+@dataclass(frozen=True)
+class MigrationRunner:
+    """A parent-provisioned capability, never an ambient administrative credential."""
+
+    role: str
+    password: str = field(repr=False)
+    marker: str
+    oid: int
+
+    @classmethod
+    def from_json(cls, value: str) -> MigrationRunner:
+        record = _runner_record(value, {"role", "password", "marker", "oid"})
+        role, password, marker, oid = (record[key] for key in ("role", "password", "marker", "oid"))
+        if (
+            not isinstance(role, str)
+            or re.fullmatch(r"votus_etl_runner_[0-9a-f]{32}", role) is None
+            or not isinstance(password, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43}", password) is None
+            or marker != f"votus-etl-runner:{uuid.UUID(hex=role.removeprefix('votus_etl_runner_'))}"
+            or type(oid) is not int
+            or not 0 < oid <= 2**32 - 1
+        ):
+            raise UnsafeDatabaseError("migration runner identity is invalid")
+        return cls(role, password, marker, oid)
+
+    @classmethod
+    def from_target_json(cls, value: str, maintenance_dsn: str) -> MigrationRunner:
+        record = _runner_record(value, {"dsn", "marker", "oid"})
+        try:
+            if not isinstance(record["dsn"], str):
+                raise ValueError("invalid DSN")
+            params = _connection_params(record["dsn"])
+            runner = cls.from_json(
+                json.dumps(
+                    {
+                        "role": params.get("user"),
+                        "password": params.get("password"),
+                        "marker": record["marker"],
+                        "oid": record["oid"],
+                    }
+                )
+            )
+            if params != _connection_params(runner.target_dsn(maintenance_dsn)):
+                raise ValueError("different target")
+        except (ValueError, TypeError, UnsafeDatabaseError):
+            raise UnsafeDatabaseError("migration runner target is invalid") from None
+        return runner
+
+    def target_dsn(self, maintenance_dsn: str) -> str:
+        return make_conninfo(maintenance_dsn, user=self.role, password=self.password)
+
+    def target_json(self, maintenance_dsn: str) -> str:
+        return json.dumps(
+            {"dsn": self.target_dsn(maintenance_dsn), "marker": self.marker, "oid": self.oid}
+        )
+
+    def verify(
+        self,
+        maintenance_dsn: str,
+        identity: DatabaseIdentity,
+        *,
+        connect: _ConnectionFactory = psycopg.connect,
+    ) -> None:
+        identity.validate()
+        params = _connection_params(maintenance_dsn)
+        if params.get("dbname") != identity.name or params.get("user") != "postgres":
+            raise UnsafeDatabaseError("migration runner requires the owned postgres target")
+        with connect(self.target_dsn(maintenance_dsn)) as connection:
+            row = connection.execute("""
+                select r.oid, r.rolname, r.rolcanlogin, r.rolinherit, r.rolsuper,
+                       r.rolcreatedb, r.rolcreaterole, r.rolreplication, r.rolbypassrls,
+                       shobj_description(r.oid, 'pg_authid'), current_user, session_user,
+                       coalesce((select array_agg(granted.rolname || ':' || m.admin_option::text
+                                || ':' || m.inherit_option::text || ':' || m.set_option::text
+                                order by granted.rolname)
+                         from pg_auth_members m join pg_roles granted on granted.oid = m.roleid
+                        where m.member = r.oid), array[]::text[])
+                  from pg_roles r where r.rolname = current_user
+            """).fetchone()
+            if row != (
+                self.oid,
+                self.role,
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                self.marker,
+                self.role,
+                self.role,
+                ["postgres:false:false:true"],
+            ):
+                raise UnsafeDatabaseError("migration runner authority or ownership changed")
+            connection.execute("set role postgres")
+            row = connection.execute(
+                "select current_database(), current_user, session_user, marker "
+                "from votus_verification.ownership_marker"
+            ).fetchone()
+            if row != (identity.name, "postgres", self.role, identity.marker):
+                raise UnsafeDatabaseError("migration runner cannot reach its owned target")
+
+
 @dataclass(frozen=True)
 class PytestResult:
     executed: int
@@ -221,7 +346,62 @@ class DisposablePostgres:
         self.marker_table_created = False
         self.target_dsn: str | None = None
         self.migration_dsn: str | None = None
+        self._owned_migration_runner: MigrationRunner | None = None
         self._grant_failure: tuple[BaseException, _GrantOperation] | None = None
+
+    def prepare_migration_runner(self, external: str | None) -> MigrationRunner:
+        migration_dsn = _require_dsn(self.migration_dsn, "migration")
+        if external is not None:
+            runner = MigrationRunner.from_json(external)
+        else:
+            with self.connect(self.admin_dsn) as admin:
+                row = admin.execute(
+                    "select current_user, rolsuper from pg_roles where rolname = current_user"
+                ).fetchone()
+                if row != ("postgres", True):
+                    raise UnsafeDatabaseError(
+                        "CI migration runner creation requires a superuser parent"
+                    )
+                role = f"votus_etl_runner_{self.identity.token.hex}"
+                password = secrets.token_urlsafe(32)
+                marker = f"votus-etl-runner:{self.identity.token}"
+                admin.execute(
+                    sql.SQL(
+                        "create role {} login noinherit nosuperuser nocreatedb nocreaterole "
+                        "noreplication nobypassrls password {}"
+                    ).format(sql.Identifier(role), sql.Literal(password))
+                )
+                admin.execute(
+                    sql.SQL("comment on role {} is {}").format(
+                        sql.Identifier(role), sql.Literal(marker)
+                    )
+                )
+                admin.execute(
+                    sql.SQL(
+                        "grant postgres to {} with admin false, inherit false, set true"
+                    ).format(sql.Identifier(role))
+                )
+                row = admin.execute(
+                    "select oid, shobj_description(oid, 'pg_authid') "
+                    "from pg_roles where rolname = %s",
+                    (role,),
+                ).fetchone()
+                if row is None or row[1] != marker:
+                    raise UnsafeDatabaseError("CI migration runner creation was not confirmed")
+                runner = MigrationRunner.from_json(
+                    json.dumps(
+                        {
+                            "role": role,
+                            "password": password,
+                            "marker": marker,
+                            "oid": row[0],
+                        }
+                    )
+                )
+                # Set before commit: cleanup also covers an ambiguous successful commit.
+                self._owned_migration_runner = runner
+        runner.verify(migration_dsn, self.identity, connect=self.connect)
+        return runner
 
     @contextmanager
     def _grant_operation(self, operation: _GrantOperation) -> Iterator[None]:
@@ -600,7 +780,11 @@ class DisposablePostgres:
 
     def _close_once(self) -> None:
         if self.admin is None:
-            if not self.created_by_this_run and not self.role_created_by_this_run:
+            if (
+                not self.created_by_this_run
+                and not self.role_created_by_this_run
+                and self._owned_migration_runner is None
+            ):
                 return
             self.admin = self.connect(self.admin_dsn, autocommit=True)
         self.identity.validate()
@@ -643,6 +827,32 @@ class DisposablePostgres:
                 errors.append(error)
         elif self.role_created_by_this_run:
             self.role_created_by_this_run = False
+        if self._owned_migration_runner is not None:
+            try:
+                runner = self._owned_migration_runner
+                row = self.admin.execute(
+                    "select oid, shobj_description(oid, 'pg_authid') "
+                    "from pg_roles where rolname = %s",
+                    (runner.role,),
+                ).fetchone()
+                if row is not None:
+                    if row != (runner.oid, runner.marker):
+                        raise UnsafeDatabaseError(
+                            "refusing cleanup because migration runner identity changed"
+                        )
+                    self.admin.execute(sql.SQL("drop role {}").format(sql.Identifier(runner.role)))
+                    if (
+                        self.admin.execute(
+                            "select oid, shobj_description(oid, 'pg_authid') "
+                            "from pg_roles where rolname = %s",
+                            (runner.role,),
+                        ).fetchone()
+                        is not None
+                    ):
+                        raise RuntimeError("migration runner still exists after cleanup")
+                self._owned_migration_runner = None
+            except BaseException as error:
+                errors.append(error)
         self.admin.close()
         self.admin = None
         if len(errors) == 1:
@@ -763,13 +973,14 @@ def _junit_counts(report_path: Path) -> tuple[int, int, int]:
     return tests, skipped, failed
 
 
-def run_pytest(
+def _run_pytest_phase(
     database_dsn: str,
     etl_root: Path,
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    phase_env: dict[str, str] | None = None,
 ) -> PytestResult:
-    env = {"ETL_TEST_DATABASE_URL": database_dsn}
+    env = {"ETL_TEST_DATABASE_URL": database_dsn, **(phase_env or {})}
     diagnostic = PytestDiagnostic("unexpected")
     body_failure: BaseException | None = None
     try:
@@ -813,6 +1024,105 @@ def run_pytest(
         # Preserve the original exception identity, traceback and interruption semantics.
         exc.pytest_diagnostic = diagnostic
         raise
+
+
+def run_pytest(
+    database_dsn: str,
+    etl_root: Path,
+    owned: DisposablePostgres,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> PytestResult:
+    """Execute an exhaustive partition without giving ordinary tests maintenance access.
+
+    The privileged child is trusted administrative test code, not a credential sandbox.
+    Its only database input is the already-owned, identity-checked target.
+    """
+    owned.identity.validate()
+    if (
+        not owned.created_by_this_run
+        or not owned.role_created_by_this_run
+        or database_dsn != owned.target_dsn
+        or not owned.migration_dsn
+        or _connection_params(owned.migration_dsn).get("dbname") != owned.identity.name
+        or _connection_params(database_dsn).get("user") != owned.identity.role_name
+    ):
+        raise UnsafeDatabaseError("pytest requires the active owned verification target")
+    migration_runner = owned.prepare_migration_runner(os.environ.get("ETL_TEST_MIGRATION_RUNNER"))
+    results: list[PytestResult] = []
+    manifests: list[tuple[set[str], set[str]]] = []
+    failures: list[BaseException] = []
+    with tempfile.TemporaryDirectory(prefix="votus-etl-partition-") as directory:
+        for phase in ("ordinary", "privileged"):
+            manifest_path = Path(directory) / f"{phase}.json"
+            phase_env = {
+                "ETL_VERIFY_PHASE": phase,
+                "ETL_VERIFY_COLLECTION_REPORT": str(manifest_path),
+            }
+            if phase == "privileged":
+                phase_env.update(
+                    ETL_TEST_OWNED_DATABASE_URL=owned.migration_dsn,
+                    ETL_TEST_OWNED_DATABASE_MARKER=owned.identity.marker,
+                    ETL_TEST_OWNED_MIGRATION_RUNNER=migration_runner.target_json(
+                        owned.migration_dsn
+                    ),
+                )
+            try:
+                result = _run_pytest_phase(database_dsn, etl_root, run=run, phase_env=phase_env)
+            except Exception as exc:
+                diagnostic = getattr(exc, "pytest_diagnostic", None)
+                if not isinstance(diagnostic, PytestDiagnostic) or diagnostic.outcome not in {
+                    "pytest_failed",
+                    "skips_rejected",
+                }:
+                    raise
+                failures.append(exc)
+                result = PytestResult(diagnostic.tests or 0, diagnostic.skipped or 0)
+            results.append(result)
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                groups = [payload[key] for key in ("all", "selected")]
+                if not all(
+                    isinstance(group, list)
+                    and all(isinstance(item, str) and item for item in group)
+                    and len(group) == len(set(group))
+                    for group in groups
+                ):
+                    raise ValueError("invalid collection")
+                complete, selected = map(set, groups)
+                if not selected or not selected <= complete:
+                    raise ValueError("invalid selection")
+                if not failures and result.executed != len(selected):
+                    raise ValueError("execution count mismatch")
+                manifests.append((complete, selected))
+            except (OSError, ValueError, KeyError, TypeError):
+                failure = RuntimeError("pytest partition report is missing or inconsistent")
+                failure.pytest_diagnostic = PytestDiagnostic("report_invalid")
+                failures.append(failure)
+                manifests.append((set(), set()))
+        first, second = manifests
+        if first[0] != second[0] or first[1] & second[1] or first[1] | second[1] != first[0]:
+            failure = RuntimeError("pytest selections must be disjoint and exhaustive")
+            failure.pytest_diagnostic = PytestDiagnostic("report_invalid")
+            raise failure
+        if failures:
+            # Keep the first causal failure and its safe diagnostics, never raw reports.
+            failure = failures[0]
+            diagnostics = [getattr(item, "pytest_diagnostic", None) for item in failures]
+            if all(
+                isinstance(item, PytestDiagnostic) and item.tests is not None
+                for item in diagnostics
+            ):
+                diagnostic = diagnostics[0]
+                failure.pytest_diagnostic = PytestDiagnostic(
+                    diagnostic.outcome,
+                    diagnostic.exit_code,
+                    sum(result.executed for result in results),
+                    sum(result.skipped for result in results),
+                    sum(item.failed or 0 for item in diagnostics),
+                )
+            raise failure
+    return PytestResult(sum(result.executed for result in results), 0)
 
 
 @contextmanager
@@ -895,7 +1205,7 @@ def main() -> int:
                     stage = "grant_test_privileges"
                     database.grant_test_privileges()
                     stage = "pytest"
-                    result = run_pytest(database_dsn, etl_root)
+                    result = run_pytest(database_dsn, etl_root, database)
                     summary = (
                         f"{migration_count} migrations, "
                         f"{result.executed} executed, {result.skipped} skipped"

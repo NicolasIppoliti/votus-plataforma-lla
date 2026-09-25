@@ -7,7 +7,6 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable
-from functools import partial
 from pathlib import Path
 from types import TracebackType
 
@@ -21,8 +20,10 @@ from etl.verify import (
     UnsafeDatabaseError,
     apply_migrations,
     main,
-    run_pytest,
     termination_as_interrupt,
+)
+from etl.verify import (
+    _run_pytest_phase as run_pytest,
 )
 
 
@@ -131,7 +132,9 @@ def pytest_cli(monkeypatch, capsys):
                 raise error
             return subprocess.CompletedProcess(command, code)
 
-        monkeypatch.setattr(verify, "run_pytest", partial(run_pytest, run=external_run))
+        monkeypatch.setattr(
+            verify, "run_pytest", lambda dsn, root, _owned: run_pytest(dsn, root, run=external_run)
+        )
         monkeypatch.setenv("ETL_VERIFY_STAGE_REPORT", "1" if opted_in else "0")
         result = main()
         output = capsys.readouterr()
@@ -1766,7 +1769,7 @@ def test_command_runs_only_selected_proof_or_full_default_and_cleans_up(
         events.append("migrations")
         return 1
 
-    def pytest_child(dsn: str, root: Path) -> verify.PytestResult:
+    def pytest_child(dsn: str, root: Path, owned: DisposablePostgres) -> verify.PytestResult:
         assert "maintenance-value" not in dsn
         assert database.identity.role_name in dsn
         assert database.admin is None
@@ -1866,3 +1869,130 @@ def test_command_is_reachable_from_the_installed_package_entry_point(tmp_path: P
     assert completed.returncode == 2
     assert completed.stdout == ""
     assert "ETL_TEST_ADMIN_DATABASE_URL must name a reachable 'template1'" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    "defect", [None, "overlap", "missing", "changed", "count", "skip", "failure"]
+)
+def test_owned_pytest_partition_is_complete_disjoint_and_credential_scoped(
+    tmp_path, defect, monkeypatch
+):
+    import json
+
+    from etl import verify
+
+    identity = _identity()
+    connections = _Connections()
+    owned = DisposablePostgres(
+        "postgresql://admin:maintenance-value@127.0.0.1/template1",
+        identity=identity,
+        connect=connections,
+        secret_factory=lambda: "test-value",
+    )
+    runner = verify.MigrationRunner(
+        f"votus_etl_runner_{identity.token.hex}",
+        "a" * 43,
+        f"votus-etl-runner:{identity.token}",
+        1234,
+    )
+    monkeypatch.setattr(owned, "prepare_migration_runner", lambda _external: runner)
+    calls = []
+    all_ids = ["tests/test_sample.py::test_ordinary", "tests/test_sample.py::test_owned"]
+
+    def child(command, **kwargs):
+        env = kwargs["env"]
+        phase = env["ETL_VERIFY_PHASE"]
+        calls.append(phase)
+        assert env["ETL_TEST_DATABASE_URL"] == owned.target_dsn
+        assert "ETL_TEST_ADMIN_DATABASE_URL" not in env
+        assert "PGPASSWORD" not in env
+        if phase == "ordinary":
+            assert "ETL_TEST_OWNED_DATABASE_URL" not in env
+            assert "ETL_TEST_OWNED_DATABASE_MARKER" not in env
+            selected = all_ids[:1]
+        else:
+            assert env["ETL_TEST_OWNED_DATABASE_URL"] == owned.migration_dsn
+            assert env["ETL_TEST_OWNED_DATABASE_MARKER"] == identity.marker
+            selected = all_ids[:1] if defect == "overlap" else all_ids[1:]
+        manifest = {"all": all_ids, "selected": selected}
+        if phase == "privileged" and defect == "changed":
+            manifest["all"] = [*all_ids, "extra"]
+        if not (phase == "privileged" and defect == "missing"):
+            Path(env["ETL_VERIFY_COLLECTION_REPORT"]).write_text(json.dumps(manifest))
+        count = 2 if phase == "privileged" and defect == "count" else 1
+        skipped = int(phase == "ordinary" and defect == "skip")
+        failed = int(phase == "ordinary" and defect == "failure")
+        report = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml="))
+        Path(report).write_text(
+            f'<testsuite tests="{count}" skipped="{skipped}" failures="{failed}"/>'
+        )
+        return subprocess.CompletedProcess(command, failed)
+
+    with owned as restricted:
+        if defect:
+            with pytest.raises(RuntimeError):
+                verify.run_pytest(restricted, tmp_path, owned, run=child)
+        else:
+            assert verify.run_pytest(restricted, tmp_path, owned, run=child) == verify.PytestResult(
+                2, 0
+            )
+    assert calls == ["ordinary", "privileged"]
+
+
+def test_owned_pytest_rejects_mismatched_target_before_launch(tmp_path):
+    from etl import verify
+
+    owned = DisposablePostgres(
+        "postgresql://admin:secret@127.0.0.1/template1", identity=_identity()
+    )
+    with pytest.raises(UnsafeDatabaseError):
+        verify.run_pytest(
+            "dbname=wrong",
+            tmp_path,
+            owned,
+            run=lambda *_args, **_kwargs: pytest.fail("unsafe target must not launch"),
+        )
+
+
+def test_collection_partition_routes_all_marked_cases_without_hidden_deselection(
+    tmp_path, monkeypatch
+):
+    import importlib.util
+    import json
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location(
+        "owned_conftest", Path(__file__).with_name("conftest.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Item:
+        def __init__(self, nodeid, privileged):
+            self.nodeid = nodeid
+            self.privileged = privileged
+
+        def get_closest_marker(self, name):
+            assert name == "owned_database"
+            return self.privileged
+
+    all_items = [Item("ordinary", False), Item("privileged", True)]
+    deselected = []
+    config = SimpleNamespace(
+        hook=SimpleNamespace(pytest_deselected=lambda items: deselected.extend(items))
+    )
+    for phase, expected in (("ordinary", "ordinary"), ("privileged", "privileged")):
+        path = tmp_path / f"{phase}.json"
+        monkeypatch.setenv("ETL_VERIFY_PHASE", phase)
+        monkeypatch.setenv("ETL_VERIFY_COLLECTION_REPORT", str(path))
+        if phase == "privileged":
+            monkeypatch.setenv("ETL_TEST_OWNED_DATABASE_URL", "explicit-target")
+            monkeypatch.setenv("ETL_TEST_OWNED_DATABASE_MARKER", "explicit-marker")
+        items = list(all_items)
+        module.pytest_collection_modifyitems(config, items)
+        assert [item.nodeid for item in items] == [expected]
+        assert json.loads(path.read_text()) == {
+            "all": ["ordinary", "privileged"],
+            "selected": [expected],
+        }
+    assert len(deselected) == 2

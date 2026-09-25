@@ -99,6 +99,7 @@ const RELEASE_GATE_FAILURE_OPERATION = {
 	OWNED_DB_IDENTITY_INSPECT: "owned_db_identity_inspect",
 	OWNED_DB_STATUS_COMMAND: "owned_db_status_command",
 	OWNED_ETL_CHILD_LAUNCH: "owned_etl_child_launch",
+	OWNED_ETL_RUNNER_BOOTSTRAP: "owned_etl_runner_bootstrap",
 } as const;
 type ReleaseGateFailureOperation =
 	(typeof RELEASE_GATE_FAILURE_OPERATION)[keyof typeof RELEASE_GATE_FAILURE_OPERATION];
@@ -199,6 +200,54 @@ class ReleaseGateFailure extends Error {
 		this.metadata = metadata;
 	}
 }
+// This capability lives only as long as the parent's marker-owned database stack.
+// All SQL input is generated here; bootstrap authority is never passed to the child.
+function provisionOwnedMigrationRunner(containerId: string): string {
+	const token = randomUUID();
+	const role = `votus_etl_runner_${token.replaceAll("-", "")}`;
+	const password = randomBytes(32).toString("base64url");
+	const marker = `votus-etl-runner:${token}`;
+	const sql = `\\set QUIET 1
+BEGIN;
+SET LOCAL log_statement = 'none';
+SET LOCAL log_min_error_statement = 'panic';
+DO $bootstrap$
+BEGIN
+  IF session_user <> 'supabase_admin' OR current_user <> 'supabase_admin'
+    OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE oid = 10 AND rolname = current_user AND rolsuper)
+  THEN RAISE EXCEPTION 'invalid bootstrap identity'; END IF;
+END
+$bootstrap$;
+CREATE ROLE "${role}" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${password}';
+GRANT postgres TO "${role}" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
+COMMENT ON ROLE "${role}" IS '${marker}';
+COMMIT;
+SELECT oid FROM pg_roles WHERE rolname = '${role}';
+`;
+	const failure = (reason: ReleaseGateFailureReason, exitCode: number | null) =>
+		new ReleaseGateFailure("owned ETL migration runner bootstrap failed; details redacted", {
+			operation: RELEASE_GATE_FAILURE_OPERATION.OWNED_ETL_RUNNER_BOOTSTRAP, reason, exitCode,
+		});
+	let result: ReturnType<typeof spawnSync>;
+	try {
+		result = spawnSync("docker", [
+			"exec", "-i", "--user", "postgres", containerId,
+			"psql", "-U", "supabase_admin", "-d", "postgres", "-XAt", "-v", "ON_ERROR_STOP=1",
+		], {
+			cwd: REPO_ROOT, env: process.env, input: sql, encoding: "utf8",
+			stdio: ["pipe", "pipe", "pipe"], timeout: 15_000,
+		});
+	} catch {
+		throw failure(RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED, null);
+	}
+	if (result.error || result.status !== 0)
+		throw failure(RELEASE_GATE_FAILURE_REASON.COMMAND_FAILED, result.status);
+	const output = result.stdout;
+	if (typeof output !== "string" || !/^[1-9][0-9]{0,9}\n$/.test(output) || Number(output) > 4_294_967_295)
+		throw failure(RELEASE_GATE_FAILURE_REASON.INVALID_IDENTITY, null);
+	return JSON.stringify({ role, password, marker, oid: Number(output) });
+}
+
 function commandResult(
 	command: string,
 	args: readonly string[],
@@ -1346,6 +1395,7 @@ async function executeGate(
 			});
 		}
 	};
+	let ownedEtlDatabaseId: string | undefined;
 	const stack = await runProductionReleasePhases(plan, {
 		runProductionMigrations: timed(
 			RELEASE_GATE_TIMING_PHASE.MIGRATIONS,
@@ -1367,7 +1417,7 @@ async function executeGate(
 			},
 		),
 		validateOwnedEtlDatabase: async () => {
-			await validateOwnedDatabase();
+			ownedEtlDatabaseId = await validateOwnedDatabase();
 			assertEtlDatabasePublication(ownership.projectId, supabasePorts[1]!);
 		},
 		startApplicationServices: timed(RELEASE_GATE_TIMING_PHASE.SUPABASE_STARTUP, async () => {
@@ -1452,6 +1502,16 @@ async function executeGate(
 					throw new Error("pending ETL recovery persistence failed; details redacted");
 				}
 				state.pendingEtlRecovery = true;
+				if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
+				const containerId = await validateOwnedDatabase();
+				if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
+				if (containerId !== ownedEtlDatabaseId)
+					throw new ReleaseGateFailure("owned ETL database identity changed; details redacted", {
+						operation: RELEASE_GATE_FAILURE_OPERATION.OWNED_DB_IDENTITY_VALIDATE,
+						reason: RELEASE_GATE_FAILURE_REASON.INVALID_IDENTITY, exitCode: null,
+					});
+				assertEtlDatabasePublication(ownership.projectId, supabasePorts[1]!);
+				env.ETL_TEST_MIGRATION_RUNNER = provisionOwnedMigrationRunner(containerId);
 				if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);
 				try {
 					child = startOwnedEtlChild({ cwd: REPO_ROOT, env });

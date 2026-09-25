@@ -443,6 +443,34 @@ def test_circuit_section_missing_snapshot_fails_closed(tmp_path, capsys, use):
     }
 
 
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_children_missing_snapshot_fails_closed(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    records = [
+        record for record in load_manifest(manifest) if record["id"] != "geography/cne-pba-circuits"
+    ]
+    save_manifest(manifest, records, events=[])
+    assert main([*args, "--use", use]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "missing_snapshot",
+        "source": "geography/cne-pba-circuits",
+    }
+
+
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_cli_rejects_incompatible_manifest_version(tmp_path, capsys, use):
+    args = circuit_case(tmp_path, [circuit_feature("0248", SQUARE)])
+    manifest = tmp_path / "manifest.json"
+    document = json.loads(manifest.read_text())
+    document["schema_version"] = 3
+    manifest.write_text(json.dumps(document))
+    assert main([*args, "--use", use]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "error: manifest schema_version must be exactly 2\n"
+
+
 def test_circuit_geometry_main_reads_verified_temp_archive(tmp_path, capsys):
     parent = {
         "type": "FeatureCollection",
@@ -2338,10 +2366,12 @@ def _fiscalizacion_csv(rows: list[str]) -> str:
     return FISCALIZACION_HEADER + "".join(rows)
 
 
+@pytest.mark.owned_database
 def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
+    owned_database,
 ) -> None:
     """Drives `ingest_source`, not the projection function.
 
@@ -2427,7 +2457,10 @@ def test_ingest_persists_the_review_items_the_fiscalizacion_run_produced(
             written = cur.fetchall()
             cur.execute("select source_kind from archive_entry where id = %s", (source_id,))
             assert cur.fetchone() == ("fiscalizacion",)
-        with psycopg.connect(TEST_DSN, user="postgres") as admin_conn, admin_conn.cursor() as cur:
+        with (
+            owned_database.owner_connection("workspace_review_ingest_owner") as admin_conn,
+            admin_conn.cursor() as cur,
+        ):
             cur.execute(
                 "select r.kind,c.context_role,c.source_kind,c.archive_availability,"
                 "c.election_year,c.archive_entry_id,c.unknown_reason from review_item r "

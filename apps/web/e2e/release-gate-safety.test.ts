@@ -574,6 +574,7 @@ describe("explicit release-gate lanes", () => {
 		const trace: string[] = [];
 		const commands: { command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }[] = [];
 		const output: string[] = [];
+		const runnerBootstraps: { args: readonly string[]; input: string; stdio: unknown; pending: unknown }[] = [];
 		let recoveryAtStop: { record: unknown; mode: number } | undefined;
 		const cleanupEvidenceChecks: { resource: string; recordExists: boolean; workdirExists: boolean }[] = [];
 		let port = 46000;
@@ -732,7 +733,7 @@ describe("explicit release-gate lanes", () => {
 			if (command === "docker" && args[0] === "container" && args[1] === "inspect") {
 				phase = "db-inspect";
 				text = fault === "identity-json" ? "PRIVATE_OUTPUT_MARKER" : JSON.stringify({
-					id: fault === "identity-id" ? "a".repeat(12) : "a".repeat(64),
+					id: fault === "identity-id" ? "a".repeat(12) : fault === "etl-runner-identity-replaced" && trace.includes("status") ? "c".repeat(64) : "a".repeat(64),
 					name: fault === "identity-name" ? "/supabase_db_unowned" : "/supabase_db_votus-e2e-12345678123441238123",
 					project: fault === "identity-project" ? "unowned" : "votus-e2e-12345678123441238123",
 					networks: fault === "identity-network" ? { unowned: { NetworkID: "b".repeat(64) } }
@@ -782,10 +783,27 @@ describe("explicit release-gate lanes", () => {
 						{ HostIp: "", HostPort: "46006" },
 						...(fault === "etl-requested-multiple-bindings" ? [{ HostIp: "", HostPort: "46006" }] : []),
 					] };
-					text = JSON.stringify({ requested, observed: JSON.parse(text) });
+					text = JSON.stringify({ requested, observed: fault === "etl-runner-publication" && trace.includes("status")
+						? { "5432/tcp": [{ HostIp: "0.0.0.0", HostPort: "46006" }] } : JSON.parse(text) });
 				}
 			}
-			if (command === "docker" && args[0] === "exec") phase = `sql${++sqlCount}`;
+			if (command === "docker" && args[0] === "exec") {
+				if (entry === "etl") {
+					phase = "runner-bootstrap";
+					const pendingPath = join(tempRoot, `votus-e2e-${token}.recovery.json`);
+					runnerBootstraps.push({ args: [...args], input: options.input, stdio: options.stdio,
+						pending: existsSync(pendingPath) ? JSON.parse(readFileSync(pendingPath, "utf8")) : null });
+					const outputs: Record<string, string> = {
+						"empty": "", "zero": "0\n", "overflow": "4294967296\n", "negative": "-1\n",
+						"fraction": "1.5\n", "leading-zero": "016384\n", "duplicate": "16384\n16384\n",
+						"noise": "PRIVATE_OUTPUT_MARKER\n16384\n", "missing-newline": "16384", "nul": "16384\0\n",
+					};
+					text = outputs[fault.replace("etl-runner-oid-", "")] ?? "16384\n";
+					if (fault === "etl-runner-throw") throw new Error(options.input);
+					if (fault === "etl-runner-spawn-error") return { status: null, error: new Error(options.input), stdout: options.input, stderr: options.input };
+					if (fault === "etl-runner-sql-error") return { status: 3, stdout: options.input, stderr: options.input };
+				} else phase = `sql${++sqlCount}`;
+			}
 			if (command === "supabase") {
 				if (args.includes("--help")) text = "--workdir --ignore-health-check --network-id --project-id --no-backup";
 				else if (args[0] === "db" && args[1] === "start") phase = "db-start";
@@ -824,6 +842,7 @@ describe("explicit release-gate lanes", () => {
 				resource: args[0], recordExists: existsSync(recoveryPath), workdirExists: existsSync(join(tempRoot, `votus-e2e-${token}`)),
 			});
 			if (phase) trace.push(phase);
+			if (phase === "db-inspect" && trace.includes("status") && fault === "etl-runner-revalidation-signal") interrupt?.();
 			if (phase === "db-start" && entry === "etl" && fault.startsWith("etl-marker-")) {
 				const marker = join(tempRoot, `votus-e2e-${token}`, ".votus-e2e-owner.json");
 				if (fault === "etl-marker-corrupt") writeFileSync(marker, "PRIVATE_MARKER_CONTENT{");
@@ -887,7 +906,7 @@ describe("explicit release-gate lanes", () => {
 				catch { ownershipMarker = "malformed"; }
 			}
 			const temporarySidecars = readdirSync(tempRoot).filter((name) => name.includes(".recovery.json.")).map((name) => ({ name, content: readFileSync(join(tempRoot, name), "utf8") }));
-			return { trace, commands, recoveryAtStop, cleanupEvidenceChecks, recoverySymlink, foreignContent, ownershipMarker, temporarySidecars, cleanupBeforePrelaunchSettlement, workdirExists, recoverySidecarExists: existsSync(sidecar), recoveryRecord, recoveryMode, ownedWorkdir: join(tempRoot, `votus-e2e-${token}`), staleSidecarExists: existsSync(staleRecord), readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure, exitCode: exit.mock.calls.at(-1)?.[0], killCalls: groupProbe?.mock.calls.map(([pid, signal]) => [pid, signal]) };
+			return { trace, commands, runnerBootstraps, recoveryAtStop, cleanupEvidenceChecks, recoverySymlink, foreignContent, ownershipMarker, temporarySidecars, cleanupBeforePrelaunchSettlement, workdirExists, recoverySidecarExists: existsSync(sidecar), recoveryRecord, recoveryMode, ownedWorkdir: join(tempRoot, `votus-e2e-${token}`), staleSidecarExists: existsSync(staleRecord), readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure, exitCode: exit.mock.calls.at(-1)?.[0], killCalls: groupProbe?.mock.calls.map(([pid, signal]) => [pid, signal]) };
 		} finally {
 			prelaunchRead.armed = false; prelaunchRead.gate = undefined; prelaunchRead.entered = undefined;
 			stdout.mockRestore(); stderr.mockRestore(); signals.mockRestore(); exit.mockRestore(); groupProbe?.mockRestore();
@@ -1191,7 +1210,7 @@ describe("explicit release-gate lanes", () => {
 			vi.unstubAllEnvs();
 		}
 		expect(result.failure).toBeUndefined();
-		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "pending-before-uv", "etl", "cleanup"]);
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
 		expect(result.commands.filter(({ command, args }) => command === "supabase" && args[0] === "migration" && args[1] === "up")).toHaveLength(0);
 		expect(result.readinessRequests).toHaveLength(0);
 		const etl = result.commands.find(({ command }) => command === "uv");
@@ -1212,7 +1231,7 @@ describe("explicit release-gate lanes", () => {
 	it("ETL does not require workspace_api REST readiness before its migrations", async () => {
 		const result = await runLane(["--run"], "http-503", "etl");
 		expect(result.failure).toBeUndefined();
-		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "pending-before-uv", "etl", "cleanup"]);
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
 		expect(result.readinessRequests).toHaveLength(0);
 	});
 
@@ -1496,6 +1515,82 @@ describe("explicit release-gate lanes", () => {
 		expect(result.output).not.toMatch(/passed;|postgres:postgres|synthetic-service/);
 	});
 
+	it("revalidates loopback publication before migration runner provisioning", async () => {
+		const result = await runLane(["--run"], "etl-runner-publication", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "cleanup"]);
+		expect(result.runnerBootstraps).toHaveLength(0);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('"operation":"owned_db_publication_validate","reason":"invalid_publication"');
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it.each([
+		["throw", "command_failed", null], ["spawn-error", "command_failed", null], ["sql-error", "command_failed", 3],
+		...["empty", "zero", "overflow", "negative", "fraction", "leading-zero", "duplicate", "noise", "missing-newline", "nul"]
+			.map((reason) => [`oid-${reason}`, "invalid_identity", null] as const),
+	] as const)("rejects migration runner bootstrap %s without leaking or starting the child", async (fault, reason, exitCode) => {
+		const result = await runLane(["--run"], `etl-runner-${fault}`, "etl");
+		expect(result.runnerBootstraps).toHaveLength(1);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain(`E2E_RELEASE_GATE_FAILURE ${JSON.stringify({ schemaVersion: 1, operation: "owned_etl_runner_bootstrap", reason, exitCode })}`);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|CREATE ROLE|PASSWORD|supabase_admin|votus_etl_runner_/);
+		expect(result.failure).not.toHaveProperty("cause");
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.workdirExists).toBe(false);
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("does not provision a migration runner when interrupted during revalidation", async () => {
+		const result = await runLane(["--run"], "etl-runner-revalidation-signal", "etl");
+		expect(result.runnerBootstraps).toHaveLength(0);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.trace.at(-1)).toBe("cleanup");
+		expect(result.exitCode).toBe(143);
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("rejects a replacement container before migration runner provisioning", async () => {
+		const result = await runLane(["--run"], "etl-runner-identity-replaced", "etl");
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "cleanup"]);
+		expect(result.runnerBootstraps).toHaveLength(0);
+		expect(result.commands.some(({ command }) => command === "uv")).toBe(false);
+		expect(result.output).toContain('"operation":"owned_db_identity_validate","reason":"invalid_identity"');
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
+	it("provisions one migration runner after durable ownership and before the ETL child", async () => {
+		const result = await runLane(["--run"], "", "etl");
+		expect(result.failure).toBeUndefined();
+		expect(result.runnerBootstraps).toHaveLength(1);
+		const bootstrap = result.runnerBootstraps[0]!;
+		expect(bootstrap.pending).toMatchObject({ status: "pending_child", ownerPid: process.pid });
+		expect(bootstrap.args).toEqual(["exec", "-i", "--user", "postgres", "a".repeat(64), "psql", "-U", "supabase_admin", "-d", "postgres", "-XAt", "-v", "ON_ERROR_STOP=1"]);
+		expect(bootstrap.stdio).toEqual(["pipe", "pipe", "pipe"]);
+		const env = result.commands.find(({ command }) => command === "uv")?.env;
+		const capability = JSON.parse(env!.ETL_TEST_MIGRATION_RUNNER!);
+		expect(Object.keys(capability).sort()).toEqual(["marker", "oid", "password", "role"]);
+		expect(capability).toEqual({
+			role: "votus_etl_runner_12345678123441238123123456789abc",
+			password: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+			marker: "votus-etl-runner:12345678-1234-4123-8123-123456789abc", oid: 16384,
+		});
+		expect(bootstrap.input).toContain(`CREATE ROLE "${capability.role}" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${capability.password}'`);
+		expect(bootstrap.input).toContain(`GRANT postgres TO "${capability.role}" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+		expect(bootstrap.input).toContain(`COMMENT ON ROLE "${capability.role}" IS '${capability.marker}'`);
+		expect(bootstrap.input).toMatch(/BEGIN;[\s\S]*CREATE ROLE[\s\S]*GRANT postgres[\s\S]*COMMENT ON ROLE[\s\S]*COMMIT;/);
+		expect(bootstrap.input).not.toMatch(/ON CONFLICT|IF NOT EXISTS/);
+		expect(bootstrap.input.match(/CREATE ROLE/g)).toHaveLength(1);
+		expect(bootstrap.input.match(/GRANT /g)).toHaveLength(1);
+		expect(bootstrap.input).toContain("session_user <> 'supabase_admin' OR current_user <> 'supabase_admin'");
+		expect(bootstrap.input).toContain("oid = 10 AND rolname = current_user AND rolsuper");
+		expect(bootstrap.input.indexOf("invalid bootstrap identity")).toBeLessThan(bootstrap.input.indexOf("CREATE ROLE"));
+		expect(result.trace.slice(-6)).toEqual(["db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
+		expect(JSON.stringify(result.commands.map(({ args }) => args))).not.toContain(capability.password);
+		expect(result.output).not.toMatch(/votus_etl_runner_|CREATE ROLE|GRANT postgres|supabase_admin/);
+		expect(result.output).not.toContain(capability.password);
+		expect(result.recoverySidecarExists).toBe(false);
+	});
+
 	it("prelaunch SIGTERM waits for preparation and never starts ETL", async () => {
 		const result = await runLane(["--run"], "etl-prelaunch-signal", "etl");
 		expect(result.cleanupBeforePrelaunchSettlement, JSON.stringify(result.trace)).toBe(false);
@@ -1543,7 +1638,7 @@ describe("explicit release-gate lanes", () => {
 
 	it("identifies child launch constructor failure after validated status", async () => {
 		const result = await runLane(["--run"], "etl-launch-throw", "etl");
-		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status"]);
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap"]);
 		expect(result.recoveryRecord).toMatchObject({ status: "pending_child" });
 		expect(result.output).toContain('E2E_RELEASE_GATE_FAILURE {"schemaVersion":1,"operation":"owned_etl_child_launch","reason":"launch_failed","exitCode":null}');
 		expect(result.output).not.toMatch(/SECRET_LAUNCH_PRIVATE|postgres:postgres|votus-e2e-12345678/);
@@ -1623,7 +1718,7 @@ describe("explicit release-gate lanes", () => {
 	it.each(["etl-mixed-bindings", "etl-dual-loopback-reversed"])("accepts %s exact dual-loopback publication and runs isolated ETL", async (fault) => {
 		const result = await runLane(["--run"], fault, "etl");
 		expect(result.failure).toBeUndefined();
-		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "pending-before-uv", "etl", "cleanup"]);
+		expect(result.trace).toEqual(["network", "db-start", "db-inspect", "publication", "status", "db-inspect", "publication", "runner-bootstrap", "pending-before-uv", "etl", "cleanup"]);
 		expect(result.commands.filter(({ command }) => command === "uv")).toHaveLength(1);
 		expect(result.workdirExists).toBe(false);
 		expect(result.recoverySidecarExists).toBe(false);

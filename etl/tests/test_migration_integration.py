@@ -155,8 +155,9 @@ def _review_context_migration_level(database_dsn: str) -> int:
         installed = _fetchone(
             connection,
             "select to_regclass('workspace_private.review_item_context') is not null,"
-            "exists(select from information_schema.columns where table_schema='workspace_private' "
-            "and table_name='review_item_context' and column_name='context_role'),"
+            "exists(select from pg_attribute where "
+            "attrelid=to_regclass('workspace_private.review_item_context') "
+            "and attname='context_role' and attnum>0 and not attisdropped),"
             "to_regprocedure('workspace_private.record_review_item_v2"
             "(text,text,text,text,text[],text[],text,text,text,integer,"
             "uuid,uuid,text)') is not null,"
@@ -1556,30 +1557,25 @@ def test_real_migration_history_repairs_pba_and_merges_circuito_aliases() -> Non
 
 # fmt: off
 
-def test_workspace_context_selection_switching_and_session_isolation() -> None:
+@pytest.mark.owned_database
+def test_workspace_context_selection_switching_and_session_isolation(owned_database) -> None:
     database_dsn = os.environ.get("ETL_TEST_DATABASE_URL")
     if not database_dsn:
         pytest.skip("ETL_TEST_DATABASE_URL is required for workspace selection coverage")
-    params = conninfo_to_dict(database_dsn)
-    params["user"] = "postgres"
-    params.pop("password", None)
-    admin_dsn = make_conninfo(**{key: str(value) for key, value in params.items()})
     user_id, session_id, other_session = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     organizations = [uuid.uuid4() for _ in range(3)]
 
     def rpc(name: str, session: uuid.UUID, *args: object) -> dict[str, object]:
         claims = json.dumps({"sub": str(user_id), "session_id": str(session), "exp": 253402300798})
-        with psycopg.connect(admin_dsn) as connection:
+        with owned_database.owner_connection("authenticated") as connection:
             connection.execute("select set_config('request.jwt.claims',%s,false)", (claims,))
-            connection.execute("set role authenticated")
             row = connection.execute(f"select workspace_api.{name}({','.join(['%s'] * len(args))})", args).fetchone()  # noqa: E501, S608
             assert row is not None and isinstance(row[0], dict)
             return row[0]
 
     try:
         assert rpc("current_workspace", session_id) == {"status": "selection_required", "context_revision": 0}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.cursor().executemany(
                 "insert into workspace_private.organization(id,slug,display_name,disabled_at) values(%s,%s,%s,%s)",  # noqa: E501
                 [(organizations[0], f"active-{organizations[0].hex}", "Active", None),
@@ -1606,34 +1602,28 @@ def test_workspace_context_selection_switching_and_session_isolation() -> None:
         assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "same_state", "context_revision": 2}  # noqa: E501
         assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "conflict", "context_revision": 2}  # noqa: E501
         assert rpc("current_workspace", other_session) == {"status": "selection_required", "context_revision": 1}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute("update workspace_private.organization_membership set membership_revision=2 where organization_id=%s and user_id=%s", (organizations[0], user_id))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 2}
         assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "active", "context_revision": 3}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute("update workspace_private.organization set entitlement_revision=1 where id=%s", (organizations[0],))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 3}
         assert rpc("switch_workspace_context", session_id, organizations[0], 3) == {"status": "active", "context_revision": 4}  # noqa: E501
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_admin_owner")
+        with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.execute("update workspace_private.organization set disabled_at=now() where id=%s", (organizations[0],))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "stale", "context_revision": 4}
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_context_owner")
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute("update workspace_private.workspace_context set fixed_expires_at='2000-01-01' where session_id=%s", (session_id,))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "expired", "context_revision": 4}
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("set role workspace_context_owner")
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute("update workspace_private.workspace_context set fixed_expires_at='2100-01-01',revoked_at=now() where session_id=%s", (session_id,))  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "revoked", "context_revision": 4}
     finally:
-        with psycopg.connect(admin_dsn) as connection:
-            connection.execute("delete from workspace_private.workspace_audit_event where user_id=%s", (user_id,))  # noqa: E501
+        # Forced-RLS organization/audit fixtures have no DELETE policy. Their UUID-scoped
+        # rows belong to this disposable database and disappear with its owned teardown.
+        with owned_database.owner_connection("workspace_context_owner") as connection:
             connection.execute("delete from workspace_private.workspace_context where user_id=%s", (user_id,))  # noqa: E501
-            connection.execute("delete from workspace_private.organization_membership where organization_id=any(%s)", (organizations,))  # noqa: E501
-            connection.execute("delete from workspace_private.organization where id=any(%s)", (organizations,))  # noqa: E501
 
 # fmt: on
 

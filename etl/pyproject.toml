@@ -35,3 +35,4 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "../spikes/scripts"]
+markers = ["owned_database: trusted administrative fixtures on a verified disposable target"]
