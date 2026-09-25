@@ -47,15 +47,20 @@ def _stage(case: str, stage: str):
     except AtomicityFailure:
         raise
     except Exception as error:
+        from etl.verify import MigrationApplyError
+
         category = "unexpected"
-        if isinstance(error, psycopg.Error):
+        state = None
+        if isinstance(error, psycopg.Error) or (
+            isinstance(error, MigrationApplyError) and isinstance(error.__cause__, psycopg.Error)
+        ):
             category = "database"
+            state = error.sqlstate
         elif isinstance(error, subprocess.TimeoutExpired):
             category = "timeout"
         elif isinstance(error, OSError):
             category = "os"
         diagnostic = f"migration_atomicity:{case}:stage={stage}:exception={category}"
-        state = error.sqlstate if isinstance(error, psycopg.Error) else None
         if isinstance(state, str) and re.fullmatch(r"[0-9A-Z]{5}", state):
             diagnostic += f":sqlstate={state}"
         print(diagnostic)

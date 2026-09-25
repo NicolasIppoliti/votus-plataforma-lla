@@ -81,26 +81,33 @@ def test_release_gate_reaches_real_cli_proof_with_its_own_pinned_service() -> No
 
 @pytest.mark.parametrize("case", ["success", "ledger", "sql"])
 @pytest.mark.parametrize(
-    "stage",
+    ("stage", "sqlstate", "failure_kind"),
     [
-        "fixture_creation",
-        "files",
-        "predecessors",
-        "cli",
-        "observer",
-        "cleanup",
-        "assertion_cleanup",
-        "assertion_temp_cleanup",
-        "complete",
+        *[
+            (stage, sqlstate, "database")
+            for stage in (
+                "fixture_creation",
+                "files",
+                "predecessors",
+                "cli",
+                "observer",
+                "cleanup",
+                "assertion_cleanup",
+                "assertion_temp_cleanup",
+                "complete",
+            )
+            for sqlstate in ("23514", "SYNTHETIC_DIAGNOSTIC_CANARY", None, 23514)
+        ],
+        *[("predecessors", "23514", kind) for kind in ("non_database", "os", "nested_database")],
     ],
 )
-@pytest.mark.parametrize("sqlstate", ["23514", "SYNTHETIC_DIAGNOSTIC_CANARY", None, 23514])
 def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     case: str,
     stage: str,
     sqlstate: object,
+    failure_kind: str,
 ) -> None:
     from etl import migration_atomicity as proof
     from etl import verify
@@ -111,7 +118,13 @@ def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
         if stage == "assertion_temp_cleanup"
         else psycopg.errors.CheckViolation(canary)
     )
+    if failure_kind != "database":
+        failure = OSError(canary) if failure_kind == "os" else RuntimeError(canary)
+        if failure_kind == "nested_database":
+            failure.__cause__ = psycopg.errors.CheckViolation(canary)
     failure.sqlstate = sqlstate
+    original_cause = failure.__cause__
+    migration_failures = []
     state = {"case": "preflight", "applied": False}
     cleaned = []
     attempted = []
@@ -187,12 +200,19 @@ def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
         )
 
     connection.execute.side_effect = execute
+    apply = partial(verify.apply_migrations, connect=lambda *a: connection)
+
+    def observe_apply(*args):
+        try:
+            return apply(*args)
+        except verify.MigrationApplyError as error:
+            migration_failures.append(error)
+            raise
+
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("POSTGRES_CONTAINER", "a" * 64)
     monkeypatch.setattr(verify, "DisposablePostgres", fixture)
-    monkeypatch.setattr(
-        verify, "apply_migrations", partial(verify.apply_migrations, connect=lambda *a: connection)
-    )
+    monkeypatch.setattr(verify, "apply_migrations", observe_apply)
     monkeypatch.setattr(proof.psycopg, "connect", lambda *a: connection)
     monkeypatch.setattr(proof, "Path", lambda *a: path)
     monkeypatch.setattr(proof.shutil, "copyfile", lambda *a: None)
@@ -222,6 +242,8 @@ def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
     if stage in ("assertion_cleanup", "assertion_temp_cleanup"):
         label = "cleanup"
     category = "os" if stage == "assertion_temp_cleanup" else "database"
+    if failure_kind != "database":
+        category = "unexpected"
     diagnostic = f"migration_atomicity:{case}:stage={label}:exception={category}"
     if category == "database" and sqlstate == "23514":
         diagnostic += ":sqlstate=23514"
@@ -230,6 +252,13 @@ def test_public_proof_reports_safe_stage_and_preserves_failure_and_cleanup(
     assert str(caught.value) == diagnostic
     assert canary not in output.out + output.err + str(caught.value)
     assert caught.value.__suppress_context__
+    if stage == "predecessors":
+        assert len(migration_failures) == 1
+        wrapped = migration_failures[0]
+        assert caught.value.__context__ is wrapped
+        assert wrapped.__cause__ is failure
+        assert failure.__cause__ is original_cause
+        assert wrapped.filename == path.name
     assert attempted[-1] == case
     assert cleaned == (attempted[:-1] if stage == "fixture_creation" else attempted)
     if stage in ("assertion_cleanup", "assertion_temp_cleanup"):

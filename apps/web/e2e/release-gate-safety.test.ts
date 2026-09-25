@@ -1,6 +1,6 @@
 import { chromium } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
@@ -95,7 +95,8 @@ vi.mock("node:fs", async (importOriginal) => {
 		closeSync: (fd: number) => { sidecarFault.descriptors.delete(fd); return actual.closeSync(fd); },
 		writeFileSync: (file: Parameters<typeof actual.writeFileSync>[0], data: string, options?: Parameters<typeof actual.writeFileSync>[2]) => {
 			const name = typeof file === "number" ? sidecarFault.descriptors.get(file) ?? "" : String(file);
-			if (sidecarFault.kind === "pending-partial-write" && name.endsWith(".pending.tmp")) {
+			if ((sidecarFault.kind === "pending-partial-write" && name.endsWith(".pending.tmp")) ||
+				(sidecarFault.kind === "ordinary-partial-write" && name.includes(".recovery.json"))) {
 				actual.writeFileSync(file, data.slice(0, 5));
 				throw new Error("PRIVATE_FAULT_WRITE");
 			}
@@ -105,12 +106,17 @@ vi.mock("node:fs", async (importOriginal) => {
 		fsyncSync: (fd: number) => {
 			const name = sidecarFault.descriptors.get(fd) ?? "";
 			if (sidecarFault.kind === "pending-fsync" && name.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "ordinary-fsync" && name.includes(".recovery.json")) throw new Error("PRIVATE_FAULT_FSYNC");
+			if (sidecarFault.kind === "ordinary-dir-fsync" && sidecarFault.linked && actual.fstatSync(fd).isDirectory()) throw new Error("PRIVATE_FAULT_FSYNC");
 			if (sidecarFault.kind === "promotion-fsync" && name.endsWith(".tmp") && !name.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_FSYNC");
 			if (sidecarFault.kind === "pending-dir-fsync" && sidecarFault.linked && actual.fstatSync(fd).isDirectory()) throw new Error("PRIVATE_FAULT_FSYNC");
 			if (sidecarFault.kind === "promotion-dir-fsync" && sidecarFault.renamed && actual.fstatSync(fd).isDirectory()) throw new Error("PRIVATE_FAULT_FSYNC");
 			return actual.fsyncSync(fd);
 		},
-		linkSync: (from: string, to: string) => { actual.linkSync(from, to); sidecarFault.linked = true; },
+		linkSync: (from: string, to: string) => {
+			if (sidecarFault.kind === "ordinary-link") throw new Error("PRIVATE_FAULT_LINK");
+			actual.linkSync(from, to); sidecarFault.linked = true;
+		},
 		renameSync: (from: string, to: string) => {
 			if (sidecarFault.kind === "promotion-rename" && from.endsWith(".tmp") && !from.endsWith(".pending.tmp")) throw new Error("PRIVATE_FAULT_RENAME");
 			actual.renameSync(from, to);
@@ -542,7 +548,7 @@ describe("explicit release-gate lanes", () => {
 	});
 
 	// Reuse the existing isolated-workdir lifecycle with fake process/network boundaries.
-	async function runLane(argv: string[], fault = "", entry: "release" | "etl" = "release", staleSidecar: boolean | "missing-marker" | "conflicting-marker" | "active-owner" | "unknown-owner" | "legacy" | "malformed" | "unknown-docker" | "same-suffix-container" | "same-suffix-volume" | "pending-child" | "pending-corrupt" | "pending-conflict" = false) {
+	async function runLane(argv: string[], fault = "", entry: "release" | "etl" = "release", staleSidecar: boolean | "missing-marker" | "conflicting-marker" | "active-owner" | "unknown-owner" | "legacy" | "malformed" | "unknown-docker" | "same-suffix-container" | "same-suffix-volume" | "pending-child" | "pending-corrupt" | "pending-conflict" = false, etlStderr?: readonly string[]) {
 		const tempRoot = mkdtempSync("/tmp/votus-e2e-unit-");
 		sidecarFault.kind = fault.startsWith("sidecar-") ? fault.slice("sidecar-".length) : "";
 		sidecarFault.renamed = false; sidecarFault.linked = false;
@@ -568,6 +574,8 @@ describe("explicit release-gate lanes", () => {
 		const trace: string[] = [];
 		const commands: { command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }[] = [];
 		const output: string[] = [];
+		let recoveryAtStop: { record: unknown; mode: number } | undefined;
+		const cleanupEvidenceChecks: { resource: string; recordExists: boolean; workdirExists: boolean }[] = [];
 		let port = 46000;
 		let sqlCount = 0;
 		let migrationCount = 0;
@@ -635,11 +643,15 @@ describe("explicit release-gate lanes", () => {
 					void Promise.resolve().then(() => { trace.push("child-close"); child.emit("close", 0); });
 					return true;
 				} });
+				if (etlStderr) void Promise.resolve().then(() => {
+					for (const chunk of etlStderr) child.stderr.write(chunk);
+				});
 				if (fault !== "etl-signal" && fault !== "etl-timeout")
 					void Promise.resolve().then(() => {
 						groupExists = fault === "etl-group-remains";
 						if (fault === "etl-spawn-error" || fault.startsWith("etl-enoent")) child.emit("error", Object.assign(new Error("PRIVATE_OUTPUT_MARKER"), { code: "ENOENT" }));
-						if (fault === "etl-failure") child.stderr.end("private postgres:postgres\nE2E_ETL_STAGE apply_migrations\nE2E_ETL_MIGRATION 0022_results_exploration_scale.sql 42710\nPRIVATE_OUTPUT_MARKER\n");
+						if (etlStderr) child.stderr.end();
+						else if (fault === "etl-failure") child.stderr.end("private postgres:postgres\nE2E_ETL_STAGE apply_migrations\nE2E_ETL_MIGRATION 0022_results_exploration_scale.sql 42710\nPRIVATE_OUTPUT_MARKER\n");
 						else if (fault.startsWith("etl-migration-")) {
 							const migration = fault === "etl-migration-bad-name" ? "../private.sql 42710" : fault === "etl-migration-bad-state" ? "0022_results_exploration_scale.sql PRIVATE" : "0022_results_exploration_scale.sql 42710";
 							child.stderr.end(`private_secret\nE2E_ETL_STAGE ${fault === "etl-migration-other-stage" ? "pytest" : "apply_migrations"}\nE2E_ETL_MIGRATION ${migration}\n${fault === "etl-migration-duplicate" ? `E2E_ETL_MIGRATION ${migration}\n` : ""}`);
@@ -796,6 +808,21 @@ describe("explicit release-gate lanes", () => {
 							: { API_URL: "http://127.0.0.1:46005", DB_URL: "postgresql://postgres:postgres@127.0.0.1:46006/postgres", ANON_KEY: "synthetic-anon", SERVICE_ROLE_KEY: "synthetic-service" });
 				} else if (args[0] === "stop") phase = "cleanup";
 			}
+			const recoveryPath = join(tempRoot, `votus-e2e-${token}.recovery.json`);
+			if (phase === "status" && sidecarFault.kind.startsWith("ordinary-") && ["ordinary-collision", "ordinary-symlink", "ordinary-temp-collision"].includes(sidecarFault.kind)) {
+				const foreign = join(tempRoot, "foreign.json");
+				if (sidecarFault.kind === "ordinary-symlink") {
+					writeFileSync(foreign, '{"foreign":true}', { mode: 0o600 });
+					symlinkSync(foreign, recoveryPath);
+				} else writeFileSync(sidecarFault.kind === "ordinary-temp-collision" ? `${recoveryPath}.${token}.tmp` : recoveryPath, '{"foreign":true}', { mode: 0o600 });
+			}
+			if (phase === "cleanup" && existsSync(recoveryPath)) recoveryAtStop = {
+				record: JSON.parse(readFileSync(recoveryPath, "utf8")) as unknown,
+				mode: statSync(recoveryPath).mode & 0o777,
+			};
+			if (trace.includes("cleanup") && command === "docker" && (args[0] === "ps" || (["volume", "network"].includes(args[0]) && args[1] === "ls"))) cleanupEvidenceChecks.push({
+				resource: args[0], recordExists: existsSync(recoveryPath), workdirExists: existsSync(join(tempRoot, `votus-e2e-${token}`)),
+			});
 			if (phase) trace.push(phase);
 			if (phase === "db-start" && entry === "etl" && fault.startsWith("etl-marker-")) {
 				const marker = join(tempRoot, `votus-e2e-${token}`, ".votus-e2e-owner.json");
@@ -850,7 +877,17 @@ describe("explicit release-gate lanes", () => {
 				catch { recoveryRecord = "malformed"; }
 			}
 			const recoveryMode = existsSync(sidecar) ? statSync(sidecar).mode & 0o777 : undefined;
-			return { trace, commands, cleanupBeforePrelaunchSettlement, workdirExists, recoverySidecarExists: existsSync(sidecar), recoveryRecord, recoveryMode, ownedWorkdir: join(tempRoot, `votus-e2e-${token}`), staleSidecarExists: existsSync(staleRecord), readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure, exitCode: exit.mock.calls.at(-1)?.[0], killCalls: groupProbe?.mock.calls.map(([pid, signal]) => [pid, signal]) };
+			const recoverySymlink = existsSync(sidecar) && lstatSync(sidecar).isSymbolicLink();
+			const foreignPath = join(tempRoot, "foreign.json");
+			const foreignContent = existsSync(foreignPath) ? readFileSync(foreignPath, "utf8") : undefined;
+			const markerPath = join(tempRoot, `votus-e2e-${token}`, ".votus-e2e-owner.json");
+			let ownershipMarker: unknown;
+			if (existsSync(markerPath)) {
+				try { ownershipMarker = JSON.parse(readFileSync(markerPath, "utf8")) as unknown; }
+				catch { ownershipMarker = "malformed"; }
+			}
+			const temporarySidecars = readdirSync(tempRoot).filter((name) => name.includes(".recovery.json.")).map((name) => ({ name, content: readFileSync(join(tempRoot, name), "utf8") }));
+			return { trace, commands, recoveryAtStop, cleanupEvidenceChecks, recoverySymlink, foreignContent, ownershipMarker, temporarySidecars, cleanupBeforePrelaunchSettlement, workdirExists, recoverySidecarExists: existsSync(sidecar), recoveryRecord, recoveryMode, ownedWorkdir: join(tempRoot, `votus-e2e-${token}`), staleSidecarExists: existsSync(staleRecord), readinessRequests, cancelCount: cancelBody.mock.calls.length, timeouts: timeout.mock.calls.map(([ms]) => ms), output: output.join(""), failure, exitCode: exit.mock.calls.at(-1)?.[0], killCalls: groupProbe?.mock.calls.map(([pid, signal]) => [pid, signal]) };
 		} finally {
 			prelaunchRead.armed = false; prelaunchRead.gate = undefined; prelaunchRead.entered = undefined;
 			stdout.mockRestore(); stderr.mockRestore(); signals.mockRestore(); exit.mockRestore(); groupProbe?.mockRestore();
@@ -862,6 +899,90 @@ describe("explicit release-gate lanes", () => {
 			rmSync(tempRoot, { force: true, recursive: true });
 		}
 	}
+
+	it("does not publish incomplete ordinary recovery evidence after a partial write", async () => {
+		const result = await runLane(["--lane", "sql"], "sidecar-ordinary-partial-write", "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toEqual({
+			workdir: result.ownedWorkdir,
+			projectId: "votus-e2e-12345678123441238123",
+			token: "12345678-1234-4123-8123-123456789abc",
+		});
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it.each(["ordinary-fsync", "ordinary-link"])("retains ownership without publishing evidence after %s", async (fault) => {
+		const result = await runLane(["--lane", "sql"], `sidecar-${fault}`, "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toMatchObject({ workdir: result.ownedWorkdir });
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it("retains complete private evidence without teardown when publication directory fsync fails", async () => {
+		const result = await runLane(["--lane", "sql"], "sidecar-ordinary-dir-fsync", "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toMatchObject({ workdir: result.ownedWorkdir });
+		expect(result.recoveryRecord).toEqual({
+			schemaVersion: 2, ownerPid: process.pid, workdir: result.ownedWorkdir,
+			projectId: "votus-e2e-12345678123441238123", token: "12345678-1234-4123-8123-123456789abc",
+			repositoryRoot: resolve(fileURLToPath(import.meta.url), "../../../.."),
+		});
+		expect(result.recoveryMode).toBe(0o600);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|postgres:postgres/);
+	});
+
+	it.each(["ordinary-collision", "ordinary-symlink", "ordinary-temp-collision"])("preserves existing evidence at %s during ordinary cleanup", async (fault) => {
+		const result = await runLane(["--lane", "sql"], `sidecar-${fault}`, "release");
+		expect(result.failure).toBeInstanceOf(ReleaseGateCleanupError);
+		expect(result.trace).toContain("sql4");
+		expect(result.trace).not.toContain("cleanup");
+		expect(result.ownershipMarker).toMatchObject({ workdir: result.ownedWorkdir });
+		expect(result.recoverySidecarExists).toBe(fault !== "ordinary-temp-collision");
+		expect(result.recoveryRecord).toEqual(fault === "ordinary-temp-collision" ? undefined : { foreign: true });
+		expect(result.recoverySymlink).toBe(fault === "ordinary-symlink");
+		expect(result.foreignContent).toBe(fault === "ordinary-symlink" ? '{"foreign":true}' : undefined);
+		expect(result.temporarySidecars).toEqual(fault === "ordinary-temp-collision" ? [{
+			name: "votus-e2e-12345678-1234-4123-8123-123456789abc.recovery.json.12345678-1234-4123-8123-123456789abc.tmp",
+			content: '{"foreign":true}',
+		}] : []);
+		expect(result.output).toContain("RECOVERY_RECORD_PERSIST");
+		expect(result.output).not.toMatch(/PRIVATE_FAULT|foreign|postgres:postgres/);
+	});
+
+	it("publishes complete ordinary evidence before teardown and retires it only after residual checks", async () => {
+		const result = await runLane(["--lane", "sql"], "", "release");
+		expect(result.failure).toBeUndefined();
+		expect(result.recoveryAtStop).toEqual({
+			mode: 0o600,
+			record: {
+				schemaVersion: 2, ownerPid: process.pid, workdir: result.ownedWorkdir,
+				projectId: "votus-e2e-12345678123441238123", token: "12345678-1234-4123-8123-123456789abc",
+				repositoryRoot: resolve(fileURLToPath(import.meta.url), "../../../.."),
+			},
+		});
+		expect(result.cleanupEvidenceChecks.filter(({ workdirExists }) => !workdirExists)).toEqual([
+			{ resource: "ps", recordExists: true, workdirExists: false },
+			{ resource: "volume", recordExists: true, workdirExists: false },
+			{ resource: "network", recordExists: true, workdirExists: false },
+		]);
+		expect(result.recoverySidecarExists).toBe(false);
+		expect(result.temporarySidecars).toEqual([]);
+		expect(result.workdirExists).toBe(false);
+	});
 
 	it("persists pending ownership before uv and promotes it before successful teardown", async () => {
 		const result = await runLane(["--run"], "", "etl");
@@ -1103,6 +1224,204 @@ describe("explicit release-gate lanes", () => {
 		expect(result.trace.slice(-2)).toEqual(["etl", "cleanup"]);
 		expect(result.output).not.toMatch(/passed:|PRIVATE_OUTPUT_MARKER|postgres:postgres|synthetic-service/);
 	});
+
+
+
+	it("reports safe pytest counts through the public ETL executor", async () => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"PRIVATE_OUTPUT_MARKER postgres:postgres\nE2E_ETL_STAGE pytest\n",
+			"E2E_ETL_PYTEST pytest_failed 1 5 0 3\n",
+		]);
+		const diagnostics = result.output.split("\n").filter((line) => line.startsWith("E2E_ETL_DIAGNOSTIC "));
+		expect(diagnostics).toHaveLength(1);
+		expect(JSON.parse(diagnostics[0]!.slice("E2E_ETL_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, reason: "child_exit", exitCode: 1, stage: "pytest",
+			pytest: { outcome: "pytest_failed", exitCode: 1, tests: 5, skipped: 0, failed: 3 },
+		});
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|E2E_ETL_PYTEST/);
+	});
+
+
+	it.each([
+		"skips_rejected", "pytest_failed", "report_missing", "report_invalid",
+		"runner_error", "interrupted", "unexpected",
+	])("preserves safe pytest %s evidence across chunks without a final newline", async (outcome) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			`${"private_secret".repeat(200)}\nE2E_ETL_STA`, "GE pytest\nE2E_ETL_PY",
+			`TEST ${outcome} - - - -`,
+		]);
+		expect(result.output).toContain(`"pytest":{"outcome":"${outcome}","exitCode":null,"tests":null,"skipped":null,"failed":null}`);
+		expect(result.output).not.toMatch(/private_secret|E2E_ETL_PYTEST/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each([
+		["zero", "0 0 0 0", { exitCode: 0, tests: 0, skipped: 0, failed: 0 }],
+		["maximum", "255 9007199254740991 9007199254740991 9007199254740991",
+			{ exitCode: 255, tests: 9007199254740991, skipped: 9007199254740991, failed: 9007199254740991 }],
+		["partial null", "1 - 0 -", { exitCode: 1, tests: null, skipped: 0, failed: null }],
+	])("reports %s pytest numeric evidence without coercion", async (_name, numbers, expected) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			`E2E_ETL_STAGE pytest\nE2E_ETL_PYTEST pytest_failed ${numbers}\n`,
+		]);
+		const line = result.output.split("\n").find((value) => value.startsWith("E2E_ETL_DIAGNOSTIC "))!;
+		expect(JSON.parse(line.slice("E2E_ETL_DIAGNOSTIC ".length)).pytest).toEqual({ outcome: "pytest_failed", ...expected });
+	});
+
+	it.each([
+		["unknown outcome", "E2E_ETL_PYTEST private_secret 1 5 0 3\n"],
+		["extra field", "E2E_ETL_PYTEST pytest_failed 1 5 0 3 private_secret\n"],
+		["missing field", "E2E_ETL_PYTEST pytest_failed 1 5 0\n"],
+		["tab separator", "E2E_ETL_PYTEST pytest_failed	1 5 0 3\n"],
+		["double separator", "E2E_ETL_PYTEST pytest_failed  1 5 0 3\n"],
+		["midline marker", "private_secret E2E_ETL_PYTEST pytest_failed 1 5 0 3\n"],
+		["overlong marker", `E2E_ETL_PYTEST pytest_failed 1 5 0 3${"private_secret".repeat(100)}\n`],
+		["duplicate marker", "E2E_ETL_PYTEST pytest_failed 1 5 0 3\nE2E_ETL_PYTEST pytest_failed 1 5 0 3\n"],
+		["invalid then valid", "E2E_ETL_PYTEST private_secret\nE2E_ETL_PYTEST pytest_failed 1 5 0 3\n"],
+		["valid then invalid", "E2E_ETL_PYTEST pytest_failed 1 5 0 3\nE2E_ETL_PYTEST private_secret\n"],
+	])("rejects %s pytest evidence without leaking stderr", async (_name, evidence) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"E2E_ETL_STAGE pytest\n", evidence,
+		]);
+		expect(result.output).toContain('"stage":"pytest"');
+		expect(result.output).not.toMatch(/"outcome"|"tests"|"skipped"|"failed"|private_secret|E2E_ETL_PYTEST/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each([
+		["negative exit", "-1 5 0 3"], ["large exit", "256 5 0 3"],
+		["fractional exit", "1.5 5 0 3"], ["exponent exit", "1e2 5 0 3"],
+		["invalid exit", "private_secret 5 0 3"],
+		["negative tests", "1 -1 0 3"], ["unsafe tests", "1 9007199254740992 0 3"],
+		["fractional tests", "1 1.5 0 3"], ["exponent tests", "1 1e2 0 3"],
+		["invalid tests", "1 private_secret 0 3"],
+		["negative skipped", "1 5 -1 3"], ["unsafe skipped", "1 5 9007199254740992 3"],
+		["fractional skipped", "1 5 1.5 3"], ["invalid skipped", "1 5 private_secret 3"],
+		["negative failed", "1 5 0 -1"], ["unsafe failed", "1 5 0 9007199254740992"],
+		["fractional failed", "1 5 0 1.5"], ["invalid failed", "1 5 0 private_secret"],
+		["NaN", "1 NaN 0 3"], ["Infinity", "1 Infinity 0 3"],
+	])("rejects %s pytest number", async (_name, numbers) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			`E2E_ETL_STAGE pytest\nE2E_ETL_PYTEST pytest_failed ${numbers}\n`,
+		]);
+		expect(result.output).not.toMatch(/"outcome"|"tests"|"skipped"|"failed"|private_secret|E2E_ETL_PYTEST/);
+	});
+
+	it.each([
+		["missing stage", ""],
+		["grant stage", "E2E_ETL_STAGE grant_test_privileges\n"],
+		["migration stage", "E2E_ETL_STAGE apply_migrations\n"],
+		["cleanup stage", "E2E_ETL_STAGE owned_database_cleanup\n"],
+		["unknown stage", "E2E_ETL_STAGE private_secret\n"],
+		["duplicate stage", "E2E_ETL_STAGE pytest\nE2E_ETL_STAGE pytest\n"],
+		["mismatched stages", "E2E_ETL_STAGE pytest\nE2E_ETL_STAGE owned_database_cleanup\n"],
+		["overlong stage", `E2E_ETL_STAGE pytest${"private_secret".repeat(100)}\n`],
+	])("omits pytest detail for %s", async (_name, stage) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			stage, "E2E_ETL_PYTEST pytest_failed 1 5 0 3\n",
+		]);
+		expect(result.output).not.toMatch(/"outcome"|"tests"|"skipped"|"failed"|private_secret|E2E_ETL_PYTEST/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each(["", "etl-spawn-error", "etl-timeout"])(
+		"does not report pytest detail outside child failure: %s", async (fault) => {
+			const result = await runLane(["--run"], fault, "etl", false, [
+				"E2E_ETL_STAGE pytest\nE2E_ETL_PYTEST pytest_failed 1 5 0 3\n",
+			]);
+			if (fault === "") expect(result.failure).toBeUndefined();
+			else expect(result.failure).toMatchObject({ reason: fault === "etl-timeout" ? "timeout" : "spawn_error", stage: null });
+			expect(result.output).not.toMatch(/"outcome"|"tests"|"failed"|E2E_ETL_PYTEST/);
+			expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		},
+	);
+
+	it.each([
+		"validate_state", "connect_admin", "grant_database", "grant_etl_membership",
+		"grant_results_membership", "verify_role", "close_admin", "migration_connection",
+		"grant_public_schema", "grant_verification_schema", "grant_marker_read",
+		"grant_public_tables", "grant_public_sequences", "grant_public_functions",
+		"register_scope", "create_public_policies", "validate_target_dsn",
+		"target_connection", "verify_target_marker",
+	])("reports safe grant operation %s through the public ETL executor", async (operation) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"PRIVATE_OUTPUT_MARKER postgres:postgres\nE2E_ETL_STAGE grant_test_privileges\n",
+			`E2E_ETL_GRANT ${operation} database 42501\n`,
+		]);
+		const diagnostics = result.output.split("\n").filter((line) => line.startsWith("E2E_ETL_DIAGNOSTIC "));
+		expect(diagnostics).toHaveLength(1);
+		expect(JSON.parse(diagnostics[0]!.slice("E2E_ETL_DIAGNOSTIC ".length))).toEqual({
+			schemaVersion: 1, reason: "child_exit", exitCode: 1, stage: "grant_test_privileges",
+			grant: { operation, category: "database", sqlstate: "42501" },
+		});
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		expect(result.output).not.toMatch(/PRIVATE_OUTPUT_MARKER|postgres:postgres|E2E_ETL_GRANT/);
+	});
+
+	it.each(["database", "safety", "interrupted", "unexpected"])(
+		"preserves a safe grant %s category across stderr chunks without a final newline", async (category) => {
+			const result = await runLane(["--run"], "etl-failure", "etl", false, [
+				`${"private_secret".repeat(200)}\nE2E_ETL_STA`, "GE grant_test_privileges\nE2E_ETL_GRA",
+				`NT register_scope ${category} -`,
+			]);
+			expect(result.output).toContain(`"grant":{"operation":"register_scope","category":"${category}","sqlstate":null}`);
+			expect(result.output).not.toMatch(/private_secret|E2E_ETL_GRANT/);
+			expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		},
+	);
+
+	it.each([
+		["unknown operation", "E2E_ETL_GRANT private_secret database 42501\n"],
+		["unknown category", "E2E_ETL_GRANT register_scope private_secret -\n"],
+		["malformed SQLSTATE", "E2E_ETL_GRANT register_scope database private_secret\n"],
+		["lowercase SQLSTATE", "E2E_ETL_GRANT register_scope database 42p01\n"],
+		["non-database SQLSTATE", "E2E_ETL_GRANT register_scope safety 42501\n"],
+		["extra field", "E2E_ETL_GRANT register_scope database 42501 private_secret\n"],
+		["missing field", "E2E_ETL_GRANT register_scope database\n"],
+		["tab separator", "E2E_ETL_GRANT register_scope\tdatabase 42501\n"],
+		["double separator", "E2E_ETL_GRANT register_scope  database 42501\n"],
+		["midline marker", "private_secret E2E_ETL_GRANT register_scope database 42501\n"],
+		["overlong marker", `E2E_ETL_GRANT register_scope database ${"private_secret".repeat(100)}\n`],
+		["duplicate marker", "E2E_ETL_GRANT register_scope database 42501\nE2E_ETL_GRANT register_scope database 42501\n"],
+		["invalid then valid", "E2E_ETL_GRANT private_secret database -\nE2E_ETL_GRANT register_scope database 42501\n"],
+		["valid then invalid", "E2E_ETL_GRANT register_scope database 42501\nE2E_ETL_GRANT private_secret database -\n"],
+	])("rejects %s grant evidence without leaking stderr", async (_name, evidence) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			"E2E_ETL_STAGE grant_test_privileges\n", evidence,
+		]);
+		expect(result.output).toContain('"stage":"grant_test_privileges"');
+		expect(result.output).not.toMatch(/"operation"|"category"|42501|42p01|private_secret|E2E_ETL_GRANT/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each([
+		["missing stage", ""],
+		["different stage", "E2E_ETL_STAGE pytest\n"],
+		["migration stage", "E2E_ETL_STAGE apply_migrations\n"],
+		["unknown stage", "E2E_ETL_STAGE private_secret\n"],
+		["duplicate stage", "E2E_ETL_STAGE grant_test_privileges\nE2E_ETL_STAGE grant_test_privileges\n"],
+		["mismatched stages", "E2E_ETL_STAGE grant_test_privileges\nE2E_ETL_STAGE pytest\n"],
+		["overlong stage", `E2E_ETL_STAGE grant_test_privileges${"private_secret".repeat(100)}\n`],
+	])("omits grant detail for %s", async (_name, stage) => {
+		const result = await runLane(["--run"], "etl-failure", "etl", false, [
+			stage, "E2E_ETL_GRANT register_scope database 42501\n",
+		]);
+		expect(result.output).not.toMatch(/"grant"|"operation"|42501|private_secret|E2E_ETL_GRANT/);
+		expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+	});
+
+	it.each(["", "etl-spawn-error", "etl-timeout"])(
+		"does not report grant detail outside child failure: %s", async (fault) => {
+			const result = await runLane(["--run"], fault, "etl", false, [
+				"E2E_ETL_STAGE grant_test_privileges\nE2E_ETL_GRANT register_scope database 42501\n",
+			]);
+			if (fault === "") expect(result.failure).toBeUndefined();
+			else expect(result.failure).toMatchObject({ reason: fault === "etl-timeout" ? "timeout" : "spawn_error", stage: null });
+			expect(result.output).not.toMatch(/"grant"|"operation"|42501|E2E_ETL_GRANT/);
+			expect(result.trace.filter((phase) => phase === "cleanup")).toHaveLength(1);
+		},
+	);
 
 	it.each(["etl-migration-bad-name", "etl-migration-bad-state", "etl-migration-duplicate", "etl-migration-other-stage"])(
 		"rejects %s migration evidence without leaking stderr", async (fault) => {

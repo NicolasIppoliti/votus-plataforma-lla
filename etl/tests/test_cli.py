@@ -840,9 +840,21 @@ def test_circuit_reference_keeps_all_other_blockers_and_reconciliation(
     if use == "reference-only":
         assert report["reference_acceptance"]["status"] == "blocked"
     counts = report["counts"]
+    assert (counts["accepted"], report["geographic_coverage"]) == (0, "unverified")
     assert counts["source_total"] == counts["total"] + counts["excluded"]
     assert counts["total"] == counts["eligible"] + counts["invalid"]
     assert counts["excluded"] == sum(report["exclusion_reasons"].values())
+    if reason == "missing_scope_identity":
+        assert counts == {
+            "accepted": 0,
+            "eligible": 1,
+            "invalid": 0,
+            "total": 1,
+            "source_total": 2,
+            "excluded": 1,
+        }
+        assert report["reasons"] == {}
+        assert report["exclusion_reasons"] == {"missing_scope_identity": 1}
 
 
 def test_circuit_overlap_pairs_are_stable_across_multiple_feature_orders(tmp_path, capsys):
@@ -890,16 +902,28 @@ def test_circuit_malformed_selected_unit_is_reported(tmp_path, capsys):
     assert report["reasons"]["invalid_geometry"] == 1
 
 
-def test_circuit_outside_scope_reasons_reconcile_total(tmp_path, capsys):
+@pytest.mark.parametrize("use", ["partition", "reference-only"])
+def test_circuit_known_outside_scope_preserves_partition_and_reconciliation(tmp_path, capsys, use):
     inside = circuit_feature("0248", SQUARE)
-    other = circuit_feature("0249", SQUARE, distrito="03")
-    malformed = {"properties": None}
-    assert main(circuit_case(tmp_path, [inside, other, malformed])) == 1
+    other_distrito = circuit_feature("0249", SQUARE, distrito="03")
+    other_indec_d = circuit_feature("0250", SQUARE, indec_d="183")
+    assert (
+        main([*circuit_case(tmp_path, [inside, other_distrito, other_indec_d]), "--use", use]) == 0
+    )
     report = json.loads(capsys.readouterr().out)
-    assert report["counts"]["source_total"] == 3
-    assert report["counts"]["total"] == 1
-    assert report["counts"]["excluded"] == 2
-    assert report["exclusion_reasons"] == {"other_distrito": 1, "missing_scope_identity": 1}
+    assert report["counts"] == {
+        "accepted": 1,
+        "eligible": 1,
+        "invalid": 0,
+        "total": 1,
+        "source_total": 3,
+        "excluded": 2,
+    }
+    assert report["reasons"] == {}
+    assert report["exclusion_reasons"] == {"other_distrito": 1, "other_indec_d": 1}
+    assert report["geographic_coverage"] == "valid"
+    if use == "reference-only":
+        assert report["reference_acceptance"]["status"] == "accepted"
 
 
 def partido_cli_fixture(tmp_path: Path, *, features: list | None = None) -> tuple:

@@ -679,19 +679,19 @@ function recoveryRecordPath(record: ReleaseGateRecoveryRecord): string {
 
 export async function persistReleaseGateRecoveryRecord(record: ReleaseGateRecoveryRecord): Promise<void> {
 	const target = recoveryRecordPath(record);
-	// A failed partial write must never publish malformed canonical pending evidence.
-	// Keep the established v2 publication path unchanged for non-ETL cleanup.
-	const staged = record.status === "pending_child"
-		? `${target}.${randomUUID()}.pending.tmp` : target;
+	// Publish only complete evidence, without replacing any existing ownership record.
+	const staged = `${target}.${randomUUID()}.${record.status === "pending_child" ? "pending.tmp" : "tmp"}`;
+	let created = false;
 	try {
 		const fd = openSync(staged, "wx", 0o600);
+		created = true;
 		try {
 			writeFileSync(fd, `${JSON.stringify({ schemaVersion: 2, ...record })}\n`);
 			fsyncSync(fd);
 		} finally {
 			closeSync(fd);
 		}
-		if (record.status === "pending_child") linkSync(staged, target);
+		linkSync(staged, target);
 		const directoryFd = openSync(path.dirname(target), "r");
 		try {
 			fsyncSync(directoryFd);
@@ -699,7 +699,7 @@ export async function persistReleaseGateRecoveryRecord(record: ReleaseGateRecove
 			closeSync(directoryFd);
 		}
 	} finally {
-		if (record.status === "pending_child" && existsSync(staged)) unlinkSync(staged);
+		if (created) unlinkSync(staged);
 	}
 }
 
@@ -1707,6 +1707,14 @@ function reportDiagnostic(error: unknown, writeError: (chunk: string) => void): 
 		exitCode: Number.isInteger(error.exitCode) && error.exitCode !== null && error.exitCode >= 0 && error.exitCode <= 255 ? error.exitCode : null,
 		stage: error.stage,
 		...(error.stage === "apply_migrations" && error.reason === "child_exit" ? { migration: error.migration, sqlstate: error.sqlstate } : {}),
+		...(error.stage === "grant_test_privileges" && error.reason === "child_exit" && error.grant ? { grant: error.grant } : {}),
+		...(error.stage === "pytest" && error.reason === "child_exit" && error.pytest ? { pytest: {
+			outcome: error.pytest.outcome,
+			exitCode: error.pytest.exitCode,
+			tests: error.pytest.tests,
+			skipped: error.pytest.skipped,
+			failed: error.pytest.failed,
+		} } : {}),
 	})}\n`);
 	if (error instanceof PlaywrightFailure) writeError(error.line());
 	if (error instanceof ReleaseGateFailure)

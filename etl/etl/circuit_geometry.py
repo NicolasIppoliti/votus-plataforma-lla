@@ -141,10 +141,11 @@ def inspect_circuits(circuits: bytes, section: bytes) -> dict:
     if geometries and parent.difference(unary_union([g for _, g in geometries])).area > 0:
         reasons["gap"] = 1
     eligible = len(selected) - len(rejected)
+    strict_partition = not reasons and not exclusion_reasons.get("missing_scope_identity", 0)
     return {
         "counts_basis": "strict-partition",
         "counts": {
-            "accepted": eligible if not reasons else 0,
+            "accepted": eligible if strict_partition else 0,
             "eligible": eligible,
             "invalid": len(rejected),
             "total": len(selected),
@@ -154,7 +155,7 @@ def inspect_circuits(circuits: bytes, section: bytes) -> dict:
         "reasons": reasons,
         "overlap_pairs": sorted(overlap_pairs, key=json.dumps),
         "exclusion_reasons": exclusion_reasons,
-        "geographic_coverage": "valid" if not reasons else "unverified",
+        "geographic_coverage": "valid" if strict_partition else "unverified",
         "election_applicability": "unknown",
         "circuits": sorted(names),
     }

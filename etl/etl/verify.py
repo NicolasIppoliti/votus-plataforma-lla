@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType, TracebackType
-from typing import Protocol, Self, TypeVar
+from typing import Literal, Protocol, Self, TypeVar
 
 import psycopg
 from psycopg import sql
@@ -45,6 +45,27 @@ class UnsafeDatabaseError(RuntimeError):
 _DatabaseRow = tuple[object, ...]
 _SignalHandler = Callable[[int, FrameType | None], object] | signal.Handlers | int | None
 _RowT_co = TypeVar("_RowT_co", covariant=True)
+_GrantOperation = Literal[
+    "validate_state",
+    "connect_admin",
+    "grant_database",
+    "grant_etl_membership",
+    "grant_results_membership",
+    "verify_role",
+    "close_admin",
+    "migration_connection",
+    "grant_public_schema",
+    "grant_verification_schema",
+    "grant_marker_read",
+    "grant_public_tables",
+    "grant_public_sequences",
+    "grant_public_functions",
+    "register_scope",
+    "create_public_policies",
+    "validate_target_dsn",
+    "target_connection",
+    "verify_target_marker",
+]
 
 
 class _Cursor(Protocol[_RowT_co]):
@@ -122,6 +143,35 @@ class PytestResult:
     skipped: int
 
 
+@dataclass(frozen=True)
+class PytestDiagnostic:
+    outcome: Literal[
+        "skips_rejected",
+        "pytest_failed",
+        "report_missing",
+        "report_invalid",
+        "runner_error",
+        "interrupted",
+        "unexpected",
+    ]
+    exit_code: int | None = None
+    tests: int | None = None
+    skipped: int | None = None
+    failed: int | None = None
+
+    def marker(self) -> str:
+        def bounded(value: int | None, maximum: int) -> str:
+            return str(value) if type(value) is int and 0 <= value <= maximum else "-"
+
+        return "E2E_ETL_PYTEST " + " ".join(
+            [
+                self.outcome,
+                bounded(self.exit_code, 255),
+                *(bounded(value, 2**53 - 1) for value in (self.tests, self.skipped, self.failed)),
+            ]
+        )
+
+
 def _connection_params(dsn: str) -> dict[str, str]:
     try:
         return {key: str(value) for key, value in conninfo_to_dict(dsn).items()}
@@ -171,6 +221,34 @@ class DisposablePostgres:
         self.marker_table_created = False
         self.target_dsn: str | None = None
         self.migration_dsn: str | None = None
+        self._grant_failure: tuple[BaseException, _GrantOperation] | None = None
+
+    @contextmanager
+    def _grant_operation(self, operation: _GrantOperation) -> Iterator[None]:
+        try:
+            yield
+        except BaseException as error:
+            # A surrounding connection exit keeps the inner operation only when
+            # it propagates the same exception, not when commit/close replaces it.
+            if self._grant_failure is None or self._grant_failure[0] is not error:
+                self._grant_failure = (error, operation)
+            raise
+
+    def grant_failure_marker(self, error: BaseException) -> str | None:
+        if self._grant_failure is None or self._grant_failure[0] is not error:
+            return None
+        state = "-"
+        if isinstance(error, psycopg.Error):
+            category = "database"
+            if isinstance(error.sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", error.sqlstate):
+                state = error.sqlstate
+        elif isinstance(error, UnsafeDatabaseError):
+            category = "safety"
+        elif isinstance(error, (KeyboardInterrupt, InterruptedError)):
+            category = "interrupted"
+        else:
+            category = "unexpected"
+        return f"E2E_ETL_GRANT {self._grant_failure[1]} {category} {state}"
 
     def safe_error(self, error: BaseException) -> str:
         message = str(error)
@@ -376,92 +454,149 @@ class DisposablePostgres:
             raise
 
     def grant_test_privileges(self) -> None:
-        migration_dsn = _require_dsn(self.migration_dsn, "migration")
-        if self.admin is not None:
-            raise UnsafeDatabaseError(
-                "administrative connection must be closed before granting test privileges"
-            )
-        admin = self.connect(self.admin_dsn, autocommit=True)
+        self._grant_failure = None
+        with self._grant_operation("validate_state"):
+            migration_dsn = _require_dsn(self.migration_dsn, "migration")
+            if self.admin is not None:
+                raise UnsafeDatabaseError(
+                    "administrative connection must be closed before granting test privileges"
+                )
+        with self._grant_operation("connect_admin"):
+            admin = self.connect(self.admin_dsn, autocommit=True)
         self.admin = admin
         try:
-            admin.execute(
-                sql.SQL("grant connect, create, temporary on database {} to {}").format(
-                    sql.Identifier(self.identity.name),
-                    sql.Identifier(self.identity.role_name),
+            with self._grant_operation("grant_database"):
+                admin.execute(
+                    sql.SQL("grant connect, create, temporary on database {} to {}").format(
+                        sql.Identifier(self.identity.name),
+                        sql.Identifier(self.identity.role_name),
+                    )
                 )
-            )
-            admin.execute(
-                sql.SQL("grant etl_writer to {} with inherit true, set true").format(
-                    sql.Identifier(self.identity.role_name)
+            with self._grant_operation("grant_etl_membership"):
+                admin.execute(
+                    sql.SQL("grant etl_writer to {} with inherit true, set true").format(
+                        sql.Identifier(self.identity.role_name)
+                    )
                 )
-            )
-            admin.execute(
-                sql.SQL(
-                    "grant results_exploration_executor to {} with inherit true, set true"
-                ).format(sql.Identifier(self.identity.role_name))
-            )
-            self._verify_role(expected_memberships=_TEST_ROLE_MEMBERSHIPS)
+            with self._grant_operation("grant_results_membership"):
+                admin.execute(
+                    sql.SQL(
+                        "grant results_exploration_executor to {} with inherit true, set true"
+                    ).format(sql.Identifier(self.identity.role_name))
+                )
+            with self._grant_operation("verify_role"):
+                self._verify_role(expected_memberships=_TEST_ROLE_MEMBERSHIPS)
         finally:
-            admin.close()
+            with self._grant_operation("close_admin"):
+                admin.close()
             self.admin = None
 
-        with self.connect(migration_dsn) as connection:
+        with (
+            self._grant_operation("migration_connection"),
+            self.connect(migration_dsn) as connection,
+        ):
             role = sql.Identifier(self.identity.role_name)
-            connection.execute(sql.SQL("grant usage, create on schema public to {}").format(role))
-            connection.execute(
-                sql.SQL("grant usage on schema votus_verification to {}").format(role)
-            )
-            connection.execute(
-                sql.SQL("grant select on table votus_verification.ownership_marker to {}").format(
-                    role
+            with self._grant_operation("grant_public_schema"):
+                connection.execute(
+                    sql.SQL("grant usage, create on schema public to {}").format(role)
                 )
-            )
-            connection.execute(
-                sql.SQL("grant all privileges on all tables in schema public to {}").format(role)
-            )
-            connection.execute(
-                sql.SQL("grant all privileges on all sequences in schema public to {}").format(role)
-            )
-            connection.execute(
-                sql.SQL("grant all privileges on all functions in schema public to {}").format(role)
-            )
-            connection.execute(
-                "insert into workspace_private.section_scope(distrito_code,seccion_code) "
-                "values('02','027') on conflict do nothing"
-            )
-            connection.execute(
-                sql.SQL(
-                    """
-                    do $$
-                    declare table_name text;
-                    begin
-                      for table_name in
-                        select relation.relname
-                          from pg_class relation
-                          join pg_namespace namespace on namespace.oid = relation.relnamespace
-                         where namespace.nspname = 'public'
-                           and relation.relkind in ('r', 'p')
-                           and relation.relrowsecurity
-                      loop
-                        execute format(
-                          'create policy %I on public.%I to %I using (true) with check (true)',
-                          'votus_etl_verify_access', table_name, {}
-                        );
-                      end loop;
-                    end
-                    $$
-                    """
-                ).format(sql.Literal(self.identity.role_name))
-            )
+            with self._grant_operation("grant_verification_schema"):
+                connection.execute(
+                    sql.SQL("grant usage on schema votus_verification to {}").format(role)
+                )
+            with self._grant_operation("grant_marker_read"):
+                connection.execute(
+                    sql.SQL(
+                        "grant select on table votus_verification.ownership_marker to {}"
+                    ).format(role)
+                )
+            with self._grant_operation("grant_public_tables"):
+                connection.execute(
+                    sql.SQL("grant all privileges on all tables in schema public to {}").format(
+                        role
+                    )
+                )
+            with self._grant_operation("grant_public_sequences"):
+                connection.execute(
+                    sql.SQL("grant all privileges on all sequences in schema public to {}").format(
+                        role
+                    )
+                )
+            with self._grant_operation("grant_public_functions"):
+                connection.execute(
+                    sql.SQL("grant all privileges on all functions in schema public to {}").format(
+                        role
+                    )
+                )
+            with self._grant_operation("register_scope"):
+                current_role = connection.execute("select current_user").fetchone()
+                if current_role is None or not isinstance(current_role[0], str):
+                    raise UnsafeDatabaseError("maintenance role identity is unavailable")
+                maintenance_role = sql.Identifier(current_role[0])
+                bridge = sql.Identifier(f"votus_etl_scope_{self.identity.token.hex}")
+                # A fresh transactional bridge leaves preexisting membership options intact.
+                connection.execute(
+                    sql.SQL(
+                        "create role {} nologin noinherit nosuperuser nocreatedb "
+                        "nocreaterole noreplication nobypassrls"
+                    ).format(bridge)
+                )
+                connection.execute(
+                    sql.SQL(
+                        "grant workspace_admin_owner to {} with inherit false, set true"
+                    ).format(bridge)
+                )
+                connection.execute(
+                    sql.SQL("grant {} to {} with inherit false, set true").format(
+                        bridge, maintenance_role
+                    )
+                )
+                connection.execute("set local role workspace_admin_owner")
+                connection.execute(
+                    "insert into workspace_private.section_scope(distrito_code,seccion_code) "
+                    "values('02','027') on conflict do nothing"
+                )
+                connection.execute(sql.SQL("set local role {}").format(maintenance_role))
+                connection.execute(sql.SQL("revoke {} from {}").format(bridge, maintenance_role))
+                connection.execute(sql.SQL("revoke workspace_admin_owner from {}").format(bridge))
+                connection.execute(sql.SQL("drop role {}").format(bridge))
+            with self._grant_operation("create_public_policies"):
+                connection.execute(
+                    sql.SQL(
+                        """
+                        do $$
+                        declare table_name text;
+                        begin
+                          for table_name in
+                            select relation.relname
+                              from pg_class relation
+                              join pg_namespace namespace on namespace.oid = relation.relnamespace
+                             where namespace.nspname = 'public'
+                               and relation.relkind in ('r', 'p')
+                               and relation.relrowsecurity
+                          loop
+                            execute format(
+                              'create policy %I on public.%I to %I using (true) with check (true)',
+                              'votus_etl_verify_access', table_name, {}
+                            );
+                          end loop;
+                        end
+                        $$
+                        """
+                    ).format(sql.Literal(self.identity.role_name))
+                )
 
-        target_dsn = _require_dsn(self.target_dsn, "test")
-        with self.connect(target_dsn) as connection:
-            row = connection.execute(
-                "select current_database(), current_user, marker "
-                "from votus_verification.ownership_marker"
-            ).fetchone()
-        if row != (self.identity.name, self.identity.role_name, self.identity.marker):
-            raise UnsafeDatabaseError("disposable role cannot reach its marked database")
+        with self._grant_operation("validate_target_dsn"):
+            target_dsn = _require_dsn(self.target_dsn, "test")
+        with self._grant_operation("target_connection"), self.connect(target_dsn) as connection:
+            with self._grant_operation("verify_target_marker"):
+                row = connection.execute(
+                    "select current_database(), current_user, marker "
+                    "from votus_verification.ownership_marker"
+                ).fetchone()
+        with self._grant_operation("verify_target_marker"):
+            if row != (self.identity.name, self.identity.role_name, self.identity.marker):
+                raise UnsafeDatabaseError("disposable role cannot reach its marked database")
 
     def _close_once(self) -> None:
         if self.admin is None:
@@ -635,20 +770,49 @@ def run_pytest(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> PytestResult:
     env = {"ETL_TEST_DATABASE_URL": database_dsn}
-    with tempfile.TemporaryDirectory(prefix="votus-etl-verify-") as temp_dir:
-        report_path = Path(temp_dir) / "pytest.xml"
-        command = [sys.executable, "-m", "pytest", "-rs", f"--junitxml={report_path}"]
-        completed = run(command, cwd=etl_root, env=env, check=False, text=True)
-        if not report_path.is_file():
-            raise RuntimeError("pytest did not produce its verification report")
-        tests, skipped, failed = _junit_counts(report_path)
-    if skipped:
-        raise RuntimeError(f"ETL verification rejected {skipped} skipped test(s)")
-    if completed.returncode != 0 or failed:
-        raise RuntimeError(
-            f"pytest failed with exit code {completed.returncode} and {failed} reported failure(s)"
-        )
-    return PytestResult(executed=tests - skipped, skipped=skipped)
+    diagnostic = PytestDiagnostic("unexpected")
+    body_failure: BaseException | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="votus-etl-verify-") as temp_dir:
+            try:
+                report_path = Path(temp_dir) / "pytest.xml"
+                command = [sys.executable, "-m", "pytest", "-rs", f"--junitxml={report_path}"]
+                try:
+                    completed = run(command, cwd=etl_root, env=env, check=False, text=True)
+                except (OSError, subprocess.SubprocessError):
+                    diagnostic = PytestDiagnostic("runner_error")
+                    raise
+                diagnostic = PytestDiagnostic("report_missing", completed.returncode)
+                if not report_path.is_file():
+                    raise RuntimeError("pytest did not produce its verification report")
+                diagnostic = PytestDiagnostic("report_invalid", completed.returncode)
+                tests, skipped, failed = _junit_counts(report_path)
+                if skipped:
+                    diagnostic = PytestDiagnostic(
+                        "skips_rejected", completed.returncode, tests, skipped, failed
+                    )
+                    raise RuntimeError(f"ETL verification rejected {skipped} skipped test(s)")
+                if completed.returncode != 0 or failed:
+                    diagnostic = PytestDiagnostic(
+                        "pytest_failed", completed.returncode, tests, skipped, failed
+                    )
+                    raise RuntimeError(
+                        f"pytest failed with exit code {completed.returncode} "
+                        f"and {failed} reported failure(s)"
+                    )
+            except BaseException as exc:
+                body_failure = exc
+                raise
+        return PytestResult(executed=tests - skipped, skipped=skipped)
+    except BaseException as exc:
+        # Cleanup replacement must not inherit evidence from the displaced failure.
+        if isinstance(exc, (KeyboardInterrupt, InterruptedError)):
+            diagnostic = PytestDiagnostic("interrupted")
+        elif exc is not body_failure:
+            diagnostic = PytestDiagnostic("unexpected")
+        # Preserve the original exception identity, traceback and interruption semantics.
+        exc.pytest_diagnostic = diagnostic
+        raise
 
 
 @contextmanager
@@ -755,13 +919,27 @@ def main() -> int:
                 and exc.filename
             ):
                 print(f"E2E_ETL_MIGRATION {exc.filename} {exc.sqlstate or '-'}", file=sys.stderr)
-        detail = (
-            "migration preparation failed; details redacted"
-            if not args.migration_atomicity
+            if reported_stage == "grant_test_privileges":
+                marker = database.grant_failure_marker(exc)
+                if marker is not None:
+                    print(marker, file=sys.stderr)
+            if reported_stage == "pytest":
+                diagnostic = getattr(exc, "pytest_diagnostic", None)
+                if not isinstance(diagnostic, PytestDiagnostic):
+                    diagnostic = PytestDiagnostic("unexpected")
+                print(diagnostic.marker(), file=sys.stderr)
+        if reported_stage == "pytest":
+            detail = "pytest verification failed; details redacted"
+        elif reported_stage == "grant_test_privileges":
+            detail = "privilege preparation failed; details redacted"
+        elif (
+            not args.migration_atomicity
             and reported_stage == "apply_migrations"
             and not isinstance(exc, MigrationApplyError)
-            else database.safe_error(exc)
-        )
+        ):
+            detail = "migration preparation failed; details redacted"
+        else:
+            detail = database.safe_error(exc)
         print(f"ETL verification failed: {detail}", file=sys.stderr)
         return 1
     finally:
