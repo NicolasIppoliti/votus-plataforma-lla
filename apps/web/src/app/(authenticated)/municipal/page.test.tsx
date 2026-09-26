@@ -210,6 +210,31 @@ vi.mock("@/lib/workspace/official-evidence", () => ({ MUNICIPAL_JURISDICTION_ID:
 }));
 
 describe("municipal page — the real entry point", () => {
+  it("shows a verified section reference beside exact results without implying historical boundaries", async () => {
+    process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
+    process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+    expect(html).toContain("Referencia geográfica de sección");
+    expect(html).toContain("vigencia electoral no verificada");
+    expect(html).toContain("2026-09-24T03:29:24Z");
+    expect(html).toContain("Fecha de descarga, no vigencia");
+    expect(html).toContain('role="img" aria-label="Contorno geográfico CNE');
+    expect(html).not.toContain("authkey=");
+    expect(html).toContain('<td class="table-cell--number">4200</td>');
+  });
+
+  it("keeps exact results visible when section geometry is withheld", async () => {
+    const html = renderToStaticMarkup(renderMunicipalView({
+      status: "ok", rows: [{ ...MUNICIPAL_ROWS[0]!, partyName: "ALIANZA LA LIBERTAD AVANZA", canonicalPartyId: "lla" }],
+      excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } }, partyMappingConfigured: true,
+    }, [], 2025, { status: "withheld" }));
+    expect(html).toContain("Geometría no disponible o no verificable");
+    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).not.toContain("<svg viewBox=\"0 0 300 200\"");
+  });
+
   it("selects the authorized 2023 provisional ballot and displays its raw category", async () => {
     process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
     process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";

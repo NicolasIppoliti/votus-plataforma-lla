@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
 import styles from "./municipal.module.css";
 import { GranularityBadge } from "@/components/GranularityBadge";
@@ -130,6 +131,7 @@ export function renderMunicipalView(
   view: MunicipalView,
   sources: MunicipalProvenance[] = [],
   year: MunicipalYear = 2025,
+  section?: MunicipalSectionResult,
 ): ReactNode {
   if (view.status !== "ok") {
     const carried = describeExcluded(
@@ -276,6 +278,14 @@ export function renderMunicipalView(
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
           </dl>
         </section>
+        {section ? <section aria-label="Referencia geográfica de sección">
+          <h2>Referencia geográfica de sección</h2>
+          {section.status === "ok" ? <>
+            <p>Contorno CNE: {section.name}. Referencia geográfica únicamente; vigencia electoral no verificada para {year}.</p>
+            <SectionOutline coordinates={section.geometry.coordinates} />
+            <p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p>
+          </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
+        </section> : null}
         <section className={styles.results} aria-labelledby="municipal-results-heading">
           <header className={styles.sectionHeading}>
             <h2 id="municipal-results-heading">Resultados exactos</h2>
@@ -348,6 +358,22 @@ export function renderMunicipalView(
       </div>
     </main>
   );
+}
+
+function SectionOutline({ coordinates }: { coordinates: number[][][][] }): ReactNode {
+  const rings = coordinates.flatMap((polygon) => polygon);
+  const points = rings.flat();
+  const west = Math.min(...points.map((point) => point[0]!));
+  const east = Math.max(...points.map((point) => point[0]!));
+  const south = Math.min(...points.map((point) => point[1]!));
+  const north = Math.max(...points.map((point) => point[1]!));
+  if (east <= west || north <= south) return null;
+  const path = rings.map((ring) => ring.map(([longitude, latitude], index) =>
+    `${index === 0 ? "M" : "L"}${(((longitude ?? west) - west) / (east - west) * 280 + 10).toFixed(1)} ${(((north - (latitude ?? north)) / (north - south)) * 180 + 10).toFixed(1)}`,
+  ).join(" ") + " Z").join(" ");
+  return <svg viewBox="0 0 300 200" role="img" aria-label="Contorno geográfico CNE de la sección Coronel Rosales, sin vigencia electoral confirmada" style={{ maxWidth: "100%", width: "300px", height: "200px" }}>
+    <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" fillRule="evenodd" />
+  </svg>;
 }
 
 function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode {
@@ -447,5 +473,6 @@ export default async function MunicipalPage({
   if (evidence.status !== "ok") return municipalRefusal("La evidencia oficial autorizada no es utilizable.");
 
   const view = municipalViewFromOfficialEvidence(evidence, categoryId, year);
-  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : [], year);
+  const section = view.status === "ok" ? await loadMunicipalSectionGeometry() : undefined;
+  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : [], year, section);
 }
