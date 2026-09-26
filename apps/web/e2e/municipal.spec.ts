@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { createClient } from "@supabase/supabase-js";
 
 import { assertE2eEnvironment } from "./gate-contract";
@@ -165,6 +168,54 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(status).toContainText("Resultados exactos en la tabla");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     }));
+  });
+
+  test("test_authorized_workspace_ssr_readiness_without_javascript", async ({ page, browser }) => {
+    const samples = await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () =>
+      withAuthorizedMunicipalWorkspace(page, async () => {
+        const context = await browser.newContext({
+          storageState: await page.context().storageState(),
+          javaScriptEnabled: false,
+        });
+        const timings: number[] = [];
+        try {
+          const staticPage = await context.newPage();
+          const address = new URL("/municipal", baseURL).toString();
+          for (let index = 0; index < 6; index++) {
+            const start = performance.now();
+            // Wait for the complete SSR document: streamed response headers may precede archive work.
+            const response = await staticPage.goto(address, { waitUntil: "domcontentloaded" });
+            timings.push(Math.round(performance.now() - start));
+            expect(response?.status()).toBe(200);
+            const main = staticPage.getByRole("main");
+            await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
+            await expect(main).toContainText("Distrito 02 · Sección 027");
+            const geography = main.getByRole("region", { name: "Referencia geográfica de sección" });
+            await expect(geography.getByRole("img")).toBeVisible();
+            await expect(geography.locator("canvas.maplibregl-canvas")).toHaveCount(0);
+            const rows = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" })
+              .getByRole("table").locator("tbody").getByRole("row");
+            await expect(rows).toHaveCount(1);
+            await expect(rows.getByRole("rowheader")).toHaveText(["ALIANZA LA LIBERTAD AVANZA"]);
+            await expect(rows.getByRole("cell")).toHaveText([String(OFFICIAL_VOTES)]);
+          }
+        } finally {
+          await context.close();
+        }
+        return timings;
+      }),
+    );
+    // Write only after all assertions and fixture cleanup succeed; no URLs or session data.
+    const outputDirectory = join(process.cwd(), "test-results");
+    await mkdir(outputDirectory, { recursive: true });
+    await writeFile(join(outputDirectory, "municipal-readiness.json"), JSON.stringify({
+      schemaVersion: 1,
+      label: "authorized municipal SSR document navigation (fixture + backend + Next; not archive-only)",
+      unit: "ms",
+      sampleCount: samples.length,
+      initial: samples[0],
+      warm: samples.slice(1),
+    }, null, 2) + "\n");
   });
 
   test("test_authorized_workspace_webgl_unavailable_preserves_outline_and_exact_table", async ({ page }) => {
