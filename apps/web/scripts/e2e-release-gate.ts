@@ -1283,34 +1283,61 @@ export function productEnvironment(
 				: `${prefix}-unused-fiscalizacion-category`,
 	};
 }
+const PREFLIGHT_STEP = {
+	SOURCE_INVENTORY: "source_inventory",
+	ISOLATION_CAPABILITIES: "isolation_capabilities",
+	STALE_OWNED_REAP: "stale_owned_reap",
+	PORT_RESERVATION: "port_reservation",
+	ISOLATED_WORKDIR: "isolated_workdir",
+} as const;
+type PreflightStep = (typeof PREFLIGHT_STEP)[keyof typeof PREFLIGHT_STEP];
+const preflightFailureSteps = new WeakMap<object, PreflightStep>();
+async function measurePreflight<T>(
+	timing: ReturnType<typeof createReleaseGateTiming>,
+	step: PreflightStep,
+	action: () => Promise<T>,
+): Promise<T> {
+	return timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+		try {
+			return await action();
+		} catch (cause) {
+			const failure = (typeof cause === "object" && cause !== null) || typeof cause === "function"
+				? cause : new Error("release gate preflight failed; details redacted");
+			preflightFailureSteps.set(failure, step);
+			throw failure;
+		}
+	});
+}
 async function executeGate(
 	state: GateState,
 	plan: ReleaseGatePlan,
 	timing: ReturnType<typeof createReleaseGateTiming>,
 ): Promise<void> {
-	const migrationNames = await timing.measure(
-		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+	const migrationNames = await measurePreflight(
+		timing,
+		PREFLIGHT_STEP.SOURCE_INVENTORY,
 		async () =>
 			await assertSourceInventory(
 				plan.migrationVersions,
 				plan.syntheticMigration,
 			),
 	);
-	await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+	await measurePreflight(timing, PREFLIGHT_STEP.ISOLATION_CAPABILITIES, async () => {
 		assertIsolationCapabilities(plan.requireBrowserCapability);
 	});
-	await timing.measure(
-		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
+	await measurePreflight(
+		timing,
+		PREFLIGHT_STEP.STALE_OWNED_REAP,
 		async () =>
 			await reapStaleOwnedWorkdirs(
 				plan.migrationVersions,
 				plan.syntheticMigration,
 			),
 	);
-	const reservations = await timing.measure(
-		RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS,
-		async () =>
-			await reserveUniquePorts(10 + SERVER_SCENARIOS.length, reservePort),
+	const reservations = await measurePreflight(
+		timing,
+		PREFLIGHT_STEP.PORT_RESERVATION,
+		async () => await reserveUniquePorts(10 + SERVER_SCENARIOS.length, reservePort),
 	);
 	state.reservations = reservations;
 	const nextReservations = reservations.slice(0, SERVER_SCENARIOS.length);
@@ -1325,7 +1352,7 @@ async function executeGate(
 	);
 	const nextPort = serverPlan[0]!.port;
 	const supabasePorts = supabaseReservations.map(({ port }) => port);
-	await timing.measure(RELEASE_GATE_TIMING_PHASE.PREFLIGHT_PORTS, async () => {
+	await measurePreflight(timing, PREFLIGHT_STEP.ISOLATED_WORKDIR, async () => {
 		await createIsolatedWorkdir(nextPort, supabasePorts, migrationNames, state);
 	});
 	const ownership = state.ownership;
@@ -1791,6 +1818,10 @@ export function reportReleaseGateFailure(
 }
 
 function reportDiagnostic(error: unknown, writeError: (chunk: string) => void): void {
+	const preflightStep = (typeof error === "object" && error !== null) || typeof error === "function"
+		? preflightFailureSteps.get(error) : undefined;
+	if (preflightStep)
+		writeError(`E2E_RELEASE_GATE_PREFLIGHT_FAILURE ${JSON.stringify({ schemaVersion: 1, step: preflightStep })}\n`);
 	if (error instanceof OwnedEtlFailure) writeError(`E2E_ETL_DIAGNOSTIC ${JSON.stringify({
 		schemaVersion: 1,
 		reason: error.reason,

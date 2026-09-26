@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import "maplibre-gl/dist/maplibre-gl.css";
 import styles from "./municipal.module.css";
 
 interface Props {
@@ -27,6 +26,8 @@ export function MunicipalSectionMap({ coordinates, name }: Props) {
       try {
         const canvas = document.createElement("canvas");
         if (!canvas.getContext("webgl2")) throw new Error("WebGL no disponible");
+        await import("maplibre-gl/dist/maplibre-gl.css");
+        if (disposed || !container.current) return;
         const [maplibregl, { MapLibreOverlay }, { GeoJsonLayer }] = await Promise.all([
           import("maplibre-gl"), import("@deck.gl/maplibre"), import("@deck.gl/layers"),
         ]);

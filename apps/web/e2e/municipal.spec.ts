@@ -129,6 +129,73 @@ test.describe("the municipal route requires workspace-authorized official result
     });
   });
 
+  test("test_authorized_workspace_section_map_keyboard_activation_and_exact_results_focus", async ({ page }) => {
+    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(new URL("/municipal", baseURL).toString());
+      const main = page.getByRole("main");
+      const geography = main.getByRole("region", { name: "Referencia geográfica de sección" });
+      const outline = geography.getByRole("img");
+      const table = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" });
+      await expect(outline).toBeVisible();
+      await expect(table.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      const activate = geography.getByRole("button", { name: "Activar mapa interactivo de la sección" });
+      await activate.focus();
+      await activate.press("Enter");
+      const status = geography.getByRole("status");
+      await expect(status).not.toContainText("Cargando mapa", { timeout: 15000 });
+      const webgl2Available = await page.evaluate(() => !!document.createElement("canvas").getContext("webgl2"));
+      if (webgl2Available) {
+        const contourText = await geography.getByText(/^Contorno CNE: .*\. Referencia geográfica únicamente;/).textContent();
+        const sectionName = contourText?.match(/^Contorno CNE: (.+)\. Referencia geográfica únicamente;/)?.[1];
+        expect(sectionName).toBeTruthy();
+        await expect(status).toContainText(`Mapa de la sección ${sectionName} disponible`);
+        await expect(geography.locator("canvas.maplibregl-canvas")).toBeVisible();
+      } else {
+        await expect(status).toHaveText(/Mapa no disponible|No se pudo mostrar el mapa/);
+        await expect(geography.locator("canvas.maplibregl-canvas")).toHaveCount(0);
+      }
+      await expect(outline).toBeVisible();
+      await expect(table.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      const select = geography.getByRole("button", { name: "Seleccionar sección y consultar resultados" });
+      await select.focus();
+      await select.press("Enter");
+      await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeFocused();
+      await expect(status).toContainText("Resultados exactos en la tabla");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    }));
+  });
+
+  test("test_authorized_workspace_webgl_unavailable_preserves_outline_and_exact_table", async ({ page }) => {
+    await page.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...args) {
+        if (args[0] === "webgl2") return null;
+        return original.apply(this, args);
+      } as typeof HTMLCanvasElement.prototype.getContext;
+    });
+    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
+      await page.goto(new URL("/municipal", baseURL).toString());
+      const main = page.getByRole("main");
+      const geography = main.getByRole("region", { name: "Referencia geográfica de sección" });
+      const outline = geography.getByRole("img");
+      const table = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" });
+      await expect(outline).toBeVisible();
+      const activate = geography.getByRole("button", { name: "Activar mapa interactivo de la sección" });
+      await activate.focus();
+      await activate.press("Enter");
+      await expect(geography.getByRole("status")).toContainText("Mapa no disponible; el contorno y la tabla siguen disponibles.");
+      await expect(geography.locator("canvas.maplibregl-canvas")).toHaveCount(0);
+      await expect(outline).toBeVisible();
+      await expect(table.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      const link = geography.getByRole("link", { name: "Ir a los resultados exactos de la sección" });
+      await link.focus();
+      await link.press("Enter");
+      await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeFocused();
+    }));
+  });
+
   test("test_authorized_workspace_shows_exact_official_table_and_adjacent_evidence", async ({ page }) => {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
       await page.goto(new URL("/", baseURL).toString());
