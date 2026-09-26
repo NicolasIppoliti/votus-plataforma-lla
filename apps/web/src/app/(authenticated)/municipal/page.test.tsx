@@ -221,6 +221,10 @@ describe("municipal page — the real entry point", () => {
     expect(html).toContain("2026-09-24T03:29:24Z");
     expect(html).toContain("Fecha de descarga, no vigencia");
     expect(html).toContain('role="img" aria-label="Contorno geográfico CNE');
+    expect(html).toContain('aria-label="Activar mapa interactivo de la sección"');
+    expect(html).toContain('Seleccionar sección y consultar resultados');
+    expect(html).toContain('href="#municipal-results-heading"');
+    expect(html).toContain('id="municipal-results-heading" tabindex="-1"');
     expect(html).not.toContain("authkey=");
     expect(html).toContain('<td class="table-cell--number">4200</td>');
   });

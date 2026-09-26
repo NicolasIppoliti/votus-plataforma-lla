@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
+import { MunicipalSectionMap } from "./MunicipalSectionMap";
 import styles from "./municipal.module.css";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { TableRegion } from "@/components/TableRegion";
@@ -283,12 +284,13 @@ export function renderMunicipalView(
           {section.status === "ok" ? <>
             <p>Contorno CNE: {section.name}. Referencia geográfica únicamente; vigencia electoral no verificada para {year}.</p>
             <SectionOutline coordinates={section.geometry.coordinates} />
+            <MunicipalSectionMap coordinates={section.geometry.coordinates} name={section.name} />
             <p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p>
           </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
         </section> : null}
         <section className={styles.results} aria-labelledby="municipal-results-heading">
           <header className={styles.sectionHeading}>
-            <h2 id="municipal-results-heading">Resultados exactos</h2>
+            <h2 id="municipal-results-heading" tabIndex={-1}>Resultados exactos</h2>
             <p role="status">Resultados oficiales autorizados por partido · {is2023 ? "provisorio" : "definitivo"} · sección 02/027.</p>
           </header>
           <section className={styles.coverage} aria-labelledby="municipal-coverage-heading">
