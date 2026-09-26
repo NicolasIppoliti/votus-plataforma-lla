@@ -72,6 +72,16 @@ function assertNoTrackedImpeccableProviderPaths(trackedOutput: string): void {
 }
 
 describe("UI tooling supply-chain contract", () => {
+	it("pins the supported pnpm release across manifests and app lockfile", () => {
+		const root = readJson<PackageManifest>("package.json");
+		const web = readJson<PackageManifest>("apps/web/package.json");
+		const lock = readWebFile("pnpm-lock.yaml");
+		assert.equal(root.packageManager, "pnpm@10.32.1");
+		assert.equal(web.packageManager, "pnpm@10.32.1");
+		assert.equal((web as PackageManifest & { engines: { pnpm: string } }).engines.pnpm, "10.32.1");
+		assert.match(lock, /^lockfileVersion: '9\.0'$/m);
+		assert.doesNotMatch(lock, /(?:@pnpm\/exe\.[^\s:]+|pnpm)@12\.3\.4/);
+	});
 	it("pins the approved Tailwind and shadcn foundation", () => {
 		const manifest = JSON.parse(
 			readWebFile("package.json"),
@@ -80,7 +90,7 @@ describe("UI tooling supply-chain contract", () => {
 		assert.equal(manifest.devDependencies.tailwindcss, "4.3.3");
 		assert.equal(manifest.dependencies.clsx, "2.1.1");
 		assert.equal(manifest.dependencies["tailwind-merge"], "3.6.0");
-		assert.equal(manifest.packageManager, "pnpm@12.3.4");
+		assert.equal(manifest.packageManager, "pnpm@10.32.1");
 
 		const postcss = readWebFile("postcss.config.mjs");
 		assert.ok(postcss.includes('"@tailwindcss/postcss": {}'));
