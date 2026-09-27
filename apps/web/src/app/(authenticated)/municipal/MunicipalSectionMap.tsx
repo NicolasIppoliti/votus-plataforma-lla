@@ -8,15 +8,17 @@ interface Props {
   name: string;
 }
 
+function focusResults(name: string, reportStatus: (status: string) => void) {
+  document.getElementById("municipal-results-heading")?.focus();
+  reportStatus(`Sección ${name} seleccionada. Resultados exactos en la tabla.`);
+}
+
 export function MunicipalSectionMap({ coordinates, name }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(false);
   const [status, setStatus] = useState("Mapa opcional: el contorno y la tabla están disponibles sin interacción.");
 
-  function focusResults() {
-    document.getElementById("municipal-results-heading")?.focus();
-    setStatus(`Sección ${name} seleccionada. Resultados exactos en la tabla.`);
-  }
+  const handleFocusResults = () => focusResults(name, setStatus);
 
   useEffect(() => {
     if (!active || !container.current) return;
@@ -49,7 +51,7 @@ export function MunicipalSectionMap({ coordinates, name }: Props) {
           data: { type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates } },
           stroked: true, filled: true, getFillColor: [37, 88, 120, 45],
           getLineColor: [27, 69, 96, 255], getLineWidth: 2, lineWidthMinPixels: 2,
-          pickable: true, onClick: focusResults,
+          pickable: true, onClick: () => focusResults(name, setStatus),
         })] });
         map.on("error", () => { if (!disposed) { cleanup?.(); cleanup = undefined; setActive(false); setStatus("No se pudo mostrar el mapa; el contorno y la tabla siguen disponibles."); } });
         map.on("load", () => {
@@ -75,9 +77,9 @@ export function MunicipalSectionMap({ coordinates, name }: Props) {
 
   return <div className={styles.mapEnhancement}>
     <button type="button" onClick={() => { setStatus("Cargando mapa de la sección…"); setActive(true); }} disabled={active} aria-label="Activar mapa interactivo de la sección">Mostrar mapa interactivo</button>
-    <button type="button" onClick={focusResults}>Seleccionar sección y consultar resultados</button>
+    <button type="button" onClick={handleFocusResults}>Seleccionar sección y consultar resultados</button>
     <p role="status">{status}</p>
     <div ref={container} className={active ? styles.mapCanvas : styles.mapInactive} aria-label={`Mapa geográfico CNE de ${name}; no muestra votos por partido`} />
-    <a href="#municipal-results-heading" onClick={focusResults}>Ir a los resultados exactos de la sección</a>
+    <a href="#municipal-results-heading" onClick={handleFocusResults}>Ir a los resultados exactos de la sección</a>
   </div>;
 }
