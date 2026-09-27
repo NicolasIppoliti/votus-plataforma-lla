@@ -35,7 +35,7 @@ not permission to contact a hosted project, ingest data, or deploy a release.
 
 ## Web quick path
 
-Use Node.js **24.21.0** from [.node-version](.node-version) and **pnpm 12.3.4**,
+Use Node.js **24.21.0** from [.node-version](.node-version) and **pnpm 10.32.1**,
 as declared in the [root](package.json) and [web package](apps/web/package.json).
 The web package declares Node `24.x` compatibility for managed Vercel updates;
 local release verification and CI still require the exact shared Node pin.
@@ -43,12 +43,13 @@ Each example explicitly selects pnpm so
 later commands do not fall back to an older global installation:
 
 ```sh
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web install --frozen-lockfile
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web dev
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web install --frozen-lockfile
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web dev
 ```
 
-The npm invocation can download the pinned tool. Do not regenerate the lockfile
-to accommodate global pnpm 10: use the declared version. Development requires
+The npm invocation can download the pinned tool. Use the declared pin rather
+than a mismatched global pnpm installation; do not regenerate the tracked lockfile
+to accommodate a global version mismatch. Development requires
 separately approved local application configuration; it does not provision a
 Supabase stack. See the [web guide](apps/web/README.md) before running E2E.
 

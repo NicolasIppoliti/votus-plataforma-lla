@@ -6,9 +6,10 @@ Commands below run from the repository root.
 ## Prerequisites and development
 
 Use Node.js **24.21.0** from [the shared pin](../../.node-version) and
-**pnpm 12.3.4**, declared by [package.json](package.json) and used in
-[CI](../../.github/workflows/release-gates.yml). Keep the committed lockfile;
-a pnpm 10 lockfile parsing failure is not a reason to regenerate it.
+**pnpm 10.32.1**, declared by [package.json](package.json) and used in
+[CI](../../.github/workflows/release-gates.yml). Use the declared pin instead of
+a mismatched global pnpm installation; do not regenerate the tracked lockfile
+to accommodate a global version mismatch.
 
 The [root package](../../package.json) repeats the same package-manager pin so
 Corepack can discover it from either directory. `engines.node` declares Node
@@ -20,8 +21,8 @@ resources. Vercel Preview uses Corepack to select the exact pnpm version.
 Use the pinned invocation for every command, not only installation:
 
 ```sh
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web install --frozen-lockfile
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web dev
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web install --frozen-lockfile
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web dev
 ```
 
 `dev` starts Next.js, not a database. Use separately approved local application
@@ -31,10 +32,10 @@ development at a hosted environment without separate authorization.
 ## Static checks and production build
 
 ```sh
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web lint
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web typecheck
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web build
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web lint
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web typecheck
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web test
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web build
 ```
 
 CI's web-static job runs the first three checks. `build` runs typechecking and
@@ -53,8 +54,8 @@ Keep `SUPABASE_EXPERIMENTAL_STACK` unset: these gates verify the default Docker
 backend and reject ambient selectors for unverified backends.
 
 ```sh
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web exec playwright install chromium
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web exec playwright install chromium
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web test:e2e:gate
 ```
 
 The runner owns the disposable loopback stack, migration inventory checks, SQL
@@ -66,7 +67,7 @@ Missing capabilities are a prerequisite failure, not permission to weaken isolat
 For a focused browser check against canonical specs:
 
 ```sh
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:focused -- e2e/root.spec.ts
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web test:e2e:focused -- e2e/root.spec.ts
 ```
 
 The focused mode still uses the owned runner, but selects only the requested
@@ -87,8 +88,8 @@ the synthetic 0039 browser grants, and all eight browser specs sequentially.
 Explicit lanes run partial components, each with its own disposable stack:
 
 ```sh
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate --lane sql
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate --lane browser
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web test:e2e:gate --lane sql
+npm exec --yes --package=pnpm@10.32.1 -- pnpm --dir apps/web test:e2e:gate --lane browser
 ```
 
 - `sql`: all 13 pgTAP proofs, including scale setup and immediate post-plan cleanup,
