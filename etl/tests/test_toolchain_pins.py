@@ -57,7 +57,7 @@ def test_repository_root_exposes_the_same_pnpm_pin_without_a_new_workspace() -> 
     assert root_manifest.is_file(), "Corepack must discover the pin from the repository root"
     root = json.loads(root_manifest.read_text())
     web = json.loads((WEB / "package.json").read_text())
-    assert root == {"private": True, "packageManager": "pnpm@12.3.4"}
+    assert root == {"private": True, "packageManager": "pnpm@10.32.1"}
     assert root["packageManager"] == web["packageManager"]
 
 

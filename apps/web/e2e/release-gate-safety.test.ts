@@ -73,7 +73,8 @@ import {
 	type ReleaseGatePlan,
 } from "../scripts/e2e-gate-runtime";
 import { reportReleaseGateFailure } from "../scripts/e2e-release-gate";
-const { createServer, randomUUID, spawn, spawnSync, tmpdir, open, sidecarFault, prelaunchRead, toolchainReads } = vi.hoisted(() => ({
+const { createServer, randomUUID, spawn, spawnSync, tmpdir, open, sidecarFault, prelaunchRead, toolchainReads, inventoryFault } = vi.hoisted(() => ({
+	inventoryFault: { armed: false },
 	toolchainReads: new Map<string, string | Error>(),
 	sidecarFault: { kind: "" as string, renamed: false, linked: false, descriptors: new Map<number, string>() },
 	prelaunchRead: { armed: false, gate: undefined as Promise<void> | undefined, entered: undefined as (() => void) | undefined },
@@ -132,7 +133,13 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	return { ...actual, open, readFile: async (...args: Parameters<typeof actual.readFile>) => {
+	return { ...actual, open, readdir: async (...args: Parameters<typeof actual.readdir>) => {
+		if (inventoryFault.armed && String(args[0]).endsWith("/e2e")) {
+			inventoryFault.armed = false;
+			return ["PRIVATE_INVENTORY.spec.ts"];
+		}
+		return actual.readdir(...args);
+	}, readFile: async (...args: Parameters<typeof actual.readFile>) => {
 		const value = await actual.readFile(...args);
 		if (prelaunchRead.armed && prelaunchRead.gate && String(args[0]).endsWith("/.votus-e2e-owner.json")) {
 			const gate = prelaunchRead.gate;
@@ -521,6 +528,20 @@ async function inspectReleaseGatePlan(
 	return JSON.parse(output) as ReleaseGatePlan;
 }
 describe("explicit release-gate lanes", () => {
+	it("classifies real-entrypoint inventory failure without leaking private inventory", async () => {
+		inventoryFault.armed = true;
+		const output: string[] = [];
+		try {
+			await releaseGateMain(["--focused", EXPECTED_E2E_SPECS[0]!]).catch((error: unknown) => {
+				reportReleaseGateFailure("gate", error, (line) => output.push(line));
+			});
+			expect(inventoryFault.armed).toBe(false);
+			expect(output.join("")).toContain('E2E_RELEASE_GATE_PREFLIGHT_FAILURE {"schemaVersion":1,"step":"source_inventory"}');
+			expect(output.join("")).not.toContain("PRIVATE_");
+		} finally {
+			inventoryFault.armed = false;
+		}
+	});
 	it.each(["--plan", "--unknown"]) ("rejects unsupported release-gate flags %s before effects", async (flag) => {
 		const executePlan = vi.fn();
 		await expect(releaseGateMain([flag], { executePlan })).rejects.toThrow(/unknown|unsupported/);
@@ -551,6 +572,14 @@ describe("explicit release-gate lanes", () => {
 		const executePlan = vi.fn();
 		await expect(releaseGateMain(argv, { executePlan })).rejects.toThrow("lane");
 		expect(executePlan).not.toHaveBeenCalled();
+	});
+
+	it("reports unknown aggregate failures without leaking messages or duplicate diagnostics", () => {
+		const output: string[] = [];
+		const privateFailure = new Error("PRIVATE_AGGREGATE_MESSAGE");
+		const failure = new AggregateError([privateFailure, privateFailure], "PRIVATE_AGGREGATE_WRAPPER");
+		reportReleaseGateFailure("gate", failure, (line) => output.push(line));
+		expect(output).toEqual(["gate: details redacted\n"]);
 	});
 
 	// Reuse the existing isolated-workdir lifecycle with fake process/network boundaries.
@@ -710,7 +739,7 @@ describe("explicit release-gate lanes", () => {
 			let phase = "";
 			let text = "";
 			if (command === "pnpm") {
-				text = args[0] === "--version" ? versions.pnpm ?? "12.3.4\n" : "Version 7.0.2\n";
+				text = args[0] === "--version" ? versions.pnpm ?? "10.32.1\n" : "Version 7.0.2\n";
 				if (args[0] === "build:next") phase = "build";
 				if (args[1] === "playwright") {
 					phase = "playwright";
@@ -3414,7 +3443,7 @@ describe("base contracts", () => {
 			spawnSync.mockImplementation((command, args) => {
 				if (command === "pnpm")
 					return successfulCommand(
-						args[0] === "--version" ? "12.3.4\n" : "Version 7.0.2\n",
+						args[0] === "--version" ? "10.32.1\n" : "Version 7.0.2\n",
 					);
 				if (command === "docker" && args[0] === "info")
 					return successfulCommand("29.7.2\n");
