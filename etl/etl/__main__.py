@@ -271,6 +271,9 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                         f"sources.yaml capability {capability!r} entry {index} upload "
                         "must be exactly 'never'"
                     )
+            if entry.get("reference_kind") == "province_geometry":
+                if capability != "geography" or not isinstance(entry.get("max_response_bytes"), int) or isinstance(entry.get("max_response_bytes"), bool) or entry["max_response_bytes"] <= 0:
+                    raise SourcesValidationError("province_geometry requires positive max_response_bytes")
             if capability == "geography":
                 if "election_year" in entry or "election_round" in entry:
                     raise SourcesValidationError("geography entries must be election-free")
@@ -336,6 +339,8 @@ def fetch_source(
     # A fiscalización entry that loses its `upload: never` declaration now fails
     # here, before its bytes exist on disk.
     guard_local_mirror_only(entry)
+    if entry.get("reference_kind") == "province_geometry" and isinstance(fetcher, RequestsFetcher):
+        fetcher = replace(fetcher, max_response_bytes=entry["max_response_bytes"])
     event_id = str(uuid.uuid4()) if invocation_id is None else invocation_id
     if not isinstance(event_id, str) or not event_id.strip():
         raise ValueError("fetch invocation id must be a non-empty opaque string")
