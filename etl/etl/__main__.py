@@ -492,6 +492,26 @@ def fetch_source(
         result = archive_source(entry, fetcher=fetcher, local_store=staged_store)
 
     record = dict(result.record)
+    if record.get("status") == "ok" and entry.get("reference_kind") == "province_geometry":
+        from .province_geometry import province_failure
+
+        payload = next(iter(staged_artifacts.values())) if len(staged_artifacts) == 1 else None
+        if payload is None and not staged_artifacts:
+            archived_path = record.get("archived_path")
+            if isinstance(archived_path, str):
+                filename = Path(archived_path).name
+                expected = local_store.path_for(entry["capability"], filename)
+                if archived_path == f"{local_store.root.name}/{entry['capability']}/{filename}" and expected.is_file():
+                    payload = expected.read_bytes()
+                    if sha256_of(payload) != record.get("sha256"):
+                        raise ArchiveIntegrityError("existing province archive digest changed during validation")
+        reason = province_failure(payload) if payload is not None else "missing_verified_geometry"
+        if reason is not None:
+            staged_artifacts.clear()
+            count_suffix = "" if reason.startswith("feature_count (") else " (rejected_payloads=1)"
+            record.update(status="error", notes=f"province_validation: {reason}{count_suffix}")
+            for field in ("sha256", "archived_path", "bytes"):
+                record[field] = None
     if identity is not None:
         record.update(identity.manifest_fields())
     with manifest_lock(manifest_path):
