@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { isValidElement, type ReactElement } from "react";
+import { describe, expect, it, vi } from "vitest";
 import Loading from "./loading";
 import ReviewError from "./error";
+import { EvidenceState } from "@/components/EvidenceState";
 
 describe("review route boundaries", () => {
   it("announces a generic technical error with an accessible retry and never reads error details", () => {
@@ -9,7 +11,16 @@ describe("review route boundaries", () => {
     for (const key of ["message", "digest"]) {
       Object.defineProperty(error, key, { get() { throw new Error("Error detail was accessed"); } });
     }
-    const markup = renderToStaticMarkup(<ReviewError error={error} unstable_retry={() => {}} />);
+    const retry = vi.fn();
+    const reset = vi.fn();
+    const boundary = ReviewError({ error, retry, reset });
+    const evidence = (boundary.props.children as ReactElement[]).find(
+      (child) => isValidElement(child) && child.type === EvidenceState,
+    ) as ReactElement<{ action: ReactElement<{ onClick: () => void }> }>;
+    evidence.props.action.props.onClick();
+    expect(retry).toHaveBeenCalledOnce();
+    expect(reset).not.toHaveBeenCalled();
+    const markup = renderToStaticMarkup(<ReviewError error={error} retry={retry} reset={reset} />);
     expect(markup).toContain("<h1>Cola de revisión</h1>");
     expect(markup).toContain('role="alert" aria-labelledby="review-error-heading"');
     expect(markup).toContain('data-state="error" data-treatment="danger"');
