@@ -126,8 +126,24 @@ The immutable original is content-addressed in `archive/geography/`; the manifes
 records its retrieval time, byte count and SHA-256. Validation checks the country
 identity, EPSG:4326 coordinates and all polygon rings, reports counts and bounds,
 and reports only the exact derived latitude correction `-90.00000001` to `-90`.
-The archived source bytes are never modified. This is a geographic reference,
-not certified election-year boundary applicability or electoral coverage. Source:
+The archived source bytes are never modified. To generate the offline browser
+reference derivative from the same verified archive and manifest (no fetch), run
+from the repository root:
+
+```sh
+uv --directory etl run --frozen python -m etl --sources-path "$PWD/etl/sources.yaml" --local-root "$PWD/archive" --manifest-path "$PWD/archive-manifest.json" generate-country-geometry --source geography/ign-argentina-country --output-dir "$PWD/apps/web/public/geography"
+```
+
+The CLI reports the input and output SHA-256, content-addressed filename, raw
+and gzip sizes, counts, corrected coordinates and simplification fallback reasons.
+It simplifies the complete MultiPolygon at a fixed 0.005° tolerance, preserving
+component and ring counts and verifying whole-geometry validity. If simplification
+changes structure or extent beyond tolerance, it retains the full corrected source
+with an explicit fallback reason; an invalid source is refused without an asset.
+No invalid geometry is published or silently repaired. The output is a derived
+reference-only GeoJSON, not an archive replacement. This is
+a geographic reference, not certified election-year boundary applicability or
+electoral coverage. Source:
 Instituto Geográfico Nacional de la República Argentina, [IGN WFS](https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Apais&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2);
 [metadata dated 2019-09-09](https://www.ign.gob.ar/capas-sig/metadata/pais.pdf)
 (the date is not a historical validity guarantee). [IGN reuse terms](https://www.ign.gob.ar/descargas/tyc1.html)

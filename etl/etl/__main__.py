@@ -715,6 +715,39 @@ def cmd_validate_country_geometry(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_generate_country_geometry(args: argparse.Namespace) -> int:
+    from .country_geometry_asset import generate_country_asset
+
+    entry = find_source_entry(load_sources(Path(args.sources_path)), args.source)
+    if entry is None:
+        raise UnknownSourceError(f"no registered source with id {args.source!r}")
+    if entry["capability"] != "geography" or entry.get("reference_kind") != "country_geometry":
+        raise ValueError("unsupported_country_source")
+    record = latest_ok_record(load_manifest(Path(args.manifest_path)), args.source)
+    if record is None:
+        raise ValueError("missing_snapshot")
+    if any(
+        field in record and record[field] != entry[field]
+        for field in ("id", "capability", "source", "source_url")
+    ):
+        raise ValueError("source_identity_mismatch")
+    local_store = LocalArchiveStore(root=Path(args.local_root))
+    filename = archived_filename(record, source_id=args.source)
+    if record["archived_path"] != f"{local_store.root.name}/geography/{filename}":
+        raise ValueError("archived_path_mismatch")
+    payload = read_archived_source(
+        entry,
+        manifest_record=record,
+        capability="geography",
+        local_store=local_store,
+        filename=filename,
+    )
+    report = generate_country_asset(payload, record["sha256"], Path(args.output_dir))
+    report["snapshot"] = {"source": args.source, "archived_path": record["archived_path"]}
+    print(json.dumps(report, sort_keys=True))
+    return 0
+
+
 def cmd_validate_partido_geometry(args: argparse.Namespace) -> int:
     from .partido_geometry import inspect_partido_geometry, rejected_geometry
 
@@ -3525,6 +3558,10 @@ def build_parser() -> argparse.ArgumentParser:
     country = subparsers.add_parser("validate-country-geometry")
     country.add_argument("--source", required=True)
     country.set_defaults(func=cmd_validate_country_geometry)
+    generator = subparsers.add_parser("generate-country-geometry")
+    generator.add_argument("--source", required=True)
+    generator.add_argument("--output-dir", required=True)
+    generator.set_defaults(func=cmd_generate_country_geometry)
     geometry = subparsers.add_parser("validate-partido-geometry")
     geometry.add_argument("--source", required=True)
     geometry.set_defaults(func=cmd_validate_partido_geometry)
