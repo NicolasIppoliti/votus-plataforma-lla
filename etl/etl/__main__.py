@@ -272,8 +272,15 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                         "must be exactly 'never'"
                     )
             if entry.get("reference_kind") == "province_geometry":
-                if capability != "geography" or not isinstance(entry.get("max_response_bytes"), int) or isinstance(entry.get("max_response_bytes"), bool) or entry["max_response_bytes"] <= 0:
-                    raise SourcesValidationError("province_geometry requires positive max_response_bytes")
+                if (
+                    capability != "geography"
+                    or not isinstance(entry.get("max_response_bytes"), int)
+                    or isinstance(entry.get("max_response_bytes"), bool)
+                    or entry["max_response_bytes"] <= 0
+                ):
+                    raise SourcesValidationError(
+                        "province_geometry requires positive max_response_bytes"
+                    )
             if capability == "geography":
                 if "election_year" in entry or "election_round" in entry:
                     raise SourcesValidationError("geography entries must be election-free")
@@ -501,10 +508,15 @@ def fetch_source(
             if isinstance(archived_path, str):
                 filename = Path(archived_path).name
                 expected = local_store.path_for(entry["capability"], filename)
-                if archived_path == f"{local_store.root.name}/{entry['capability']}/{filename}" and expected.is_file():
+                if (
+                    archived_path == f"{local_store.root.name}/{entry['capability']}/{filename}"
+                    and expected.is_file()
+                ):
                     payload = expected.read_bytes()
                     if sha256_of(payload) != record.get("sha256"):
-                        raise ArchiveIntegrityError("existing province archive digest changed during validation")
+                        raise ArchiveIntegrityError(
+                            "existing province archive digest changed during validation"
+                        )
         reason = province_failure(payload) if payload is not None else "missing_verified_geometry"
         if reason is not None:
             staged_artifacts.clear()

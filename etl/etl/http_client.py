@@ -55,7 +55,9 @@ class RequestsFetcher:
         self, url: str, *, timeout: float = 60, headers: dict[str, str] | None = None
     ) -> FetchResponse:
         if self.max_response_bytes is None:
-            response = requests.get(url, timeout=timeout, headers=headers or {}, allow_redirects=False)
+            response = requests.get(
+                url, timeout=timeout, headers=headers or {}, allow_redirects=False
+            )
             return FetchResponse(response.status_code, response.content, dict(response.headers))
 
         response = requests.get(
