@@ -182,6 +182,19 @@
       "fetched_at": "2026-09-24T03:29:24Z",
       "status": "ok",
       "notes": "CNE descargas page-linked complete electoral sections GeoJSON; geographic reference only, election-year applicability unknown. CNE/PBA catalog attributes CC BY 4.0 to circuit resource, not separately verified for this layer."
+    },
+    {
+      "id": "geography/ign-buenos-aires-province",
+      "capability": "geography",
+      "source": "wms.ign.gob.ar",
+      "source_url": "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Aprovincia&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2&CQL_FILTER=in1%3D%2706%27",
+      "archived_path": "archive/geography/ign-buenos-aires-province.314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723.geojson",
+      "sha256": "314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723",
+      "mime": "application/json",
+      "bytes": 10282974,
+      "fetched_at": "2026-09-28T04:26:37Z",
+      "status": "ok",
+      "notes": "IGN CapasSIG WFS ign:provincia; geographic reference only (2019 metadata), not election-effective. Attribute Instituto Geográfico Nacional (IGN); verify reuse/redistribution terms before publication. Selected in1=06, provincia.68; preliminary full response 10,282,974 bytes."
     }
   ],
   "fetch_events": [
@@ -246,6 +259,27 @@
         "fetched_at": "2026-09-24T03:29:24Z",
         "status": "ok",
         "notes": "CNE descargas page-linked complete electoral sections GeoJSON; geographic reference only, election-year applicability unknown. CNE/PBA catalog attributes CC BY 4.0 to circuit resource, not separately verified for this layer."
+      }
+    },
+    {
+      "event_id": "c7fb1483-aec4-4597-aa84-d63cafb44093",
+      "sequence": 4,
+      "source_id": "geography/ign-buenos-aires-province",
+      "fetched_at": "2026-09-28T04:26:37Z",
+      "status": "ok",
+      "classification": "initial",
+      "record": {
+        "id": "geography/ign-buenos-aires-province",
+        "capability": "geography",
+        "source": "wms.ign.gob.ar",
+        "source_url": "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Aprovincia&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2&CQL_FILTER=in1%3D%2706%27",
+        "archived_path": "archive/geography/ign-buenos-aires-province.314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723.geojson",
+        "sha256": "314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723",
+        "mime": "application/json",
+        "bytes": 10282974,
+        "fetched_at": "2026-09-28T04:26:37Z",
+        "status": "ok",
+        "notes": "IGN CapasSIG WFS ign:provincia; geographic reference only (2019 metadata), not election-effective. Attribute Instituto Geográfico Nacional (IGN); verify reuse/redistribution terms before publication. Selected in1=06, provincia.68; preliminary full response 10,282,974 bytes."
       }
     }
   ]

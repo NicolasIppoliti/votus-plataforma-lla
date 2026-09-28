@@ -32,7 +32,7 @@ geography:
     filename: ign-buenos-aires-province.geojson
     reference_kind: province_geometry
     max_response_bytes: 15000000
-    notes: "IGN CapasSIG WFS ign:provincia; geographic reference only (2019 metadata), not election-effective. Attribute Instituto Geográfico Nacional (IGN); verify reuse/redistribution terms before publication. Selected in1=06, provincia.68; preliminary full response 10,282,974 bytes."
+    notes: "IGN CapasSIG WFS ign:provincia; geographic reference only, not election result authorization or an IGN-certified 2023/2025 edition (2019 metadata). Cite FUENTE: Instituto Geográfico Nacional de la República Argentina without implying endorsement. Ley 27.275 art. 2 permits reuse/free redistribution of public information; no provider-permission gate. User reports LLA technicians confirmed unchanged provincial boundary for 2023/2025. Selected in1=06, provincia.68; archived response 10,282,974 bytes."
   - id: geography/cne-pba-sections
     source: mapa2.electoral.gov.ar
     source_url: "https://mapa2.electoral.gov.ar/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&authkey=c4492e92d364f46230423ad9d1a34398&typeName=descargas:secciones_electorales&maxFeatures=2000&outputFormat=application%2Fjson"
