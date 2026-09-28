@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: resolve(import.meta.dirname, "../.."),
   outputFileTracingIncludes: {
     "/municipal": ["../../archive-manifest.json", "../../archive/geography/cne-pba-sections.*.geojson"],
+    "/api/geography/buenos-aires": [
+      "../../archive-manifest.json",
+      "../../archive/geography/ign-buenos-aires-province.314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723.geojson",
+    ],
   },
   experimental: {
     testProxy: e2eTestProxyEnabled,
