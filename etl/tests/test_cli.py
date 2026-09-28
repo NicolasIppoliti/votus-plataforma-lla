@@ -174,6 +174,244 @@ def test_validate_coronel_rosales_partido_geometry_is_reachable_through_main(
     }
 
 
+def test_country_geometry_registered_source_is_reachable_and_bounded(tmp_path, capsys):
+    source_id = "geography/ign-argentina-country"
+    entry = next(entry for entry in load_sources()["geography"] if entry["id"] == source_id)
+    assert entry["reference_kind"] == "country_geometry"
+    assert entry["max_response_bytes"] == 134217728
+    assert entry["filename"] == "ign-argentina-country.geojson"
+    assert entry["source"] == "wms.ign.gob.ar"
+    assert entry["source_url"] == (
+        "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature"
+        "&typeName=ign%3Apais&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2"
+    )
+    assert (
+        main(
+            [
+                "--manifest-path",
+                str(tmp_path / "missing.json"),
+                "validate-country-geometry",
+                "--source",
+                source_id,
+            ]
+        )
+        == 1
+    )
+    assert "missing_snapshot" in capsys.readouterr().err
+
+
+def country_geometry_case(tmp_path: Path, document: dict | None = None) -> tuple:
+    source_id = "geography/ign-argentina-country"
+    entry = {
+        "id": source_id,
+        "source": "IGN",
+        "source_url": "https://example.test/argentina.geojson",
+        "mime": "application/geo+json",
+        "notes": "test-only country reference",
+        "filename": "argentina.geojson",
+        "reference_kind": "country_geometry",
+        "max_response_bytes": 134217728,
+    }
+    sources = tmp_path / "sources.yaml"
+    sources.write_text(yaml.safe_dump({"geography": [entry]}))
+    if document is None:
+        document = {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "pais.885",
+                    "properties": {"fna": "República Argentina", "nam": "Argentina", "sag": "IGN"},
+                    "geometry": {
+                        "type": "MultiPolygon",
+                        "coordinates": [
+                            [[[-74, -40], [-73, -40], [-73, -39], [-74, -40]]],
+                            [[[-50, -90.00000001], [-49, -89], [-48, -89], [-50, -90.00000001]]],
+                        ],
+                    },
+                }
+            ],
+        }
+    payload = json.dumps(document, ensure_ascii=False).encode()
+    root = tmp_path / "archive"
+    (root / "geography").mkdir(parents=True)
+    archive = root / "geography" / "argentina.geojson"
+    archive.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    record = {
+        "id": source_id,
+        "capability": "geography",
+        "source": entry["source"],
+        "source_url": entry["source_url"],
+        "status": "ok",
+        "sha256": digest,
+        "archived_path": "archive/geography/argentina.geojson",
+        "fetched_at": "2026-09-22T00:00:00Z",
+    }
+    save_manifest(manifest, [record], events=[])
+    args = [
+        "--sources-path",
+        str(sources),
+        "--local-root",
+        str(root),
+        "--manifest-path",
+        str(manifest),
+        "validate-country-geometry",
+        "--source",
+        source_id,
+    ]
+    return document, payload, archive, manifest, record, args
+
+
+def test_country_geometry_reports_verified_multipart_and_exact_polar_correction(tmp_path, capsys):
+    _, original, archive, _, record, args = country_geometry_case(tmp_path)
+    assert main(args) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "counts": {"features": 1, "polygons": 2, "rings": 2, "vertices": 8, "corrections": 2},
+        "bbox": [-74, -90, -48, -39],
+        "corrections": [
+            {"polygon": 1, "ring": 0, "vertex": index, "original": -90.00000001, "corrected": -90}
+            for index in (0, 3)
+        ],
+        "reference_only": True,
+        "snapshot": {
+            "source": record["id"],
+            "sha256": record["sha256"],
+            "archived_path": record["archived_path"],
+        },
+    }
+    assert archive.read_bytes() == original
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == record["sha256"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("id", "pais.886"),
+        ("nam", "Another country"),
+        ("crs", "EPSG:3857"),
+        ("geometry", "Point"),
+    ],
+)
+def test_country_geometry_rejects_wrong_identity_crs_or_shape(tmp_path, capsys, field, value):
+    document, _, archive, manifest, record, args = country_geometry_case(tmp_path)
+    feature = document["features"][0]
+    if field == "crs":
+        document["crs"]["properties"]["name"] = value
+    elif field == "geometry":
+        feature["geometry"]["type"] = value
+    elif field == "nam":
+        feature["properties"][field] = value
+    else:
+        feature[field] = value
+    payload = json.dumps(document, ensure_ascii=False).encode()
+    archive.write_bytes(payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        [-50, -90.00000002],
+        [-50, 90.00000001],
+        [180.00000001, -89],
+        [False, -89],
+        ["-50", -89],
+        [-50, float("inf")],
+        [-50],
+    ],
+)
+def test_country_geometry_rejects_other_invalid_coordinates(tmp_path, capsys, point):
+    document, _, archive, manifest, record, args = country_geometry_case(tmp_path)
+    document["features"][0]["geometry"]["coordinates"][1][0][1] = point
+    payload = json.dumps(document, ensure_ascii=False).encode()
+    archive.write_bytes(payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "missing_archive", "missing_snapshot"])
+def test_country_geometry_requires_verified_archive(tmp_path, capsys, failure):
+    _, _, archive, manifest, _, args = country_geometry_case(tmp_path)
+    if failure == "corrupt":
+        archive.write_bytes(b"invalid archive")
+    elif failure == "missing_archive":
+        archive.unlink()
+    else:
+        save_manifest(manifest, [], events=[])
+    assert main(args) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_country_geometry_rejects_contradictory_declared_feature_count(tmp_path, capsys):
+    document, _, archive, manifest, record, args = country_geometry_case(tmp_path)
+    document["numberReturned"] = 2
+    payload = json.dumps(document, ensure_ascii=False).encode()
+    archive.write_bytes(payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert "declared_feature_count" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_country_geometry_fetch_preserves_raw_bytes_or_rejects_before_archive(
+    tmp_path, monkeypatch, capsys, valid
+):
+    import etl.http_client as http_client
+
+    document, original, _, _, _, validate_args = country_geometry_case(tmp_path)
+    if not valid:
+        document["features"][0]["properties"]["nam"] = "Wrong country"
+    payload = json.dumps(document, ensure_ascii=False).encode()
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def iter_content(self, chunk_size):
+            yield payload
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http_client.requests, "get", lambda *args, **kwargs: Response())
+    archive = tmp_path / "fresh-archive"
+    manifest = tmp_path / "fresh-manifest.json"
+    args = validate_args.copy()
+    args[args.index("--local-root") + 1] = str(archive)
+    args[args.index("--manifest-path") + 1] = str(manifest)
+    args[args.index("validate-country-geometry")] = "fetch"
+    code = main(args)
+    record = load_manifest(manifest)[0]
+    if valid:
+        assert code == 0
+        assert record["sha256"] == hashlib.sha256(original).hexdigest()
+        assert (tmp_path / record["archived_path"]).read_bytes() == original
+    else:
+        assert code == 1
+        assert "country_validation" in capsys.readouterr().err
+        assert record["status"] == "error"
+        assert not list(archive.rglob("*.geojson"))
+
+
+def test_country_geometry_rejects_forged_manifest_directory_with_matching_basename(
+    tmp_path, capsys
+):
+    _, _, _, manifest, record, args = country_geometry_case(tmp_path)
+    record["archived_path"] = "other/geography/argentina.geojson"
+    save_manifest(manifest, [record], events=[])
+    assert main(args) == 1
+    assert "archived_path" in capsys.readouterr().err
+
+
 CNE_SECTION_IDENTITY = {
     "provincia": "Buenos Aires",
     "departamen": "Cnel. de Marina L.Rosales",
@@ -9203,6 +9441,7 @@ def test_registered_electoral_sources_declare_an_explicit_election() -> None:
                     "circuit_geometry",
                     "section_geometry",
                     "province_geometry",
+                    "country_geometry",
                 }
                 if entry["reference_kind"] == "province_geometry":
                     assert entry["max_response_bytes"] == 15000000

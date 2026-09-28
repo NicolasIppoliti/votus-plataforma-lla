@@ -25,6 +25,15 @@
 # (etl.http_client.check_robots_txt_still_absent). See design.md D10.
 
 geography:
+  - id: geography/ign-argentina-country
+    source: wms.ign.gob.ar
+    source_url: "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Apais&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2"
+    mime: application/json
+    filename: ign-argentina-country.geojson
+    reference_kind: country_geometry
+    max_response_bytes: 134217728
+    expected_identity: {id: 'pais.885', fna: República Argentina, nam: Argentina, sag: IGN}
+    notes: "IGN CapasSIG WFS ign:pais, geographic reference only; metadata https://www.ign.gob.ar/capas-sig/metadata/pais.pdf dated 2019-09-09 does not establish historical boundary validity. Attribute Instituto Geográfico Nacional de la República Argentina with original source and date, without implying endorsement; terms https://www.ign.gob.ar/descargas/tyc1.html. No election coverage claim."
   - id: geography/ign-buenos-aires-province
     source: wms.ign.gob.ar
     source_url: "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Aprovincia&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2&CQL_FILTER=in1%3D%2706%27"

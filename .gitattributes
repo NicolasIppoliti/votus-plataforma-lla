@@ -6,6 +6,9 @@
 # never be reproduced by a silently normalised fixture.
 etl/tests/fixtures/** -text
 
+# Only the national IGN raw GeoJSON uses Git LFS; derived geometry stays outside this rule.
+archive/geography/ign-argentina-country.*.geojson filter=lfs diff=lfs merge=lfs -text
+
 # Archived source documents, when any are ever tracked, are bytes, not text.
 *.zip binary
 *.pdf binary
