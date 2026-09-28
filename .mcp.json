@@ -3,6 +3,17 @@
     "shadcn": {
       "command": "npx",
       "args": ["-y", "shadcn@4.21.0", "mcp"]
+    },
+    "next-devtools": {
+      "command": "npx",
+      "args": ["-y", "next-devtools-mcp@0.4.0"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@0.0.82"]
+    },
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=thsfykfykbpfjsrepwas&read_only=true&features=database%2Cdocs"
     }
   }
 }

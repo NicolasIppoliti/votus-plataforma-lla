@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Archival and normalization pipeline for the Votus electoral analysis platform."
 requires-python = ">=3.12"
 dependencies = [
-    "psycopg[binary]==3.3.4",
+    "psycopg[binary]==3.3.6",
     "pyyaml==6.0.3",
     "requests==2.34.2",
     "shapely==2.1.2",
@@ -16,12 +16,12 @@ etl-verify = "etl.verify:main"
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
-  "ruff==0.16.1",
+  "ruff==0.16.9",
 ]
 build = ["hatchling==1.32.4", "editables==0.6"]
 
 [tool.uv]
-required-version = "==0.12.17"
+required-version = "==0.12.19"
 default-groups = ["dev", "build"]
 no-build-isolation-package = ["etl"]
 

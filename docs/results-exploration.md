@@ -9,12 +9,12 @@ This change does not run a hosted migration or deploy the web application. The e
 ## Reproduce the local proof
 
 Run from the repository root with the [web prerequisites](../apps/web/README.md),
-including pnpm 12.3.4 and the owned gate's Docker/Supabase capabilities:
+including pnpm 12.6.0 and the owned gate's Docker/Supabase capabilities:
 
 ```bash
 uv --directory etl run pytest tests/test_migration_sql.py -q
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web exec vitest run e2e/release-gate-safety.test.ts e2e/scenario-ownership.test.ts
-npm exec --yes --package=pnpm@12.3.4 -- pnpm --dir apps/web test:e2e:gate -- --release-proof-only
+corepack pnpm@12.6.0 --dir apps/web exec vitest run e2e/release-gate-safety.test.ts e2e/scenario-ownership.test.ts
+corepack pnpm@12.6.0 --dir apps/web test:e2e:gate -- --release-proof-only
 ```
 
 The disposable proof MUST report:

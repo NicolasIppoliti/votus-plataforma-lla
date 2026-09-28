@@ -739,7 +739,7 @@ describe("explicit release-gate lanes", () => {
 			let phase = "";
 			let text = "";
 			if (command === "pnpm") {
-				text = args[0] === "--version" ? versions.pnpm ?? "10.32.1\n" : "Version 7.0.2\n";
+				text = args[0] === "--version" ? versions.pnpm ?? "12.6.0\n" : "Version 7.0.2\n";
 				if (args[0] === "build:next") phase = "build";
 				if (args[1] === "playwright") {
 					phase = "playwright";
@@ -3443,7 +3443,7 @@ describe("base contracts", () => {
 			spawnSync.mockImplementation((command, args) => {
 				if (command === "pnpm")
 					return successfulCommand(
-						args[0] === "--version" ? "10.32.1\n" : "Version 7.0.2\n",
+						args[0] === "--version" ? "12.6.0\n" : "Version 7.0.2\n",
 					);
 				if (command === "docker" && args[0] === "info")
 					return successfulCommand("29.7.2\n");

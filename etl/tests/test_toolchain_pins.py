@@ -19,6 +19,7 @@ WEB = ROOT / "apps/web"
 def test_web_dependencies_have_exact_matching_lock_resolutions() -> None:
     manifest = json.loads((WEB / "package.json").read_text())
     assert manifest["devDependencies"].get("supabase") == "2.116.0"
+    assert manifest["devDependencies"]["@types/node"] == "24.19.0"
     documents = list(yaml.safe_load_all((WEB / "pnpm-lock.yaml").read_text()))
     dependency_lock = next(doc for doc in documents if "settings" in doc)
     importer = dependency_lock["importers"]["."]
@@ -57,7 +58,7 @@ def test_repository_root_exposes_the_same_pnpm_pin_without_a_new_workspace() -> 
     assert root_manifest.is_file(), "Corepack must discover the pin from the repository root"
     root = json.loads(root_manifest.read_text())
     web = json.loads((WEB / "package.json").read_text())
-    assert root == {"private": True, "packageManager": "pnpm@10.32.1"}
+    assert root == {"private": True, "packageManager": "pnpm@12.6.0"}
     assert root["packageManager"] == web["packageManager"]
 
 

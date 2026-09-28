@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 
 interface ReviewErrorProps {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  retry: () => void;
+  reset: () => void;
 }
 
-export default function ReviewError({ unstable_retry }: ReviewErrorProps) {
+export default function ReviewError({ retry }: ReviewErrorProps) {
   return (
     <main className="review-queue page-shell">
       <header className="review-queue__header">
@@ -20,7 +21,7 @@ export default function ReviewError({ unstable_retry }: ReviewErrorProps) {
         title="No se pudo cargar la revisión"
         titleId="review-error-heading"
         eyebrow="Atención operativa"
-        action={<Button variant="solid" type="button" onClick={unstable_retry}>Reintentar carga</Button>}
+        action={<Button variant="solid" type="button" onClick={retry}>Reintentar carga</Button>}
       >
         <p>Revise la conexión y vuelva a intentar la carga.</p>
       </EvidenceState>
