@@ -42,13 +42,7 @@ interface ComponentsConfig {
 }
 
 interface McpConfig {
-	mcpServers: Record<
-		string,
-		{
-			command: string;
-			args: string[];
-		}
-	>;
+	mcpServers: Record<string, { command: string; args: string[] } | { url: string }>;
 }
 
 function readProjectFile(path: string): string {
@@ -76,9 +70,9 @@ describe("UI tooling supply-chain contract", () => {
 		const root = readJson<PackageManifest>("package.json");
 		const web = readJson<PackageManifest>("apps/web/package.json");
 		const lock = readWebFile("pnpm-lock.yaml");
-		assert.equal(root.packageManager, "pnpm@10.32.1");
-		assert.equal(web.packageManager, "pnpm@10.32.1");
-		assert.equal((web as PackageManifest & { engines: { pnpm: string } }).engines.pnpm, "10.32.1");
+		assert.equal(root.packageManager, "pnpm@12.6.0");
+		assert.equal(web.packageManager, "pnpm@12.6.0");
+		assert.equal((web as PackageManifest & { engines: { pnpm: string } }).engines.pnpm, "12.6.0");
 		assert.match(lock, /^lockfileVersion: '9\.0'$/m);
 		assert.doesNotMatch(lock, /(?:@pnpm\/exe\.[^\s:]+|pnpm)@12\.3\.4/);
 	});
@@ -88,9 +82,10 @@ describe("UI tooling supply-chain contract", () => {
 		) as PackageManifest;
 		assert.equal(manifest.devDependencies["@tailwindcss/postcss"], "4.3.3");
 		assert.equal(manifest.devDependencies.tailwindcss, "4.3.3");
-		assert.equal(manifest.dependencies.clsx, "2.1.1");
-		assert.equal(manifest.dependencies["tailwind-merge"], "3.6.0");
-		assert.equal(manifest.packageManager, "pnpm@10.32.1");
+		assert.equal(manifest.dependencies.cn, "0.4.0");
+		assert.equal(Object.hasOwn(manifest.dependencies, "clsx"), false);
+		assert.equal(Object.hasOwn(manifest.dependencies, "tailwind-merge"), false);
+		assert.equal(manifest.packageManager, "pnpm@12.6.0");
 
 		const postcss = readWebFile("postcss.config.mjs");
 		assert.ok(postcss.includes('"@tailwindcss/postcss": {}'));
@@ -141,6 +136,11 @@ describe("UI tooling supply-chain contract", () => {
 				shadcn: {
 					command: "npx",
 					args: ["-y", "shadcn@4.21.0", "mcp"],
+				},
+				"next-devtools": { command: "npx", args: ["-y", "next-devtools-mcp@0.4.0"] },
+				playwright: { command: "npx", args: ["-y", "@playwright/mcp@0.0.82"] },
+				supabase: {
+					url: "https://mcp.supabase.com/mcp?project_ref=thsfykfykbpfjsrepwas&read_only=true&features=database%2Cdocs",
 				},
 			},
 		});
