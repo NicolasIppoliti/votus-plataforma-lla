@@ -271,6 +271,16 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                         f"sources.yaml capability {capability!r} entry {index} upload "
                         "must be exactly 'never'"
                     )
+            if entry.get("reference_kind") == "province_geometry":
+                if (
+                    capability != "geography"
+                    or not isinstance(entry.get("max_response_bytes"), int)
+                    or isinstance(entry.get("max_response_bytes"), bool)
+                    or entry["max_response_bytes"] <= 0
+                ):
+                    raise SourcesValidationError(
+                        "province_geometry requires positive max_response_bytes"
+                    )
             if capability == "geography":
                 if "election_year" in entry or "election_round" in entry:
                     raise SourcesValidationError("geography entries must be election-free")
@@ -336,6 +346,8 @@ def fetch_source(
     # A fiscalización entry that loses its `upload: never` declaration now fails
     # here, before its bytes exist on disk.
     guard_local_mirror_only(entry)
+    if entry.get("reference_kind") == "province_geometry" and isinstance(fetcher, RequestsFetcher):
+        fetcher = replace(fetcher, max_response_bytes=entry["max_response_bytes"])
     event_id = str(uuid.uuid4()) if invocation_id is None else invocation_id
     if not isinstance(event_id, str) or not event_id.strip():
         raise ValueError("fetch invocation id must be a non-empty opaque string")
@@ -487,6 +499,31 @@ def fetch_source(
         result = archive_source(entry, fetcher=fetcher, local_store=staged_store)
 
     record = dict(result.record)
+    if record.get("status") == "ok" and entry.get("reference_kind") == "province_geometry":
+        from .province_geometry import province_failure
+
+        payload = next(iter(staged_artifacts.values())) if len(staged_artifacts) == 1 else None
+        if payload is None and not staged_artifacts:
+            archived_path = record.get("archived_path")
+            if isinstance(archived_path, str):
+                filename = Path(archived_path).name
+                expected = local_store.path_for(entry["capability"], filename)
+                if (
+                    archived_path == f"{local_store.root.name}/{entry['capability']}/{filename}"
+                    and expected.is_file()
+                ):
+                    payload = expected.read_bytes()
+                    if sha256_of(payload) != record.get("sha256"):
+                        raise ArchiveIntegrityError(
+                            "existing province archive digest changed during validation"
+                        )
+        reason = province_failure(payload) if payload is not None else "missing_verified_geometry"
+        if reason is not None:
+            staged_artifacts.clear()
+            count_suffix = "" if reason.startswith("feature_count (") else " (rejected_payloads=1)"
+            record.update(status="error", notes=f"province_validation: {reason}{count_suffix}")
+            for field in ("sha256", "archived_path", "bytes"):
+                record[field] = None
     if identity is not None:
         record.update(identity.manifest_fields())
     with manifest_lock(manifest_path):

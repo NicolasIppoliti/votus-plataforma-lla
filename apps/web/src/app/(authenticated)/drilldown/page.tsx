@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import styles from "./drilldown.module.css";
 import { DrilldownDistribution } from "./DrilldownDistribution";
+import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
 import {
@@ -317,6 +318,16 @@ function PageShell({ facets, selected, children }: ExplorerFormProps): ReactNode
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
         <ExplorerHeader />
+        <section className={styles.province} aria-labelledby="province-reference-heading">
+          <div className={styles.provinceCopy}>
+            <h2 id="province-reference-heading">Buenos Aires: referencia geográfica</h2>
+            <p>El contorno provincial orienta la navegación. No hay resultados electorales provinciales disponibles en este mapa.</p>
+            <p>Para llegar a Coronel Rosales, elegí una elección y una categoría autorizadas; después seleccioná el distrito nacional 02 (Buenos Aires), la sección 027 (Coronel Rosales) y el nivel sección. La disponibilidad depende de la selección.</p>
+            <a href="#explorer-election">Elegir elección para explorar Coronel Rosales</a>
+            <p className={styles.attribution}>FUENTE: Instituto Geográfico Nacional de la República Argentina · Datos geográficos recuperados el 28/09/2026; metadatos IGN 2019. Sin aval del IGN ni correspondencia electoral certificada.</p>
+          </div>
+          <ProvinceReferenceMap />
+        </section>
         <ExplorerForm facets={facets} selected={selected}>{children}</ExplorerForm>
       </div>
     </main>

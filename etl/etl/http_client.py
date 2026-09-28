@@ -43,17 +43,41 @@ def _retry_after_delay(retry_after: str | None, fallback: float) -> float:
     return max(delay, fallback) if 0 <= delay < 1e309 else fallback
 
 
+class ResponseTooLargeError(ValueError):
+    """Registered response exceeded its source-bound byte ceiling."""
+
+
 @dataclass
 class RequestsFetcher:
+    max_response_bytes: int | None = None
+
     def get(
         self, url: str, *, timeout: float = 60, headers: dict[str, str] | None = None
     ) -> FetchResponse:
-        response = requests.get(url, timeout=timeout, headers=headers or {}, allow_redirects=False)
-        return FetchResponse(
-            status_code=response.status_code,
-            content=response.content,
-            headers=dict(response.headers),
+        if self.max_response_bytes is None:
+            response = requests.get(
+                url, timeout=timeout, headers=headers or {}, allow_redirects=False
+            )
+            return FetchResponse(response.status_code, response.content, dict(response.headers))
+
+        response = requests.get(
+            url, timeout=timeout, headers=headers or {}, allow_redirects=False, stream=True
         )
+        try:
+            if 300 <= response.status_code < 400:
+                raise ValueError("redirect_not_allowed")
+            if response.status_code >= 400:
+                return FetchResponse(response.status_code, b"", dict(response.headers))
+            chunks = []
+            size = 0
+            for chunk in response.iter_content(chunk_size=65536):
+                size += len(chunk)
+                if size > self.max_response_bytes:
+                    raise ResponseTooLargeError("response_too_large")
+                chunks.append(chunk)
+            return FetchResponse(response.status_code, b"".join(chunks), dict(response.headers))
+        finally:
+            response.close()
 
 
 # ---------------------------------------------------------------------------

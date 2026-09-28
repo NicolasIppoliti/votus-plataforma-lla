@@ -8639,6 +8639,557 @@ def test_sources_boundary_accepts_only_supported_capability_families(
         load_sources(path)
 
 
+@pytest.mark.parametrize(
+    "variant,reason",
+    [
+        ("wrong", "wrong_province"),
+        ("missing", "invalid_feature_list"),
+        ("empty", "feature_count"),
+        ("multiple", "feature_count"),
+        ("crs", "invalid_crs"),
+        ("shape", "invalid_geometry"),
+        ("type", "invalid_feature_type"),
+        ("overflow", "invalid_geometry"),
+        ("longitude", "invalid_geometry"),
+        ("latitude", "invalid_geometry"),
+        ("extra_ordinate", "invalid_geometry"),
+        ("valid", None),
+    ],
+)
+def test_fetch_cli_refuses_wrong_province_before_archive(
+    tmp_path, monkeypatch, capsys, variant, reason
+):
+    import etl.http_client as http_client
+
+    source_id = "geography/synthetic-ign-province"
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "geography": [
+                    {
+                        "id": source_id,
+                        "source": "IGN fixture",
+                        "source_url": "https://example.test/province",
+                        "mime": "application/geo+json",
+                        "notes": "synthetic",
+                        "filename": "province.geojson",
+                        "reference_kind": "province_geometry",
+                        "max_response_bytes": 10000,
+                    }
+                ]
+            }
+        )
+    )
+    document = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "features": [
+            {
+                "type": "Feature",
+                "id": "provincia.68",
+                "properties": {"in1": "07"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-62, -39], [-61, -39], [-61, -38], [-62, -39]]],
+                },
+            }
+        ],
+    }
+    feature = document["features"][0]
+    if variant != "wrong":
+        feature["properties"]["in1"] = "06"
+    if variant == "missing":
+        del document["features"]
+    elif variant == "empty":
+        document["features"] = []
+    elif variant == "multiple":
+        document["features"].append(feature.copy())
+    elif variant == "crs":
+        document["crs"]["properties"]["name"] = "EPSG:3857"
+    elif variant == "shape":
+        feature["geometry"]["coordinates"][0][-1] = [-60, -39]
+    elif variant == "type":
+        feature["type"] = "NotAFeature"
+    elif variant == "overflow":
+        feature["geometry"]["coordinates"][0][0][0] = 10**400
+    elif variant == "longitude":
+        feature["geometry"]["coordinates"][0][0][0] = -999
+        feature["geometry"]["coordinates"][0][-1][0] = -999
+    elif variant == "latitude":
+        feature["geometry"]["coordinates"][0][0][1] = 999
+        feature["geometry"]["coordinates"][0][-1][1] = 999
+    elif variant == "extra_ordinate":
+        feature["geometry"]["coordinates"][0][0].append(42)
+        feature["geometry"]["coordinates"][0][-1].append(42)
+    payload = json.dumps(document).encode()
+    requests = []
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def iter_content(self, chunk_size):
+            yield payload
+
+        def close(self):
+            pass
+
+    def fake_get(*args, **kwargs):
+        requests.append(args)
+        return Response()
+
+    monkeypatch.setattr(http_client.requests, "get", fake_get)
+    archive = tmp_path / "archive"
+    manifest = tmp_path / "manifest.json"
+    code = main(
+        [
+            "--sources-path",
+            str(path),
+            "--local-root",
+            str(archive),
+            "--manifest-path",
+            str(manifest),
+            "fetch",
+            "--source",
+            source_id,
+        ]
+    )
+    assert len(requests) == 1, "must reach mocked transport"
+    output = capsys.readouterr()
+    record = load_manifest(manifest)[0]
+    if reason is None:
+        assert code == 0
+        assert record["status"] == "ok"
+        assert record["sha256"] == hashlib.sha256(payload).hexdigest()
+        assert (tmp_path / record["archived_path"]).read_bytes() == payload
+    else:
+        assert code == 1
+        assert reason in output.err
+        if reason == "invalid_feature_list":
+            assert "rejected_payloads=1" in output.err
+            assert "count=0" not in output.err
+        elif reason == "feature_count":
+            assert f"count={len(document['features'])}" in output.err
+        else:
+            assert "rejected_payloads=1" in output.err
+        assert record["status"] == "error"
+        assert record["sha256"] is None and record["archived_path"] is None
+        assert not list(archive.rglob("*.geojson"))
+
+
+@pytest.mark.parametrize("declared_length", [None, "1"])
+def test_fetch_cli_rejects_oversize_stream_before_archive(
+    tmp_path, monkeypatch, capsys, declared_length
+):
+    """An untrusted streamed response must be bounded through the public fetch CLI."""
+    import etl.http_client as http_client
+
+    source_id = "geography/synthetic-ign-province"
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        yaml.safe_dump(
+            {
+                "geography": [
+                    {
+                        "id": source_id,
+                        "source": "IGN synthetic fixture",
+                        "source_url": "https://example.test/province.geojson",
+                        "mime": "application/geo+json",
+                        "notes": "Synthetic geography only",
+                        "filename": "province.geojson",
+                        "reference_kind": "province_geometry",
+                        "max_response_bytes": 8,
+                    }
+                ]
+            }
+        )
+    )
+    state = {"requests": 0, "closed": False, "content_read": False}
+
+    class Response:
+        status_code = 200
+        headers = {} if declared_length is None else {"Content-Length": declared_length}
+
+        def iter_content(self, chunk_size):
+            yield b"123456789"
+
+        @property
+        def content(self):
+            state["content_read"] = True
+            raise AssertionError("unbounded response.content access")
+
+        def close(self):
+            state["closed"] = True
+
+    def fake_get(*args, **kwargs):
+        state["requests"] += 1
+        return Response()
+
+    monkeypatch.setattr(http_client.requests, "get", fake_get)
+    archive = tmp_path / "archive"
+    manifest = tmp_path / "manifest.json"
+    code = main(
+        [
+            "--sources-path",
+            str(sources_path),
+            "--local-root",
+            str(archive),
+            "--manifest-path",
+            str(manifest),
+            "fetch",
+            "--source",
+            source_id,
+        ]
+    )
+    assert state["requests"] == 1, "test must reach CLI transport"
+    assert code == 1
+    assert state["closed"] is True
+    assert state["content_read"] is False
+    assert "response_too_large" in capsys.readouterr().err
+    assert not list(archive.rglob("*")) if archive.exists() else True
+    assert load_manifest(manifest)[0]["status"] == "error"
+    assert "response_too_large" in load_manifest(manifest)[0]["notes"]
+
+
+@pytest.mark.parametrize("declared_length", [None, "1"])
+def test_fetch_cli_ign_under_cap(tmp_path, monkeypatch, declared_length, capsys):
+    import etl.http_client as http_client
+
+    source_id = "geography/synthetic-ign-province"
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "geography": [
+                    {
+                        "id": source_id,
+                        "source": "IGN fixture",
+                        "source_url": "https://example.test/geojson",
+                        "mime": "application/json",
+                        "notes": "synthetic",
+                        "filename": "province.geojson",
+                        "reference_kind": "province_geometry",
+                        "max_response_bytes": 10000,
+                    }
+                ]
+            }
+        )
+    )
+    payload = json.dumps(
+        {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "provincia.68",
+                    "properties": {"in1": "06"},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-62, -39], [-61, -39], [-61, -38], [-62, -39]]],
+                    },
+                }
+            ],
+        }
+    ).encode()
+    state = {"closed": False}
+
+    class Response:
+        status_code = 200
+        headers = {} if declared_length is None else {"Content-Length": declared_length}
+
+        def iter_content(self, chunk_size):
+            yield payload[: len(payload) // 2]
+            yield payload[len(payload) // 2 :]
+
+        @property
+        def content(self):
+            raise AssertionError("stream must not read response.content")
+
+        def close(self):
+            state["closed"] = True
+
+    monkeypatch.setattr(http_client.requests, "get", lambda *a, **kw: Response())
+    root = tmp_path / "archive"
+    manifest = tmp_path / "manifest.json"
+    assert (
+        main(
+            [
+                "--sources-path",
+                str(path),
+                "--local-root",
+                str(root),
+                "--manifest-path",
+                str(manifest),
+                "fetch",
+                "--source",
+                source_id,
+            ]
+        )
+        == 0
+    )
+    assert state["closed"]
+    record = load_manifest(manifest)[0]
+    assert record["status"] == "ok"
+    assert record["bytes"] == len(payload)
+    assert record["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert (tmp_path / record["archived_path"]).read_bytes() == payload
+
+
+def test_fetch_cli_revalidates_identical_existing_province(tmp_path, monkeypatch, capsys):
+    import etl.http_client as http_client
+
+    source = "geography/synthetic-province"
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "geography": [
+                    {
+                        "id": source,
+                        "source": "fixture",
+                        "source_url": "https://example.test/province",
+                        "mime": "application/geo+json",
+                        "notes": "synthetic",
+                        "filename": "province.geojson",
+                        "reference_kind": "province_geometry",
+                        "max_response_bytes": 10000,
+                    }
+                ]
+            }
+        )
+    )
+    payload = json.dumps(
+        {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "provincia.68",
+                    "properties": {"in1": "06"},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-62, -39], [-61, -39], [-61, -38], [-62, -39]]],
+                    },
+                }
+            ],
+        }
+    ).encode()
+    requests = []
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def iter_content(self, chunk_size):
+            yield payload
+
+        def close(self):
+            pass
+
+    def fake_get(*args, **kwargs):
+        requests.append(args)
+        return Response()
+
+    monkeypatch.setattr(http_client.requests, "get", fake_get)
+    root = tmp_path / "archive"
+    manifest = tmp_path / "manifest.json"
+    args = [
+        "--sources-path",
+        str(path),
+        "--local-root",
+        str(root),
+        "--manifest-path",
+        str(manifest),
+        "fetch",
+        "--source",
+        source,
+    ]
+    assert main(args) == 0
+    first = load_manifest(manifest)[0]
+    second_code = main(args)
+    assert len(requests) == 2, "both invocations must reach mocked transport"
+    assert second_code == 0, capsys.readouterr().err
+    second = load_manifest(manifest)[0]
+    assert second["status"] == "ok"
+    assert (second["sha256"], second["archived_path"]) == (first["sha256"], first["archived_path"])
+    assert load_fetch_events(manifest)[-1]["classification"] != "fetch_error"
+    assert len(list(root.rglob("*.geojson"))) == 1
+
+
+def test_fetch_source_reused_transport_does_not_cap_ordinary_source(tmp_path, monkeypatch):
+    import etl.http_client as http_client
+    from etl.http_client import RequestsFetcher
+
+    province = "geography/synthetic-province"
+    ordinary = "geography/synthetic-ordinary"
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "geography": [
+                    {
+                        "id": province,
+                        "source": "fixture",
+                        "source_url": "https://example.test/province",
+                        "mime": "application/json",
+                        "notes": "synthetic",
+                        "filename": "province.json",
+                        "reference_kind": "province_geometry",
+                        "max_response_bytes": 10000,
+                    },
+                    {
+                        "id": ordinary,
+                        "source": "fixture",
+                        "source_url": "https://example.test/ordinary",
+                        "mime": "application/json",
+                        "notes": "synthetic",
+                        "filename": "ordinary.json",
+                        "reference_kind": "section_geometry",
+                    },
+                ]
+            }
+        )
+    )
+    payload = json.dumps(
+        {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "provincia.68",
+                    "properties": {"in1": "06"},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-62, -39], [-61, -39], [-61, -38], [-62, -39]]],
+                    },
+                }
+            ],
+        }
+    ).encode()
+    calls = []
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, url):
+            self.url = url
+
+        def iter_content(self, chunk_size):
+            assert self.url.endswith("/province")
+            yield payload
+
+        @property
+        def content(self):
+            assert self.url.endswith("/ordinary")
+            return b"ordinary-data-exceeds-eight"
+
+        def close(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs.get("stream", False)))
+        return Response(url)
+
+    monkeypatch.setattr(http_client.requests, "get", fake_get)
+    sources = load_sources(path)
+    transport = RequestsFetcher()
+    first = fetch_source(
+        province,
+        sources=sources,
+        fetcher=transport,
+        local_root=tmp_path / "archive",
+        manifest_path=tmp_path / "manifest.json",
+    )
+    second = fetch_source(
+        ordinary,
+        sources=sources,
+        fetcher=transport,
+        local_root=tmp_path / "archive",
+        manifest_path=tmp_path / "manifest.json",
+    )
+    assert first.record["status"] == second.record["status"] == "ok"
+    assert second.record["bytes"] == len(b"ordinary-data-exceeds-eight")
+    assert calls == [
+        ("https://example.test/province", True),
+        ("https://example.test/ordinary", False),
+    ]
+
+
+def test_fetch_cli_rejects_capped_redirect_without_artifact(tmp_path, monkeypatch, capsys):
+    import etl.http_client as http_client
+
+    source_id = "geography/synthetic-province"
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "geography": [
+                    {
+                        "id": source_id,
+                        "source": "fixture",
+                        "source_url": "https://example.test/province",
+                        "mime": "application/json",
+                        "notes": "synthetic",
+                        "filename": "province.json",
+                        "reference_kind": "province_geometry",
+                        "max_response_bytes": 8,
+                    }
+                ]
+            }
+        )
+    )
+    state = {"calls": 0, "closed": False}
+
+    class Response:
+        status_code = 302
+        headers = {"Location": "https://example.test/other"}
+
+        def iter_content(self, chunk_size):
+            yield b"redirect"
+
+        @property
+        def content(self):
+            raise AssertionError("redirect must not materialize")
+
+        def close(self):
+            state["closed"] = True
+
+    def fake_get(*args, **kwargs):
+        state["calls"] += 1
+        assert kwargs["allow_redirects"] is False
+        return Response()
+
+    monkeypatch.setattr(http_client.requests, "get", fake_get)
+    root = tmp_path / "archive"
+    manifest = tmp_path / "manifest.json"
+    code = main(
+        [
+            "--sources-path",
+            str(path),
+            "--local-root",
+            str(root),
+            "--manifest-path",
+            str(manifest),
+            "fetch",
+            "--source",
+            source_id,
+        ]
+    )
+    assert state["calls"] == 1
+    assert code == 1
+    assert state["closed"]
+    assert "redirect" in capsys.readouterr().err
+    record = load_manifest(manifest)[0]
+    assert record["status"] == "error"
+    assert record["archived_path"] is None
+    assert not list(root.rglob("*")) if root.exists() else True
+
+
 def test_registered_electoral_sources_declare_an_explicit_election() -> None:
     from etl.__main__ import load_sources
 
@@ -8651,7 +9202,10 @@ def test_registered_electoral_sources_declare_an_explicit_election() -> None:
                     "partido_geometry",
                     "circuit_geometry",
                     "section_geometry",
+                    "province_geometry",
                 }
+                if entry["reference_kind"] == "province_geometry":
+                    assert entry["max_response_bytes"] == 15000000
                 assert "election_year" not in entry
                 assert "election_round" not in entry
                 continue

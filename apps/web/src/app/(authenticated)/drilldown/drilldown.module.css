@@ -1,4 +1,15 @@
-.root, .layout, .filters, .context, .results, .evidence, .state { min-width: 0; }
+.root, .layout, .filters, .context, .results, .evidence, .state, .province { min-width: 0; }
+.province { display: grid; gap: 1rem; padding: 1.25rem; border: 1px solid var(--border); border-radius: 0.375rem; background: var(--surface); }
+.provinceCopy { display: grid; gap: 0.75rem; max-width: 72ch; }
+.provinceCopy h2, .provinceCopy p, .provinceMap p { margin: 0; }
+.provinceCopy h2 { font-size: 1.25rem; line-height: 1.3; }
+.provinceCopy p { font-size: 0.875rem; line-height: 1.5; }
+.provinceCopy .attribution { color: var(--muted-ink); font-size: 0.75rem; }
+.provinceMap { display: grid; justify-items: start; gap: 0.5rem; min-width: 0; }
+.provinceMap button { min-height: 2.75rem; cursor: pointer; }
+.provinceMap :is(button, a):focus-visible, .provinceCopy a:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+.provinceCanvas { width: 100%; height: min(55vw, 26rem); min-height: 16rem; }
+.provinceInactive { display: none; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
 .header { display: grid; gap: 0.5rem; margin-block: 0 0.5rem; }
 .header h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
@@ -70,7 +81,7 @@
   .selectorGroup:last-child { grid-column: auto; }
 }
 @media (max-width: 47.999rem) {
-  .filters, .results, .evidence { padding: 1rem; }
+  .filters, .results, .evidence, .province { padding: 1rem; }
   .layout { gap: 1rem; }
   .axis, .barRow { grid-template-columns: minmax(0, 1fr) 5rem; column-gap: 0.75rem; }
   .axis > span { display: none; }

@@ -87,6 +87,20 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("offers a geographic Buenos Aires anchor and a safe Coronel Rosales selection path without provincial results", async () => {
+    const markup = await render({});
+    expect(markup).toContain("Buenos Aires: referencia geográfica");
+    expect(markup).toContain("FUENTE: Instituto Geográfico Nacional de la República Argentina");
+    expect(markup).toContain("No hay resultados electorales provinciales disponibles en este mapa.");
+    expect(markup).toContain("Coronel Rosales");
+    expect(markup).toContain("distrito nacional 02");
+    expect(markup).toContain("sección 027");
+    expect(markup).toContain('href="#explorer-election"');
+    expect(markup).not.toContain("135 partidos");
+    expect(markup).not.toContain("level=distrito");
+    expect(mocks.bundle).not.toHaveBeenCalled();
+  });
+
   it("loads and renders a complete exact-section selection through the authorized evidence module", async () => {
     const markup = await render();
 
@@ -111,7 +125,7 @@ describe("DrilldownPage authorized official evidence", () => {
       "SHA-256",
     ]) expect(markup).toContain(text);
     expect(markup).not.toContain("https://");
-    expect(markup).not.toContain("href=");
+    expect(markup).not.toContain('href="/drilldown?');
   });
 
   it("renders the complete normalized submitted mesa identity beside exact authorized evidence", async () => {
@@ -322,7 +336,7 @@ describe("DrilldownPage authorized official evidence", () => {
       expect(markup).toContain(text);
     for (const forbidden of ["https://", "http://", "transport.invalid", "external.invalid", "returnTo", "987654", "LEAK_ARCHIVE", "b".repeat(64), "SHA-256", 'aria-label="procedencia"', "LLA", "votos a nivel"])
       expect(markup).not.toContain(forbidden);
-    const links = [...markup.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)];
+    const links = [...markup.matchAll(/<a\b[^>]*href="(\/drilldown\?[^"]*)"[^>]*>(.*?)<\/a>/g)];
     expect(links).toHaveLength(1);
     expect(links[0]?.[2]).toBe("Reintentar carga");
     expect(links[0]?.[1]?.replaceAll("&amp;", "&")).toBe(
@@ -415,7 +429,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("Resultados y evidencia");
     expect(markup).not.toContain("Evidencia y archivo");
     expect(markup).not.toContain("Reintentar carga");
-    expect(markup).not.toContain("href=");
+    expect(markup).not.toContain('href="/drilldown?');
     expect(markup).not.toContain("300 votos a nivel seccion");
     expect(markup).not.toContain("Distribución del voto oficial");
   });

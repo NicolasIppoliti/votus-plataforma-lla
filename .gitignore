@@ -49,6 +49,7 @@ coverage/
 !/archive/geography/arba-coronel-rosales-partido.b502009185a5d6b1666312d2d91aa9b79053b2ee8a06f0aa683029b925c3ed13.geojson
 !/archive/geography/cne-pba-circuits.215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71.geojson
 !/archive/geography/cne-pba-sections.964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673.geojson
+!/archive/geography/ign-buenos-aires-province.314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723.geojson
 
 # Archive fetch coordination lock (generated locally).
 /archive-manifest.json.lock
