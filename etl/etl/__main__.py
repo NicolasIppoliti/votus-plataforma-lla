@@ -271,7 +271,7 @@ def load_sources(path: Path = DEFAULT_SOURCES_PATH) -> dict[str, list[dict]]:
                         f"sources.yaml capability {capability!r} entry {index} upload "
                         "must be exactly 'never'"
                     )
-            if entry.get("reference_kind") == "province_geometry":
+            if entry.get("reference_kind") in ("province_geometry", "country_geometry"):
                 if (
                     capability != "geography"
                     or not isinstance(entry.get("max_response_bytes"), int)
@@ -346,7 +346,9 @@ def fetch_source(
     # A fiscalización entry that loses its `upload: never` declaration now fails
     # here, before its bytes exist on disk.
     guard_local_mirror_only(entry)
-    if entry.get("reference_kind") == "province_geometry" and isinstance(fetcher, RequestsFetcher):
+    if entry.get("reference_kind") in ("province_geometry", "country_geometry") and isinstance(
+        fetcher, RequestsFetcher
+    ):
         fetcher = replace(fetcher, max_response_bytes=entry["max_response_bytes"])
     event_id = str(uuid.uuid4()) if invocation_id is None else invocation_id
     if not isinstance(event_id, str) or not event_id.strip():
@@ -524,6 +526,30 @@ def fetch_source(
             record.update(status="error", notes=f"province_validation: {reason}{count_suffix}")
             for field in ("sha256", "archived_path", "bytes"):
                 record[field] = None
+    if record.get("status") == "ok" and entry.get("reference_kind") == "country_geometry":
+        from .country_geometry import inspect_country
+
+        payload = next(iter(staged_artifacts.values())) if len(staged_artifacts) == 1 else None
+        if payload is None and not staged_artifacts:
+            archived_path = record.get("archived_path")
+            if isinstance(archived_path, str):
+                target = local_store.path_for(entry["capability"], Path(archived_path).name)
+                if (
+                    archived_path == f"{local_store.root.name}/{entry['capability']}/{target.name}"
+                    and target.is_file()
+                ):
+                    payload = target.read_bytes()
+                    if sha256_of(payload) != record.get("sha256"):
+                        raise ArchiveIntegrityError("existing country archive digest changed")
+        try:
+            if payload is None:
+                raise ValueError("missing_verified_geometry")
+            inspect_country(payload)
+        except ValueError as exc:
+            staged_artifacts.clear()
+            record.update(status="error", notes=f"country_validation: {exc}")
+            for field in ("sha256", "archived_path", "bytes"):
+                record[field] = None
     if identity is not None:
         record.update(identity.manifest_fields())
     with manifest_lock(manifest_path):
@@ -648,6 +674,44 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print(f"  {kind} ({severity}): {count} review item(s)", file=sys.stderr)
 
     print(f"archived {args.source} -> {result.record['archived_path']}")
+    return 0
+
+
+def cmd_validate_country_geometry(args: argparse.Namespace) -> int:
+    from .country_geometry import inspect_country
+
+    entry = find_source_entry(load_sources(Path(args.sources_path)), args.source)
+    if entry is None:
+        raise UnknownSourceError(f"no registered source with id {args.source!r}")
+    if entry["capability"] != "geography" or entry.get("reference_kind") != "country_geometry":
+        raise ValueError("unsupported_country_source")
+    record = latest_ok_record(load_manifest(Path(args.manifest_path)), args.source)
+    if record is None:
+        raise ValueError("missing_snapshot")
+    if any(
+        field in record and record[field] != entry[field]
+        for field in ("id", "capability", "source", "source_url")
+    ):
+        raise ValueError("source_identity_mismatch")
+    local_store = LocalArchiveStore(root=Path(args.local_root))
+    filename = archived_filename(record, source_id=args.source)
+    expected_path = f"{local_store.root.name}/geography/{filename}"
+    if record["archived_path"] != expected_path:
+        raise ValueError("archived_path_mismatch")
+    payload = read_archived_source(
+        entry,
+        manifest_record=record,
+        capability="geography",
+        local_store=local_store,
+        filename=filename,
+    )
+    result = inspect_country(payload)
+    result["snapshot"] = {
+        "source": args.source,
+        "sha256": record["sha256"],
+        "archived_path": record["archived_path"],
+    }
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 
@@ -3458,6 +3522,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-root", default=str(DEFAULT_LOCAL_ROOT))
     parser.add_argument("--manifest-path", default=str(DEFAULT_MANIFEST_PATH))
     subparsers = parser.add_subparsers(dest="command", required=True)
+    country = subparsers.add_parser("validate-country-geometry")
+    country.add_argument("--source", required=True)
+    country.set_defaults(func=cmd_validate_country_geometry)
     geometry = subparsers.add_parser("validate-partido-geometry")
     geometry.add_argument("--source", required=True)
     geometry.set_defaults(func=cmd_validate_partido_geometry)

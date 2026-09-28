@@ -50,6 +50,7 @@ coverage/
 !/archive/geography/cne-pba-circuits.215b9d53504b385db35825a1dead0af6c87494dbef541f0ab8acf61996852e71.geojson
 !/archive/geography/cne-pba-sections.964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673.geojson
 !/archive/geography/ign-buenos-aires-province.314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723.geojson
+!/archive/geography/ign-argentina-country.ae076881944abd36b79b0a68d14912ca475af95a2c2a9211910ffab81f6ca1e6.geojson
 
 # Archive fetch coordination lock (generated locally).
 /archive-manifest.json.lock

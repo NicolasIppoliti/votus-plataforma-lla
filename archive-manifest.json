@@ -195,6 +195,19 @@
       "fetched_at": "2026-09-28T04:26:37Z",
       "status": "ok",
       "notes": "IGN CapasSIG WFS ign:provincia; geographic reference only (2019 metadata), not election-effective. Attribute Instituto Geográfico Nacional (IGN); verify reuse/redistribution terms before publication. Selected in1=06, provincia.68; preliminary full response 10,282,974 bytes."
+    },
+    {
+      "id": "geography/ign-argentina-country",
+      "capability": "geography",
+      "source": "wms.ign.gob.ar",
+      "source_url": "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Apais&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2",
+      "archived_path": "archive/geography/ign-argentina-country.ae076881944abd36b79b0a68d14912ca475af95a2c2a9211910ffab81f6ca1e6.geojson",
+      "sha256": "ae076881944abd36b79b0a68d14912ca475af95a2c2a9211910ffab81f6ca1e6",
+      "mime": "application/json",
+      "bytes": 113130004,
+      "fetched_at": "2026-09-28T21:26:14Z",
+      "status": "ok",
+      "notes": "IGN CapasSIG WFS ign:pais, geographic reference only; metadata https://www.ign.gob.ar/capas-sig/metadata/pais.pdf dated 2019-09-09 does not establish historical boundary validity. Attribute Instituto Geográfico Nacional de la República Argentina with original source and date, without implying endorsement; terms https://www.ign.gob.ar/descargas/tyc1.html. No election coverage claim."
     }
   ],
   "fetch_events": [
@@ -280,6 +293,27 @@
         "fetched_at": "2026-09-28T04:26:37Z",
         "status": "ok",
         "notes": "IGN CapasSIG WFS ign:provincia; geographic reference only (2019 metadata), not election-effective. Attribute Instituto Geográfico Nacional (IGN); verify reuse/redistribution terms before publication. Selected in1=06, provincia.68; preliminary full response 10,282,974 bytes."
+      }
+    },
+    {
+      "event_id": "c66ceb5c-93b1-43a7-9d30-524df2dc06f0",
+      "sequence": 5,
+      "source_id": "geography/ign-argentina-country",
+      "fetched_at": "2026-09-28T21:26:14Z",
+      "status": "ok",
+      "classification": "initial",
+      "record": {
+        "id": "geography/ign-argentina-country",
+        "capability": "geography",
+        "source": "wms.ign.gob.ar",
+        "source_url": "https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Apais&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2",
+        "archived_path": "archive/geography/ign-argentina-country.ae076881944abd36b79b0a68d14912ca475af95a2c2a9211910ffab81f6ca1e6.geojson",
+        "sha256": "ae076881944abd36b79b0a68d14912ca475af95a2c2a9211910ffab81f6ca1e6",
+        "mime": "application/json",
+        "bytes": 113130004,
+        "fetched_at": "2026-09-28T21:26:14Z",
+        "status": "ok",
+        "notes": "IGN CapasSIG WFS ign:pais, geographic reference only; metadata https://www.ign.gob.ar/capas-sig/metadata/pais.pdf dated 2019-09-09 does not establish historical boundary validity. Attribute Instituto Geográfico Nacional de la República Argentina with original source and date, without implying endorsement; terms https://www.ign.gob.ar/descargas/tyc1.html. No election coverage claim."
       }
     }
   ]

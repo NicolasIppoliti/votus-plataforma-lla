@@ -112,6 +112,27 @@ full ETL verification, then attempts guarded cleanup (retaining recovery
 evidence if ownership is uncertain). A passing plan is not a passing ETL run.
 `test:e2e:gate --plan` is not a supported substitute.
 
+### IGN country reference (Slice 5, Unit A)
+
+From the repository root, archive the registered IGN `ign:pais` WFS response once
+(with a 128 MiB response cap), then replay validation entirely offline:
+
+```sh
+uv --directory etl run --frozen python -m etl --sources-path "$PWD/etl/sources.yaml" --local-root "$PWD/archive" --manifest-path "$PWD/archive-manifest.json" fetch --source geography/ign-argentina-country
+uv --directory etl run --frozen python -m etl --sources-path "$PWD/etl/sources.yaml" --local-root "$PWD/archive" --manifest-path "$PWD/archive-manifest.json" validate-country-geometry --source geography/ign-argentina-country
+```
+
+The immutable original is content-addressed in `archive/geography/`; the manifest
+records its retrieval time, byte count and SHA-256. Validation checks the country
+identity, EPSG:4326 coordinates and all polygon rings, reports counts and bounds,
+and reports only the exact derived latitude correction `-90.00000001` to `-90`.
+The archived source bytes are never modified. This is a geographic reference,
+not certified election-year boundary applicability or electoral coverage. Source:
+Instituto Geográfico Nacional de la República Argentina, [IGN WFS](https://wms.ign.gob.ar/geoserver/ign/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=ign%3Apais&outputFormat=application%2Fjson&srsName=EPSG%3A4326&maxFeatures=2);
+[metadata dated 2019-09-09](https://www.ign.gob.ar/capas-sig/metadata/pais.pdf)
+(the date is not a historical validity guarantee). [IGN reuse terms](https://www.ign.gob.ar/descargas/tyc1.html)
+require original source and date attribution; no IGN endorsement is implied.
+
 ### CNE circuit reference replay (Slice 2)
 
 From the repository root, with the checksum-addressed files present under
