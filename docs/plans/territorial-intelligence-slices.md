@@ -1,17 +1,39 @@
 # Territorial Intelligence — Merge-Gated Delivery
 
-**Merge-gated planning; Slice 1 is an unmerged implementation candidate, not production map delivery.** Deliver territorial dominance and
-comparison first, then separate specialized modules. Current selector/chart/table
-workflows remain usable until replaced by verified vertical slices.
+**Reconciled to verified merged deliveries as of 2026-09-29.** Slices 0–6 delivered
+bounded capabilities, not every original expansion goal. Slice 7 is the next planning
+scope; this correction does not authorize its implementation or any Git operation.
+Existing selector/chart/table workflows remain usable.
 [Product](../../PRODUCT.md) · [Design](../../DESIGN.md) ·
 [Proposal](../proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) · [Roadmap](../roadmap.md)
+
+## Current status
+
+| Slice | Status and accepted boundary | Merged evidence |
+| --- | --- | --- |
+| 0 | Completed: product direction | [#360](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/360) |
+| 1 | Completed: research/lab feasibility and ARBA partido archive/CLI; no production map | [#362](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/362) |
+| 2 | Partial/conditional: bounded CNE reference archive/CLI delivered; additional usable child/terrain sources remain conditional | [#371](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/371) |
+| 3 | Completed: optional Coronel Rosales CNE section reference on `/municipal` | [#372](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/372) |
+| 4 | Completed: Buenos Aires anchor and verified municipal transition | [#374](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/374) |
+| 5 | Completed: bounded Argentina reference views, not full electoral coverage | [Source #378](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/378), [generator #380](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/380), [UI #382](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/382) |
+| 6 | Completed: one accepted national election pair at Coronel Rosales section depth | [#383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383) |
+| 7 | Next planned: separate operational coverage heat; reuse existing Fiscalización | — |
+| 8 | Planned: statutory scenario presentation; reuse existing calculator | — |
+| 9 | Planned: analytical question/evidence/evaluation and go/no-go | — |
+| 10 | Planned, conditional on 9: supported-granularity recommendations | — |
+
+Source availability does not block already delivered bounded scopes or Slice 7 planning.
+New usable child geography and terrain require independent source acceptance and validation.
+Original intent documents and historical task paragraphs may retain pre-merge wording;
+this status table and each delivered boundary below distinguish current delivery from intent.
 
 ## Rules for every slice
 
 - Commit, push, review in its **own PR**, and merge before starting the next slice.
   These are future delivery gates, not permission to publish this documentation now.
 - Dependencies below mean **merged**, not merely implemented. Obtain separate scope
-  authorization and write implementation specifications at each slice, not in this PR.
+  authorization and write implementation specifications at each slice, not through this documentation correction.
 - Strict TDD: real-entry-point RED before behavior exists, then GREEN and relevant
   negative cases. Record exact commands/results, affected regression checks and runtime
   reachability; helper-only tests do not qualify. Docs/research-only work records a
@@ -27,8 +49,9 @@ workflows remain usable until replaced by verified vertical slices.
 
 ## Sequential slices
 
-### 0 — Align product direction (this documentation PR)
+### 0 — Align product direction
 
+- **Delivered:** Direction merged in PR #360; no runtime delivery or geographic coverage implied.
 - **Goal/scope:** Agree map-first purpose, glossary, visual/evidence contracts and this sequence.
 - **Entry point:** README links to Product, Design, glossary, proposal, roadmap and plan.
 - **Verification:** Documentation-only TDD exception; inspect links, current/target wording,
@@ -39,6 +62,9 @@ workflows remain usable until replaced by verified vertical slices.
 
 ### 1 — Establish source, geometry and terrain feasibility
 
+- **Delivered:** PR #362 merged on 2026-09-23. Research/lab only, including immutable
+  ARBA partido geometry and real fetch/validation CLI absorbed from Slice 2. Production
+  rendering, terrain and child-source acceptance remain separate expansion work.
 - **Goal/scope:** Source/geometry/terrain matrix, bounded partido join, standalone deck.gl +
   MapLibre evaluator and lab budgets. By explicit user decision, the partido-only immutable
   ARBA WFS snapshot, registry and reachable archive/validation CLI planned for Slice 2 were
@@ -47,22 +73,32 @@ workflows remain usable until replaced by verified vertical slices.
   standalone evaluator outside Next routes. No delivered production map.
 - **Verification:** Source/document verification for research; CLI behavior-level TDD and
   evaluator command-level TDD, focused/full/type/lint and candidate/base canonical gates
-  8/8. All nine production routes remain within the ≤10% initial-JS budget: eight retained-
-  build inventories are identical; `/login` raw bytes are equal and gzip is 2 bytes smaller
-  in the candidate because one server-action/minifier chunk differs by build. Native
-  assessment unassessable; corrected whole-candidate verification and later merge pending.
+  8/8. For the Slice 1 candidate, all nine production routes were within its accepted
+  ≤10% initial-JS budget: eight retained-build inventories were identical; `/login` raw
+  bytes were equal and gzip was 2 bytes smaller because one server-action/minifier chunk
+  differed by build. This historical measurement is not a current universal budget. Native
+  assessment was unassessable historically; that is not approval. The merged research/lab
+  delivery is verified, not a pending merge or a production-map certification.
 - **Non-goals:** Production renderer, electoral ingestion, terrain, child geography,
   arbitrary nationwide coverage or invented APIs.
 - **Rollback:** Revert evaluator/package/report and new geography consumer/registry/CLI;
   retain immutable snapshot and manifest history and existing exact workflows.
 - **Dependencies/gate:** 0; minimal partido workspace is feasible within accepted lab
-  budgets, not a production guarantee. Review whole candidate before merge.
+  budgets, not a production guarantee. Future expansion retains independent merge gates.
 
 ### 2 — Archive and validate geographic reference evidence
 
-- **Goal/scope:** Remaining separately accepted terrain or child-reference source/archive/CLI
+- **Delivered:** PR #371 merged on 2026-09-25: original CNE circuits and sections,
+  checksum provenance and a real archive-reading CLI. Original circuits `0248B`/`0248C`
+  overlap: strict partition validation rejects them by default; they were not repaired.
+  Explicit checksum-pinned reference-only acceptance reports warnings and unsupported
+  spatial assignment. Historical applicability and geographic coverage remain unverified.
+  Later provincial/national scopes delivered their own reference pipelines; none establishes
+  blanket completion of all geography.
+- **Remaining conditional scope:** Remaining separately accepted terrain or child-reference source/archive/CLI
   validation, only if such sources become available. Partido-only ARBA snapshot/archive/CLI
-  was explicitly absorbed into Slice 1; no other geography/terrain archival goal is done.
+  was explicitly absorbed into Slice 1; the bounded CNE delivery above does not complete
+  remaining usable child-source or terrain goals.
 - **Entry point:** Documented maintainer CLI invoking archive read/validation, not only helpers.
 - **RED/verification:** Drive the CLI against missing/corrupt checksums, incompatible versions,
   code collisions and incomplete coverage; GREEN must report per-reason exclusions and replay.
@@ -70,11 +106,17 @@ workflows remain usable until replaced by verified vertical slices.
 - **Rollback:** New CLI/projection consumers; retain immutable entries and prior contracts.
 - **Dependencies/gate:** 1 merged, then separately accept each new source; its archive and
   validation gate must pass before that source is used. Unavailable sources do not block
-  the minimal partido-only Slice 3 after Slice 1 merges.
+  delivered municipal references or planning the next slice.
 
 ### 3 — Deliver the smallest complete municipal workspace
 
-- **Goal/scope:** Smallest reachable Coronel Rosales partido-boundary municipal workspace
+- **Delivered:** PR #372: `/municipal` uses an optional checksum-verified CNE **section**
+  reference for Coronel Rosales and authorized exact official results, with no-JS and WebGL
+  fallback. This intentionally evolved from the ARBA partido feasibility in Slice 1; it is
+  not an ARBA production renderer, circuit/mesa allocation or historical certification.
+  Later municipal/comparison gates strengthen browser evidence, not hosted authenticated
+  deployment or full physical-device certification.
+- **Original intent / future expansion:** Smallest reachable Coronel Rosales municipal workspace
   using existing authorized exact municipal results, with synchronized exact table/text
   fallback and explicit unsupported child-depth/terrain states. No electoral extrusion
   without a separately validated metric and production decision.
@@ -85,13 +127,15 @@ workflows remain usable until replaced by verified vertical slices.
 - **Non-goals:** Generic municipalities, circuits, establishments, mesas, terrain, comparison,
   provincial/national expansion or fabricated geometry.
 - **Rollback:** Municipal scene integration only; retain authorized exact-table workflow.
-- **Dependencies/gate:** 1 merged for partido-only scope; any newly accepted terrain or child
+- **Dependencies/gate:** Delivered scope follows 1 and bounded CNE reference work in 2; newly accepted terrain or child
   geometry must first clear remaining Slice 2 archive/validation work before use. A working
   end-to-end scope, not an isolated renderer. High review-load risk: keep depth narrow.
 
 ### 4 — Expand to the provincial anchor
 
-- **Goal/scope:** Buenos Aires Province workspace with only verified child territories and
+- **Delivered:** PR #374: `/drilldown` Buenos Aires anchor and verified Coronel Rosales
+  transition. It does not deliver votes for all 135 partidos.
+- **Future expansion / original goal:** Buenos Aires Province workspace with only verified child territories and
   visible coverage limits; reuse municipal navigation/evidence without assuming all partidos.
 - **Entry point:** `/drilldown` provincial scope with a reachable Coronel Rosales transition.
 - **RED/verification:** Real-route unsupported/missing units, national/PBA scheme collisions,
@@ -103,7 +147,11 @@ workflows remain usable until replaced by verified vertical slices.
 
 ### 5 — Expand to the national anchor
 
-- **Goal/scope:** Argentina workspace and supported child jurisdictions, with a verified
+- **Delivered:** PRs #378/#380/#382: optional continental MapLibre/deck view and separately
+  labelled complete-territory D3 polar SVG on `/drilldown`. Geographic coverage is not
+  electoral coverage. Source, generator, UI and bounded verification evidence are linked in
+  [UI PR #382](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/382).
+- **Future expansion / original goal:** Argentina workspace and supported child jurisdictions, with a verified
   Buenos Aires transition and explicit missing coverage; no false complete-country claim.
 - **Entry point:** `/drilldown` national scope and geographic breadcrumbs.
 - **RED/verification:** Route-driven jurisdiction identity, unsupported children, camera/scope
@@ -114,18 +162,37 @@ workflows remain usable until replaced by verified vertical slices.
 
 ### 6 — Compare territorial elections
 
-- **Goal/scope:** Paired comparable territories, synchronized cameras/scales and exact deltas,
+- **Delivered:** PR #383 merged on 2026-09-29: national `DIPUTADO NACIONAL`, 2023 generales
+  versus 2025 legislativas, Coronel Rosales `02`/`027` only. Both sides use the same current
+  CNE section reference, not historical child-territory proof. Per-election highest-vote
+  canonical party shares use a common 0–100% scale and exact included-party-vote denominators;
+  leaders may differ. Absence is not zero and missing-side deltas remain nonnumeric.
+- **Bounded verification:** [PR #383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383)
+  records one fresh ordinary focused gate: four cases, 371 SQL assertions, two rollback/reapply
+  proofs, build and cleanup passed. Camera retention/synchronization, opt-in, fallback,
+  mobile and real Tab/Enter paths are covered. Ten actual initial chunks total 556969 raw
+  bytes; direct MapLibre/Overlay/GeoJsonLayer implementations are physically outside initial
+  groups behind activation guards. This is not exhaustive transitive attribution, network
+  or execution timing, numeric reduced-motion duration or full accessibility certification.
+  No numeric Slice 6 budget was accepted; Slice 1 lab and Slice 5 ≤10% budgets do not apply
+  universally. The accepted original-camera RED exception is historical and narrowly scoped,
+  not a strict-TDD policy change.
+- **Future expansion / original goal:** Paired comparable territories, synchronized cameras/scales and exact deltas,
   preserving each election's labels, metric basis, provenance and unmatched units.
-- **Entry point:** `/compare`, using verified child-unit correspondence rather than aggregate inference.
+- **Entry point:** `/compare`, gated to the accepted section/election pair; other scopes retain
+  authorized aggregate comparison. Future child correspondence needs independent verification.
 - **RED/verification:** Real route: changed boundaries, incompatible bases, missing/left-only/right-only
   units, zero versus absence, ties and delayed-selection reversal; accessible exact paired values.
-- **Non-goals:** Fiscalización blending or unsupported fine-grained comparison.
+- **Non-goals:** Fiscalización blending, finer within-section vote allocation, generic pair
+  coverage, historical edition certification or unsupported fine-grained comparison.
 - **Rollback:** Spatial comparison only; preserve current authorized aggregate comparison.
 - **Dependencies/gate:** 5; review correspondence and common scales. High contract/UI diff risk:
   start with one supported comparison depth and split further capabilities into later merged PRs.
 
 ### 7 — Add separate Fiscalización operational heat
 
+- **Status:** Next planned spatial extension, not a missing application. Map the existing
+  functional `/fiscalizacion` route and coverage guards before separately authorizing implementation.
 - **Goal/scope:** Coverage/operational heat at supported geography, with official denominator,
   literal `isRandomSample: false` and explicit source opt-in.
 - **Entry point:** `/fiscalizacion`; never an official-results series or default query path.
@@ -137,6 +204,8 @@ workflows remain usable until replaced by verified vertical slices.
 
 ### 8 — Add statutory seat scenarios
 
+- **Status:** Planned presentation extension; reuse the existing statutory calculator, not
+  duplicate its algorithms (PBA Hare, national D'Hondt; 18 total / 9 renewed council seats).
 - **Goal/scope:** Hypothetical 3D council/seat exploration using authoritative allocation;
   conditional vote ranges with assumptions, not fabricated exact winning thresholds.
 - **Entry point:** `/simulate`, keeping accepted inputs and exact allocation trace synchronized.
@@ -149,6 +218,8 @@ workflows remain usable until replaced by verified vertical slices.
 
 ### 9 — Establish future Análisis/Prospectiva evidence foundations
 
+- **Status:** Planned; question, evidence, evaluation and go/no-go precede output. Route/model
+  approval remains pending.
 - **Goal/scope:** A bounded probabilistic analytical question with explicit assumptions,
   confidence, limitations, evidence lineage and an evaluation protocol; no accuracy promises.
 - **Entry point:** Separately approved reachable analysis module exposing evidence/uncertainty;
@@ -161,6 +232,7 @@ workflows remain usable until replaced by verified vertical slices.
 
 ### 10 — Deliver conditional municipal/intra-municipal recommendations
 
+- **Status:** Planned and conditional on Slice 9 evaluation and supported geography.
 - **Goal/scope:** Evidence-bound recommendations only at evaluated supported granularity, with
   assumptions, confidence, limitations and traceable alternatives visible to the analyst.
 - **Entry point:** The analysis module from 9, linked to supporting territorial evidence.
