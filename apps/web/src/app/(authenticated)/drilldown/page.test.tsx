@@ -87,6 +87,18 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("places a national geographic orientation before the preserved provincial and exact-selection path", async () => {
+    const markup = await render({});
+    expect(markup).toContain("Argentina: referencia geográfica");
+    expect(markup.indexOf("Argentina: referencia geográfica")).toBeLessThan(markup.indexOf("Buenos Aires: referencia geográfica"));
+    expect(markup).toContain("Vista continental americana");
+    expect(markup).toContain("Vista completa desde el polo sur");
+    const national = markup.slice(markup.indexOf('aria-labelledby="national-reference-heading"'), markup.indexOf('aria-labelledby="province-reference-heading"'));
+    expect(national.match(/<a\b[^>]*href="#province-reference-heading"[^>]*>Ir a Buenos Aires<\/a>/g)).toHaveLength(1);
+    expect(markup).toContain('href="#explorer-election"');
+    expect(mocks.bundle).not.toHaveBeenCalled();
+  });
+
   it("offers a geographic Buenos Aires anchor and a safe Coronel Rosales selection path without provincial results", async () => {
     const markup = await render({});
     expect(markup).toContain("Buenos Aires: referencia geográfica");

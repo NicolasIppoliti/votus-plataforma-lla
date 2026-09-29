@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import styles from "./drilldown.module.css";
 import { DrilldownDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
+import { NationalReferenceMap } from "./NationalReferenceMap";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
 import {
@@ -318,6 +319,15 @@ function PageShell({ facets, selected, children }: ExplorerFormProps): ReactNode
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
         <ExplorerHeader />
+        <section className={styles.province} aria-labelledby="national-reference-heading">
+          <div className={styles.provinceCopy}>
+            <h2 id="national-reference-heading">Argentina: referencia geográfica</h2>
+            <p>Vista continental americana y Vista completa desde el polo sur: escalas y proyecciones distintas. Contornos de referencia IGN, no límites electorales ni cobertura de resultados nacionales.</p>
+            <p>El mapa orienta; la selección electoral sólo cambia mediante los selectores.</p>
+            <a href="#explorer-election">Continuar con la selección exacta</a>
+          </div>
+          <NationalReferenceMap />
+        </section>
         <section className={styles.province} aria-labelledby="province-reference-heading">
           <div className={styles.provinceCopy}>
             <h2 id="province-reference-heading">Buenos Aires: referencia geográfica</h2>
