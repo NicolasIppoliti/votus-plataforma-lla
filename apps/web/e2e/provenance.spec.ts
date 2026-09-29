@@ -1,6 +1,9 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { test as nextTest } from "./review-test-fixture";
+import { zoomTest } from "./review-zoom-test-fixture";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import {
@@ -30,6 +33,289 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 // `SourceDisclaimer.tsx`, task 11.17). No page rendered without an
 // explicit unofficial opt-in may ever contain it.
 const FISCALIZACION_MARKER = "party-internal, unofficial";
+
+test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }) => {
+  await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    await page.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind, ...args) {
+        if (kind === "webgl2") return null;
+        return original.call(this, kind, ...args);
+      } as typeof original;
+    });
+    await page.goto(new URL("/drilldown", baseURL).toString());
+    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
+    await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
+    await expect(national).toContainText("WebGL no disponible");
+    await expect(national.getByRole("link", { name: "Ir a Buenos Aires" })).toHaveCount(1);
+    await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
+    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
+    await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+    await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
+  }));
+});
+
+test("national reference renders both views on desktop and mobile without changing electoral scope", async ({ page }, testInfo) => {
+  await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const rendererErrors: string[] = [];
+    page.on("pageerror", (error) => rendererErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") rendererErrors.push(message.text());
+    });
+    await page.goto(new URL("/drilldown", baseURL).toString());
+    const cdp = await page.context().newCDPSession(page);
+    const beforeHeap = await cdp.send("Runtime.getHeapUsage");
+    const started = Date.now();
+    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const continental = national.getByRole("region", { name: "Vista continental americana" });
+    const polar = national.getByRole("region", { name: "Vista completa desde el polo sur" });
+    try {
+      await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
+      await expect(continental.getByRole("status")).toContainText("Vista continental disponible");
+      await expect(national.getByText("Referencia IGN verificada. Ambas vistas son geográficas; ninguna muestra votos.")).toBeVisible();
+      const activationToReadyMs = Date.now() - started;
+      const afterHeap = await cdp.send("Runtime.getHeapUsage");
+      await writeFile(testInfo.outputPath("national-activation-observation.json"), JSON.stringify({
+        activationToReadyMs, before: { usedSize: beforeHeap.usedSize, totalSize: beforeHeap.totalSize },
+        after: { usedSize: afterHeap.usedSize, totalSize: afterHeap.totalSize },
+      }));
+    } finally { await cdp.detach(); }
+    const polarImage = polar.getByRole("img", { name: /Extensión completa de la referencia IGN/ });
+    await expect(polarImage.locator("path")).toHaveAttribute("d", /^M.{100,}/);
+    const mapCanvas = continental.locator("canvas.maplibregl-canvas");
+    await expect(mapCanvas).toBeVisible();
+    await expect.poll(() => mapCanvas.evaluate((canvas) => {
+      const element = canvas as HTMLCanvasElement;
+      return element.width > 0 && element.height > 0 && Boolean(element.getContext("webgl2"));
+    })).toBe(true);
+
+    const screenshotPaths: string[] = [];
+    const canvasCaptures: { name: string; png: Buffer; captureMs: [number, number]; regionMs: [number, number]; postRegionCanvas: unknown }[] = [];
+    for (const [name, width, height] of [["desktop", 1440, 900], ["mobile", 390, 844]] as const) {
+      const continentalPath = testInfo.outputPath(`${name}-continental.png`);
+      const polarPath = testInfo.outputPath(`${name}-polar.png`);
+      screenshotPaths.push(continentalPath, polarPath);
+      await page.setViewportSize({ width, height });
+      await expect(continental).toBeVisible();
+      await expect(polarImage).toBeVisible();
+      await expect(mapCanvas).toBeVisible();
+      const canvasStart = performance.now();
+      const png = await mapCanvas.screenshot();
+      const canvasEnd = performance.now();
+      const regionStart = performance.now();
+      await testInfo.attach(`${name}-continental`, { body: await continental.screenshot({ path: continentalPath }), contentType: "image/png" });
+      await testInfo.attach(`${name}-polar`, { body: await polar.screenshot({ path: polarPath }), contentType: "image/png" });
+      const regionEnd = performance.now();
+      await writeFile(testInfo.outputPath(`${name}-canvas.png`), png);
+      const postRegionCanvas = await mapCanvas.evaluate((element) => {
+        const canvas = element as HTMLCanvasElement;
+        const rect = canvas.getBoundingClientRect();
+        const style = getComputedStyle(canvas);
+        const root = getComputedStyle(document.documentElement);
+        return {
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          intrinsic: { width: canvas.width, height: canvas.height },
+          client: { width: canvas.clientWidth, height: canvas.clientHeight },
+          dpr: devicePixelRatio, scroll: { x: scrollX, y: scrollY },
+          canvasBackground: style.backgroundColor, rootBackground: root.backgroundColor,
+          borders: { top: parseFloat(style.borderTopWidth), right: parseFloat(style.borderRightWidth),
+            bottom: parseFloat(style.borderBottomWidth), left: parseFloat(style.borderLeftWidth) },
+        };
+      });
+      canvasCaptures.push({ name, png, captureMs: [canvasStart, canvasEnd],
+        regionMs: [regionStart, regionEnd], postRegionCanvas });
+    }
+    for (const screenshotPath of screenshotPaths) {
+      const png = await readFile(screenshotPath);
+      expect(png.subarray(0, 8).toString("hex"), `${screenshotPath} PNG signature`).toBe("89504e470d0a1a0a");
+    }
+    const diagnostics = [];
+    for (const { name, png, captureMs, regionMs, postRegionCanvas } of canvasCaptures) {
+      const pixels = await page.evaluate(async (encoded) => {
+        const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+        const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        image.close();
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+        const firstRows = Array.from({ length: Math.min(4, canvas.height) }, (_, y) => {
+          const colors = new Map<string, number>();
+          for (let x = 4; x < canvas.width - 4; x++) {
+            const index = (y * canvas.width + x) * 4;
+            const rgba = [...data.slice(index, index + 4)].join(",");
+            colors.set(rgba, (colors.get(rgba) ?? 0) + 1);
+          }
+          return { y, uniqueColors: colors.size, dominant: [...colors.entries()]
+            .sort((a, b) => b[1] - a[1]).slice(0, 4).map(([rgba, count]) => ({ rgba, count })) };
+        });
+        const interiorIndex = (Math.floor(canvas.height / 2) * canvas.width + 4) * 4;
+        const differs = (x: number, y: number) => {
+          const index = (y * canvas.width + x) * 4;
+          // The layer paints blue geography; neutral white/gray capture strips are not land.
+          return data[index + 2]! - data[index]! > 12 && data[index + 2]! - data[index + 1]! > 3;
+        };
+        let foreground = 0;
+        let northEdge = 0;
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 4; x < canvas.width - 4; x++) {
+            if (!differs(x, y)) continue;
+            foreground++;
+            if (y < 3) northEdge++;
+          }
+        }
+        return { foreground, northEdge, width: canvas.width, height: canvas.height,
+          topLeft: [...data.slice(0, 4)], interiorSample: [...data.slice(interiorIndex, interiorIndex + 4)], firstRows };
+      }, png.toString("base64"));
+      diagnostics.push({ name, captureMs, regionMs, postRegionCanvas, pixels });
+      expect.soft(pixels.foreground, `${name}: continental canvas has visible foreground`).toBeGreaterThan(0);
+      expect.soft(pixels.northEdge, `${name}: mainland must not touch the north canvas edge after resize`).toBe(0);
+    }
+    await writeFile(testInfo.outputPath("national-canvas-diagnostics.json"), JSON.stringify(diagnostics));
+    expect(rendererErrors, "browser renderer errors").toEqual([]);
+    const election = page.getByRole("combobox", { name: "Elección", exact: true });
+    await expect(election).toHaveValue("");
+    const provinceLink = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    await provinceLink.focus();
+    await provinceLink.press("Enter");
+    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(election).toHaveValue("");
+    await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+    await expect(election).toBeFocused();
+  }));
+});
+
+test("national reference integrity failure leaves exact selectors available for retry", async ({ page }) => {
+  await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    await page.route("**/geography/argentina-reference.*.geojson", (route) => route.fulfill({ status: 200, body: "{}" }));
+    await page.goto(new URL("/drilldown", baseURL).toString());
+    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
+    await expect(national).toContainText("No se pudo verificar la referencia IGN");
+    await expect(national.getByRole("img", { name: /Extensión completa/ })).toHaveCount(0);
+    await expect(national.getByRole("button", { name: "Reintentar mapa nacional" })).toBeEnabled();
+    await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeEnabled();
+  }));
+});
+
+test("activated national reference remains accessible and navigable at 320 CSS pixels", async ({ page }, testInfo) => {
+  await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto(new URL("/drilldown", baseURL).toString());
+    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const activation = national.getByRole("button", { name: "Mostrar referencia nacional" });
+    await activation.focus();
+    await expect(activation).toBeFocused();
+    await activation.press("Enter");
+    await expect(national).toContainText("Referencia IGN verificada");
+    await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
+      .toContainText("Vista continental disponible");
+    const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    const violations = axe.violations.map(({ id, impact, nodes }) => ({
+      id, impact, targets: nodes.flatMap(({ target }) => target),
+    }));
+    await writeFile(testInfo.outputPath("national-axe-findings.json"), JSON.stringify(violations));
+    expect.soft(violations, "automated WCAG-tagged violations after activation (not a conformance claim)").toEqual([]);
+    expect.soft(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+      "320px document must not overflow horizontally").toBe(true);
+    const targetBoxes = [];
+    for (const label of ["Ir a Buenos Aires", "Volver a Argentina", "Ir a la selección electoral exacta"]) {
+      const link = national.getByRole("link", { name: label });
+      const box = await link.boundingBox();
+      targetBoxes.push({ label, width: box?.width ?? 0, height: box?.height ?? 0 });
+      expect.soft(box?.width, `${label} touch width`).toBeGreaterThanOrEqual(44);
+      expect.soft(box?.height, `${label} touch height`).toBeGreaterThanOrEqual(44);
+    }
+    await writeFile(testInfo.outputPath("national-320-layout.json"), JSON.stringify({
+      viewport: await page.evaluate(() => ({ inner: innerWidth, client: document.documentElement.clientWidth,
+        scroll: document.documentElement.scrollWidth })), targets: targetBoxes,
+    }));
+    const province = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    await province.focus();
+    await expect(province).toBeFocused();
+    const focus = await province.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { outline: style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0,
+        shadow: style.boxShadow !== "none" };
+    });
+    expect(focus.outline || focus.shadow, "focused navigation has visible outline or ring").toBe(true);
+    await province.press("Enter");
+    await expect(page).toHaveURL(/#province-reference-heading$/);
+  }));
+});
+
+test.describe("national reference touch", () => {
+  test.use({ hasTouch: true });
+  test("touch activation loads both geographic views", async ({ page }) => {
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(new URL("/drilldown", baseURL).toString());
+      const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+      await national.getByRole("button", { name: "Mostrar referencia nacional" }).tap();
+      await expect(national).toContainText("Referencia IGN verificada");
+      await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
+        .toContainText("Vista continental disponible");
+      await national.getByRole("link", { name: "Ir a Buenos Aires" }).tap();
+      await expect(page).toHaveURL(/#province-reference-heading$/);
+    }));
+  });
+});
+
+zoomTest.describe("national reference at native 200% zoom", () => {
+  zoomTest.use({ zoomWindowWidth: 640 });
+  zoomTest("keeps the verified views and exact navigation usable", async ({ page, next, zoom }, testInfo) => {
+    const origin = new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin;
+    next.onFetch((request) => new URL(request.url).origin === origin
+      ? fetch(request, { redirect: "error" }) : "abort");
+    try {
+      await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+      await page.goto(new URL("/drilldown", baseURL).toString());
+      const dimensions = () => page.evaluate(() => ({ inner: innerWidth,
+        client: document.documentElement.clientWidth, outer: outerWidth }));
+      const factorBefore = await zoom.set(1);
+      expect(factorBefore).toBe(1);
+      const before = await dimensions();
+      expect(before.outer).toBe(640);
+      expect(Math.abs(before.inner - 640)).toBeLessThanOrEqual(2);
+      const factorAfter = await zoom.set(2);
+      expect(factorAfter).toBe(2);
+      await expect.poll(async () => Math.abs((await dimensions()).inner - before.inner / 2)).toBeLessThanOrEqual(2);
+      const after = await dimensions();
+      await writeFile(testInfo.outputPath("national-native-zoom.json"), JSON.stringify({
+        factorBefore, factorAfter, before, after,
+      }));
+      expect(Math.abs(after.client - before.client / 2)).toBeLessThanOrEqual(20);
+      expect(after.outer).toBe(before.outer);
+      expect(Math.abs(after.inner - 320)).toBeLessThanOrEqual(2);
+      const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+      await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
+      await expect(national).toContainText("Referencia IGN verificada");
+      await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
+        .toContainText("Vista continental disponible");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
+      await expect(page).toHaveURL(/#province-reference-heading$/);
+      }));
+    } catch (error) {
+      try {
+        const trigger = page.getByRole("button", { name: "Abrir navegación" });
+        const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+        await writeFile(testInfo.outputPath("national-native-failure.json"), JSON.stringify({
+          pathname: new URL(page.url()).pathname, errorName: error instanceof Error ? error.name : "unknown",
+          mobileTriggerVisible: await trigger.isVisible(),
+          drawerVisible: await page.getByRole("dialog", { name: "Navegación principal" }).isVisible(),
+          organizationCount: await organization.count(), organizationVisible: await organization.isVisible(),
+        }));
+      } catch { /* Diagnostic collection must never replace the original failure. */ }
+      throw error;
+    }
+  });
+});
 
 nextTest("retries unavailable official evidence with the served canonical selection", async ({ page, next }) => {
     const bodies: unknown[] = [];
@@ -116,9 +402,19 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       if (fixtureError || typeof fixture?.organization_id !== "string") throw new Error(`failed to set up authorized official fixture: ${fixtureError?.message ?? "invalid response"}`);
       let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
       try {
-        await page.goto(new URL("/dashboard", baseURL).toString()); const selector = page.getByRole("combobox", { name: "Organización", exact: true }); await expect(selector).toBeVisible(); await selector.selectOption(fixture.organization_id);
-        const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST"); await page.getByRole("button", { name: "Cambiar organización" }).click(); const response = await switched;
-        expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } }); outcome = { value: await run() };
+        await page.goto(new URL("/dashboard", baseURL).toString());
+        const trigger = page.getByRole("button", { name: "Abrir navegación" });
+        const mobile = await trigger.isVisible();
+        if (mobile) await trigger.click();
+        const selector = page.getByRole("combobox", { name: "Organización", exact: true });
+        await expect(selector).toBeVisible();
+        await selector.selectOption(fixture.organization_id);
+        const switched = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
+        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        const response = await switched;
+        expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
+        if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+        outcome = { value: await run() };
       } catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
       if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "official assertion and fixture cleanup failed"); throw outcome.error; }
       if (cleanupError) throw new Error(`failed to clean official fixture: ${cleanupError.message}`); return outcome.value;

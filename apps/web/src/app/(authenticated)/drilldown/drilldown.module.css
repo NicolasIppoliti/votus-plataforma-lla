@@ -10,6 +10,18 @@
 .provinceMap :is(button, a):focus-visible, .provinceCopy a:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
 .provinceCanvas { width: 100%; height: min(55vw, 26rem); min-height: 16rem; }
 .provinceInactive { display: none; }
+.nationalMap { display: grid; justify-items: start; gap: 0.65rem; min-width: 0; }
+.nationalMap p { margin: 0; font-size: 0.8125rem; line-height: 1.5; }
+.nationalMap button { min-height: 2.75rem; cursor: pointer; }
+.nationalMap > a { display: inline-flex; align-items: center; min-height: 2.75rem; }
+.nationalMap :is(button, a):focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+.nationalViews { display: grid; width: 100%; gap: 1.5rem; }
+.nationalViews section { min-width: 0; display: grid; align-content: start; gap: 0.5rem; }
+.nationalViews h3 { margin: 0; font-size: 1rem; }
+.nationalCanvas { width: 100%; height: clamp(16rem, 35vw, 26rem); background: var(--surface-muted); }
+.polarMap { display: block; width: 100%; max-width: 25rem; height: auto; background: var(--surface-muted); }
+.polarMap path { fill: rgba(37, 88, 120, 0.35); stroke: #1b4560; stroke-width: 0.5; }
+@media (min-width: 48rem) { .nationalViews { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
 .header { display: grid; gap: 0.5rem; margin-block: 0 0.5rem; }
 .header h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
