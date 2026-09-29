@@ -2,7 +2,8 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { FacetOption } from "@/lib/results/exploration";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn(), replace: vi.fn() }));
+const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn(), geometry: vi.fn(), replace: vi.fn() }));
+vi.mock("@/lib/workspace/municipal-section-geometry", () => ({ loadMunicipalSectionGeometry: mocks.geometry }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: mocks.replace }) }));
 vi.mock("@/lib/workspace/official-facets", () => ({ AuthorizedOfficialFacetsError: class AuthorizedOfficialFacetsError extends Error {}, OFFICIAL_FACETS_ERROR: { AUTHORIZATION_DENIED: "authorization_denied" }, createAuthorizedOfficialFacetRepository: () => ({ facets: mocks.facets }) }));
 vi.mock("@/lib/workspace/official-comparison-evidence", () => ({ OFFICIAL_COMPARISON_EVIDENCE_STATUS: { OK: "ok", EMPTY: "empty", AUTHORIZATION_DENIED: "authorization_denied", UNAVAILABLE: "unavailable", PAYLOAD_TOO_LARGE: "payload_too_large", MALFORMED: "malformed", UNMAPPED_PARTIES: "unmapped_parties" }, loadAuthorizedOfficialComparisonEvidence: mocks.evidence }));
@@ -16,8 +17,102 @@ let leftSections = [section], rightSections = [section];
 function facets(selection: Record<string, string | undefined>) { const left = selection.electionId === IDS.leftElection, right = selection.electionId === IDS.rightElection; return { elections, categories: left ? [{ id: IDS.leftCategory, name: "DIPUTADOS 2023" }] : right ? [{ id: IDS.rightCategory, name: "DIPUTADOS 2025" }] : [], distritos: selection.categoryId ? left ? leftDistricts : right ? rightDistricts : [] : [], secciones: selection.distritoCode ? left ? leftSections : right ? rightSections : [] : [], circuitos: [], establecimientos: [], mesas: [], availableLevels: selection.seccionCode ? ["distrito", "seccion"] : [], exclusions: [] }; }
 function side(year: 2023 | 2025, electionId: string, categoryId: string, votes: readonly [number, number]) { const archiveEntryId = `official/archive-${year}`, total = votes[0] + votes[1]; return { result: { status: "ok" as const, sourceKind: "official" as const, level: "seccion" as const, sourceGranularity: "mesa" as const, categoryName: `DIPUTADOS ${year}`, electionYear: year, electionRound: "generales", totalVotes: total, mesaCount: 1, parties: [{ identityStatus: "canonical" as const, canonicalPartyId: "party-a", displayName: year === 2023 ? "PARTIDO A 2023" : "PARTIDO A 2025", listId: null, votes: votes[0], voteShare: String(votes[0] / total) }, { identityStatus: "canonical" as const, canonicalPartyId: "party-b", displayName: year === 2023 ? "PARTIDO B 2023" : "PARTIDO B 2025", listId: null, votes: votes[1], voteShare: String(votes[1] / total) }], archiveEntryIds: [archiveEntryId], sourceAudit: [{ kind: "official", rows: 2, votes: total }], sourceExclusions: [{ kind: "fiscalizacion", rows: 1, votes: 999 }] }, reference: { items: [{ jurisdictionId: `${year}-section`, electionId, year, round: "generales", categoryId, categoryName: `DIPUTADOS ${year}`, distritoCode: "02", distritoName: "Buenos Aires", seccionCode: "027", seccionName: "Coronel Rosales", circuitoCode: null, circuitoName: null, establecimientoCode: null, establecimientoName: null, mesaCode: null }], sourceExclusions: [{ kind: "fiscalizacion", reason: "non_official_source" as const, rows: 1 }] }, provenance: { items: [{ archiveEntryId, capability: "national", mime: "text/csv", bytes: 120, fetchedAt: "2026-01-01T00:00:00Z", status: "ok" as const, sha256: "a".repeat(64) }], sourceExclusions: [{ kind: "fiscalizacion", rows: 1, votes: 999 }] } }; }
 function evidence() { return { status: "ok" as const, left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]), right: side(2025, IDS.rightElection, IDS.rightCategory, [55, 45]) }; }
-beforeEach(() => { leftDistricts = [district]; rightDistricts = [district]; leftSections = [section]; rightSections = [section]; mocks.facets.mockReset().mockImplementation(facets); mocks.evidence.mockReset().mockResolvedValue(evidence()); }); afterEach(() => vi.clearAllMocks());
+beforeEach(() => { leftDistricts = [district]; rightDistricts = [district]; leftSections = [section]; rightSections = [section]; mocks.facets.mockReset().mockImplementation(facets); mocks.evidence.mockReset().mockResolvedValue(evidence()); mocks.geometry.mockReset().mockResolvedValue({ status: "ok", name: "Cnel. de Marina L.Rosales", sha256: "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673", fetchedAt: "2026-09-24T03:29:24Z", geometry: { type: "MultiPolygon", coordinates: [[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]] } }); }); afterEach(() => vi.clearAllMocks());
 async function render(params: Record<string, string | string[] | undefined>): Promise<string> { return renderToStaticMarkup((await ComparePage({ searchParams: Promise.resolve(params) })) as ReactElement); }
+function supportedSpatialEvidence() {
+  const original = mocks.facets.getMockImplementation()!;
+  mocks.facets.mockImplementation(async (selection: Record<string, string | undefined>) => {
+    const result = await original(selection);
+    return { ...result, elections: result.elections.map((election: { id: string; round: string; label: string }) => election.id === IDS.rightElection ? { ...election, round: "legislativas", label: "2025 legislativas" } : election), categories: result.categories.map((category: { id: string; name: string }) => ({ ...category, name: "DIPUTADO NACIONAL" })) };
+  });
+  const value = evidence();
+  value.left.result.categoryName = "DIPUTADO NACIONAL";
+  value.right.result.categoryName = "DIPUTADO NACIONAL";
+  value.right.result.electionRound = "legislativas";
+  value.left.reference.items[0]!.categoryName = "DIPUTADO NACIONAL";
+  value.right.reference.items[0]!.categoryName = "DIPUTADO NACIONAL";
+  value.right.reference.items[0]!.round = "legislativas";
+  mocks.evidence.mockResolvedValue(value);
+  return value;
+}
+
+it("shows paired current-reference geography for the exact authorized national deputy elections", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup).toContain("Comparación territorial de referencia");
+  expect(markup).toContain("2023 generales");
+  expect(markup).toContain("2025 legislativas");
+  expect(markup).toContain("2026-09-24");
+  expect(markup).toContain("Escala común 0–100 % de votos partidarios");
+  expect(markup).toContain("Lado A — 2023 generales");
+  expect(markup).toContain("Lado B — 2025 legislativas");
+  expect(markup).toContain("Mayor participación en la sección: PARTIDO A 2023 — 60,00 % (60 votos de 100 votos partidarios incluidos)");
+  expect(markup).toContain("Mayor participación en la sección: PARTIDO A 2025 — 55,00 % (55 votos de 100 votos partidarios incluidos)");
+  expect(markup.match(/Mostrar mapa interactivo/g)).toHaveLength(2);
+  expect(markup).toContain("no certifica límites históricos");
+  expect(markup).toContain("Resultados exactos");
+  expect(mocks.geometry).toHaveBeenCalledOnce();
+});
+
+it("shows different election leaders on one fixed share legend through the authorized route", async () => {
+  const value = supportedSpatialEvidence();
+  value.right.result.parties[0]!.votes = 25;
+  value.right.result.parties[1]!.votes = 75;
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  expect(markup).toContain("PARTIDO A 2023 — 60,00 % (60 votos de 100 votos partidarios incluidos)");
+  expect(markup).toContain("PARTIDO B 2025 — 75,00 % (75 votos de 100 votos partidarios incluidos)");
+  expect(markup).toContain("Mayor participación del partido canónico por elección");
+  expect(markup).toContain("Escala de color común: 0 %");
+  expect(markup).toContain("100 %");
+});
+
+it("refuses tied official leaders at the real route before loading geometry or exposing figures", async () => {
+  const value = supportedSpatialEvidence();
+  value.left.result.parties[0]!.votes = 50;
+  value.left.result.parties[1]!.votes = 50;
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  expect(markup).toContain("La comparación canónica no superó sus controles y no se muestran cifras.");
+  expect(markup).not.toMatch(/Comparación territorial de referencia|Mapa geográfico|<table|PARTIDO A 2023|PARTIDO A 2025|official\/archive|60,00 %|55,00 %/);
+  expect(mocks.geometry).not.toHaveBeenCalled();
+});
+
+it("makes the exact-results destination keyboard-focusable for map selection", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup).toMatch(/<h2 id="compare-results-heading" tabIndex="-1">Resultados exactos<\/h2>|<h2 id="compare-results-heading" tabindex="-1">Resultados exactos<\/h2>/);
+});
+
+it("keeps exact official results when current geometry is unavailable", async () => {
+  supportedSpatialEvidence();
+  mocks.geometry.mockResolvedValue({ status: "withheld" });
+  const markup = await render(PARAMS);
+  expect(markup).toContain("Referencia geográfica no disponible");
+  expect(markup).toContain("60,00 %");
+  expect(markup).toContain("official/archive-2023");
+  expect(markup).not.toContain("Comparación territorial de referencia");
+});
+
+it("never loads spatial geometry for a mismatched reference pair", async () => {
+  const value = supportedSpatialEvidence();
+  value.right.reference.items[0]!.categoryId = IDS.leftCategory;
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  expect(markup).toContain("Resultados exactos");
+  expect(markup).not.toContain("Comparación territorial de referencia");
+  expect(mocks.geometry).not.toHaveBeenCalled();
+});
+
+it("never loads spatial geometry when one official side is denied", async () => {
+  supportedSpatialEvidence();
+  mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
+  const markup = await render(PARAMS);
+  expect(markup).not.toContain("Comparación territorial de referencia");
+  expect(markup).not.toContain("60,00 %");
+  expect(mocks.geometry).not.toHaveBeenCalled();
+});
+
 describe("authorized comparison page", () => {
   it("loads authorized facets for independent sides and one shared exact section", async () => { const markup = await render({}); for (const name of ["leftElectionId", "rightElectionId", "leftCategoryId", "rightCategoryId", "distritoCode", "seccionCode"]) expect(markup).toContain(`name="${name}"`); expect(markup).toContain('<form action="/compare" method="get">'); expect(markup).toContain("2023 generales"); expect(markup).toContain("2025 generales"); expect(markup).not.toContain("2021 generales"); expect(mocks.facets).toHaveBeenCalledTimes(1); expect(mocks.evidence).not.toHaveBeenCalled(); await render({ leftElectionId: IDS.leftElection, rightElectionId: IDS.rightElection }); expect(mocks.facets).toHaveBeenCalledWith({ electionId: IDS.leftElection }); expect(mocks.facets).toHaveBeenCalledWith({ electionId: IDS.rightElection }); });
   it("keeps a shared district code when side names differ and loads its sections", async () => { rightDistricts = [{ ...district, name: "Provincia de Buenos Aires" }]; const markup = await render({ ...PARAMS, seccionCode: undefined }); expect(markup).toContain('<option value="02" selected="">02 — nombres contradictorios</option>'); expect(markup).not.toContain("Buenos Aires"); expect(markup).not.toContain("Provincia de Buenos Aires"); expect(markup).toContain("027 — Coronel Rosales"); expect(mocks.facets).toHaveBeenCalledWith({ electionId: IDS.leftElection, categoryId: IDS.leftCategory, distritoCode: "02" }); expect(mocks.facets).toHaveBeenCalledWith({ electionId: IDS.rightElection, categoryId: IDS.rightCategory, distritoCode: "02" }); });
@@ -204,14 +299,28 @@ it.each(["authorization_denied", "payload_too_large", "malformed", "unavailable"
   expect(markup).not.toContain('viewBox="0 0 100 12"');
 });
 
-it("charts the full canonical union without inventing a vote share for an absent party", async () => {
+it("distinguishes an absent observation from a present zero-vote party across chart and exact table", async () => {
   const value = evidence();
+  value.left.result.parties[1]!.votes = 0;
+  value.left.result.totalVotes = 60;
+  value.left.result.sourceAudit[0]!.votes = 60;
   value.right.result.parties[1]!.canonicalPartyId = "party-c";
   value.right.result.parties[1]!.displayName = "PARTIDO C 2025";
   mocks.evidence.mockResolvedValue(value);
   const markup = await render(PARAMS);
-  expect(markup.match(/viewBox="0 0 100 12"/g)).toHaveLength(6);
-  expect(markup).toContain('aria-label="Lado B: PARTIDO B 2023, 0,00 %"');
-  expect(markup).toContain('aria-label="Lado A: PARTIDO C 2025, 0,00 %"');
+  expect(markup).toContain('aria-label="Lado A: PARTIDO B 2023, 0,00 %"');
   expect(markup).toContain('aria-label="Lado B: PARTIDO C 2025, 45,00 %"');
+  expect(markup).not.toContain('aria-label="Lado B: PARTIDO B 2023, 0,00 %"');
+  expect(markup).not.toContain('aria-label="Lado A: PARTIDO C 2025, 0,00 %"');
+  expect(markup).toContain("Lado B: observación no disponible");
+  expect(markup).toContain("Lado A: observación no disponible");
+  const rows = [...markup.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].map(([row]) => row);
+  const partyB = rows.find((row) => row.includes('scope="row">PARTIDO B 2023'))!;
+  const partyC = rows.find((row) => row.includes('scope="row">PARTIDO C 2025'))!;
+  expect(partyB).toContain("0,00 %");
+  expect(partyB).toContain("Observación no disponible");
+  expect(partyB).not.toContain("puntos porcentuales");
+  expect(partyC).toContain("45,00 %");
+  expect(partyC).toContain("Observación no disponible");
+  expect(partyC).not.toContain("puntos porcentuales");
 });

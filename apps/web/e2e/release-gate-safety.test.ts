@@ -542,6 +542,58 @@ describe("explicit release-gate lanes", () => {
 			inventoryFault.armed = false;
 		}
 	});
+	it("accepts analysis only for the browser lane and transports an explicit boolean", async () => {
+		const normal = await inspectReleaseGatePlan(["--lane", "browser"]);
+		const analyzed = await inspectReleaseGatePlan(["--lane", "browser", "--analyze-production-build"]);
+		expect(normal.analyzeProductionBuild).toBe(false);
+		expect(analyzed).toEqual({ ...normal, analyzeProductionBuild: true });
+		const result = await runLane(["--lane", "browser", "--analyze-production-build"]);
+		expect(result.failure).toBeUndefined();
+		const build = result.commands.find(({ command, args }) => command === "pnpm" && args[0] === "build:next");
+		expect(build?.env?.VOTUS_E2E_ANALYZE_PRODUCTION_BUILD).toBe("1");
+		expect(result.commands.filter(({ command, args }) => command === "pnpm" && args[0] === "build:next")).toHaveLength(1);
+		expect(result.trace).toContain("playwright");
+	});
+
+	it("keeps one comparison spec and full proofs in the analyzed focused gate", async () => {
+		const selected = "e2e/comparison.spec.ts";
+		const plans: ReleaseGatePlan[] = [];
+		const executePlan = async (plan: ReleaseGatePlan) => { plans.push(plan); };
+		await releaseGateMain(["--focused", selected], { executePlan });
+		await releaseGateMain(["--focused", selected, "--analyze-production-build"], { executePlan });
+		expect(plans).toHaveLength(2);
+		const normal = plans[0]!;
+		const analyzed = plans[1]!;
+		expect(normal.analyzeProductionBuild).toBe(false);
+		expect(analyzed).toEqual({ ...normal, analyzeProductionBuild: true });
+		expect(analyzed.mode).toBe(RELEASE_GATE_MODE.FOCUSED);
+		expect(analyzed.selectedSpecs).toEqual([selected]);
+		expect(analyzed.pgTapProofs).toHaveLength(13);
+		expect(analyzed.rollbackReapplyProofs).toHaveLength(2);
+		expect(analyzed.runBrowser).toBe(true);
+	});
+
+	it("ignores an ambient analysis marker for an ordinary gate build", async () => {
+		vi.stubEnv("VOTUS_E2E_ANALYZE_PRODUCTION_BUILD", "1");
+		try {
+			const result = await runLane(["--lane", "browser"]);
+			expect(result.failure).toBeUndefined();
+			const build = result.commands.find(({ command, args }) => command === "pnpm" && args[0] === "build:next");
+			expect(build?.env).not.toHaveProperty("VOTUS_E2E_ANALYZE_PRODUCTION_BUILD");
+		} finally { vi.unstubAllEnvs(); }
+	});
+
+	it.each([
+		["--lane", "sql", "--analyze-production-build"],
+		["--release-proof-only", "--analyze-production-build"],
+		["--focused", "e2e/comparison.spec.ts", "--analyze-production-build", "--analyze-production-build"],
+		["--lane", "browser", "--analyze-production-build", "--analyze-production-build"],
+	])("rejects unsupported or duplicate analysis before commands: %j", async (...argv) => {
+		const executePlan = vi.fn();
+		await expect(releaseGateMain(argv, { executePlan })).rejects.toThrow();
+		expect(executePlan).not.toHaveBeenCalled();
+	});
+
 	it.each(["--plan", "--unknown"]) ("rejects unsupported release-gate flags %s before effects", async (flag) => {
 		const executePlan = vi.fn();
 		await expect(releaseGateMain([flag], { executePlan })).rejects.toThrow(/unknown|unsupported/);
@@ -735,7 +787,7 @@ describe("explicit release-gate lanes", () => {
 		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 		const staleResources = new Set(["ps", "volume", "network"]);
 		spawnSync.mockImplementation((command, args, options) => {
-			commands.push({ command, args: [...args] });
+			commands.push({ command, args: [...args], ...(command === "pnpm" && args[0] === "build:next" ? { env: options.env } : {}) });
 			let phase = "";
 			let text = "";
 			if (command === "pnpm") {
@@ -1338,6 +1390,8 @@ describe("explicit release-gate lanes", () => {
 		for (const { args } of result.commands.filter(({ args }) => args.includes("--workdir") && !args.includes("--help")))
 			expect(args[args.indexOf("--workdir") + 1]).toBe(workdir);
 		expect(result.trace.at(-1)).toBe("cleanup");
+		const build = result.commands.find(({ command, args }) => command === "pnpm" && args[0] === "build:next");
+		if (build) expect(build.env).not.toHaveProperty("VOTUS_E2E_ANALYZE_PRODUCTION_BUILD");
 		const pgTap = result.trace.filter((phase) => phase.startsWith("pgtap:"));
 		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 13);
 		if (lane !== "browser") {
@@ -3106,7 +3160,7 @@ describe("base contracts", () => {
 		);
 		expect(e2eGate.match(/\["build:next"\]/g)).toHaveLength(1);
 		expect(e2eGate).toMatch(
-			/RELEASE_GATE_TIMING_PHASE\.PRODUCTION_BUILD,\s*async \(\) => \s*\{\s*runChecked\(\s*"pnpm",\s*\["build:next"\]/s,
+			/RELEASE_GATE_TIMING_PHASE\.PRODUCTION_BUILD,\s*async \(\) => \s*\{[\s\S]*?runChecked\(\s*"pnpm",\s*\["build:next"\]/s,
 		);
 		expect(e2eGate).not.toMatch(/\["(?:build|typecheck)"\]/);
 	});

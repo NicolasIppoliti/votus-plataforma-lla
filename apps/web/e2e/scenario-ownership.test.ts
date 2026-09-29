@@ -21,9 +21,99 @@ import {
 } from "./result-fixture";
 
 describe("parallel scenario ownership", () => {
+  it("binds a separate supported comparison identity without changing the default or colliding with municipal ownership", () => {
+    const spec = "e2e/comparison.spec.ts";
+    const baseline = resultScenarioIdentity(spec);
+    const supported = resultScenarioIdentity(spec, "spatial");
+    expect([supported.distritoCode, supported.seccionCode, supported.categoryName, ...supported.electionRounds]).toEqual([
+      "02", "027", "DIPUTADO NACIONAL", "generales", "legislativas",
+    ]);
+    expect(resultScenarioIdentity(spec)).toEqual(baseline);
+    expect(supported.jurisdictionId).not.toBe(baseline.jurisdictionId);
+    expect(planResultCleanup(spec, "spatial").filter((key) => planResultCleanup(spec).includes(key))).toEqual([]);
+    const municipal = planResultNaturalKeys("e2e/municipal.spec.ts");
+    expect(planResultNaturalKeys(spec, "spatial").filter((key) => municipal.includes(key))).toEqual([
+      "jurisdiction:02|027|null|null|null",
+    ]);
+    const runner = readFileSync(new URL("../playwright.config.ts", import.meta.url), "utf8");
+    expect(runner).toMatch(/fullyParallel:\s*false[\s\S]*workers:\s*1/);
+    expect(supported.distritoCode + "/" + supported.seccionCode).toBe("02/027");
+    expect(resultScenarioIdentity("e2e/municipal.spec.ts").seccionCode).toBe("027");
+  });
+  it("keeps the spatial authorization extension inside district 02 with a distinct owned section", () => {
+    const spec = "e2e/comparison.spec.ts";
+    const spatial = comparisonFixture(spec, "spatial");
+    const extension = spatial.identity.comparisonLeftOnlySection!;
+    expect(extension.distritoCode).toBe(spatial.identity.distritoCode);
+    expect(extension.seccionCode).toBe("028");
+    expect(extension.seccionCode).not.toBe(spatial.identity.seccionCode);
+    expect(spatial.seed.jurisdictions[1]).toMatchObject({
+      id: extension.jurisdictionId, distrito_code: "02", seccion_code: "028",
+    });
+    expect(planResultNaturalKeys(spec, "spatial")).toContain("jurisdiction:02|028|null|null|null");
+    expect(planResultCleanup(spec, "spatial")).toContain(`jurisdiction:${extension.jurisdictionId}`);
+    expect(assertResultFixtureOwnership(spec, spatial.seed, "spatial")).toContain(extension.archiveEntryId);
+    const original = comparisonFixture(spec);
+    expect([original.identity.distritoCode, original.identity.seccionCode,
+      original.identity.comparisonLeftOnlySection?.distritoCode,
+      original.identity.comparisonLeftOnlySection?.seccionCode]).toEqual(["84", "847", "84", "848"]);
+  });
+
+  it("seeds two mapped spatial leaders with exact shares and complete owned cleanup", () => {
+    const spec = "e2e/comparison.spec.ts";
+    const { identity, seed } = comparisonFixture(spec, "spatial");
+    const original = comparisonFixture(spec).seed;
+    const municipal = sourceIsolationFixture("e2e/municipal.spec.ts").seed;
+    expect(seed.rows.map((row) => row["votes"])).toEqual([6_000, 9_000, 4_000, 3_000, 5_000]);
+    expect(seed.rows.slice(0, 4).map((row) => row["list_id"])).toEqual([
+      identity.comparisonParty!.listIds[0], identity.comparisonParty!.listIds[1],
+      identity.comparisonOtherParty!.listIds[0], identity.comparisonOtherParty!.listIds[1],
+    ]);
+    expect(seed.partyCanonical).toEqual([
+      { id: identity.comparisonParty!.canonicalPartyId, display_name: identity.comparisonParty!.displayName },
+      { id: identity.comparisonOtherParty!.canonicalPartyId, display_name: identity.comparisonOtherParty!.displayName },
+    ]);
+    expect(seed.partyMappings).toHaveLength(4);
+    expect(planScenarioPartyNaturalKeys(spec, "spatial").filter((key) => key.startsWith("party_"))).toHaveLength(6);
+    expect(planScenarioPartyCleanup(spec, "spatial")).toEqual([
+      ...identity.comparisonParty!.mappingIds.map((id) => `party_mapping:${id}`),
+      `party_canonical:${identity.comparisonParty!.canonicalPartyId}`,
+      ...identity.comparisonOtherParty!.mappingIds.map((id) => `party_mapping:${id}`),
+      `party_canonical:${identity.comparisonOtherParty!.canonicalPartyId}`,
+    ]);
+    expect(planResultNaturalKeys(spec, "spatial").filter((key) => key.startsWith("result:"))).toHaveLength(5);
+    expect(planResultCleanup(spec, "spatial")).toEqual(expect.arrayContaining(planScenarioPartyCleanup(spec, "spatial")));
+    expect(assertResultFixtureOwnership(spec, seed, "spatial")).toHaveLength(3);
+    expect(original.rows.map((row) => row["votes"])).toEqual([10_000, 12_000, 5_000]);
+    expect(original.partyMappings).toHaveLength(2);
+    expect(municipal.partyMappings).toHaveLength(1);
+    const missing = comparisonFixture(spec, "spatial").seed;
+    missing.partyMappings!.pop();
+    expect(() => assertResultFixtureOwnership(spec, missing, "spatial")).toThrow();
+  });
+
+  it("accepts only the supported fixture under its bound ownership plan", () => {
+    const spec = "e2e/comparison.spec.ts";
+    const { seed, identity } = comparisonFixture(spec, "spatial");
+    expect(seed.category["name"]).toBe("DIPUTADO NACIONAL");
+    expect(seed.jurisdictions[0]?.["distrito_code"]).toBe("02");
+    expect(seed.jurisdictions[0]?.["seccion_code"]).toBe("027");
+    expect(seed.elections.map((entry) => entry["round"])).toEqual(["generales", "legislativas"]);
+    expect(assertResultFixtureOwnership(spec, seed, "spatial")).toEqual([
+      ...identity.archiveEntryIds, identity.comparisonLeftOnlySection!.archiveEntryId,
+    ].sort());
+    expect(() => assertResultFixtureOwnership(spec, seed)).toThrow();
+    expect(() => assertResultFixtureOwnership(spec, comparisonFixture(spec).seed, "spatial")).toThrow();
+    const wrong = comparisonFixture(spec, "spatial").seed;
+    wrong.elections[1]!["round"] = "generales";
+    expect(() => assertResultFixtureOwnership(spec, wrong, "spatial")).toThrow();
+    expect(() => resultScenarioIdentity("e2e/municipal.spec.ts", "spatial")).toThrow("unsupported comparison fixture variant");
+    expect(() => resultScenarioIdentity(spec, "arbitrary" as "spatial")).toThrow("unsupported comparison fixture variant");
+  });
+
   it("keeps every mutable identity and cleanup target pairwise disjoint", () => {
-    const identities = DATA_SCENARIO_SPECS.map(resultScenarioIdentity);
-    const cleanupPlans = DATA_SCENARIO_SPECS.map(planResultCleanup);
+    const identities = DATA_SCENARIO_SPECS.map((spec) => resultScenarioIdentity(spec));
+    const cleanupPlans = DATA_SCENARIO_SPECS.map((spec) => planResultCleanup(spec));
     const uuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
     for (const identity of identities) {
@@ -51,7 +141,7 @@ describe("parallel scenario ownership", () => {
   });
 
   it("keeps category, jurisdiction, election and result natural keys pairwise disjoint", () => {
-    const naturalKeys = DATA_SCENARIO_SPECS.map(planResultNaturalKeys);
+    const naturalKeys = DATA_SCENARIO_SPECS.map((spec) => planResultNaturalKeys(spec));
     for (const keys of naturalKeys) {
       expect(keys.some((key) => key.includes("DIPUTADO NACIONAL"))).toBe(false);
       expect(new Set(keys).size).toBe(keys.length);

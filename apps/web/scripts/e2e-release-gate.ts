@@ -1681,12 +1681,15 @@ async function executeGate(
 		VOTUS_E2E_SELECTED_SPECS: JSON.stringify(plan.selectedSpecs),
 	};
 	await timed(RELEASE_GATE_TIMING_PHASE.PRODUCTION_BUILD, async () => {
+		const buildEnvironment = productEnvironment(environment, "shared");
+		delete buildEnvironment.VOTUS_E2E_ANALYZE_PRODUCTION_BUILD;
+		if (plan.analyzeProductionBuild) buildEnvironment.VOTUS_E2E_ANALYZE_PRODUCTION_BUILD = "1";
 		runChecked(
 			"pnpm",
 			["build:next"],
 			"production Next build",
 			WEB_ROOT,
-			productEnvironment(environment, "shared"),
+			buildEnvironment,
 		);
 	})();
 	if (state.interrupted) throw new Error(`interrupted by ${state.interrupted}`);

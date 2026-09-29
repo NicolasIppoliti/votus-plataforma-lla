@@ -24,10 +24,13 @@ export async function runProductionBuild(
 }
 
 function nextBuild(): Promise<number> {
+	const analysis = process.env.VOTUS_E2E_ANALYZE_PRODUCTION_BUILD;
+	if (analysis !== undefined && analysis !== "1")
+		throw new Error("invalid production build analysis marker");
 	const require = createRequire(import.meta.url);
 	const nextCli = require.resolve("next/dist/bin/next");
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [nextCli, "build"], {
+		const child = spawn(process.execPath, [nextCli, "build", ...(analysis === "1" ? ["--experimental-analyze"] : [])], {
 			cwd: path.resolve("."),
 			stdio: "inherit",
 		});
