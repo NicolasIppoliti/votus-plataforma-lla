@@ -27,7 +27,7 @@ export async function loadMunicipalSectionGeometry(): Promise<MunicipalSectionRe
     if (bytes.length !== record.bytes || createHash("sha256").update(bytes).digest("hex") !== SHA256) return { status: "withheld" };
     const collection = JSON.parse(bytes.toString("utf8")) as unknown;
     if (!isObject(collection) || collection.type !== "FeatureCollection" || !isObject(collection.crs) || collection.crs.type !== "name" || !isObject(collection.crs.properties) || collection.crs.properties.name !== CRS || !Array.isArray(collection.features)) return { status: "withheld" };
-    const matching = collection.features.filter((feature: unknown) => isObject(feature) && isObject(feature.properties) && feature.properties.provincia === "Buenos Aires" && feature.properties.departamen === SECTION_NAME && feature.properties.cabecera === "Punta Alta");
+    const matching = collection.features.filter((feature: unknown) => isObject(feature) && isObject(feature.properties) && feature.properties.provincia === "Buenos Aires" && feature.properties.departamen === SECTION_NAME && feature.properties.cabecera === "Punta Alta" && feature.properties.gid === 30556);
     if (matching.length !== 1) return { status: "withheld" };
     const feature = matching[0];
     if (!isObject(feature) || feature.type !== "Feature" || !isObject(feature.geometry) || feature.geometry.type !== "MultiPolygon" || !validCoordinates(feature.geometry.coordinates)) return { status: "withheld" };

@@ -1,6 +1,8 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ComparisonSelectionForm, type SelectionGroup } from "./ComparisonSelectionForm";
 import { ComparisonChart } from "./ComparisonChart";
+import { ComparisonMap } from "./ComparisonMap";
+import { loadMunicipalSectionGeometry } from "@/lib/workspace/municipal-section-geometry";
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { EvidenceState } from "@/components/EvidenceState";
@@ -495,6 +497,21 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   }
   const leftName = (id: string | null | undefined) => displayName(evidence.left, evidence.right, id);
   const rightName = (id: string | null | undefined) => displayName(evidence.right, evidence.left, id);
+  // The archived CNE polygon is a current reference only for this curated national pair.
+  // Neither a CNE display name nor a feature id is used as a jurisdiction join.
+  const spatialScope = unitId === "02/027" &&
+    selectedLeftElection.year === 2023 && selectedLeftElection.round === "generales" &&
+    selectedRightElection.year === 2025 && selectedRightElection.round === "legislativas" &&
+    leftCategory.name === "DIPUTADO NACIONAL" && rightCategory.name === "DIPUTADO NACIONAL" &&
+    evidence.left.result.electionYear === 2023 && evidence.left.result.electionRound === "generales" && evidence.left.result.categoryName === "DIPUTADO NACIONAL" &&
+    evidence.right.result.electionYear === 2025 && evidence.right.result.electionRound === "legislativas" && evidence.right.result.categoryName === "DIPUTADO NACIONAL" &&
+    [evidence.left, evidence.right].every((side, index) => side.reference.items.length > 0 && side.reference.items.every((reference) =>
+      reference.distritoCode === "02" && reference.seccionCode === "027" &&
+      reference.electionId === (index === 0 ? leftSelection.electionId : rightSelection.electionId) &&
+      reference.categoryId === (index === 0 ? leftSelection.categoryId : rightSelection.categoryId) &&
+      reference.year === side.result.electionYear && reference.round === side.result.electionRound &&
+      reference.categoryName === "DIPUTADO NACIONAL"));
+  const section = spatialScope ? await loadMunicipalSectionGeometry() : null;
   const summedFrom = evidence.left.result.sourceGranularity === evidence.right.result.sourceGranularity && evidence.left.result.sourceGranularity !== "seccion"
     ? evidence.left.result.sourceGranularity
     : undefined;
@@ -513,7 +530,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         {comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
         <div className="official-compare__analysis">
         <section className="official-compare__results" aria-labelledby="compare-results-heading">
-          <h2 id="compare-results-heading">Resultados exactos</h2>
+          <h2 id="compare-results-heading" tabIndex={-1}>Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
         <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "sin cambio"}.</p>
         <ComparisonChart
@@ -521,21 +538,22 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
         />
+        {section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : spatialScope ? <p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p> : null}
         <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
           <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>
             <thead><tr><th scope="col">Partido izquierdo</th><th scope="col">Participación izquierda</th><th scope="col">Partido derecho</th><th scope="col">Participación derecha</th><th scope="col">Variación</th></tr></thead>
             <tbody>
               {[...swing.swings].sort((left, right) => left.party.localeCompare(right.party)).map((partySwing) => {
-                const share2023 = swing.shares2023.find((share) => share.party === partySwing.party)?.sharePercent ?? 0;
-                const share2025 = swing.shares2025.find((share) => share.party === partySwing.party)?.sharePercent ?? 0;
+                const share2023 = swing.shares2023.find((share) => share.party === partySwing.party)?.sharePercent;
+                const share2025 = swing.shares2025.find((share) => share.party === partySwing.party)?.sharePercent;
                 return (
                   <tr key={partySwing.party}>
                     <th scope="row">{leftName(partySwing.party)}</th>
-                    <td className="table-cell--number">{formatPercentage(share2023)}</td>
+                    <td className="table-cell--number">{share2023 === undefined ? "Observación no disponible" : formatPercentage(share2023)}</td>
                     <td>{rightName(partySwing.party)}</td>
-                    <td className="table-cell--number">{formatPercentage(share2025)}</td>
-                    <td className="table-cell--number">{formatSwing(partySwing.swingPercentPoints)}</td>
+                    <td className="table-cell--number">{share2025 === undefined ? "Observación no disponible" : formatPercentage(share2025)}</td>
+                    <td className="table-cell--number">{share2023 === undefined || share2025 === undefined ? "Observación no disponible" : formatSwing(partySwing.swingPercentPoints)}</td>
                   </tr>
                 );
               })}

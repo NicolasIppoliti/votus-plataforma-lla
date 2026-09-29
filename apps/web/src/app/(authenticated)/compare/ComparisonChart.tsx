@@ -11,17 +11,22 @@ const percentage = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, ma
 const count = new Intl.NumberFormat("es-AR");
 const TICKS = [0, 25, 50, 75, 100];
 
-function ShareBar({ side, name, share }: { side: string; name: string; share: number }) {
-  const label = `${side}: ${name}, ${percentage.format(share)} %`;
+function ShareBar({ side, name, share }: { side: string; name: string; share: number | undefined }) {
   return (
     <div className={styles.barRow}>
       <div className={styles.barLabel}><span className={styles.side}>{side}</span><span>{name}</span></div>
-      <svg className={styles.bar} viewBox="0 0 100 12" preserveAspectRatio="none" role="img" aria-label={label}>
-        {TICKS.map((tick) => <line key={tick} x1={tick} x2={tick} y1="0" y2="12" className={styles.gridLine} vectorEffect="non-scaling-stroke" />)}
-        <rect x="0" y="3" width={share} height="6" className={side === "Lado A" ? styles.barA : styles.barB} />
-        <line x1="0" x2="0" y1="0" y2="12" className={styles.baseline} vectorEffect="non-scaling-stroke" />
-      </svg>
-      <span className={styles.value} aria-hidden="true">{percentage.format(share)} %</span>
+      {share === undefined ? (
+        <span className={styles.value}>{side}: observación no disponible</span>
+      ) : (
+        <>
+          <svg className={styles.bar} viewBox="0 0 100 12" preserveAspectRatio="none" role="img" aria-label={`${side}: ${name}, ${percentage.format(share)} %`}>
+            {TICKS.map((tick) => <line key={tick} x1={tick} x2={tick} y1="0" y2="12" className={styles.gridLine} vectorEffect="non-scaling-stroke" />)}
+            <rect x="0" y="3" width={share} height="6" className={side === "Lado A" ? styles.barA : styles.barB} />
+            <line x1="0" x2="0" y1="0" y2="12" className={styles.baseline} vectorEffect="non-scaling-stroke" />
+          </svg>
+          <span className={styles.value} aria-hidden="true">{percentage.format(share)} %</span>
+        </>
+      )}
     </div>
   );
 }
@@ -46,8 +51,8 @@ export function ComparisonChart({ swing, leftNames, rightNames }: Props) {
       <div className={styles.series}>
         {[...swing.swings].sort((left, right) => left.party.localeCompare(right.party)).map(({ party }) => (
           <div className={styles.pair} key={party}>
-            <ShareBar side="Lado A" name={leftNames[party]!} share={swing.shares2023.find((share) => share.party === party)?.sharePercent ?? 0} />
-            <ShareBar side="Lado B" name={rightNames[party]!} share={swing.shares2025.find((share) => share.party === party)?.sharePercent ?? 0} />
+            <ShareBar side="Lado A" name={leftNames[party]!} share={swing.shares2023.find((share) => share.party === party)?.sharePercent} />
+            <ShareBar side="Lado B" name={rightNames[party]!} share={swing.shares2025.find((share) => share.party === party)?.sharePercent} />
           </div>
         ))}
       </div>

@@ -14,7 +14,7 @@ import { loadMunicipalSectionGeometry } from "./municipal-section-geometry";
 const HASH = "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673";
 const PATH = "archive/geography/cne-pba-sections." + HASH + ".geojson";
 const point = [-62, -38];
-const validFeature = () => ({ type: "Feature", properties: { provincia: "Buenos Aires", departamen: "Cnel. de Marina L.Rosales", cabecera: "Punta Alta" }, geometry: { type: "MultiPolygon", coordinates: [[[[...point], [-61, -38], [-61, -37], [...point]]]] } });
+const validFeature = () => ({ type: "Feature", properties: { provincia: "Buenos Aires", departamen: "Cnel. de Marina L.Rosales", cabecera: "Punta Alta", gid: 30556 }, geometry: { type: "MultiPolygon", coordinates: [[[[...point], [-61, -38], [-61, -37], [...point]]]] } });
 const validCollection = () => ({ type: "FeatureCollection", crs: { type: "name", properties: { name: "urn:ogc:def:crs:EPSG::4326" } }, features: [validFeature()] });
 const validRecord = () => ({ id: "geography/cne-pba-sections", archived_path: PATH, sha256: HASH, mime: "application/json", status: "ok", bytes: 30269143, fetched_at: "2026-09-24T03:29:24Z" });
 
@@ -45,6 +45,7 @@ describe("municipal section archive boundary", () => {
 
   it.each([
     ["wrong cabecera", { ...validCollection(), features: [{ ...validFeature(), properties: { ...validFeature().properties, cabecera: "Other" } }] }],
+    ["wrong pinned feature identity", { ...validCollection(), features: [{ ...validFeature(), properties: { ...validFeature().properties, gid: 99999 } }] }],
     ["wrong CRS", { ...validCollection(), crs: { type: "name", properties: { name: "EPSG:3857" } } }],
     ["zero matching sections", { ...validCollection(), features: [] }],
     ["two matching sections", { ...validCollection(), features: [validFeature(), validFeature()] }],

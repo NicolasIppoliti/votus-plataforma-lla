@@ -1,3 +1,14 @@
+.spatial { margin-block: 1.5rem; padding-block: 1.5rem; border-block: 1px solid var(--border); }
+.spatial h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+.spatial h3 { margin: 0; font-size: 1rem; }
+.spatial p { font-size: 0.8125rem; line-height: 1.55; }
+.spatialLegend { max-width: 26rem; margin-block: 1rem 1.5rem; }
+.spatialGradient { height: 1rem; border: 1px solid var(--border); }
+.spatialTicks { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-size: 0.75rem; }
+.spatialPair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+.spatialPair article { min-width: 0; }
+@media (max-width: 47.999rem) { .spatialPair { grid-template-columns: minmax(0, 1fr); } }
+
 .guidance {
   margin: 1.25rem 0 0;
   padding-block-start: 0.75rem;
