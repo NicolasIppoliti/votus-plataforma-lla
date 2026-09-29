@@ -139,6 +139,7 @@ export interface ReleaseGatePlan {
 	rollbackReapplyProofs: readonly ReleaseGateSqlProof[];
 	requireBrowserCapability: boolean;
 	runBrowser: boolean;
+	analyzeProductionBuild: boolean;
 }
 
 export interface ReleaseGateCliDependencies {
@@ -417,7 +418,7 @@ const ROLLBACK_REAPPLY_PROOFS: readonly ReleaseGateSqlProof[] = [
 
 function releaseGateMode(argv: readonly string[]): ReleaseGateMode {
 	if (argv.some((arg) => arg === "--lane" || arg.startsWith("--lane="))) {
-		const laneArgs = argv.filter((arg) => arg !== "--inspect-plan");
+		const laneArgs = argv.filter((arg) => arg !== "--inspect-plan" && arg !== "--analyze-production-build");
 		if (
 			laneArgs.length !== 2 || laneArgs[0] !== "--lane" ||
 			(laneArgs[1] !== RELEASE_GATE_MODE.SQL && laneArgs[1] !== RELEASE_GATE_MODE.BROWSER)
@@ -473,7 +474,7 @@ export function parseFocusedE2eSelection(
 function parseFocusedE2eCliSelection(argv: readonly string[]): readonly string[] {
 	if (argv[0] !== "--focused")
 		throw new Error("focused E2E arguments must begin with --focused");
-	const selection = argv.slice(1);
+	const selection = argv.slice(1).filter((arg) => arg !== "--analyze-production-build");
 	return parseFocusedE2eSelection(
 		selection[0] === "--" ? selection.slice(1) : selection,
 	);
@@ -529,6 +530,7 @@ export function createReleaseGatePlan(
 		runBrowser:
 			mode === RELEASE_GATE_MODE.BROWSER ||
 			mode === RELEASE_GATE_MODE.FULL || mode === RELEASE_GATE_MODE.FOCUSED,
+		analyzeProductionBuild: false,
 	};
 }
 
@@ -581,18 +583,22 @@ export async function runReleaseGateCli(
 	dependencies: ReleaseGateCliDependencies,
 ): Promise<void> {
 	const mode = releaseGateMode(argv);
+	const analyzeProductionBuild = argv.includes("--analyze-production-build");
+	if (analyzeProductionBuild && ((mode !== RELEASE_GATE_MODE.BROWSER && mode !== RELEASE_GATE_MODE.FOCUSED) || argv.filter((arg) => arg === "--analyze-production-build").length !== 1))
+		throw new Error("production build analysis requires exactly one browser or focused option");
 	const selectedSpecs =
 		mode === RELEASE_GATE_MODE.FOCUSED
 			? parseFocusedE2eCliSelection(argv)
 			: EXPECTED_E2E_SPECS;
 	if (mode !== RELEASE_GATE_MODE.FOCUSED) {
 		const allowed = mode === RELEASE_GATE_MODE.SQL || mode === RELEASE_GATE_MODE.BROWSER
-			? ["--inspect-plan", "--lane", mode]
+			? ["--inspect-plan", "--lane", mode, ...(mode === RELEASE_GATE_MODE.BROWSER ? ["--analyze-production-build"] : [])]
 			: ["--inspect-plan", "--release-proof-only", "--scale-proof-only", "--rollback-proofs-only"];
 		if (argv.some((arg) => !allowed.includes(arg)))
 			throw new Error("unknown release-gate option; use --inspect-plan for a read-only plan");
 	}
 	const plan = createReleaseGatePlan(mode, selectedSpecs);
+	plan.analyzeProductionBuild = analyzeProductionBuild;
 	if (argv.includes("--inspect-plan")) {
 		dependencies.writeOutput(`${JSON.stringify(plan, null, 2)}\n`);
 		return;
