@@ -772,9 +772,14 @@ test.describe("the review route reflects the disposable database", () => {
 
       await expect(page).toHaveURL(/\/review/);
       const main = page.getByRole("main");
-      await expect(
-        main.getByRole("heading", { name: "Cola de revisión" }),
-      ).toBeVisible();
+      await expect(main).toHaveCount(1);
+      const heading = main.getByRole("heading", {
+        level: 1,
+        name: "Cola de revisión",
+        exact: true,
+      });
+      await expect(heading).toHaveCount(1);
+      await expect(heading).toBeVisible();
       await expect(main).toContainText(READ_ONLY_NOTICE);
       await expect(
         main.getByText("Resolver elementos de revisión", { exact: true }),
