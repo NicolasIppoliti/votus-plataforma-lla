@@ -85,6 +85,149 @@ async function renderSimulation(
   );
 }
 
+describe("simulate page — bounded sample entry", () => {
+  it("submits the rendered sweep action and evaluates endpoint samples on the canonical page", async () => {
+    transferHarness.replace.mockClear();
+    transferHarness.actions.length = 0;
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+    expect(markup).toContain('aria-label="Muestreo de transferencias a total fijo"');
+    const data = new FormData();
+    for (const [key, value] of Object.entries({ donor: "110", target: "999", max: "1000", step: "600" })) data.set(key, value);
+    const action = transferHarness.actions[1];
+    if (!action) throw new Error("missing rendered sweep action");
+    expect(await action([], data)).toEqual([]);
+    const url = new URL(transferHarness.replace.mock.calls[0]![0], "https://example.invalid");
+    expect(JSON.parse(url.searchParams.get("input")!)).toEqual(ALLOCATION_INPUT);
+    const served = await renderSimulation(undefined, Object.fromEntries(url.searchParams));
+    expect(served).toContain('data-testid="sweep-result"');
+    expect(served).toContain("Último intervalo más corto: 400 votos");
+    expect(served).toContain("Mínimo y máximo de bancas en las muestras válidas");
+    expect(served).toContain('data-testid="allocation-result"');
+    expect(served).toContain("Huella de los datos proporcionados");
+  });
+});
+
+describe("simulate page — sweep action validation", () => {
+  it.each([
+    { max: "-1" }, { max: "0.5" }, { max: "9007199254740992" }, { max: "6001" },
+    { step: "0" }, { step: "-1" }, { step: "0.5" }, { donor: "unknown" }, { target: "110" },
+    { max: "21", step: "1" },
+  ])("returns a visible form refusal and never navigates on invalid action: %s", async (invalid) => {
+    transferHarness.replace.mockClear();
+    transferHarness.actions.length = 0;
+    await renderSimulation(ALLOCATION_INPUT);
+    const data = new FormData();
+    for (const [key, value] of Object.entries({ donor: "110", target: "999", max: "1000", step: "600", ...invalid })) data.set(key, value);
+    expect((await transferHarness.actions[1]!([], data)).length).toBeGreaterThan(0);
+    expect(transferHarness.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("simulate page — sweep evidence and refusal boundaries", () => {
+  const sweep = { sweepDonor: "110", sweepTarget: "999", sweepMax: "1000", sweepStep: "600" };
+  const national = {
+    level: "national", seatsToFill: 2, padron: 20000, totalVotes: 10000,
+    isProjection: true, granularity: "mesa", unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+    threshold: { value: 0, basis: "padron" },
+    lists: [...ALLOCATION_INPUT.lists, { listId: "zero", listName: "Lista cero", votes: 0 }],
+  };
+  function exactLinks(markup: string): URL[] {
+    return [...markup.matchAll(/href="([^"]+)"[^>]*>Ver escenario exacto/g)]
+      .map((match) => new URL(match[1]!.replaceAll("&amp;", "&"), "https://example.invalid"));
+  }
+
+  it.each([OFFICIAL_PBA_2025_INPUT, national])("retains rich input and every point's own complete exact link", async (input) => {
+    const params = { ...sweep, sweepDonor: input.lists[0]!.listId, sweepTarget: input.lists[1]!.listId };
+    const roster = input.level === "pba_municipal"
+      ? { council: "Coronel de Marina Leonardo Rosales", heldOver: JSON.stringify(HELD_OVER) } : {};
+    const markup = await renderSimulation(input, { ...params, ...roster });
+    const links = exactLinks(markup);
+    expect(links).toHaveLength(3);
+    for (const [index, url] of links.entries()) {
+      const amount = [0, 600, 1000][index]!;
+      const adjusted = JSON.parse(url.searchParams.get("input")!);
+      expect(adjusted).toEqual({ ...input, lists: input.lists.map((list, position) => ({
+        ...list, votes: list.votes + (position === 0 ? -amount : position === 1 ? amount : 0),
+      })) });
+      expect(adjusted.lists.reduce((sum: number, list: { votes: number }) => sum + list.votes, 0))
+        .toBe(input.lists.reduce((sum, list) => sum + list.votes, 0));
+      expect([...url.searchParams.keys()].some((key) => key.startsWith("sweep"))).toBe(false);
+      if (roster.heldOver) expect(url.searchParams.get("heldOver")).toBe(roster.heldOver);
+      const exact = await renderSimulation(undefined, Object.fromEntries(url.searchParams));
+      expect(exact).toContain("Huella de los datos proporcionados");
+      expect(exact).not.toContain('data-testid="sweep-result"');
+      expect(exact).toContain(input.level === "national" ? "Tabla de cocientes D’Hondt" : "Asignación Hare por lista");
+    }
+  });
+
+  it("shows all-list seat-count extrema, including zero, only over evaluated valid points", async () => {
+    const markup = await renderSimulation(national, { ...sweep, sweepMax: "4000", sweepStep: "2000" });
+    const extrema = markup.split("Mínimo y máximo de bancas en las muestras válidas")[1]!.split("</table>")[0]!;
+    expect(extrema).toContain('<th scope="row">LA LIBERTAD AVANZA</th><td>0</td><td>1</td>');
+    expect(extrema).toContain('<th scope="row">FUERZA PATRIA</th><td>1</td><td>2</td>');
+    expect(extrema).toContain('<th scope="row">Lista cero</th><td>0</td><td>0</td>');
+    expect(markup).toContain("3 muestras evaluadas; 3 válidas; 0 rechazadas");
+    expect(markup).toContain("0 (ninguno)");
+  });
+
+  it("counts refusals by reason and never fabricates extrema for no valid samples", async () => {
+    for (const [threshold, valid] of [[30, 2], [100, 0]] as const) {
+      const markup = await renderSimulation({ ...national, threshold: { value: threshold, basis: "padron" } },
+        { ...sweep, sweepMax: "2000", sweepStep: "1000" });
+      expect(markup).toContain(`3 muestras evaluadas; ${valid} válidas; ${3 - valid} rechazadas`);
+      expect(markup).toContain(`se rechaza una asignación vacía: ${3 - valid} muestras`);
+      expect(exactLinks(markup)).toHaveLength(3);
+      if (valid === 0) {
+        expect(markup).toContain("No hay muestras válidas");
+        expect(markup).not.toContain("Mínimo y máximo de bancas en las muestras válidas");
+      }
+    }
+  });
+
+  it.each([
+    { sweepMax: "6001" }, { sweepStep: "0" }, { sweepDonor: "unknown" },
+    { sweepMax: "21", sweepStep: "1" }, { sweepTarget: "110" },
+  ])("rejects invalid URL requests visibly while keeping baseline result and evidence: %s", async (invalid) => {
+    const baseline = await renderSimulation(ALLOCATION_INPUT);
+    const markup = await renderSimulation(ALLOCATION_INPUT, { ...sweep, ...invalid });
+    expect(markup).toContain("Muestreo rechazado; la base se conserva");
+    expect(markup).not.toContain('data-testid="sweep-result"');
+    expect(markup.match(/sha256 [a-f0-9]+/)?.[0]).toBe(baseline.match(/sha256 [a-f0-9]+/)?.[0]);
+    expect(markup).toContain('data-testid="allocation-result"');
+  });
+
+  it("refuses a sweep with invalid council configuration before generating any points", async () => {
+    const markup = await renderSimulation({ ...ALLOCATION_INPUT, seatsToFill: 8 }, sweep);
+    expect(markup).toContain("Muestreo rechazado; la base se conserva");
+    expect(markup).not.toContain('data-testid="sweep-result"');
+    expect(exactLinks(markup)).toHaveLength(0);
+  });
+
+  it("rejects repeated sweep fields without losing an otherwise canonical baseline", async () => {
+    const markup = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({
+      input: JSON.stringify(ALLOCATION_INPUT), ...sweep, sweepMax: ["1", "2"],
+    }) }) as ReactElement);
+    expect(markup).toContain("una sola vez");
+    expect(markup).toContain('data-testid="allocation-result"');
+  });
+
+  it("resets sweep defaults on a different baseline and keeps permanent transfers sweep-free", async () => {
+    transferHarness.actions.length = 0;
+    transferHarness.replace.mockClear();
+    await renderSimulation(ALLOCATION_INPUT, sweep);
+    const data = new FormData();
+    data.set("donor", "110"); data.set("target", "999"); data.set("amount", "1000");
+    expect(await transferHarness.actions[0]!([], data)).toEqual([]);
+    const url = new URL(transferHarness.replace.mock.calls[0]![0], "https://example.invalid");
+    expect(url.searchParams.has("sweepMax")).toBe(false);
+    const markup = await renderSimulation(undefined, Object.fromEntries(url.searchParams));
+    expect(markup).toMatch(/id="sweep-max"[^>]*value="0"/);
+    expect(markup).toMatch(/id="sweep-step"[^>]*value="1"/);
+    expect(markup.match(/<option value="" selected="">Seleccione para muestrear/g)).toHaveLength(2);
+    expect(markup).not.toContain('data-testid="sweep-result"');
+  });
+});
+
 describe("simulate page — fixed-total transfer entry", () => {
   async function transfer(input: object, amount: string, donor = "110", target = "999",
     params: Record<string, string> = {}) {

@@ -18,6 +18,8 @@ import { GRANULARITY } from "@/lib/results/types";
 import { projectionGranularitySchema } from "./projection-input";
 import {
   createSimulationScenario,
+  simulationSweepQuery,
+  sweepBaselineQuery,
   SimulationFormError,
   simulationScenarioQuery,
   simulationValuesFromQuery,
@@ -156,6 +158,55 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
   );
 }
 
+function SweepForm({ requestKey, navigate }: TransferFormProps) {
+  const baseline = transferBaselineFromQuery(requestKey);
+  const [controls, setControls] = useState({ donor: "", target: "", max: "0", step: "1" });
+  const [errors, action, pending] = useActionState<readonly string[], FormData>(
+    async (_previous, data) => {
+      try {
+        navigate(simulationSweepQuery(requestKey, data));
+        return [];
+      } catch (error) {
+        return error instanceof SimulationFormError ? error.messages : ["No se pudo preparar el muestreo."];
+      }
+    }, [],
+  );
+  if (!baseline) return null;
+  return (
+    <form aria-label="Muestreo de transferencias a total fijo" action={action} noValidate
+      aria-busy={pending} className="simulation-transfer simulation-form__section panel form-grid">
+      <h3>Muestrear transferencias sin cambiar la base</h3>
+      <p id="sweep-help">Operación hipotética a total fijo. Incluye cero y el máximo; si el paso no divide
+        el máximo, el último intervalo será más corto. Hasta 21 muestras y 600 posiciones de trabajo
+        (muestras × bancas × listas): límites conservadores sin medición de rendimiento, no garantías
+        universales. Al cambiar la base, seleccione las listas de nuevo.</p>
+      {(["donor", "target"] as const).map((name) => (
+        <div className="field" key={name}>
+          <Label htmlFor={`sweep-${name}`}>{name === "donor" ? "Donante del muestreo" : "Receptora del muestreo"}</Label>
+          <select id={`sweep-${name}`} name={name} value={controls[name]} required
+            aria-describedby="sweep-help sweep-errors"
+            onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))}>
+            <option value="">Seleccione para muestrear</option>
+            {baseline.lists.map((list) => <option key={list.listId} value={list.listId}>{list.listName} — {list.votes} votos</option>)}
+          </select>
+        </div>
+      ))}
+      {(["max", "step"] as const).map((name) => (
+        <div className="field" key={name}>
+          <Label htmlFor={`sweep-${name}`}>{name === "max" ? "Máximo a transferir" : "Paso del muestreo"}</Label>
+          <Input id={`sweep-${name}`} name={name} type="text" inputMode="numeric" required
+            aria-describedby="sweep-help sweep-errors" value={controls[name]}
+            onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))} />
+        </div>
+      ))}
+      <div id="sweep-errors" aria-live="polite" aria-atomic="true">
+        {errors.length ? <ul role="alert">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : null}
+      </div>
+      <Button type="submit" disabled={pending}>Evaluar muestras</Button>
+    </form>
+  );
+}
+
 interface EditorState {
   observedKey: string;
   targetKey: string;
@@ -169,7 +220,7 @@ function restoredEditor(requestKey: string): EditorState {
   return {
     observedKey: requestKey,
     targetKey: requestKey,
-    values: requestKey ? simulationValuesFromQuery(requestKey) : INITIAL_VALUES,
+    values: requestKey ? simulationValuesFromQuery(sweepBaselineQuery(requestKey)) : INITIAL_VALUES,
     dirty: false,
     errors: [],
     requests: [],
@@ -352,6 +403,17 @@ export function SimulationForm({ requestKey, children }: SimulationFormProps) {
   const isNational = values.level === ALLOCATION_LEVEL.NATIONAL;
   const isMunicipal = values.level === ALLOCATION_LEVEL.PBA_MUNICIPAL;
   const totalsHelpId = isNational ? "national-totals-help" : "pba-totals-help";
+  function navigateOperation(targetKey: string) {
+    cancelScheduledRequest();
+    setEditor((current) => ({
+      ...restoredEditor(targetKey),
+      observedKey: current.observedKey,
+      requests: [...current.requests, targetKey],
+    }));
+    startTransition(() => router.replace(`/simulate?${targetKey}`, { scroll: false }));
+  }
+
+  const baselineKey = sweepBaselineQuery(requestKey);
   const showResult = !editor.dirty && errors.length === 0 && !isPending &&
     editor.targetKey === requestKey;
 
@@ -621,15 +683,8 @@ export function SimulationForm({ requestKey, children }: SimulationFormProps) {
     </section>
     )}
     <div className="simulation-output" aria-busy={editor.dirty || isPending}>
-      {showResult ? <TransferForm key={requestKey} requestKey={requestKey} navigate={(targetKey) => {
-        cancelScheduledRequest();
-        setEditor((current) => ({
-          ...restoredEditor(targetKey),
-          observedKey: current.observedKey,
-          requests: [...current.requests, targetKey],
-        }));
-        startTransition(() => router.replace(`/simulate?${targetKey}`, { scroll: false }));
-      }} /> : null}
+      {showResult ? <TransferForm key={`transfer-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
+      {showResult ? <SweepForm key={`sweep-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
       <p role="status" className="simulation-output__status">
         {showResult ? "Escenario actual" : errors.length
           ? "Complete o corrija los campos para actualizar el resultado. El resultado anterior no se muestra."

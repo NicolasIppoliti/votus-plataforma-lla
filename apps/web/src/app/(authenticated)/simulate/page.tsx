@@ -21,6 +21,13 @@ import {
   type ProjectionInput,
 } from "./projection-input";
 import { SimulationForm } from "./simulation-form";
+import {
+  simulationSweep,
+  SimulationFormError,
+  SWEEP_KEYS,
+  transferBaselineFromQuery,
+  type SimulationSweep,
+} from "./simulation-form-adapter";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { SeatDistribution } from "./seat-distribution";
 import "./simulation.css";
@@ -213,6 +220,103 @@ function validateCouncilInput({
   }
 }
 
+interface SweepResultProps {
+  query: string;
+  baselineError: string | undefined;
+}
+
+function SweepResult({ query, baselineError }: SweepResultProps) {
+  if (!SWEEP_KEYS.some((key) => new URLSearchParams(query).has(key))) return null;
+  let sweep: SimulationSweep | undefined;
+  let requestError: string | undefined;
+  try {
+    if (baselineError) throw new SimulationFormError([baselineError]);
+    sweep = simulationSweep(query);
+  } catch (error) {
+    requestError = error instanceof SimulationFormError ? error.messages.join(" ") : "Revise el escenario de base.";
+  }
+  if (!sweep) return <p role="alert">Muestreo rechazado; la base se conserva. {requestError}</p>;
+  const amounts = sweep.amounts;
+  const points = sweep.queries.map((pointQuery, index) => {
+    let result: AllocationResult | undefined;
+    let refusal: string | undefined;
+    try {
+      result = allocateSeats(projectionToAllocationInput(transferBaselineFromQuery(pointQuery)!));
+    } catch (error) {
+      refusal = allocationErrorMessage(error);
+    }
+    return { amount: amounts[index]!, query: pointQuery, result, refusal };
+  });
+  const valid = points.filter((point) => point.result !== undefined);
+  const refusals = new Map<string, number>();
+  for (const point of points) {
+    if (point.refusal) refusals.set(point.refusal, (refusals.get(point.refusal) ?? 0) + 1);
+  }
+  const baseline = transferBaselineFromQuery(sweep.queries[0]!)!;
+  function seats(result: AllocationResult, listId: string): number {
+    return result.seatAwards.filter((award) => award.listId === listId).length;
+  }
+  return (
+    <section data-testid="sweep-result" aria-label="Resultados del muestreo" className="simulation-sweep">
+      <h2>Muestras de transferencia a total fijo</h2>
+      <p>
+        Proyección hipotética: {points.length} muestras evaluadas; {valid.length} válidas; {points.length - valid.length} rechazadas.
+        La base y su resultado exacto no cambian. Sin probabilidades, garantías entre puntos ni umbral general para ganar bancas.
+      </p>
+      {sweep.shorterLastInterval ? <p>Último intervalo más corto: {sweep.lastInterval} votos.</p> : null}
+      <p>Rechazos por motivo: {refusals.size === 0 ? "0 (ninguno)." : null}</p>
+      {refusals.size ? (
+        <ul>{[...refusals].map(([reason, count]) => <li key={reason}>{reason}: {count} muestras.</li>)}</ul>
+      ) : null}
+      <div className="table-scroll" role="region" aria-label="Muestras evaluadas" tabIndex={0}>
+        <table className="data-table">
+          <caption>Muestras evaluadas</caption>
+          <thead>
+            <tr>
+              <th scope="col">Votos transferidos</th>
+              <th scope="col">Estado</th>
+              {baseline.lists.map((list) => <th scope="col" key={list.listId}>{list.listName} (bancas)</th>)}
+              <th scope="col">Evidencia exacta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {points.map((point) => (
+              <tr key={point.amount}>
+                <th scope="row">{point.amount}</th>
+                <td>{point.refusal ?? "Válida"}</td>
+                {baseline.lists.map((list) => (
+                  <td key={list.listId}>{point.result ? seats(point.result, list.listId) : "No disponible"}</td>
+                ))}
+                <td><a href={`/simulate?${point.query}`}>Ver escenario exacto: {point.amount} votos</a></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {valid.length ? (
+        <div className="table-scroll" role="region" aria-label="Extremos de bancas observados" tabIndex={0}>
+          <table className="data-table">
+            <caption>Mínimo y máximo de bancas en las muestras válidas</caption>
+            <thead>
+              <tr><th scope="col">Lista</th><th scope="col">Mínimo de bancas</th><th scope="col">Máximo de bancas</th></tr>
+            </thead>
+            <tbody>
+              {baseline.lists.map((list) => {
+                const counts = valid.map((point) => seats(point.result!, list.listId));
+                return (
+                  <tr key={list.listId}>
+                    <th scope="row">{list.listName}</th><td>{Math.min(...counts)}</td><td>{Math.max(...counts)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : <p role="alert">No hay muestras válidas: no se calculan extremos de bancas.</p>}
+    </section>
+  );
+}
+
 export default async function SimulatePage({
   searchParams,
 }: SimulatePageProps): Promise<ReactNode> {
@@ -222,7 +326,7 @@ export default async function SimulatePage({
   // this, `?input=A&input=B` renders "Pass an `input` query parameter" for a
   // request that sent it twice, and a repeated `heldOver` skips the roster
   // with no statement at all.
-  const repeated = repeatedParams(params);
+  const repeated = repeatedParams(params).filter((key) => !SWEEP_KEYS.some((sweepKey) => sweepKey === key));
   if (repeated.length > 0) {
     return (
       <main>
@@ -338,7 +442,7 @@ export default async function SimulatePage({
 
   const requestQuery = new URLSearchParams(
     Object.entries(params).flatMap(([key, value]) =>
-      typeof value === "string" ? [[key, value]] : [],
+      typeof value === "string" ? [[key, value]] : Array.isArray(value) ? value.map((entry) => [key, entry]) : [],
     ),
   );
   requestQuery.sort();
@@ -347,6 +451,7 @@ export default async function SimulatePage({
     <main className="simulation-page">
       <h1>Simulación de bancas</h1>
       <SimulationForm requestKey={requestQuery.toString()}>
+      <SweepResult query={requestQuery.toString()} baselineError={councilError ?? parseError} />
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}

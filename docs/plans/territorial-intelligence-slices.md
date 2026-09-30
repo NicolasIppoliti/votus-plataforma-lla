@@ -20,7 +20,7 @@ Existing selector/chart/table workflows remain usable.
 | 5 | Completed: bounded Argentina reference views, not full electoral coverage | [Source #378](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/378), [generator #380](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/380), [UI #382](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/382) |
 | 6 | Completed: one accepted national election pair at Coronel Rosales section depth | [#383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383) |
 | 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
-| 8 | IN PROGRESS: seat relief merged; W1 direct transfers local/unverified independently; W2 bounded samples pending | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387) |
+| 8 | IN PROGRESS: seat relief and W1 direct transfers merged; W2 bounded samples local, independent verification pending | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388) |
 | 9 | Planned: analytical question/evidence/evaluation and go/no-go | — |
 | 10 | Planned, conditional on 9: supported-granularity recommendations | — |
 
@@ -211,18 +211,35 @@ this status table and each delivered boundary below distinguish current delivery
 ### 8 — Add statutory seat scenarios
 
 - **Status:** IN PROGRESS overall. Seat relief merged in PR #387 independently of
-  deferred spatial Slice 7. W1 direct transfers are a local implementation candidate,
-  not independently verified or merged; W2 bounded samples remain pending after W1's
-  separately verified delivery. No ranges or whole-Slice-8 completion is claimed.
+  deferred spatial Slice 7. W1 direct transfers merged in PR #388 after independent
+  verification. W2 bounded samples are local; independent verification and delivery
+  remain pending. No whole-Slice-8 completion is claimed.
   Reuse the existing statutory calculator unchanged (PBA Hare, national D'Hondt; 18 total / 9 renewed council seats).
-- **Local W1 scope:** An explicit distinct donor/receptor pair transfers a nonnegative
+- **Merged W1 scope:** An explicit distinct donor/receptor pair transfers a nonnegative
   safe-integer amount (default zero) from the current complete baseline. Only those
   two vote counts change; total, richer vote bases, unmodeled breakdown, padrón,
   projection scope and supplied rosters survive. Zero is an exact no-op; invalid
   requests do not navigate. The existing URL feeds the canonical server allocation,
   table, trace and refusals. Baseline changes reset transfer controls; the custom
-  editor remains usable. Focused action-to-route tests are local evidence only;
-  full regressions and served mobile/keyboard/reset verification remain pending.
+  editor remains usable. Independent regressions and served mobile/keyboard/reset
+  verification passed for W1 before its separately authorized delivery.
+- **Local W2 scope:** Separate donor/target/maximum/positive-step controls preserve the
+  complete baseline and its ordinary exact result. URL keys `sweepDonor`, `sweepTarget`,
+  `sweepMax`, `sweepStep` accompany canonical `input`; W1 exact URLs remain unchanged.
+  Samples include zero, every step and the maximum once; a shorter final interval is
+  disclosed. Preloop, overflow-safe guards reject requests above 21 samples or 600
+  aggregate work positions (sample count × seats-to-fill × list count), without
+  clamping, thinning or changing the baseline. These are conservative unbenchmarked
+  application guards, not universal performance certification or illustration caps.
+  The canonical server allocator evaluates every point; refusals are counted by reason.
+  Min/max seat counts cover all lists, including zero, over valid samples only; no
+  valid samples means no extrema. Each point links its own complete adjusted input and
+  preserved roster/evidence to the existing exact route, without sweep parameters.
+  There are no probabilities, guarantees between points, general winning thresholds,
+  Hare monotonicity assumptions or binary search. Focused local tests do not replace
+  pending independent browser/full checks or official statutory golden certification.
+  Rollback removes only W2 controls, request validation, evaluation, rendering,
+  tests/styles and these docs; retain W1 transfers, baseline/exact contracts and allocator.
 - **Delivered presentation scope:** Individually countable, static shallow-depth blocks grouped by list,
   with a shared seats-to-fill capacity, zero-seat lists and unchanged exact evidence.
   Municipal drawings represent renewal only, never unknown holdover identities.

@@ -635,6 +635,292 @@ test("transfers a rich baseline losslessly with keyboard controls and resets aft
   await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
 });
 
+test("samples fixed-total transfers, links exact evidence and resets on baseline changes at 320px", async ({ page }) => {
+  const input = {
+    level: "national", padron: 20000, totalVotes: 10000,
+    unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+    threshold: { value: 0, basis: "padron" }, seatsToFill: 2,
+    isProjection: true, granularity: "distrito",
+    lists: [
+      { listId: "A", listName: "Lista A", votes: 6000 },
+      { listId: "B", listName: "Lista B", votes: 4000 },
+      { listId: "C", listName: "Lista cero", votes: 0 },
+    ],
+  };
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+  const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
+  const exact = page.getByRole("region", { name: "Resultado de la asignación" });
+  const trace = await exact.getByText(/Huella de los datos proporcionados/).innerText();
+  const baselineUrl = page.url();
+  await sweep.getByLabel("Donante del muestreo").selectOption("A");
+  await sweep.getByLabel("Receptora del muestreo").selectOption("B");
+  await sweep.getByLabel("Máximo a transferir").fill("21");
+  await sweep.getByLabel("Paso del muestreo").fill("1");
+  await sweep.getByRole("button", { name: "Evaluar muestras" }).click();
+  await expect(sweep.getByRole("alert")).toContainText("21 muestras");
+  await expect(page).toHaveURL(baselineUrl);
+  await expect(exact.getByText(/Huella de los datos proporcionados/)).toHaveText(trace);
+  await sweep.getByLabel("Máximo a transferir").fill("1000");
+  await sweep.getByLabel("Paso del muestreo").fill("600");
+  await sweep.getByRole("button", { name: "Evaluar muestras" }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("sweepMax")).toBe("1000");
+  const samples = page.getByRole("region", { name: "Resultados del muestreo", exact: true });
+  await expect(samples).toContainText("3 muestras evaluadas; 3 válidas; 0 rechazadas");
+  await expect(samples).toContainText("Último intervalo más corto: 400 votos");
+  const sampledTable = samples.getByRole("table", { name: "Muestras evaluadas", exact: true });
+  await expect(sampledTable.getByRole("row")).toHaveCount(4);
+  await expect(sampledTable.locator("tbody").getByRole("rowheader")).toHaveText(["0", "600", "1000"]);
+  await expect(samples).toContainText("Sin probabilidades, garantías entre puntos ni umbral general para ganar bancas");
+  for (const amount of [0, 600, 1000]) {
+    const link = samples.getByRole("link", { name: `Ver escenario exacto: ${amount} votos`, exact: true });
+    await expect(link).toHaveCount(1);
+    const url = new URL((await link.getAttribute("href"))!, page.url());
+    expect([...url.searchParams.keys()].some((key) => key.startsWith("sweep"))).toBe(false);
+    expect(JSON.parse(url.searchParams.get("input")!)).toEqual({
+      ...input,
+      lists: input.lists.map((list, index) => ({
+        ...list, votes: list.votes + (index === 0 ? -amount : index === 1 ? amount : 0),
+      })),
+    });
+  }
+  await expect(samples.getByRole("table", { name: "Mínimo y máximo de bancas en las muestras válidas" })
+    .getByRole("row", { name: "Lista cero 0 0", exact: true })).toBeVisible();
+  await expect(exact.getByText(/Huella de los datos proporcionados/)).toHaveText(trace);
+  expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
+  const endpoint = samples.getByRole("link", { name: "Ver escenario exacto: 1000 votos", exact: true });
+  const pointUrl = new URL((await endpoint.getAttribute("href"))!, page.url());
+  expect(pointUrl.searchParams.has("sweepMax")).toBe(false);
+  expect(JSON.parse(pointUrl.searchParams.get("input")!)).toEqual({ ...input, lists: [
+    { ...input.lists[0], votes: 5000 }, { ...input.lists[1], votes: 5000 }, input.lists[2],
+  ] });
+  await expectNoHorizontalOverflow(page);
+  await expect(sweep).toHaveAttribute("aria-busy", "false");
+  await expect(sweep.getByRole("button", { name: "Evaluar muestras" })).toBeEnabled();
+  await sweep.getByLabel("Máximo a transferir").fill("500");
+  await endpoint.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("input")).toBe(pointUrl.searchParams.get("input"));
+  await expect(samples).toHaveCount(0);
+  await expect(exact.getByRole("table", { name: "Tabla de cocientes D’Hondt" })).toBeVisible();
+  await expect(exact.getByText(/Huella de los datos proporcionados/)).not.toHaveText(trace);
+  await expect(sweep.getByLabel("Donante del muestreo")).toHaveValue("");
+  await expect(sweep.getByLabel("Receptora del muestreo")).toHaveValue("");
+  await expect(sweep.getByLabel("Máximo a transferir")).toHaveValue("0");
+  await expect(sweep.getByLabel("Paso del muestreo")).toHaveValue("1");
+  await expectNoHorizontalOverflow(page);
+});
+
+const sweepEvidenceInput = {
+  level: "national", seatsToFill: 2, padron: 20000, totalVotes: 10000,
+  isProjection: true, granularity: "mesa", unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+  threshold: { value: 0, basis: "padron" },
+  lists: [
+    { listId: "110", listName: "LA LIBERTAD AVANZA", votes: 6000 },
+    { listId: "999", listName: "FUERZA PATRIA", votes: 4000 },
+    { listId: "zero", listName: "Lista cero", votes: 0 },
+  ],
+};
+
+function sweepEvidenceQuery(fields: Record<string, string> = {}): string {
+  return new URLSearchParams({ input: JSON.stringify(sweepEvidenceInput), ...fields }).toString();
+}
+
+async function expectSweepDefaults(page: Page): Promise<void> {
+  const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
+  await expect(sweep.getByLabel("Donante del muestreo")).toHaveValue("");
+  await expect(sweep.getByLabel("Receptora del muestreo")).toHaveValue("");
+  await expect(sweep.getByLabel("Máximo a transferir")).toHaveValue("0");
+  await expect(sweep.getByLabel("Paso del muestreo")).toHaveValue("1");
+  await expect(sweep).toHaveAttribute("aria-busy", "false");
+  await expect(sweep.getByRole("button", { name: "Evaluar muestras", exact: true })).toBeEnabled();
+  await expect(page.getByRole("region", { name: "Resultados del muestreo", exact: true })).toHaveCount(0);
+}
+
+test("serves varying sample allocations and numeric extrema for every list", async ({ page }) => {
+  // Same hypothetical fixture and expected extrema as page.test.tsx; not statutory certification.
+  await page.goto(`/simulate?${sweepEvidenceQuery({
+    sweepDonor: "110", sweepTarget: "999", sweepMax: "4000", sweepStep: "2000",
+  })}`);
+  const samples = page.getByRole("region", { name: "Resultados del muestreo", exact: true });
+  const points = samples.getByRole("table", { name: "Muestras evaluadas", exact: true });
+  await expect(points.locator("tbody").getByRole("rowheader")).toHaveText(["0", "2000", "4000"]);
+  for (const [amount, seats] of [["0", ["1", "1", "0"]], ["2000", ["1", "1", "0"]], ["4000", ["0", "2", "0"]]] as const) {
+    const row = points.getByRole("rowheader", { name: amount, exact: true }).locator("..");
+    await expect(row.getByRole("cell")).toHaveText([
+      "Válida", ...seats, `Ver escenario exacto: ${amount} votos`,
+    ]);
+  }
+  const extrema = samples.getByRole("table", { name: "Mínimo y máximo de bancas en las muestras válidas" });
+  await expect(extrema.getByRole("row")).toHaveCount(4);
+  for (const [name, counts] of [
+    ["LA LIBERTAD AVANZA", ["0", "1"]],
+    ["FUERZA PATRIA", ["1", "2"]],
+    ["Lista cero", ["0", "0"]],
+  ] as const) {
+    const row = extrema.getByRole("rowheader", { name, exact: true }).locator("..");
+    await expect(row.getByRole("cell")).toHaveText([...counts]);
+  }
+  await expect(samples).toContainText("3 muestras evaluadas; 3 válidas; 0 rechazadas");
+});
+
+for (const invalid of [
+  { fields: { sweepStep: "0" }, reason: "El paso debe ser un número entero mayor que cero." },
+  { fields: { sweepMax: "21", sweepStep: "1" }, reason: "El muestreo supera el límite de 21 muestras. Reduzca el máximo o aumente el paso." },
+]) {
+  test(`rejects a direct sweep URL without changing baseline evidence: ${invalid.reason}`, async ({ page }) => {
+    await page.goto(`/simulate?${sweepEvidenceQuery()}`);
+    const result = page.getByRole("region", { name: "Resultado de la asignación" });
+    await expect(result).toBeVisible();
+    const baselineEvidence = await result.innerText();
+    const invalidFields = Object.assign({
+      sweepDonor: "110", sweepTarget: "999", sweepMax: "1000", sweepStep: "600",
+    }, invalid.fields);
+    await page.goto(`/simulate?${sweepEvidenceQuery(invalidFields)}`);
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(
+      `Muestreo rechazado; la base se conserva. ${invalid.reason}`,
+    );
+    expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(sweepEvidenceInput);
+    await expect(result).toHaveText(baselineEvidence, { useInnerText: true });
+    await expect(page.getByRole("region", { name: "Resultados del muestreo", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("table", { name: "Muestras evaluadas", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^Ver escenario exacto:/ })).toHaveCount(0);
+  });
+}
+
+test("resets drafted sweep controls after a custom edit and same-document Browser Back", async ({ page }) => {
+  await page.goto(`/simulate?${sweepEvidenceQuery()}`);
+  const result = page.getByRole("region", { name: "Resultado de la asignación" });
+  const editor = page.getByRole("form", { name: "Formulario de simulación de bancas" });
+  const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
+  await expect(editor).toBeVisible();
+  const baselineUrl = page.url();
+  const baselineEvidence = await result.innerText();
+  await page.evaluate(() => window.history.pushState(null, "", window.location.href));
+  const servedDocument = await page.evaluateHandle(() => document);
+  async function draftSweep() {
+    await sweep.getByLabel("Donante del muestreo").selectOption("110");
+    await sweep.getByLabel("Receptora del muestreo").selectOption("999");
+    await sweep.getByLabel("Máximo a transferir").fill("1000");
+    await sweep.getByLabel("Paso del muestreo").fill("600");
+    await expect(sweep.getByLabel("Donante del muestreo")).toHaveValue("110");
+    await expect(sweep.getByLabel("Receptora del muestreo")).toHaveValue("999");
+    await expect(sweep.getByLabel("Máximo a transferir")).toHaveValue("1000");
+    await expect(sweep.getByLabel("Paso del muestreo")).toHaveValue("600");
+  }
+  try {
+    await draftSweep();
+    await editor.getByLabel("Nombre de la lista").first().fill("Lista editada");
+    await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get("input")!).lists[0].listName).toBe("Lista editada");
+    await expect(result).toContainText("Lista editada");
+    await expectSweepDefaults(page);
+    expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
+    await draftSweep();
+    await page.goBack();
+    await expect(page).toHaveURL(baselineUrl);
+    expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
+    expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(sweepEvidenceInput);
+    await expect(result).toHaveText(baselineEvidence, { useInnerText: true });
+    for (const [index, list] of sweepEvidenceInput.lists.entries()) {
+      await expect(editor.getByLabel("Nombre de la lista").nth(index)).toHaveValue(list.listName);
+      await expect(editor.getByLabel("Votos de la lista").nth(index)).toHaveValue(String(list.votes));
+    }
+    await expectSweepDefaults(page);
+  } finally {
+    await servedDocument.dispose();
+  }
+});
+
+test("releases a real superseded sweep response without restoring stale samples", async ({ page }) => {
+  await page.goto(`/simulate?${sweepEvidenceQuery()}`);
+  const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
+  await sweep.getByLabel("Donante del muestreo").selectOption("110");
+  await sweep.getByLabel("Receptora del muestreo").selectOption("999");
+  await sweep.getByLabel("Máximo a transferir").fill("4000");
+  await sweep.getByLabel("Paso del muestreo").fill("2000");
+
+  let responseReady = false;
+  let responseDelivered = false;
+  let releaseResponse: () => void = () => {};
+  const delay = new Promise<void>((resolve) => { releaseResponse = resolve; });
+  const servedDocument = await page.evaluateHandle(() => document);
+  const sampleMonitor = await page.evaluateHandle(() => {
+    let seen = false;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof Element && (
+            node.matches('[aria-label="Resultados del muestreo"]') ||
+            node.querySelector('[aria-label="Resultados del muestreo"]')
+          )) seen = true;
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return { observer, get seen() { return seen; } };
+  });
+  await page.route("**/simulate?**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("sweepMax") !== "4000") {
+      await route.continue();
+      return;
+    }
+    // Fetch the actual RSC navigation response and release it intact after a newer request.
+    const response = await route.fetch();
+    responseReady = true;
+    await delay;
+    await route.fulfill({ response });
+    responseDelivered = true;
+  });
+  try {
+    await sweep.getByRole("button", { name: "Evaluar muestras", exact: true }).click();
+    await expect.poll(() => responseReady).toBe(true);
+    // The editable baseline remains available during the sweep transition.
+    // Supersede through its real debounced router request, never page.goto or abort.
+    const editor = page.getByRole("form", { name: "Formulario de simulación de bancas" });
+    await expect(editor).toBeVisible();
+    await editor.getByLabel("Nombre de la lista").first().fill("Lista nueva A");
+    await editor.getByLabel("Nombre de la lista").nth(1).fill("Lista nueva B");
+    await expect.poll(() => {
+      const input = new URL(page.url()).searchParams.get("input");
+      return input ? JSON.parse(input).lists[0].listName : null;
+    }).toBe("Lista nueva A");
+    const result = page.getByRole("region", { name: "Resultado de la asignación" });
+    await expect(result.getByRole("table", { name: "Tabla de cocientes D’Hondt" })).toBeVisible();
+    const newerUrl = page.url();
+    const newerInput = JSON.parse(new URL(newerUrl).searchParams.get("input")!);
+    expect(newerInput).toEqual({ ...sweepEvidenceInput, lists: [
+      { ...sweepEvidenceInput.lists[0], listName: "Lista nueva A" },
+      { ...sweepEvidenceInput.lists[1], listName: "Lista nueva B" },
+      sweepEvidenceInput.lists[2],
+    ] });
+    const newerEvidence = await result.innerText();
+    releaseResponse();
+    await expect.poll(() => responseDelivered).toBe(true);
+    // Drain route handlers and browser rendering before checking the final state.
+    await page.unrouteAll({ behavior: "wait" });
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect(page).toHaveURL(newerUrl);
+    expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(newerInput);
+    await expect(result).toHaveText(newerEvidence, { useInnerText: true });
+    await expect(editor.getByLabel("Nombre de la lista").first()).toHaveValue("Lista nueva A");
+    await expect(editor.getByLabel("Votos de la lista").first()).toHaveValue("6000");
+    expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
+    await expectSweepDefaults(page);
+    const transfer = page.getByRole("form", { name: "Transferencia de votos a total fijo" });
+    await expect(transfer).toHaveAttribute("aria-busy", "false");
+    await expect(transfer.getByRole("button", { name: "Transferir votos", exact: true })).toBeEnabled();
+    expect(await sampleMonitor.evaluate((monitor) => monitor.seen)).toBe(false);
+  } finally {
+    releaseResponse();
+    await page.unrouteAll({ behavior: "wait" });
+    await sampleMonitor.evaluate((monitor) => monitor.observer.disconnect());
+    await sampleMonitor.dispose();
+    await servedDocument.dispose();
+  }
+});
+
 test("keeps zero-seat lists countable at desktop and mobile widths", async ({ page }) => {
   const longName = "Lista con denominación extensa".repeat(8);
   const input = {
