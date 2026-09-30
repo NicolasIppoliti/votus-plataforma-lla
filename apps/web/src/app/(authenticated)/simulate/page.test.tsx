@@ -3,7 +3,26 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import SimulatePage from "./page";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+const transferHarness = vi.hoisted(() => ({
+  replace: vi.fn(),
+  actions: [] as Array<(state: readonly string[], data: FormData) => Promise<readonly string[]>>,
+}));
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: transferHarness.replace }) }));
+// React's native action scheduling is the platform boundary; execute the real
+// rendered form action, then send its URL through the real server page.
+vi.mock("react", async () => {
+  const actual = await vi.importActual<typeof import("react")>("react");
+  return {
+    ...actual,
+    useState: <T,>(initial: T | (() => T)) => [typeof initial === "function" ? (initial as () => T)() : initial, () => {}],
+    useTransition: () => [false, (callback: () => void) => callback()],
+    useActionState: (action: typeof transferHarness.actions[number], initial: readonly string[]) => {
+      transferHarness.actions.push(action);
+      return [initial, () => {}, false];
+    },
+  };
+});
 
 /**
  * `composeCouncil` and `CouncilCompositionError` were complete, tested, and
@@ -65,6 +84,152 @@ async function renderSimulation(
     })) as ReactElement,
   );
 }
+
+describe("simulate page — fixed-total transfer entry", () => {
+  async function transfer(input: object, amount: string, donor = "110", target = "999",
+    params: Record<string, string> = {}) {
+    transferHarness.replace.mockClear();
+    transferHarness.actions.length = 0;
+    const markup = await renderSimulation(input, params);
+    const data = new FormData();
+    data.set("donor", donor);
+    data.set("target", target);
+    data.set("amount", amount);
+    const action = transferHarness.actions[0];
+    if (!action) throw new Error("missing rendered transfer action");
+    const errors = await action([], data);
+    return { markup, errors, url: transferHarness.replace.mock.calls[0]?.[0] as string | undefined };
+  }
+
+  it("keeps zero an exact no-op with explicit empty party selections", async () => {
+    const { markup, errors, url } = await transfer(ALLOCATION_INPUT, "0");
+    expect(errors).toEqual([]);
+    expect(url).toBeUndefined();
+    expect(markup).toContain('name="amount"');
+    expect(markup).toContain('value="0"');
+    expect(markup.match(/<option value="" selected="">Seleccione una lista/g)).toHaveLength(2);
+    expect(markup).toContain("Operación hipotética a total fijo");
+  });
+
+  it.each([
+    ["-1", "110", "999"], ["0.5", "110", "999"], ["", "110", "999"],
+    ["9007199254740992", "110", "999"], ["6001", "110", "999"],
+    ["1", "110", "110"], ["0", "unknown", "999"], ["0", "110", ""],
+  ])("rejects invalid amount/IDs without navigating: %s %s %s", async (amount, donor, target) => {
+    const { errors, url } = await transfer(ALLOCATION_INPUT, amount, donor, target);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(url).toBeUndefined();
+  });
+
+  it("rejects repeated native action fields without choosing a value or navigating", async () => {
+    transferHarness.replace.mockClear();
+    transferHarness.actions.length = 0;
+    await renderSimulation(ALLOCATION_INPUT);
+    const data = new FormData();
+    data.append("donor", "110");
+    data.append("donor", "999");
+    data.set("target", "999");
+    data.set("amount", "0");
+    const action = transferHarness.actions[0];
+    if (!action) throw new Error("missing rendered transfer action");
+    expect((await action([], data)).join(" ")).toContain("una sola vez");
+    expect(transferHarness.replace).not.toHaveBeenCalled();
+  });
+
+  it("rejects receiver overflow without navigation", async () => {
+    const { errors, url } = await transfer({ ...ALLOCATION_INPUT,
+      lists: [ALLOCATION_INPUT.lists[0], { ...ALLOCATION_INPUT.lists[1], votes: Number.MAX_SAFE_INTEGER }],
+    }, "1");
+    expect(errors.join(" ")).toContain("entero seguro");
+    expect(url).toBeUndefined();
+  });
+
+  it.each([
+    OFFICIAL_PBA_2025_INPUT,
+    { ...ALLOCATION_INPUT, level: "pba_provincial", totalVotes: 11000, seatsToFill: 2 },
+    { level: "national", padron: 20000, totalVotes: 11000, seatsToFill: 2,
+      unmodeledVotes: 0, unmodeledVoteBreakdown: [], threshold: { value: 3, basis: "padron" },
+      isProjection: true, granularity: "distrito", lists: ALLOCATION_INPUT.lists },
+  ])("transfers complete rich/partial input losslessly and serves its ordinary evidence", async (input) => {
+    const donor = input.lists[0]!.listId;
+    const target = input.lists[1]!.listId;
+    const { errors, url } = await transfer(input, "100", donor, target);
+    expect(errors).toEqual([]);
+    const query = new URL(url!, "https://example.invalid").searchParams;
+    const adjusted = JSON.parse(query.get("input")!);
+    expect(adjusted).toEqual({ ...input, lists: [
+      { ...input.lists[0], votes: input.lists[0]!.votes - 100 },
+      { ...input.lists[1], votes: input.lists[1]!.votes + 100 }, ...input.lists.slice(2),
+    ] });
+    expect(adjusted.lists.reduce((sum: number, list: { votes: number }) => sum + list.votes, 0))
+      .toBe(input.lists.reduce((sum, list) => sum + list.votes, 0));
+    const served = await renderSimulation(undefined, Object.fromEntries(query));
+    expect(served).toContain("Huella de los datos proporcionados");
+    expect(served).toContain(input.level === "national" ? "Tabla de cocientes D’Hondt" : "Asignación Hare por lista");
+    if ("totalVotes" in input && input.totalVotes === 11000) expect(served).toContain("Cobertura de votos incompleta: 1.000");
+  });
+
+  it("keeps supplied rosters and all query evidence attached to the adjusted scenario", async () => {
+    const params = { council: "Coronel de Marina Leonardo Rosales", heldOver: JSON.stringify(HELD_OVER) };
+    const { errors, url } = await transfer({ ...ALLOCATION_INPUT, councilTotal: 18 }, "100", "110", "999", params);
+    expect(errors).toEqual([]);
+    const query = new URL(url!, "https://example.invalid").searchParams;
+    expect(query.get("heldOver")).toBe(params.heldOver);
+    expect(query.get("council")).toBe(params.council);
+    const served = await renderSimulation(undefined, Object.fromEntries(query));
+    expect(served).toContain('data-testid="council-composition"');
+    expect(served).toContain("18 bancas, 9 renovadas en esta elección");
+  });
+
+  it("retains canonical server refusals instead of fabricating output", async () => {
+    const { errors, url } = await transfer({ ...ALLOCATION_INPUT, totalVotes: 100 }, "100");
+    expect(errors).toEqual([]);
+    const query = new URL(url!, "https://example.invalid").searchParams;
+    const served = await renderSimulation(undefined, Object.fromEntries(query));
+    expect(served).toContain("no cumplen sus reglas");
+    expect(served).not.toContain('data-testid="allocation-result"');
+    expect(served).not.toContain("Huella de los datos proporcionados");
+  });
+
+  it("retains the original custom editor and resets transfer defaults for a changed baseline", async () => {
+    const { url } = await transfer({ ...ALLOCATION_INPUT, councilTotal: 18 }, "1000", "110", "999",
+      { council: "Coronel de Marina Leonardo Rosales" });
+    const query = new URL(url!, "https://example.invalid").searchParams;
+    const served = await renderSimulation(undefined, Object.fromEntries(query));
+    expect(served).toContain('aria-label="Formulario de simulación de bancas"');
+    expect(served).toMatch(/id="simulation-list-votes-110"[^>]*value="5000"/);
+    expect(served.match(/<option value="" selected="">Seleccione una lista/g)).toHaveLength(2);
+    expect(served).toMatch(/id="transfer-amount"[^>]*value="0"/);
+  });
+
+  it("submits a direct transfer through the rendered form and canonical server route", async () => {
+    transferHarness.replace.mockClear();
+    transferHarness.actions.length = 0;
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+    expect(markup).toContain('aria-label="Transferencia de votos a total fijo"');
+    const data = new FormData();
+    data.set("donor", "110");
+    data.set("target", "999");
+    data.set("amount", "1000");
+    const action = transferHarness.actions[0];
+    if (!action) throw new Error("missing rendered transfer action");
+    expect(await action([], data)).toEqual([]);
+    const url = new URL(transferHarness.replace.mock.calls[0]![0], "https://example.invalid");
+    const adjusted = JSON.parse(url.searchParams.get("input")!);
+    expect(adjusted).toEqual({
+      ...ALLOCATION_INPUT,
+      lists: [
+        { ...ALLOCATION_INPUT.lists[0], votes: 5000 },
+        { ...ALLOCATION_INPUT.lists[1], votes: 5000 },
+      ],
+    });
+    const served = await renderSimulation(undefined, Object.fromEntries(url.searchParams));
+    expect(served).toContain('data-testid="allocation-result"');
+    expect(served).toContain("Asignación Hare por lista");
+    expect(served).toContain("Huella de los datos proporcionados");
+    expect(served).not.toBe(markup);
+  });
+});
 
 describe("simulate page — normal-user entry", () => {
   it("explains automatic server calculation without an apply button", async () => {

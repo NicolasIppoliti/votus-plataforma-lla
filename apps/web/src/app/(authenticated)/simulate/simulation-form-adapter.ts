@@ -36,6 +36,52 @@ export function simulationScenarioQuery(scenario: SimulationScenario): string {
   return query.toString();
 }
 
+/** Read the complete baseline independently of the narrower custom editor. */
+export function transferBaselineFromQuery(query: string): ProjectionInput | null {
+  const params = new URLSearchParams(query);
+  if (params.getAll("input").length !== 1 ||
+    [...params.keys()].some((key) => params.getAll(key).length !== 1)) return null;
+  try {
+    return projectionInputSchema.parse(JSON.parse(params.get("input") ?? ""));
+  } catch {
+    return null;
+  }
+}
+
+/** Change only two vote counts; all other input and query evidence survives. */
+export function transferSimulationQuery(
+  query: string,
+  donorId: string,
+  targetId: string,
+  amount: string,
+): string {
+  const input = transferBaselineFromQuery(query);
+  if (!input) throw new SimulationFormError(["El escenario de base no es válido para transferir votos."]);
+  const donor = input.lists.find((list) => list.listId === donorId);
+  const target = input.lists.find((list) => list.listId === targetId);
+  if (!donor || !target || donorId === targetId) {
+    throw new SimulationFormError(["Seleccione una lista donante y una receptora existentes y distintas."]);
+  }
+  const votes = parseInteger(amount, "La cantidad a transferir");
+  if (votes > donor.votes) {
+    throw new SimulationFormError(["La cantidad a transferir no puede superar los votos de la lista donante."]);
+  }
+  if (!Number.isSafeInteger(target.votes + votes)) {
+    throw new SimulationFormError(["La suma en la lista receptora supera el límite de entero seguro."]);
+  }
+  if (votes === 0) return query;
+  const adjusted = {
+    ...input,
+    lists: input.lists.map((list) => list.listId === donorId
+      ? { ...list, votes: list.votes - votes }
+      : list.listId === targetId ? { ...list, votes: list.votes + votes } : list),
+  };
+  const params = new URLSearchParams(query);
+  params.set("input", JSON.stringify(adjusted));
+  params.sort();
+  return params.toString();
+}
+
 /** Only restore scenarios the editor can reproduce without losing evidence. */
 export function simulationValuesFromQuery(query: string): SimulationFormValues | null {
   const params = new URLSearchParams(query);

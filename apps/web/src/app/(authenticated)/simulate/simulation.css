@@ -55,6 +55,27 @@
   margin-block-start: 1.5rem;
 }
 
+.simulation-transfer {
+  margin-block-end: 1.5rem;
+  min-width: 0;
+}
+
+.simulation-transfer .field {
+  min-width: 0;
+}
+
+.simulation-transfer select {
+  width: 100%;
+  min-width: 0;
+}
+
+.simulation-transfer > h3,
+.simulation-transfer > p,
+.simulation-transfer > [aria-live] {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+
 .simulation-output__status {
   margin: 0 0 1rem;
   padding-block: 0.625rem;
