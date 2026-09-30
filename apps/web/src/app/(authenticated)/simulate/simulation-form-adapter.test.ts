@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   createSimulationScenario,
   SimulationFormError,
+  simulationScenarioQuery,
+  transferBaselineFromQuery,
+  transferSimulationQuery,
   type SimulationFormValues,
 } from "./simulation-form-adapter";
 
@@ -34,6 +37,25 @@ const NATIONAL_VALUES: SimulationFormValues = {
     { id: "list-2", name: "Lista B", votes: "6000" },
   ],
 };
+
+describe("complete transfer query boundary", () => {
+  const query = simulationScenarioQuery(createSimulationScenario(MUNICIPAL_VALUES));
+  it("returns the original query verbatim for zero and preserves the baseline", () => {
+    expect(transferSimulationQuery(query, "list-1", "list-2", "0")).toBe(query);
+    const adjusted = transferBaselineFromQuery(transferSimulationQuery(query, "list-1", "list-2", "6000"));
+    expect(adjusted?.lists.map((list) => list.votes)).toEqual([0, 9850]);
+    expect(transferBaselineFromQuery(query)?.lists.map((list) => list.votes)).toEqual([6000, 3850]);
+  });
+  it("rejects duplicate list identities and repeated query values, never picking the first", () => {
+    const scenario = createSimulationScenario(MUNICIPAL_VALUES);
+    scenario.input.lists[1]!.listId = "list-1";
+    for (const invalid of [simulationScenarioQuery(scenario), `${query}&input=%7B%7D`, `${query}&council=other`]) {
+      expect(transferBaselineFromQuery(invalid)).toBeNull();
+      expect(() => transferSimulationQuery(invalid, "list-1", "list-2", "0"))
+        .toThrow(SimulationFormError);
+    }
+  });
+});
 
 describe("simulation form adapter", () => {
   it("builds the canonical municipal projection and derives the fixed council", () => {

@@ -20,7 +20,7 @@ Existing selector/chart/table workflows remain usable.
 | 5 | Completed: bounded Argentina reference views, not full electoral coverage | [Source #378](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/378), [generator #380](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/380), [UI #382](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/382) |
 | 6 | Completed: one accepted national election pair at Coronel Rosales section depth | [#383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383) |
 | 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
-| 8 | IN PROGRESS, unmerged: independently authorized seat relief verified locally; ranges remain future | — |
+| 8 | IN PROGRESS: seat relief merged; W1 direct transfers local/unverified independently; W2 bounded samples pending | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387) |
 | 9 | Planned: analytical question/evidence/evaluation and go/no-go | — |
 | 10 | Planned, conditional on 9: supported-granularity recommendations | — |
 
@@ -210,10 +210,20 @@ this status table and each delivered boundary below distinguish current delivery
 
 ### 8 — Add statutory seat scenarios
 
-- **Status:** IN PROGRESS overall; bounded presentation increment locally verified,
-  unmerged and independently authorized by the user while spatial Slice 7 is deferred.
+- **Status:** IN PROGRESS overall. Seat relief merged in PR #387 independently of
+  deferred spatial Slice 7. W1 direct transfers are a local implementation candidate,
+  not independently verified or merged; W2 bounded samples remain pending after W1's
+  separately verified delivery. No ranges or whole-Slice-8 completion is claimed.
   Reuse the existing statutory calculator unchanged (PBA Hare, national D'Hondt; 18 total / 9 renewed council seats).
-- **Current scope:** Individually countable, static shallow-depth blocks grouped by list,
+- **Local W1 scope:** An explicit distinct donor/receptor pair transfers a nonnegative
+  safe-integer amount (default zero) from the current complete baseline. Only those
+  two vote counts change; total, richer vote bases, unmodeled breakdown, padrón,
+  projection scope and supplied rosters survive. Zero is an exact no-op; invalid
+  requests do not navigate. The existing URL feeds the canonical server allocation,
+  table, trace and refusals. Baseline changes reset transfer controls; the custom
+  editor remains usable. Focused action-to-route tests are local evidence only;
+  full regressions and served mobile/keyboard/reset verification remain pending.
+- **Delivered presentation scope:** Individually countable, static shallow-depth blocks grouped by list,
   with a shared seats-to-fill capacity, zero-seat lists and unchanged exact evidence.
   Municipal drawings represent renewal only, never unknown holdover identities.
   Drawing is bounded to 60 seats and 600 slots across lists; larger scenarios retain
@@ -222,7 +232,7 @@ this status table and each delivered boundary below distinguish current delivery
 - **Future scope:** Broader hypothetical council exploration and conditional vote ranges
   with assumptions, not fabricated exact winning thresholds.
 - **Entry point:** `/simulate`, keeping accepted inputs and exact allocation trace synchronized.
-- **Current verification:** Strict real-route RED/GREEN for seat presentation, then
+- **Merged relief verification:** Strict real-route RED/GREEN for seat presentation, then
   synthetic national/provincial/municipal cases, zero seats, large-count fallback and
   unchanged trace/roster checks. These protect presentation preservation, not statutory
   certification or passed official goldens. The allocator refuses insufficient partial
@@ -241,9 +251,10 @@ this status table and each delivered boundary below distinguish current delivery
 - **Rollback:** New scenario presentation/range behavior; retain existing statutory calculator.
 - **Dependencies/gate:** Existing statutory `/simulate` entry and independent review,
   mobile/accessibility and evidence gates for this presentation increment; no dependency
-  on deferred spatial 7 or new source acceptance. Conditional ranges/modeling require
-  separate authorization and verification. High combined modeling/rendering risk:
-  keep later capabilities independently reviewable.
+  on deferred spatial 7 or new source acceptance. W1 direct transfers precede the
+  authorized W2 bounded samples; each needs its own independent verification and
+  delivery gate. High combined modeling/rendering risk: keep later capabilities
+  independently reviewable.
 
 ### 9 — Establish future Análisis/Prospectiva evidence foundations
 

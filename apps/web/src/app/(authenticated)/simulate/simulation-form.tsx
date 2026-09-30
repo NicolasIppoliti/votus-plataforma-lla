@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useActionState,
   useEffect,
   useRef,
   useState,
@@ -20,6 +21,8 @@ import {
   SimulationFormError,
   simulationScenarioQuery,
   simulationValuesFromQuery,
+  transferBaselineFromQuery,
+  transferSimulationQuery,
   type SimulationFormListValues,
   type SimulationFormValues,
 } from "./simulation-form-adapter";
@@ -88,6 +91,69 @@ function NumberField({
 interface SimulationFormProps {
   requestKey: string;
   children: ReactNode;
+}
+
+interface TransferFormProps {
+  requestKey: string;
+  navigate: (targetKey: string) => void;
+}
+
+function TransferForm({ requestKey, navigate }: TransferFormProps) {
+  const baseline = transferBaselineFromQuery(requestKey);
+  const [controls, setControls] = useState({ donor: "", target: "", amount: "0" });
+  const [errors, action, pending] = useActionState<readonly string[], FormData>(
+    async (_previous, data) => {
+      try {
+        function field(name: string): string {
+          const entries = data.getAll(name);
+          if (entries.length !== 1 || typeof entries[0] !== "string") {
+            throw new SimulationFormError(["Complete cada campo de transferencia una sola vez."]);
+          }
+          return entries[0];
+        }
+        const targetKey = transferSimulationQuery(requestKey, field("donor"), field("target"), field("amount"));
+        if (targetKey !== requestKey) navigate(targetKey);
+        return [];
+      } catch (error) {
+        return error instanceof SimulationFormError ? error.messages
+          : ["No se pudo transferir. Revise el escenario y la cantidad."];
+      }
+    },
+    [],
+  );
+  if (!baseline) return null;
+  return (
+    <form aria-label="Transferencia de votos a total fijo" action={action}
+      className="simulation-transfer simulation-form__section panel form-grid" noValidate aria-busy={pending}>
+      <h3>Transferir votos entre listas</h3>
+      <p id="transfer-help">Operación hipotética a total fijo: resta votos de una lista y suma
+        la misma cantidad a otra, sin cambiar los demás datos del escenario actual.
+        Cero conserva exactamente el escenario. Al cambiar la base, seleccione las listas de nuevo.</p>
+      {[{ name: "donor", label: "Lista donante" }, { name: "target", label: "Lista receptora" }].map(({ name, label }) => (
+        <div className="field" key={name}>
+          <Label htmlFor={`transfer-${name}`}>{label}</Label>
+          <select id={`transfer-${name}`} name={name} value={name === "donor" ? controls.donor : controls.target} required
+            onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))}
+            aria-describedby="transfer-help transfer-errors">
+            <option value="">Seleccione una lista</option>
+            {baseline.lists.map((list) => (
+              <option key={list.listId} value={list.listId}>{list.listName} — {list.votes} votos</option>
+            ))}
+          </select>
+        </div>
+      ))}
+      <div className="field">
+        <Label htmlFor="transfer-amount">Cantidad a transferir</Label>
+        <Input id="transfer-amount" name="amount" type="text" inputMode="numeric"
+          value={controls.amount} onChange={(event) => setControls((current) => ({ ...current, amount: event.target.value }))}
+          required aria-describedby="transfer-help transfer-errors" />
+      </div>
+      <div id="transfer-errors" aria-live="polite" aria-atomic="true">
+        {errors.length ? <ul role="alert">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : null}
+      </div>
+      <Button type="submit" disabled={pending}>Transferir votos</Button>
+    </form>
+  );
 }
 
 interface EditorState {
@@ -555,6 +621,15 @@ export function SimulationForm({ requestKey, children }: SimulationFormProps) {
     </section>
     )}
     <div className="simulation-output" aria-busy={editor.dirty || isPending}>
+      {showResult ? <TransferForm key={requestKey} requestKey={requestKey} navigate={(targetKey) => {
+        cancelScheduledRequest();
+        setEditor((current) => ({
+          ...restoredEditor(targetKey),
+          observedKey: current.observedKey,
+          requests: [...current.requests, targetKey],
+        }));
+        startTransition(() => router.replace(`/simulate?${targetKey}`, { scroll: false }));
+      }} /> : null}
       <p role="status" className="simulation-output__status">
         {showResult ? "Escenario actual" : errors.length
           ? "Complete o corrija los campos para actualizar el resultado. El resultado anterior no se muestra."

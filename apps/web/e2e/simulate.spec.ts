@@ -542,6 +542,99 @@ test.describe("the simulation route labels caller-supplied projections", () => {
 });
 
 
+test("transfers a rich baseline losslessly with keyboard controls and resets after changes", async ({ page }) => {
+  const input = {
+    level: "pba_municipal", voteTotals: { kind: "valid_votes_only", validVotes: 10000 },
+    unmodeledVotes: 1000,
+    unmodeledVoteBreakdown: [{ reason: "omitted_non_qualifying_lists", votes: 1000 }],
+    seatsToFill: 9, councilTotal: 18, isProjection: true, granularity: "seccion",
+    lists: [
+      { listId: "A", listName: "Lista A", votes: 6000 },
+      { listId: "B", listName: "Lista B", votes: 3000 },
+    ],
+  };
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+  const transfer = page.getByRole("form", { name: "Transferencia de votos a total fijo" });
+  const result = page.getByRole("region", { name: "Resultado de la asignación" });
+  await expect(transfer).toBeVisible();
+  const baselineUrl = page.url();
+  const baselineTrace = await result.getByText(/Huella de los datos proporcionados/).innerText();
+  await expect(transfer.getByLabel("Lista donante")).toHaveValue("");
+  await expect(transfer.getByLabel("Lista receptora")).toHaveValue("");
+  await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
+  await transfer.getByLabel("Lista donante").selectOption("A");
+  await transfer.getByLabel("Lista receptora").selectOption("B");
+  await transfer.getByRole("button", { name: "Transferir votos", exact: true }).click();
+  await expect(page).toHaveURL(baselineUrl);
+  await expect(result.getByText(/Huella de los datos proporcionados/)).toHaveText(baselineTrace);
+  await expect(transfer).toHaveAttribute("aria-busy", "false");
+  await expect(transfer.getByRole("button", { name: "Transferir votos", exact: true })).toBeEnabled();
+  await transfer.getByLabel("Cantidad a transferir").fill("6001");
+  await page.keyboard.press("Tab");
+  await expect(transfer.getByRole("button", { name: "Transferir votos", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(transfer.getByRole("alert")).toContainText("no puede superar");
+  await expect(page).toHaveURL(baselineUrl);
+  // Retain the served baseline in same-document history before router.replace.
+  await page.evaluate(() => window.history.pushState(null, "", window.location.href));
+  const servedDocument = await page.evaluateHandle(() => document);
+  await transfer.getByLabel("Cantidad a transferir").fill("1000");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get("input")!).lists[0].votes).toBe(5000);
+  expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual({ ...input, lists: [
+    { ...input.lists[0], votes: 5000 }, { ...input.lists[1], votes: 4000 },
+  ] });
+  await expect(result).toContainText("1.000 explícitamente fuera del modelo");
+  await expect(result.getByText(/Huella de los datos proporcionados/)).not.toHaveText(baselineTrace);
+  await expect(result.getByRole("table", { name: "Asignación Hare por lista" })).toBeVisible();
+  await expect(transfer.getByLabel("Lista donante")).toHaveValue("");
+  await expect(transfer.getByLabel("Lista receptora")).toHaveValue("");
+  await expect(transfer.getByLabel("Lista receptora").getByRole("option", {
+    name: "Seleccione una lista", exact: true, selected: true,
+  })).toHaveCount(1);
+  await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
+  await expectNoHorizontalOverflow(page);
+
+  // Browser Back is external to the editor and restores a different complete baseline.
+  await transfer.getByLabel("Lista donante").selectOption("A");
+  await transfer.getByLabel("Lista receptora").selectOption("B");
+  await transfer.getByLabel("Cantidad a transferir").fill("100");
+  await expect(transfer.getByLabel("Lista donante")).toHaveValue("A");
+  await expect(transfer.getByLabel("Lista receptora")).toHaveValue("B");
+  await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("100");
+  await page.goBack();
+  await expect(page).toHaveURL(baselineUrl);
+  expect(await page.evaluate((previousDocument) => document === previousDocument, servedDocument)).toBe(true);
+  await servedDocument.dispose();
+  expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
+  await expect(result.getByText(/Huella de los datos proporcionados/)).toHaveText(baselineTrace);
+  await expect(transfer.getByLabel("Lista donante")).toHaveValue("");
+  await expect(transfer.getByLabel("Lista receptora")).toHaveValue("");
+  await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
+  await expect(transfer.getByLabel("Lista donante").getByRole("option", {
+    name: "Lista A — 6000 votos", exact: true,
+  })).toHaveText("Lista A — 6000 votos");
+
+  // A custom-editor baseline change must also discard a drafted operation.
+  const custom = { ...input, voteTotals: undefined, totalVotes: 10000,
+    blankVotes: 0, annulledVotes: 0, unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+    lists: [{ ...input.lists[0], votes: 6000 }, { ...input.lists[1], votes: 4000 }],
+  };
+  await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(custom),
+    council: "Coronel de Marina Leonardo Rosales" })}`);
+  await transfer.getByLabel("Lista donante").selectOption("A");
+  await transfer.getByLabel("Lista receptora").selectOption("B");
+  await transfer.getByLabel("Cantidad a transferir").fill("100");
+  const editor = page.getByRole("form", { name: "Formulario de simulación de bancas" });
+  await editor.getByLabel("Nombre de la lista").first().fill("Lista A editada");
+  await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get("input")!).lists[0].listName).toBe("Lista A editada");
+  await expect(transfer.getByLabel("Lista donante")).toHaveValue("");
+  await expect(transfer.getByLabel("Lista receptora")).toHaveValue("");
+  await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
+});
+
 test("keeps zero-seat lists countable at desktop and mobile widths", async ({ page }) => {
   const longName = "Lista con denominación extensa".repeat(8);
   const input = {
@@ -561,8 +654,14 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
   const trace = result.getByText(/Huella de los datos proporcionados/);
   await expect(chart).toBeVisible();
   const servedTrace = await trace.innerText();
+  const transfer = page.getByRole("form", { name: "Transferencia de votos a total fijo" });
   for (const width of [1280, 320]) {
     await page.setViewportSize({ width, height: 800 });
+    for (const label of ["Lista donante", "Lista receptora"]) {
+      await expect(transfer.getByLabel(label).getByRole("option", {
+        name: `${longName} — 10000 votos`, exact: true,
+      })).toHaveText(`${longName} — 10000 votos`);
+    }
     await expect(chart.locator('[data-seat-state="awarded"]')).toHaveCount(2);
     await expect(chart.locator('[data-seat-state="empty"]')).toHaveCount(4);
     await expect(chart.getByRole("img", { name: "Lista C: 0 de 2 bancas", exact: true })).toBeVisible();
