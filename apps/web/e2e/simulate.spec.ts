@@ -49,7 +49,7 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 test.describe("the simulation route labels caller-supplied projections", () => {
   test("test_projection_form_reaches_the_municipal_hare_result", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 800 });
     await page.goto("/dashboard");
     await expect(page).toHaveURL(new URL("/", page.url()).toString());
@@ -317,6 +317,12 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(seatChart).toContainText("Lista A");
     await expect(seatChart).toContainText("Lista B");
     await expect(seatChart).toContainText(/9/);
+    const listASeats = seatChart.getByRole("img", { name: "Lista A: 5 de 9 bancas", exact: true });
+    const listBSeats = seatChart.getByRole("img", { name: "Lista B: 4 de 9 bancas", exact: true });
+    await expect(listASeats.locator('[data-seat-state="awarded"]')).toHaveCount(5);
+    await expect(listASeats.locator('[data-seat-state="empty"]')).toHaveCount(4);
+    await expect(listBSeats.locator('[data-seat-state="awarded"]')).toHaveCount(4);
+    const originalTrace = await result.getByText(/Huella de los datos proporcionados/).innerText();
     // Invalid edits remove the preceding result immediately, including its trace.
     await listVotes.nth(0).fill("");
     await expect(result).toHaveCount(0);
@@ -352,24 +358,103 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(result).not.toContainText("D’Hondt");
     await expectNoHorizontalOverflow(page);
 
-    for (const evidenceLabel of [
-      "Asignación Hare por lista",
-      "Evidencia de asignación por banca",
-    ]) {
-      const evidenceScroll = result.getByRole("region", {
-        name: evidenceLabel,
-      });
-      await expect(evidenceScroll).toBeVisible();
-      await expect(evidenceScroll).toHaveAttribute("tabindex", "0");
-      await evidenceScroll.focus();
-      await expect(evidenceScroll).toBeFocused();
-    }
+    const awardsScroll = result.getByRole("region", { name: "Evidencia de asignación por banca", exact: true });
+    // Inspect DOM order, then traverse it with real keys from one known start.
+    expect(await result.locator('[tabindex="0"]').evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("aria-label")),
+    )).toEqual(["Asignación Hare por lista", "Evidencia de asignación por banca"]);
+    await allocationScroll.focus();
+    await expect(allocationScroll).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(awardsScroll).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(allocationScroll).toBeFocused();
 
     await page.setViewportSize({ width: 320, height: 720 });
     await expectNoHorizontalOverflow(page);
     await expect(seatChart).toBeVisible();
+    await expect(listASeats.locator('[data-seat-state="awarded"]')).toHaveCount(5);
+    await expect(result.getByText(/Huella de los datos proporcionados/)).toHaveText(originalTrace);
     await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(listBSeats.locator('[data-seat-state="awarded"]')).toHaveCount(4);
+    await expectNoHorizontalOverflow(page);
     await expect(result.getByRole("heading", { name: "Resultado (municipal de PBA)" })).toHaveCSS("font-size", "20px");
+    expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+    const awardedBlock = listASeats.locator('[data-seat-state="awarded"]').first();
+    const emptyBlock = listASeats.locator('[data-seat-state="empty"]').first();
+    // Global reduced-motion policy caps durations at 0.01ms, not exact zero.
+    const reducedMotionLimitSeconds = 0.00001;
+    for (const block of [awardedBlock, emptyBlock]) {
+      const motion = await block.evaluate((element) => ({
+        state: element.getAttribute("data-seat-state"),
+        styles: [null, "::after"].map((pseudo) => {
+          const style = getComputedStyle(element, pseudo);
+          return {
+            pseudo, transition: style.transitionDuration, animation: style.animationDuration,
+            transitionDelay: style.transitionDelay, animationDelay: style.animationDelay,
+            name: style.animationName,
+          };
+        }),
+        effects: element.getAnimations({ subtree: true }).map((animation) => ({
+          state: animation.playState, pending: animation.pending,
+          timing: animation.effect?.getTiming(), computed: animation.effect?.getComputedTiming(),
+        })),
+      }));
+      const diagnostic = `Seat relief motion: ${JSON.stringify(motion)}`;
+      for (const style of motion.styles) {
+        for (const durations of [style.transition, style.animation]) {
+          for (const duration of durations.split(",")) {
+            expect(Number.parseFloat(duration), diagnostic).toBeGreaterThanOrEqual(0);
+            expect(Number.parseFloat(duration), diagnostic).toBeLessThanOrEqual(reducedMotionLimitSeconds);
+          }
+        }
+        expect(style.name, diagnostic).toBe("none");
+        for (const delays of [style.transitionDelay, style.animationDelay]) {
+          expect(delays.split(",").map(Number.parseFloat), diagnostic).toEqual(delays.split(",").map(() => 0));
+        }
+      }
+      for (const effect of motion.effects) {
+        expect(effect.pending, diagnostic).toBe(false);
+        expect(effect.state, diagnostic).not.toBe("running");
+        expect(effect.state, diagnostic).not.toBe("paused");
+        expect(effect.timing?.delay, diagnostic).toBe(0);
+        expect(effect.timing?.endDelay, diagnostic).toBe(0);
+        expect(effect.computed?.activeDuration, diagnostic).toBeLessThanOrEqual(reducedMotionLimitSeconds * 1000);
+      }
+    }
+    // One capture batch before navigation clears the actual served result.
+    for (const [name, width] of [["desktop", 1280], ["mobile", 320]] as const) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(listASeats.locator('[data-seat-state="awarded"]')).toHaveCount(5);
+      await expect(listBSeats.locator('[data-seat-state="awarded"]')).toHaveCount(4);
+      await expect(municipalConfiguration).toContainText(/18 bancas/);
+      await expect(result.getByText(/Huella de los datos proporcionados/)).toHaveText(originalTrace);
+      await expectNoHorizontalOverflow(page);
+      await page.evaluate(async () => { await document.fonts.ready; window.scrollTo(0, 0); });
+      const capturePath = testInfo.outputPath(`seat-relief-municipal-${name}.png`);
+      await page.screenshot({ path: capturePath, fullPage: true, animations: "disabled" });
+      await testInfo.attach(`seat-relief-municipal-${name}`, { path: capturePath, contentType: "image/png" });
+    }
+    await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+    expect(await page.evaluate(() => matchMedia("(forced-colors: active)").matches)).toBe(true);
+    const faces = await Promise.all([awardedBlock, emptyBlock].map((block) => block.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const face = getComputedStyle(element, "::after");
+      return {
+        outline: style.borderTopStyle, width: Number.parseFloat(style.borderTopWidth), background: style.backgroundColor,
+        faceContent: face.content, faceBorder: face.borderTopStyle, faceHeight: Number.parseFloat(face.height),
+      };
+    })));
+    expect(faces[0]!.outline).toBe("solid");
+    expect(faces[1]!.outline).toBe("dashed");
+    expect(faces.every((face) => face.width > 0)).toBe(true);
+    expect(faces[0]!.background).not.toBe(faces[1]!.background);
+    expect(faces[0]!.faceContent).not.toBe("none");
+    expect(faces[0]!.faceBorder).toBe("solid");
+    expect(faces[0]!.faceHeight).toBeGreaterThan(0);
+    expect(faces[1]!.faceContent).toBe("none");
+    await page.emulateMedia({ forcedColors: "none", reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/simulate");
     await expect(page).toHaveURL(/\/simulate$/);
     const desktopForm = page.getByRole("form", {
@@ -456,6 +541,36 @@ test.describe("the simulation route labels caller-supplied projections", () => {
   });
 });
 
+
+test("keeps zero-seat lists countable at desktop and mobile widths", async ({ page }) => {
+  const longName = "Lista con denominación extensa".repeat(8);
+  const input = {
+    level: "national", padron: 100000, totalVotes: 16000,
+    unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+    threshold: { value: 3, basis: "padron" }, seatsToFill: 2,
+    isProjection: true, granularity: "distrito",
+    lists: [
+      { listId: "A", listName: longName, votes: 10000 },
+      { listId: "B", listName: "Lista B", votes: 4000 },
+      { listId: "C", listName: "Lista C", votes: 2000 },
+    ],
+  };
+  await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+  const result = page.getByRole("region", { name: "Resultado de la asignación" });
+  const chart = result.getByRole("region", { name: "Distribución de bancas", exact: true });
+  const trace = result.getByText(/Huella de los datos proporcionados/);
+  await expect(chart).toBeVisible();
+  const servedTrace = await trace.innerText();
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(chart.locator('[data-seat-state="awarded"]')).toHaveCount(2);
+    await expect(chart.locator('[data-seat-state="empty"]')).toHaveCount(4);
+    await expect(chart.getByRole("img", { name: "Lista C: 0 de 2 bancas", exact: true })).toBeVisible();
+    await expect(result.getByRole("table", { name: "Cocientes ganadores ordenados" }).getByRole("row")).toHaveCount(3);
+    await expect(trace).toHaveText(servedTrace);
+    await expectNoHorizontalOverflow(page);
+  }
+});
 
 test("preserves a rich supplied scenario until another scenario is explicitly started", async ({ page }) => {
   const input = {

@@ -1,8 +1,9 @@
 # Territorial Intelligence — Merge-Gated Delivery
 
 **Reconciled to verified merged deliveries as of 2026-09-29.** Slices 0–6 delivered
-bounded capabilities, not every original expansion goal. Slice 7 is the next planning
-scope; this correction does not authorize its implementation or any Git operation.
+bounded capabilities, not every original expansion goal. Spatial Slice 7 is deferred;
+the user authorized a bounded Slice 8 presentation increment independently. This does
+not authorize spatial implementation or any Git operation.
 Existing selector/chart/table workflows remain usable.
 [Product](../../PRODUCT.md) · [Design](../../DESIGN.md) ·
 [Proposal](../proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) · [Roadmap](../roadmap.md)
@@ -18,8 +19,8 @@ Existing selector/chart/table workflows remain usable.
 | 4 | Completed: Buenos Aires anchor and verified municipal transition | [#374](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/374) |
 | 5 | Completed: bounded Argentina reference views, not full electoral coverage | [Source #378](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/378), [generator #380](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/380), [UI #382](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/382) |
 | 6 | Completed: one accepted national election pair at Coronel Rosales section depth | [#383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383) |
-| 7 | Next planned: separate operational coverage heat; reuse existing Fiscalización | — |
-| 8 | Planned: statutory scenario presentation; reuse existing calculator | — |
+| 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
+| 8 | IN PROGRESS, unmerged: independently authorized seat relief verified locally; ranges remain future | — |
 | 9 | Planned: analytical question/evidence/evaluation and go/no-go | — |
 | 10 | Planned, conditional on 9: supported-granularity recommendations | — |
 
@@ -30,7 +31,9 @@ this status table and each delivered boundary below distinguish current delivery
 
 ## Rules for every slice
 
-- Commit, push, review in its **own PR**, and merge before starting the next slice.
+- Commit, push, review in its **own PR**, and merge before starting the next dependent slice.
+  The user explicitly separated the bounded Slice 8 seat-presentation increment from
+  deferred spatial Slice 7; this exception does not waive either slice's delivery gates.
   These are future delivery gates, not permission to publish this documentation now.
 - Dependencies below mean **merged**, not merely implemented. Obtain separate scope
   authorization and write implementation specifications at each slice, not through this documentation correction.
@@ -191,8 +194,9 @@ this status table and each delivered boundary below distinguish current delivery
 
 ### 7 — Add separate Fiscalización operational heat
 
-- **Status:** Next planned spatial extension, not a missing application. Map the existing
-  functional `/fiscalizacion` route and coverage guards before separately authorizing implementation.
+- **Status:** Spatial extension deferred awaiting accepted evidence, not a missing
+  application. Existing `/fiscalizacion` and coverage guards remain usable; spatial heat
+  requires separate evidence acceptance and implementation authorization.
 - **Goal/scope:** Coverage/operational heat at supported geography, with official denominator,
   literal `isRandomSample: false` and explicit source opt-in.
 - **Entry point:** `/fiscalizacion`; never an official-results series or default query path.
@@ -200,21 +204,46 @@ this status table and each delivered boundary below distinguish current delivery
   bounded uncovered collections, denied evidence and accessible operational coverage.
 - **Non-goals:** Statistical representativeness, personal fiscal names or inferred official totals.
 - **Rollback:** Heat presentation only; retain existing paired coverage/results guards.
-- **Dependencies/gate:** 6; source-separation and coverage semantics pass independent review.
+- **Dependencies/gate:** 6 plus separately accepted spatial evidence; source-separation
+  and coverage semantics pass independent review. Deferred spatial work does not gate
+  the user-authorized bounded Slice 8 seat-presentation increment.
 
 ### 8 — Add statutory seat scenarios
 
-- **Status:** Planned presentation extension; reuse the existing statutory calculator, not
-  duplicate its algorithms (PBA Hare, national D'Hondt; 18 total / 9 renewed council seats).
-- **Goal/scope:** Hypothetical 3D council/seat exploration using authoritative allocation;
-  conditional vote ranges with assumptions, not fabricated exact winning thresholds.
+- **Status:** IN PROGRESS overall; bounded presentation increment locally verified,
+  unmerged and independently authorized by the user while spatial Slice 7 is deferred.
+  Reuse the existing statutory calculator unchanged (PBA Hare, national D'Hondt; 18 total / 9 renewed council seats).
+- **Current scope:** Individually countable, static shallow-depth blocks grouped by list,
+  with a shared seats-to-fill capacity, zero-seat lists and unchanged exact evidence.
+  Municipal drawings represent renewal only, never unknown holdover identities.
+  Drawing is bounded to 60 seats and 600 slots across lists; larger scenarios retain
+  exact labelled counts and disclose that individual-seat drawing is unavailable.
+  No camera, map, three-axis sensitivity, renderer dependency or algorithm change.
+- **Future scope:** Broader hypothetical council exploration and conditional vote ranges
+  with assumptions, not fabricated exact winning thresholds.
 - **Entry point:** `/simulate`, keeping accepted inputs and exact allocation trace synchronized.
-- **RED/verification:** Entry-driven official golden cases for PBA Hare/national D'Hondt,
-  ties, conditional range limits and total-versus-renewed seats (Coronel Rosales: 18/9).
+- **Current verification:** Strict real-route RED/GREEN for seat presentation, then
+  synthetic national/provincial/municipal cases, zero seats, large-count fallback and
+  unchanged trace/roster checks. These protect presentation preservation, not statutory
+  certification or passed official goldens. The allocator refuses insufficient partial
+  scenarios; retain that refusal rather than fabricating seats. Keep the unassigned-count
+  disclosure for any partial result supported by the authoritative interface.
+  The actual focused `/simulate` browser gate passed with 371 SQL assertions, both
+  rollback/reapply proofs, production build and owned cleanup. Desktop/mobile captures
+  were reviewed; real Tab/Shift+Tab, forced-color distinctions and settled reduced-motion
+  checks passed. A strict-zero duration assertion failed and was corrected to respect
+  the existing 0.01ms global policy without changing product CSS. Motion was inspected
+  after settlement, not continuously throughout every update. This is scoped browser
+  evidence, not full accessibility, physical-device or official-golden certification.
+- **Future verification:** Entry-driven official golden cases for statutory/modeling
+  changes, ties, conditional range limits and total-versus-renewed seats (18/9).
 - **Non-goals:** Client-side duplicate allocation or probabilistic election prediction.
 - **Rollback:** New scenario presentation/range behavior; retain existing statutory calculator.
-- **Dependencies/gate:** 7; statutory, mobile and evidence review. High combined modeling/rendering
-  risk: re-slice into independently useful scenario capabilities if the budget is exceeded.
+- **Dependencies/gate:** Existing statutory `/simulate` entry and independent review,
+  mobile/accessibility and evidence gates for this presentation increment; no dependency
+  on deferred spatial 7 or new source acceptance. Conditional ranges/modeling require
+  separate authorization and verification. High combined modeling/rendering risk:
+  keep later capabilities independently reviewable.
 
 ### 9 — Establish future Análisis/Prospectiva evidence foundations
 
