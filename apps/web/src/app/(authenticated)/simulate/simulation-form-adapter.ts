@@ -82,6 +82,70 @@ export function transferSimulationQuery(
   return params.toString();
 }
 
+export const SWEEP_KEYS = ["sweepDonor", "sweepTarget", "sweepMax", "sweepStep"] as const;
+
+export function sweepBaselineQuery(query: string): string {
+  const params = new URLSearchParams(query);
+  for (const key of SWEEP_KEYS) params.delete(key);
+  params.sort();
+  return params.toString();
+}
+
+export interface SimulationSweep {
+  amounts: number[];
+  queries: string[];
+  lastInterval: number;
+  shorterLastInterval: boolean;
+}
+
+/** Conservative, unbenchmarked request guards; not universal timing guarantees. */
+export function simulationSweep(query: string): SimulationSweep {
+  const params = new URLSearchParams(query);
+  const fields = SWEEP_KEYS.map((key) => {
+    const entries = params.getAll(key);
+    if (entries.length !== 1) throw new SimulationFormError(["Complete cada parámetro de muestreo una sola vez."]);
+    return entries[0]!;
+  });
+  const [donor, target, rawMax, rawStep] = fields;
+  const max = parseInteger(rawMax!, "El máximo a transferir");
+  const step = parseInteger(rawStep!, "El paso", { positive: true });
+  const baseline = sweepBaselineQuery(query);
+  // Reuse W1's canonical, lossless operation, including identity and overflow checks.
+  transferSimulationQuery(baseline, donor!, target!, String(max));
+  const input = transferBaselineFromQuery(baseline)!;
+  const intervals = Math.floor(max / step);
+  const remainder = max % step;
+  if (intervals >= 21) throw new SimulationFormError(["El muestreo supera el límite de 21 muestras. Reduzca el máximo o aumente el paso."]);
+  const count = intervals + 1 + (remainder > 0 ? 1 : 0);
+  if (count > 21) throw new SimulationFormError(["El muestreo supera el límite de 21 muestras. Reduzca el máximo o aumente el paso."]);
+  if (input.seatsToFill > Math.floor(600 / count / input.lists.length)) {
+    throw new SimulationFormError(["El muestreo supera el límite de 600 posiciones de trabajo (muestras × bancas × listas)."]);
+  }
+  const amounts = Array.from({ length: intervals + 1 }, (_, index) => index * step);
+  if (remainder > 0) amounts.push(max);
+  return {
+    amounts,
+    queries: amounts.map((amount) => transferSimulationQuery(baseline, donor!, target!, String(amount))),
+    lastInterval: remainder || (max === 0 ? 0 : step),
+    shorterLastInterval: remainder > 0,
+  };
+}
+
+export function simulationSweepQuery(query: string, data: FormData): string {
+  const params = new URLSearchParams(sweepBaselineQuery(query));
+  for (const [index, name] of ["donor", "target", "max", "step"].entries()) {
+    const entries = data.getAll(name);
+    if (entries.length !== 1 || typeof entries[0] !== "string") {
+      throw new SimulationFormError(["Complete cada campo de muestreo una sola vez."]);
+    }
+    params.set(SWEEP_KEYS[index]!, entries[0]);
+  }
+  params.sort();
+  const request = params.toString();
+  simulationSweep(request);
+  return request;
+}
+
 /** Only restore scenarios the editor can reproduce without losing evidence. */
 export function simulationValuesFromQuery(query: string): SimulationFormValues | null {
   const params = new URLSearchParams(query);

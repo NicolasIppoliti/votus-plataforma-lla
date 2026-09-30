@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createSimulationScenario,
+  simulationSweep,
+  simulationSweepQuery,
+  sweepBaselineQuery,
   SimulationFormError,
   simulationScenarioQuery,
   transferBaselineFromQuery,
@@ -54,6 +57,77 @@ describe("complete transfer query boundary", () => {
       expect(() => transferSimulationQuery(invalid, "list-1", "list-2", "0"))
         .toThrow(SimulationFormError);
     }
+  });
+});
+
+describe("bounded sweep query boundary", () => {
+  const baseline = simulationScenarioQuery(createSimulationScenario(MUNICIPAL_VALUES));
+  function request(max: string, step: string, query = baseline, donor = "list-1", target = "list-2") {
+    const data = new FormData();
+    for (const [key, value] of Object.entries({ max, step, donor, target })) data.set(key, value);
+    return simulationSweepQuery(query, data);
+  }
+
+  it.each([
+    ["1000", "500", [0, 500, 1000]], ["1000", "600", [0, 600, 1000]],
+    ["0", "1", [0]], ["10", "20", [0, 10]],
+  ])("includes both endpoints exactly once: maximum %s, step %s", (max, step, amounts) => {
+    const query = request(max, step);
+    const sweep = simulationSweep(query);
+    expect(sweep.amounts).toEqual(amounts);
+    expect(sweepBaselineQuery(query)).toBe(baseline);
+    expect(sweep.queries.every((point) => !new URLSearchParams(point).has("sweepMax"))).toBe(true);
+    for (const [index, point] of sweep.queries.entries()) {
+      const original = transferBaselineFromQuery(baseline)!;
+      expect(transferBaselineFromQuery(point)).toEqual({ ...original, lists: [
+        { ...original.lists[0], votes: 6000 - amounts[index]! },
+        { ...original.lists[1], votes: 3850 + amounts[index]! },
+      ] });
+    }
+  });
+
+  it("accepts 21 samples and rejects 22 without thinning or clamping", () => {
+    expect(simulationSweep(request("20", "1")).amounts).toHaveLength(21);
+    expect(() => request("21", "1")).toThrow("21 muestras");
+    expect(() => request("41", "2")).toThrow("21 muestras");
+  });
+
+  it("accepts exactly 600 aggregate work slots and rejects one sample beyond", () => {
+    const scenario = createSimulationScenario(NATIONAL_VALUES);
+    scenario.input.seatsToFill = 10;
+    scenario.input.lists.push({ listId: "zero", listName: "Lista cero", votes: 0 });
+    const query = simulationScenarioQuery(scenario);
+    expect(simulationSweep(request("19", "1", query)).amounts).toHaveLength(20);
+    expect(() => request("20", "1", query)).toThrow("600 posiciones");
+    scenario.input.seatsToFill = Number.MAX_SAFE_INTEGER;
+    expect(() => request("0", "1", simulationScenarioQuery(scenario))).toThrow("600 posiciones");
+  });
+
+  it.each([
+    ["-1", "1"], ["0.5", "1"], ["9007199254740992", "1"], ["", "1"],
+    ["1", "0"], ["1", "-1"], ["1", "0.5"], ["1", "9007199254740992"], ["6001", "1"],
+  ])("rejects invalid maximum/step before generating samples: %s/%s", (max, step) => {
+    expect(() => request(max, step)).toThrow(SimulationFormError);
+  });
+
+  it("rejects unsafe preloop sample counts, identities, duplicates and receiver overflow", () => {
+    const scenario = createSimulationScenario(NATIONAL_VALUES);
+    scenario.input.lists[0]!.votes = Number.MAX_SAFE_INTEGER;
+    scenario.input.lists[1]!.votes = 0;
+    expect(() => request(String(Number.MAX_SAFE_INTEGER), "1", simulationScenarioQuery(scenario))).toThrow("21 muestras");
+    for (const [donor, target] of [["list-1", "list-1"], ["unknown", "list-2"], ["", "list-2"]]) {
+      expect(() => request("0", "1", baseline, donor, target)).toThrow("existentes y distintas");
+    }
+    const repeated = `${request("0", "1")}&sweepMax=1`;
+    expect(() => simulationSweep(repeated)).toThrow("una sola vez");
+    const data = new FormData();
+    data.append("donor", "list-1"); data.append("donor", "list-2");
+    expect(() => simulationSweepQuery(baseline, data)).toThrow("una sola vez");
+    scenario.input.lists[0]!.votes = 1;
+    scenario.input.lists[1]!.votes = Number.MAX_SAFE_INTEGER;
+    expect(() => request("1", "1", simulationScenarioQuery(scenario))).toThrow("entero seguro");
+    scenario.input.lists[1]!.listId = "list-1";
+    expect(() => request("0", "1", simulationScenarioQuery(scenario))).toThrow(SimulationFormError);
   });
 });
 
