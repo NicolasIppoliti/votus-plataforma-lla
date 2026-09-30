@@ -57,27 +57,33 @@ An all-135-partido program is unapproved; establish the second complete municipa
 
 ## FUTURE — Territorial intelligence program
 
-**Direction approved; Slice 1 feasibility is an unmerged implementation candidate.**
+**Direction approved; Slice 1 research/lab merged in #362.**
 Current routes remain selector/chart/table-first. One ARBA partido reference has a
 checksum-backed archive/CLI and a standalone non-production renderer evaluator;
-child geometry, terrain and production map scenes are not delivered. The map becomes the main workspace, not a decorative hero.
+that Slice 1 delivery does not include child geometry, terrain or production map
+scenes. Later bounded reference scenes are distinguished below. The map becomes the
+main workspace, not a decorative hero.
 
 Follow the [sequential slice plan](plans/territorial-intelligence-slices.md):
 
-1. Documentation alignment (Slice 0), then Slice 1 source/geometry/terrain feasibility;
-   final whole-candidate verification, review and merge remain pending.
+1. Documentation alignment (Slice 0) and bounded Slice 1 research/lab are merged;
+   neither establishes production rendering, accepted terrain or child coverage.
 2. The user pulled partido-only archive/CLI into Slice 1. Remaining Slice 2 work
    validates any newly accepted child/terrain source before that source is used.
-3. After Slice 1 merges, the smallest production scope may start without unavailable
-   sources: Coronel Rosales partido boundary with existing authorized exact municipal
-   results, table/text fallback and explicit unsupported child/terrain states. No
-   generic municipality, extrusion or comparison is included.
+3. Bounded municipal, provincial/national references and one section-level national
+   comparison were subsequently delivered (Slices 3–6); follow the plan for their
+   exact accepted boundaries, not blanket production or electoral coverage.
 4. Territorial election comparison alongside dominance as the core product.
-5. Separate Fiscalización heat layer and statutory seat simulation.
-6. Future Análisis/Prospectiva foundations, then conditional recommendations.
+5. Spatial Fiscalización remains deferred. Bounded Slice 8 statutory scenarios are
+   delivered, including W1 #388 and W2 #389; deterministic samples are not forecasts.
+6. [Slice 9 predictive suitability](plans/slice-09-predictive-suitability.md) asks whether
+   2027 Coronel Rosales CONCEJALES list-vote estimation is defensible. Evidence and
+   preregistered evaluation/go-no-go precede any model, route or output. Feasibility
+   is not established; no-go is valid. Slice 10 recommendations remain unauthorized.
 
-Each slice requires its own reviewed PR and merge before the next starts; none of
-those delivery actions has occurred for Slice 1. Exact coverage is a feasibility finding, not a roadmap promise.
+Each dependent slice requires its own reviewed PR and merge; the bounded Slice 8
+merge dependency is fulfilled, not the Slice 9 analytical gate. Exact coverage is a
+feasibility finding, not a roadmap promise.
 Provincial/national expansion is not authorization for all-135-partido ingestion;
 the existing municipal-expansion workstream must be reconciled with these slices
 before overlapping work starts. Specialized modules share foundations, never mix
