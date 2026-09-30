@@ -1,9 +1,10 @@
 # Territorial Intelligence — Merge-Gated Delivery
 
-**Reconciled to verified merged deliveries as of 2026-09-29.** Slices 0–6 delivered
-bounded capabilities, not every original expansion goal. Spatial Slice 7 is deferred;
-the user authorized a bounded Slice 8 presentation increment independently. This does
-not authorize spatial implementation or any Git operation.
+**Reconciled through W1 #388 (`14741ab`) and W2 #389 (`1b37b37`) merged deliveries.**
+Slices 0–6 and accepted bounded Slice 8 work are complete, not every original
+expansion goal. Spatial Slice 7 is deferred. Slice 9 is defined as a suitability
+question, not an authorized model or forecast. This does not authorize spatial
+implementation or any Git operation.
 Existing selector/chart/table workflows remain usable.
 [Product](../../PRODUCT.md) · [Design](../../DESIGN.md) ·
 [Proposal](../proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) · [Roadmap](../roadmap.md)
@@ -20,9 +21,9 @@ Existing selector/chart/table workflows remain usable.
 | 5 | Completed: bounded Argentina reference views, not full electoral coverage | [Source #378](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/378), [generator #380](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/380), [UI #382](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/382) |
 | 6 | Completed: one accepted national election pair at Coronel Rosales section depth | [#383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383) |
 | 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
-| 8 | IN PROGRESS: seat relief and W1 direct transfers merged; W2 bounded samples local, independent verification pending | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388) |
-| 9 | Planned: analytical question/evidence/evaluation and go/no-go | — |
-| 10 | Planned, conditional on 9: supported-granularity recommendations | — |
+| 8 | Completed: accepted bounded seat relief, W1 transfers and W2 deterministic samples; broader exploration remains future | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388), [samples #389](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/389) |
+| 9 | Defined: [2027 Rosales CONCEJALES suitability](slice-09-predictive-suitability.md); evidence/evaluation pending, feasibility not established | — |
+| 10 | Conditional on 9 and separate authorization: supported-granularity recommendations | — |
 
 Source availability does not block already delivered bounded scopes or Slice 7 planning.
 New usable child geography and terrain require independent source acceptance and validation.
@@ -210,10 +211,11 @@ this status table and each delivered boundary below distinguish current delivery
 
 ### 8 — Add statutory seat scenarios
 
-- **Status:** IN PROGRESS overall. Seat relief merged in PR #387 independently of
-  deferred spatial Slice 7. W1 direct transfers merged in PR #388 after independent
-  verification. W2 bounded samples are local; independent verification and delivery
-  remain pending. No whole-Slice-8 completion is claimed.
+- **Status:** Accepted bounded work complete. Seat relief merged in PR #387 independently
+  of deferred spatial Slice 7. W1 direct transfers merged in PR #388 (`14741ab`),
+  and W2 bounded samples merged in PR #389 (`1b37b37`) after their delivery gates.
+  This closes the accepted increment, not speculative broader council exploration,
+  probability modeling or universal official-golden certification.
   Reuse the existing statutory calculator unchanged (PBA Hare, national D'Hondt; 18 total / 9 renewed council seats).
 - **Merged W1 scope:** An explicit distinct donor/receptor pair transfers a nonnegative
   safe-integer amount (default zero) from the current complete baseline. Only those
@@ -223,7 +225,7 @@ this status table and each delivered boundary below distinguish current delivery
   table, trace and refusals. Baseline changes reset transfer controls; the custom
   editor remains usable. Independent regressions and served mobile/keyboard/reset
   verification passed for W1 before its separately authorized delivery.
-- **Local W2 scope:** Separate donor/target/maximum/positive-step controls preserve the
+- **Merged W2 scope:** Separate donor/target/maximum/positive-step controls preserve the
   complete baseline and its ordinary exact result. URL keys `sweepDonor`, `sweepTarget`,
   `sweepMax`, `sweepStep` accompany canonical `input`; W1 exact URLs remain unchanged.
   Samples include zero, every step and the maximum once; a shorter final interval is
@@ -236,8 +238,9 @@ this status table and each delivered boundary below distinguish current delivery
   valid samples means no extrema. Each point links its own complete adjusted input and
   preserved roster/evidence to the existing exact route, without sweep parameters.
   There are no probabilities, guarantees between points, general winning thresholds,
-  Hare monotonicity assumptions or binary search. Focused local tests do not replace
-  pending independent browser/full checks or official statutory golden certification.
+  Hare monotonicity assumptions or binary search. W2 independent verification and
+  merge are delivered; that bounded evidence does not establish official statutory
+  golden certification, probabilistic confidence or forecast backtesting.
   Rollback removes only W2 controls, request validation, evaluation, rendering,
   tests/styles and these docs; retain W1 transfers, baseline/exact contracts and allocator.
 - **Delivered presentation scope:** Individually countable, static shallow-depth blocks grouped by list,
@@ -268,28 +271,32 @@ this status table and each delivered boundary below distinguish current delivery
 - **Rollback:** New scenario presentation/range behavior; retain existing statutory calculator.
 - **Dependencies/gate:** Existing statutory `/simulate` entry and independent review,
   mobile/accessibility and evidence gates for this presentation increment; no dependency
-  on deferred spatial 7 or new source acceptance. W1 direct transfers precede the
-  authorized W2 bounded samples; each needs its own independent verification and
-  delivery gate. High combined modeling/rendering risk: keep later capabilities
-  independently reviewable.
+  on deferred spatial 7 or new source acceptance. W1 and W2 independent verification
+  and merge gates are fulfilled for their accepted scopes. Slice 9 may be defined,
+  but analytical implementation still requires its own evidence/evaluation gate.
+  Keep later capabilities independently reviewable.
 
-### 9 — Establish future Análisis/Prospectiva evidence foundations
+### 9 — Assess predictive suitability before choosing an analytical implementation
 
-- **Status:** Planned; question, evidence, evaluation and go/no-go precede output. Route/model
-  approval remains pending.
-- **Goal/scope:** A bounded probabilistic analytical question with explicit assumptions,
-  confidence, limitations, evidence lineage and an evaluation protocol; no accuracy promises.
-- **Entry point:** Separately approved reachable analysis module exposing evidence/uncertainty;
-  route and model contract are decisions for this slice, not invented here.
-- **RED/verification:** Real-entry refusal under insufficient/incompatible evidence, reproducible
-  evaluation and honest uncertainty; record limitations and supported geographic granularity.
-- **Non-goals:** Recommendations, deterministic forecasts or fabricated model accuracy.
-- **Rollback:** New analytical output/module; preserve underlying official evidence.
-- **Dependencies/gate:** 8; reviewed question, evaluation adequacy and explicit go/no-go for use.
+- **Selected question:** Is estimating the 2027 Coronel Rosales CONCEJALES list-vote
+  distribution defensible on accepted comparable official evidence?
+- **Status:** [Definition](slice-09-predictive-suitability.md) recorded; feasibility **not
+  established**. Product target is selected; methods, routes and outputs are not.
+- **Scope:** Accept target/denominator, source and identity inventory, then preregister
+  temporal evaluation, benchmarks, uncertainty checks and success/refusal criteria
+  before holdout inspection. No-go or separately authorized evidence acquisition is valid.
+- **Entry point:** This linked definition only; no analysis module is chosen or promised.
+- **Verification:** Passive-doc behavioral-TDD exception now. Future authorized behavior
+  requires real-entry refusal tests, reproducible evaluation and supported granularity.
+- **Non-goals:** Forecast promises, recommendations, tactical targeting or invented accuracy.
+- **Rollback:** Definition/planning text only; no runtime or official-evidence changes.
+- **Dependencies/gate:** Bounded 8 merge gate fulfilled. Source acceptance and adequate
+  evaluation remain open; an approved issue and separate authorization precede implementation.
 
 ### 10 — Deliver conditional municipal/intra-municipal recommendations
 
-- **Status:** Planned and conditional on Slice 9 evaluation and supported geography.
+- **Status:** Conditional, not authorized; requires Slice 9 evaluation, supported
+  geography and a separate product/scope decision.
 - **Goal/scope:** Evidence-bound recommendations only at evaluated supported granularity, with
   assumptions, confidence, limitations and traceable alternatives visible to the analyst.
 - **Entry point:** The analysis module from 9, linked to supporting territorial evidence.
