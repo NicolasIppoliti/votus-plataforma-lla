@@ -145,18 +145,47 @@
   font-weight: 400;
 }
 
-.seat-distribution__track {
-  height: 0.625rem;
-  background: var(--surface-muted);
-  border-inline: 1px solid var(--border);
+.seat-distribution__blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-block-end: 0.25rem;
 }
 
-.seat-distribution__track > span {
-  display: block;
-  height: 100%;
+.seat-distribution__block {
+  position: relative;
+  flex: 0 0 1rem;
+  height: 0.875rem;
+  border: 1px dashed var(--muted-ink);
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+.seat-distribution__block[data-seat-state="awarded"] {
+  border: 1px solid var(--simulation);
   background: var(--simulation);
-  transform-origin: left;
-  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.seat-distribution__block[data-seat-state="awarded"]::after {
+  content: "";
+  position: absolute;
+  inset: 100% -1px auto;
+  height: 3px;
+  border: 1px solid var(--simulation);
+  background: var(--surface-muted);
+}
+
+@media (forced-colors: active) {
+  .seat-distribution__block { border-color: CanvasText; }
+  .seat-distribution__block[data-seat-state="awarded"] {
+    border-color: CanvasText;
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+  .seat-distribution__block[data-seat-state="awarded"]::after {
+    border-color: CanvasText;
+    background: Canvas;
+  }
 }
 
 @media (min-width: 70rem) {
@@ -174,8 +203,4 @@
 @media (max-width: 40rem) {
   .simulation-page > h1 { font-size: 1.75rem; }
   .simulation-workspace { gap: 1.5rem; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .seat-distribution__track > span { transition: none; }
 }

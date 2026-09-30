@@ -171,6 +171,80 @@ describe("simulate page — normal-user entry", () => {
 });
 
 describe("simulate page — complete statutory evidence", () => {
+  it("draws nine individual renewal awards through the actual route", async () => {
+    const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 });
+
+    expect(markup.match(/data-seat-state="awarded"/g)).toHaveLength(9);
+  });
+  it("keeps municipal renewal blocks separate from unknown holdovers", async () => {
+    const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 });
+    const chart = markup.match(/<section aria-label="Distribución de bancas"[\s\S]*?<\/section>/)?.[0] ?? "";
+
+    expect(chart.match(/data-seat-state="empty"/g)).toHaveLength(9);
+    expect(chart).toContain('aria-label="LA LIBERTAD AVANZA: 5 de 9 bancas"');
+    expect(chart).toContain('aria-label="FUERZA PATRIA: 4 de 9 bancas"');
+    expect(chart).toContain("Cada bloque en relieve es una banca asignada");
+    expect(chart).toContain("posición de la escala no asignada a esa lista");
+    expect(chart).toContain("No representa la composición total del concejo");
+    expect(markup).not.toContain('data-testid="council-composition"');
+    expect(markup).toContain("Huella de los datos proporcionados");
+  });
+
+  it.each([60, 61])("retains exact provincial capacity at %i seats without truncating", async (seatsToFill) => {
+    const markup = await renderSimulation({
+      ...ALLOCATION_INPUT,
+      level: "pba_provincial",
+      seatsToFill,
+      lists: [{ listId: "A", listName: "Lista A", votes: 10000 }],
+    });
+    const chart = markup.match(/<section aria-label="Distribución de bancas"[\s\S]*?<\/section>/)?.[0] ?? "";
+
+    expect(chart).toContain(`aria-label="Lista A: ${seatsToFill} de ${seatsToFill} bancas"`);
+    expect(markup).toContain("Asignación Hare por lista");
+    expect(markup).toContain("Huella de los datos proporcionados");
+    if (seatsToFill === 60) {
+      expect(chart.match(/data-seat-state="awarded"/g)).toHaveLength(60);
+      expect(chart).not.toContain("no disponible para esta escala");
+    } else {
+      expect(chart).not.toContain("data-seat-state");
+      expect(chart).toContain("Dibujo de una banca por bloque no disponible");
+      expect(chart).toContain("conteos exactos sobre la misma capacidad, sin truncar");
+    }
+  });
+
+  it("bounds the total slot budget while retaining every zero-seat list", async () => {
+    const markup = await renderSimulation({
+      ...ALLOCATION_INPUT,
+      level: "pba_provincial",
+      seatsToFill: 60,
+      lists: [
+        { listId: "A", listName: "Lista A", votes: 10000 },
+        ...Array.from({ length: 10 }, (_, index) => ({
+          listId: `zero-${index}`, listName: `Lista cero ${index}`, votes: 0,
+        })),
+      ],
+    });
+    const chart = markup.match(/<section aria-label="Distribución de bancas"[\s\S]*?<\/section>/)?.[0] ?? "";
+
+    expect(chart).toContain('aria-label="Lista A: 60 de 60 bancas"');
+    expect(chart.match(/aria-label="Lista cero \d+: 0 de 60 bancas"/g)).toHaveLength(10);
+    expect(chart).not.toContain("data-seat-state");
+    expect(chart).toContain("Dibujo de una banca por bloque no disponible");
+  });
+
+  it("refuses insufficient renewal votes rather than fabricating partial awards", async () => {
+    const markup = await renderSimulation({
+      ...ALLOCATION_INPUT,
+      totalVotes: 100,
+      lists: [{ listId: "A", listName: "Lista A", votes: 1 }],
+    });
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).not.toContain('aria-label="Distribución de bancas"');
+    expect(markup).not.toContain("data-seat-state");
+    expect(markup).not.toContain("Huella de los datos proporcionados");
+  });
+
   it("shows actual renewal-seat proportions beside the canonical evidence", async () => {
     const markup = await renderSimulation(ALLOCATION_INPUT);
 
@@ -320,6 +394,8 @@ describe("simulate page — complete statutory evidence", () => {
     });
 
     expect(markup).toContain("D’Hondt");
+    expect(markup.match(/data-seat-state="awarded"/g)).toHaveLength(2);
+    expect(markup.match(/data-seat-state="empty"/g)).toHaveLength(4);
     expect(markup).toContain('aria-label="Lista A: 2 de 2 bancas"');
     expect(markup).toContain('aria-label="Lista B: 0 de 2 bancas"');
     expect(markup).toContain('aria-label="Lista C: 0 de 2 bancas"');

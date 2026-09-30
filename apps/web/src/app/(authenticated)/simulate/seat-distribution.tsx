@@ -9,6 +9,10 @@ export function SeatDistribution({ result }: SeatDistributionProps) {
     ? result.results.map((list) => ({ ...list, count: list.seats }))
     : result.results.map((list) => ({ ...list, count: list.totalSeats }));
   const unallocated = result.seatsToFill - rows.reduce((sum, row) => sum + row.count, 0);
+  // Input accepts positive integers without a seat/list upper bound. Bound only
+  // this presentation, not allocation or its canonical numerical evidence.
+  const drawIndividualSeats = result.seatsToFill <= 60 &&
+    rows.length * result.seatsToFill <= 600;
 
   return (
     <section aria-label="Distribución de bancas" className="seat-distribution">
@@ -22,6 +26,18 @@ export function SeatDistribution({ result }: SeatDistributionProps) {
           ? " No representa la composición total del concejo."
           : " Se muestran todas las listas, incluidas las que no reciben bancas."}
       </p>
+      {drawIndividualSeats ? (
+        <p className="seat-distribution__legend">
+          Cada bloque en relieve es una banca asignada. Cada contorno vacío es
+          una posición de la escala no asignada a esa lista, no una banca adicional.
+          Todas las filas usan la misma capacidad y el mismo tamaño de bloque.
+        </p>
+      ) : (
+        <p role="note">
+          Dibujo de una banca por bloque no disponible para esta escala:
+          se muestran los conteos exactos sobre la misma capacidad, sin truncar.
+        </p>
+      )}
       <ul className="seat-distribution__rows">
         {rows.map((row) => (
           <li key={row.listId}>
@@ -30,9 +46,17 @@ export function SeatDistribution({ result }: SeatDistributionProps) {
                 <span>{row.listName}</span>
                 <strong>{row.count}<span> / {result.seatsToFill}</span></strong>
               </div>
-              <div className="seat-distribution__track" aria-hidden="true">
-                <span style={{ transform: `scaleX(${row.count / result.seatsToFill})` }} />
-              </div>
+              {drawIndividualSeats ? (
+                <div className="seat-distribution__blocks" aria-hidden="true">
+                  {Array.from({ length: result.seatsToFill }, (_, index) => (
+                    <span
+                      key={index}
+                      className="seat-distribution__block"
+                      data-seat-state={index < row.count ? "awarded" : "empty"}
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
           </li>
         ))}
