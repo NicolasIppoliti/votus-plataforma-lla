@@ -3549,12 +3549,38 @@ def positive_int(value: str) -> int:
     return parsed
 
 
+def cmd_reconcile_pba_pdf_evidence(args: argparse.Namespace) -> int:
+    from .pba_pdf_evidence import reconcile
+
+    report = reconcile(
+        sources=load_sources(Path(args.sources_path)),
+        local_root=Path(args.local_root),
+        manifest_path=Path(args.manifest_path),
+        include_html=args.include_html,
+        include_earlier=args.include_earlier,
+    )
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    return 1 if report["failure_counts"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m etl", description=__doc__)
     parser.add_argument("--sources-path", default=str(DEFAULT_SOURCES_PATH))
     parser.add_argument("--local-root", default=str(DEFAULT_LOCAL_ROOT))
     parser.add_argument("--manifest-path", default=str(DEFAULT_MANIFEST_PATH))
     subparsers = parser.add_subparsers(dest="command", required=True)
+    reconciliation = subparsers.add_parser(
+        "reconcile-pba-pdf-evidence", help="Read verified municipal PDF evidence; review required."
+    )
+    reconciliation.add_argument(
+        "--include-html", action="store_true",
+        help="Verify integrated/argentinos/extranjeros HTML and reconcile source-specific fields.",
+    )
+    reconciliation.add_argument(
+        "--include-earlier", action="store_true",
+        help="Read additional 2011/2013 reference PDFs; expanded pilot review remains pending.",
+    )
+    reconciliation.set_defaults(func=cmd_reconcile_pba_pdf_evidence)
     country = subparsers.add_parser("validate-country-geometry")
     country.add_argument("--source", required=True)
     country.set_defaults(func=cmd_validate_country_geometry)
