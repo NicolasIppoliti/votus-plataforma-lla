@@ -2,24 +2,35 @@
 
 ## Status and scope
 
-The preliminary CLI is implemented: seven ordinary public-entry writer checks
-PASSED historically after the help formatter correction; independent candidate
-review remains pending. The full 53-case model contracts remain PREPARED and
-unimplemented. Real evaluation: NO; actual cuts and inputs remain unfrozen,
-and the forecast is unvalidated. This is not scientific acceptance or a 2027
-forecast. Historical RED evidence is preserved, not replaced by these checks.
+Root/history/profile validation is implemented. After the parent's 28 observed
+pre-implementation REDs, the E2a writer's focused public-entry run PASSED all
+34 checks: 28 schema contracts, five prior rejections and help. E2a assessment,
+independent native review and delivery remain parent-owned and pending. Valid
+payloads still reach the explicit pipeline-unimplemented diagnostic; UNKNOWN
+reference reports, bounds, calibration and composition are NOT implemented.
+The full 53-case model suite has not passed or been run in this unit. Real
+evaluation: NO; actual cuts and inputs remain unfrozen, and the forecast is
+unvalidated. This is not scientific acceptance or a 2027 forecast. Historical
+RED evidence is preserved, not replaced by these checks.
 
 The canonical repository fixture is
 `etl/tests/fixtures/ideology_v1_public_cases.json`. Its `cases` and `grid` preserve
 the original core plan's decoded values, including all 53 literal stdin strings
-and expectations. `stage1CapabilityFixture` retains only selector, stdin, exit,
-stdout and stderr. Operational metadata is not runtime fixture data; the test
-runner has one loader with no fallback to the historical plan. The temporary
-preliminary fixture remains until E2 retires it as capability grows.
+and expectations. Runtime data now contains only `cases` and `grid`; the test
+runner has one loader with no fallback to the historical plan. E2a retired
+`stage1CapabilityFixture`, its temporary class, factory and binding because the
+three-discriminator payload is invalid under full root validation. The historical
+preparation record below remains intact. Exact decoded equality to the pinned
+original plan passed for all 53 cases (including literal stdin and all nested
+expectations) and all 16 grid entries before the focused GREEN run.
 
-This passive data extraction, loader-path migration and status correction have
-no meaningful behavior RED. Verification checks exact decoded equivalence and
-seven ordinary preliminary public-entry contracts, not the full model suite.
+The earlier passive fixture migration had no meaningful behavior RED. E2a uses
+the parent's observed behavior REDs, not that passive-migration exception.
+Calibration-cut shape and semantic eligibility remain unimplemented; root guards
+are not applied blindly to optional cuts. Later cut quarantine must report reasons.
+Well-typed unsupported profile bases remain schema-valid, without asserting axis
+usability. Profile publication and optional hypothesis dates are parsed separately
+without changing input objects or authenticating historical evidence.
 
 All records below and in the test plan are explicitly synthetic. Their votes,
 offer identifiers, dates, quotations, attribution and availability claims are

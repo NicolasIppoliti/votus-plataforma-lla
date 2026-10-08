@@ -1655,12 +1655,5 @@
       2,
       2
     ]
-  ],
-  "stage1CapabilityFixture": {
-    "selector": "TestStageOneIdeologyPublicEntry.test_preliminary_checks_reach_capability_boundary",
-    "stdin": "{\"schema_version\":1,\"synthetic\":true,\"source_kind\":\"official\"}\n",
-    "exit": 2,
-    "stdout": "",
-    "stderr": "error: synthetic pipeline processing is not implemented at this stage\n"
-  }
+  ]
 }

@@ -187,13 +187,6 @@ class TestIdeologyPublicEntry(unittest.TestCase):
         self.assertEqual(result.stderr, "error: source_kind must be official\n")
 
 
-class TestStageOneIdeologyPublicEntry(TestIdeologyPublicEntry):
-    # Temporary preliminary boundary only; never inherit baseline/full-v1 tests.
-    test_help_reaches_the_experimental_entry = None
-    test_neither_axis_usable_preserves_exact_latest_shares = None
-    test_fiscalizacion_is_rejected_before_any_result = None
-
-
 # The fixture is test-owned synthetic data, not an archive or private fixture.
 # Reading it is part of the test runner scope, never part of the CLI.
 PLAN = Path(__file__).parent / "fixtures" / "ideology_v1_public_cases.json"
@@ -391,6 +384,90 @@ with PLAN.open(encoding="utf-8") as plan_file:
     CORE_GRID = CORE_PLAN["grid"]
 
 
+class TestIdeologySchemaPublicEntry(unittest.TestCase):
+    # Reuse the bounded public-entry invocation without inheriting baseline tests.
+    invoke = TestIdeologyPublicEntry.invoke
+
+    def setUp(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_unsupported_axes_not_centred")
+        self.payload = json.loads(case["stdin"])
+
+    def test_large_json_integer_is_parse_rejection(self):
+        # Valid JSON syntax; CPython's integer conversion limit rejects the token.
+        stdin = '{"schema_version":' + "1" * 5000 + '}\n'
+        self.assertLess(len(stdin.encode("utf-8")), 32768)
+        result = self.invoke(stdin)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: invalid JSON\n")
+
+    def test_boolean_previous_year_is_rejected(self):
+        self.payload["previous"]["year"] = True
+        result = self.invoke(json.dumps(self.payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: require previous.year < latest.year < target_year\n")
+
+    def test_boolean_positive_denominator_is_rejected(self):
+        self.payload["previous"]["positive_votes"] = True
+        result = self.invoke(json.dumps(self.payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: previous positive_votes must be a positive integer\n")
+
+    def test_invalid_forecast_origin_is_rejected(self):
+        self.payload["forecast_origin"] = "2026-13-01"
+        result = self.invoke(json.dumps(self.payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: forecast_origin must be an ISO date\n")
+
+    def test_invalid_previous_availability_is_rejected(self):
+        self.payload["previous"]["available_on"] = "2023-13-01"
+        result = self.invoke(json.dumps(self.payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: previous results availability must be an ISO date\n")
+
+    def test_invalid_latest_availability_is_rejected(self):
+        self.payload["latest"]["available_on"] = "2025-13-01"
+        result = self.invoke(json.dumps(self.payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: latest results availability must be an ISO date\n")
+
+    def test_invalid_profile_availability_is_rejected(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_profile_citation_required")
+        payload = json.loads(case["stdin"])
+        profile = payload["previous"]["offers"][0]["profiles"]["economic"]
+        profile["citation"] = "INVENTED"
+        profile["available_on"] = "2023-13-01"
+        result = self.invoke(json.dumps(payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            "error: previous offer a economic available_on must be an ISO date\n",
+        )
+
+    def test_invalid_hypothesis_date_is_rejected(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_profile_citation_required")
+        payload = json.loads(case["stdin"])
+        profile = payload["previous"]["offers"][0]["profiles"]["economic"]
+        profile["citation"] = "INVENTED"
+        profile["hypothesis_on"] = "2023-13-01"
+        result = self.invoke(json.dumps(payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            "error: previous offer a economic hypothesis_on must be an ISO date\n",
+        )
+
+
 def public_case(case):
     def test(self):
         self.check_case(case)
@@ -400,24 +477,6 @@ def public_case(case):
 
 for core_case in CORE_CASES:
     setattr(TestRemainingIdeologyPublicEntry, core_case["test"], public_case(core_case))
-
-
-# Separate temporary fixture: ordinary assertions, no full-v1 report/classifier.
-def preliminary_capability_case(case):
-    def test(self):
-        result = self.invoke(case["stdin"])
-        self.assertEqual(result.returncode, case["exit"])
-        self.assertEqual(result.stdout, case["stdout"])
-        self.assertEqual(result.stderr, case["stderr"])
-    return test
-
-
-STAGE1_CAPABILITY_CASE = CORE_PLAN["stage1CapabilityFixture"]
-setattr(
-    TestStageOneIdeologyPublicEntry,
-    STAGE1_CAPABILITY_CASE["selector"].split(".")[1],
-    preliminary_capability_case(STAGE1_CAPABILITY_CASE),
-)
 
 
 if __name__ == "__main__":
