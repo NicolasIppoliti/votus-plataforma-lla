@@ -14,10 +14,11 @@ lists, with null delta and signal. Shares remain exact reduced latest fractions.
 Only null profiles and the documented synthetic, party-identity and member-context
 bases are classified. Other schema-valid bases retain the pending diagnostic,
 not a new rejection or an authenticated source admission. Historical publication
-and current hypothesis contexts remain separate. E4a screens recognized cut
-metadata and emits the full reference envelope only when every cut is rejected.
-Any potentially eligible or unsupported cut retains the pending diagnostic for
-the entire payload; calibration and composition are NOT implemented.
+and current hypothesis contexts remain separate. Unit 1 extends E4a to full cut
+validation and a constant-prediction reference grid. General signal-bearing
+fitting, composition and final free-mass serialization remain pending. Any
+eligible cut whose predictions are not proven constant retains the controlled
+pending diagnostic for the entire payload, even when root profiles are masked.
 For each sorted target band q, compatibility uses K(q,r)=1-|q-r|/4 with exact
 Fraction arithmetic and the full original positive-vote denominator. Unusable
 historical evidence spans all five bands; usable mixed evidence retains its
@@ -53,26 +54,45 @@ expectations) and all 16 grid entries before the focused GREEN run.
 
 The earlier passive fixture migration had no meaningful behavior RED. E2a uses
 the parent's observed behavior REDs, not that passive-migration exception.
-Full calibration-cut validation and eligible fitting remain unimplemented; root
-guards are not applied blindly to optional cuts. The bounded E4a metadata screen
-requires unique nonempty cut IDs, object records, exact integer years/target and
-canonical ISO dates. Unknown historical result publication is recognized; unknown
-outcome publication, malformed metadata, recursive inputs and unsupported shapes
-remain pending, without guessed taxonomy or partial success.
+Unit 1 screens known metadata rejections before full distribution validation,
+preserving the earlier partial-cut fixtures and their reason priority. Each
+otherwise eligible cut uses its own origin, input elections, target year and
+optional target profiles. Only schema/synthetic and source/type/category/
+jurisdiction headers inherit from the root, never root targets or hypotheses.
+Full root guards validate cut inputs; outcomes require full votes/denominator/
+roster but no profiles. Previous IDs may differ; outcome IDs must match latest.
+Duplicate cut IDs quarantine every occurrence. Malformed cuts emit
+`invalid_cut_schema` with the precise validator `schema_error`; unidentified
+rows retain their input index. Schema-error counts appear only for such errors.
+After known metadata failures, cut origins must precede the enclosing origin.
+Nested calibration/forecast metadata is rejected as `forecast_as_observation`.
 
 Recognized rejection reasons are collected independently in this order: source,
 election type, category, jurisdiction, unknown historical result availability,
 input publication later than its own cut origin, outcome publication at/after the
 parent origin, outcome year mismatch, nonobserved outcome, and differing declared
-valid latest/outcome ID rosters. Duplicate roster IDs remain pending. Input
+valid latest/outcome ID rosters. Malformed roster IDs are quarantined with schema detail. Input
 publication equality is allowed; outcome equality fails. Temporal failures do
 not acquire fabricated missing-distribution reasons from partial cut records.
 All-rejected reports preserve E3 shares, bounds, coverage, anchors, grid and false
 readiness/evaluation gates. `audit.calibration.rejected` retains cut order and
 reason order; `rejection_counts` counts each reason once per cut and appears only
 with nonempty rejected rows. The exact empty-cut calibration envelope is unchanged.
-E4a self-verification is pending here until the parent records observed results;
-this increment does not close E4/E5 or authorize scientific acceptance.
+For eligible cuts, Unit 1 proves constant prediction using exact rational
+signals: masked/unidentified axes contribute zero, and equal free (economic,
+social) signatures give every grid pair one common factor. Empty/one free offer
+or zero free mass also preserves exact latest shares. Equal losses or approximate
+vector equality are not proofs. Unsupported policy bases remain whole-payload
+pending, not centred or admitted as evidence. Each constant cut is scored against
+its full observed outcome with exact rational TV; the global mean is converted
+to a float for all 16 scores in grid order. Eligible IDs retain input order.
+Beta stays null, with `insufficient_signal`; no eligible cuts instead retain
+`insufficient_calibration` and empty scores. Root shares remain exact references.
+The fresh 70-check scoped verification is to be reported by the writer after
+these final documentation edits; no pass or elapsed time is asserted here.
+All 53 frozen cases and grid entries must remain exact, but their full numerical
+runtime is deferred to Unit 2. This increment does not close E4/E5 or authorize
+scientific acceptance.
 Well-typed unsupported profile bases remain schema-valid, without asserting axis
 usability. Profile publication and optional hypothesis dates are parsed separately
 without changing input objects or authenticating historical evidence.

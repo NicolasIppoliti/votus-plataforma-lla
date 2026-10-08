@@ -138,8 +138,7 @@ def validate_root(payload):
             validate_profiles(profiles, f"target offer {offer_id}")
     require(isinstance(payload.get("calibration_cuts"), list),
             "calibration_cuts must be a list")
-    # Recognized cut metadata is screened separately, never with root guards.
-    # Full cut validation and eligible calibration remain pending.
+    # Cut metadata is screened before applying full guards to eligible inputs.
 
 
 def classify_profile(profile, origin, *, current_target=False):
@@ -244,7 +243,7 @@ def compatibility_interval(election, axis, q, details):
     return lower / denominator, upper / denominator
 
 
-def target_axis_audit(payload, history, axis, profile, detail):
+def target_axis_audit(payload, history, axis, profile, detail, *, exact_signal=False):
     """Contrast each fixed target hypothesis before taking delta extrema."""
     if not detail["usable"]:
         return {
@@ -275,7 +274,7 @@ def target_axis_audit(payload, history, axis, profile, detail):
         "reasons": ["trend_unidentified"] if signal is None else [],
         "bounds": bounds,
         "delta": [float(lower), float(upper)],
-        "signal": None if signal is None else float(signal),
+        "signal": signal if exact_signal else None if signal is None else float(signal),
     }
 
 
@@ -360,10 +359,136 @@ def rejected_calibration_metadata(payload):
     return rejected
 
 
+def calibration_reference(payload):
+    """Quarantine cuts; score only predictions proven constant for the grid."""
+    cuts = payload["calibration_cuts"]
+    id_counts = {}
+    for cut in cuts:
+        if isinstance(cut, dict) and nonempty_string(cut.get("id")):
+            id_counts[cut["id"]] = id_counts.get(cut["id"], 0) + 1
+    rejected, eligible, losses = [], [], []
+    pending = False
+    parent_origin = date.fromisoformat(payload["forecast_origin"])
+    inherited = ("schema_version", "synthetic", "source_kind", "election_type",
+                 "category", "jurisdiction")
+    for index, cut in enumerate(cuts):
+        row = {"id": cut["id"]} if (
+            isinstance(cut, dict) and nonempty_string(cut.get("id"))
+        ) else {"index": index}
+        if "id" in row and id_counts[row["id"]] > 1:
+            rejected.append({**row, "reasons": ["duplicate_cut_id"]})
+            continue
+        try:
+            require(isinstance(cut, dict), "cut must be an object")
+            require(nonempty_string(cut.get("id")), "cut id must be nonempty")
+            screened = rejected_calibration_metadata({
+                **payload, "calibration_cuts": [cut],
+            })
+            if screened:
+                rejected.extend(screened)
+                continue
+            origin = iso_date(cut.get("forecast_origin"), "cut forecast_origin")
+            if origin >= parent_origin:
+                rejected.append({**row, "reasons": ["cut_origin_not_before_origin"]})
+                continue
+            records = [cut.get(label) for label in ("previous", "latest", "outcome")]
+            if any(isinstance(record, dict) and (
+                "calibration_cuts" in record or "forecast" in record
+            ) for record in [cut, *records]) or any(
+                isinstance(record, dict) and record.get("observed", True) is not True
+                for record in records[:2]
+            ):
+                rejected.append({**row, "reasons": ["forecast_as_observation"]})
+                continue
+            context = {field: payload[field] for field in inherited}
+            context.update(cut)
+            context["calibration_cuts"] = []
+            validate_root(context)
+            outcome = cut.get("outcome")
+            require(isinstance(outcome, dict), "outcome must be an object")
+            require(type(outcome.get("year")) is int,
+                    "outcome year must be an integer")
+            publication = iso_date(outcome.get("available_on"), "outcome results availability")
+            reasons = []
+            if publication >= parent_origin:
+                reasons.append("outcome_not_known_before_origin")
+            if outcome["year"] != context["target_year"]:
+                reasons.append("outcome_year_mismatch")
+            if outcome.get("observed", True) is not True:
+                reasons.append("outcome_not_observed")
+            outcome_ids = validate_distribution(outcome, "outcome")
+            latest_ids = {offer["id"] for offer in context["latest"]["offers"]}
+            if outcome_ids != latest_ids:
+                reasons.append("outcome_roster_not_comparable")
+            if reasons:
+                rejected.append({**row, "reasons": reasons})
+                continue
+        except InputValidationError as error:
+            rejected.append({**row, "reasons": ["invalid_cut_schema"],
+                             "schema_error": str(error)})
+            continue
+        eligible.append(cut["id"])
+        if not constant_reference_prediction(context):
+            pending = True
+            continue
+        latest = context["latest"]
+        observed = {offer["id"]: Fraction(offer["votes"], outcome["positive_votes"])
+                    for offer in outcome["offers"]}
+        loss = sum((abs(Fraction(offer["votes"], latest["positive_votes"])
+                        - observed[offer["id"]]) for offer in latest["offers"]), Fraction(0)) / 2
+        losses.append(loss)
+    if pending:
+        return None
+    scores = []
+    if eligible:
+        mean_tv = float(sum(losses, Fraction(0)) / len(losses))
+        scores = [{"beta": [e, s], "mean_tv": mean_tv}
+                  for e in (0, 0.5, 1, 2) for s in (0, 0.5, 1, 2)]
+    calibration = {
+        "eligible": eligible, "rejected": rejected, "scores": scores,
+        "selected_by": "global_mean_tv_then_sum_then_e_then_s",
+    }
+    if rejected:
+        counts, schema_counts = {}, {}
+        for row in rejected:
+            for reason in row["reasons"]:
+                counts[reason] = counts.get(reason, 0) + 1
+            if "schema_error" in row:
+                error = row["schema_error"]
+                schema_counts[error] = schema_counts.get(error, 0) + 1
+        calibration["rejection_counts"] = counts
+        if schema_counts:
+            calibration["schema_error_counts"] = schema_counts
+    return calibration
+
+
+def constant_reference_prediction(payload):
+    """Equal exact free signatures imply a common factor for every grid pair."""
+    origin = date.fromisoformat(payload["forecast_origin"])
+    history = historical_profile_audit(payload, origin)
+    if history is None:
+        return False
+    signatures, free_votes = [], 0
+    for offer in payload["latest"]["offers"]:
+        profiles = payload.get("target_profiles", {}).get(offer["id"], offer["profiles"])
+        axes = classify_axes(profiles, origin, current_target=True)
+        if axes is None:
+            return False
+        if not any(detail["usable"] for detail in axes.values()):
+            continue
+        free_votes += offer["votes"]
+        signatures.append(tuple(
+            target_axis_audit(payload, history, axis, profiles[axis], detail,
+                              exact_signal=True)["signal"] or Fraction(0)
+            for axis, detail in axes.items()
+        ))
+    return free_votes == 0 or len(signatures) <= 1 or len(set(signatures)) == 1
+
+
 def reference_report(payload):
-    """Audit compatibility only with empty or entirely rejected known cuts."""
-    rejected = rejected_calibration_metadata(payload)
-    if rejected is None:
+    """Audit exact references with rejected or proven constant-prediction cuts."""
+    calibration = calibration_reference(payload)
+    if calibration is None:
         return None
     origin = date.fromisoformat(payload["forecast_origin"])
     latest = payload["latest"]
@@ -393,7 +518,7 @@ def reference_report(payload):
             "numerator": share.numerator,
             "denominator": share.denominator,
         }
-    reasons = {"insufficient_calibration": 1}
+    reasons = {"insufficient_signal" if calibration["eligible"] else "insufficient_calibration": 1}
     if anchors:
         reasons["profile_neither_axis_usable"] = len(anchors)
     audit = {
@@ -401,22 +526,13 @@ def reference_report(payload):
         "anchored_offers": sorted(anchors),
         "reasons": reasons,
         "offers": offers,
-        "calibration": {
-            "eligible": [], "rejected": rejected, "scores": [],
-            "selected_by": "global_mean_tv_then_sum_then_e_then_s",
-        },
+        "calibration": calibration,
         "evaluation": {
             "performed": False,
             "scientific_acceptance": False,
             "reason": "actual_inputs_and_outer_cuts_unfrozen",
         },
     }
-    if rejected:
-        counts = {}
-        for row in rejected:
-            for reason in row["reasons"]:
-                counts[reason] = counts.get(reason, 0) + 1
-        audit["calibration"]["rejection_counts"] = counts
     return {
         "synthetic": True,
         "forecast_ready": False,

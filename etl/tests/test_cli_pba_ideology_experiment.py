@@ -769,6 +769,84 @@ class TestIdeologyRejectedCalibrationPublicEntry(unittest.TestCase):
         self.check_rejected_reference()
 
 
+class TestIdeologyCalibrationEligibilityPublicEntry(unittest.TestCase):
+    invoke = TestIdeologyPublicEntry.invoke
+    check_case = TestRemainingIdeologyPublicEntry.check_case
+
+    def setUp(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_economic_independent_calibration_free_mass")
+        self.payload = json.loads(case["stdin"])
+        self.cut = self.payload["calibration_cuts"][0]
+
+    def check_quarantined(self, rejected, counts, schema_counts=None):
+        report = self.check_case({
+            "stdin": json.dumps(self.payload) + "\n", "exit": 0,
+            "expect": {"status": "reference_only", "beta": None},
+        })
+        reference = {offer["id"]: {"numerator": 1, "denominator": 3}
+                     for offer in self.payload["latest"]["offers"]}
+        self.assertEqual(report["reference_shares"], reference)
+        self.assertEqual(report["shares"], reference)
+        self.assertEqual(report["audit"]["anchored_offers"], ["u"])
+        calibration = {
+            "eligible": [], "rejected": rejected, "scores": [],
+            "selected_by": "global_mean_tv_then_sum_then_e_then_s",
+            "rejection_counts": counts,
+        }
+        if schema_counts is not None:
+            calibration["schema_error_counts"] = schema_counts
+        self.assertEqual(report["audit"]["calibration"], calibration)
+        for offer, q, previous, delta, signal in (
+            ("a", 2, [0, 0], [1 / 3, 2 / 3], 1 / 3),
+            ("b", -2, [1, 1], [-2 / 3, -1 / 3], -1 / 3),
+        ):
+            self.assertEqual(report["audit"]["offers"][offer]["economic"], {
+                "usable": True, "reasons": [],
+                "bounds": [{"q": q, "previous": previous, "latest": [1 / 3, 2 / 3]}],
+                "delta": delta, "signal": signal,
+            })
+        for detail in report["audit"]["offers"]["u"].values():
+            self.assertEqual(detail, {
+                "usable": False, "reasons": ["profile_unknown"], "bounds": [],
+                "delta": None, "signal": None,
+            })
+
+    def test_duplicate_cut_ids_are_all_quarantined(self):
+        from copy import deepcopy
+
+        self.cut["id"] = "duplicate"
+        self.payload["calibration_cuts"].append(deepcopy(self.cut))
+        self.check_quarantined([
+            {"id": "duplicate", "reasons": ["duplicate_cut_id"]},
+            {"id": "duplicate", "reasons": ["duplicate_cut_id"]},
+        ], {"duplicate_cut_id": 2})
+
+    def test_invalid_cut_profile_is_quarantined_with_schema_detail(self):
+        self.cut["id"] = "bad-profile"
+        self.cut["latest"]["offers"][0]["profiles"]["economic"]["bands"] = [True]
+        # Existing validate_root -> validate_profiles -> validate_profile label.
+        message = "latest offer a economic bands must be a nonempty set of integers in [-2,2]"
+        self.check_quarantined([
+            {"id": "bad-profile", "reasons": ["invalid_cut_schema"],
+             "schema_error": message},
+        ], {"invalid_cut_schema": 1}, {message: 1})
+
+    def test_cut_origin_must_precede_enclosing_origin(self):
+        self.cut["id"] = "late-origin"
+        self.cut["forecast_origin"] = "2027-01-01"
+        self.check_quarantined([
+            {"id": "late-origin", "reasons": ["cut_origin_not_before_origin"]},
+        ], {"cut_origin_not_before_origin": 1})
+
+    def test_recursive_outcome_is_not_observed_input(self):
+        self.cut["id"] = "recursive-outcome"
+        self.cut["outcome"]["calibration_cuts"] = []
+        self.check_quarantined([
+            {"id": "recursive-outcome", "reasons": ["forecast_as_observation"]},
+        ], {"forecast_as_observation": 1})
+
+
 class TestPendingIdeologyNumericalPipeline(unittest.TestCase):
     # Temporary stage boundaries; frozen future-success expectations stay intact.
     invoke = TestIdeologyPublicEntry.invoke
