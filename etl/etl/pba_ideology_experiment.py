@@ -1,4 +1,4 @@
-"""Validate synthetic inputs and audit empty-cut compatibility references."""
+"""Validate synthetic inputs and audit uncalibrated compatibility references."""
 
 import argparse
 from datetime import date
@@ -138,8 +138,8 @@ def validate_root(payload):
             validate_profiles(profiles, f"target offer {offer_id}")
     require(isinstance(payload.get("calibration_cuts"), list),
             "calibration_cuts must be a list")
-    # Cut shape/eligibility is not implemented. Do not apply root semantic
-    # guards to cuts: later stages must quarantine them with audited reasons.
+    # Recognized cut metadata is screened separately, never with root guards.
+    # Full cut validation and eligible calibration remain pending.
 
 
 def classify_profile(profile, origin, *, current_target=False):
@@ -279,9 +279,91 @@ def target_axis_audit(payload, history, axis, profile, detail):
     }
 
 
-def empty_cut_reference_report(payload):
-    """Audit compatibility without calibrating or changing latest shares."""
-    if payload["calibration_cuts"]:
+def rejected_calibration_metadata(payload):
+    """Return all rejected rows, or None if any cut needs fuller processing."""
+    rejected, ids = [], set()
+    parent_origin = date.fromisoformat(payload["forecast_origin"])
+    for cut in payload["calibration_cuts"]:
+        if not isinstance(cut, dict) or not nonempty_string(cut.get("id")):
+            return None
+        if cut["id"] in ids or "calibration_cuts" in cut:
+            return None
+        ids.add(cut["id"])
+        records = [cut.get(label) for label in ("previous", "latest", "outcome")]
+        if not all(isinstance(record, dict) for record in records):
+            return None
+        previous, latest, outcome = records
+        years = [record.get("year") for record in records] + [cut.get("target_year")]
+        if not all(type(year) is int for year in years):
+            return None
+        if not previous["year"] < latest["year"] < cut["target_year"]:
+            return None
+        if any(record.get("observed", True) is not True
+               or "calibration_cuts" in record for record in (previous, latest)):
+            return None
+        for field in ("source_kind", "election_type", "category", "jurisdiction"):
+            if not nonempty_string(cut.get(field, payload[field])):
+                return None
+        try:
+            origin = iso_date(cut.get("forecast_origin"), "cut forecast_origin")
+            publications = [
+                None if record.get("available_on") is None
+                else iso_date(record["available_on"], "cut results availability")
+                for record in records
+            ]
+        except InputValidationError:
+            return None
+        if publications[2] is None:
+            return None
+        reasons = []
+        for field, reason in (
+            ("source_kind", "source_kind_not_official"),
+            ("election_type", "election_type_not_general"),
+            ("category", "category_not_comparable"),
+            ("jurisdiction", "jurisdiction_not_comparable"),
+        ):
+            if cut.get(field, payload[field]) != payload[field]:
+                reasons.append(reason)
+        if any(publication is None for publication in publications[:2]):
+            reasons.append("historical_results_availability_unknown")
+        if any(publication is not None and publication > origin
+               for publication in publications[:2]):
+            reasons.append("historical_results_unavailable_at_cut_origin")
+        if publications[2] >= parent_origin:
+            reasons.append("outcome_not_known_before_origin")
+        if outcome["year"] != cut["target_year"]:
+            reasons.append("outcome_year_mismatch")
+        if outcome.get("observed", True) is not True:
+            reasons.append("outcome_not_observed")
+        rosters = []
+        for record in (latest, outcome):
+            if "offers" not in record:
+                rosters.append(None)
+                continue
+            offers = record["offers"]
+            if not isinstance(offers, list) or not all(
+                isinstance(offer, dict) and nonempty_string(offer.get("id"))
+                for offer in offers
+            ):
+                return None
+            roster = [offer["id"] for offer in offers]
+            if len(set(roster)) != len(roster):
+                return None
+            rosters.append(set(roster))
+        if all(roster is not None for roster in rosters) and rosters[0] != rosters[1]:
+            reasons.append("outcome_roster_not_comparable")
+        # Temporal/scope failures do not require omitted distributions. Conversely,
+        # no metadata failure means pending, not invented eligibility or fitting.
+        if not reasons:
+            return None
+        rejected.append({"id": cut["id"], "reasons": reasons})
+    return rejected
+
+
+def reference_report(payload):
+    """Audit compatibility only with empty or entirely rejected known cuts."""
+    rejected = rejected_calibration_metadata(payload)
+    if rejected is None:
         return None
     origin = date.fromisoformat(payload["forecast_origin"])
     latest = payload["latest"]
@@ -320,7 +402,7 @@ def empty_cut_reference_report(payload):
         "reasons": reasons,
         "offers": offers,
         "calibration": {
-            "eligible": [], "rejected": [], "scores": [],
+            "eligible": [], "rejected": rejected, "scores": [],
             "selected_by": "global_mean_tv_then_sum_then_e_then_s",
         },
         "evaluation": {
@@ -329,6 +411,12 @@ def empty_cut_reference_report(payload):
             "reason": "actual_inputs_and_outer_cuts_unfrozen",
         },
     }
+    if rejected:
+        counts = {}
+        for row in rejected:
+            for reason in row["reasons"]:
+                counts[reason] = counts.get(reason, 0) + 1
+        audit["calibration"]["rejection_counts"] = counts
     return {
         "synthetic": True,
         "forecast_ready": False,
@@ -381,7 +469,7 @@ def main():
         sys.stderr.write(f"error: {error}\n")
         return 2
 
-    report = empty_cut_reference_report(payload)
+    report = reference_report(payload)
     if report is not None:
         sys.stdout.write(json.dumps(
             report, sort_keys=True, separators=(",", ":"), allow_nan=False,

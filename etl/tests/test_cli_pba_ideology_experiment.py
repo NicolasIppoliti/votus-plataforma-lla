@@ -686,6 +686,89 @@ class TestIdeologyTemporalBoundsPublicEntry(unittest.TestCase):
         self.assertNotIn("target_profiles", self.payload)
 
 
+class TestIdeologyRejectedCalibrationPublicEntry(unittest.TestCase):
+    invoke = TestIdeologyPublicEntry.invoke
+    check_case = TestRemainingIdeologyPublicEntry.check_case
+
+    def setUp(self):
+        from copy import deepcopy
+
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_earlier_only_cut_reasons")
+        self.payload = deepcopy(json.loads(case["stdin"]))
+        self.rejected = deepcopy(case["expect"]["audit"]["calibration"]["rejected"])
+        self.counts = {
+            "outcome_not_known_before_origin": 1,
+            "source_kind_not_official": 1,
+            "election_type_not_general": 1,
+            "historical_results_availability_unknown": 1,
+        }
+
+    def check_rejected_reference(self):
+        report = self.check_case({
+            "stdin": json.dumps(self.payload) + "\n", "exit": 0,
+            "expect": {"status": "reference_only", "beta": None},
+        })
+        reference = {"a": {"numerator": 1, "denominator": 1}}
+        self.assertEqual(report["reference_shares"], reference)
+        self.assertEqual(report["shares"], reference)
+        self.assertEqual(report["audit"]["anchored_offers"], ["a"])
+        self.assertEqual(report["audit"]["calibration"], {
+            "eligible": [], "rejected": self.rejected, "scores": [],
+            "selected_by": "global_mean_tv_then_sum_then_e_then_s",
+            "rejection_counts": self.counts,
+        })
+        for year in ("2023", "2025"):
+            for axis in ("economic", "social"):
+                self.assertEqual(report["audit"]["profile_coverage"][year][axis], {
+                    "usable_offers": 0, "unknown_offers": 1, "unknown_votes": 10,
+                })
+        for detail in report["audit"]["offers"]["a"].values():
+            self.assertIs(detail["usable"], False)
+            self.assertEqual(detail["reasons"], ["profile_unknown"])
+            self.assertEqual(detail["bounds"], [])
+            self.assertIsNone(detail["delta"])
+            self.assertIsNone(detail["signal"])
+
+    def test_rejection_counts_preserve_all_cut_reasons(self):
+        self.check_rejected_reference()
+
+    def test_input_publication_at_cut_origin_is_not_late(self):
+        self.payload["calibration_cuts"] = [{
+            "id": "at-origin", "forecast_origin": "2022-01-01", "target_year": 2023,
+            "previous": {"year": 2019, "available_on": "2022-01-01"},
+            "latest": {"year": 2021, "available_on": "2022-01-01"},
+            "outcome": {"year": 2023, "available_on": "2026-01-01"},
+        }]
+        self.rejected = [{"id": "at-origin", "reasons": ["outcome_not_known_before_origin"]}]
+        self.counts = {"outcome_not_known_before_origin": 1}
+        self.check_rejected_reference()
+
+    def test_cut_scope_conflicts_are_independently_audited(self):
+        cut = self.payload["calibration_cuts"][1]
+        cut.update(source_kind="official", election_type="general",
+                   category="DIPUTADOS", jurisdiction="pba:001")
+        cut["previous"]["available_on"] = "2019-12-01"
+        self.payload["calibration_cuts"] = [cut]
+        self.rejected = [{"id": "bad-source", "reasons": [
+            "category_not_comparable", "jurisdiction_not_comparable",
+        ]}]
+        self.counts = {"category_not_comparable": 1, "jurisdiction_not_comparable": 1}
+        self.check_rejected_reference()
+
+    def test_every_rejected_cut_contributes_to_reason_counts(self):
+        from copy import deepcopy
+
+        duplicate = deepcopy(self.payload["calibration_cuts"][0])
+        duplicate["id"] = "leak-2"
+        self.payload["calibration_cuts"].insert(1, duplicate)
+        row = deepcopy(self.rejected[0])
+        row["id"] = "leak-2"
+        self.rejected.insert(1, row)
+        self.counts["outcome_not_known_before_origin"] = 2
+        self.check_rejected_reference()
+
+
 class TestPendingIdeologyNumericalPipeline(unittest.TestCase):
     # Temporary stage boundaries; frozen future-success expectations stay intact.
     invoke = TestIdeologyPublicEntry.invoke

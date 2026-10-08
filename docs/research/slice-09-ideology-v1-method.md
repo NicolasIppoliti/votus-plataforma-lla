@@ -5,8 +5,8 @@
 Root/history/profile validation is implemented. After the parent's 28 observed
 pre-implementation REDs, the E2a writer's focused public-entry run PASSED all
 34 checks: 28 schema contracts, five prior rejections and help. E2a was delivered
-separately; E2b was delivered in scoped reviewed commits. E3 assessment,
-independent review and delivery remain parent-owned.
+separately; E2b and E3 were delivered in scoped reviewed commits. E4a
+assessment, independent review and delivery remain parent-owned.
 The empty-cut reference path now audits both usable and masked target axes.
 Historical coverage counts
 all offers and votes independently of target overrides; masked bounds are empty
@@ -14,8 +14,10 @@ lists, with null delta and signal. Shares remain exact reduced latest fractions.
 Only null profiles and the documented synthetic, party-identity and member-context
 bases are classified. Other schema-valid bases retain the pending diagnostic,
 not a new rejection or an authenticated source admission. Historical publication
-and current hypothesis contexts remain separate. Nonempty cuts retain the
-pending diagnostic; calibration and composition are NOT implemented.
+and current hypothesis contexts remain separate. E4a screens recognized cut
+metadata and emits the full reference envelope only when every cut is rejected.
+Any potentially eligible or unsupported cut retains the pending diagnostic for
+the entire payload; calibration and composition are NOT implemented.
 For each sorted target band q, compatibility uses K(q,r)=1-|q-r|/4 with exact
 Fraction arithmetic and the full original positive-vote denominator. Unusable
 historical evidence spans all five bands; usable mixed evidence retains its
@@ -51,8 +53,26 @@ expectations) and all 16 grid entries before the focused GREEN run.
 
 The earlier passive fixture migration had no meaningful behavior RED. E2a uses
 the parent's observed behavior REDs, not that passive-migration exception.
-Calibration-cut shape and semantic eligibility remain unimplemented; root guards
-are not applied blindly to optional cuts. Later cut quarantine must report reasons.
+Full calibration-cut validation and eligible fitting remain unimplemented; root
+guards are not applied blindly to optional cuts. The bounded E4a metadata screen
+requires unique nonempty cut IDs, object records, exact integer years/target and
+canonical ISO dates. Unknown historical result publication is recognized; unknown
+outcome publication, malformed metadata, recursive inputs and unsupported shapes
+remain pending, without guessed taxonomy or partial success.
+
+Recognized rejection reasons are collected independently in this order: source,
+election type, category, jurisdiction, unknown historical result availability,
+input publication later than its own cut origin, outcome publication at/after the
+parent origin, outcome year mismatch, nonobserved outcome, and differing declared
+valid latest/outcome ID rosters. Duplicate roster IDs remain pending. Input
+publication equality is allowed; outcome equality fails. Temporal failures do
+not acquire fabricated missing-distribution reasons from partial cut records.
+All-rejected reports preserve E3 shares, bounds, coverage, anchors, grid and false
+readiness/evaluation gates. `audit.calibration.rejected` retains cut order and
+reason order; `rejection_counts` counts each reason once per cut and appears only
+with nonempty rejected rows. The exact empty-cut calibration envelope is unchanged.
+E4a self-verification is pending here until the parent records observed results;
+this increment does not close E4/E5 or authorize scientific acceptance.
 Well-typed unsupported profile bases remain schema-valid, without asserting axis
 usability. Profile publication and optional hypothesis dates are parsed separately
 without changing input objects or authenticating historical evidence.
