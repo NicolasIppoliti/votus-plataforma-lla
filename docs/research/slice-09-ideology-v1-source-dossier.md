@@ -133,6 +133,98 @@ The [district catalogue](https://www.juntaelectoral.gba.gov.ar/distritos.php?dis
 was confirmed to link 1963–2025. This does not claim visits to elder PDFs.
 Byte integrity authenticates neither programme, historical date nor eligible cut.
 
+## 6. Expediente-first research: public search and bounded request
+
+**Next priority: obtain the two 2021 common-programme annexes before reconsidering
+experimental design.** The [unsent Spanish request draft](slice-09-expediente-request-draft.md)
+asks only for public, redacted copies and publication witnesses. No outreach or
+automatic follow-up is authorized. This section records parent-supplied research,
+not independent retrieval by this writer; authentication remains partial.
+
+### Search observations, not global absence
+
+The actual [public resolution form](https://www.juntaelectoral.gba.gov.ar/buscar-resoluciones.php)
+uses POST with browser fields `spartpol`, `stema`, `accion=requerir`, `perfil=1`,
+`fecha`, `extrac`, `vtec`, `slugar=1` and submit control `action=`.
+Five initial searches (809/platform theme 51; 962/theme 51; 17015; 17014;
+Rosales/platform) each returned HTTP 200, strict UTF-8, 226,484 bytes and an
+unpopulated table. Shared SHA256:
+`d91495924a7c24599631826e21630a0b9453c7d029f038d2b015fce11f4f2900`.
+These transport observations are not logical-search PASS or source-absence proof.
+
+An actual GET returned 225,990 bytes, SHA256
+`72580d703fa227fde1a669fb489237ec607e465cfc63c313c6578a78c4ec8387`.
+A POST corrected to the actual submit control still returned the shared `d914…`
+response; omitted action was not demonstrated to be the cause.
+Finally, keyword searches with other fields defaulted and the actual submit
+control returned HTTP 200, strict UTF-8 and one populated row of six cells each:
+
+| Keyword | Bytes | Response SHA256 |
+|---|---:|---|
+| JUNTOS | 226,853 | `1ffa1870a512303d79fdbc769899ab5414f1636dc63aff9b3771abc542d9ad9c` |
+| FRENTE DE TODOS | 226,860 | `f5199ae3caf4ae693fcd186a3cb9a8dfe99b7ab516a18aec3b4b8ba38c16d3fc` |
+
+The links below were discovered, not invented. No record date or theme was
+parsed from the table; filenames do not prove dates.
+
+### Three acquired documents: zero requested programme annexes
+
+Acquisition on 2026-10-08 was sequential, with a 15-second/2-MiB bound and no
+retries. All three responses were HTTP 200, `application/pdf`:
+
+1. [107662106201902030.PDF](https://www.juntaelectoral.gba.gov.ar/files/resoluciones/107662106201902030.PDF)
+   — 74,369 bytes; PDF 1.4; two pages; acquired 17:36:23.415938Z.
+   SHA256: `94fe3ee30edf084d9bfb7c50c8c6d9a1d76d50ac1d568ac4ef98b747ff227346`.
+2. [120042008202111300.PDF](https://www.juntaelectoral.gba.gov.ar/files/resoluciones/120042008202111300.PDF)
+   — 246,352 bytes; PDF 1.7; one page; acquired 17:36:25.441422Z.
+   SHA256: `5bf4cbd71f4285982aa51bebc003d6651703ee15d964e8b6486531ffffe9b238`.
+3. [120042008202111303.PDF](https://www.juntaelectoral.gba.gov.ar/files/resoluciones/120042008202111303.PDF)
+   — 18,489 bytes; PDF 1.4; one page; acquired 17:36:25.954432Z.
+   SHA256: `81e927447d8dfe21e932d965343886e47573b42c9c8caff65e540fd663dadcfa`.
+
+All four actual pages were rendered and visually read. The supplied renderer
+used pinned CPython 3.13.12 `-I -S -B`, macOS `osascript`/PDFKit, `shell=false`,
+a 30-second bound and 32,768-byte cap. All native inner RCs were 0; original
+outer RC was not exposed. First-document stderr was exactly:
+`CoreGraphics PDF has logged an error. Set environment variable "CG_PDF_VERBOSE" to learn more.`
+Other stderr was empty. Whole-PDF text lengths
+were 1 / 1,142 / 717; the first was not useful. No private values were transcribed.
+Temporary sources/PNGs were not copied into Git; URLs and hashes are portable.
+
+The first document is a 2019 Partido Renovador Federal procedural resolution,
+case 5200-13958/13. Page 1, II records withdrawal from Juntos por Cambio after
+failed candidate-list agreements; III states that fs. 314/315 contain a copy
+of the approved party programme.
+Page 2, clause 3 takes note of that platform, but does not reproduce it or
+establish common-alliance policy. Related alliance references conflict:
+5200-16381/19 on page 1 versus 5200-13081/19 in page 2, clause 2.
+This source inconsistency remains unresolved. Handwritten June 2019 has an
+unclear exact day; no day is inferred from the filename.
+
+The other two documents concern FDT case 5200-17014/2021, Celeste y Blanca 10,
+for the 12 September 2021 PASO: Coronel **Suárez**, not Coronel Rosales.
+They concern nomination/attachments for concejales and consejo escolar,
+titulares/suplentes, with no programme clauses or annexes. Digital signing on
+20 August is not authenticated publication.
+
+Exclusive primary reason counts reconcile to three acquired documents:
+one different-party/year document and two wrong-municipality nomination documents.
+Office/PASO differences overlap those reasons, not additional documents.
+Zero requested programme annexes were obtained; no broad source absence follows.
+
+### Request scope and limits
+
+The draft prioritizes Juntos 5200-17015/2021 fs. 9/11 and Frente de Todos
+5200-17014/21 Annex I fs. 9/18. The latter precise folio reference is newly
+parent-supplied from separate read-only research 740, not rerun by this writer.
+It also asks for public locators, not whole private cases, for relevant historical
+common platforms and municipal nomination instruments.
+
+A copy obtained now may establish a byte version, not historical availability.
+Even sufficient programme-identity evidence would not itself establish three
+whole comparable cuts. Existing scientific criteria, readiness, freeze status,
+profile bands and absence of real metrics remain unchanged.
+
 ## Remaining freeze obligations and scientific boundary
 
 Still pending: full one-to-one offer identity, nomination, category and complete
