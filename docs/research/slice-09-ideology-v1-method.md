@@ -2,6 +2,36 @@
 
 ## Status and scope
 
+The complete synthetic model now has one production-reachable composer for all
+16 pairs on each eligible cut and for the selected pair on the root. Cut
+eligibility and metadata-first rejection priority are unchanged. Each cut uses
+only its own temporal/profile context. Exact fixed-q signals feed annualized
+exponential scores; only exact free mass is normalized, with anchors untouched.
+Zero/one free offer, zero free mass and equal exact factors preserve latest
+fractions before evaluating unnecessary exponentials. Overflow, nonfinite or
+zero score sums reject with the declared finite-positive-score diagnostic.
+
+Loss representation is predeclared before real measurement: convert finite
+floating scores to exact Fractions, normalize quotas by their exact sum, floor
+10^12 units and assign residual units by exact rational remainder, then offer ID.
+Multiply those units by exact free mass. Calibration uses these same serialized
+rational predictions: rational TV per cut, rational global mean, then one float
+conversion for reporting and strict comparison. Only exactly equal reported
+losses invoke sum/E/S tie ordering; no selection tolerance is applied.
+Identical prediction vectors across every pair on every eligible cut yield null
+beta and insufficient signal; equal losses alone do not. No eligible cuts yield
+null beta and insufficient calibration. Otherwise the actual selected pair is
+applied even to a masked or degenerate root; unchanged output is reference-only.
+
+The obsolete numerical-pending test is retired; all permanent checks and all
+53 frozen cases/16 grid entries remain unchanged. Final self-check results are
+reported in the writer handoff, not asserted here before observation. Parent
+assessment, independent verification, native acknowledgement and scoped delivery
+remain pending. Readiness gates remain false, evaluation unperformed, actual
+inputs/cuts unfrozen and real forecasts unvalidated. E4/E5 are not closed here.
+
+### Historical delivered increments (superseded current capability statements)
+
 Root/history/profile validation is implemented. After the parent's 28 observed
 pre-implementation REDs, the E2a writer's focused public-entry run PASSED all
 34 checks: 28 schema contracts, five prior rejections and help. E2a was delivered
@@ -273,9 +303,10 @@ For F use the specified exp(h*(betaE*dE+betaS*dS)) and normalize only to free
 mass M. An unavailable or unidentified axis has no factor. Zero F, one F, M=0,
 and equal free factors return exact latest shares. Positive M with zero or
 nonfinite score sum rejects before emitting output. For nontrivial shares use
-an explicitly declared numerical representation: round normalized free weights
-to a total of 10^12 integer units using largest remainders (ties by offer ID),
-then multiply by exact rational M. Anchors are not rounded. This is display/
+the representation declared above: convert floating scores to exact Fractions,
+normalize by their exact Fraction sum, apportion 10^12 integer units using exact
+largest remainders (ties by offer ID), then multiply by exact rational M.
+The finite positive floating fsum guard is retained alongside exact quota sums. Anchors are not rounded. This is display/
 serialization apportionment within free mass, not election seat allocation or
 voter transfer. Float errors must not alter the exact sum or make negatives.
 

@@ -847,32 +847,6 @@ class TestIdeologyCalibrationEligibilityPublicEntry(unittest.TestCase):
         ], {"forecast_as_observation": 1})
 
 
-class TestPendingIdeologyNumericalPipeline(unittest.TestCase):
-    # Temporary stage boundaries; frozen future-success expectations stay intact.
-    invoke = TestIdeologyPublicEntry.invoke
-
-    def check_pending(self, payload):
-        result = self.invoke(json.dumps(payload) + "\n")
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertEqual(result.stderr,
-                         "error: synthetic pipeline processing is not implemented at this stage\n")
-
-    def test_nonempty_cuts_cannot_bypass_calibration_when_root_is_masked(self):
-        case = next(case for case in CORE_CASES
-                    if case["test"] == "test_economic_independent_calibration_free_mass")
-        payload = json.loads(case["stdin"])
-        self.assertTrue(payload["calibration_cuts"])
-        for election in (payload["previous"], payload["latest"]):
-            for offer in election["offers"]:
-                offer["profiles"] = {"economic": None, "social": None}
-        payload["target_profiles"] = {
-            offer["id"]: {"economic": None, "social": None}
-            for offer in payload["latest"]["offers"]
-        }
-        self.check_pending(payload)
-
-
 def public_case(case):
     def test(self):
         self.check_case(case)

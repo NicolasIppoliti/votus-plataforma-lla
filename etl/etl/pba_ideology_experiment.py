@@ -1,8 +1,9 @@
-"""Validate synthetic inputs and audit uncalibrated compatibility references."""
+"""Calibrate and compose synthetic ideology scenarios; not validated forecasts."""
 
 import argparse
 from datetime import date
 import json
+import math
 from fractions import Fraction
 import sys
 
@@ -359,15 +360,17 @@ def rejected_calibration_metadata(payload):
     return rejected
 
 
-def calibration_reference(payload):
-    """Quarantine cuts; score only predictions proven constant for the grid."""
+def calibration_fit(payload):
+    """Quarantine cuts and score shared serialized predictions on their own inputs."""
     cuts = payload["calibration_cuts"]
     id_counts = {}
     for cut in cuts:
         if isinstance(cut, dict) and nonempty_string(cut.get("id")):
             id_counts[cut["id"]] = id_counts.get(cut["id"], 0) + 1
-    rejected, eligible, losses = [], [], []
-    pending = False
+    rejected, eligible = [], []
+    grid = [(e, s) for e in (0, 0.5, 1, 2) for s in (0, 0.5, 1, 2)]
+    losses = [Fraction(0) for _ in grid]
+    indistinguishable = True
     parent_origin = date.fromisoformat(payload["forecast_origin"])
     inherited = ("schema_version", "synthetic", "source_kind", "election_type",
                  "category", "jurisdiction")
@@ -428,22 +431,26 @@ def calibration_reference(payload):
                              "schema_error": str(error)})
             continue
         eligible.append(cut["id"])
-        if not constant_reference_prediction(context):
-            pending = True
-            continue
-        latest = context["latest"]
+        state = composition_context(context)
+        if state is None:
+            return None
         observed = {offer["id"]: Fraction(offer["votes"], outcome["positive_votes"])
                     for offer in outcome["offers"]}
-        loss = sum((abs(Fraction(offer["votes"], latest["positive_votes"])
-                        - observed[offer["id"]]) for offer in latest["offers"]), Fraction(0)) / 2
-        losses.append(loss)
-    if pending:
-        return None
-    scores = []
-    if eligible:
-        mean_tv = float(sum(losses, Fraction(0)) / len(losses))
-        scores = [{"beta": [e, s], "mean_tv": mean_tv}
-                  for e in (0, 0.5, 1, 2) for s in (0, 0.5, 1, 2)]
+        predictions = [compose(state, pair) for pair in grid]
+        indistinguishable = indistinguishable and all(
+            prediction == predictions[0] for prediction in predictions[1:]
+        )
+        for index, prediction in enumerate(predictions):
+            losses[index] += sum((abs(share - observed[offer_id])
+                                  for offer_id, share in prediction.items()), Fraction(0)) / 2
+    scores = [{"beta": list(pair), "mean_tv": float(loss / len(eligible))}
+              for pair, loss in zip(grid, losses)] if eligible else []
+    beta = None
+    if eligible and not indistinguishable:
+        selected = min(scores, key=lambda score: (
+            score["mean_tv"], sum(score["beta"]), *score["beta"],
+        ))
+        beta = dict(zip(("economic", "social"), selected["beta"]))
     calibration = {
         "eligible": eligible, "rejected": rejected, "scores": scores,
         "selected_by": "global_mean_tv_then_sum_then_e_then_s",
@@ -459,73 +466,115 @@ def calibration_reference(payload):
         calibration["rejection_counts"] = counts
         if schema_counts:
             calibration["schema_error_counts"] = schema_counts
-    return calibration
+    return calibration, beta
 
 
-def constant_reference_prediction(payload):
-    """Equal exact free signatures imply a common factor for every grid pair."""
+def composition_context(payload):
+    """Build exact coefficients and audits once for this root or cut origin."""
     origin = date.fromisoformat(payload["forecast_origin"])
     history = historical_profile_audit(payload, origin)
     if history is None:
-        return False
-    signatures, free_votes = [], 0
+        return None
+    offers, anchors, coefficients, base = {}, [], {}, {}
     for offer in payload["latest"]["offers"]:
         profiles = payload.get("target_profiles", {}).get(offer["id"], offer["profiles"])
         axes = classify_axes(profiles, origin, current_target=True)
         if axes is None:
-            return False
-        if not any(detail["usable"] for detail in axes.values()):
-            continue
-        free_votes += offer["votes"]
-        signatures.append(tuple(
-            target_axis_audit(payload, history, axis, profiles[axis], detail,
-                              exact_signal=True)["signal"] or Fraction(0)
-            for axis, detail in axes.items()
-        ))
-    return free_votes == 0 or len(signatures) <= 1 or len(set(signatures)) == 1
-
-
-def reference_report(payload):
-    """Audit exact references with rejected or proven constant-prediction cuts."""
-    calibration = calibration_reference(payload)
-    if calibration is None:
-        return None
-    origin = date.fromisoformat(payload["forecast_origin"])
-    latest = payload["latest"]
-    target_profiles = payload.get("target_profiles")
-    history = historical_profile_audit(payload, origin)
-    if history is None:
-        return None
-    offers, anchors = {}, []
-    for offer in latest["offers"]:
-        profiles = (
-            offer["profiles"] if target_profiles is None
-            else target_profiles[offer["id"]]
-        )
-        axes = classify_axes(profiles, origin, current_target=True)
-        if axes is None:
             return None
+        offer_id = offer["id"]
+        base[offer_id] = Fraction(offer["votes"], payload["latest"]["positive_votes"])
         if not any(detail["usable"] for detail in axes.values()):
-            anchors.append(offer["id"])
-        offers[offer["id"]] = {
-            axis: target_axis_audit(payload, history, axis, profiles[axis], detail)
+            anchors.append(offer_id)
+        audit = {
+            axis: target_axis_audit(payload, history, axis, profiles[axis], detail,
+                                    exact_signal=True)
             for axis, detail in axes.items()
         }
-    shares = {}
-    for offer in latest["offers"]:
-        share = Fraction(offer["votes"], latest["positive_votes"])
-        shares[offer["id"]] = {
-            "numerator": share.numerator,
-            "denominator": share.denominator,
-        }
-    reasons = {"insufficient_signal" if calibration["eligible"] else "insufficient_calibration": 1}
+        coefficients[offer_id] = tuple(
+            audit[axis]["signal"] or Fraction(0) for axis in ("economic", "social")
+        )
+        for detail in audit.values():
+            if detail["signal"] is not None:
+                detail["signal"] = float(detail["signal"])
+        offers[offer_id] = audit
+    return {
+        "base": base, "anchors": anchors, "coefficients": coefficients,
+        "history": history, "offers": offers,
+        "h": Fraction(payload["target_year"] - payload["latest"]["year"],
+                      payload["latest"]["year"] - payload["previous"]["year"]),
+    }
+
+
+def compose(state, beta):
+    """Preserve anchors and apportion only exact free mass, for cuts and root."""
+    base = state["base"]
+    free = sorted(set(base) - set(state["anchors"]))
+    mass = sum((base[offer_id] for offer_id in free), Fraction(0))
+    if len(free) <= 1 or mass == 0:
+        return base.copy()
+    e, s = map(Fraction, beta)
+    exponents = {
+        offer_id: state["h"] * (e * state["coefficients"][offer_id][0]
+                                 + s * state["coefficients"][offer_id][1])
+        for offer_id in free
+    }
+    # Common factors cancel exactly, even when exp would overflow.
+    if len(set(exponents.values())) == 1:
+        return base.copy()
+    diagnostic = "positive free mass requires a finite positive score sum"
+    try:
+        scores = {offer_id: float(base[offer_id]) * math.exp(float(exponents[offer_id]))
+                  for offer_id in free}
+        total = math.fsum(scores.values())
+    except OverflowError:
+        raise InputValidationError(diagnostic) from None
+    require(math.isfinite(total) and total > 0
+            and all(math.isfinite(score) and score >= 0 for score in scores.values()),
+            diagnostic)
+    exact = {offer_id: Fraction(score) for offer_id, score in scores.items()}
+    exact_total = sum(exact.values(), Fraction(0))
+    require(exact_total > 0, diagnostic)
+    quotas = {offer_id: score / exact_total * 10**12
+              for offer_id, score in exact.items()}
+    units = {offer_id: quota.numerator // quota.denominator
+             for offer_id, quota in quotas.items()}
+    priority = sorted(free, key=lambda offer_id: (
+        -(quotas[offer_id] - units[offer_id]), offer_id,
+    ))
+    for offer_id in priority[:10**12 - sum(units.values())]:
+        units[offer_id] += 1
+    return {**base, **{offer_id: mass * Fraction(units[offer_id], 10**12)
+                      for offer_id in free}}
+
+
+def experiment_report(payload):
+    """Fit earlier cuts, then compose the root without authenticating real data."""
+    fit = calibration_fit(payload)
+    if fit is None:
+        return None
+    calibration, beta = fit
+    state = composition_context(payload)
+    if state is None:
+        return None
+    prediction = compose(state, (0, 0) if beta is None
+                         else (beta["economic"], beta["social"]))
+    def serialized(distribution):
+        return {offer_id: {"numerator": share.numerator, "denominator": share.denominator}
+                for offer_id, share in distribution.items()}
+    shares = serialized(prediction)
+    reference = serialized(state["base"])
+    anchors = state["anchors"]
+    reasons = {}
+    if beta is None:
+        reasons["insufficient_signal" if calibration["eligible"]
+                else "insufficient_calibration"] = 1
     if anchors:
         reasons["profile_neither_axis_usable"] = len(anchors)
     audit = {
-        **history,
+        **state["history"],
         "anchored_offers": sorted(anchors),
         "reasons": reasons,
-        "offers": offers,
+        "offers": state["offers"],
         "calibration": calibration,
         "evaluation": {
             "performed": False,
@@ -537,12 +586,11 @@ def reference_report(payload):
         "synthetic": True,
         "forecast_ready": False,
         "slice10_unblocked": False,
-        "status": "reference_only",
-        "reference_shares": shares,
+        "status": "reference_only" if shares == reference else "experimental",
+        "reference_shares": reference,
         "shares": shares,
-        "beta": None,
-        "h": (payload["target_year"] - latest["year"])
-             / (latest["year"] - payload["previous"]["year"]),
+        "beta": beta,
+        "h": float(state["h"]),
         "grid": [[economic, social]
                  for economic in (0, 0.5, 1, 2)
                  for social in (0, 0.5, 1, 2)],
@@ -581,11 +629,11 @@ def main():
 
     try:
         validate_root(payload)
+        report = experiment_report(payload)
     except InputValidationError as error:
         sys.stderr.write(f"error: {error}\n")
         return 2
 
-    report = reference_report(payload)
     if report is not None:
         sys.stdout.write(json.dumps(
             report, sort_keys=True, separators=(",", ":"), allow_nan=False,
