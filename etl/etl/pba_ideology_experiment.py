@@ -1,4 +1,4 @@
-"""Validate synthetic stdin inputs; pipeline processing is not implemented."""
+"""Validate synthetic inputs and audit empty-cut compatibility references."""
 
 import argparse
 from datetime import date
@@ -228,35 +228,82 @@ def historical_profile_audit(payload, origin):
     }
 
 
-def masked_reference_report(payload):
-    """Return a complete reference only where no numerical pipeline is needed."""
+def compatibility_interval(election, axis, q, details):
+    """Use every original vote; unavailable evidence spans all five bands."""
+    lower = upper = Fraction(0)
+    for offer in election["offers"]:
+        bands = (
+            offer["profiles"][axis]["bands"]
+            if details[offer["id"]][axis]["usable"]
+            else range(-2, 3)
+        )
+        kernels = [Fraction(4 - abs(q - r), 4) for r in bands]
+        lower += offer["votes"] * min(kernels)
+        upper += offer["votes"] * max(kernels)
+    denominator = election["positive_votes"]
+    return lower / denominator, upper / denominator
+
+
+def target_axis_audit(payload, history, axis, profile, detail):
+    """Contrast each fixed target hypothesis before taking delta extrema."""
+    if not detail["usable"]:
+        return {
+            "usable": False, "reasons": detail["reasons"],
+            "bounds": [], "delta": None, "signal": None,
+        }
+    bounds, lower_deltas, upper_deltas = [], [], []
+    for q in sorted(profile["bands"]):
+        intervals = {}
+        for label in ("previous", "latest"):
+            election = payload[label]
+            intervals[label] = compatibility_interval(
+                election, axis, q,
+                history["profile_details"][str(election["year"])],
+            )
+        previous, latest = intervals["previous"], intervals["latest"]
+        lower_deltas.append(latest[0] - previous[1])
+        upper_deltas.append(latest[1] - previous[0])
+        bounds.append({
+            "q": q,
+            "previous": [float(value) for value in previous],
+            "latest": [float(value) for value in latest],
+        })
+    lower, upper = min(lower_deltas), max(upper_deltas)
+    signal = lower if lower > 0 else upper if upper < 0 else None
+    return {
+        "usable": True,
+        "reasons": ["trend_unidentified"] if signal is None else [],
+        "bounds": bounds,
+        "delta": [float(lower), float(upper)],
+        "signal": None if signal is None else float(signal),
+    }
+
+
+def empty_cut_reference_report(payload):
+    """Audit compatibility without calibrating or changing latest shares."""
     if payload["calibration_cuts"]:
         return None
     origin = date.fromisoformat(payload["forecast_origin"])
     latest = payload["latest"]
     target_profiles = payload.get("target_profiles")
-    offers = {}
+    history = historical_profile_audit(payload, origin)
+    if history is None:
+        return None
+    offers, anchors = {}, []
     for offer in latest["offers"]:
         profiles = (
             offer["profiles"] if target_profiles is None
             else target_profiles[offer["id"]]
         )
         axes = classify_axes(profiles, origin, current_target=True)
-        if axes is None or any(detail["usable"] for detail in axes.values()):
+        if axes is None:
             return None
+        if not any(detail["usable"] for detail in axes.values()):
+            anchors.append(offer["id"])
         offers[offer["id"]] = {
-            axis: {
-                "usable": False,
-                "reasons": detail["reasons"],
-                "bounds": [],
-                "delta": None,
-                "signal": None,
-            }
+            axis: target_axis_audit(payload, history, axis, profiles[axis], detail)
             for axis, detail in axes.items()
         }
-    history = historical_profile_audit(payload, origin)
-    if history is None:
-        return None
     shares = {}
     for offer in latest["offers"]:
         share = Fraction(offer["votes"], latest["positive_votes"])
@@ -264,13 +311,13 @@ def masked_reference_report(payload):
             "numerator": share.numerator,
             "denominator": share.denominator,
         }
+    reasons = {"insufficient_calibration": 1}
+    if anchors:
+        reasons["profile_neither_axis_usable"] = len(anchors)
     audit = {
         **history,
-        "anchored_offers": sorted(shares),
-        "reasons": {
-            "insufficient_calibration": 1,
-            "profile_neither_axis_usable": len(shares),
-        },
+        "anchored_offers": sorted(anchors),
+        "reasons": reasons,
         "offers": offers,
         "calibration": {
             "eligible": [], "rejected": [], "scores": [],
@@ -334,7 +381,7 @@ def main():
         sys.stderr.write(f"error: {error}\n")
         return 2
 
-    report = masked_reference_report(payload)
+    report = empty_cut_reference_report(payload)
     if report is not None:
         sys.stdout.write(json.dumps(
             report, sort_keys=True, separators=(",", ":"), allow_nan=False,

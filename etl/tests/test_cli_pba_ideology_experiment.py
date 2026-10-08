@@ -570,6 +570,122 @@ class TestIdeologyMaskedReferencePublicEntry(unittest.TestCase):
                 self.assertEqual(detail["reasons"], ["profile_unknown"])
 
 
+class TestIdeologyTemporalBoundsPublicEntry(unittest.TestCase):
+    # Reuse only the public invocation/envelope, not the baseline test selectors.
+    invoke = TestIdeologyPublicEntry.invoke
+    check_case = TestRemainingIdeologyPublicEntry.check_case
+    check_reference = TestIdeologyMaskedReferencePublicEntry.check_reference
+
+    def setUp(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_explicit_centre_is_not_unknown")
+        self.payload = json.loads(case["stdin"])
+        self.previous = self.payload["previous"]
+        self.latest = self.payload["latest"]
+        self.previous_offer = self.previous["offers"][0]
+        self.latest_offer = self.latest["offers"][0]
+        self.assertEqual(self.payload["forecast_origin"], "2026-01-01")
+        self.assertEqual(self.payload["calibration_cuts"], [])
+        for election, bands in ((self.previous, [0]), (self.latest, [2])):
+            self.assertEqual(election["positive_votes"], 10)
+            self.assertEqual(len(election["offers"]), 1)
+            offer = election["offers"][0]
+            self.assertEqual(offer["votes"], election["positive_votes"])
+            self.assertEqual(offer["profiles"]["economic"]["bands"], bands)
+        self.assertNotIn("target_profiles", self.payload)
+
+    def explicit_target(self):
+        # Independent target publication must not inherit the historical date.
+        profile = dict(self.latest_offer["profiles"]["economic"])
+        profile["available_on"] = "2020-01-01"
+        self.payload["target_profiles"] = {
+            self.latest_offer["id"]: {"economic": profile, "social": None},
+        }
+
+    def check_bounds(self, previous, latest, delta, signal, reasons):
+        from fractions import Fraction
+
+        report = self.check_case({
+            "stdin": json.dumps(self.payload) + "\n", "exit": 0, "expect": {},
+        })
+        detail = report["audit"]["offers"][self.latest_offer["id"]]["economic"]
+        self.assertIs(detail["usable"], True)
+        self.assertEqual(detail["bounds"], [
+            {"q": 2, "previous": previous, "latest": latest},
+        ])
+        self.assertEqual(detail["delta"], delta)
+        self.assertEqual(detail["signal"], signal)
+        self.assertEqual(detail["reasons"], reasons)
+        reference = {}
+        for offer in self.latest["offers"]:
+            share = Fraction(offer["votes"], self.latest["positive_votes"])
+            reference[offer["id"]] = {
+                "numerator": share.numerator, "denominator": share.denominator,
+            }
+        self.assertEqual(report["reference_shares"], reference)
+        self.assertEqual(report["shares"], reference)
+        self.assertIsNone(report["beta"])
+        self.assertEqual(report["audit"]["anchored_offers"], [])
+        self.assertEqual(report["audit"]["reasons"], {"insufficient_calibration": 1})
+        self.assertNotIn("profile_neither_axis_usable", report["audit"]["reasons"])
+        return report
+
+    def check_history(self, report, election, usable, reasons):
+        year = str(election["year"])
+        offers = election["offers"]
+        for offer in offers:
+            detail = report["audit"]["profile_details"][year][offer["id"]]["economic"]
+            self.assertIs(detail["usable"], usable)
+            self.assertIs(detail["mixed"], False)
+            self.assertEqual(detail["reasons"], reasons)
+        self.assertEqual(report["audit"]["profile_coverage"][year]["economic"], {
+            "usable_offers": len(offers) if usable else 0,
+            "unknown_offers": 0 if usable else len(offers),
+            "unknown_votes": 0 if usable else sum(offer["votes"] for offer in offers),
+        })
+
+    def test_historical_publication_at_origin_retains_point_bounds(self):
+        self.previous_offer["profiles"]["economic"]["available_on"] = "2026-01-01"
+        self.explicit_target()
+        report = self.check_bounds([0.5, 0.5], [1, 1], [0.5, 0.5], 0.5, [])
+        self.check_history(report, self.previous, True, [])
+        self.check_history(report, self.latest, True, [])
+
+    def test_historical_publication_after_origin_expands_all_bands(self):
+        self.previous_offer["profiles"]["economic"]["available_on"] = "2026-01-02"
+        self.explicit_target()
+        report = self.check_bounds([0, 1], [1, 1], [0, 1], None, ["trend_unidentified"])
+        self.check_history(report, self.previous, False, ["profile_unavailable_at_origin"])
+        self.check_history(report, self.latest, True, [])
+
+    def test_current_hypothesis_at_origin_does_not_authenticate_history(self):
+        profile = self.latest_offer["profiles"]["economic"]
+        profile["available_on"] = None
+        profile["hypothesis_on"] = "2026-01-01"
+        report = self.check_bounds([0.5, 0.5], [0, 1], [-0.5, 0.5], None,
+                                   ["trend_unidentified"])
+        self.check_history(report, self.previous, True, [])
+        self.check_history(report, self.latest, False, ["historical_publication_unknown"])
+        self.assertIsNone(profile["available_on"])
+        self.assertNotIn("target_profiles", self.payload)
+
+    def test_current_hypothesis_after_origin_stays_masked(self):
+        profile = self.latest_offer["profiles"]["economic"]
+        profile["available_on"] = None
+        profile["hypothesis_on"] = "2026-01-02"
+        report = self.check_reference(self.payload)
+        detail = report["audit"]["offers"][self.latest_offer["id"]]["economic"]
+        self.assertEqual(detail["reasons"], ["historical_publication_unknown"])
+        self.check_history(report, self.previous, True, [])
+        self.check_history(report, self.latest, False, ["historical_publication_unknown"])
+        self.assertEqual(report["audit"]["reasons"], {
+            "insufficient_calibration": 1,
+            "profile_neither_axis_usable": len(self.latest["offers"]),
+        })
+        self.assertIsNone(profile["available_on"])
+        self.assertNotIn("target_profiles", self.payload)
+
+
 class TestPendingIdeologyNumericalPipeline(unittest.TestCase):
     # Temporary stage boundaries; frozen future-success expectations stay intact.
     invoke = TestIdeologyPublicEntry.invoke
@@ -580,11 +696,6 @@ class TestPendingIdeologyNumericalPipeline(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr,
                          "error: synthetic pipeline processing is not implemented at this stage\n")
-
-    def test_usable_target_remains_explicitly_pending(self):
-        case = next(case for case in CORE_CASES
-                    if case["test"] == "test_explicit_centre_is_not_unknown")
-        self.check_pending(json.loads(case["stdin"]))
 
     def test_nonempty_cuts_cannot_bypass_calibration_when_root_is_masked(self):
         case = next(case for case in CORE_CASES
