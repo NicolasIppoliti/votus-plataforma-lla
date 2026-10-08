@@ -4,10 +4,20 @@
 
 Root/history/profile validation is implemented. After the parent's 28 observed
 pre-implementation REDs, the E2a writer's focused public-entry run PASSED all
-34 checks: 28 schema contracts, five prior rejections and help. E2a assessment,
-independent native review and delivery remain parent-owned and pending. Valid
-payloads still reach the explicit pipeline-unimplemented diagnostic; UNKNOWN
-reference reports, bounds, calibration and composition are NOT implemented.
+34 checks: 28 schema contracts, five prior rejections and help. E2a was delivered
+separately; E2b assessment, independent review and delivery remain parent-owned.
+The masked-reference path now emits a complete report when every target axis is
+unusable and calibration cuts are actually empty. Historical coverage counts
+all offers and votes independently of target overrides; masked bounds are empty
+lists, with null delta and signal. Shares remain exact reduced latest fractions.
+Only null profiles and the documented synthetic, party-identity and member-context
+bases are classified. Other schema-valid bases retain the pending diagnostic,
+not a new rejection or an authenticated source admission. Historical publication
+and current hypothesis contexts remain separate. Any usable target axis or
+nonempty cuts also retain the pending diagnostic. Numerical bounds, calibration
+and composition are NOT implemented. The focused E2b public-entry run PASSED
+41 checks: 34 guards/help, two frozen reference positives, three new complete
+masked-reference contracts and two temporary pending-pipeline regressions.
 The full 53-case model suite has not passed or been run in this unit. Real
 evaluation: NO; actual cuts and inputs remain unfrozen, and the forecast is
 unvalidated. This is not scientific acceptance or a 2027 forecast. Historical

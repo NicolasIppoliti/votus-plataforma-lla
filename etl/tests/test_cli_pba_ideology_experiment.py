@@ -374,6 +374,7 @@ class TestRemainingIdeologyPublicEntry(TestIdeologyPublicEntry):
                 share["numerator"] / share["denominator"], comparison["value"],
                 rel_tol=0, abs_tol=1e-9,
             ))
+        return report
 
 
 # One process per declared case, no bootstrap, retry, subprocess helper or
@@ -466,6 +467,138 @@ class TestIdeologySchemaPublicEntry(unittest.TestCase):
             result.stderr,
             "error: previous offer a economic hypothesis_on must be an ISO date\n",
         )
+
+
+class TestIdeologyMaskedReferencePublicEntry(unittest.TestCase):
+    # Method aliases reuse the public contract without inheriting fixture tests.
+    invoke = TestIdeologyPublicEntry.invoke
+    check_case = TestRemainingIdeologyPublicEntry.check_case
+
+    def fixture_payload(self, name="test_unsupported_axes_not_centred"):
+        case = next(case for case in CORE_CASES if case["test"] == name)
+        return json.loads(case["stdin"])
+
+    def check_reference(self, payload, expect=None):
+        from fractions import Fraction
+
+        report = self.check_case({
+            "stdin": json.dumps(payload) + "\n", "exit": 0,
+            "expect": expect or {},
+        })
+        reference = {}
+        for offer in payload["latest"]["offers"]:
+            share = Fraction(offer["votes"], payload["latest"]["positive_votes"])
+            reference[offer["id"]] = {
+                "numerator": share.numerator, "denominator": share.denominator,
+            }
+        self.assertEqual(report["reference_shares"], reference)
+        self.assertEqual(report["shares"], reference)
+        self.assertEqual(report["status"], "reference_only")
+        self.assertIsNone(report["beta"])
+        self.assertEqual(report["audit"]["anchored_offers"], sorted(reference))
+        self.assertEqual(report["audit"]["calibration"], {
+            "eligible": [], "rejected": [], "scores": [],
+            "selected_by": "global_mean_tv_then_sum_then_e_then_s",
+        })
+        for axes in report["audit"]["offers"].values():
+            for detail in axes.values():
+                self.assertIs(detail["usable"], False)
+                self.assertEqual(detail["bounds"], [])
+                self.assertIsNone(detail["delta"])
+                self.assertIsNone(detail["signal"])
+        return report
+
+    def test_all_null_axes_emit_masked_reference_envelope(self):
+        payload = self.fixture_payload()
+        for election in (payload["previous"], payload["latest"]):
+            for offer in election["offers"]:
+                offer["profiles"] = {"economic": None, "social": None}
+        payload.pop("target_profiles", None)
+        report = self.check_reference(payload)
+        self.assertEqual(report["audit"]["reasons"], {
+            "insufficient_calibration": 1,
+            "profile_neither_axis_usable": len(payload["latest"]["offers"]),
+        })
+        for axes in report["audit"]["offers"].values():
+            for detail in axes.values():
+                self.assertEqual(detail["reasons"], ["profile_unknown"])
+
+    def test_unsupported_policy_axes_emit_no_numeric_masks(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_unsupported_axes_not_centred")
+        report = self.check_reference(json.loads(case["stdin"]), case["expect"])
+        axes = report["audit"]["offers"]["b"]
+        self.assertEqual(axes["economic"]["reasons"], ["party_identity_not_offer_policy"])
+        self.assertEqual(axes["social"]["reasons"], ["member_context_not_offer_policy"])
+
+    def test_known_and_mixed_history_with_null_targets_is_reference_only(self):
+        payload = self.fixture_payload()
+        for election in (payload["previous"], payload["latest"]):
+            for offer in election["offers"]:
+                offer["profiles"] = {
+                    axis: {"bands": bands, "basis": "synthetic_offer_hypothesis",
+                           "citation": "INVENTED", "available_on": "2020-01-01"}
+                    for axis, bands in (("economic", [0]), ("social", [-1, 1]))
+                }
+        payload["target_profiles"] = {
+            offer["id"]: {"economic": None, "social": None}
+            for offer in payload["latest"]["offers"]
+        }
+        report = self.check_reference(payload)
+        for election in (payload["previous"], payload["latest"]):
+            year = str(election["year"])
+            count = len(election["offers"])
+            votes = sum(offer["votes"] for offer in election["offers"])
+            self.assertEqual(votes, election["positive_votes"])
+            for axis, mixed in (("economic", False), ("social", True)):
+                self.assertEqual(report["audit"]["profile_coverage"][year][axis], {
+                    "usable_offers": count, "unknown_offers": 0, "unknown_votes": 0,
+                })
+                self.assertEqual(report["audit"]["profile_breakdown"][year][axis], {
+                    "known_offers": 0 if mixed else count,
+                    "known_votes": 0 if mixed else votes,
+                    "mixed_offers": count if mixed else 0,
+                    "mixed_votes": votes if mixed else 0,
+                    "unknown_offers": 0, "unknown_votes": 0,
+                })
+                for offer in election["offers"]:
+                    detail = report["audit"]["profile_details"][year][offer["id"]][axis]
+                    self.assertIs(detail["usable"], True)
+                    self.assertIs(detail["mixed"], mixed)
+        for axes in report["audit"]["offers"].values():
+            for detail in axes.values():
+                self.assertEqual(detail["reasons"], ["profile_unknown"])
+
+
+class TestPendingIdeologyNumericalPipeline(unittest.TestCase):
+    # Temporary stage boundaries; frozen future-success expectations stay intact.
+    invoke = TestIdeologyPublicEntry.invoke
+
+    def check_pending(self, payload):
+        result = self.invoke(json.dumps(payload) + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr,
+                         "error: synthetic pipeline processing is not implemented at this stage\n")
+
+    def test_usable_target_remains_explicitly_pending(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_explicit_centre_is_not_unknown")
+        self.check_pending(json.loads(case["stdin"]))
+
+    def test_nonempty_cuts_cannot_bypass_calibration_when_root_is_masked(self):
+        case = next(case for case in CORE_CASES
+                    if case["test"] == "test_economic_independent_calibration_free_mass")
+        payload = json.loads(case["stdin"])
+        self.assertTrue(payload["calibration_cuts"])
+        for election in (payload["previous"], payload["latest"]):
+            for offer in election["offers"]:
+                offer["profiles"] = {"economic": None, "social": None}
+        payload["target_profiles"] = {
+            offer["id"]: {"economic": None, "social": None}
+            for offer in payload["latest"]["offers"]
+        }
+        self.check_pending(payload)
 
 
 def public_case(case):

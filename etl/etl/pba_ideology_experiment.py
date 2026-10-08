@@ -3,6 +3,7 @@
 import argparse
 from datetime import date
 import json
+from fractions import Fraction
 import sys
 
 
@@ -141,6 +142,163 @@ def validate_root(payload):
     # guards to cuts: later stages must quarantine them with audited reasons.
 
 
+def classify_profile(profile, origin, *, current_target=False):
+    """Classify documented evidence; None marks an unimplemented basis."""
+    reasons = []
+    if profile is None:
+        reasons = ["profile_unknown"]
+    elif profile["basis"] == "party_identity":
+        reasons = ["party_identity_not_offer_policy"]
+    elif profile["basis"] == "member_context":
+        reasons = ["member_context_not_offer_policy"]
+    elif profile["basis"] != "synthetic_offer_hypothesis":
+        return None
+    else:
+        publication = profile.get("available_on")
+        hypothesis = profile.get("hypothesis_on")
+        # Current declarations may justify a scenario, never retrospectively
+        # authenticate a historical endpoint's publication availability.
+        current_declaration = (
+            current_target and hypothesis is not None
+            and date.fromisoformat(hypothesis) <= origin
+        )
+        if not current_declaration:
+            if publication is None:
+                reasons = ["historical_publication_unknown"]
+            elif date.fromisoformat(publication) > origin:
+                reasons = ["profile_unavailable_at_origin"]
+    usable = not reasons
+    return {
+        "usable": usable,
+        "mixed": usable and len(profile["bands"]) > 1,
+        "reasons": reasons,
+    }
+
+
+def classify_axes(profiles, origin, *, current_target=False):
+    axes = {}
+    for axis in ("economic", "social"):
+        detail = classify_profile(
+            profiles[axis], origin, current_target=current_target,
+        )
+        if detail is None:
+            return None
+        axes[axis] = detail
+    return axes
+
+
+def historical_profile_audit(payload, origin):
+    """Count every historical offer and vote independently of target masks."""
+    details, coverage, breakdown, denominators = {}, {}, {}, {}
+    for election in (payload["previous"], payload["latest"]):
+        year = str(election["year"])
+        denominators[year] = election["positive_votes"]
+        details[year] = {}
+        for offer in election["offers"]:
+            axes = classify_axes(offer["profiles"], origin)
+            if axes is None:
+                return None
+            details[year][offer["id"]] = axes
+        coverage[year], breakdown[year] = {}, {}
+        for axis in ("economic", "social"):
+            counts = {
+                f"{group}_{measure}": 0
+                for group in ("known", "mixed", "unknown")
+                for measure in ("offers", "votes")
+            }
+            for offer in election["offers"]:
+                detail = details[year][offer["id"]][axis]
+                if not detail["usable"]:
+                    group = "unknown"
+                else:
+                    group = "mixed" if detail["mixed"] else "known"
+                counts[f"{group}_offers"] += 1
+                counts[f"{group}_votes"] += offer["votes"]
+            breakdown[year][axis] = counts
+            coverage[year][axis] = {
+                "usable_offers": counts["known_offers"] + counts["mixed_offers"],
+                "unknown_offers": counts["unknown_offers"],
+                "unknown_votes": counts["unknown_votes"],
+            }
+    return {
+        "positive_vote_denominators": denominators,
+        "profile_details": details,
+        "profile_coverage": coverage,
+        "profile_breakdown": breakdown,
+    }
+
+
+def masked_reference_report(payload):
+    """Return a complete reference only where no numerical pipeline is needed."""
+    if payload["calibration_cuts"]:
+        return None
+    origin = date.fromisoformat(payload["forecast_origin"])
+    latest = payload["latest"]
+    target_profiles = payload.get("target_profiles")
+    offers = {}
+    for offer in latest["offers"]:
+        profiles = (
+            offer["profiles"] if target_profiles is None
+            else target_profiles[offer["id"]]
+        )
+        axes = classify_axes(profiles, origin, current_target=True)
+        if axes is None or any(detail["usable"] for detail in axes.values()):
+            return None
+        offers[offer["id"]] = {
+            axis: {
+                "usable": False,
+                "reasons": detail["reasons"],
+                "bounds": [],
+                "delta": None,
+                "signal": None,
+            }
+            for axis, detail in axes.items()
+        }
+    history = historical_profile_audit(payload, origin)
+    if history is None:
+        return None
+    shares = {}
+    for offer in latest["offers"]:
+        share = Fraction(offer["votes"], latest["positive_votes"])
+        shares[offer["id"]] = {
+            "numerator": share.numerator,
+            "denominator": share.denominator,
+        }
+    audit = {
+        **history,
+        "anchored_offers": sorted(shares),
+        "reasons": {
+            "insufficient_calibration": 1,
+            "profile_neither_axis_usable": len(shares),
+        },
+        "offers": offers,
+        "calibration": {
+            "eligible": [], "rejected": [], "scores": [],
+            "selected_by": "global_mean_tv_then_sum_then_e_then_s",
+        },
+        "evaluation": {
+            "performed": False,
+            "scientific_acceptance": False,
+            "reason": "actual_inputs_and_outer_cuts_unfrozen",
+        },
+    }
+    return {
+        "synthetic": True,
+        "forecast_ready": False,
+        "slice10_unblocked": False,
+        "status": "reference_only",
+        "reference_shares": shares,
+        "shares": shares,
+        "beta": None,
+        "h": (payload["target_year"] - latest["year"])
+             / (latest["year"] - payload["previous"]["year"]),
+        "grid": [[economic, social]
+                 for economic in (0, 0.5, 1, 2)
+                 for social in (0, 0.5, 1, 2)],
+        "audit": audit,
+    }
+
+
 class ExperimentArgumentParser(argparse.ArgumentParser):
     """Keep public argument diagnostics independent of the script filename."""
 
@@ -175,6 +333,13 @@ def main():
     except InputValidationError as error:
         sys.stderr.write(f"error: {error}\n")
         return 2
+
+    report = masked_reference_report(payload)
+    if report is not None:
+        sys.stdout.write(json.dumps(
+            report, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ) + "\n")
+        return 0
 
     sys.stderr.write(
         "error: synthetic pipeline processing is not implemented at this stage\n"
