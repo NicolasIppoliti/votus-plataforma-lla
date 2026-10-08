@@ -1,0 +1,435 @@
+"""Synthetic public-entry tests; not electoral evidence or candidate evaluation.
+
+Run only under a fresh, explicit native scope. The standalone unittest runner
+uses stdlib; normal pytest discovery remains supported and unchanged.
+"""
+
+import json
+import os
+import selectors
+import subprocess
+import sys
+import time
+import unittest
+from pathlib import Path
+
+class StopOnUnexpectedResult(unittest.TextTestResult):
+    def addError(self, test, err):
+        super().addError(test, err)
+        self.stop()
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        if not (EXPECT_MISSING_ENTRY_RED and err[0] is test.failureException
+                and getattr(test, "_expected_contract_red", False)):
+            self.stop()
+
+
+EXPECT_MISSING_ENTRY_RED = False
+SERIALIZATION_SELECTORS = (
+    "TestRemainingIdeologyPublicEntry.test_serialization_largest_remainder_id_tie",
+    "TestRemainingIdeologyPublicEntry.test_serialization_id_priority_is_input_order_independent",
+)
+STAGE1_DIAGNOSTIC_SELECTORS = (
+    "TestRemainingIdeologyPublicEntry.test_invalid_json",
+    "TestRemainingIdeologyPublicEntry.test_schema_rejection",
+    "TestRemainingIdeologyPublicEntry.test_real_input_unfrozen",
+    "TestRemainingIdeologyPublicEntry.test_mixed_source",
+)
+MODULE = Path(__file__).parents[1] / "etl" / "pba_ideology_experiment.py"
+REFERENCE_INPUT = (
+    '{"schema_version":1,"synthetic":true,"source_kind":"official","jurisdiction":"pba:027","'
+    'category":"CONCEJALES","election_type":"general","forecast_origin":"2026-01-01","target_'
+    'year":2027,"previous":{"year":2023,"available_on":"2023-12-06","positive_votes":10,"offe'
+    'rs":[{"id":"old-a","votes":4,"profiles":{"economic":null,"social":null}},{"id":"old-b","'
+    'votes":6,"profiles":{"economic":null,"social":null}}]},"latest":{"year":2025,"available_'
+    'on":"2025-12-08","positive_votes":10,"offers":[{"id":"latest-a","votes":3,"profiles":{"e'
+    'conomic":null,"social":null}},{"id":"latest-b","votes":7,"profiles":{"economic":null,"so'
+    'cial":null}}]},"calibration_cuts":[]}'
+)
+HELP = (
+    "usage: pba-ideology-experiment [-h]\n\n"
+    "Experimental ideology-conditioned v1; read JSON from stdin. "
+    "Not a validated forecast.\n\n"
+    "options:\n"
+    "  -h, --help  show this help message and exit\n"
+)
+
+
+class TestIdeologyPublicEntry(unittest.TestCase):
+    def invoke(self, stdin: str = "", *args: str) -> subprocess.CompletedProcess[str]:
+        argv = [sys.executable, "-I", "-S", "-B", str(MODULE), *args]
+        pending = memoryview(stdin.encode("utf-8"))
+        captured = {"stdout": bytearray(), "stderr": bytearray()}
+        deadline = time.monotonic() + 5
+        child = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=0, cwd=MODULE.parent, env={"LC_ALL": "C", "PATH": ""},
+        )
+        streams = (child.stdin, child.stdout, child.stderr)
+        sent = 0
+        try:
+            with selectors.DefaultSelector() as ready:
+                for stream, label in zip(streams, ("stdin", "stdout", "stderr")):
+                    os.set_blocking(stream.fileno(), False)
+                    if label == "stdin" and not pending:
+                        stream.close()
+                    else:
+                        event = selectors.EVENT_WRITE if label == "stdin" else selectors.EVENT_READ
+                        ready.register(stream, event, label)
+                while ready.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("CLI child exceeded five-second deadline")
+                    for key, _ in ready.select(remaining):
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("CLI child exceeded five-second deadline")
+                        stream, label = key.fileobj, key.data
+                        if label == "stdin":
+                            try:
+                                sent += os.write(stream.fileno(), pending[sent:sent + 4096])
+                            except BlockingIOError:
+                                continue
+                            except BrokenPipeError:
+                                # Early rejection/absent entry may close stdin without reading it.
+                                ready.unregister(stream)
+                                stream.close()
+                                continue
+                            if sent == len(pending):
+                                ready.unregister(stream)
+                                stream.close()
+                        else:
+                            buffer = captured[label]
+                            # Read at most the remaining allowance plus ONE detection byte.
+                            try:
+                                data = os.read(stream.fileno(), min(4096, 32768 - len(buffer) + 1))
+                            except BlockingIOError:
+                                continue
+                            if not data:
+                                ready.unregister(stream)
+                                stream.close()
+                            elif len(buffer) + len(data) > 32768:
+                                raise RuntimeError(f"CLI child {label} exceeded 32768-byte cap")
+                            else:
+                                buffer.extend(data)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("CLI child exceeded five-second deadline")
+                rc = child.wait(timeout=remaining)
+            return subprocess.CompletedProcess(
+                argv, rc, captured["stdout"].decode("utf-8"), captured["stderr"].decode("utf-8"),
+            )
+        finally:
+            # Only this direct child is owned; no process-group/host isolation claim.
+            try:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=1)
+            finally:
+                for stream in streams:
+                    stream.close()
+
+    def test_help_reaches_the_experimental_entry(self):
+        result = self.invoke("", "--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, HELP)
+        self.assertEqual(result.stderr, "")
+
+    def test_neither_axis_usable_preserves_exact_latest_shares(self):
+        result = self.invoke(REFERENCE_INPUT + "\n")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, "")
+        report = json.loads(result.stdout)
+        self.assertEqual(
+            result.stdout,
+            json.dumps(report, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+        )
+        exact_shares = {
+            "latest-a": {"numerator": 3, "denominator": 10},
+            "latest-b": {"numerator": 7, "denominator": 10},
+        }
+        self.assertEqual(report["reference_shares"], exact_shares)
+        self.assertEqual(report["shares"], exact_shares)
+        self.assertEqual(report["status"], "reference_only")
+        self.assertIs(report["synthetic"], True)
+        self.assertIs(report["forecast_ready"], False)
+        self.assertIs(report["slice10_unblocked"], False)
+        self.assertIsNone(report["beta"])
+        self.assertEqual(report["audit"]["anchored_offers"], ["latest-a", "latest-b"])
+        self.assertEqual(
+            report["audit"]["reasons"],
+            {
+                "insufficient_calibration": 1,
+                "profile_neither_axis_usable": 2,
+            },
+        )
+        self.assertEqual(
+            report["audit"]["positive_vote_denominators"], {"2023": 10, "2025": 10}
+        )
+        self.assertEqual(report["audit"]["profile_coverage"], {
+            "2023": {
+                "economic": {"usable_offers": 0, "unknown_offers": 2, "unknown_votes": 10},
+                "social": {"usable_offers": 0, "unknown_offers": 2, "unknown_votes": 10},
+            },
+            "2025": {
+                "economic": {"usable_offers": 0, "unknown_offers": 2, "unknown_votes": 10},
+                "social": {"usable_offers": 0, "unknown_offers": 2, "unknown_votes": 10},
+            },
+        })
+
+    def test_fiscalizacion_is_rejected_before_any_result(self):
+        payload = REFERENCE_INPUT.replace(
+            '"source_kind":"official"', '"source_kind":"fiscalizacion"'
+        )
+        result = self.invoke(payload + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "error: source_kind must be official\n")
+
+
+class TestStageOneIdeologyPublicEntry(TestIdeologyPublicEntry):
+    # Temporary preliminary boundary only; never inherit baseline/full-v1 tests.
+    test_help_reaches_the_experimental_entry = None
+    test_neither_axis_usable_preserves_exact_latest_shares = None
+    test_fiscalizacion_is_rejected_before_any_result = None
+
+
+# The fixture is test-owned synthetic data, not an archive or private fixture.
+# Reading it is part of the test runner scope, never part of the CLI.
+PLAN = Path(__file__).parent / "fixtures" / "ideology_v1_public_cases.json"
+
+
+def assert_subset(test, actual, expected, path="report"):
+    """Check declared public fields without hiding missing fields or list order."""
+    if isinstance(expected, dict):
+        test.assertIsInstance(actual, dict, path)
+        for key, value in expected.items():
+            test.assertIn(key, actual, path)
+            assert_subset(test, actual[key], value, f"{path}.{key}")
+    else:
+        test.assertEqual(actual, expected, path)
+
+
+class TestRemainingIdeologyPublicEntry(TestIdeologyPublicEntry):
+    # Avoid inheriting/rerunning the already consumed first three selectors.
+    test_help_reaches_the_experimental_entry = None
+    test_neither_axis_usable_preserves_exact_latest_shares = None
+    test_fiscalizacion_is_rejected_before_any_result = None
+
+    def check_case(self, case):
+        result = self.invoke(case["stdin"], *case.get("args", []))
+        self._expected_contract_red = False
+        try:
+            # Execute the ordinary contract assertions, retaining their traceback.
+            self.assertEqual(result.returncode, case["exit"])
+            self.assertEqual(result.stderr, case.get("stderr", ""))
+        except self.failureException:
+            diagnostic = f"{sys.executable}: can't open file '{MODULE}': [Errno 2] No such file or directory\n"
+            self._expected_contract_red = (
+                EXPECT_MISSING_ENTRY_RED and result.returncode == 2
+                and result.stdout == "" and result.stderr == diagnostic
+            )
+            raise  # Never manufacture or substitute an assertion failure.
+        if case["exit"]:
+            self.assertEqual(result.stdout, "")
+            return
+        report = json.loads(result.stdout)
+        self.assertEqual(
+            result.stdout,
+            json.dumps(report, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+        )
+        assert_subset(self, report, case["expect"])
+        for field in ("status", "reference_shares", "shares", "beta", "h", "grid", "audit"):
+            self.assertIn(field, report)
+        for field in ("anchored_offers", "reasons", "positive_vote_denominators",
+                      "profile_coverage", "profile_details", "profile_breakdown", "offers", "calibration", "evaluation"):
+            self.assertIn(field, report["audit"])
+        assert_subset(self, report["audit"]["evaluation"], {
+            "performed": False, "scientific_acceptance": False,
+            "reason": "actual_inputs_and_outer_cuts_unfrozen",
+        })
+        payload = json.loads(case["stdin"])
+        for election in (payload["previous"], payload["latest"]):
+            year = str(election["year"])
+            self.assertEqual(report["audit"]["positive_vote_denominators"][year], election["positive_votes"])
+            details = report["audit"]["profile_details"][year]
+            self.assertEqual(set(details), {offer["id"] for offer in election["offers"]})
+            for offer in election["offers"]:
+                self.assertEqual(set(details[offer["id"]]), {"economic", "social"})
+                for axis in ("economic", "social"):
+                    detail = details[offer["id"]][axis]
+                    for field in ("usable", "mixed", "reasons"):
+                        self.assertIn(field, detail)
+                    self.assertIs(type(detail["usable"]), bool)
+                    self.assertIs(type(detail["mixed"]), bool)
+                    self.assertIsInstance(detail["reasons"], list)
+            for axis in ("economic", "social"):
+                unknown = [offer for offer in election["offers"]
+                           if not details[offer["id"]][axis]["usable"]]
+                coverage = report["audit"]["profile_coverage"][year][axis]
+                self.assertEqual(coverage["unknown_offers"], len(unknown))
+                self.assertEqual(coverage["unknown_votes"], sum(offer["votes"] for offer in unknown))
+                self.assertEqual(coverage["usable_offers"], len(election["offers"]) - len(unknown))
+                breakdown = report["audit"]["profile_breakdown"][year][axis]
+                for label in ("known", "mixed", "unknown"):
+                    def group(offer):
+                        detail = details[offer["id"]][axis]
+                        return "unknown" if not detail["usable"] else "mixed" if detail["mixed"] else "known"
+                    members = [offer for offer in election["offers"] if group(offer) == label]
+                    self.assertEqual(breakdown[f"{label}_offers"], len(members))
+                    self.assertEqual(breakdown[f"{label}_votes"], sum(offer["votes"] for offer in members))
+        self.assertEqual(set(report["audit"]["offers"]), {offer["id"] for offer in payload["latest"]["offers"]})
+        for axes in report["audit"]["offers"].values():
+            self.assertEqual(set(axes), {"economic", "social"})
+            for detail in axes.values():
+                for field in ("usable", "reasons", "bounds", "delta", "signal"):
+                    self.assertIn(field, detail)
+        self.assertEqual(report["grid"], CORE_GRID)
+        calibration = report["audit"]["calibration"]
+        for field in ("eligible", "rejected", "scores", "selected_by"):
+            self.assertIn(field, calibration)
+        self.assertIs(report["audit"]["evaluation"]["performed"], False)
+        self.assertIs(report["audit"]["evaluation"]["scientific_acceptance"], False)
+        if case.get("require_selected_beta"):
+            self.assertIsNotNone(report["beta"])
+        if report["beta"] is not None:
+            self.assertEqual(set(report["beta"]), {"economic", "social"})
+        if calibration["eligible"]:
+            self.assertEqual([score["beta"] for score in calibration["scores"]], CORE_GRID)
+            for score in calibration["scores"]:
+                self.assertIn(type(score["mean_tv"]), (int, float))
+                self.assertGreaterEqual(score["mean_tv"], 0)
+                self.assertLessEqual(score["mean_tv"], 1)
+            if report["beta"] is not None:
+                selected = min(calibration["scores"], key=lambda score: (
+                    score["mean_tv"], sum(score["beta"]), *score["beta"],
+                ))
+                self.assertEqual(selected["beta"], [report["beta"]["economic"], report["beta"]["social"]])
+                # Tie evidence uses EXACT reported values, never expected-loss tolerance.
+                tied = [score for score in calibration["scores"]
+                        if score["mean_tv"] == selected["mean_tv"]]
+                self.assertEqual(selected["beta"], min(
+                    (score["beta"] for score in tied),
+                    key=lambda beta: (sum(beta), *beta),
+                ))
+        else:
+            self.assertEqual(calibration["scores"], [])
+        self.assertIs(report["synthetic"], True)
+        self.assertIs(report["forecast_ready"], False)
+        self.assertIs(report["slice10_unblocked"], False)
+        self.assertEqual(set(report["shares"]), set(report["reference_shares"]))
+        from fractions import Fraction
+        import math
+
+        total = Fraction(0)
+        reference_total = Fraction(0)
+        anchored = report["audit"]["anchored_offers"]
+        free_mass = 1 - sum((Fraction(
+            report["reference_shares"][offer]["numerator"],
+            report["reference_shares"][offer]["denominator"],
+        ) for offer in anchored), Fraction(0))
+        for offer, share in report["shares"].items():
+            self.assertEqual(set(share), {"numerator", "denominator"})
+            self.assertIs(type(share["numerator"]), int)
+            self.assertIs(type(share["denominator"]), int)
+            self.assertGreater(share["denominator"], 0)
+            self.assertEqual(math.gcd(share["numerator"], share["denominator"]), 1)
+            reference = report["reference_shares"][offer]
+            self.assertEqual(set(reference), {"numerator", "denominator"})
+            self.assertIs(type(reference["numerator"]), int)
+            self.assertIs(type(reference["denominator"]), int)
+            self.assertGreater(reference["denominator"], 0)
+            self.assertGreaterEqual(reference["numerator"], 0)
+            self.assertEqual(math.gcd(reference["numerator"], reference["denominator"]), 1)
+            reference_total += Fraction(reference["numerator"], reference["denominator"])
+            value = Fraction(share["numerator"], share["denominator"])
+            if report["status"] == "experimental" and offer not in anchored and free_mass:
+                self.assertEqual((value / free_mass * 10**12).denominator, 1)
+            self.assertGreaterEqual(value, 0)
+            total += value
+            if offer in report["audit"]["anchored_offers"]:
+                self.assertEqual(share, report["reference_shares"][offer])
+        self.assertEqual(total, 1)
+        self.assertEqual(reference_total, 1)
+        if "allocation_units" in case:
+            self.assertEqual(free_mass, Fraction(4, 5))
+            self.assertEqual(set(case["allocation_units"]), set(report["shares"]) - set(anchored))
+            self.assertEqual(sum(case["allocation_units"].values()), 10**12)
+            for offer, units in case["allocation_units"].items():
+                share = report["shares"][offer]
+                value = Fraction(share["numerator"], share["denominator"])
+                self.assertEqual(value / free_mass * 10**12, units)
+        for offer, interval in case.get("share_intervals", {}).items():
+            share = report["shares"][offer]
+            value = share["numerator"] / share["denominator"]
+            self.assertGreaterEqual(value, interval[0])
+            self.assertLessEqual(value, interval[1])
+        if "constant_calibration_loss" in case:
+            for score in calibration["scores"]:
+                self.assertEqual(score["mean_tv"], case["constant_calibration_loss"])
+        model = case.get("calibration_model")
+        if model:
+            for score in calibration["scores"]:
+                e, s = score["beta"]
+                predicted = 1 / (1 + math.exp(-(e * model["e"] + s * model["s"])))
+                expected_loss = sum(abs(predicted - value) for value in model["outcomes"]) / len(model["outcomes"])
+                self.assertTrue(math.isclose(score["mean_tv"], expected_loss, rel_tol=0, abs_tol=1e-9))
+        for comparison in case.get("composition_checks", []):
+            offer = comparison["offer"]
+            share = report["shares"][offer]
+            self.assertTrue(math.isclose(
+                share["numerator"] / share["denominator"], comparison["value"],
+                rel_tol=0, abs_tol=1e-9,
+            ))
+
+
+# One process per declared case, no bootstrap, retry, subprocess helper or
+# implementation import. Native approval must cover this explicit plan read.
+with PLAN.open(encoding="utf-8") as plan_file:
+    CORE_PLAN = json.load(plan_file)
+    CORE_CASES = CORE_PLAN["cases"]
+    CORE_GRID = CORE_PLAN["grid"]
+
+
+def public_case(case):
+    def test(self):
+        self.check_case(case)
+    test.__doc__ = case["rule"]
+    return test
+
+
+for core_case in CORE_CASES:
+    setattr(TestRemainingIdeologyPublicEntry, core_case["test"], public_case(core_case))
+
+
+# Separate temporary fixture: ordinary assertions, no full-v1 report/classifier.
+def preliminary_capability_case(case):
+    def test(self):
+        result = self.invoke(case["stdin"])
+        self.assertEqual(result.returncode, case["exit"])
+        self.assertEqual(result.stdout, case["stdout"])
+        self.assertEqual(result.stderr, case["stderr"])
+    return test
+
+
+STAGE1_CAPABILITY_CASE = CORE_PLAN["stage1CapabilityFixture"]
+setattr(
+    TestStageOneIdeologyPublicEntry,
+    STAGE1_CAPABILITY_CASE["selector"].split(".")[1],
+    preliminary_capability_case(STAGE1_CAPABILITY_CASE),
+)
+
+
+if __name__ == "__main__":
+    # This new opt-in is a proposal, never a replay of the consumed grant.
+    if "--expected-missing-entry-red" in sys.argv:
+        sys.argv.remove("--expected-missing-entry-red")
+        if tuple(sys.argv[1:]) not in (
+            ("TestRemainingIdeologyPublicEntry",), SERIALIZATION_SELECTORS,
+            STAGE1_DIAGNOSTIC_SELECTORS,
+        ):
+            raise RuntimeError("RED mode requires exact whole-core, ordered two-selector or ordered four-selector scope")
+        EXPECT_MISSING_ENTRY_RED = True
+    unittest.main(verbosity=2, testRunner=unittest.TextTestRunner(
+        verbosity=2, resultclass=StopOnUnexpectedResult,
+    ))
