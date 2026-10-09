@@ -39,18 +39,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Names re-exported for callers that import them from jurisdiction (`X as X`).
 from .admin_codes import (
-    CIRCUITO_CODE_WIDTH,
-    DISTRITO_CODE_WIDTH,
-    PBA_DISTRITO_CODE_WIDTH,
-    SECCION_CODE_WIDTH,
-    _zero_pad_numeric,
-    is_canonicalizable_code,
+    CIRCUITO_CODE_WIDTH as CIRCUITO_CODE_WIDTH,
+)
+from .admin_codes import (
+    DISTRITO_CODE_WIDTH as DISTRITO_CODE_WIDTH,
+)
+from .admin_codes import (
+    PBA_DISTRITO_CODE_WIDTH as PBA_DISTRITO_CODE_WIDTH,
+)
+from .admin_codes import (
+    SECCION_CODE_WIDTH as SECCION_CODE_WIDTH,
+)
+from .admin_codes import (
+    _zero_pad_numeric as _zero_pad_numeric,
+)
+from .admin_codes import (
     is_canonicalizable_circuito_code,
     normalize_circuito_code,
     normalize_distrito_code,
-    normalize_pba_distrito_code,
     normalize_seccion_code,
+)
+from .admin_codes import (
+    is_canonicalizable_code as is_canonicalizable_code,
+)
+from .admin_codes import (
+    normalize_pba_distrito_code as normalize_pba_distrito_code,
 )
 from .crosswalk import CrosswalkTable
 
@@ -63,6 +78,7 @@ GRANULARITY_LEVELS: tuple[str, ...] = (
     "establecimiento",
     "mesa",
 )
+
 
 def normalize_jurisdiction_name(raw: str | None) -> str | None:
     """Normalize authoritative display metadata without rewriting its meaning.

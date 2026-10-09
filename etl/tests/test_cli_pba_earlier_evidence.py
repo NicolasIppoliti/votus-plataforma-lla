@@ -11,7 +11,8 @@ archive_case = _archive_case
 
 
 def test_real_main_earlier_references_are_explicit_and_failures_are_counted(
-    archive_case, capsys,
+    archive_case,
+    capsys,
 ):
     args, _, _, _, _ = archive_case
     assert main(args) == 1
@@ -24,10 +25,12 @@ def test_real_main_earlier_references_are_explicit_and_failures_are_counted(
     report = json.loads(output.out)
     assert [item["year"] for item in report["sources"]] == [2011, 2013, *YEARS]
     assert [item["status"] for item in report["sources"][:2]] == [
-        "registry_source_missing", "registry_source_missing",
+        "registry_source_missing",
+        "registry_source_missing",
     ]
     assert report["failure_counts"] == {
-        "registry_source_missing": 2, "manifest_record_missing": 5,
+        "registry_source_missing": 2,
+        "manifest_record_missing": 5,
     }
     assert report["historical_reference_scope"] == {
         "additional_years": [2011, 2013],
@@ -37,11 +40,19 @@ def test_real_main_earlier_references_are_explicit_and_failures_are_counted(
 
 
 def test_real_main_additional_missing_references_do_not_change_current_pilot_cohort(
-    archive_case, capsys,
+    archive_case,
+    capsys,
 ):
     args, manifest, _, record, _ = archive_case
-    records = [{**record, "id": f"pba/{year}-resultados-027", "election_year": year,
-                "source_url": f"https://example.invalid/{year}.pdf"} for year in YEARS]
+    records = [
+        {
+            **record,
+            "id": f"pba/{year}-resultados-027",
+            "election_year": year,
+            "source_url": f"https://example.invalid/{year}.pdf",
+        }
+        for year in YEARS
+    ]
     manifest.write_text(json.dumps(records))
 
     assert main([*args, "--include-html", "--include-earlier"]) == 1
@@ -56,7 +67,8 @@ def test_real_main_additional_missing_references_do_not_change_current_pilot_coh
 
 
 def test_real_main_reports_reopened_documentary_review_before_any_scores(
-    archive_case, capsys,
+    archive_case,
+    capsys,
 ):
     args, _, _, _, _ = archive_case
     assert main([*args, "--include-html", "--include-earlier"]) == 1
@@ -78,7 +90,8 @@ def test_real_main_reports_reopened_documentary_review_before_any_scores(
 
 
 def test_real_main_records_refined_policy_and_fixed_candidate_before_scores(
-    archive_case, capsys,
+    archive_case,
+    capsys,
 ):
     args, _, _, _, _ = archive_case
     assert main([*args, "--include-html", "--include-earlier"]) == 1
@@ -94,8 +107,11 @@ def test_real_main_records_refined_policy_and_fixed_candidate_before_scores(
     assert policy["new_list_forecast"] == "zero_only_for_verified_new_identity"
     assert policy["observed_lists"] == "individual_coordinates_never_pooled"
     assert protocol["candidate"] == {
-        "id": "mean_last_three", "window": 3, "weighting": "equal_by_election",
+        "id": "mean_last_three",
+        "window": 3,
+        "weighting": "equal_by_election",
         "frozen_before_scores_at": "2026-10-01T21:57:16Z",
         "alignment": "same_approved_policy_as_benchmarks",
-        "retuning": "none", "source_validation_outcome_exposure": "disclosed",
+        "retuning": "none",
+        "source_validation_outcome_exposure": "disclosed",
     }

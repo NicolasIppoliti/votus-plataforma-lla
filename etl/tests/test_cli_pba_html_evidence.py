@@ -48,29 +48,63 @@ def html_case(tmp_path):
         digest = hashlib.sha256(data).hexdigest()
         name = source_id.split("/")[1] + (".html" if mime == "text/html" else ".pdf")
         (root / "pba" / name).write_bytes(data)
-        source = {"id": source_id, "election_year": year, "election_round": round_,
-                  "mime": mime, "expected_sha256": digest, "source": "example.invalid",
-                  "source_kind": "official", "notes": "Synthetic public evidence",
-                  "source_url": f"https://example.invalid/{name}"}
+        source = {
+            "id": source_id,
+            "election_year": year,
+            "election_round": round_,
+            "mime": mime,
+            "expected_sha256": digest,
+            "source": "example.invalid",
+            "source_kind": "official",
+            "notes": "Synthetic public evidence",
+            "source_url": f"https://example.invalid/{name}",
+        }
         sources.append(source)
-        records.append({**source, "status": "ok", "capability": "pba", "sha256": digest,
-                        "archived_path": f"pba/{name}"})
+        records.append(
+            {
+                **source,
+                "status": "ok",
+                "capability": "pba",
+                "sha256": digest,
+                "archived_path": f"pba/{name}",
+            }
+        )
 
     for year in YEARS:
-        add(f"pba/{year}-resultados-027", pdf_bytes([
-            "Lista Votos %", "901 - PUBLIC GROUP A 20.000 61,94",
-            "902 - PUBLIC GROUP B 12.291 38,06", "VOTOS POSITIVOS 32.291 93,76",
-            "VOTO EN BLANCO 2.150 6,24", "TOTAL DE VOTOS 34.441 100,00",
-            "TOTAL DE ELECTORES 52.755", "TOTAL DE MESAS 154",
-        ]), "application/pdf", year, "unverified")
+        add(
+            f"pba/{year}-resultados-027",
+            pdf_bytes(
+                [
+                    "Lista Votos %",
+                    "901 - PUBLIC GROUP A 20.000 61,94",
+                    "902 - PUBLIC GROUP B 12.291 38,06",
+                    "VOTOS POSITIVOS 32.291 93,76",
+                    "VOTO EN BLANCO 2.150 6,24",
+                    "TOTAL DE VOTOS 34.441 100,00",
+                    "TOTAL DE ELECTORES 52.755",
+                    "TOTAL DE MESAS 154",
+                ]
+            ),
+            "application/pdf",
+            year,
+            "unverified",
+        )
     add(HTML_ID, html_bytes(), "text/html", 2025, "provinciales")
     for suffix in ("argentinos", "extranjeros"):
         add(f"{HTML_ID}-{suffix}", html_bytes(), "text/html", 2025, "provinciales")
     registry, manifest = tmp_path / "sources.yaml", tmp_path / "manifest.json"
     registry.write_text(yaml.safe_dump({"pba": sources}))
     manifest.write_text(json.dumps(records))
-    args = ["--sources-path", str(registry), "--local-root", str(root),
-            "--manifest-path", str(manifest), "reconcile-pba-pdf-evidence", "--include-html"]
+    args = [
+        "--sources-path",
+        str(registry),
+        "--local-root",
+        str(root),
+        "--manifest-path",
+        str(manifest),
+        "reconcile-pba-pdf-evidence",
+        "--include-html",
+    ]
 
     def replace(data, *, repin=True):
         record = next(item for item in records if item["id"] == HTML_ID)
@@ -104,15 +138,21 @@ def test_real_main_reads_html_fields_and_category_adjacent_percentages(html_case
     extraction = item["extraction"]
     assert extraction["category"] == "CONCEJALES"
     assert extraction["fields"] == {
-        "positive_votes": 32291, "blank_votes": 2150, "null_votes": None,
-        "total_votes": 34441, "total_electors": 52755, "total_mesas": 156,
+        "positive_votes": 32291,
+        "blank_votes": 2150,
+        "null_votes": None,
+        "total_votes": 34441,
+        "total_electors": 52755,
+        "total_mesas": 156,
         "counted_mesas": 156,
     }
-    assert [(row["list_id"], row["printed_votes"], row["printed_percent"])
-            for row in extraction["list_rows"]] == [("901", 20000, "61.94"),
-                                                       ("902", 12291, "38.06")]
-    assert all(row["printed_percent_denominator"] == "positive_votes"
-               for row in extraction["list_rows"])
+    assert [
+        (row["list_id"], row["printed_votes"], row["printed_percent"])
+        for row in extraction["list_rows"]
+    ] == [("901", 20000, "61.94"), ("902", 12291, "38.06")]
+    assert all(
+        row["printed_percent_denominator"] == "positive_votes" for row in extraction["list_rows"]
+    )
     assert extraction["exclusions_by_reason"] == {"category_not_contested": 1}
     assert "printed_field_missing:null_votes" in item["uncertainties"]
     evidence = {field["field"]: field for field in extraction["field_evidence"]}
@@ -123,28 +163,51 @@ def test_real_main_reads_html_fields_and_category_adjacent_percentages(html_case
     assert all(field["label"] and field["location"] for field in evidence.values())
 
 
-@pytest.mark.parametrize("value,reason", [
-    ("2.150", "printed_field_repeated:blank_votes"),
-    ("2.151", "printed_field_conflicting:blank_votes"),
-])
+@pytest.mark.parametrize(
+    "value,reason",
+    [
+        ("2.150", "printed_field_repeated:blank_votes"),
+        ("2.151", "printed_field_conflicting:blank_votes"),
+    ],
+)
 def test_real_main_does_not_pick_repeated_summary(html_case, capsys, value, reason):
-    duplicate = ("<tr><td></td><td>VOTO EN BLANCO</td><td>0</td><td>0 %</td>"
-                 f"<td>{value}</td><td>6.24 %</td></tr>")
+    duplicate = (
+        "<tr><td></td><td>VOTO EN BLANCO</td><td>0</td><td>0 %</td>"
+        f"<td>{value}</td><td>6.24 %</td></tr>"
+    )
     item, _ = report_html(html_case, capsys, html_bytes(rows=duplicate))
     assert item["extraction"]["fields"]["blank_votes"] is None
     assert reason in item["uncertainties"]
-    assert len([field for field in item["extraction"]["field_evidence"]
-                if field["field"] == "blank_votes"]) == 2
+    assert (
+        len(
+            [
+                field
+                for field in item["extraction"]["field_evidence"]
+                if field["field"] == "blank_votes"
+            ]
+        )
+        == 2
+    )
 
 
-@pytest.mark.parametrize("header,percent,reason", [
-    ("Concejales Titulares</th><th>Porcentaje</th><th>Concejales Titulares",
-     "Porcentaje", "html_category_header_repeated"),
-    ("Concejales Titulares", "Participación", "html_category_percent_header_missing"),
-    ("Intendente", "Porcentaje", "html_category_header_missing"),
-])
+@pytest.mark.parametrize(
+    "header,percent,reason",
+    [
+        (
+            "Concejales Titulares</th><th>Porcentaje</th><th>Concejales Titulares",
+            "Porcentaje",
+            "html_category_header_repeated",
+        ),
+        ("Concejales Titulares", "Participación", "html_category_percent_header_missing"),
+        ("Intendente", "Porcentaje", "html_category_header_missing"),
+    ],
+)
 def test_real_main_refuses_ambiguous_category_headers(
-    html_case, capsys, header, percent, reason,
+    html_case,
+    capsys,
+    header,
+    percent,
+    reason,
 ):
     item, _ = report_html(html_case, capsys, html_bytes(header=header, percent=percent))
     extraction = item["extraction"]
@@ -155,18 +218,23 @@ def test_real_main_refuses_ambiguous_category_headers(
 
 
 def test_real_main_preserves_repeated_list_ids(html_case, capsys):
-    duplicate = ("<tr><td>901</td><td>PUBLIC GROUP C</td><td>0</td><td>0 %</td>"
-                 "<td>1</td><td>0.00 %</td></tr>")
+    duplicate = (
+        "<tr><td>901</td><td>PUBLIC GROUP C</td><td>0</td><td>0 %</td>"
+        "<td>1</td><td>0.00 %</td></tr>"
+    )
     item, _ = report_html(html_case, capsys, html_bytes(rows=duplicate))
     assert [row["list_id"] for row in item["extraction"]["list_rows"]] == ["901", "902", "901"]
     assert "list_id_repeated" in item["uncertainties"]
 
 
-@pytest.mark.parametrize("replacement,reason", [
-    ("<td>not-an-integer</td>", "list_vote_malformed"),
-    ("<td><td>20.000</td></td>", "html_row_structure_malformed"),
-    ('<td colspan="2">20.000</td>', "html_row_structure_malformed"),
-])
+@pytest.mark.parametrize(
+    "replacement,reason",
+    [
+        ("<td>not-an-integer</td>", "list_vote_malformed"),
+        ("<td><td>20.000</td></td>", "html_row_structure_malformed"),
+        ('<td colspan="2">20.000</td>', "html_row_structure_malformed"),
+    ],
+)
 def test_real_main_surfaces_malformed_cells_without_zero(html_case, capsys, replacement, reason):
     data = html_bytes().replace(b"<td><b>20.000</b></td>", replacement.encode())
     item, _ = report_html(html_case, capsys, data)
@@ -189,8 +257,11 @@ def test_real_main_refuses_html_archive_hash_mismatch(html_case, capsys):
     assert main(args) == 1
     output = capsys.readouterr()
     assert output.err == ""
-    item = next(source for source in json.loads(output.out)["html_sources"]
-                if source["source_id"] == HTML_ID)
+    item = next(
+        source
+        for source in json.loads(output.out)["html_sources"]
+        if source["source_id"] == HTML_ID
+    )
     assert item["status"] == "archive_hash_mismatch"
     assert item["digest"]["verified"] is False
     assert item["extraction"] is None
@@ -213,11 +284,14 @@ def test_real_main_reads_verified_public_html_fixture(html_case, capsys):
     assert extraction["unparsed_table_rows"] == 0
 
 
-@pytest.mark.parametrize("replacement", [
-    '<th colspan="2">Concejales Titulares</th>',
-    '<th rowspan="2">Concejales Titulares</th>',
-    "<th><th>Concejales Titulares</th></th>",
-])
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        '<th colspan="2">Concejales Titulares</th>',
+        '<th rowspan="2">Concejales Titulares</th>',
+        "<th><th>Concejales Titulares</th></th>",
+    ],
+)
 def test_real_main_refuses_malformed_category_header(html_case, capsys, replacement):
     data = html_bytes().replace(b"<th>Concejales Titulares</th>", replacement.encode())
     item, _ = report_html(html_case, capsys, data)
@@ -236,8 +310,11 @@ def test_real_main_blocks_fields_from_ambiguous_detail_group(html_case, capsys):
     for field in ("total_electors", "total_mesas"):
         assert extraction["fields"][field] is None
         assert f"printed_field_ambiguous:{field}" in item["uncertainties"]
-        ambiguous = next(evidence for evidence in extraction["field_evidence"]
-                         if evidence["field"] == field and evidence.get("binding") == "ambiguous")
+        ambiguous = next(
+            evidence
+            for evidence in extraction["field_evidence"]
+            if evidence["field"] == field and evidence.get("binding") == "ambiguous"
+        )
         assert ambiguous["printed_labels"] == ["Electores habilitados", "Total de mesas"]
         assert ambiguous["printed_values"] == ["156"]
         assert ambiguous["printed_value"] is None
@@ -249,13 +326,18 @@ def test_real_main_preserves_all_repeated_detail_values(html_case, capsys):
     item, _ = report_html(html_case, capsys, html_bytes(details=details))
     assert item["extraction"]["fields"]["total_electors"] is None
     assert "printed_field_conflicting:total_electors" in item["uncertainties"]
-    assert [evidence["printed_value"] for evidence in item["extraction"]["field_evidence"]
-            if evidence["field"] == "total_electors"] == ["52.755", "52.755", "52.756"]
+    assert [
+        evidence["printed_value"]
+        for evidence in item["extraction"]["field_evidence"]
+        if evidence["field"] == "total_electors"
+    ] == ["52.755", "52.755", "52.756"]
 
 
 def test_real_main_refuses_truncated_detail_after_valid_table(html_case, capsys):
-    details = (b'<div class="detail-group"><span class="detail-label">Electores habilitados</span>'
-               b'<span class="detail-value">52.755</span>')
+    details = (
+        b'<div class="detail-group"><span class="detail-label">Electores habilitados</span>'
+        b'<span class="detail-value">52.755</span>'
+    )
     item, _ = report_html(html_case, capsys, html_bytes() + details)
     assert item["extraction"]["fields"]["total_electors"] is None
     assert "printed_field_ambiguous:total_electors" in item["uncertainties"]

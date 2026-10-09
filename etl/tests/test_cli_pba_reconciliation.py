@@ -26,12 +26,30 @@ def replace_source(args, source_id, data):
 def component_case(html_case):
     args, _ = html_case
     for suffix, replacements in (
-        ("argentinos", {"52.755": "52.104", "156": "154", "20.000": "19.900",
-                        "12.291": "12.284", "32.291": "32.184", "2.150": "2.133",
-                        "34.441": "34.317"}),
-        ("extranjeros", {"52.755": "651", "156": "2", "20.000": "100",
-                         "12.291": "7", "32.291": "107", "2.150": "17",
-                         "34.441": "124"}),
+        (
+            "argentinos",
+            {
+                "52.755": "52.104",
+                "156": "154",
+                "20.000": "19.900",
+                "12.291": "12.284",
+                "32.291": "32.184",
+                "2.150": "2.133",
+                "34.441": "34.317",
+            },
+        ),
+        (
+            "extranjeros",
+            {
+                "52.755": "651",
+                "156": "2",
+                "20.000": "100",
+                "12.291": "7",
+                "32.291": "107",
+                "2.150": "17",
+                "34.441": "124",
+            },
+        ),
     ):
         data = html_bytes().decode()
         for before, after in replacements.items():
@@ -44,8 +62,14 @@ def test_real_main_reconciles_components_without_repairing_pdf_mesas(html_case, 
     _, report = report_html(component_case(html_case), capsys)
     assert report["failure_counts"] == {}
     reconciliation = report["reconciliation"]
-    for key in ("positive_votes", "blank_votes", "total_votes", "total_electors",
-                "total_mesas", "counted_mesas"):
+    for key in (
+        "positive_votes",
+        "blank_votes",
+        "total_votes",
+        "total_electors",
+        "total_mesas",
+        "counted_mesas",
+    ):
         field = reconciliation["components"]["fields"][key]
         assert field["status"] == "matched"
         assert field["integrated"] == field["argentinos"] + field["extranjeros"]
@@ -53,10 +77,14 @@ def test_real_main_reconciles_components_without_repairing_pdf_mesas(html_case, 
     for key in ("positive_votes", "blank_votes", "total_votes", "total_electors"):
         assert pdf["fields"][key]["status"] == "matched"
     assert pdf["fields"]["total_mesas"] == {
-        "status": "conflict", "pdf": 154, "html": 156,
+        "status": "conflict",
+        "pdf": 154,
+        "html": 156,
     }
     assert pdf["fields"]["null_votes"] == {
-        "status": "unknown", "pdf": None, "html": None,
+        "status": "unknown",
+        "pdf": None,
+        "html": None,
     }
     assert pdf["list_counts"]["status"] == "matched"
     assert reconciliation["components"]["list_counts"]["status"] == "matched"
@@ -73,8 +101,7 @@ def test_real_main_reconciles_components_without_repairing_pdf_mesas(html_case, 
 def test_real_main_keeps_component_disagreement_and_source_field_provenance(html_case, capsys):
     case = component_case(html_case)
     args, _ = case
-    replace_source(args, f"{HTML_ID}-extranjeros",
-                   html_bytes().replace(b"32.291", b"108"))
+    replace_source(args, f"{HTML_ID}-extranjeros", html_bytes().replace(b"32.291", b"108"))
     _, report = report_html(case, capsys)
     field = report["reconciliation"]["components"]["fields"]["positive_votes"]
     assert field["status"] == "conflict" and field["extranjeros"] == 108
@@ -119,8 +146,7 @@ def test_real_main_reads_protected_legacy_html_without_rewriting_manifest(html_c
     item, report = report_html(html_case, capsys)
     assert item["status"] == "extracted" and item["digest"]["verified"] is True
     assert item["provenance"]["missing_manifest_identity_fields"] == missing
-    assert all(f"manifest_provenance_missing:{field}" in item["uncertainties"]
-               for field in missing)
+    assert all(f"manifest_provenance_missing:{field}" in item["uncertainties"] for field in missing)
     assert item["source_kind"] == "official"
     assert item["extraction"]["fields"]["total_mesas"] == 156
     assert manifest.read_bytes() == before
@@ -162,10 +188,13 @@ def test_real_main_applies_approved_protocol_without_scoring_unaccepted_periods(
     assert eligibility["automatic_historical_validation"] is False
     assert eligibility["eligible_count"] == 0 and eligibility["candidate_count"] == 3
     assert [origin["target_year"] for origin in eligibility["origins"]] == [2021, 2023, 2025]
-    assert [(origin["last_election"], origin["last_same_type"])
-            for origin in eligibility["origins"]] == [(2019, 2017), (2021, 2019), (2023, 2021)]
-    assert all(origin["status"] == "review_pending" and origin["scores"] is None
-               for origin in eligibility["origins"])
+    assert [
+        (origin["last_election"], origin["last_same_type"]) for origin in eligibility["origins"]
+    ] == [(2019, 2017), (2021, 2019), (2023, 2021)]
+    assert all(
+        origin["status"] == "review_pending" and origin["scores"] is None
+        for origin in eligibility["origins"]
+    )
     assert eligibility["reasons_by_origin_count"]["historical_source_series_not_accepted"] == 3
     assert eligibility["reasons_by_origin_count"]["origin_available_series_review_pending"] == 3
     assert eligibility["reasons_by_origin_count"]["list_crosswalk_unverified"] == 3

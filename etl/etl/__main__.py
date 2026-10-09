@@ -3573,11 +3573,13 @@ def build_parser() -> argparse.ArgumentParser:
         "reconcile-pba-pdf-evidence", help="Read verified municipal PDF evidence; review required."
     )
     reconciliation.add_argument(
-        "--include-html", action="store_true",
+        "--include-html",
+        action="store_true",
         help="Verify integrated/argentinos/extranjeros HTML and reconcile source-specific fields.",
     )
     reconciliation.add_argument(
-        "--include-earlier", action="store_true",
+        "--include-earlier",
+        action="store_true",
         help="Read additional 2011/2013 reference PDFs; expanded pilot review remains pending.",
     )
     reconciliation.set_defaults(func=cmd_reconcile_pba_pdf_evidence)
