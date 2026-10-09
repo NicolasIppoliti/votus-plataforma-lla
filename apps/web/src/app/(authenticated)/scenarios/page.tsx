@@ -3,6 +3,7 @@ import {
   type ScenarioRefusal,
   loadScenarioArtifact,
 } from "@/lib/scenarios/scenario-artifact";
+import "./scenarios.css";
 
 const REFUSAL_MESSAGE: Record<ScenarioRefusal, string> = {
   missing: "El archivo de escenarios no está disponible.",

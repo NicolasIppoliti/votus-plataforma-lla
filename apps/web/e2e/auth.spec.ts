@@ -33,6 +33,7 @@ const PROTECTED_ROUTES = [
   "/fiscalizacion",
   "/municipal",
   "/review",
+  "/scenarios",
   "/simulate",
 ] as const;
 

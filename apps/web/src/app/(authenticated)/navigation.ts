@@ -21,7 +21,10 @@ export const NAVIGATION_GROUPS = {
   },
   scenarios: {
     label: "Escenarios",
-    items: [{ label: "Simulación 2027", href: "/simulate" }],
+    items: [
+      { label: "Simulación 2027", href: "/simulate" },
+      { label: "Escenarios Rosales 2027", href: "/scenarios" },
+    ],
   },
   operations: {
     label: "Operaciones",

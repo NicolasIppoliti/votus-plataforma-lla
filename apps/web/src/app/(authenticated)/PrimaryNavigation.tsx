@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { House, Search, Columns2, MapPin, ClipboardCheck, SlidersHorizontal, ListChecks } from "lucide-react";
+import { House, Search, Columns2, MapPin, ClipboardCheck, SlidersHorizontal, Layers, ListChecks } from "lucide-react";
 import { usePathname } from "next/navigation";
 import {
   isRouteActive,
@@ -16,6 +16,7 @@ const navigationIcons = {
   "/municipal": MapPin,
   "/fiscalizacion": ClipboardCheck,
   "/simulate": SlidersHorizontal,
+  "/scenarios": Layers,
   "/review": ListChecks,
 } as const;
 

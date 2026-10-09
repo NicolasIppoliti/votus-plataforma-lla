@@ -26,6 +26,7 @@ it("defines every current route in grouped operational navigation", () => {
     "/municipal",
     "/fiscalizacion",
     "/simulate",
+    "/scenarios",
     "/review",
   ]);
   expect(items.map((item) => item.label)).toEqual([
@@ -35,6 +36,7 @@ it("defines every current route in grouped operational navigation", () => {
     "Municipal",
     "Fiscalización (no oficial)",
     "Simulación 2027",
+    "Escenarios Rosales 2027",
     "Revisión de datos",
   ]);
   expect(NAVIGATION_GROUPS.situation.items).toEqual([
