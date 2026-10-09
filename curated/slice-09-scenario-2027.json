@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "base_year": 2025,
+  "target_year": 2027,
+  "declared_on": "2026-10-09",
+  "note": "Default 2027 offer structure: every 2025 offer continues under its 2025 id. Edit relations (continuation/merge/split/exit/entry) and rates to explore scenarios. All transfers are supuestos sin validar unless the backtest validated them.",
+  "default": "persistencia",
+  "relations": [
+    {"type": "continuation", "origins": ["2206"], "destinations": ["2206"]},
+    {"type": "continuation", "origins": ["2200"], "destinations": ["2200"]},
+    {"type": "continuation", "origins": ["2201"], "destinations": ["2201"]},
+    {"type": "continuation", "origins": ["2207"], "destinations": ["2207"]},
+    {"type": "continuation", "origins": ["2204"], "destinations": ["2204"]},
+    {"type": "continuation", "origins": ["962"], "destinations": ["962"]},
+    {"type": "continuation", "origins": ["2203"], "destinations": ["2203"]},
+    {"type": "continuation", "origins": ["2202"], "destinations": ["2202"]}
+  ],
+  "scenarios": {
+    "persistencia": {
+      "model": "persistence",
+      "note": "B1: continuing offers keep their 2025 share; exit mass split equally among entries"
+    },
+    "transferencias_ei": {
+      "model": "relation_type",
+      "rates": {
+        "__non_positive__": {
+          "A_c": "0.26447816409966957",
+          "A_e": "0.1363009329871204",
+          "A_n": "0.5992209031379084"
+        },
+        "continuing": {
+          "E": "0.14685997163801884",
+          "L": "0.2055413312044771",
+          "N": "0.11194824302849372",
+          "R": "0.5356504541255394"
+        },
+        "exit": {
+          "X_c": "0.35599567603798543",
+          "X_e": "0.15659808923341412",
+          "X_n": "0.48740623481170997"
+        }
+      },
+      "rates_source": {
+        "file": "docs/research/slice-09-frozen-forecast-2023-2025.json",
+        "sha256": "6efbcb6ce11b7ba6818a2e4e32bd5b1cd58192374af0825300a2b7960dc7744f",
+        "note": "pooled_rates of the frozen model (freeze 71d5b96) trained on 2015-2017, 2017-2019, 2019-2021, 2021-2023; not validated by the backtest"
+      }
+    }
+  }
+}
