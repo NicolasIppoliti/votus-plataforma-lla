@@ -13,6 +13,14 @@
     "etl/etl/hare_seats.py": {
       "original_sha256": "2230575c4805d685aa10ee41b26440b76a886f4bd18576f921ec58b6ed54cf72",
       "amended_sha256": "157944894bb291e89f6a27e75473808a1f47b9aa15a3796c0fbfa6f691f8cb53"
+    },
+    "etl/etl/mesa_transfers.py": {
+      "original_sha256": "68c164c303a39fba5dba6a42100ecad0ff05a401a0465c82bfb8d716b978a6f0",
+      "amended_sha256": "df65ec0e2e779e327f246ae7bfcbe4fd01f095ad48568403f488f61f6ad6d3bd"
+    },
+    "etl/etl/relation_forecast.py": {
+      "original_sha256": "b36473285895360fa324400ffed7aa6053472082806c63761d73c73bf487fb9a",
+      "amended_sha256": "5e3b5d7fe319f30ec708f169b2ed81ed35d91c8d0d07682bc360c29c11445eb8"
     }
   },
   "reproduction": {
