@@ -43,6 +43,10 @@ labels and addresses are not transcribed into these documents.
 | [Public electoral register query](https://www.padron.gov.ar/publica/) | 200 | Individual statistical query, not an archived bulk dataset |
 | [CNE-supplied public Drive file](https://drive.google.com/file/d/1a-juY4ljtTcUoBYf5lKrN6bpwlIfDXK3/view?usp=drive_link) | 200 | Landing page for the results TXT |
 
+The `authkey` query value of the CNE GeoServer download URLs is recorded as
+`authkey=REDACTED`: it is a portal-issued access parameter flagged by secret
+scanning, and the archived bytes are identified by their SHA-256, not by it.
+
 These are prior retrieval observations, not live availability guarantees. Page
 bytes are not included in this seven-original package; their observed hashes and
 retrieval times are retained in provenance. The public register was not scraped.
