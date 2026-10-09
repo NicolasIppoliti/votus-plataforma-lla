@@ -41,6 +41,34 @@ def test_circuito_padding_and_suffix(raw, expected):
     assert admin_codes.normalize_circuito_code(raw) == expected
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("000248", "00248"), ("00248", "00248"), ("248", "00248"),
+    ("00248A", "0248A"), ("0248A", "0248A"), ("248a", "0248A"),
+    ("000001", "00001"), ("123456", "123456"), ("12345B", "12345B"),
+    (" 248a ", "0248A"), ("000000", "00000"), ("00000a", "0000A"),
+])
+def test_circuito_identity_key(raw, expected):
+    key = admin_codes.circuito_identity_key(raw)
+    assert key == expected
+    assert admin_codes.circuito_identity_key(key) == key
+
+
+@pytest.mark.parametrize("dine_2019,dine_2021", [
+    ("000248", "00248"), ("000249", "00249"),
+    ("00248A", "0248A"), ("00248B", "0248B"),
+    ("00249A", "0249A"), ("00249B", "0249B"),
+])
+def test_circuito_identity_matches_dine_years_without_changing_normalization(dine_2019, dine_2021):
+    assert admin_codes.circuito_identity_key(dine_2019) == admin_codes.circuito_identity_key(dine_2021)
+    assert admin_codes.normalize_circuito_code(dine_2019) == dine_2019
+    assert admin_codes.normalize_circuito_code(dine_2021) == dine_2021
+
+
+@pytest.mark.parametrize("raw", [None, 2, "", " ", "2_7", "-2", "+2", "2.0", "٢", "²", "2AB", "2é"])
+def test_circuito_identity_rejects_invalid_codes(raw):
+    assert admin_codes.circuito_identity_key(raw) is None
+
+
 def test_jurisdiction_reexports_identical_callables():
     for name in ("normalize_distrito_code", "normalize_seccion_code",
                  "normalize_pba_distrito_code", "normalize_circuito_code",

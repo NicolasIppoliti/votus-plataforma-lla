@@ -20,7 +20,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from etl.admin_codes import (
-    normalize_circuito_code, normalize_distrito_code, normalize_seccion_code,
+    circuito_identity_key, normalize_circuito_code, normalize_distrito_code, normalize_seccion_code,
 )
 
 REQUIRED = {"ano", "distrito_id", "seccion_id", "circuito_id", "mesa_id",
@@ -393,6 +393,124 @@ def reconcile(args):
     return result
 
 
+def validate_alignment_rules(data, years):
+    def require(condition, reason):
+        if not condition:
+            raise ValueError(reason)
+    require(isinstance(data, dict) and set(data) == {
+        "schema_version", "pairs", "key", "max_relative_electores_change", "basis"},
+        "unexpected or missing fields")
+    require(type(data["schema_version"]) is int and data["schema_version"] == 1,
+            "schema_version must be 1")
+    require(data["key"] == ["circuito_identity_key", "mesa_number", "mesa_tipo"],
+            "unsupported key")
+    require(isinstance(data["basis"], str) and bool(data["basis"].strip()), "basis must be text")
+    pairs = data["pairs"]
+    require(isinstance(pairs, list) and bool(pairs), "pairs must be a non-empty list")
+    previous = None
+    for pair in pairs:
+        require(isinstance(pair, list) and len(pair) == 2
+                and all(type(y) is int for y in pair), "pairs must contain two integer years")
+        require(pair[0] < pair[1] and (previous is None or
+                (pair[0] > previous[0] and pair[1] > previous[1])),
+                "pairs must be strictly increasing")
+        require(all(y in years for y in pair), "pair year absent from panel")
+        previous = pair
+    raw = data["max_relative_electores_change"]
+    require(isinstance(raw, str) and len(raw.split("/")) == 2
+            and all(p.isascii() and p.isdigit() for p in raw.split("/")),
+            "threshold must be an exact fraction string")
+    numerator, denominator = map(int, raw.split("/"))
+    require(0 < numerator < denominator, "threshold must be in (0,1)")
+    return Fraction(numerator, denominator)
+
+
+def align(args):
+    data = (json.load(sys.stdin, object_pairs_hook=strict_object) if args.panel == "-" else
+            json.loads(Path(args.panel).read_text(encoding="utf-8"), object_pairs_hook=strict_object))
+    elections = {}
+    for election in data["elections"]:
+        if election["year"] in elections:
+            raise ValueError("duplicate panel year")
+        elections[election["year"]] = election
+    try:
+        rules = json.loads(args.rules.read_text(encoding="utf-8"), object_pairs_hook=strict_object)
+        threshold = validate_alignment_rules(rules, elections)
+    except (ValueError, OSError) as error:
+        raise ValueError(f"invalid alignment rules: {error}") from error
+    result = dict(schema_version=1, rules=rules, pairs=[])
+    for a, b in rules["pairs"]:
+        origin, destination = elections[a], elections[b]
+        aligned, unaligned = [], []
+        counts = dict.fromkeys(("only_in_origin", "only_in_destination",
+            "electores_change_exceeds_threshold", "invalid_circuito", "invalid_mesa_number",
+            "zero_origin_electores", "quarantined_in_panel"), 0)
+        by_tipo = {reason: Counter() for reason in ("only_in_origin", "only_in_destination")}
+
+        def exclude(reason, **records):
+            unaligned.append(dict(reason=reason, **records))
+            counts[reason] += 1
+            if reason in by_tipo:
+                by_tipo[reason][next(iter(records.values()))["mesa_tipo"]] += 1
+
+        indexes = []
+        for side, election in (("origin", origin), ("destination", destination)):
+            index = {}
+            for record in election["quarantined_mesas"]:
+                exclude("quarantined_in_panel", **{side: record})
+            for record in election["mesas"]:
+                circuito = circuito_identity_key(record["circuito"])
+                number = record["mesa"]
+                if circuito is None:
+                    exclude("invalid_circuito", **{side: record})
+                    continue
+                if not isinstance(number, str) or not number.strip().isascii() or not number.strip().isdigit():
+                    exclude("invalid_mesa_number", **{side: record})
+                    continue
+                tipo = MESA_ALIASES.get(record["mesa_tipo"].strip())
+                if tipo is None:
+                    raise ValueError("invalid panel mesa_tipo")
+                key = (circuito, int(number.strip()), tipo)
+                if key in index:
+                    raise ValueError(f"duplicate alignment key in year {election['year']}: {key}")
+                if type(record["electores"]) is not int or record["electores"] < 0:
+                    raise ValueError("invalid panel electores")
+                index[key] = dict(record, mesa_tipo=tipo)
+            indexes.append(index)
+        left, right = indexes
+        for key in sorted(left.keys() | right.keys()):
+            if key not in right:
+                exclude("only_in_origin", origin=left[key])
+            elif key not in left:
+                exclude("only_in_destination", destination=right[key])
+            else:
+                p, q = left[key], right[key]
+                ea, eb = p["electores"], q["electores"]
+                if ea == 0:
+                    exclude("zero_origin_electores", origin=p, destination=q)
+                elif Fraction(abs(eb - ea), ea) > threshold:
+                    exclude("electores_change_exceeds_threshold", origin=p, destination=q)
+                else:
+                    aligned.append(dict(key=list(key), origin_electores=ea, destination_electores=eb,
+                                        origin_positivo=p["votes"]["positivo"],
+                                        destination_positivo=q["votes"]["positivo"]))
+        coverage = dict(aligned_mesas=len(aligned))
+        for side, election in (("origin", origin), ("destination", destination)):
+            total = len(election["mesas"]) + len(election["quarantined_mesas"])
+            assert len(aligned) + sum(side in entry for entry in unaligned) == total
+            coverage[f"{side}_mesas"] = total
+            denominator = sum(m["votes"]["positivo"] for m in election["mesas"])
+            numerator = sum(m[f"{side}_positivo"] for m in aligned)
+            share = Fraction(numerator, denominator) if denominator else None
+            coverage[f"aligned_{side}_positivo_share"] = (
+                f"{share.numerator}/{share.denominator}" if share is not None else None)
+        result["pairs"].append(dict(origin_year=a, destination_year=b,
+            origin_is_proxy=origin["is_proxy"], destination_is_proxy=destination["is_proxy"],
+            aligned=aligned, unaligned=unaligned, counts=counts,
+            only_in_by_mesa_tipo=by_tipo, coverage=coverage))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -411,10 +529,13 @@ def main():
     command.add_argument("--panel", required=True, help="Panel JSON path or - for stdin")
     command.add_argument("--jeba", type=Path, required=True)
     command.add_argument("--offer-map", type=Path, required=True)
+    command = commands.add_parser("align", help="Align mesa identities under declared electores rules")
+    command.add_argument("--panel", required=True, help="Panel JSON path or - for stdin")
+    command.add_argument("--rules", type=Path, required=True)
     args = parser.parse_args()
     try:
         result = {"inventory": inventory, "mesas": mesas, "panel": panel,
-                  "reconcile": reconcile}[args.command](args)
+                  "reconcile": reconcile, "align": align}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)

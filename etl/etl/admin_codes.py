@@ -133,6 +133,25 @@ def normalize_circuito_code(raw: str | None) -> str | None:
     return stripped.zfill(CIRCUITO_CODE_WIDTH)
 
 
+def circuito_identity_key(code: object) -> str | None:
+    """Return a padding-independent circuito identity for cross-election comparison.
+
+    DINE 2019's six-character codes and other years' five-character codes
+    identify the same circuits. Strip numeric leading zeros, then pad to five
+    digits (four with an uppercase letter suffix), never truncating significant
+    digits. Unlike ``normalize_circuito_code``, return None for inputs outside
+    the circuito scheme so callers must handle invalid identities explicitly
+    rather than silently comparing malformed passthrough values.
+    """
+    if not is_canonicalizable_circuito_code(code):
+        return None
+    assert isinstance(code, str)
+    stripped = code.strip()
+    suffix = stripped[-1].upper() if stripped[-1].isalpha() else ""
+    numeric_part = stripped[:-1] if suffix else stripped
+    return numeric_part.lstrip("0").zfill(CIRCUITO_CODE_WIDTH - len(suffix)) + suffix
+
+
 @overload
 def normalize_seccion_code(raw: str) -> str: ...
 

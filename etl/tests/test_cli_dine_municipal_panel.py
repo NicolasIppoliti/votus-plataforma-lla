@@ -424,3 +424,77 @@ def test_reconcile_zero_reasons_and_unknown_denominator(tmp_path):
     assert year["positivos"]["delta"] is None
     assert year["offers"][0]["delta_share_of_jeba_positivos"] is None
     assert all(value == 0 for value in year["reasons"].values())
+
+
+ALIGN_RULES = dict(schema_version=1, pairs=[[2015, 2017]],
+                   key=["circuito_identity_key", "mesa_number", "mesa_tipo"],
+                   max_relative_electores_change="1/10", basis="Declared before measurement")
+
+
+def alignment_fixture(tmp_path):
+    def mesa(number, electores=100, circuito="000248", tipo="NATIVOS"):
+        return dict(circuito=circuito, mesa=str(number), mesa_tipo=tipo,
+                    electores=electores, votes={"positivo": 50})
+    origin = [mesa(1), mesa(2), mesa(3, tipo="EXTRANJEROS"),
+              mesa(4, circuito="bad"), mesa("bad"), mesa(6, 0),
+              mesa(7, circuito="00248A")]
+    destination = [mesa(1, 110, "00248"), mesa(2, 111), mesa(5), mesa(6),
+                   mesa(7, circuito="0248A", tipo="NATIVO")]
+    elections = [dict(year=2015, is_proxy=True, mesas=origin,
+                      quarantined_mesas=[dict(circuito="00248", mesa="8", mesa_tipo="NATIVOS")]),
+                 dict(year=2017, is_proxy=False, mesas=destination, quarantined_mesas=[])]
+    panel_path, rules_path = tmp_path / "panel.json", tmp_path / "rules.json"
+    panel_path.write_text(json.dumps(dict(elections=elections)))
+    rules_path.write_text(json.dumps(ALIGN_RULES))
+    return panel_path, rules_path, elections
+
+
+def invoke_align(panel_path, rules_path, stdin=None):
+    return subprocess.run([sys.executable, "-I", "-S", "-B", str(MODULE), "align",
+                           "--panel", str(panel_path), "--rules", str(rules_path)],
+                          input=stdin, capture_output=True, text=True, timeout=10)
+
+
+@pytest.mark.parametrize("stdin", [False, True])
+def test_align_entry_point_accounts_for_every_mesa(tmp_path, stdin):
+    panel_path, rules_path, elections = alignment_fixture(tmp_path)
+    result = invoke_align("-" if stdin else panel_path, rules_path,
+                          panel_path.read_text() if stdin else None)
+    assert result.returncode == 0, result.stderr
+    pair = json.loads(result.stdout)["pairs"][0]
+    assert pair["origin_is_proxy"] is True and pair["destination_is_proxy"] is False
+    assert [m["key"] for m in pair["aligned"]] == [["00248", 1, "NATIVOS"], ["0248A", 7, "NATIVOS"]]
+    assert pair["aligned"][0]["destination_electores"] == 110
+    assert pair["counts"] == dict(only_in_origin=1, only_in_destination=1,
+        electores_change_exceeds_threshold=1, invalid_circuito=1,
+        invalid_mesa_number=1, zero_origin_electores=1, quarantined_in_panel=1)
+    assert pair["only_in_by_mesa_tipo"] == {
+        "only_in_origin": {"EXTRANJEROS": 1}, "only_in_destination": {"NATIVOS": 1}}
+    assert pair["coverage"] == dict(aligned_mesas=2, origin_mesas=8, destination_mesas=5,
+        aligned_origin_positivo_share="2/7", aligned_destination_positivo_share="2/5")
+    for side, election in zip(("origin", "destination"), elections):
+        accounted = len(pair["aligned"]) + sum(side in m for m in pair["unaligned"])
+        assert accounted == len(election["mesas"]) + len(election["quarantined_mesas"])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("schema_version", True), ("pairs", [[2017, 2015]]), ("pairs", [[2015, 2019]]),
+    ("pairs", [[2015, 2017], [2015, 2017]]), ("pairs", []),
+    ("max_relative_electores_change", "0.1"), ("max_relative_electores_change", "0/1"),
+    ("max_relative_electores_change", "1/1"), ("max_relative_electores_change", "1/0"),
+    ("key", ["mesa_number"]), ("basis", ""), ("extra", 1)])
+def test_align_rejects_invalid_rules(tmp_path, field, value):
+    panel_path, rules_path, _ = alignment_fixture(tmp_path)
+    rules_path.write_text(json.dumps(dict(ALIGN_RULES, **{field: value})))
+    result = invoke_align(panel_path, rules_path)
+    assert result.returncode == 2
+    assert result.stderr.startswith("error: invalid alignment rules: ")
+
+
+def test_align_rejects_duplicate_normalized_keys(tmp_path):
+    panel_path, rules_path, elections = alignment_fixture(tmp_path)
+    elections[0]["mesas"].append(dict(elections[0]["mesas"][0], circuito="00248"))
+    panel_path.write_text(json.dumps(dict(elections=elections)))
+    result = invoke_align(panel_path, rules_path)
+    assert result.returncode == 2
+    assert "duplicate alignment key" in result.stderr
