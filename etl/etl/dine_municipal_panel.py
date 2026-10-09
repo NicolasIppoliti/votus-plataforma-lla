@@ -428,13 +428,18 @@ def validate_alignment_rules(data, years):
 def align(args):
     data = (json.load(sys.stdin, object_pairs_hook=strict_object) if args.panel == "-" else
             json.loads(Path(args.panel).read_text(encoding="utf-8"), object_pairs_hook=strict_object))
+    return align_panel(data, args.rules)
+
+
+def align_panel(data, rules_path, include_records=False):
+    """Shared alignment; optional records are internal solver inputs only."""
     elections = {}
     for election in data["elections"]:
         if election["year"] in elections:
             raise ValueError("duplicate panel year")
         elections[election["year"]] = election
     try:
-        rules = json.loads(args.rules.read_text(encoding="utf-8"), object_pairs_hook=strict_object)
+        rules = json.loads(rules_path.read_text(encoding="utf-8"), object_pairs_hook=strict_object)
         threshold = validate_alignment_rules(rules, elections)
     except (ValueError, OSError) as error:
         raise ValueError(f"invalid alignment rules: {error}") from error
@@ -494,6 +499,8 @@ def align(args):
                     aligned.append(dict(key=list(key), origin_electores=ea, destination_electores=eb,
                                         origin_positivo=p["votes"]["positivo"],
                                         destination_positivo=q["votes"]["positivo"]))
+                    if include_records:
+                        aligned[-1].update(origin=p, destination=q)
         coverage = dict(aligned_mesas=len(aligned))
         for side, election in (("origin", origin), ("destination", destination)):
             total = len(election["mesas"]) + len(election["quarantined_mesas"])
@@ -508,7 +515,27 @@ def align(args):
             origin_is_proxy=origin["is_proxy"], destination_is_proxy=destination["is_proxy"],
             aligned=aligned, unaligned=unaligned, counts=counts,
             only_in_by_mesa_tipo=by_tipo, coverage=coverage))
+        if include_records:
+            result['pairs'][-1]['category_records'] = {
+                'origin': origin['mesas'], 'destination': destination['mesas']}
     return result
+
+
+def transfers(args):
+    from etl.mesa_transfers import estimate_transfers, validate_recipe
+    try:
+        recipe = json.loads(args.recipe.read_text(encoding="utf-8"), object_pairs_hook=strict_object)
+        validate_recipe(recipe)
+    except (ValueError, OSError) as error:
+        raise ValueError(f"invalid recipe: {error}") from error
+    data = (json.load(sys.stdin, object_pairs_hook=strict_object) if args.panel == "-" else
+            json.loads(Path(args.panel).read_text(encoding="utf-8"), object_pairs_hook=strict_object))
+    alignment = align_panel(data, args.rules, include_records=True)
+    pair = next((p for p in alignment["pairs"] if
+                 [p["origin_year"], p["destination_year"]] == args.pair), None)
+    if pair is None:
+        raise ValueError("invalid pair: must be a declared alignment pair")
+    return estimate_transfers(pair, recipe)
 
 
 def main():
@@ -532,10 +559,15 @@ def main():
     command = commands.add_parser("align", help="Align mesa identities under declared electores rules")
     command.add_argument("--panel", required=True, help="Panel JSON path or - for stdin")
     command.add_argument("--rules", type=Path, required=True)
+    command = commands.add_parser("transfers", help="Estimate a row-stochastic mesa transfer matrix")
+    command.add_argument("--panel", required=True, help="Panel JSON path or - for stdin")
+    command.add_argument("--rules", type=Path, required=True)
+    command.add_argument("--recipe", type=Path, required=True)
+    command.add_argument("--pair", type=int, nargs=2, required=True)
     args = parser.parse_args()
     try:
         result = {"inventory": inventory, "mesas": mesas, "panel": panel,
-                  "reconcile": reconcile, "align": align}[args.command](args)
+                  "reconcile": reconcile, "align": align, "transfers": transfers}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)
