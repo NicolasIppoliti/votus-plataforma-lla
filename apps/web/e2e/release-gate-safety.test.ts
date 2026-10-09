@@ -3059,7 +3059,7 @@ describe("base contracts", () => {
 
 		expect(etlRelease).toContain("timeout-minutes: 15");
 		expect(etlRelease).toContain("services:");
-		expect(etlRelease).toContain("image: postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f");
+		expect(etlRelease).toContain("image: public.ecr.aws/docker/library/postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f");
 		expect(etlRelease).toContain("POSTGRES_HOST_AUTH_METHOD: trust");
 		expect(etlRelease).toContain("postgresql://postgres@127.0.0.1:54322/template1");
 		expect(etlRelease).toContain("astral-sh/setup-uv@");

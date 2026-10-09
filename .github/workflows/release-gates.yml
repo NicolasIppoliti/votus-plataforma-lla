@@ -108,7 +108,9 @@ jobs:
         case: [ordinary, success, ledger, sql]
     services:
       postgres:
-        image: postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+        # Same digest from the ECR Public mirror of Docker official images; avoids
+        # Docker Hub's unauthenticated pull rate limit on shared runners.
+        image: public.ecr.aws/docker/library/postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
