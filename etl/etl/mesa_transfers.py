@@ -1,6 +1,7 @@
 """Deterministic ecological point estimates, not individual voter transitions."""
 from fractions import Fraction
 import math
+import random
 
 NON_POSITIVE = '__non_positive__'
 CATEGORY_RULE = ('Each agrupacion_id is its own category; never pool unknown offers. '
@@ -11,10 +12,24 @@ def validate_recipe(recipe):
     fixed = dict(schema_version=1, weighting='origin_electores', init='destination_share_rows',
                  categories=CATEGORY_RULE, declared_on='2026-10-09', lipschitz='power_iteration',
                  note='declared before any backtest measurement')
-    if not isinstance(recipe, dict) or set(recipe) != set(fixed) | {'tol', 'max_iter', 'power_iterations', 'safety_factor', 'accelerator'}:
+    if not isinstance(recipe, dict) or set(recipe) - {'bootstrap'} != set(fixed) | {'tol', 'max_iter', 'power_iterations', 'safety_factor', 'accelerator'}:
         raise ValueError('unexpected or missing recipe fields')
     if type(recipe['schema_version']) is not int or any(recipe[k] != v for k, v in fixed.items()):
         raise ValueError('unsupported recipe declaration')
+    if 'bootstrap' in recipe:
+        bootstrap = recipe['bootstrap']
+        declaration = dict(rng='random.Random (Mersenne Twister), stdlib',
+                           interval='percentile', levels=['0.025', '0.5', '0.975'],
+                           warm_start='point_estimate')
+        if (not isinstance(bootstrap, dict)
+                or set(bootstrap) != set(declaration) | {'replicates', 'seed'}):
+            raise ValueError('unexpected or missing bootstrap fields')
+        if any(bootstrap[k] != v for k, v in declaration.items()):
+            raise ValueError('unsupported bootstrap declaration; levels must be 0.025, 0.5, 0.975')
+        if type(bootstrap['replicates']) is not int or bootstrap['replicates'] < 2:
+            raise ValueError('bootstrap replicates must be an integer >= 2')
+        if type(bootstrap['seed']) is not int:
+            raise ValueError('bootstrap seed must be an integer')
     if recipe['accelerator'] not in ('none', 'fista_with_monotone_restart'):
         raise ValueError('unsupported accelerator')
     try:
@@ -67,7 +82,7 @@ def project_simplex(values):
     return [max(value - theta, 0.0) for value in values]
 
 
-def solve(x_exact, y_exact, weights, destination_weights, recipe):
+def solve(x_exact, y_exact, weights, destination_weights, recipe, initial=None):
     """FISTA (Beck & Teboulle 2009) or PGD; report full weighted SSE.
 
     L is a safety-scaled power-iteration upper estimate for lambda_max(X^T W X).
@@ -83,7 +98,7 @@ def solve(x_exact, y_exact, weights, destination_weights, recipe):
     bound = power_lipschitz(gram, recipe['power_iterations'], recipe['safety_factor'])
     overall = [float(sum((yi[c] * w for yi, w in zip(y_exact, destination_weights)), Fraction())
                      / sum(destination_weights)) for c in range(columns)]
-    matrix = [overall[:] for _ in range(rows)]
+    matrix = [row[:] for row in initial] if initial is not None else [overall[:] for _ in range(rows)]
     def step(point):
         return [project_simplex([point[r][c] -
             (sum(gram[r][s] * point[s][c] for s in range(rows)) - cross[r][c]) / bound
@@ -114,6 +129,56 @@ def solve(x_exact, y_exact, weights, destination_weights, recipe):
     objective = sum(w * sum((pred[c] - yi[c]) ** 2 for c in range(columns))
                     for pred, yi, w in zip(fitted, y, weights))
     return matrix, fitted, iteration, converged, objective, bound
+
+
+def quantiles(values):
+    """Type-7: sorted values at h=(n-1)*p, linearly interpolate adjacent ranks."""
+    ordered = sorted(values)
+    result = {}
+    for name, probability in (('q025', .025), ('q500', .5), ('q975', .975)):
+        position = (len(ordered) - 1) * probability
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        result[name] = ordered[lower] + (position - lower) * (ordered[upper] - ordered[lower])
+    return result
+
+
+def bootstrap_intervals(shares, weights, destination_weights, recipe, matrix, categories):
+    """Paired mesa bootstrap; include every fit, even when it fails to converge.
+
+    Implied totals use each fitted matrix on the ORIGINAL panel and destination
+    electores, isolating transfer uncertainty from resampled electorate size.
+    """
+    config = recipe['bootstrap']
+    rng = random.Random(config['seed'])
+    samples, totals = [], []
+    converged = 0
+    n = len(weights)
+    # Original-panel exposure for the existing destination-weighted totals.
+    exposure = [sum(float(x[r]) * w for x, w in zip(shares['origin'], destination_weights))
+                for r in range(len(matrix))]
+    for _ in range(config['replicates']):
+        indices = [rng.randrange(n) for _ in range(n)]
+        fitted, _, _, success, _, _ = solve(
+            [shares['origin'][i] for i in indices],
+            [shares['destination'][i] for i in indices],
+            [weights[i] for i in indices], [destination_weights[i] for i in indices],
+            recipe, initial=matrix)
+        converged += success
+        samples.append(fitted)
+        totals.append([sum(exposure[r] * fitted[r][c] for r in range(len(matrix)))
+                       for c in range(len(matrix[0]))])
+    cells = {origin: {dest: dict(estimate=round(matrix[r][c], 9),
+                **quantiles([sample[r][c] for sample in samples]))
+                for c, dest in enumerate(categories['destination'])}
+             for r, origin in enumerate(categories['origin'])}
+    diagnostics = dict(replicates=config['replicates'], replicates_converged=converged,
+        replicates_not_converged=config['replicates'] - converged,
+        quantile_rule='type-7 linear interpolation: h=(n-1)*p, zero-based ranks',
+        non_converged_policy='included in all quantiles, never dropped',
+        destination_totals_basis='original usable panel, destination electores')
+    return cells, diagnostics, {dest: quantiles([t[c] for t in totals])
+                               for c, dest in enumerate(categories['destination'])}
 
 
 def estimate_transfers(pair, recipe):
@@ -161,7 +226,14 @@ def estimate_transfers(pair, recipe):
         implied=sum(pred[c] * w for pred, w in zip(fitted, destination_weights)),
         observed=int(sum((yi[c] * w for yi, w in zip(shares['destination'], destination_weights)), Fraction())))
         for c, category in enumerate(categories['destination'])}
-    return dict(schema_version=1, origin_year=pair['origin_year'], destination_year=pair['destination_year'],
+    uncertainty = {}
+    if 'bootstrap' in recipe:
+        cells, diagnostics, total_intervals = bootstrap_intervals(
+            shares, weights, destination_weights, recipe, matrix, categories)
+        uncertainty = dict(cell_uncertainty=cells, bootstrap=diagnostics)
+        for dest, interval in total_intervals.items():
+            totals[dest].update(interval)
+    return dict(**uncertainty, schema_version=1, origin_year=pair['origin_year'], destination_year=pair['destination_year'],
         matrix={origin: {dest: round(matrix[r][c], 9) for c, dest in enumerate(categories['destination'])}
                 for r, origin in enumerate(categories['origin'])}, labels=labels,
         destination_totals=totals, mesas_used=len(usable), mesas_excluded_by_reason=excluded,

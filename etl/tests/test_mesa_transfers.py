@@ -35,6 +35,11 @@ def fixture(tmp_path, single=False, negative=False):
 
 
 def run(panel, rules, recipe=RECIPE, pair=('2019', '2021')):
+    if recipe == RECIPE:
+        data = json.loads(RECIPE.read_text())
+        data['bootstrap']['replicates'] = 24
+        recipe = panel.parent / 'small-recipe.json'
+        recipe.write_text(json.dumps(data))
     return subprocess.run([sys.executable, '-I', '-S', '-B', str(CLI), 'transfers',
         '--panel', str(panel), '--rules', str(rules), '--recipe', str(recipe), '--pair', *pair],
         capture_output=True, text=True)
@@ -128,3 +133,81 @@ def test_invalid_recipe_or_pair(tmp_path, change):
     assert response.returncode == 2
     assert response.stderr.startswith('error: ')
     assert not response.stdout
+
+
+def noisy_panel(tmp_path, amplitude):
+    panel, rules = fixture(tmp_path)
+    data = json.loads(panel.read_text())
+    # Balanced perturbations within each composition group: same underlying T.
+    for i, record in enumerate(data['elections'][1]['mesas']):
+        noise = amplitude * (1 if (i // 4) % 2 else -1)
+        record['positive']['0']['votes'] += noise
+        record['positive']['1']['votes'] -= noise
+    panel.write_text(json.dumps(data))
+    return panel, rules
+
+
+def test_bootstrap_noise_coverage_seed_and_order(tmp_path):
+    categories = ['0', '1', '2', '__non_positive__']
+    panel, rules = noisy_panel(tmp_path, 2)
+    first = run(panel, rules)
+    assert first.returncode == 0, first.stderr
+    assert first.stdout == run(panel, rules).stdout
+    low = json.loads(first.stdout)
+    widths = []
+    for r, origin in enumerate(categories):
+        for c, dest in enumerate(categories):
+            cell = low['cell_uncertainty'][origin][dest]
+            assert cell['estimate'] == low['matrix'][origin][dest]
+            assert 0 <= cell['q025'] <= cell['q500'] <= cell['q975'] <= 1
+            assert cell['q025'] <= TRUTH[r][c] <= cell['q975']
+            widths.append(cell['q975'] - cell['q025'])
+    assert max(widths) < .1
+    recipe = json.loads((tmp_path / 'small-recipe.json').read_text())
+    recipe['bootstrap']['seed'] += 1
+    changed_path = tmp_path / 'changed.json'
+    changed_path.write_text(json.dumps(recipe))
+    changed = json.loads(run(panel, rules, recipe=changed_path).stdout)
+    assert changed['matrix'] == low['matrix']
+    assert changed['cell_uncertainty'] != low['cell_uncertainty']
+    high = json.loads(run(*noisy_panel(tmp_path, 100)).stdout)
+    high_widths = [cell['q975'] - cell['q025']
+                   for row in high['cell_uncertainty'].values() for cell in row.values()]
+    assert sum(high_widths) > sum(widths)
+    assert high['bootstrap']['replicates_converged'] == 24
+    assert high['bootstrap']['replicates_not_converged'] == 0
+    for totals in high['destination_totals'].values():
+        assert totals['q025'] <= totals['q500'] <= totals['q975']
+
+
+@pytest.mark.parametrize('field,value', [
+    ('replicates', 1), ('replicates', True), ('seed', '1'),
+    ('rng', 'other'), ('interval', 'normal'), ('warm_start', 'random'),
+    ('levels', ['0', '0.5', '1']), ('levels', ['0.975', '0.5', '0.025']),
+    ('levels', [0.025, 0.5, 0.975]), ('levels', ['1/40', '0.5', '0.975']),
+])
+def test_invalid_bootstrap_recipe(tmp_path, field, value):
+    panel, rules = fixture(tmp_path)
+    recipe = json.loads(RECIPE.read_text())
+    recipe['bootstrap'][field] = value
+    path = tmp_path / 'invalid.json'
+    path.write_text(json.dumps(recipe))
+    response = run(panel, rules, recipe=path)
+    assert response.returncode == 2
+    assert response.stderr.startswith('error: invalid recipe: ')
+    assert not response.stdout
+
+
+def test_nonconverged_replicates_are_included(tmp_path):
+    panel, rules = noisy_panel(tmp_path, 100)
+    recipe = json.loads(RECIPE.read_text())
+    recipe['max_iter'] = 1
+    recipe['bootstrap']['replicates'] = 4
+    path = tmp_path / 'short.json'
+    path.write_text(json.dumps(recipe))
+    response = run(panel, rules, recipe=path)
+    assert response.returncode == 0, response.stderr
+    result = json.loads(response.stdout)
+    assert result['bootstrap']['replicates_not_converged'] == 4
+    assert result['bootstrap']['replicates_converged'] == 0
+    assert result['cell_uncertainty']['0']['0']['q975'] > 0
