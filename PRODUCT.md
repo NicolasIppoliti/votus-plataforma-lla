@@ -23,7 +23,7 @@ This direction does not claim a delivered map or authorize implementation.
 | Core | Territorial dominance and election comparison: Argentina → Buenos Aires Province → Coronel Rosales, then circuits, establishments and mesas only where source-backed. |
 | Separate module | Fiscalización: operational coverage/heat, with its denominator and non-random sample; never an official-results aggregate. |
 | Separate module | Simulación: hypothetical 3D council/seat scenarios with statutory allocation and conditional vote ranges, not false exact thresholds. |
-| Future, gated | Análisis/Prospectiva: the 2027 Coronel Rosales CONCEJALES model was backtested (#391) and is not validated. The next step is a scenario explorer labelled "supuestos sin validar"; no forecast is promised and recommendations remain unauthorized. |
+| Future, gated | Análisis/Prospectiva: the 2027 Coronel Rosales CONCEJALES model was backtested (#391) and is not validated. Its scenarios are shown read-only at `/scenarios`, labelled "supuestos sin validar" (#393); no forecast is promised and recommendations remain unauthorized. |
 
 Modules share geographic and evidence foundations, not blended numerical outputs.
 Physical terrain and electoral extrusion are independent layers. Height expresses a
