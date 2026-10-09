@@ -68,6 +68,42 @@ geography:
     notes: "Official ARBA WFS partido reference; structural geometry only, no election-date applicability established. Child electoral depths unsupported."
 
 national:
+  - id: national/2015-generales
+    election_year: 2015
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2015-provisorios_generales.zip
+    mime: application/zip
+    filename: 2015-generales.zip
+    expected_sha256: 870e0ea7826e81847caa2e1e9d203955577b748721edd89f74e93ecfb9715e12
+    notes: "Official DINE 2015 generales, provisional scrutiny, mesa level."
+  - id: national/2017-generales
+    election_year: 2017
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2017-provisorios_generales.zip
+    mime: application/zip
+    filename: 2017-generales.zip
+    expected_sha256: 7c89e3905dc1b079b85ec1eb0cb8fc851acdc8b151024036137450bb672cd97b
+    notes: "Official DINE 2017 generales, provisional scrutiny, mesa level."
+  - id: national/2019-generales
+    election_year: 2019
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2019-provisorios_generales.zip
+    mime: application/zip
+    filename: 2019-generales.zip
+    expected_sha256: eb62f4e999a75754db1d3f446a5977679a0d34faba81de6afc13cb20943e4bf7
+    notes: "Official DINE 2019 generales, provisional scrutiny, mesa level."
+  - id: national/2021-generales
+    election_year: 2021
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2021-provisorios_generales.zip
+    mime: application/zip
+    filename: 2021-generales.zip
+    expected_sha256: 0b44fc815876cefdfc3341fccef5d38f51e225aa043eca36df19f7e33cbac992
+    notes: "Official DINE 2021 generales, provisional scrutiny, mesa level."
   - id: national/2023-generales
     election_year: 2023
     election_round: generales
