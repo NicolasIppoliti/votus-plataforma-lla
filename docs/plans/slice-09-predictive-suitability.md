@@ -1,5 +1,11 @@
 # Slice 9 — Is a 2027 Rosales council vote estimate defensible?
 
+> **Outcome (2026-10-09, #391).** The question was answered with a preregistered
+> backtest of a mesa-level ecological-inference model: **not validated** against
+> persistence. This definition is kept as history; see the
+> [closure](../research/slice-09-closure.md) and
+> [backtest results](../research/slice-09-backtest-results.md).
+
 **Question:** Is estimating the 2027 Coronel Rosales **CONCEJALES list-vote
 distribution** defensible on accepted comparable official evidence?
 

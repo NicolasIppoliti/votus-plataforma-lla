@@ -76,13 +76,15 @@ Follow the [sequential slice plan](plans/territorial-intelligence-slices.md):
 4. Territorial election comparison alongside dominance as the core product.
 5. Spatial Fiscalización remains deferred. Bounded Slice 8 statutory scenarios are
    delivered, including W1 #388 and W2 #389; deterministic samples are not forecasts.
-6. [Slice 9 predictive suitability](plans/slice-09-predictive-suitability.md) asks whether
-   2027 Coronel Rosales CONCEJALES list-vote estimation is defensible. Evidence and
-   preregistered evaluation/go-no-go precede any model, route or output. Feasibility
-   is not established; no-go is valid. Slice 10 recommendations remain unauthorized.
+6. Slice 9 (#391) built a mesa-level ecological-inference model for 2027 Coronel
+   Rosales CONCEJALES and backtested it under preregistration: it is **not validated**
+   ([closure](research/slice-09-closure.md)). Slice 10 is narrowed to presenting
+   unvalidated scenarios, labelled "supuestos sin validar"; recommendations remain
+   unauthorized.
 
 Each dependent slice requires its own reviewed PR and merge; the bounded Slice 8
-merge dependency is fulfilled, not the Slice 9 analytical gate. Exact coverage is a
+merge dependency is fulfilled. The Slice 9 analytical gate was evaluated and not
+passed, which limits Slice 10 to unvalidated scenarios. Exact coverage is a
 feasibility finding, not a roadmap promise.
 Provincial/national expansion is not authorization for all-135-partido ingestion;
 the existing municipal-expansion workstream must be reconciled with these slices
