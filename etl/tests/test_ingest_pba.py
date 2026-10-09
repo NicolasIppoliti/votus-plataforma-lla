@@ -24,12 +24,14 @@ import uuid
 from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import psycopg
 import pytest
 import requests
 
 from etl import db
+from etl.__main__ import find_source_entry, load_sources
 from etl.archive import ArchiveIntegrityError, FetchResponse
 from etl.crosswalk import CrosswalkTable, JurisdictionCrosswalkEntry
 from etl.http_client import (
@@ -53,6 +55,22 @@ from etl.jurisdiction import JurisdictionNames, QuarantinedPbaDistrito, resolve_
 from etl.storage import LocalArchiveStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_every_registered_pba_source_has_an_exact_allowed_path() -> None:
+    sources = load_sources()
+    assert sources["pba"], "production registry must contain PBA sources"
+    missing_paths = []
+    for registered in sources["pba"]:
+        entry = find_source_entry(sources, registered["id"])
+        assert entry is not None
+        assert entry["capability"] == "pba"
+        url = urlparse(entry["source_url"])
+        assert url.hostname == PBA_HOST, entry["id"]
+        if url.path not in PBA_ALLOWED_PATHS:
+            missing_paths.append(url.path)
+    assert not missing_paths, f"Unregistered PBA paths: {missing_paths}"
+    assert all(not path.endswith("/") for path in PBA_ALLOWED_PATHS)
 
 
 def _read(name: str) -> bytes:
