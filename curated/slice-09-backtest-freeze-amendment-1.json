@@ -6,6 +6,10 @@
   "change": "style_only_ruff_lint_and_format",
   "reason": "Release Gates require ruff lint and format; frozen modules were reformatted after measurement without behavior change.",
   "code_files": {
+    "etl/etl/dine_municipal_panel.py": {
+      "original_sha256": "4b9b607cf0db74ff5bb6fc6ac9c9553c617b1d802aa962a0365e0396c1252b4b",
+      "amended_sha256": "7f39f622ad6e14d92c571a5f45457382b2f900f2ef7f5bc1a602ffc50ff3b45e"
+    },
     "etl/etl/hare_seats.py": {
       "original_sha256": "2230575c4805d685aa10ee41b26440b76a886f4bd18576f921ec58b6ed54cf72",
       "amended_sha256": "157944894bb291e89f6a27e75473808a1f47b9aa15a3796c0fbfa6f691f8cb53"

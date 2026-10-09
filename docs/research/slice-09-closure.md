@@ -14,7 +14,7 @@ decision; see the last section).
 
 | Requirement | Status | Evidence |
 | --- | --- | --- |
-| DINE 2015–2023 mesa panel, hash/size/encoding verified | Met, size by hash | `c47b15d`; `panel` rejects any archive whose SHA-256 differs from `expected_sha256` (which fixes its exact bytes, hence its size), records `archive_bytes`/`member_bytes` without a separate expected-size check, and decodes strict UTF-8 (`etl/etl/dine_municipal_panel.py:48–76`); rebuild sha `059cb471…0127`, reproduced by independent verifiers |
+| DINE 2015–2023 mesa panel, hash/size/encoding verified | Met, size by hash | `c47b15d`; `panel` rejects any archive whose SHA-256 differs from `expected_sha256` (which fixes its exact bytes, hence its size), records `archive_bytes`/`member_bytes` without a separate expected-size check, and decodes strict UTF-8 (`etl/etl/dine_municipal_panel.py:86–119`); rebuild sha `059cb471…0127`, reproduced by independent verifiers |
 | Concejales 2017/2021, Intendente proxy 2015/2019/2023 flagged per row with bias note | Met | `curated/slice-09-mesa-panel-inputs.json` (`proxy`, `proxy_note`); `is_proxy` on panel rows and on reconcile/align outputs |
 | 2027 base = JEBA definitive concejales 2025, 154 Argentine + 2 foreign mesas | Met, with an open discrepancy | `69a15c8`; positivos 32,291 (argentinos 32,184 + extranjeros). JEBA PDF says 154 mesas, HTML components 154 + 2 = 156; recorded `status: unresolved` |
 | DINE vs JEBA reconciliation per election with per-reason breakdown; no missing mesa as zero | Met | `fb6504e`; `reconcile` reports per-field and per-offer deltas; missing mesas are counted, never zero-filled, and labelled "unidentified: district totals cannot identify which mesas" |
@@ -43,8 +43,11 @@ From [backtest results](slice-09-backtest-results.md). TV in pp / seat error.
 
 Gates against B1: relative FAIL, absolute FAIL, majority PASS (2/3), maximum
 loss FAIL (2019, 21.388 pp), seats FAIL. 2025 confirmation PASS. Validated: no.
-Nothing was retuned after measurement; `git diff 71d5b96 HEAD` touches no frozen
-file.
+Nothing was retuned after measurement. The only later change to frozen files is
+a style-only ruff lint/format pass required by Release Gates, recorded in
+`curated/slice-09-backtest-freeze-amendment-1.json` (original and amended
+hashes); rerunning with the amended code reproduced the panel, development,
+final and 2023→2025 forecast outputs byte for byte.
 
 Default simulator output (2025 offers continuing unchanged into 2027):
 persistence seats 2206:5, 2200:2, 2201:2; EI alternative 2206:4, 2200:3,
