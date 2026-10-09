@@ -538,6 +538,25 @@ def transfers(args):
     return estimate_transfers(pair, recipe)
 
 
+def seats(args):
+    from etl.hare_seats import allocate_seats
+    if args.seats <= 0:
+        raise ValueError("seats must be a positive integer")
+    data = json.loads(args.jeba.read_text(encoding="utf-8"), object_pairs_hook=strict_object)
+    matches = [e for e in data["elections"] if e["year"] == args.year]
+    if len(matches) != 1:
+        raise ValueError(f"unknown or duplicate year: {args.year}")
+    election = matches[0]
+    # The top-level PDF offers include both elector components in 2025.
+    votes = {}
+    for offer in election["offers"]:
+        key = offer["list_id"]
+        if key in votes:
+            raise ValueError(f"duplicate list_id: {key}")
+        votes[key] = offer["votes"]
+    return dict(year=args.year, source=election["source"], **allocate_seats(votes, args.seats))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -564,10 +583,15 @@ def main():
     command.add_argument("--rules", type=Path, required=True)
     command.add_argument("--recipe", type=Path, required=True)
     command.add_argument("--pair", type=int, nargs=2, required=True)
+    command = commands.add_parser("seats", help="Allocate JEBA PDF list votes under Ley 5109")
+    command.add_argument("--jeba", type=Path, required=True)
+    command.add_argument("--year", type=int, required=True)
+    command.add_argument("--seats", type=int, default=9)
     args = parser.parse_args()
     try:
         result = {"inventory": inventory, "mesas": mesas, "panel": panel,
-                  "reconcile": reconcile, "align": align, "transfers": transfers}[args.command](args)
+                  "reconcile": reconcile, "align": align, "transfers": transfers,
+                  "seats": seats}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)
