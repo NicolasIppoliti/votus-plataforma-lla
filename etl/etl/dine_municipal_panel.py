@@ -219,6 +219,96 @@ def mesas(args):
     return result
 
 
+def strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate key: {key}")
+        result[key] = value
+    return result
+
+
+def validate_inputs(data, root):
+    def require(condition, reason):
+        if not condition:
+            raise ValueError(reason)
+
+    def text(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    fields = {"schema_version", "distrito", "seccion", "target_category", "elections"}
+    require(isinstance(data, dict) and set(data) == fields, "unexpected or missing top-level fields")
+    require(type(data["schema_version"]) is int and data["schema_version"] == 1,
+            "schema_version must be 1")
+    for key, width in (("distrito", 2), ("seccion", 3)):
+        value = data[key]
+        require(isinstance(value, str) and len(value) == width
+                and value.isascii() and value.isdigit(), f"{key} must be a {width}-digit code")
+    require(text(data["target_category"]), "target_category must be non-empty text")
+    elections = data["elections"]
+    require(isinstance(elections, list) and bool(elections), "elections must be a non-empty list")
+    previous = None
+    fields = {"year", "archive", "expected_sha256", "cargo", "proxy"}
+    for election in elections:
+        require(isinstance(election, dict) and fields <= set(election)
+                and set(election) <= fields | {"proxy_note"}, "unexpected or missing election fields")
+        year = election["year"]
+        require(type(year) is int, "year must be an integer")
+        require(previous is None or year > previous, "years must be strictly increasing and unique")
+        previous = year
+        require(text(election["archive"]), "archive must be non-empty text")
+        archive = Path(election["archive"])
+        require(not archive.is_absolute() and (root / archive).resolve().is_relative_to(root),
+                "archive must be relative to the inputs repository root")
+        sha = election["expected_sha256"]
+        require(isinstance(sha, str) and len(sha) == 64
+                and all(c in "0123456789abcdefABCDEF" for c in sha), "expected_sha256 must be hex64")
+        require(text(election["cargo"]), "cargo must be non-empty text")
+        require(type(election["proxy"]) is bool, "proxy must be a boolean")
+        proxy = election["proxy"]
+        require((election["cargo"] != data["target_category"]) == proxy,
+                "cargo must differ from target_category exactly when proxy is true")
+        note = election.get("proxy_note")
+        require(text(note) if proxy else note is None,
+                "proxy_note must be non-empty for a proxy and absent/null otherwise")
+
+
+def panel(args):
+    try:
+        raw = args.inputs.read_bytes()
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=strict_object)
+        root = args.inputs.resolve().parent.parent
+        validate_inputs(data, root)
+    except (ValueError, OSError) as error:
+        raise ValueError(f"invalid inputs: {error}") from error
+    result = {key: data[key] for key in ("schema_version", "distrito", "seccion", "target_category")}
+    result.update(inputs_sha256=hashlib.sha256(raw).hexdigest(), elections=[], summary=[])
+    for election in data["elections"]:
+        year = election["year"]
+        selected = argparse.Namespace(archive=root / election["archive"], year=year,
+                                      expected_sha256=election["expected_sha256"].lower(),
+                                      distrito=data["distrito"], seccion=data["seccion"],
+                                      cargo=election["cargo"])
+        try:
+            observed = mesas(selected)
+        except UnicodeDecodeError as error:
+            raise ValueError(f"year {year}: results member is not valid UTF-8 at byte offset {error.start}") from error
+        except (ValueError, OSError, zipfile.BadZipFile, csv.Error) as error:
+            raise ValueError(f"year {year}: {error}") from error
+        proxy = election["proxy"]
+        observed.update(is_proxy=proxy, proxy_for=data["target_category"] if proxy else None,
+                        proxy_note=election.get("proxy_note"))
+        for record in observed["mesas"] + observed["quarantined_mesas"]:
+            record.update(is_proxy=proxy, observed_cargo=election["cargo"])
+        result["elections"].append(observed)
+        totals = observed["totals"]
+        result["summary"].append(dict(year=year, mesas=totals["mesas"],
+                                      electores=totals["electores"], positivo=totals["votes"]["positivo"],
+                                      quarantined_mesas=len(observed["quarantined_mesas"]),
+                                      excluded_rows_by_reason=observed["excluded_rows_by_reason"].copy()))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -231,9 +321,11 @@ def main():
         command.add_argument("--seccion", required=True)
         if name == "mesas":
             command.add_argument("--cargo", required=True)
+    command = commands.add_parser("panel", help="Assemble declared multi-year mesa inputs")
+    command.add_argument("--inputs", type=Path, required=True)
     args = parser.parse_args()
     try:
-        result = inventory(args) if args.command == "inventory" else mesas(args)
+        result = {"inventory": inventory, "mesas": mesas, "panel": panel}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)

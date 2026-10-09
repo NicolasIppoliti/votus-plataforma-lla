@@ -220,3 +220,106 @@ def test_year_header_variants(tmp_path, year_header):
     result = invoke(path, digest)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["source"]["header"] == header
+
+
+def panel_inputs(tmp_path):
+    elections = []
+    for year, cargo, proxy in [(2019, "INTENDENTE", True), (2021, "CONCEJALES", False)]:
+        folder = tmp_path / str(year)
+        folder.mkdir()
+        rows = [mesa_row(year=str(year), cargo=cargo),
+                mesa_row(year=str(year), cargo=cargo, mesa="2"),
+                mesa_row(year=str(year), cargo=cargo, mesa="3"),
+                mesa_row(year=str(year), cargo=cargo, mesa="3"),
+                mesa_row(year=str(year), cargo="OTHER")]
+        path, digest = archive(folder, {"results.csv": payload(rows)})
+        elections.append(dict(year=year, archive=str(path.relative_to(tmp_path)),
+                              expected_sha256=digest, cargo=cargo, proxy=proxy,
+                              proxy_note="Declared synthetic proxy" if proxy else None))
+    curated = tmp_path / "curated"
+    curated.mkdir()
+    return curated / "inputs.json", dict(schema_version=1, distrito="02", seccion="027",
+                                         target_category="CONCEJALES", elections=elections)
+
+
+def invoke_panel(path, data):
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return invoke(None, None, "panel", "--inputs", str(path))
+
+
+def test_panel_two_years(tmp_path):
+    path, inputs = panel_inputs(tmp_path)
+    result = invoke_panel(path, inputs)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["inputs_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert data["schema_version"] == 1
+    assert (data["distrito"], data["seccion"], data["target_category"]) == ("02", "027", "CONCEJALES")
+    assert [e["year"] for e in data["elections"]] == [2019, 2021]
+    for election, declared, summary in zip(data["elections"], inputs["elections"], data["summary"]):
+        assert election["is_proxy"] is declared["proxy"]
+        assert election["proxy_for"] == ("CONCEJALES" if declared["proxy"] else None)
+        assert election["proxy_note"] == declared["proxy_note"]
+        for mesa in election["mesas"] + election["quarantined_mesas"]:
+            assert mesa["is_proxy"] is declared["proxy"]
+            assert mesa["observed_cargo"] == declared["cargo"]
+        assert election["source"]["archive_sha256"] == declared["expected_sha256"]
+        assert summary == dict(year=declared["year"], mesas=2, electores=200, positivo=10,
+                              quarantined_mesas=1,
+                              excluded_rows_by_reason=election["excluded_rows_by_reason"])
+        assert summary["excluded_rows_by_reason"]["other_cargo"] == 1
+
+
+@pytest.mark.parametrize("change", [
+    "schema", "order", "duplicate", "false_cargo", "true_cargo", "note", "sha",
+    "year_bool", "proxy_type", "absolute", "escape", "extra", "empty", "false_note",
+    "district_type", "section_type", "target_type", "elections_type", "archive_type"])
+def test_panel_invalid_inputs(tmp_path, change):
+    path, data = panel_inputs(tmp_path)
+    first, second = data["elections"]
+    if change == "schema": data["schema_version"] = True
+    elif change == "order": second["year"] = 2017
+    elif change == "duplicate": second["year"] = first["year"]
+    elif change == "false_cargo": second["cargo"] = "INTENDENTE"
+    elif change == "true_cargo": first["cargo"] = "CONCEJALES"
+    elif change == "note": del first["proxy_note"]
+    elif change == "sha": first["expected_sha256"] = "z" * 64
+    elif change == "year_bool": first["year"] = True
+    elif change == "proxy_type": first["proxy"] = 1
+    elif change == "absolute": first["archive"] = "/input.zip"
+    elif change == "escape": first["archive"] = "../input.zip"
+    elif change == "extra": data["unknown"] = 1
+    elif change == "empty": data["elections"] = []
+    elif change == "false_note": second["proxy_note"] = "not allowed"
+    elif change == "district_type": data["distrito"] = 2
+    elif change == "section_type": data["seccion"] = None
+    elif change == "target_type": data["target_category"] = ""
+    elif change == "elections_type": data["elections"] = {}
+    elif change == "archive_type": first["archive"] = None
+    result = invoke_panel(path, data)
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith("error: invalid inputs: ")
+
+
+@pytest.mark.parametrize("failure", ["sha", "member", "year", "utf8"])
+def test_panel_year_failure_aborts(tmp_path, failure):
+    path, data = panel_inputs(tmp_path)
+    election = data["elections"][1]
+    if failure == "sha":
+        election["expected_sha256"] = "0" * 64
+        message = "archive sha256 mismatch:"
+    else:
+        members = {"results.csv": payload([mesa_row(year="2019")])}
+        message = "row year mismatch:"
+        if failure == "member":
+            members = {}
+            message = "expected exactly one results member,"
+        elif failure == "utf8":
+            members = {"results.csv": b"\xff\n"}
+            message = "results member is not valid UTF-8 at byte offset"
+        _, election["expected_sha256"] = archive(tmp_path / "2021", members)
+    result = invoke_panel(path, data)
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith("error: year 2021: " + message)

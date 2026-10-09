@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "distrito": "02",
+  "seccion": "027",
+  "target_category": "CONCEJALES",
+  "elections": [
+    {
+      "year": 2015,
+      "archive": "archive/national/2015-generales.870e0ea7826e81847caa2e1e9d203955577b748721edd89f74e93ecfb9715e12.zip",
+      "expected_sha256": "870e0ea7826e81847caa2e1e9d203955577b748721edd89f74e93ecfb9715e12",
+      "cargo": "INTENDENTE",
+      "proxy": true,
+      "proxy_note": "Concejales were elected this year but DINE publishes no per-mesa CONCEJALES category for PBA; INTENDENTE is a declared proxy. Possible bias: candidate-specific vote and split-ticket voting between mayor and council."
+    },
+    {
+      "year": 2017,
+      "archive": "archive/national/2017-generales.7c89e3905dc1b079b85ec1eb0cb8fc851acdc8b151024036137450bb672cd97b.zip",
+      "expected_sha256": "7c89e3905dc1b079b85ec1eb0cb8fc851acdc8b151024036137450bb672cd97b",
+      "cargo": "CONCEJALES",
+      "proxy": false,
+      "proxy_note": null
+    },
+    {
+      "year": 2019,
+      "archive": "archive/national/2019-generales.eb62f4e999a75754db1d3f446a5977679a0d34faba81de6afc13cb20943e4bf7.zip",
+      "expected_sha256": "eb62f4e999a75754db1d3f446a5977679a0d34faba81de6afc13cb20943e4bf7",
+      "cargo": "INTENDENTE",
+      "proxy": true,
+      "proxy_note": "Concejales were elected this year but DINE publishes no per-mesa CONCEJALES category for PBA; INTENDENTE is a declared proxy. Possible bias: candidate-specific vote and split-ticket voting between mayor and council."
+    },
+    {
+      "year": 2021,
+      "archive": "archive/national/2021-generales.0b44fc815876cefdfc3341fccef5d38f51e225aa043eca36df19f7e33cbac992.zip",
+      "expected_sha256": "0b44fc815876cefdfc3341fccef5d38f51e225aa043eca36df19f7e33cbac992",
+      "cargo": "CONCEJALES",
+      "proxy": false,
+      "proxy_note": null
+    },
+    {
+      "year": 2023,
+      "archive": "archive/national/2023-generales.zip",
+      "expected_sha256": "2562b18c741ba5740d264e5328f206cb25f709ed0a4f8cf962f301e423e79c6b",
+      "cargo": "INTENDENTE",
+      "proxy": true,
+      "proxy_note": "Concejales were elected this year but DINE publishes no per-mesa CONCEJALES category for PBA; INTENDENTE is a declared proxy. Possible bias: candidate-specific vote and split-ticket voting between mayor and council."
+    }
+  ]
+}
