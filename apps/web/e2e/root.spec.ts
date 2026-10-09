@@ -644,6 +644,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       "Municipal",
       "Fiscalización (no oficial)",
       "Simulación 2027",
+      "Escenarios Rosales 2027",
       "Revisión de datos",
     ]) {
       await expect(
