@@ -90,6 +90,35 @@ def test_real_pairs(monkeypatch, capsys, a):
     assert r['jeba_category_unauthenticated'] is True
 
 
+def test_public_core_mapping_without_destination_votes():
+    from etl.forecast_baselines import core_mapping
+    pair = dict(relations=[relation('split', 'a', 'd e'),
+                           relation('continuation', 'a', 'd'),
+                           relation('exit', 'x', ''), relation('entry', '', 'f')])
+    mapping = core_mapping(pair, dict(a=Fraction(3, 4), x=Fraction(1, 4)))
+    assert mapping['mapped_shares'] == dict(d=Fraction(3, 8), e=Fraction(3, 8), f=0)
+    assert mapping['exit_mass'] == Fraction(1, 4)
+    assert mapping['entries'] == ['f']
+    assert mapping['destinations'] == ['d', 'e', 'f']
+    with pytest.raises(ValueError, match='coverage'):
+        core_mapping(dict(relations=[relation('continuation', 'a', 'd')]),
+                     dict(a=Fraction(3, 4), x=Fraction(1, 4)))
+
+
+def test_public_metrics_union_and_hare_scaling():
+    from etl.forecast_baselines import total_variation, seat_error
+    assert total_variation(dict(a=Fraction(1)), dict(b=Fraction(1))) == 1
+    result = seat_error(dict(d=Fraction(1, 2), f=Fraction(3, 8),
+                             g=Fraction(1, 8), e=Fraction(0)), 100,
+                        dict(d=45, f=35, g=15, e=5))
+    assert result['seat_error'] == 1
+    assert result['forecast_seats']['seats'] == dict(d=5, f=3, g=1, e=0)
+    tied = seat_error(dict(a=Fraction(1, 2), b=Fraction(1, 2)), 100,
+                      dict(a=60, b=40))
+    assert tied['forecast_seats'] == dict(error='ambiguous_tie')
+    assert tied['seat_error'] is None
+
+
 def test_invalid_pair(monkeypatch, capsys):
     code, error = run(monkeypatch, capsys, pair=(2015, 2019))
     assert code == 2

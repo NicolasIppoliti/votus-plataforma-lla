@@ -51,6 +51,65 @@ def seat_result(votes):
         return dict(error='ambiguous_tie')
 
 
+def total_variation(forecast_shares, observed_shares):
+    """Exact TV over the union of offer ids; absent shares are zero."""
+    return sum((abs(forecast_shares.get(k, Fraction(0)) -
+                    observed_shares.get(k, Fraction(0)))
+                for k in forecast_shares.keys() | observed_shares.keys()), Fraction(0)) / 2
+
+
+def seat_error(forecast_shares, observed_votes_total, observed_votes):
+    """Hare allocations and half-L1 seat error; ambiguous ties remain explicit."""
+    allocation = seat_result({k: v * observed_votes_total for k, v in forecast_shares.items()})
+    official = seat_result({k: Fraction(v) for k, v in observed_votes.items()})
+    error = (None if 'error' in allocation or 'error' in official else
+             sum(abs(allocation['seats'].get(k, 0) - official['seats'].get(k, 0))
+                 for k in forecast_shares.keys() | observed_votes.keys()) // 2)
+    return dict(forecast_seats=allocation, observed_seats=official, seat_error=error)
+
+
+def core_mapping(correspondence_pair, origin_shares):
+    """Map core shares without outcomes; relation destinations define the offer universe.
+
+    Return mapped_shares, exit_mass, entries and destinations, plus origin metadata
+    needed by the baseline CLI. Multiple relations reach DISTINCT successors.
+    """
+    relations = correspondence_pair['relations']
+    destinations = sorted({d for relation in relations for d in relation['destinations']})
+    reaches = {k: set() for k in origin_shares}
+    exits, declared_entries = set(), set()
+    for relation in relations:
+        kind, left, right = relation['type'], relation['origins'], relation['destinations']
+        if not set(left) <= origin_shares.keys():
+            raise ValueError('relation references unknown offer')
+        if kind in ('continuation', 'merge', 'split'):
+            if not left or not right:
+                raise ValueError('empty core relation')
+            for k in left:
+                reaches[k].update(right)
+        elif kind == 'exit' and left and not right:
+            exits.update(left)
+        elif kind == 'entry' and right and not left:
+            declared_entries.update(right)
+        else:
+            raise ValueError('invalid relation type or shape')
+    unmapped = {k for k, successors in reaches.items() if not successors}
+    mapped = dict.fromkeys(destinations, Fraction(0))
+    entries = set(destinations) - set().union(*reaches.values())
+    if unmapped != exits or entries != declared_entries:
+        raise ValueError('incomplete or conflicting exit/entry coverage')
+    mapped_origins = {}
+    for k, successors in reaches.items():
+        if successors:
+            share = origin_shares[k]
+            for d in successors:
+                mapped[d] += share / len(successors)
+            mapped_origins[k] = dict(destinations=sorted(successors), share=number(share))
+    exit_mass = sum((origin_shares[k] for k in exits), Fraction(0))
+    return dict(mapped_shares=mapped, exit_mass=exit_mass, entries=sorted(entries),
+                destinations=destinations, mapped_origins=mapped_origins, exit_origins=sorted(exits))
+
+
 def baselines(args):
     from etl.dine_municipal_panel import strict_object
     def load(path):
@@ -64,53 +123,30 @@ def baselines(args):
         raise ValueError('invalid pair: must be consecutive in correspondence')
     origin, origin_total = election_votes(data, a)
     observed, total = election_votes(data, b)
-    reaches = {k: set() for k in origin}
-    exits, declared_entries = set(), set()
-    for relation in matches[0]['relations']:
-        kind, left, right = relation['type'], relation['origins'], relation['destinations']
-        if not set(left) <= origin.keys() or not set(right) <= observed.keys():
-            raise ValueError('relation references unknown offer')
-        if kind in ('continuation', 'merge', 'split'):
-            if not left or not right:
-                raise ValueError('empty core relation')
-            for k in left:
-                reaches[k].update(right)
-        elif kind == 'exit' and left and not right:
-            exits.update(left)
-        elif kind == 'entry' and right and not left:
-            declared_entries.update(right)
-        else:
-            raise ValueError('invalid relation type or shape')
-    unmapped = {k for k, destinations in reaches.items() if not destinations}
-    mapped = dict.fromkeys(observed, Fraction(0))
-    entries = set(observed) - set().union(*reaches.values())
-    if unmapped != exits or entries != declared_entries:
+    if any(not set(r['destinations']) <= observed.keys() for r in matches[0]['relations']):
+        raise ValueError('relation references unknown offer')
+    mapping = core_mapping(matches[0], {k: Fraction(v, origin_total) for k, v in origin.items()})
+    if set(mapping['destinations']) != observed.keys():
         raise ValueError('incomplete or conflicting exit/entry coverage')
-    mapped_origins = {}
-    for k, destinations in reaches.items():
-        if destinations:
-            share = Fraction(origin[k], origin_total)
-            for d in destinations:
-                mapped[d] += share / len(destinations)
-            mapped_origins[k] = dict(destinations=sorted(destinations), share=number(share))
-    exit_mass = sum((Fraction(origin[k], origin_total) for k in exits), Fraction(0))
+    mapped = {k: mapping['mapped_shares'][k] for k in observed}
+    entries, exits = mapping['entries'], mapping['exit_origins']
+    mapped_origins, exit_mass = mapping['mapped_origins'], mapping['exit_mass']
     mass = sum(mapped.values())
     persistence = ({k: v + (exit_mass / len(entries) if k in entries else 0)
                     for k, v in mapped.items()} if entries else
                    {k: v / mass for k, v in mapped.items()})
     proportional = ({k: v / mass for k, v in mapped.items()} if mass else
                     dict.fromkeys(observed, Fraction(1, len(observed))))
-    official = seat_result({k: Fraction(v) for k, v in observed.items()})
     result = dict(origin_year=a, destination_year=b, jeba_category_unauthenticated=True,
                   exit_mass=number(exit_mass), exit_origins=sorted(exits), entries=sorted(entries),
-                  mapped_origins=mapped_origins, observed_seats=official,
+                  mapped_origins=mapped_origins,
                   ignored_by_reason={'member_overlap': len(matches[0].get('member_overlap', []))})
     tvs = {}
     for name, forecast in (('B1', persistence), ('B2', proportional)):
-        tv = sum((abs(v - Fraction(observed[k], total)) for k, v in forecast.items()), Fraction(0)) / 2
-        allocation = seat_result({k: v * total for k, v in forecast.items()})
-        error = (None if 'error' in allocation or 'error' in official else
-                 sum(abs(allocation['seats'][k] - official['seats'][k]) for k in observed) // 2)
+        tv = total_variation(forecast, {k: Fraction(v, total) for k, v in observed.items()})
+        metrics = seat_error(forecast, total, observed)
+        allocation, error = metrics['forecast_seats'], metrics['seat_error']
+        result['observed_seats'] = metrics['observed_seats']
         result[name] = dict(shares={k: number(v) for k, v in forecast.items()}, TV=number(tv),
                             forecast_seats=allocation, seat_error=error,
                             fallback_equal_split=name == 'B2' and not mass)
