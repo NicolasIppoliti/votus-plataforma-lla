@@ -9,6 +9,7 @@ import argparse
 from collections import Counter, defaultdict
 import csv
 import hashlib
+from fractions import Fraction
 import io
 import json
 from pathlib import Path
@@ -309,6 +310,89 @@ def panel(args):
     return result
 
 
+def validate_offer_map(data):
+    def require(condition, reason):
+        if not condition:
+            raise ValueError(reason)
+    require(isinstance(data, dict) and set(data) == {"schema_version", "years"},
+            "unexpected or missing top-level fields")
+    require(type(data["schema_version"]) is int and data["schema_version"] == 1,
+            "schema_version must be 1")
+    require(isinstance(data["years"], dict), "years must be an object")
+    fields = {"dine_id", "dine_label", "jeba_list_id", "jeba_label", "basis"}
+    for year, pairs in data["years"].items():
+        require(year in {"2015", "2017", "2019", "2021", "2023"}, f"unknown year: {year}")
+        require(isinstance(pairs, list), f"year {year}: pairs must be a list")
+        seen_dine, seen_jeba = set(), set()
+        for pair in pairs:
+            require(isinstance(pair, dict) and set(pair) == fields,
+                    f"year {year}: unexpected or missing pair fields")
+            require(all(isinstance(v, str) and v.strip() for v in pair.values()),
+                    f"year {year}: pair fields must be non-empty text")
+            for field, seen in (("dine_id", seen_dine), ("jeba_list_id", seen_jeba)):
+                require(pair[field] not in seen, f"year {year}: duplicate {field}: {pair[field]}")
+                seen.add(pair[field])
+
+
+def reconcile(args):
+    def load(path):
+        return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=strict_object)
+    try:
+        mapping = load(args.offer_map)
+        validate_offer_map(mapping)
+    except (ValueError, OSError) as error:
+        raise ValueError(f"invalid offer map: {error}") from error
+    provisional = (json.load(sys.stdin, object_pairs_hook=strict_object)
+                   if args.panel == "-" else load(Path(args.panel)))
+    definitive = load(args.jeba)
+    dine = {e["year"]: e for e in provisional["elections"]}
+    jeba = {e["year"]: e for e in definitive["elections"]}
+    result = {"schema_version": 1, "elections": [], "years_without_counterpart": {
+        "panel": sorted(dine.keys() - jeba.keys()), "jeba": sorted(jeba.keys() - dine.keys())}}
+    for year in sorted(dine.keys() & jeba.keys()):
+        p, j = dine[year], jeba[year]
+        totals = p["totals"]
+        entry = dict(year=year, is_proxy=p["is_proxy"], proxy_for=p["proxy_for"],
+                     jeba_category_unauthenticated=j.get("category_label_as_printed") is None)
+        for field in ("mesas", "electores", "positivos", "blancos", "nulos"):
+            left = (totals.get(field) if field in ("mesas", "electores") else
+                    totals["votes"].get("positivo" if field == "positivos" else field))
+            right = j["totals"].get(field)
+            entry[field] = dict(dine=left, jeba=right,
+                                delta=None if left is None or right is None else left - right)
+        positives, offers = totals["positive"], {o["list_id"]: o for o in j["offers"]}
+        used_dine, used_jeba, matched = set(), set(), []
+        missing = 0
+        for pair in mapping["years"].get(str(year), []):
+            did, jid = pair["dine_id"], pair["jeba_list_id"]
+            if did not in positives or jid not in offers:
+                missing += 1
+                continue
+            used_dine.add(did)
+            used_jeba.add(jid)
+            left, right = positives[did]["votes"], offers[jid]["votes"]
+            delta = None if left is None or right is None else left - right
+            denominator = j["totals"].get("positivos")
+            share = Fraction(delta, denominator) if delta is not None and denominator else None
+            matched.append(dict(dine_id=did, jeba_list_id=jid, dine_votes=left,
+                                jeba_votes=right, delta=delta, delta_share_of_jeba_positivos=
+                                f"{share.numerator}/{share.denominator}" if share is not None else None))
+        unmatched_dine = [dict(dine_id=k, **v) for k, v in sorted(positives.items()) if k not in used_dine]
+        unmatched_jeba = [v for k, v in sorted(offers.items()) if k not in used_jeba]
+        mesa_delta = entry["mesas"]["delta"]
+        entry.update(offers=matched, unmatched_dine=unmatched_dine, unmatched_jeba=unmatched_jeba,
+                     mesas_missing_note="unidentified: district totals cannot identify which mesas",
+                     reasons=dict(mesas_missing_in_provisional=None if mesa_delta is None else max(-mesa_delta, 0),
+                                  mesas_extra_in_provisional=None if mesa_delta is None else max(mesa_delta, 0),
+                                  offers_unmatched_dine=len(unmatched_dine), offers_unmatched_jeba=len(unmatched_jeba),
+                                  offers_with_vote_delta=sum(o["delta"] not in (None, 0) for o in matched),
+                                  map_pair_not_found=missing))
+        result["elections"].append(entry)
+    result["base_2025"] = (dict(jeba[2025], note="definitive district base; no provisional mesa data")
+                           if 2025 in jeba else None)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -323,9 +407,14 @@ def main():
             command.add_argument("--cargo", required=True)
     command = commands.add_parser("panel", help="Assemble declared multi-year mesa inputs")
     command.add_argument("--inputs", type=Path, required=True)
+    command = commands.add_parser("reconcile", help="Compare JSON district totals without archive access")
+    command.add_argument("--panel", required=True, help="Panel JSON path or - for stdin")
+    command.add_argument("--jeba", type=Path, required=True)
+    command.add_argument("--offer-map", type=Path, required=True)
     args = parser.parse_args()
     try:
-        result = {"inventory": inventory, "mesas": mesas, "panel": panel}[args.command](args)
+        result = {"inventory": inventory, "mesas": mesas, "panel": panel,
+                  "reconcile": reconcile}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)

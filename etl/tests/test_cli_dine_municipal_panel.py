@@ -323,3 +323,104 @@ def test_panel_year_failure_aborts(tmp_path, failure):
     assert result.returncode == 2
     assert result.stdout == ""
     assert result.stderr.startswith("error: year 2021: " + message)
+
+
+def reconciliation_inputs():
+    panel = {"elections": [{"year": 2021, "is_proxy": True, "proxy_for": "CONCEJALES",
+        "totals": {"mesas": 2, "electores": 100, "votes": {"positivo": 12,
+        "blancos": 1, "nulos": 0}, "positive": {"d": {"name": "SYNTHETIC A", "votes": 10},
+        "u": {"name": "SYNTHETIC U", "votes": 2}}}}, {"year": 2015}]}
+    election = {"year": 2021, "category_label_as_printed": None,
+        "totals": {"mesas": 3, "electores": None, "positivos": 20, "blancos": 2, "nulos": 1},
+        "offers": [{"list_id": "j", "label": "SYNTHETIC A", "votes": 15},
+                   {"list_id": "v", "label": "SYNTHETIC V", "votes": 5}]}
+    base = {"year": 2025, "totals": {"nulos": None}, "offers": [],
+            "components": {"synthetic": {}}, "discrepancies": [{"field": "mesas"}]}
+    jeba = {"elections": [election, base]}
+    mapping = {"schema_version": 1, "years": {"2021": [
+        {"dine_id": "d", "dine_label": "SYNTHETIC A", "jeba_list_id": "j",
+         "jeba_label": "SYNTHETIC A", "basis": "label match: identical"},
+        {"dine_id": "absent", "dine_label": "SYNTHETIC B", "jeba_list_id": "missing",
+         "jeba_label": "SYNTHETIC B", "basis": "label match: identical"}]}}
+    return panel, jeba, mapping
+
+
+def invoke_reconcile(tmp_path, panel, jeba, mapping, stdin=False):
+    paths = []
+    for name, value in (("panel", panel), ("jeba", jeba), ("map", mapping)):
+        path = tmp_path / (name + ".json")
+        path.write_text(json.dumps(value))
+        paths.append(str(path))
+    command = [sys.executable, "-I", "-S", "-B", str(MODULE), "reconcile",
+               "--panel", "-" if stdin else paths[0], "--jeba", paths[1], "--offer-map", paths[2]]
+    return subprocess.run(command, input=json.dumps(panel) if stdin else None,
+                          capture_output=True, text=True, timeout=10)
+
+
+@pytest.mark.parametrize("stdin,mesas", [(False, 2), (True, 4)])
+def test_reconcile_real_entry_point_preserves_unknown_and_unmatched(tmp_path, stdin, mesas):
+    panel, jeba, mapping = reconciliation_inputs()
+    panel["elections"][0]["totals"]["mesas"] = mesas
+    result = invoke_reconcile(tmp_path, panel, jeba, mapping, stdin)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert result.stdout.strip() == json.dumps(data, sort_keys=True, ensure_ascii=False)
+    year = data["elections"][0]
+    assert year["year"] == 2021
+    assert year["is_proxy"] is True and year["proxy_for"] == "CONCEJALES"
+    assert year["jeba_category_unauthenticated"] is True
+    assert year["mesas"] == {"dine": mesas, "jeba": 3, "delta": mesas - 3}
+    assert year["electores"] == {"dine": 100, "jeba": None, "delta": None}
+    assert year["positivos"]["delta"] == -8
+    assert year["blancos"]["delta"] == -1 and year["nulos"]["delta"] == -1
+    assert year["offers"] == [{"dine_id": "d", "jeba_list_id": "j", "dine_votes": 10,
+        "jeba_votes": 15, "delta": -5, "delta_share_of_jeba_positivos": "-1/4"}]
+    assert year["unmatched_dine"] == [{"dine_id": "u", "name": "SYNTHETIC U", "votes": 2}]
+    assert year["unmatched_jeba"] == [jeba["elections"][0]["offers"][1]]
+    assert year["reasons"] == {"mesas_missing_in_provisional": max(3 - mesas, 0),
+        "mesas_extra_in_provisional": max(mesas - 3, 0), "offers_unmatched_dine": 1,
+        "offers_unmatched_jeba": 1, "offers_with_vote_delta": 1, "map_pair_not_found": 1}
+    assert year["mesas_missing_note"] == "unidentified: district totals cannot identify which mesas"
+    assert data["years_without_counterpart"] == {"panel": [2015], "jeba": [2025]}
+    assert data["base_2025"] == dict(jeba["elections"][1],
+        note="definitive district base; no provisional mesa data")
+
+
+@pytest.mark.parametrize("invalid", ["unknown_year", "duplicate_dine", "duplicate_jeba", "schema"])
+def test_reconcile_invalid_offer_map(tmp_path, invalid):
+    panel, jeba, mapping = reconciliation_inputs()
+    if invalid == "unknown_year":
+        mapping["years"]["2025"] = []
+    elif invalid == "schema":
+        mapping["schema_version"] = 2
+    else:
+        pair = mapping["years"]["2021"][0].copy()
+        pair["jeba_list_id" if invalid == "duplicate_dine" else "dine_id"] = "different"
+        mapping["years"]["2021"].append(pair)
+    result = invoke_reconcile(tmp_path, panel, jeba, mapping)
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith("error: invalid offer map: ")
+
+
+def test_reconcile_zero_reasons_and_unknown_denominator(tmp_path):
+    panel, jeba, mapping = reconciliation_inputs()
+    panel["elections"] = panel["elections"][:1]
+    p = panel["elections"][0]
+    p.update(is_proxy=False, proxy_for=None)
+    p["totals"]["mesas"] = 3
+    p["totals"]["positive"].pop("u")
+    p["totals"]["positive"]["d"]["votes"] = 15
+    j = jeba["elections"][0]
+    j["category_label_as_printed"] = "CONCEJALES"
+    j["totals"]["positivos"] = None
+    j["offers"] = j["offers"][:1]
+    mapping["years"]["2021"] = mapping["years"]["2021"][:1]
+    result = invoke_reconcile(tmp_path, panel, jeba, mapping)
+    assert result.returncode == 0, result.stderr
+    year = json.loads(result.stdout)["elections"][0]
+    assert not year["is_proxy"] and year["proxy_for"] is None
+    assert not year["jeba_category_unauthenticated"]
+    assert year["positivos"]["delta"] is None
+    assert year["offers"][0]["delta_share_of_jeba_positivos"] is None
+    assert all(value == 0 for value in year["reasons"].values())
