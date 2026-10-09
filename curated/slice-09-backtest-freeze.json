@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "experiment_id": "slice09-ei-relation-backtest-v1",
+  "declared_on": "2026-10-09",
+  "status": "frozen_before_measurement",
+  "code": {
+    "commit": "1a65a4f512000126e1cb55d155d5ae6132853b2f",
+    "tree": "6302f7122cf289b8f894cf4a96e40b324de0b26e",
+    "files": {
+      "etl/etl/admin_codes.py": "4cc870b51321a1106dc56a5fffe2aa16be1f919dc78e0aa03af58b2e25eb4586",
+      "etl/etl/dine_municipal_panel.py": "4b9b607cf0db74ff5bb6fc6ac9c9553c617b1d802aa962a0365e0396c1252b4b",
+      "etl/etl/forecast_baselines.py": "ec28caac8d59a15c12ec19f7c589abfd6904826967371e3528f3a2cfb11f2923",
+      "etl/etl/hare_seats.py": "2230575c4805d685aa10ee41b26440b76a886f4bd18576f921ec58b6ed54cf72",
+      "etl/etl/mesa_transfers.py": "68c164c303a39fba5dba6a42100ecad0ff05a401a0465c82bfb8d716b978a6f0",
+      "etl/etl/numeric.py": "aa173f8147b43920c895ec8a8347d4f7cfc74afc0bad66e177ca76f30c1956be",
+      "etl/etl/relation_forecast.py": "b36473285895360fa324400ffed7aa6053472082806c63761d73c73bf487fb9a"
+    }
+  },
+  "interpreter": "CPython 3.13.12 (uv-managed, pinned) with -I -S -B",
+  "inputs": {
+    "curated/slice-09-dine-jeba-offer-map.json": "a5d0bf1d4172ba957d3669573ee8a6fc1904114988795a9b0aff5171fcb5248b",
+    "curated/slice-09-forecast-recipe.json": "a5ac4db04d769cdde019f7c8238fa7415aba850726fcb50d3a3128e64ea51eb2",
+    "curated/slice-09-jeba-definitive-totals.json": "455555f1336efaca66605dbd7f6441e78533f9e558568705b6c19779f73a42fd",
+    "curated/slice-09-mesa-alignment-rules.json": "c1cedd95e35d73dbdd1628da3875e1471e42c27ea270e81089b4d22dc888e036",
+    "curated/slice-09-mesa-panel-inputs.json": "8bf608bbdb25c1d13384a51ab4abff5d539350b1ac040cc879cfffaf2576b0c9",
+    "curated/slice-09-offer-correspondence.json": "e0c158507f73e94c7374df2ab617ca40d8e4995fb32527746eb719b550844a33",
+    "curated/slice-09-transfer-recipe.json": "9d1788043543b258aeda07294edcc6c1b0ce298df851ee7e2fe7ff265e07dbf1"
+  },
+  "documents": {
+    "docs/research/slice-09-backtest-preregistration.md": "e57d00a5d82cc390fe6612cda51eb96661de60b04e05e689e241b73bf1a2b4f3"
+  },
+  "derived": {
+    "panel": {
+      "command": "dine_municipal_panel.py panel --inputs curated/slice-09-mesa-panel-inputs.json",
+      "sha256": "059cb47192aaee05383d538345cec92b36c4210b4ec82898f9114dc2a25d0127"
+    }
+  },
+  "forecast_command": "dine_municipal_panel.py forecast --panel PANEL --rules curated/slice-09-mesa-alignment-rules.json --transfer-recipe curated/slice-09-transfer-recipe.json --forecast-recipe curated/slice-09-forecast-recipe.json --correspondence curated/slice-09-offer-correspondence.json --jeba curated/slice-09-jeba-definitive-totals.json --offer-map curated/slice-09-dine-jeba-offer-map.json --pair ORIGIN TARGET --train TRAIN...",
+  "development_cuts": [
+    {
+      "target": 2019,
+      "pair": [
+        2017,
+        2019
+      ],
+      "train": [
+        [
+          2015,
+          2017
+        ]
+      ]
+    },
+    {
+      "target": 2021,
+      "pair": [
+        2019,
+        2021
+      ],
+      "train": [
+        [
+          2015,
+          2017
+        ],
+        [
+          2017,
+          2019
+        ]
+      ]
+    },
+    {
+      "target": 2023,
+      "pair": [
+        2021,
+        2023
+      ],
+      "train": [
+        [
+          2015,
+          2017
+        ],
+        [
+          2017,
+          2019
+        ],
+        [
+          2019,
+          2021
+        ]
+      ]
+    }
+  ],
+  "final_test": {
+    "target": 2025,
+    "pair": [
+      2023,
+      2025
+    ],
+    "train": [
+      [
+        2015,
+        2017
+      ],
+      [
+        2017,
+        2019
+      ],
+      [
+        2019,
+        2021
+      ],
+      [
+        2021,
+        2023
+      ]
+    ],
+    "measurements_allowed": 1,
+    "run_after": "development results committed"
+  },
+  "metrics": {
+    "primary": "district TV of positive-vote shares vs JEBA definitive totals, exact fractions; 1 pp = 1/100 TV",
+    "secondary": "half-L1 seat error of Hare allocations, 9 seats, Ley 5109 arts. 109-110",
+    "per_mesa": "not applicable: model applies at district level; not computed"
+  },
+  "references": {
+    "candidates": [
+      "B1",
+      "B2"
+    ],
+    "selection": "lower mean TV over development cuts, chosen once globally",
+    "tie": "gates must pass against both B1 and B2"
+  },
+  "gates": {
+    "relative_mean_tv_max_ratio": "85/100",
+    "absolute_mean_tv_min_gain": "1/100",
+    "cut_wins_required": "strict_majority",
+    "cut_win": "model TV strictly lower than reference TV",
+    "max_cut_tv_loss": "2/100",
+    "seat_error_mean": "not_worse_than_reference",
+    "absolute_tv_is_gate": false,
+    "undefined_metric": "fails the gate it feeds"
+  },
+  "final_confirmation": {
+    "max_tv_loss": "2/100",
+    "seat_error": "not_worse_than_reference",
+    "reference": "same best reference"
+  },
+  "verdict_rule": "validated iff every development gate and the 2025 confirmation pass; otherwise unvalidated assumptions, no retuning, consult user",
+  "decision": "gate composition option A chosen by user 2026-10-09"
+}

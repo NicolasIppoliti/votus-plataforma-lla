@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "bootstrap": {
+    "replicates": 200,
+    "seed": 20261009,
+    "rng": "random.Random (Mersenne Twister), stdlib",
+    "interval": "percentile",
+    "levels": ["0.025", "0.5", "0.975"],
+    "warm_start": "point_estimate"
+  },
+  "weighting": "origin_electores",
+  "init": "destination_share_rows",
+  "tol": "1e-10",
+  "max_iter": 20000,
+  "lipschitz": "power_iteration",
+  "accelerator": "fista_with_monotone_restart",
+  "power_iterations": 1000,
+  "safety_factor": "1.05",
+  "categories": "Each agrupacion_id is its own category; never pool unknown offers. Add __non_positive__ = electores - positivo; exclude negative residual mesas.",
+  "declared_on": "2026-10-09",
+  "note": "declared before any backtest measurement"
+}

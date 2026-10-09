@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "canonical_offers": "curated/slice-09-jeba-definitive-totals.json: elections[].offers; all relation ids are year-local references to the exact JEBA list_id and label in that file",
+  "relation_rule": {
+    "declared_on": "2026-10-09",
+    "interpretation": "Declared modelling prior before measurement, not measured ideology or voter transfers.",
+    "municipal": "Continuation iff the same official registry id competes in both years.",
+    "core": "PJ leads peronist fronts; absent PJ, use the front's member-party set. Cambiemos/JxC/Juntos core is PRO+UCR+CC-ARI (2015 UCR+CC-ARI documented); FIT core is PO+PTS+IS. Overlapping subsets of an absent-PJ front may support merge/split branches.",
+    "minor": "Other shared provincial members are informational member_overlap entries, never coverage or continuity on their own; core branch support is not repeated as minor overlap.",
+    "split": "Record destinations and shared core parties when a core divides; include additional shared members with each branch.",
+    "brand": "Same-name alliance may continue when the destination includes the same-name party; this does not imply member-party carryover.",
+    "unknown": "No source means exit/entry, indicating undocumented succession, not necessarily historical dissolution or creation.",
+    "coverage": "Complete canonical coverage; repeated supported relations allowed; no exit/entry for supported offers. Multiple predecessor records require a merge containing all their origins.",
+    "allocation": "Persistence allocation of split shares is deferred to a later frozen baseline rule; no allocation is declared here.",
+    "sources": "Each supported relation cites both sides through the sources dictionary; parent visual verification is attributed, not worker refetch. sha256_prefix is the first 16 hex supplied by parent."
+  },
+  "party_codes": {"PRO":"PRO", "UCR":"UCR", "CC":"CC-ARI", "PJ":"Partido Justicialista", "FG":"Frente Grande", "V":"Victoria", "EDE":"Nuevo Encuentro/EDE", "K":"Kolina", "FRA":"Frente Renovador Auténtico", "FR":"Frente Renovador", "RF":"Renovador Federal", "LDS":"Libres del Sur", "TP":"Tercera Posición", "CET":"Cultura Educación y Trabajo", "UCyB":"Unión Celeste y Blanco", "UP":"Unión Popular", "UPF":"Unión Popular Federal", "UT":"Unión por Todos", "DP":"Demócrata Progresista", "D":"Demócrata", "CP":"Conservador Popular", "EA":"Espacio Abierto", "DIA":"Diálogo", "PF":"Propuesta Federal", "LYD":"Lealtad y Dignidad", "TyP":"Trabajo y Pueblo", "PO":"Partido del Obrero", "PTS":"PTS", "IS":"IS", "NI":"Nueva Izquierda", "NBA":"Nuevo Buenos Aires", "CF":"Compromiso Federal", "IP":"Izquierda Popular", "PC":"Comunista", "UPop":"Unidad Popular", "PCom":"Patria de los Comunes", "S":"Socialista", "SOL":"Solidario", "FED":"Federal", "UL":"Unión por la Libertad", "LLA":"La Libertad Avanza"},
+  "sources": {
+    "15C":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/118041706201502040.PDF","kind":"official","claim":"The recognition documents Cambiemos members including UCR and CC-ARI.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"94ee9a65d51a3550"},
+    "15F":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/118021706201502040.PDF","kind":"official","claim":"The FPV recognition documents PJ, Frente Grande, Victoria, EDE and Kolina among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"f59f6911f0348f17"},
+    "15U":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/118001706201502030.PDF","kind":"official","claim":"The UNA recognition documents Frente Renovador Auténtico, Tercera Posición and UNIR among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"8d17a94888b86526"},
+    "15P":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/118071706201502030.PDF","kind":"official","claim":"The Progresistas recognition documents GEN, Socialista and Libres del Sur among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"0896ac51f0d8b71d"},
+    "17C":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119001906201702010.PDF","kind":"official","claim":"The Cambiemos recognition documents PRO, UCR, CC-ARI and other provincial members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"38389a1bc456ea9e"},
+    "17UC":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119052206201704010.PDF","kind":"official","claim":"Unidad Ciudadana comprises Frente Grande, Victoria, EDE and Kolina, without PJ.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"8ab00133b0293c64"},
+    "17P":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119092206201704010.PDF","kind":"official","claim":"The 1País recognition documents Frente Renovador Auténtico, GEN, Libres del Sur and Tercera Posición among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"9c6023872b4d2582"},
+    "17F":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119102206201704010.PDF","kind":"official","claim":"Frente Justicialista comprises PJ and Lealtad y Dignidad.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"8aed753d835c0ae8"},
+    "17I":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119042206201701040.PDF","kind":"official","claim":"The FIT recognition documents PO, PTS and IS.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"353982c65cfd6ca3"},
+    "19C":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119142106201602050.PDF","kind":"official","claim":"The parent identifies this resolution as the 2019 JxC recognition documenting PRO, UCR and CC-ARI among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"f000cb87195d1e0a","note":"URL identifier contains 2016; retained exactly as supplied and visually identified by parent, not corrected by inference."},
+    "19F":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119162106201904050.PDF","kind":"official","claim":"The FdT recognition documents PJ, Unidad Ciudadana members and the Frente Renovador Auténtico branch of 1País.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"82a337f623a9d197"},
+    "19CF":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119152106201905050.PDF","kind":"official","claim":"Consenso Federal includes GEN, Libres del Sur, Tercera Posición and Socialista among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"45fa64d7108fdcda"},
+    "19N":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119111806201906060.PDF","kind":"official","claim":"Frente NOS comprises Conservador Popular and Unión por Todos.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"11d5b7ad726dac3f"},
+    "19I":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/119131806201903030.PDF","kind":"official","claim":"FIT-Unidad comprises PTS, IS, PO and Nueva Izquierda.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"5253d5e7d7d5829d"},
+    "21C":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/150622307202100000.PDF","kind":"official","claim":"Juntos includes PRO, UCR, CC-ARI, GEN and Socialista among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"3c279491836b26a2"},
+    "21F":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/150612307202100000.PDF","kind":"official","claim":"FdT includes PJ, Frente Grande, Victoria, Nuevo Encuentro and Frente Renovador among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"bd34da9120cf76ea"},
+    "21A":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/150592307202100000.PDF","kind":"official","claim":"Avanza Libertad includes Demócrata and UCeDé.","evidence_status":"verified_text_extraction_by_parent_2026-10-09","sha256_prefix":"8a095041a7da18c4"},
+    "21I":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/150602307202100000.PDF","kind":"official","claim":"FIT-Unidad includes PTS, IS, PO and Nueva Izquierda.","evidence_status":"verified_text_extraction_by_parent_2026-10-09","sha256_prefix":"51a963b685182358"},
+    "23C":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/150612406202314280.PDF","kind":"official","claim":"JxC includes PRO, UCR, CC-ARI, GEN, Socialista, UNIR and Unión Popular Federal among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"3b40e302754e6c79"},
+    "23L":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/921042406202300000.PDF","kind":"official","claim":"LLA comprises Unión Celeste y Blanco, Unión por Todos, Fe, Integrar, MID and Demócrata.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"bfdc3097125cb418"},
+    "23F":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/150622406202314280.PDF","kind":"official","claim":"UxP includes PJ, Frente Grande, Victoria, Nuevo Encuentro and Frente Renovador among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"b37bfa3a7eb431bc"},
+    "25F":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/11707202515043608.PDF","kind":"official","claim":"Fuerza Patria includes PJ, Frente Grande, Victoria, Nuevo Encuentro and Frente Renovador among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"716e2a92a12d8124"},
+    "25L":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/11807202516400908.PDF","kind":"official","claim":"LLA 2025 comprises PRO and the La Libertad Avanza party, with none of the six documented 2023 alliance members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"d93e89cc33897984"},
+    "25S":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/11807202516113100.PDF","kind":"official","claim":"Somos Buenos Aires includes UCR, CC-ARI, GEN, Socialista and Diálogo among its members.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"364d5892cb5e1d83"},
+    "25P":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/11707202514443706.PDF","kind":"official","claim":"Potencia comprises MID, UNIR and Demócrata.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"0fa3c82e7a51381d"},
+    "25E":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/11707202514540409.PDF","kind":"official","claim":"Es con Vos comprises Republicano Federal and Unión Popular Federal.","evidence_status":"verified_visually_by_parent_2026-10-09","sha256_prefix":"27d76da12e910c37"},
+    "caducas":{"url":"https://www.juntaelectoral.gba.gov.ar/agrupaciones-caducas.php","kind":"official","claim":"The official registry identifies IVR as 382 and Bien Común as 809.","evidence_status":"verified_visually_by_parent_2026-10-09"},
+    "reconocidas":{"url":"https://www.juntaelectoral.gba.gov.ar/agrupaciones-reconocidas.php","kind":"official","claim":"The official registry identifies Primero Rosales separately as 962.","evidence_status":"verified_visually_by_parent_2026-10-09"},
+    "BCexit":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/11304202611415305.PDF","kind":"official","claim":"Bien Común caducidad records non-participation in 2023 and 2025.","evidence_status":"verified_visually_by_parent_2026-10-09"},
+    "PR":{"url":"https://www.juntaelectoral.gba.gov.ar/files/resoluciones/198092305202300000.PDF","kind":"official","claim":"Primero Rosales was recognized separately without a documented succession from Bien Común.","evidence_status":"verified_visually_by_parent_2026-10-09"}
+  },
+  "pairs": [
+    {"origin_year":2015,"destination_year":2017,"relations":[
+      {"type":"continuation","origins":["135"],"destinations":["508"],"core_parties":["UCR","CC"],"sources":{"origin":{"135":["15C"]},"destination":{"508":["17C"]}}},
+      {"type":"continuation","origins":["131"],"destinations":["509"],"core_parties":["PJ"],"sources":{"origin":{"131":["15F"]},"destination":{"509":["17F"]}}},
+      {"type":"merge","origins":["138","132"],"destinations":["501"],"core_parties":["FRA","TP","UNIR","GEN","LDS"],"origin_core_parties":{"138":["FRA","TP","UNIR"],"132":["GEN","LDS"]},"sources":{"origin":{"138":["15U"],"132":["15P"]},"destination":{"501":["17P"]}}},
+      {"type":"continuation","origins":["382"],"destinations":["382"],"basis":"municipal_registry","registry_id":"382","sources":{"origin":{"382":["caducas"]},"destination":{"382":["caducas"]}}},
+      {"type":"exit","origins":["1804"],"destinations":[],"note":"No documented core successor to Frente Popular."},
+      {"type":"exit","origins":["137"],"destinations":[],"note":"2015 FIT recognition not found; do not infer membership from labels."},
+      {"type":"entry","origins":[],"destinations":["809"],"note":"No documented predecessor to registry 809."},
+      {"type":"entry","origins":[],"destinations":["503"],"note":"FPV overlap is minor under the declared PJ-core rule, not a core predecessor."},
+      {"type":"entry","origins":[],"destinations":["510"],"note":"2015 FIT membership source unavailable."}
+    ],"member_overlap":[
+      {"origin":"135","destination":"508","role":"minor","shared_parties":["UL","EA","Fe","CP","DIA"],"sources":["15C","17C"]},
+      {"origin":"131","destination":"503","role":"minor","shared_parties":["FG","V","EDE","K"],"sources":["15F","17UC"]},
+      {"origin":"131","destination":"508","role":"minor","shared_parties":["UT"],"sources":["15F","17C"]},
+      {"origin":"135","destination":"509","role":"minor","shared_parties":["LYD"],"sources":["15C","17F"]}
+    ]},
+    {"origin_year":2017,"destination_year":2019,"relations":[
+      {"type":"continuation","origins":["508"],"destinations":["135"],"core_parties":["PRO","UCR","CC"],"sources":{"origin":{"508":["17C"]},"destination":{"135":["19C"]}}},
+      {"type":"merge","origins":["503","509","501"],"destinations":["136"],"core_parties":["FG","V","EDE","K","PJ","FRA","NBA","PAIS","CET"],"origin_core_parties":{"503":["FG","V","EDE","K"],"509":["PJ"],"501":["FRA","NBA","PAIS","CET"]},"sources":{"origin":{"503":["17UC"],"509":["17F"],"501":["17P"]},"destination":{"136":["19F"]}}},
+      {"type":"split","origins":["501"],"destinations":["136","137"],"core_parties":["FRA","NBA","PAIS","CET","GEN","LDS","TP"],"destination_core_parties":{"136":["FRA","NBA","PAIS","CET"],"137":["GEN","LDS","TP"]},"sources":{"origin":{"501":["17P"]},"destination":{"136":["19F"],"137":["19CF"]}}},
+      {"type":"continuation","origins":["510"],"destinations":["133"],"core_parties":["PO","PTS","IS"],"sources":{"origin":{"510":["17I"]},"destination":{"133":["19I"]}}},
+      {"type":"continuation","origins":["809"],"destinations":["809"],"basis":"municipal_registry","registry_id":"809","sources":{"origin":{"809":["caducas"]},"destination":{"809":["caducas"]}}},
+      {"type":"exit","origins":["382"],"destinations":[],"note":"Registry 382 does not compete among canonical destination offers."},
+      {"type":"entry","origins":[],"destinations":["131"],"note":"Cambiemos overlap is minor, not a core predecessor to NOS."}
+    ],"member_overlap":[
+      {"origin":"508","destination":"135","role":"minor","shared_parties":["Fe","EA","D","DIA"],"sources":["17C","19C"]},
+      {"origin":"508","destination":"131","role":"minor","shared_parties":["CP","UT"],"sources":["17C","19N"]}
+    ]},
+    {"origin_year":2019,"destination_year":2021,"relations":[
+      {"type":"continuation","origins":["135"],"destinations":["506"],"core_parties":["PRO","UCR","CC"],"sources":{"origin":{"135":["19C"]},"destination":{"506":["21C"]}}},
+      {"type":"continuation","origins":["136"],"destinations":["507"],"core_parties":["PJ"],"sources":{"origin":{"136":["19F"]},"destination":{"507":["21F"]}}},
+      {"type":"continuation","origins":["133"],"destinations":["504"],"core_parties":["PO","PTS","IS"],"sources":{"origin":{"133":["19I"]},"destination":{"504":["21I"]}}},
+      {"type":"continuation","origins":["809"],"destinations":["809"],"basis":"municipal_registry","registry_id":"809","sources":{"origin":{"809":["caducas"]},"destination":{"809":["caducas"]}}},
+      {"type":"exit","origins":["137"],"destinations":[],"note":"Consenso Federal overlaps are minor under the declared rule; no documented core successor."},
+      {"type":"exit","origins":["131"],"destinations":[],"note":"No documented core successor to NOS."},
+      {"type":"entry","origins":[],"destinations":["503"],"note":"Demócrata overlap is minor, not a JxC core predecessor."},
+      {"type":"entry","origins":[],"destinations":["508"],"note":"Vamos con Vos members unknown."},
+      {"type":"entry","origins":[],"destinations":["258"],"note":"COPEBO membership in FdT is informational, not PJ-core succession."}
+    ],"member_overlap":[
+      {"origin":"135","destination":"506","role":"minor","shared_parties":["DP","EA","DIA","Integrar","PF"],"sources":["19C","21C"]},
+      {"origin":"136","destination":"507","role":"minor","shared_parties":["FG","V","EDE","PC","K","CET","CF","TyP","IP","PAIS","NBA"],"sources":["19F","21F"]},
+      {"origin":"133","destination":"504","role":"minor","shared_parties":["NI"],"sources":["19I","21I"]},
+      {"origin":"135","destination":"507","role":"minor","shared_parties":["Fe"],"sources":["19C","21F"]},
+      {"origin":"135","destination":"503","role":"minor","shared_parties":["D"],"sources":["19C","21A"]},
+      {"origin":"137","destination":"506","role":"minor","shared_parties":["GEN","S"],"sources":["19CF","21C"]},
+      {"origin":"136","destination":"258","role":"minor","shared_parties":["COPEBO"],"sources":["19F"],"note":"Destination is the canonical standalone COPEBO offer, not an alliance recognition."}
+    ]},
+    {"origin_year":2021,"destination_year":2023,"relations":[
+      {"type":"continuation","origins":["506"],"destinations":["132"],"core_parties":["PRO","UCR","CC"],"sources":{"origin":{"506":["21C"]},"destination":{"132":["23C"]}}},
+      {"type":"continuation","origins":["507"],"destinations":["134"],"core_parties":["PJ"],"sources":{"origin":{"507":["21F"]},"destination":{"134":["23F"]}}},
+      {"type":"exit","origins":["809"],"destinations":[],"note":"Caducidad documents 2023/2025 non-participation; no Primero Rosales succession.","sources":["BCexit","PR"]},
+      {"type":"exit","origins":["503"],"destinations":[],"note":"Demócrata and UCeDé overlaps are minor, not core continuity."},
+      {"type":"exit","origins":["508"],"destinations":[],"note":"Vamos con Vos members unknown."},
+      {"type":"exit","origins":["504"],"destinations":[],"note":"No canonical FIT destination offer."},
+      {"type":"exit","origins":["258"],"destinations":[],"note":"No documented core successor to standalone COPEBO."},
+      {"type":"entry","origins":[],"destinations":["135"],"note":"Provincial party overlaps are minor, not a documented core predecessor."},
+      {"type":"entry","origins":[],"destinations":["962"],"note":"Separately recognized registry 962; no predecessor.","sources":["PR"]}
+    ],"member_overlap":[
+      {"origin":"506","destination":"132","role":"minor","shared_parties":["GEN","S","DIA","PF","UPF","UNIR","EA"],"sources":["21C","23C"]},
+      {"origin":"507","destination":"134","role":"minor","shared_parties":["FG","V","EDE","PC","K","CF","TyP","IP","FR","SOL","NBA","UPop"],"sources":["21F","23F"]},
+      {"origin":"506","destination":"135","role":"minor","shared_parties":["MID","Integrar"],"sources":["21C","23L"]},
+      {"origin":"507","destination":"135","role":"minor","shared_parties":["Fe"],"sources":["21F","23L"]},
+      {"origin":"503","destination":"135","role":"minor","shared_parties":["D"],"sources":["21A","23L"]},
+      {"origin":"503","destination":"132","role":"minor","shared_parties":["UCeDé"],"sources":["21A","23C"]}
+    ]},
+    {"origin_year":2023,"destination_year":2025,"relations":[
+      {"type":"continuation","origins":["134"],"destinations":["2200"],"core_parties":["PJ"],"sources":{"origin":{"134":["23F"]},"destination":{"2200":["25F"]}}},
+      {"type":"merge","origins":["132","135"],"destinations":["2206"],"core_parties":["PRO"],"origin_bases":{"132":{"basis":"party_core","core_parties":["PRO"]},"135":{"basis":"brand","brand":"La Libertad Avanza"}},"note":"Brand branch carries no 2023 member parties to LLA 2025; MID/Demócrata overlap goes to Potencia as minor.","sources":{"origin":{"132":["23C"],"135":["23L"]},"destination":{"2206":["25L"]}}},
+      {"type":"split","origins":["132"],"destinations":["2206","2204"],"core_parties":["PRO","UCR","CC"],"destination_core_parties":{"2206":["PRO"],"2204":["UCR","CC"]},"destination_shared_parties":{"2206":["PRO"],"2204":["UCR","CC","GEN","S","DIA"]},"sources":{"origin":{"132":["23C"]},"destination":{"2206":["25L"],"2204":["25S"]}}},
+      {"type":"continuation","origins":["962"],"destinations":["962"],"basis":"municipal_registry","registry_id":"962","sources":{"origin":{"962":["reconocidas","PR"]},"destination":{"962":["reconocidas"]}}},
+      {"type":"entry","origins":[],"destinations":["2201"],"note":"Potencia member overlap is minor; no core predecessor."},
+      {"type":"entry","origins":[],"destinations":["2207"],"note":"Unión y Libertad member list unavailable."},
+      {"type":"entry","origins":[],"destinations":["2203"],"note":"No canonical 2023 FIT counterpart."},
+      {"type":"entry","origins":[],"destinations":["2202"],"note":"Unión Popular Federal overlap is minor, not JxC-core succession."}
+    ],"member_overlap":[
+      {"origin":"134","destination":"2200","role":"minor","shared_parties":["FG","V","EDE","K","TyP","FR","PCom","SOL","NBA","UPop"],"sources":["23F","25F"]},
+      {"origin":"132","destination":"2204","role":"minor","shared_parties":["GEN","S","DIA"],"sources":["23C","25S"]},
+      {"origin":"132","destination":"2201","role":"minor","shared_parties":["UNIR"],"sources":["23C","25P"]},
+      {"origin":"132","destination":"2202","role":"minor","shared_parties":["UPF"],"sources":["23C","25E"]},
+      {"origin":"135","destination":"2201","role":"minor","shared_parties":["MID","D"],"sources":["23L","25P"]}
+    ]}
+  ]
+}

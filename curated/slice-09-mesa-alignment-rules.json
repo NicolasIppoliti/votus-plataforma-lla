@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "pairs": [[2015, 2017], [2017, 2019], [2019, 2021], [2021, 2023]],
+  "key": ["circuito_identity_key", "mesa_number", "mesa_tipo"],
+  "max_relative_electores_change": "1/10",
+  "basis": "The threshold is declared before any model measurement and applies to electores only, never votes. Mesas are alphabetical voter blocks, so composition can shift."
+}

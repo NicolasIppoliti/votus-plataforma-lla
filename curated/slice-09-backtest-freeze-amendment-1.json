@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "amends": "curated/slice-09-backtest-freeze.json",
+  "freeze_sha256": "965379656e5eaedcc5e009bfa642c7f46c0dea673f7aafac6fab0ba06cedc158",
+  "declared_on": "2026-10-09",
+  "change": "style_only_ruff_lint_and_format",
+  "reason": "Release Gates require ruff lint and format; frozen modules were reformatted after measurement without behavior change.",
+  "code_files": {
+    "etl/etl/dine_municipal_panel.py": {
+      "original_sha256": "4b9b607cf0db74ff5bb6fc6ac9c9553c617b1d802aa962a0365e0396c1252b4b",
+      "amended_sha256": "7f39f622ad6e14d92c571a5f45457382b2f900f2ef7f5bc1a602ffc50ff3b45e"
+    },
+    "etl/etl/forecast_baselines.py": {
+      "original_sha256": "ec28caac8d59a15c12ec19f7c589abfd6904826967371e3528f3a2cfb11f2923",
+      "amended_sha256": "9cc14a39a691d8ec25f9dfe7438832fb4f31c46ac8e4bfc47bcb3fbf5790daa7"
+    },
+    "etl/etl/hare_seats.py": {
+      "original_sha256": "2230575c4805d685aa10ee41b26440b76a886f4bd18576f921ec58b6ed54cf72",
+      "amended_sha256": "157944894bb291e89f6a27e75473808a1f47b9aa15a3796c0fbfa6f691f8cb53"
+    },
+    "etl/etl/mesa_transfers.py": {
+      "original_sha256": "68c164c303a39fba5dba6a42100ecad0ff05a401a0465c82bfb8d716b978a6f0",
+      "amended_sha256": "df65ec0e2e779e327f246ae7bfcbe4fd01f095ad48568403f488f61f6ad6d3bd"
+    },
+    "etl/etl/relation_forecast.py": {
+      "original_sha256": "b36473285895360fa324400ffed7aa6053472082806c63761d73c73bf487fb9a",
+      "amended_sha256": "5e3b5d7fe319f30ec708f169b2ed81ed35d91c8d0d07682bc360c29c11445eb8"
+    }
+  },
+  "reproduction": {
+    "panel_sha256": "059cb47192aaee05383d538345cec92b36c4210b4ec82898f9114dc2a25d0127",
+    "development_output_sha256": "cfa37305a5413b29ad09c238053b45f6d9a994b1ee03849cf84d2cf656ce515a",
+    "final_output_sha256": "e864f49e3ea70f7d9a7c06e82028b4c470ab94941d64f31124cae6c479bc922e",
+    "forecast_2023_2025_sha256": "6efbcb6ce11b7ba6818a2e4e32bd5b1cd58192374af0825300a2b7960dc7744f",
+    "note": "Reran with the amended code: panel, development, final and the 2023->2025 forecast are byte-identical to the committed outputs. The final-stage rerun is a reproduction, not a second counted measurement."
+  }
+}

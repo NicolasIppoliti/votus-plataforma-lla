@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "jurisdiction": {
+    "jeba_distrito": "027",
+    "dine_distrito": "02",
+    "dine_seccion": "027"
+  },
+  "elections": [
+    {
+      "year": 2015,
+      "scope": "definitive",
+      "source": {"id": "pba/2015-resultados-027", "url": "https://www.juntaelectoral.gba.gov.ar/resultados/2015027.pdf", "archived_path": "archive/pba/2015027.78bcdfc8901f759130db4d4085fc1be8fcedf2337599d123f39d9c2bd518ca2d.pdf", "sha256": "78bcdfc8901f759130db4d4085fc1be8fcedf2337599d123f39d9c2bd518ca2d", "page": 1},
+      "category_label_as_printed": null,
+      "category_basis": "Existing reader does not return an authenticated exact category header; docs/research/slice-09-official-evidence-inventory.md lines 239–245 documents numerical PDF evidence, not category authentication.",
+      "offers": [
+        {"list_id": "135", "label": "ALIANZA CAMBIEMOS BUENOS AIRES", "votes": 16260},
+        {"list_id": "382", "label": "INTEGRACION VECINALISTA ROSALEÑA", "votes": 9072},
+        {"list_id": "138", "label": "ALIANZA UNIDOS POR UNA NUEVA ALTERNATIVA", "votes": 4146},
+        {"list_id": "131", "label": "ALIANZA FRENTE PARA LA VICTORIA", "votes": 3032},
+        {"list_id": "1804", "label": "ALIANZA FRENTE POPULAR", "votes": 833},
+        {"list_id": "132", "label": "ALIANZA PROGRESISTAS", "votes": 791},
+        {"list_id": "137", "label": "AZA. FTE. DE IZQUIERDA Y LOS TRABAJADORES", "votes": 628}
+      ],
+      "totals": {"positivos": 34762, "blancos": 2763, "nulos": 250, "total_published": 37775, "electores": 48406, "mesas": 144},
+      "unknown_fields": [],
+      "checks": {"offers_sum": 34762, "offers_sum_equals_positivos": true},
+      "extraction": {
+        "reader": "etl.pba_pdf_evidence.extract",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_pdf_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/2015027.78bcdfc8901f759130db4d4085fc1be8fcedf2337599d123f39d9c2bd518ca2d.pdf'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'78bcdfc8901f759130db4d4085fc1be8fcedf2337599d123f39d9c2bd518ca2d'\"'\"'; print(json.dumps(extract(data, source_id='\"'\"'pba/2015-resultados-027'\"'\"'),ensure_ascii=False))'",
+        "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: []", "Exclusions by reason: {}"]
+      }
+    },
+    {
+      "year": 2017,
+      "scope": "definitive",
+      "source": {"id": "pba/2017-resultados-027", "url": "https://www.juntaelectoral.gba.gov.ar/resultados/2017027.pdf", "archived_path": "archive/pba/2017027.a3468c938bb9393b341d87638b39be46ae0f6d6c56cdab456c85a7394174bc13.pdf", "sha256": "a3468c938bb9393b341d87638b39be46ae0f6d6c56cdab456c85a7394174bc13", "page": 1},
+      "category_label_as_printed": null,
+      "category_basis": "Existing reader does not return an authenticated exact category header; docs/research/slice-09-official-evidence-inventory.md lines 239–245 documents numerical PDF evidence, not category authentication.",
+      "offers": [
+        {"list_id": "508", "label": "ALIANZA CAMBIEMOS BUENOS AIRES", "votes": 18289},
+        {"list_id": "809", "label": "BIEN COMUN POR ROSALES", "votes": 5579},
+        {"list_id": "503", "label": "ALIANZA UNIDAD CIUDADANA", "votes": 4502},
+        {"list_id": "501", "label": "ALIANZA 1 PAIS", "votes": 4418},
+        {"list_id": "509", "label": "ALIANZA FRENTE JUSTICIALISTA", "votes": 1712},
+        {"list_id": "510", "label": "ALIANZA FRENTE DE IZQUIERDA Y DE LOS", "votes": 830},
+        {"list_id": "382", "label": "INTEGRACION VECINALISTA ROSALEÑA", "votes": 679}
+      ],
+      "totals": {"positivos": 36009, "blancos": 1358, "nulos": 457, "total_published": 37824, "electores": 49875, "mesas": 148},
+      "unknown_fields": [],
+      "checks": {"offers_sum": 36009, "offers_sum_equals_positivos": true},
+      "extraction": {
+        "reader": "etl.pba_pdf_evidence.extract",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_pdf_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/2017027.a3468c938bb9393b341d87638b39be46ae0f6d6c56cdab456c85a7394174bc13.pdf'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'a3468c938bb9393b341d87638b39be46ae0f6d6c56cdab456c85a7394174bc13'\"'\"'; print(json.dumps(extract(data, source_id='\"'\"'pba/2017-resultados-027'\"'\"'),ensure_ascii=False))'",
+        "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: []", "Exclusions by reason: {}"]
+      }
+    },
+    {
+      "year": 2019,
+      "scope": "definitive",
+      "source": {"id": "pba/2019-resultados-027", "url": "https://www.juntaelectoral.gba.gov.ar/resultados/2019027.pdf", "archived_path": "archive/pba/2019027.f4e4f56d85fc0851cbc2c35fd727de60324584bdd10412f203e00374b9c57f6f.pdf", "sha256": "f4e4f56d85fc0851cbc2c35fd727de60324584bdd10412f203e00374b9c57f6f", "page": 1},
+      "category_label_as_printed": null,
+      "category_basis": "Existing reader does not return an authenticated exact category header; docs/research/slice-09-official-evidence-inventory.md lines 239–245 documents numerical PDF evidence, not category authentication.",
+      "offers": [
+        {"list_id": "135", "label": "JUNTOS POR EL CAMBIO", "votes": 22068},
+        {"list_id": "136", "label": "FRENTE DE TODOS", "votes": 7031},
+        {"list_id": "809", "label": "BIEN COMUN POR ROSALES", "votes": 5325},
+        {"list_id": "137", "label": "CONSENSO FEDERAL", "votes": 1747},
+        {"list_id": "131", "label": "FRENTE NOS", "votes": 610},
+        {"list_id": "133", "label": "FTE DE IZQ. Y DE TRABAJADORES-UNIDAD", "votes": 604}
+      ],
+      "totals": {"positivos": 37385, "blancos": 1826, "nulos": 354, "total_published": 39565, "electores": 49979, "mesas": 146},
+      "unknown_fields": [],
+      "checks": {"offers_sum": 37385, "offers_sum_equals_positivos": true},
+      "extraction": {
+        "reader": "etl.pba_pdf_evidence.extract",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_pdf_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/2019027.f4e4f56d85fc0851cbc2c35fd727de60324584bdd10412f203e00374b9c57f6f.pdf'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'f4e4f56d85fc0851cbc2c35fd727de60324584bdd10412f203e00374b9c57f6f'\"'\"'; print(json.dumps(extract(data, source_id='\"'\"'pba/2019-resultados-027'\"'\"'),ensure_ascii=False))'",
+        "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: []", "Exclusions by reason: {}"]
+      }
+    },
+    {
+      "year": 2021,
+      "scope": "definitive",
+      "source": {"id": "pba/2021-resultados-027", "url": "https://www.juntaelectoral.gba.gov.ar/resultados/2021027.pdf", "archived_path": "archive/pba/2021027.682aeb7bbba4eceed32123a4bb6b60b273e5a9c9adf75345fa8fb7f8548afa75.pdf", "sha256": "682aeb7bbba4eceed32123a4bb6b60b273e5a9c9adf75345fa8fb7f8548afa75", "page": 1},
+      "category_label_as_printed": null,
+      "category_basis": "Existing reader does not return an authenticated exact category header; docs/research/slice-09-official-evidence-inventory.md lines 239–245 documents numerical PDF evidence, not category authentication.",
+      "offers": [
+        {"list_id": "506", "label": "ALIANZA JUNTOS", "votes": 16401},
+        {"list_id": "507", "label": "FRENTE DE TODOS", "votes": 5927},
+        {"list_id": "809", "label": "BIEN COMUN POR ROSALES", "votes": 5512},
+        {"list_id": "503", "label": "ALIANZA AVANZA LIBERTAD", "votes": 3336},
+        {"list_id": "508", "label": "FRENTE VAMOS CON VOS", "votes": 1650},
+        {"list_id": "504", "label": "FRENTE DE IZQUIERDA Y DE TRABAJADORES -", "votes": 1137},
+        {"list_id": "258", "label": "CORRIENTE DE PENSAMIENTO BONAERENSE", "votes": 558}
+      ],
+      "totals": {"positivos": 34521, "blancos": 1581, "nulos": 575, "total_published": 36677, "electores": 51248, "mesas": 152},
+      "unknown_fields": [],
+      "checks": {"offers_sum": 34521, "offers_sum_equals_positivos": true},
+      "extraction": {
+        "reader": "etl.pba_pdf_evidence.extract",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_pdf_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/2021027.682aeb7bbba4eceed32123a4bb6b60b273e5a9c9adf75345fa8fb7f8548afa75.pdf'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'682aeb7bbba4eceed32123a4bb6b60b273e5a9c9adf75345fa8fb7f8548afa75'\"'\"'; print(json.dumps(extract(data, source_id='\"'\"'pba/2021-resultados-027'\"'\"'),ensure_ascii=False))'",
+        "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: []", "Exclusions by reason: {}"]
+      }
+    },
+    {
+      "year": 2023,
+      "scope": "definitive",
+      "source": {"id": "pba/2023-resultados-027", "url": "https://www.juntaelectoral.gba.gov.ar/resultados/2023027.pdf", "archived_path": "archive/pba/2023027.5d44448d8ed1d7c646190f9d30533217706d5b4803a3c439602ce7362ee733cb.pdf", "sha256": "5d44448d8ed1d7c646190f9d30533217706d5b4803a3c439602ce7362ee733cb", "page": 1},
+      "category_label_as_printed": null,
+      "category_basis": "Existing reader does not return an authenticated exact category header; docs/research/slice-09-official-evidence-inventory.md lines 239–245 documents numerical PDF evidence, not category authentication.",
+      "offers": [
+        {"list_id": "134", "label": "UNION POR LA PATRIA", "votes": 12507},
+        {"list_id": "132", "label": "JUNTOS POR EL CAMBIO", "votes": 10630},
+        {"list_id": "135", "label": "LA LIBERTAD AVANZA", "votes": 10365},
+        {"list_id": "962", "label": "AGRUPACION MUNICIPAL PRIMERO ROSALES", "votes": 1857}
+      ],
+      "totals": {"positivos": 35359, "blancos": 3597, "nulos": 317, "total_published": 39273, "electores": 52194, "mesas": 153},
+      "unknown_fields": [],
+      "checks": {"offers_sum": 35359, "offers_sum_equals_positivos": true},
+      "extraction": {
+        "reader": "etl.pba_pdf_evidence.extract",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_pdf_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/2023027.5d44448d8ed1d7c646190f9d30533217706d5b4803a3c439602ce7362ee733cb.pdf'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'5d44448d8ed1d7c646190f9d30533217706d5b4803a3c439602ce7362ee733cb'\"'\"'; print(json.dumps(extract(data, source_id='\"'\"'pba/2023-resultados-027'\"'\"'),ensure_ascii=False))'",
+        "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: []", "Exclusions by reason: {}"]
+      }
+    },
+    {
+      "year": 2025,
+      "scope": "definitive",
+      "source": {"id": "pba/2025-resultados-027", "url": "https://www.juntaelectoral.gba.gov.ar/resultados/2025027.pdf", "archived_path": "archive/pba/2025027.59d044be3d4e52dccf5211d3510b5d517d38cdccf484c3d1d5f549172bd88f89.pdf", "sha256": "59d044be3d4e52dccf5211d3510b5d517d38cdccf484c3d1d5f549172bd88f89", "page": 1},
+      "category_label_as_printed": null,
+      "category_basis": "Existing reader does not return an authenticated exact category header; docs/research/slice-09-official-evidence-inventory.md lines 239–245 documents numerical PDF evidence, not category authentication.",
+      "offers": [
+        {"list_id": "2206", "label": "ALIANZA LA LIBERTAD AVANZA", "votes": 14550},
+        {"list_id": "2200", "label": "ALIANZA FUERZA PATRIA", "votes": 7300},
+        {"list_id": "2201", "label": "ALIANZA POTENCIA", "votes": 4540},
+        {"list_id": "2207", "label": "ALIANZA UNION Y LIBERTAD", "votes": 1788},
+        {"list_id": "2204", "label": "ALIANZA SOMOS BUENOS AIRES", "votes": 1512},
+        {"list_id": "962", "label": "AGRUPACION MUNICIPAL PRIMERO ROSALES", "votes": 1384},
+        {"list_id": "2203", "label": "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD", "votes": 1027},
+        {"list_id": "2202", "label": "ALIANZA ES CON VOS ES CON NOSOTROS", "votes": 190}
+      ],
+      "totals": {"positivos": 32291, "blancos": 2150, "nulos": null, "total_published": 34441, "electores": 52755, "mesas": 154},
+      "unknown_fields": ["nulos"],
+      "checks": {"offers_sum": 32291, "offers_sum_equals_positivos": true},
+      "extraction": {
+        "reader": "etl.pba_pdf_evidence.extract",
+        "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_pdf_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/2025027.59d044be3d4e52dccf5211d3510b5d517d38cdccf484c3d1d5f549172bd88f89.pdf'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'59d044be3d4e52dccf5211d3510b5d517d38cdccf484c3d1d5f549172bd88f89'\"'\"'; print(json.dumps(extract(data, source_id='\"'\"'pba/2025-resultados-027'\"'\"'),ensure_ascii=False))'",
+        "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: [\"printed_field_missing:null_votes\"]", "Exclusions by reason: {}"]
+      },
+      "components": {
+        "argentinos": {
+          "source": {"id": "pba/2025-distrito-027-argentinos", "url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/escrutinio-argentinos/distrito_027.html", "archived_path": "archive/pba/distrito_027_argentinos.7514c4e90d15e2dc19c85f4a5508cbf11c201c7e0d8fcaf4dee7a3ff25c6a9de.html", "sha256": "7514c4e90d15e2dc19c85f4a5508cbf11c201c7e0d8fcaf4dee7a3ff25c6a9de", "page": null},
+          "category_label_as_printed": null,
+          "category_basis": "etl/etl/pba_html_evidence.py lines 170–179 recognizes CONCEJALES or CONCEJALES TITULARES but returns normalized CONCEJALES, not the exact printed header.",
+          "offers": [
+            {"list_id": "2206", "label": "ALIANZA LA LIBERTAD AVANZA", "votes": 14509},
+            {"list_id": "2200", "label": "ALIANZA FUERZA PATRIA", "votes": 7275},
+            {"list_id": "2201", "label": "ALIANZA POTENCIA", "votes": 4524},
+            {"list_id": "2207", "label": "ALIANZA UNION Y LIBERTAD", "votes": 1776},
+            {"list_id": "2204", "label": "ALIANZA SOMOS BUENOS AIRES", "votes": 1509},
+            {"list_id": "962", "label": "AGRUPACION MUNICIPAL PRIMERO ROSALES", "votes": 1379},
+            {"list_id": "2203", "label": "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD", "votes": 1024},
+            {"list_id": "2202", "label": "ALIANZA ES CON VOS ES CON NOSOTROS", "votes": 188}
+          ],
+          "totals": {"positivos": 32184, "blancos": 2133, "nulos": null, "total_published": 34317, "electores": 52104, "mesas": 154},
+          "unknown_fields": ["nulos"],
+          "checks": {"offers_sum": 32184, "offers_sum_equals_positivos": true},
+          "extraction": {
+            "reader": "etl.pba_html_evidence.extract",
+            "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_html_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/distrito_027_argentinos.7514c4e90d15e2dc19c85f4a5508cbf11c201c7e0d8fcaf4dee7a3ff25c6a9de.html'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'7514c4e90d15e2dc19c85f4a5508cbf11c201c7e0d8fcaf4dee7a3ff25c6a9de'\"'\"'; print(json.dumps(extract(data),ensure_ascii=False))'",
+            "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: [\"printed_field_missing:null_votes\"]", "Exclusions by reason: {\"category_not_contested\": 8}"]
+          }
+        },
+        "extranjeros": {
+          "source": {"id": "pba/2025-distrito-027-extranjeros", "url": "https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/escrutinio-extranjeros/distrito_027.html", "archived_path": "archive/pba/distrito_027_extranjeros.a8e3dbd55fe92998c8cda87ed9096cf65f32e4008856b38f98e61f9f349fad76.html", "sha256": "a8e3dbd55fe92998c8cda87ed9096cf65f32e4008856b38f98e61f9f349fad76", "page": null},
+          "category_label_as_printed": null,
+          "category_basis": "etl/etl/pba_html_evidence.py lines 170–179 recognizes CONCEJALES or CONCEJALES TITULARES but returns normalized CONCEJALES, not the exact printed header.",
+          "offers": [
+            {"list_id": "2206", "label": "ALIANZA LA LIBERTAD AVANZA", "votes": 41},
+            {"list_id": "2200", "label": "ALIANZA FUERZA PATRIA", "votes": 25},
+            {"list_id": "2201", "label": "ALIANZA POTENCIA", "votes": 16},
+            {"list_id": "2207", "label": "ALIANZA UNION Y LIBERTAD", "votes": 12},
+            {"list_id": "962", "label": "AGRUPACION MUNICIPAL PRIMERO ROSALES", "votes": 5},
+            {"list_id": "2204", "label": "ALIANZA SOMOS BUENOS AIRES", "votes": 3},
+            {"list_id": "2203", "label": "FTE. DE IZQUIERDA Y DE TRABAJADORES - UNIDAD", "votes": 3},
+            {"list_id": "2202", "label": "ALIANZA ES CON VOS ES CON NOSOTROS", "votes": 2}
+          ],
+          "totals": {"positivos": 107, "blancos": 17, "nulos": null, "total_published": 124, "electores": 651, "mesas": 2},
+          "unknown_fields": ["nulos"],
+          "checks": {"offers_sum": 107, "offers_sum_equals_positivos": true},
+          "extraction": {
+            "reader": "etl.pba_html_evidence.extract",
+            "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/nicolasmateoippoliti/dev/votus-plataforma-lla-slice09-v1/etl /Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'import hashlib,json; from pathlib import Path; from etl.pba_html_evidence import extract; data=Path('\"'\"'/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/archive/pba/distrito_027_extranjeros.a8e3dbd55fe92998c8cda87ed9096cf65f32e4008856b38f98e61f9f349fad76.html'\"'\"').read_bytes(); assert hashlib.sha256(data).hexdigest()=='\"'\"'a8e3dbd55fe92998c8cda87ed9096cf65f32e4008856b38f98e61f9f349fad76'\"'\"'; print(json.dumps(extract(data),ensure_ascii=False))'",
+            "notes": ["Numerical extraction does not authenticate category.", "Archive sha256 verified before extraction.", "Reader uncertainties: [\"printed_field_missing:null_votes\"]", "Exclusions by reason: {\"category_not_contested\": 8}"]
+          }
+        }
+      },
+      "discrepancies": [
+        {"field": "mesas", "pdf": 154, "html_combined": 156, "argentinos": 154, "extranjeros": 2, "status": "unresolved"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+"""The slice 9 backtest freeze must match the committed bytes it declares."""
+
+import ast
+import hashlib
+import json
+from fractions import Fraction
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+FREEZE = ROOT / "curated/slice-09-backtest-freeze.json"
+
+
+def load():
+    return json.loads(FREEZE.read_text(encoding="utf-8"))
+
+
+def test_every_frozen_file_matches_its_sha256():
+    from etl.backtest import frozen_hashes
+
+    files = frozen_hashes(FREEZE, load())
+    assert files, "freeze declares no files"
+    for path, expected in files.items():
+        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == expected, path
+
+
+def test_style_amendment_is_bound_to_freeze_and_reproduces_results():
+    amendment = json.loads(
+        (ROOT / "curated/slice-09-backtest-freeze-amendment-1.json").read_text(encoding="utf-8")
+    )
+    assert amendment["freeze_sha256"] == hashlib.sha256(FREEZE.read_bytes()).hexdigest()
+    assert amendment["change"] == "style_only_ruff_lint_and_format"
+    code = load()["code"]["files"]
+    for path, entry in amendment["code_files"].items():
+        assert entry["original_sha256"] == code[path], path
+    research = ROOT / "docs/research"
+    for name, key in (
+        ("development", "development_output_sha256"),
+        ("final", "final_output_sha256"),
+    ):
+        committed = hashlib.sha256(
+            (research / f"slice-09-backtest-{name}.json").read_bytes()
+        ).hexdigest()
+        assert amendment["reproduction"][key] == committed
+
+
+def etl_import_closure(entry):
+    """Every etl/etl module reachable from entry through etl.* imports."""
+    seen, pending = set(), [entry]
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        for node in ast.walk(ast.parse((ROOT / path).read_text(encoding="utf-8"))):
+            names = []
+            if isinstance(node, ast.ImportFrom):
+                module = f"etl.{node.module or ''}".rstrip(".") if node.level else node.module or ""
+                names = [module] + [f"{module}.{a.name}" for a in node.names]
+            elif isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            for name in names:
+                parts = name.split(".")
+                if parts[0] == "etl" and len(parts) == 2:
+                    candidate = f"etl/etl/{parts[1]}.py"
+                    if (ROOT / candidate).is_file():
+                        pending.append(candidate)
+    return seen
+
+
+def test_freeze_covers_every_forecast_cli_input():
+    freeze = load()
+    for name in (
+        "dine-jeba-offer-map",
+        "forecast-recipe",
+        "jeba-definitive-totals",
+        "mesa-alignment-rules",
+        "mesa-panel-inputs",
+        "offer-correspondence",
+        "transfer-recipe",
+    ):
+        assert f"curated/slice-09-{name}.json" in freeze["inputs"]
+    closure = etl_import_closure("etl/etl/dine_municipal_panel.py")
+    assert closure - freeze["code"]["files"].keys() == set()
+    assert len(freeze["derived"]["panel"]["sha256"]) == 64
+
+
+def test_cuts_are_rolling_origin_and_2025_is_single_final():
+    freeze = load()
+    cuts = freeze["development_cuts"]
+    assert [c["target"] for c in cuts] == [2019, 2021, 2023]
+    final = freeze["final_test"]
+    assert final["target"] == 2025 and final["measurements_allowed"] == 1
+    for cut in cuts + [final]:
+        origin, target = cut["pair"]
+        assert target == cut["target"] and origin == target - 2
+        training = [tuple(p) for p in cut["train"]]
+        assert training == [(y, y + 2) for y in range(2015, origin, 2)]
+
+
+def test_gates_match_goal_thresholds():
+    gates = load()["gates"]
+    assert Fraction(gates["relative_mean_tv_max_ratio"]) == Fraction(85, 100)
+    assert Fraction(gates["absolute_mean_tv_min_gain"]) == Fraction(1, 100)
+    assert gates["cut_wins_required"] == "strict_majority"
+    assert Fraction(gates["max_cut_tv_loss"]) == Fraction(2, 100)
+    assert gates["seat_error_mean"] == "not_worse_than_reference"
+    assert gates["absolute_tv_is_gate"] is False
+    confirmation = load()["final_confirmation"]
+    assert Fraction(confirmation["max_tv_loss"]) == Fraction(2, 100)
+    assert confirmation["seat_error"] == "not_worse_than_reference"
+
+
+def test_committed_development_result_belongs_to_this_freeze():
+    result = json.loads(
+        (ROOT / "docs/research/slice-09-backtest-development.json").read_text(encoding="utf-8")
+    )
+    assert result["freeze_sha256"] == hashlib.sha256(FREEZE.read_bytes()).hexdigest()
+    assert result["panel_sha256"] == load()["derived"]["panel"]["sha256"]
+    assert result["stage"] == "development"
+    assert [c["target"] for c in result["cuts"]] == [
+        c["target"] for c in load()["development_cuts"]
+    ]
+
+
+def test_committed_final_result_belongs_to_committed_development():
+    research = ROOT / "docs/research"
+    final = json.loads((research / "slice-09-backtest-final.json").read_text(encoding="utf-8"))
+    development = research / "slice-09-backtest-development.json"
+    assert final["development_sha256"] == hashlib.sha256(development.read_bytes()).hexdigest()
+    assert final["freeze_sha256"] == hashlib.sha256(FREEZE.read_bytes()).hexdigest()
+    assert final["stage"] == "final" and final["target"] == load()["final_test"]["target"]
+    assert final["validated"] is (final["development_pass"] and all(final["confirmation"].values()))

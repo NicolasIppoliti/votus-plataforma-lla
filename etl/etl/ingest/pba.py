@@ -69,9 +69,9 @@ PBA_HOST = "www.juntaelectoral.gba.gov.ar"
 # Bounded surface (D10 constraint 7): only the exact confirmed paths, never
 # a directory prefix — a prefix like "/escrutinio-definitivo-2025/" would
 # permit crawling the whole subtree, which is exactly what this constraint
-# forbids. The first entry is this module's actual ingestion source; the
-# remaining four are reference-only "bancas" PDFs, registered so an operator
-# can archive/open them, never parsed by this module.
+# forbids. The two base distrito HTMLs are this module's ingestion sources.
+# Registered result PDFs, "bancas" PDFs and electorate-variant HTMLs are
+# archive-only references, never parsed by this module.
 PBA_ALLOWED_PATHS: tuple[str, ...] = (
     "/escrutinio-definitivo-2025/distrito_027.html",
     "/escrutinio-definitivo-2025/distrito_113.html",
@@ -79,6 +79,16 @@ PBA_ALLOWED_PATHS: tuple[str, ...] = (
     "/escrutinio-definitivo-2025/consejeros/2025027.pdf",
     "/escrutinio-definitivo-2025/concejales_distri/2025027.pdf",
     "/escrutinio-definitivo-2025/consejeros_distri/2025027.pdf",
+    "/resultados/2011027.pdf",
+    "/resultados/2013027.pdf",
+    "/resultados/2015027.pdf",
+    "/resultados/2017027.pdf",
+    "/resultados/2019027.pdf",
+    "/resultados/2021027.pdf",
+    "/resultados/2023027.pdf",
+    "/resultados/2025027.pdf",
+    "/escrutinio-definitivo-2025/escrutinio-argentinos/distrito_027.html",
+    "/escrutinio-definitivo-2025/escrutinio-extranjeros/distrito_027.html",
 )
 
 PBA_HOST_POLICY = HostPolicy(

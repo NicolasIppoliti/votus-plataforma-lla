@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "years": {
+    "2015": [
+      {"dine_id":"0131","dine_label":"ALIANZA FRENTE PARA LA VICTORIA","jeba_list_id":"131","jeba_label":"ALIANZA FRENTE PARA LA VICTORIA","basis":"label match: identical"},
+      {"dine_id":"0132","dine_label":"ALIANZA PROGRESISTAS","jeba_list_id":"132","jeba_label":"ALIANZA PROGRESISTAS","basis":"label match: identical"},
+      {"dine_id":"0136","dine_label":"ALIANZA FRENTE POPULAR","jeba_list_id":"1804","jeba_label":"ALIANZA FRENTE POPULAR","basis":"label match: identical"},
+      {"dine_id":"0137","dine_label":"ALIANZA FRENTE DE IZQUIERDA Y DE LOS TRABAJADORES","jeba_list_id":"137","jeba_label":"AZA. FTE. DE IZQUIERDA Y LOS TRABAJADORES","basis":"label match: ALIANZA/FRENTE abbreviations and DE conjunction only"},
+      {"dine_id":"0138","dine_label":"ALIANZA UNIDOS POR UNA NUEVA ALTERNATIVA (UNA)","jeba_list_id":"138","jeba_label":"ALIANZA UNIDOS POR UNA NUEVA ALTERNATIVA","basis":"label match: parenthesized acronym only"},
+      {"dine_id":"0145","dine_label":"CAMBIEMOS BUENOS AIRES","jeba_list_id":"135","jeba_label":"ALIANZA CAMBIEMOS BUENOS AIRES","basis":"label match: ALIANZA prefix only"},
+      {"dine_id":"0667","dine_label":"INTEGRACION VECINALISTA ROSALEÑA","jeba_list_id":"382","jeba_label":"INTEGRACION VECINALISTA ROSALEÑA","basis":"label match: identical"}
+    ],
+    "2017": [
+      {"dine_id":"0382","dine_label":"INTEGRACION VECINALISTA ROSALEÑA","jeba_list_id":"382","jeba_label":"INTEGRACION VECINALISTA ROSALEÑA","basis":"label match: identical"},
+      {"dine_id":"0503","dine_label":"FRENTE DE IZQUIERDA Y DE LOS TRABAJADORES","jeba_list_id":"510","jeba_label":"ALIANZA FRENTE DE IZQUIERDA Y DE LOS","basis":"label match: ALIANZA prefix and printed truncation after LOS only"},
+      {"dine_id":"0511","dine_label":"1PAIS","jeba_list_id":"501","jeba_label":"ALIANZA 1 PAIS","basis":"label match: ALIANZA prefix and spacing only"},
+      {"dine_id":"0518","dine_label":"CAMBIEMOS BUENOS AIRES","jeba_list_id":"508","jeba_label":"ALIANZA CAMBIEMOS BUENOS AIRES","basis":"label match: ALIANZA prefix only"},
+      {"dine_id":"0546","dine_label":"FRENTE JUSTICIALISTA","jeba_list_id":"509","jeba_label":"ALIANZA FRENTE JUSTICIALISTA","basis":"label match: ALIANZA prefix only"},
+      {"dine_id":"0574","dine_label":"UNIDAD CIUDADANA","jeba_list_id":"503","jeba_label":"ALIANZA UNIDAD CIUDADANA","basis":"label match: ALIANZA prefix only"},
+      {"dine_id":"0844","dine_label":"BIEN COMUN POR ROSALES","jeba_list_id":"809","jeba_label":"BIEN COMUN POR ROSALES","basis":"label match: identical"}
+    ],
+    "2019": [
+      {"dine_id":"02-1911","dine_label":"FRENTE NOS","jeba_list_id":"131","jeba_label":"FRENTE NOS","basis":"label match: identical"},
+      {"dine_id":"02-503","dine_label":"FRENTE DE TODOS","jeba_list_id":"136","jeba_label":"FRENTE DE TODOS","basis":"label match: identical"},
+      {"dine_id":"02-809","dine_label":"BIEN COMUN POR ROSALES","jeba_list_id":"809","jeba_label":"BIEN COMUN POR ROSALES","basis":"label match: identical"},
+      {"dine_id":"133","dine_label":"FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD","jeba_list_id":"133","jeba_label":"FTE DE IZQ. Y DE TRABAJADORES-UNIDAD","basis":"label match: FRENTE/IZQUIERDA abbreviations and spacing only"},
+      {"dine_id":"135","dine_label":"JUNTOS POR EL CAMBIO","jeba_list_id":"135","jeba_label":"JUNTOS POR EL CAMBIO","basis":"label match: identical"},
+      {"dine_id":"137","dine_label":"CONSENSO FEDERAL","jeba_list_id":"137","jeba_label":"CONSENSO FEDERAL","basis":"label match: identical"}
+    ],
+    "2021": [
+      {"dine_id":"258","dine_label":"CORRIENTE DE PENSAMIENTO BONAERENSE","jeba_list_id":"258","jeba_label":"CORRIENTE DE PENSAMIENTO BONAERENSE","basis":"label match: identical"},
+      {"dine_id":"503","dine_label":"AVANZA LIBERTAD","jeba_list_id":"503","jeba_label":"ALIANZA AVANZA LIBERTAD","basis":"label match: ALIANZA prefix only"},
+      {"dine_id":"504","dine_label":"FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD","jeba_list_id":"504","jeba_label":"FRENTE DE IZQUIERDA Y DE TRABAJADORES -","basis":"label match: printed truncation after hyphen only"},
+      {"dine_id":"506","dine_label":"JUNTOS","jeba_list_id":"506","jeba_label":"ALIANZA JUNTOS","basis":"label match: ALIANZA prefix only"},
+      {"dine_id":"507","dine_label":"FRENTE DE TODOS","jeba_list_id":"507","jeba_label":"FRENTE DE TODOS","basis":"label match: identical"},
+      {"dine_id":"508","dine_label":"FRENTE VAMOS CON VOS","jeba_list_id":"508","jeba_label":"FRENTE VAMOS CON VOS","basis":"label match: identical"},
+      {"dine_id":"809","dine_label":"BIEN COMUN POR ROSALES","jeba_list_id":"809","jeba_label":"BIEN COMUN POR ROSALES","basis":"label match: identical"}
+    ],
+    "2023": [
+      {"dine_id":"20132","dine_label":"JUNTOS POR EL CAMBIO","jeba_list_id":"132","jeba_label":"JUNTOS POR EL CAMBIO","basis":"label match: identical"},
+      {"dine_id":"20134","dine_label":"UNION POR LA PATRIA","jeba_list_id":"134","jeba_label":"UNION POR LA PATRIA","basis":"label match: identical"},
+      {"dine_id":"20135","dine_label":"LA LIBERTAD AVANZA","jeba_list_id":"135","jeba_label":"LA LIBERTAD AVANZA","basis":"label match: identical"},
+      {"dine_id":"20962","dine_label":"PRIMERO ROSALES","jeba_list_id":"962","jeba_label":"AGRUPACION MUNICIPAL PRIMERO ROSALES","basis":"label match: AGRUPACION MUNICIPAL legal-form prefix only"}
+    ]
+  }
+}

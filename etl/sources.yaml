@@ -68,6 +68,42 @@ geography:
     notes: "Official ARBA WFS partido reference; structural geometry only, no election-date applicability established. Child electoral depths unsupported."
 
 national:
+  - id: national/2015-generales
+    election_year: 2015
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2015-provisorios_generales.zip
+    mime: application/zip
+    filename: 2015-generales.zip
+    expected_sha256: 870e0ea7826e81847caa2e1e9d203955577b748721edd89f74e93ecfb9715e12
+    notes: "Official DINE 2015 generales, provisional scrutiny, mesa level."
+  - id: national/2017-generales
+    election_year: 2017
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2017-provisorios_generales.zip
+    mime: application/zip
+    filename: 2017-generales.zip
+    expected_sha256: 7c89e3905dc1b079b85ec1eb0cb8fc851acdc8b151024036137450bb672cd97b
+    notes: "Official DINE 2017 generales, provisional scrutiny, mesa level."
+  - id: national/2019-generales
+    election_year: 2019
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2019-provisorios_generales.zip
+    mime: application/zip
+    filename: 2019-generales.zip
+    expected_sha256: eb62f4e999a75754db1d3f446a5977679a0d34faba81de6afc13cb20943e4bf7
+    notes: "Official DINE 2019 generales, provisional scrutiny, mesa level."
+  - id: national/2021-generales
+    election_year: 2021
+    election_round: generales
+    source: argentina.gob.ar
+    source_url: https://www.argentina.gob.ar/sites/default/files/2021-provisorios_generales.zip
+    mime: application/zip
+    filename: 2021-generales.zip
+    expected_sha256: 0b44fc815876cefdfc3341fccef5d38f51e225aa043eca36df19f7e33cbac992
+    notes: "Official DINE 2021 generales, provisional scrutiny, mesa level."
   - id: national/2023-generales
     election_year: 2023
     election_round: generales
@@ -128,6 +164,114 @@ national:
     filename: 2023-paso-wayback.zip
 
 pba:
+  # Catalogue provenance is not canonical acceptance; historical rounds remain unverified.
+  - id: pba/2011-resultados-027
+    election_year: 2011
+    election_round: unverified
+    source_kind: official
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2011027.pdf
+    mime: application/pdf
+    filename: 2011027.pdf
+    expected_sha256: 46d1979b251be8b6948e9ced2feeae6bb6755f08ac7923c9cb9517c31071745c
+    notes: >-
+      Earlier official municipal reference candidate; not accepted council series.
+      Optional evidence extension; excluded from the default six-source reconciliation.
+      Exact official URL inspected in memory with verified TLS on 2026-10-01;
+      240007 bytes, one page, six recognized list rows and printed positive total 30656.
+      Technical shape and snapshot pin do not establish historical comparability.
+  - id: pba/2013-resultados-027
+    election_year: 2013
+    election_round: unverified
+    source_kind: official
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2013027.pdf
+    mime: application/pdf
+    filename: 2013027.pdf
+    expected_sha256: 2033fb08a36c11341e66c226e1c131a69510cc1a054432dc4d54017e48eef249
+    notes: >-
+      Earlier official municipal reference candidate; not accepted council series.
+      Optional evidence extension; excluded from the default six-source reconciliation.
+      Exact official URL inspected in memory with verified TLS on 2026-10-01;
+      240634 bytes, two pages, nine recognized list rows and printed positive total 33420
+      on page one.
+      Page two has no recognized list table or positive-total label; its remaining content
+      requires explicit layout validation. Snapshot pin does not establish comparability.
+  - id: pba/2015-resultados-027
+    election_year: 2015
+    election_round: unverified
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2015027.pdf
+    mime: application/pdf
+    filename: 2015027.pdf
+    expected_sha256: 78bcdfc8901f759130db4d4085fc1be8fcedf2337599d123f39d9c2bd518ca2d
+    notes: >-
+      Official municipal reference candidate; not accepted council series.
+      Catalogue provenance: https://www.juntaelectoral.gba.gov.ar/distritos.php?distrito=027.
+      Snapshot pin documented in docs/research/slice-09-official-evidence-inventory.md.
+  - id: pba/2017-resultados-027
+    election_year: 2017
+    election_round: unverified
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2017027.pdf
+    mime: application/pdf
+    filename: 2017027.pdf
+    expected_sha256: a3468c938bb9393b341d87638b39be46ae0f6d6c56cdab456c85a7394174bc13
+    notes: >-
+      Official municipal reference candidate; not accepted council series.
+      Catalogue provenance: https://www.juntaelectoral.gba.gov.ar/distritos.php?distrito=027.
+      Snapshot pin documented in docs/research/slice-09-official-evidence-inventory.md.
+  - id: pba/2019-resultados-027
+    election_year: 2019
+    election_round: unverified
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2019027.pdf
+    mime: application/pdf
+    filename: 2019027.pdf
+    expected_sha256: f4e4f56d85fc0851cbc2c35fd727de60324584bdd10412f203e00374b9c57f6f
+    notes: >-
+      Official municipal reference candidate; not accepted council series.
+      Catalogue provenance: https://www.juntaelectoral.gba.gov.ar/distritos.php?distrito=027.
+      Snapshot pin documented in docs/research/slice-09-official-evidence-inventory.md.
+  - id: pba/2021-resultados-027
+    election_year: 2021
+    election_round: unverified
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2021027.pdf
+    mime: application/pdf
+    filename: 2021027.pdf
+    expected_sha256: 682aeb7bbba4eceed32123a4bb6b60b273e5a9c9adf75345fa8fb7f8548afa75
+    notes: >-
+      Official municipal reference candidate; not accepted council series.
+      Catalogue provenance: https://www.juntaelectoral.gba.gov.ar/distritos.php?distrito=027.
+      Snapshot pin documented in docs/research/slice-09-official-evidence-inventory.md.
+  - id: pba/2023-resultados-027
+    election_year: 2023
+    election_round: unverified
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2023027.pdf
+    mime: application/pdf
+    filename: 2023027.pdf
+    expected_sha256: 5d44448d8ed1d7c646190f9d30533217706d5b4803a3c439602ce7362ee733cb
+    notes: >-
+      Official municipal reference candidate; not accepted council series.
+      Catalogue provenance: https://www.juntaelectoral.gba.gov.ar/distritos.php?distrito=027.
+      Snapshot pin documented in docs/research/slice-09-official-evidence-inventory.md.
+      Prior resultados-generales/2023027.pdf alias observed byte-equal only at snapshot time.
+  - id: pba/2025-resultados-027
+    election_year: 2025
+    election_round: unverified
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/resultados/2025027.pdf
+    mime: application/pdf
+    filename: 2025027.pdf
+    expected_sha256: 59d044be3d4e52dccf5211d3510b5d517d38cdccf484c3d1d5f549172bd88f89
+    notes: >-
+      Official municipal reference candidate; not accepted council series.
+      Catalogue provenance: https://www.juntaelectoral.gba.gov.ar/distritos.php?distrito=027.
+      Snapshot pin documented in docs/research/slice-09-official-evidence-inventory.md.
+      PDF total mesas 154 versus existing HTML total/count 156/156 remains unresolved;
+      no supersession or canonical authority inferred from technical timestamps.
   - id: pba/2025-distrito-027
     election_year: 2025
     election_round: provinciales
@@ -144,6 +288,34 @@ pba:
       etl.ingest.pba.PBA_HOST_POLICY (concurrency 1, >=4s delay, identifying
       UA, cert verification on). Verified 200, text/html, this session.
     filename: distrito_027.html
+  - id: pba/2025-distrito-027-argentinos
+    election_year: 2025
+    election_round: provinciales
+    source_kind: official
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/escrutinio-argentinos/distrito_027.html
+    mime: text/html
+    filename: distrito_027_argentinos.html
+    expected_sha256: 7514c4e90d15e2dc19c85f4a5508cbf11c201c7e0d8fcaf4dee7a3ff25c6a9de
+    notes: >-
+      Official 2025 district 027 definitive HTML, argentinos electorate variant.
+      Linked variant of https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/distrito_027.html.
+      Separate archive/provenance for field-level reconciliation; no canonical category acceptance.
+      An absent null-vote field remains unknown, never inferred as zero.
+  - id: pba/2025-distrito-027-extranjeros
+    election_year: 2025
+    election_round: provinciales
+    source_kind: official
+    source: www.juntaelectoral.gba.gov.ar
+    source_url: https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/escrutinio-extranjeros/distrito_027.html
+    mime: text/html
+    filename: distrito_027_extranjeros.html
+    expected_sha256: a8e3dbd55fe92998c8cda87ed9096cf65f32e4008856b38f98e61f9f349fad76
+    notes: >-
+      Official 2025 district 027 definitive HTML, extranjeros electorate variant.
+      Linked variant of https://www.juntaelectoral.gba.gov.ar/escrutinio-definitivo-2025/distrito_027.html.
+      Separate archive/provenance for field-level reconciliation; no canonical category acceptance.
+      An absent null-vote field remains unknown, never inferred as zero.
   - id: pba/2025-distrito-113
     election_year: 2025
     election_round: provinciales

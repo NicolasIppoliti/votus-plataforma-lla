@@ -62,7 +62,7 @@ def test_release_gate_reaches_real_cli_proof_with_its_own_pinned_service() -> No
     workflow = yaml.safe_load((root / ".github/workflows/release-gates.yml").read_text())
     job = workflow["jobs"]["etl-release"]
     assert job["services"]["postgres"]["image"] == (
-        "postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f"
+        "public.ecr.aws/docker/library/postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f"
     )
     cli = next(step for step in job["steps"] if step.get("uses", "").startswith("supabase/"))
     assert cli["uses"] == "supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf"

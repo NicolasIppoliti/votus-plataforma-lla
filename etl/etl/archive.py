@@ -137,6 +137,19 @@ def _empty_record(entry: dict, fetched_at: str, note: str) -> dict:
     }
 
 
+def validate_source_pin(entry: dict) -> None:
+    """Reject malformed optional acquisition pins before transport or writes."""
+    if "expected_sha256" not in entry:
+        return
+    pin = entry["expected_sha256"]
+    if (
+        not isinstance(pin, str)
+        or len(pin) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in pin)
+    ):
+        raise ArchiveIntegrityError("expected_sha256 must be a 64-character hexadecimal digest")
+
+
 def archive_source(
     entry: dict,
     *,
