@@ -88,3 +88,13 @@ def test_committed_development_result_belongs_to_this_freeze():
     assert result['panel_sha256'] == load()['derived']['panel']['sha256']
     assert result['stage'] == 'development'
     assert [c['target'] for c in result['cuts']] == [c['target'] for c in load()['development_cuts']]
+
+
+def test_committed_final_result_belongs_to_committed_development():
+    research = ROOT / 'docs/research'
+    final = json.loads((research / 'slice-09-backtest-final.json').read_text(encoding='utf-8'))
+    development = research / 'slice-09-backtest-development.json'
+    assert final['development_sha256'] == hashlib.sha256(development.read_bytes()).hexdigest()
+    assert final['freeze_sha256'] == hashlib.sha256(FREEZE.read_bytes()).hexdigest()
+    assert final['stage'] == 'final' and final['target'] == load()['final_test']['target']
+    assert final['validated'] is (final['development_pass'] and all(final['confirmation'].values()))
