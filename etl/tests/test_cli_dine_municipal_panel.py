@@ -1,4 +1,5 @@
 """Public-entry inventory contracts using synthetic, non-electoral ZIPs."""
+
 import csv
 import hashlib
 import io
@@ -11,9 +12,20 @@ from pathlib import Path
 import pytest
 
 MODULE = Path(__file__).parents[1] / "etl" / "dine_municipal_panel.py"
-HEADER = ["cargo_nombre", "Año", "seccion_id", "distrito_id", "circuito_id",
-          "mesa_id", "mesa_tipo", "mesa_electores", "agrupacion_id",
-          "agrupacion_nombre", "votos_tipo", "votos_cantidad"]
+HEADER = [
+    "cargo_nombre",
+    "Año",
+    "seccion_id",
+    "distrito_id",
+    "circuito_id",
+    "mesa_id",
+    "mesa_tipo",
+    "mesa_electores",
+    "agrupacion_id",
+    "agrupacion_nombre",
+    "votos_tipo",
+    "votos_cantidad",
+]
 
 
 def payload(rows, header=HEADER):
@@ -24,10 +36,30 @@ def payload(rows, header=HEADER):
     return ("\ufeff" + text.getvalue()).encode("utf-8")
 
 
-def row(cargo="CONCEJALES ", year="2021", seccion="27", distrito="2",
-        circuito="1", mesa="1", tipo="NORMAL ", votos="POSITIVO "):
-    return [cargo, year, seccion, distrito, circuito, mesa, tipo, "100",
-            "10", "PUBLIC SYNTHETIC", votos, "5"]
+def row(
+    cargo="CONCEJALES ",
+    year="2021",
+    seccion="27",
+    distrito="2",
+    circuito="1",
+    mesa="1",
+    tipo="NORMAL ",
+    votos="POSITIVO ",
+):
+    return [
+        cargo,
+        year,
+        seccion,
+        distrito,
+        circuito,
+        mesa,
+        tipo,
+        "100",
+        "10",
+        "PUBLIC SYNTHETIC",
+        votos,
+        "5",
+    ]
 
 
 def archive(tmp_path, members):
@@ -41,8 +73,19 @@ def archive(tmp_path, members):
 def invoke(path=None, digest=None, *args, command_name="inventory"):
     command = [sys.executable, "-I", "-S", "-B", str(MODULE)]
     if path is not None:
-        command += [command_name, "--archive", str(path), "--expected-sha256", digest,
-                    "--year", "2021", "--distrito", "2", "--seccion", "27"]
+        command += [
+            command_name,
+            "--archive",
+            str(path),
+            "--expected-sha256",
+            digest,
+            "--year",
+            "2021",
+            "--distrito",
+            "2",
+            "--seccion",
+            "27",
+        ]
     return subprocess.run(command + list(args), capture_output=True, text=True, timeout=10)
 
 
@@ -58,17 +101,26 @@ def run_mesas(tmp_path, rows, header=HEADER, cargo="CONCEJALES"):
 
 
 def test_mesas_happy_path_and_totals(tmp_path):
-    rows = [mesa_row(), mesa_row(votos="EN BLANCO"),
-            row(tipo="EXTRANJERO", mesa="2"), row(tipo="EXTRANJEROS", mesa="2", votos="NULOS"),
-            mesa_row(cargo="DIPUTADOS"), mesa_row(seccion="28")]
+    rows = [
+        mesa_row(),
+        mesa_row(votos="EN BLANCO"),
+        row(tipo="EXTRANJERO", mesa="2"),
+        row(tipo="EXTRANJEROS", mesa="2", votos="NULOS"),
+        mesa_row(cargo="DIPUTADOS"),
+        mesa_row(seccion="28"),
+    ]
     data = run_mesas(tmp_path, rows)
     assert len(data["mesas"]) == 2
     assert data["totals"]["mesas"] == 2
     assert data["totals"]["electores"] == 200
-    assert data["totals"]["votes"] == dict(positivo=10, blancos=5, nulos=5,
-                                               impugnados=0, recurridos=0, comando=0)
+    assert data["totals"]["votes"] == dict(
+        positivo=10, blancos=5, nulos=5, impugnados=0, recurridos=0, comando=0
+    )
     assert data["totals"]["positive"] == {"10": {"name": "PUBLIC SYNTHETIC", "votes": 10}}
-    assert sum(p["votes"] for p in data["totals"]["positive"].values()) == data["totals"]["votes"]["positivo"]
+    assert (
+        sum(p["votes"] for p in data["totals"]["positive"].values())
+        == data["totals"]["votes"]["positivo"]
+    )
     for tipo, total in data["totals"]["votes"].items():
         assert total == sum(m["votes"][tipo] for m in data["mesas"])
     for mesa in data["mesas"]:
@@ -81,11 +133,19 @@ def test_mesas_happy_path_and_totals(tmp_path):
     assert data["excluded_rows_by_reason"]["other_jurisdiction"] == 1
 
 
-@pytest.mark.parametrize("reason,index,value", [
-    ("unknown_mesa_tipo", 6, "NORMAL"), ("unknown_votos_tipo", 10, "BLANCO"),
-    ("non_integer_votes", 11, "-1"), ("non_integer_votes", 11, "1.0"),
-    ("non_integer_electores", 7, ""), ("positive_without_agrupacion", 8, " "),
-    ("short_row", None, None), ("short_row", None, "extra")])
+@pytest.mark.parametrize(
+    "reason,index,value",
+    [
+        ("unknown_mesa_tipo", 6, "NORMAL"),
+        ("unknown_votos_tipo", 10, "BLANCO"),
+        ("non_integer_votes", 11, "-1"),
+        ("non_integer_votes", 11, "1.0"),
+        ("non_integer_electores", 7, ""),
+        ("positive_without_agrupacion", 8, " "),
+        ("short_row", None, None),
+        ("short_row", None, "extra"),
+    ],
+)
 def test_mesas_row_exclusion_reason(tmp_path, reason, index, value):
     bad = mesa_row()
     if index is None:
@@ -98,9 +158,14 @@ def test_mesas_row_exclusion_reason(tmp_path, reason, index, value):
     assert sum(data["quarantined_mesas_by_reason"].values()) == 0
 
 
-@pytest.mark.parametrize("reason,index,value", [
-    ("conflicting_electores", 7, "101"), ("duplicate_tally", 11, "6"),
-    ("conflicting_agrupacion_name", 9, "OTHER SYNTHETIC")])
+@pytest.mark.parametrize(
+    "reason,index,value",
+    [
+        ("conflicting_electores", 7, "101"),
+        ("duplicate_tally", 11, "6"),
+        ("conflicting_agrupacion_name", 9, "OTHER SYNTHETIC"),
+    ],
+)
 def test_mesas_quarantine_reason(tmp_path, reason, index, value):
     second = mesa_row()
     second[index] = value
@@ -115,8 +180,9 @@ def test_mesas_quarantine_reason(tmp_path, reason, index, value):
 
 
 def test_mesas_multiple_lists_per_agrupacion(tmp_path):
-    data = run_mesas(tmp_path, [mesa_row() + ["1"], mesa_row(mesa="2") + ["2"]],
-                     HEADER + ["lista_numero"])
+    data = run_mesas(
+        tmp_path, [mesa_row() + ["1"], mesa_row(mesa="2") + ["2"]], HEADER + ["lista_numero"]
+    )
     assert data["quarantined_mesas_by_reason"]["multiple_lists_per_agrupacion"] == 2
     assert data["mesas"] == []
 
@@ -144,25 +210,49 @@ def test_help():
 
 
 def test_inventory_exact(tmp_path):
-    data = payload([row(), row(circuito="00001", votos="BLANCO "),
-                    row(circuito="2", tipo="EXTRANJEROS "),
-                    row(circuito="1", tipo="EXTRANJEROS "),
-                    row(" DIPUTADOS "), row(seccion="28"), row(distrito="3")])
+    data = payload(
+        [
+            row(),
+            row(circuito="00001", votos="BLANCO "),
+            row(circuito="2", tipo="EXTRANJEROS "),
+            row(circuito="1", tipo="EXTRANJEROS "),
+            row(" DIPUTADOS "),
+            row(seccion="28"),
+            row(distrito="3"),
+        ]
+    )
     path, digest = archive(tmp_path, {"results.csv": data, "lookup.csv": b"id,name\n"})
     result = invoke(path, digest)
     expected = {
         "schema_version": 1,
-        "source": {"archive_sha256": digest, "archive_bytes": path.stat().st_size,
-                   "member": "results.csv", "member_bytes": len(data), "header": HEADER},
-        "year": 2021, "distrito": "02", "seccion": "027",
-        "total_rows": 7, "selected_rows": 5,
+        "source": {
+            "archive_sha256": digest,
+            "archive_bytes": path.stat().st_size,
+            "member": "results.csv",
+            "member_bytes": len(data),
+            "header": HEADER,
+        },
+        "year": 2021,
+        "distrito": "02",
+        "seccion": "027",
+        "total_rows": 7,
+        "selected_rows": 5,
         "excluded_rows_by_reason": {"other_jurisdiction": 2},
         "categories": {
-            "CONCEJALES": {"rows": 4, "distinct_mesas": 3,
-                           "mesa_tipo": {"NORMAL": 2, "EXTRANJEROS": 2},
-                           "votos_tipo": {"POSITIVO": 3, "BLANCO": 1}},
-            "DIPUTADOS": {"rows": 1, "distinct_mesas": 1,
-                          "mesa_tipo": {"NORMAL": 1}, "votos_tipo": {"POSITIVO": 1}}}}
+            "CONCEJALES": {
+                "rows": 4,
+                "distinct_mesas": 3,
+                "mesa_tipo": {"NORMAL": 2, "EXTRANJEROS": 2},
+                "votos_tipo": {"POSITIVO": 3, "BLANCO": 1},
+            },
+            "DIPUTADOS": {
+                "rows": 1,
+                "distinct_mesas": 1,
+                "mesa_tipo": {"NORMAL": 1},
+                "votos_tipo": {"POSITIVO": 1},
+            },
+        },
+    }
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
     assert result.stdout == json.dumps(expected, sort_keys=True, ensure_ascii=False) + "\n"
@@ -171,8 +261,12 @@ def test_inventory_exact(tmp_path):
 @pytest.mark.parametrize("command_name", ["inventory", "mesas"])
 def test_sha_mismatch(tmp_path, command_name):
     path, digest = archive(tmp_path, {"results.csv": payload([row()])})
-    result = invoke(path, "0" * 64, *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
-                    command_name=command_name)
+    result = invoke(
+        path,
+        "0" * 64,
+        *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
+        command_name=command_name,
+    )
     assert result.returncode == 2
     assert result.stdout == ""
     assert result.stderr == f"error: archive sha256 mismatch: expected {'0' * 64} got {digest}\n"
@@ -182,35 +276,61 @@ def test_sha_mismatch(tmp_path, command_name):
 @pytest.mark.parametrize("command_name", ["inventory", "mesas"])
 def test_member_cardinality(tmp_path, names, command_name):
     path, digest = archive(tmp_path, {name: payload([row()]) for name in names})
-    result = invoke(path, digest, *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
-                    command_name=command_name)
+    result = invoke(
+        path,
+        digest,
+        *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
+        command_name=command_name,
+    )
     assert result.returncode == 2
     assert result.stdout == ""
-    assert result.stderr == f"error: expected exactly one results member, found {len(names)}: {names}\n"
+    assert (
+        result.stderr
+        == f"error: expected exactly one results member, found {len(names)}: {names}\n"
+    )
 
 
 @pytest.mark.parametrize("data", [b"\xff\n", payload([row()]) + b"\xff\n"])
 @pytest.mark.parametrize("command_name", ["inventory", "mesas"])
 def test_invalid_utf8(tmp_path, data, command_name):
     path, digest = archive(tmp_path, {"results.csv": data})
-    result = invoke(path, digest, *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
-                    command_name=command_name)
+    result = invoke(
+        path,
+        digest,
+        *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
+        command_name=command_name,
+    )
     assert result.returncode == 2
     assert result.stdout == ""
     assert result.stderr.startswith("error: results member is not valid UTF-8 at byte offset ")
-    assert result.stderr.removeprefix(
-        "error: results member is not valid UTF-8 at byte offset ").strip().isdigit()
+    assert (
+        result.stderr.removeprefix("error: results member is not valid UTF-8 at byte offset ")
+        .strip()
+        .isdigit()
+    )
 
 
 @pytest.mark.parametrize("command_name", ["inventory", "mesas"])
 def test_year_mismatch_scans_excluded_rows(tmp_path, command_name):
-    path, digest = archive(tmp_path, {"results.csv": payload([
-        row(year="2017"), row(year="2019", distrito="3"), row(year="2017")])})
-    result = invoke(path, digest, *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
-                    command_name=command_name)
+    path, digest = archive(
+        tmp_path,
+        {
+            "results.csv": payload(
+                [row(year="2017"), row(year="2019", distrito="3"), row(year="2017")]
+            )
+        },
+    )
+    result = invoke(
+        path,
+        digest,
+        *(["--cargo", "CONCEJALES"] if command_name == "mesas" else []),
+        command_name=command_name,
+    )
     assert result.returncode == 2
     assert result.stdout == ""
-    assert result.stderr == 'error: row year mismatch: expected 2021, counts {"2017": 2, "2019": 1}\n'
+    assert (
+        result.stderr == 'error: row year mismatch: expected 2021, counts {"2017": 2, "2019": 1}\n'
+    )
 
 
 @pytest.mark.parametrize("year_header", ["ano", " año ", "ANO"])
@@ -227,19 +347,33 @@ def panel_inputs(tmp_path):
     for year, cargo, proxy in [(2019, "INTENDENTE", True), (2021, "CONCEJALES", False)]:
         folder = tmp_path / str(year)
         folder.mkdir()
-        rows = [mesa_row(year=str(year), cargo=cargo),
-                mesa_row(year=str(year), cargo=cargo, mesa="2"),
-                mesa_row(year=str(year), cargo=cargo, mesa="3"),
-                mesa_row(year=str(year), cargo=cargo, mesa="3"),
-                mesa_row(year=str(year), cargo="OTHER")]
+        rows = [
+            mesa_row(year=str(year), cargo=cargo),
+            mesa_row(year=str(year), cargo=cargo, mesa="2"),
+            mesa_row(year=str(year), cargo=cargo, mesa="3"),
+            mesa_row(year=str(year), cargo=cargo, mesa="3"),
+            mesa_row(year=str(year), cargo="OTHER"),
+        ]
         path, digest = archive(folder, {"results.csv": payload(rows)})
-        elections.append(dict(year=year, archive=str(path.relative_to(tmp_path)),
-                              expected_sha256=digest, cargo=cargo, proxy=proxy,
-                              proxy_note="Declared synthetic proxy" if proxy else None))
+        elections.append(
+            dict(
+                year=year,
+                archive=str(path.relative_to(tmp_path)),
+                expected_sha256=digest,
+                cargo=cargo,
+                proxy=proxy,
+                proxy_note="Declared synthetic proxy" if proxy else None,
+            )
+        )
     curated = tmp_path / "curated"
     curated.mkdir()
-    return curated / "inputs.json", dict(schema_version=1, distrito="02", seccion="027",
-                                         target_category="CONCEJALES", elections=elections)
+    return curated / "inputs.json", dict(
+        schema_version=1,
+        distrito="02",
+        seccion="027",
+        target_category="CONCEJALES",
+        elections=elections,
+    )
 
 
 def invoke_panel(path, data):
@@ -254,7 +388,11 @@ def test_panel_two_years(tmp_path):
     data = json.loads(result.stdout)
     assert data["inputs_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert data["schema_version"] == 1
-    assert (data["distrito"], data["seccion"], data["target_category"]) == ("02", "027", "CONCEJALES")
+    assert (data["distrito"], data["seccion"], data["target_category"]) == (
+        "02",
+        "027",
+        "CONCEJALES",
+    )
     assert [e["year"] for e in data["elections"]] == [2019, 2021]
     for election, declared, summary in zip(data["elections"], inputs["elections"], data["summary"]):
         assert election["is_proxy"] is declared["proxy"]
@@ -264,38 +402,82 @@ def test_panel_two_years(tmp_path):
             assert mesa["is_proxy"] is declared["proxy"]
             assert mesa["observed_cargo"] == declared["cargo"]
         assert election["source"]["archive_sha256"] == declared["expected_sha256"]
-        assert summary == dict(year=declared["year"], mesas=2, electores=200, positivo=10,
-                              quarantined_mesas=1,
-                              excluded_rows_by_reason=election["excluded_rows_by_reason"])
+        assert summary == dict(
+            year=declared["year"],
+            mesas=2,
+            electores=200,
+            positivo=10,
+            quarantined_mesas=1,
+            excluded_rows_by_reason=election["excluded_rows_by_reason"],
+        )
         assert summary["excluded_rows_by_reason"]["other_cargo"] == 1
 
 
-@pytest.mark.parametrize("change", [
-    "schema", "order", "duplicate", "false_cargo", "true_cargo", "note", "sha",
-    "year_bool", "proxy_type", "absolute", "escape", "extra", "empty", "false_note",
-    "district_type", "section_type", "target_type", "elections_type", "archive_type"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "schema",
+        "order",
+        "duplicate",
+        "false_cargo",
+        "true_cargo",
+        "note",
+        "sha",
+        "year_bool",
+        "proxy_type",
+        "absolute",
+        "escape",
+        "extra",
+        "empty",
+        "false_note",
+        "district_type",
+        "section_type",
+        "target_type",
+        "elections_type",
+        "archive_type",
+    ],
+)
 def test_panel_invalid_inputs(tmp_path, change):
     path, data = panel_inputs(tmp_path)
     first, second = data["elections"]
-    if change == "schema": data["schema_version"] = True
-    elif change == "order": second["year"] = 2017
-    elif change == "duplicate": second["year"] = first["year"]
-    elif change == "false_cargo": second["cargo"] = "INTENDENTE"
-    elif change == "true_cargo": first["cargo"] = "CONCEJALES"
-    elif change == "note": del first["proxy_note"]
-    elif change == "sha": first["expected_sha256"] = "z" * 64
-    elif change == "year_bool": first["year"] = True
-    elif change == "proxy_type": first["proxy"] = 1
-    elif change == "absolute": first["archive"] = "/input.zip"
-    elif change == "escape": first["archive"] = "../input.zip"
-    elif change == "extra": data["unknown"] = 1
-    elif change == "empty": data["elections"] = []
-    elif change == "false_note": second["proxy_note"] = "not allowed"
-    elif change == "district_type": data["distrito"] = 2
-    elif change == "section_type": data["seccion"] = None
-    elif change == "target_type": data["target_category"] = ""
-    elif change == "elections_type": data["elections"] = {}
-    elif change == "archive_type": first["archive"] = None
+    if change == "schema":
+        data["schema_version"] = True
+    elif change == "order":
+        second["year"] = 2017
+    elif change == "duplicate":
+        second["year"] = first["year"]
+    elif change == "false_cargo":
+        second["cargo"] = "INTENDENTE"
+    elif change == "true_cargo":
+        first["cargo"] = "CONCEJALES"
+    elif change == "note":
+        del first["proxy_note"]
+    elif change == "sha":
+        first["expected_sha256"] = "z" * 64
+    elif change == "year_bool":
+        first["year"] = True
+    elif change == "proxy_type":
+        first["proxy"] = 1
+    elif change == "absolute":
+        first["archive"] = "/input.zip"
+    elif change == "escape":
+        first["archive"] = "../input.zip"
+    elif change == "extra":
+        data["unknown"] = 1
+    elif change == "empty":
+        data["elections"] = []
+    elif change == "false_note":
+        second["proxy_note"] = "not allowed"
+    elif change == "district_type":
+        data["distrito"] = 2
+    elif change == "section_type":
+        data["seccion"] = None
+    elif change == "target_type":
+        data["target_category"] = ""
+    elif change == "elections_type":
+        data["elections"] = {}
+    elif change == "archive_type":
+        first["archive"] = None
     result = invoke_panel(path, data)
     assert result.returncode == 2
     assert result.stdout == ""
@@ -326,22 +508,63 @@ def test_panel_year_failure_aborts(tmp_path, failure):
 
 
 def reconciliation_inputs():
-    panel = {"elections": [{"year": 2021, "is_proxy": True, "proxy_for": "CONCEJALES",
-        "totals": {"mesas": 2, "electores": 100, "votes": {"positivo": 12,
-        "blancos": 1, "nulos": 0}, "positive": {"d": {"name": "SYNTHETIC A", "votes": 10},
-        "u": {"name": "SYNTHETIC U", "votes": 2}}}}, {"year": 2015}]}
-    election = {"year": 2021, "category_label_as_printed": None,
+    panel = {
+        "elections": [
+            {
+                "year": 2021,
+                "is_proxy": True,
+                "proxy_for": "CONCEJALES",
+                "totals": {
+                    "mesas": 2,
+                    "electores": 100,
+                    "votes": {"positivo": 12, "blancos": 1, "nulos": 0},
+                    "positive": {
+                        "d": {"name": "SYNTHETIC A", "votes": 10},
+                        "u": {"name": "SYNTHETIC U", "votes": 2},
+                    },
+                },
+            },
+            {"year": 2015},
+        ]
+    }
+    election = {
+        "year": 2021,
+        "category_label_as_printed": None,
         "totals": {"mesas": 3, "electores": None, "positivos": 20, "blancos": 2, "nulos": 1},
-        "offers": [{"list_id": "j", "label": "SYNTHETIC A", "votes": 15},
-                   {"list_id": "v", "label": "SYNTHETIC V", "votes": 5}]}
-    base = {"year": 2025, "totals": {"nulos": None}, "offers": [],
-            "components": {"synthetic": {}}, "discrepancies": [{"field": "mesas"}]}
+        "offers": [
+            {"list_id": "j", "label": "SYNTHETIC A", "votes": 15},
+            {"list_id": "v", "label": "SYNTHETIC V", "votes": 5},
+        ],
+    }
+    base = {
+        "year": 2025,
+        "totals": {"nulos": None},
+        "offers": [],
+        "components": {"synthetic": {}},
+        "discrepancies": [{"field": "mesas"}],
+    }
     jeba = {"elections": [election, base]}
-    mapping = {"schema_version": 1, "years": {"2021": [
-        {"dine_id": "d", "dine_label": "SYNTHETIC A", "jeba_list_id": "j",
-         "jeba_label": "SYNTHETIC A", "basis": "label match: identical"},
-        {"dine_id": "absent", "dine_label": "SYNTHETIC B", "jeba_list_id": "missing",
-         "jeba_label": "SYNTHETIC B", "basis": "label match: identical"}]}}
+    mapping = {
+        "schema_version": 1,
+        "years": {
+            "2021": [
+                {
+                    "dine_id": "d",
+                    "dine_label": "SYNTHETIC A",
+                    "jeba_list_id": "j",
+                    "jeba_label": "SYNTHETIC A",
+                    "basis": "label match: identical",
+                },
+                {
+                    "dine_id": "absent",
+                    "dine_label": "SYNTHETIC B",
+                    "jeba_list_id": "missing",
+                    "jeba_label": "SYNTHETIC B",
+                    "basis": "label match: identical",
+                },
+            ]
+        },
+    }
     return panel, jeba, mapping
 
 
@@ -351,10 +574,27 @@ def invoke_reconcile(tmp_path, panel, jeba, mapping, stdin=False):
         path = tmp_path / (name + ".json")
         path.write_text(json.dumps(value))
         paths.append(str(path))
-    command = [sys.executable, "-I", "-S", "-B", str(MODULE), "reconcile",
-               "--panel", "-" if stdin else paths[0], "--jeba", paths[1], "--offer-map", paths[2]]
-    return subprocess.run(command, input=json.dumps(panel) if stdin else None,
-                          capture_output=True, text=True, timeout=10)
+    command = [
+        sys.executable,
+        "-I",
+        "-S",
+        "-B",
+        str(MODULE),
+        "reconcile",
+        "--panel",
+        "-" if stdin else paths[0],
+        "--jeba",
+        paths[1],
+        "--offer-map",
+        paths[2],
+    ]
+    return subprocess.run(
+        command,
+        input=json.dumps(panel) if stdin else None,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
 
 
 @pytest.mark.parametrize("stdin,mesas", [(False, 2), (True, 4)])
@@ -373,17 +613,31 @@ def test_reconcile_real_entry_point_preserves_unknown_and_unmatched(tmp_path, st
     assert year["electores"] == {"dine": 100, "jeba": None, "delta": None}
     assert year["positivos"]["delta"] == -8
     assert year["blancos"]["delta"] == -1 and year["nulos"]["delta"] == -1
-    assert year["offers"] == [{"dine_id": "d", "jeba_list_id": "j", "dine_votes": 10,
-        "jeba_votes": 15, "delta": -5, "delta_share_of_jeba_positivos": "-1/4"}]
+    assert year["offers"] == [
+        {
+            "dine_id": "d",
+            "jeba_list_id": "j",
+            "dine_votes": 10,
+            "jeba_votes": 15,
+            "delta": -5,
+            "delta_share_of_jeba_positivos": "-1/4",
+        }
+    ]
     assert year["unmatched_dine"] == [{"dine_id": "u", "name": "SYNTHETIC U", "votes": 2}]
     assert year["unmatched_jeba"] == [jeba["elections"][0]["offers"][1]]
-    assert year["reasons"] == {"mesas_missing_in_provisional": max(3 - mesas, 0),
-        "mesas_extra_in_provisional": max(mesas - 3, 0), "offers_unmatched_dine": 1,
-        "offers_unmatched_jeba": 1, "offers_with_vote_delta": 1, "map_pair_not_found": 1}
+    assert year["reasons"] == {
+        "mesas_missing_in_provisional": max(3 - mesas, 0),
+        "mesas_extra_in_provisional": max(mesas - 3, 0),
+        "offers_unmatched_dine": 1,
+        "offers_unmatched_jeba": 1,
+        "offers_with_vote_delta": 1,
+        "map_pair_not_found": 1,
+    }
     assert year["mesas_missing_note"] == "unidentified: district totals cannot identify which mesas"
     assert data["years_without_counterpart"] == {"panel": [2015], "jeba": [2025]}
-    assert data["base_2025"] == dict(jeba["elections"][1],
-        note="definitive district base; no provisional mesa data")
+    assert data["base_2025"] == dict(
+        jeba["elections"][1], note="definitive district base; no provisional mesa data"
+    )
 
 
 @pytest.mark.parametrize("invalid", ["unknown_year", "duplicate_dine", "duplicate_jeba", "schema"])
@@ -426,23 +680,50 @@ def test_reconcile_zero_reasons_and_unknown_denominator(tmp_path):
     assert all(value == 0 for value in year["reasons"].values())
 
 
-ALIGN_RULES = dict(schema_version=1, pairs=[[2015, 2017]],
-                   key=["circuito_identity_key", "mesa_number", "mesa_tipo"],
-                   max_relative_electores_change="1/10", basis="Declared before measurement")
+ALIGN_RULES = dict(
+    schema_version=1,
+    pairs=[[2015, 2017]],
+    key=["circuito_identity_key", "mesa_number", "mesa_tipo"],
+    max_relative_electores_change="1/10",
+    basis="Declared before measurement",
+)
 
 
 def alignment_fixture(tmp_path):
     def mesa(number, electores=100, circuito="000248", tipo="NATIVOS"):
-        return dict(circuito=circuito, mesa=str(number), mesa_tipo=tipo,
-                    electores=electores, votes={"positivo": 50})
-    origin = [mesa(1), mesa(2), mesa(3, tipo="EXTRANJEROS"),
-              mesa(4, circuito="bad"), mesa("bad"), mesa(6, 0),
-              mesa(7, circuito="00248A")]
-    destination = [mesa(1, 110, "00248"), mesa(2, 111), mesa(5), mesa(6),
-                   mesa(7, circuito="0248A", tipo="NATIVO")]
-    elections = [dict(year=2015, is_proxy=True, mesas=origin,
-                      quarantined_mesas=[dict(circuito="00248", mesa="8", mesa_tipo="NATIVOS")]),
-                 dict(year=2017, is_proxy=False, mesas=destination, quarantined_mesas=[])]
+        return dict(
+            circuito=circuito,
+            mesa=str(number),
+            mesa_tipo=tipo,
+            electores=electores,
+            votes={"positivo": 50},
+        )
+
+    origin = [
+        mesa(1),
+        mesa(2),
+        mesa(3, tipo="EXTRANJEROS"),
+        mesa(4, circuito="bad"),
+        mesa("bad"),
+        mesa(6, 0),
+        mesa(7, circuito="00248A"),
+    ]
+    destination = [
+        mesa(1, 110, "00248"),
+        mesa(2, 111),
+        mesa(5),
+        mesa(6),
+        mesa(7, circuito="0248A", tipo="NATIVO"),
+    ]
+    elections = [
+        dict(
+            year=2015,
+            is_proxy=True,
+            mesas=origin,
+            quarantined_mesas=[dict(circuito="00248", mesa="8", mesa_tipo="NATIVOS")],
+        ),
+        dict(year=2017, is_proxy=False, mesas=destination, quarantined_mesas=[]),
+    ]
     panel_path, rules_path = tmp_path / "panel.json", tmp_path / "rules.json"
     panel_path.write_text(json.dumps(dict(elections=elections)))
     rules_path.write_text(json.dumps(ALIGN_RULES))
@@ -450,39 +731,79 @@ def alignment_fixture(tmp_path):
 
 
 def invoke_align(panel_path, rules_path, stdin=None):
-    return subprocess.run([sys.executable, "-I", "-S", "-B", str(MODULE), "align",
-                           "--panel", str(panel_path), "--rules", str(rules_path)],
-                          input=stdin, capture_output=True, text=True, timeout=10)
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            str(MODULE),
+            "align",
+            "--panel",
+            str(panel_path),
+            "--rules",
+            str(rules_path),
+        ],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
 
 
 @pytest.mark.parametrize("stdin", [False, True])
 def test_align_entry_point_accounts_for_every_mesa(tmp_path, stdin):
     panel_path, rules_path, elections = alignment_fixture(tmp_path)
-    result = invoke_align("-" if stdin else panel_path, rules_path,
-                          panel_path.read_text() if stdin else None)
+    result = invoke_align(
+        "-" if stdin else panel_path, rules_path, panel_path.read_text() if stdin else None
+    )
     assert result.returncode == 0, result.stderr
     pair = json.loads(result.stdout)["pairs"][0]
     assert pair["origin_is_proxy"] is True and pair["destination_is_proxy"] is False
     assert [m["key"] for m in pair["aligned"]] == [["00248", 1, "NATIVOS"], ["0248A", 7, "NATIVOS"]]
     assert pair["aligned"][0]["destination_electores"] == 110
-    assert pair["counts"] == dict(only_in_origin=1, only_in_destination=1,
-        electores_change_exceeds_threshold=1, invalid_circuito=1,
-        invalid_mesa_number=1, zero_origin_electores=1, quarantined_in_panel=1)
+    assert pair["counts"] == dict(
+        only_in_origin=1,
+        only_in_destination=1,
+        electores_change_exceeds_threshold=1,
+        invalid_circuito=1,
+        invalid_mesa_number=1,
+        zero_origin_electores=1,
+        quarantined_in_panel=1,
+    )
     assert pair["only_in_by_mesa_tipo"] == {
-        "only_in_origin": {"EXTRANJEROS": 1}, "only_in_destination": {"NATIVOS": 1}}
-    assert pair["coverage"] == dict(aligned_mesas=2, origin_mesas=8, destination_mesas=5,
-        aligned_origin_positivo_share="2/7", aligned_destination_positivo_share="2/5")
+        "only_in_origin": {"EXTRANJEROS": 1},
+        "only_in_destination": {"NATIVOS": 1},
+    }
+    assert pair["coverage"] == dict(
+        aligned_mesas=2,
+        origin_mesas=8,
+        destination_mesas=5,
+        aligned_origin_positivo_share="2/7",
+        aligned_destination_positivo_share="2/5",
+    )
     for side, election in zip(("origin", "destination"), elections):
         accounted = len(pair["aligned"]) + sum(side in m for m in pair["unaligned"])
         assert accounted == len(election["mesas"]) + len(election["quarantined_mesas"])
 
 
-@pytest.mark.parametrize("field,value", [
-    ("schema_version", True), ("pairs", [[2017, 2015]]), ("pairs", [[2015, 2019]]),
-    ("pairs", [[2015, 2017], [2015, 2017]]), ("pairs", []),
-    ("max_relative_electores_change", "0.1"), ("max_relative_electores_change", "0/1"),
-    ("max_relative_electores_change", "1/1"), ("max_relative_electores_change", "1/0"),
-    ("key", ["mesa_number"]), ("basis", ""), ("extra", 1)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema_version", True),
+        ("pairs", [[2017, 2015]]),
+        ("pairs", [[2015, 2019]]),
+        ("pairs", [[2015, 2017], [2015, 2017]]),
+        ("pairs", []),
+        ("max_relative_electores_change", "0.1"),
+        ("max_relative_electores_change", "0/1"),
+        ("max_relative_electores_change", "1/1"),
+        ("max_relative_electores_change", "1/0"),
+        ("key", ["mesa_number"]),
+        ("basis", ""),
+        ("extra", 1),
+    ],
+)
 def test_align_rejects_invalid_rules(tmp_path, field, value):
     panel_path, rules_path, _ = alignment_fixture(tmp_path)
     rules_path.write_text(json.dumps(dict(ALIGN_RULES, **{field: value})))
