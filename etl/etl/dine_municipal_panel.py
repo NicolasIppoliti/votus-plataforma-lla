@@ -587,11 +587,16 @@ def main():
     command.add_argument("--jeba", type=Path, required=True)
     command.add_argument("--year", type=int, required=True)
     command.add_argument("--seats", type=int, default=9)
+    command = commands.add_parser("baselines", help="Evaluate frozen JEBA share baselines")
+    command.add_argument("--jeba", type=Path, required=True)
+    command.add_argument("--correspondence", type=Path, required=True)
+    command.add_argument("--pair", type=int, nargs=2, required=True)
     args = parser.parse_args()
+    from etl.forecast_baselines import baselines
     try:
         result = {"inventory": inventory, "mesas": mesas, "panel": panel,
                   "reconcile": reconcile, "align": align, "transfers": transfers,
-                  "seats": seats}[args.command](args)
+                  "seats": seats, "baselines": baselines}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)
