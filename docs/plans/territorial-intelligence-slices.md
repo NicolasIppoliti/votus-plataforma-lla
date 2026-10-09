@@ -2,8 +2,9 @@
 
 **Reconciled through W1 #388 (`14741ab`) and W2 #389 (`1b37b37`) merged deliveries.**
 Slices 0–6 and accepted bounded Slice 8 work are complete, not every original
-expansion goal. Spatial Slice 7 is deferred. Slice 9 is defined as a suitability
-question, not an authorized model or forecast. This does not authorize spatial
+expansion goal. Spatial Slice 7 is deferred. Slice 9 is delivered (#391): its
+preregistered backtest did **not** validate the transfer model. Slice 10 is narrowed
+to an unvalidated scenario explorer. This does not authorize spatial
 implementation or any Git operation.
 Existing selector/chart/table workflows remain usable.
 [Product](../../PRODUCT.md) · [Design](../../DESIGN.md) ·
@@ -22,8 +23,8 @@ Existing selector/chart/table workflows remain usable.
 | 6 | Completed: one accepted national election pair at Coronel Rosales section depth | [#383](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/383) |
 | 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
 | 8 | Completed: accepted bounded seat relief, W1 transfers and W2 deterministic samples; broader exploration remains future | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388), [samples #389](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/389) |
-| 9 | Defined: [2027 Rosales CONCEJALES suitability](slice-09-predictive-suitability.md); evidence/evaluation pending, feasibility not established | — |
-| 10 | Conditional on 9 and separate authorization: supported-granularity recommendations | — |
+| 9 | Completed: mesa-level EI scenario model and preregistered backtest; **not validated** (loses to persistence). See [closure](../research/slice-09-closure.md) | [#391](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/391) |
+| 10 | Narrowed by owner decision: unvalidated 2027 scenario explorer; recommendations remain unauthorized; approved issue pending | — |
 
 Source availability does not block already delivered bounded scopes or Slice 7 planning.
 New usable child geography and terrain require independent source acceptance and validation.
@@ -272,37 +273,47 @@ this status table and each delivered boundary below distinguish current delivery
 - **Dependencies/gate:** Existing statutory `/simulate` entry and independent review,
   mobile/accessibility and evidence gates for this presentation increment; no dependency
   on deferred spatial 7 or new source acceptance. W1 and W2 independent verification
-  and merge gates are fulfilled for their accepted scopes. Slice 9 may be defined,
-  but analytical implementation still requires its own evidence/evaluation gate.
-  Keep later capabilities independently reviewable.
+  and merge gates are fulfilled for their accepted scopes. Slice 9 later ran its own
+  evidence/evaluation gate (#391). Keep later capabilities independently reviewable.
 
 ### 9 — Assess predictive suitability before choosing an analytical implementation
 
 - **Selected question:** Is estimating the 2027 Coronel Rosales CONCEJALES list-vote
   distribution defensible on accepted comparable official evidence?
-- **Status:** [Definition](slice-09-predictive-suitability.md) recorded; feasibility **not
-  established**. Product target is selected; methods, routes and outputs are not.
-- **Scope:** Accept target/denominator, source and identity inventory, then preregister
-  temporal evaluation, benchmarks, uncertainty checks and success/refusal criteria
-  before holdout inspection. No-go or separately authorized evidence acquisition is valid.
-- **Entry point:** This linked definition only; no analysis module is chosen or promised.
-- **Verification:** Passive-doc behavioral-TDD exception now. Future authorized behavior
-  requires real-entry refusal tests, reproducible evaluation and supported granularity.
-- **Non-goals:** Forecast promises, recommendations, tactical targeting or invented accuracy.
-- **Rollback:** Definition/planning text only; no runtime or official-evidence changes.
-- **Dependencies/gate:** Bounded 8 merge gate fulfilled. Source acceptance and adequate
-  evaluation remain open; an approved issue and separate authorization precede implementation.
+- **Status:** Completed in #391 (`7a05dcc`). A mesa-level ecological-inference model was
+  frozen before measurement and backtested; it is **not validated**: development mean
+  TV 21.074 pp vs 17.245 pp for persistence, while the single 2025 test passed its
+  confirmation. Results: [backtest](../research/slice-09-backtest-results.md),
+  [closure](../research/slice-09-closure.md). Original
+  [definition](slice-09-predictive-suitability.md) kept as history.
+- **Scope delivered:** DINE 2015–2023 mesa panel (INTENDENTE declared proxy in 2015,
+  2019 and 2023), JEBA definitive totals 2015–2025, DINE↔JEBA reconciliation, audited
+  mesa alignment, sourced offer correspondence, EI with bootstrap uncertainty, Hare
+  seats, baselines, a freeze before measurement and a rolling-origin backtest.
+- **Entry points:** `etl/etl/dine_municipal_panel.py`, `etl/etl/backtest.py` and
+  `etl/etl/scenario_2027.py`.
+- **Verification:** Strict TDD per unit, independent reproduction of both backtest
+  stages and native RDD review; see the closure.
+- **Non-goals kept:** Forecast promises, recommendations, tactical targeting or invented accuracy.
+- **Gate result:** Evaluation completed; the model is not validated. A validated forecast
+  would need a new preregistration and a new holdout.
 
-### 10 — Deliver conditional municipal/intra-municipal recommendations
+### 10 — Present unvalidated 2027 council scenarios
 
-- **Status:** Conditional, not authorized; requires Slice 9 evaluation, supported
-  geography and a separate product/scope decision.
-- **Goal/scope:** Evidence-bound recommendations only at evaluated supported granularity, with
-  assumptions, confidence, limitations and traceable alternatives visible to the analyst.
-- **Entry point:** The analysis module from 9, linked to supporting territorial evidence.
-- **RED/verification:** Real-entry unsupported territory, weak evidence, uncertainty and
-  reproducibility cases; evaluate recommendation limits before user-facing claims.
-- **Non-goals:** Deterministic predictions, false precision or unsupported mesa geography.
-- **Rollback:** Recommendation surface/output only; retain evaluated analytical foundations.
-- **Dependencies/gate:** 9; independent evidence review and explicitly accepted limitations.
-  High research/product breadth risk: select one useful question before implementation.
+- **Status:** Narrowed by owner decision (2026-10-09) after Slice 9 failed validation.
+  Implementation still requires an approved issue. Recommendations, as originally
+  planned, remain **unauthorized**.
+- **Goal/scope:** Show the 2027 Coronel Rosales CONCEJALES scenarios from the Slice 9
+  simulator: list shares and Hare seats (Ley 5109, 9 seats) for persistence (default)
+  and relation-type EI transfers (alternative). Every view carries the label
+  **"supuestos sin validar"** and the backtest errors.
+- **Entry point:** A precomputed, versioned artifact generated by the ETL from
+  `etl/etl/scenario_2027.py`, with its SHA-256 and source hashes; the web only reads
+  and presents it. No live re-estimation in the browser.
+- **RED/verification:** Refuse to render an artifact whose hash, provenance or
+  unvalidated status is missing or mismatched; label and backtest errors are always
+  visible; mobile and accessibility checks; seat totals equal 9.
+- **Non-goals:** Recommendations, tactical targeting, validated-forecast claims,
+  per-mesa projections, other territories or elections, live model re-estimation.
+- **Rollback:** The artifact and its presentation only; Slice 9 foundations stay.
+- **Dependencies/gate:** #391 merged. Approved issue, own PR, independent review.

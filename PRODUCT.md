@@ -23,7 +23,7 @@ This direction does not claim a delivered map or authorize implementation.
 | Core | Territorial dominance and election comparison: Argentina → Buenos Aires Province → Coronel Rosales, then circuits, establishments and mesas only where source-backed. |
 | Separate module | Fiscalización: operational coverage/heat, with its denominator and non-random sample; never an official-results aggregate. |
 | Separate module | Simulación: hypothetical 3D council/seat scenarios with statutory allocation and conditional vote ranges, not false exact thresholds. |
-| Future, gated | Análisis/Prospectiva: first assess whether estimating 2027 Coronel Rosales CONCEJALES list votes is defensible; feasibility is not established. No model, route or forecast promised. Recommendations remain separately conditional. |
+| Future, gated | Análisis/Prospectiva: the 2027 Coronel Rosales CONCEJALES model was backtested (#391) and is not validated. The next step is a scenario explorer labelled "supuestos sin validar"; no forecast is promised and recommendations remain unauthorized. |
 
 Modules share geographic and evidence foundations, not blended numerical outputs.
 Physical terrain and electoral extrusion are independent layers. Height expresses a
@@ -73,7 +73,7 @@ The product name is Votus. Product language is direct, neutral, operational Span
 - Real route-level unit, SQL, and browser release gates.
 - Slice 1 merged research/lab (#362): 69,544-byte ARBA WFS partido MultiPolygon (SHA-256 `b502009185a5d6b1666312d2d91aa9b79053b2ee8a06f0aa683029b925c3ed13`), PBA `027` → national `(02,027)`; accepted standalone lab verification, not production rendering or blanket geographic/historical certification.
 - Slice 8 bounded scenarios delivered: W1 direct transfers (#388) and W2 deterministic samples (#389); neither supplies forecast probabilities or backtest evidence.
-- [Slice 9 suitability definition](docs/plans/slice-09-predictive-suitability.md): selected municipal question, pending source acceptance and evaluation; no predictive feasibility pass.
+- Slice 9 (#391): 2027 Coronel Rosales CONCEJALES scenario model with a preregistered backtest; transfers are **not validated** and are presented as "supuestos sin validar" ([closure](docs/research/slice-09-closure.md)).
 - Historical CI/CD research and operational-verification documentation.
 
 Evidence is trusted by the internal users and should not dominate every primary view. It must remain available through a clear dedicated detail surface and stay attached to degraded or disputed results where omission would change interpretation.
