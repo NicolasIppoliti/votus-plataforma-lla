@@ -1,5 +1,10 @@
 # Ideology-conditioned v1: public experiment contract
 
+> **Superseded 2026-10-09.** Slice 9 was redefined as a mesa-level ecological-inference
+> scenario model; the v1 code described here was retired. See the
+> [v1 disposition](slice-09-v1-disposition.md) and the
+> [backtest results](slice-09-backtest-results.md).
+
 ## Status and scope
 
 The complete synthetic model now has one production-reachable composer for all

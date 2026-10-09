@@ -1,5 +1,10 @@
 # Ideology v1: evidence exists, real evaluation remains blocked
 
+> **Superseded 2026-10-09.** Slice 9 was redefined as a mesa-level ecological-inference
+> scenario model; the v1 code described here was retired. See the
+> [v1 disposition](slice-09-v1-disposition.md) and the
+> [backtest results](slice-09-backtest-results.md).
+
 > **DESCRIPTIVE STATUS ONLY — PARTIAL AUTHENTICATION / NOT FROZEN**
 > **Readiness: false. V1 real metrics: NONE. No admitted real cuts.**
 > This is not a scientific verdict, predictive claim, input freeze or design change.
