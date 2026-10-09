@@ -10,7 +10,9 @@ bytes, and different content under an existing name is refused.
 
 import hashlib
 import json
+import os
 import sys
+import tempfile
 from argparse import ArgumentParser, Namespace
 from fractions import Fraction
 from pathlib import Path
@@ -137,7 +139,16 @@ def write(artifact, output_dir):
     if destination.exists() and destination.read_bytes() != payload:
         raise ValueError("existing artifact content mismatch")
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(payload)
+    # Publish atomically: a reader sees either no artifact or the complete bytes.
+    handle, temporary = tempfile.mkstemp(dir=output_dir, prefix=".scenario-artifact-")
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(payload)
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
     return dict(filename=filename, sha256=digest, bytes=len(payload))
 
 

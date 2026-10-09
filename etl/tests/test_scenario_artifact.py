@@ -37,6 +37,7 @@ def test_artifact_is_content_addressed_and_deterministic(monkeypatch, capsys, tm
     path = tmp_path / meta["filename"]
     assert meta["filename"] == f"rosales-concejales-2027.{meta['sha256']}.json"
     assert sha(path) == meta["sha256"] and path.stat().st_size == meta["bytes"]
+    assert path.stat().st_mode & 0o777 == 0o644
     first = path.read_bytes()
     code, again = run(monkeypatch, capsys, tmp_path)
     assert code == 0 and again == meta and path.read_bytes() == first
@@ -111,3 +112,13 @@ def test_committed_web_artifact_matches_regeneration(monkeypatch, capsys, tmp_pa
     code, meta = run(monkeypatch, capsys, tmp_path)
     assert code == 0 and [p.name for p in committed] == [meta["filename"]]
     assert committed[0].read_bytes() == (tmp_path / meta["filename"]).read_bytes()
+
+
+def test_failed_publication_leaves_no_partial_artifact(monkeypatch, capsys, tmp_path):
+    def fail(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli.os, "replace", fail)
+    code, err = run(monkeypatch, capsys, tmp_path)
+    assert code == 2 and "disk full" in err
+    assert list(tmp_path.iterdir()) == []
