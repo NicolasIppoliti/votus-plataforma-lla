@@ -3,8 +3,8 @@
 **Reconciled through W1 #388 (`14741ab`) and W2 #389 (`1b37b37`) merged deliveries.**
 Slices 0–6 and accepted bounded Slice 8 work are complete, not every original
 expansion goal. Spatial Slice 7 is deferred. Slice 9 is delivered (#391): its
-preregistered backtest did **not** validate the transfer model. Slice 10 is narrowed
-to an unvalidated scenario explorer. This does not authorize spatial
+preregistered backtest did **not** validate the transfer model. Slice 10 (#393) adds
+the read-only `/scenarios` explorer of unvalidated scenarios. This does not authorize spatial
 implementation or any Git operation.
 Existing selector/chart/table workflows remain usable.
 [Product](../../PRODUCT.md) · [Design](../../DESIGN.md) ·
@@ -24,7 +24,7 @@ Existing selector/chart/table workflows remain usable.
 | 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
 | 8 | Completed: accepted bounded seat relief, W1 transfers and W2 deterministic samples; broader exploration remains future | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388), [samples #389](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/389) |
 | 9 | Completed: mesa-level EI scenario model and preregistered backtest; **not validated** (loses to persistence). See [closure](../research/slice-09-closure.md) | [#391](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/391) |
-| 10 | Narrowed by owner decision: unvalidated 2027 scenario explorer; recommendations remain unauthorized; approved issue pending | — |
+| 10 | Implemented for [#393](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/393): read-only `/scenarios` from a verified ETL artifact, labelled "supuestos sin validar"; recommendations remain unauthorized | — |
 
 Source availability does not block already delivered bounded scopes or Slice 7 planning.
 New usable child geography and terrain require independent source acceptance and validation.
@@ -300,9 +300,11 @@ this status table and each delivered boundary below distinguish current delivery
 
 ### 10 — Present unvalidated 2027 council scenarios
 
-- **Status:** Narrowed by owner decision (2026-10-09) after Slice 9 failed validation.
-  Implementation still requires an approved issue. Recommendations, as originally
-  planned, remain **unauthorized**.
+- **Status:** Narrowed by owner decision (2026-10-09) after Slice 9 failed validation and
+  implemented for approved issue #393: `etl/etl/scenario_artifact.py` writes the
+  content-addressed artifact; `apps/web/src/lib/scenarios/scenario-artifact.ts` verifies it
+  and `/scenarios` presents it. Recommendations, as originally planned, remain
+  **unauthorized**.
 - **Goal/scope:** Show the 2027 Coronel Rosales CONCEJALES scenarios from the Slice 9
   simulator: list shares and Hare seats (Ley 5109, 9 seats) for persistence (default)
   and relation-type EI transfers (alternative). Every view carries the label

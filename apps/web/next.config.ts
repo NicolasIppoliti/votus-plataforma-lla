@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
       "../../archive-manifest.json",
       "../../archive/geography/ign-buenos-aires-province.314600f9b681841b9f35c27fac030c835de6a95cbf4a0c4256a39df6c069f723.geojson",
     ],
+    // Pinned Slice 10 artifact read by src/lib/scenarios/scenario-artifact.ts.
+    "/scenarios": [
+      "./data/scenarios/rosales-concejales-2027.0a7c6c0e607f1f0e13534f7d7e1711b011faabaa2a6f6a3d47bc20b6bbcad2b4.json",
+    ],
   },
   experimental: {
     testProxy: e2eTestProxyEnabled,

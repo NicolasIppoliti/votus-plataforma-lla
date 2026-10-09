@@ -1055,3 +1055,40 @@ test("restores the served scenario while a superseded response is pending", asyn
     await page.unrouteAll({ behavior: "wait" });
   }
 });
+
+test("reaches unvalidated 2027 scenarios from shared navigation at mobile width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/");
+  const drawerTrigger = page.getByRole("button", { name: "Abrir navegación" });
+  await drawerTrigger.click();
+  const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+  await drawer.getByRole("link", { name: "Escenarios Rosales 2027", exact: true }).click();
+  await expect(page).toHaveURL(/\/scenarios$/);
+  await expect(drawer).toBeHidden();
+
+  await expect(page.getByRole("heading", { level: 1, name: "Escenarios Rosales 2027" })).toBeVisible();
+  const main = page.getByRole("main");
+  await expect(main.getByRole("status")).toContainText("supuestos sin validar");
+  const persistence = page.getByRole("heading", { level: 2, name: "Persistencia (por defecto)" });
+  const transfers = page.getByRole("heading", {
+    level: 2,
+    name: "Transferencias estimadas por inferencia ecológica",
+  });
+  expect((await elementRectangle(persistence)).top).toBeLessThan((await elementRectangle(transfers)).top);
+  const persistenceRow = page
+    .getByRole("region", { name: "Listas del escenario Persistencia", exact: true })
+    .getByRole("row", { name: /ALIANZA LA LIBERTAD AVANZA/ });
+  await expect(persistenceRow.getByRole("cell")).toHaveText(["45,06", "5"]);
+  await expect(main.getByText(/21,074 pp frente a 17,245 pp/)).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  const regions = page.getByRole("region", { name: /^Listas del escenario / });
+  await expect(regions).toHaveCount(2);
+  await regions.first().focus();
+  await expect(regions.first()).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(regions.nth(1)).toBeFocused();
+
+  await page.setViewportSize({ width: 320, height: 720 });
+  await expectNoHorizontalOverflow(page);
+});

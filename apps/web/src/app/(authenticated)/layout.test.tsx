@@ -111,6 +111,7 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
       "/municipal",
       "/fiscalizacion",
       "/simulate",
+      "/scenarios",
       "/review",
     ]);
 });
@@ -160,6 +161,7 @@ it.each([
   ["/municipal", "/municipal"],
   ["/fiscalizacion", "/fiscalizacion"],
   ["/simulate", "/simulate"],
+  ["/scenarios", "/scenarios"],
   ["/review", "/review"],
 ])("marks only the %s route as the current page", async (pathname, href) => {
   expect(currentPrimaryHrefs(await renderLayout(pathname))).toEqual([href]);
@@ -169,6 +171,7 @@ it.each([
   ["/compare/districts", "/compare"],
   ["/municipal/coronel-rosales", "/municipal"],
   ["/simulate/", "/simulate"],
+  ["/scenarios/", "/scenarios"],
   ["/review/history", "/review"],
 ])("matches the %s route to its navigation family", async (pathname, href) => {
   expect(currentPrimaryHrefs(await renderLayout(pathname))).toEqual([href]);
@@ -279,7 +282,7 @@ it("keeps real root attention unknown after the review request throws", async ()
   expect(markup).not.toContain("Sin elementos pendientes");
 });
 
-it("renders all seven shared destinations in contract order with explicit source status", async () => {
+it("renders all eight shared destinations in contract order with explicit source status", async () => {
   const markup = await renderLayout("/dashboard");
   const navigationMarkup = primaryNavigation(markup);
   const hrefs = [...navigationMarkup.matchAll(/<a ([^>]*)>/g)]
@@ -294,6 +297,7 @@ it("renders all seven shared destinations in contract order with explicit source
     "/municipal",
     "/fiscalizacion",
     "/simulate",
+    "/scenarios",
     "/review",
   ]);
   expect(navigationMarkup).toContain(
@@ -326,6 +330,7 @@ it("renders all seven shared destinations in contract order with explicit source
   expect(navigationMarkup).toContain("Municipal");
   expect(navigationMarkup).toContain("Fiscalización (no oficial)");
   expect(navigationMarkup).toContain("Simulación 2027");
+  expect(navigationMarkup).toContain("Escenarios Rosales 2027");
   expect(navigationMarkup).toContain("Revisión de datos");
 });
 
@@ -341,7 +346,7 @@ it("keeps workspace, theme and account below navigation and only review status i
   expect(sidebar).toContain("Esta herramienta no es una fuente electoral oficial.");
   expect(topbar).toContain("Sin elementos pendientes");
   expect(topbar).toContain("Abrir navegación");
-  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(7);
+  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(8);
   expect(currentPrimaryHrefs(markup)).toEqual(["/compare"]);
 });
 
