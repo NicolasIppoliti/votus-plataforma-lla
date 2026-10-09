@@ -1,10 +1,12 @@
 """Ley 5109 entry-point regressions; golden seats supplied from official JEBA PDFs."""
+
 import json
+import sys
 from fractions import Fraction
 from pathlib import Path
-import sys
 
 import pytest
+
 from etl import dine_municipal_panel as cli
 
 JEBA = Path(__file__).resolve().parents[2] / "curated/slice-09-jeba-definitive-totals.json"
@@ -19,8 +21,11 @@ GOLDEN = [
 
 
 def invoke(monkeypatch, capsys, year, *extra):
-    monkeypatch.setattr(sys, "argv", ["dine_municipal_panel", "seats", "--jeba",
-                                     str(JEBA), "--year", str(year), *extra])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dine_municipal_panel", "seats", "--jeba", str(JEBA), "--year", str(year), *extra],
+    )
     code = cli.main()
     output = capsys.readouterr()
     return code, output
@@ -37,8 +42,9 @@ def test_official_pdf_seats_through_real_cli(monkeypatch, capsys, year, expected
     assert code == 0
     result = json.loads(output.out)
     election = next(e for e in json.loads(JEBA.read_text())["elections"] if e["year"] == year)
-    assert result["seats"] == {o["list_id"]: expected.get(o["list_id"], 0)
-                               for o in election["offers"]}
+    assert result["seats"] == {
+        o["list_id"]: expected.get(o["list_id"], 0) for o in election["offers"]
+    }
     quotient = Fraction(sum(o["votes"] for o in election["offers"]), 9)
     assert result["quotient"] == str(quotient)
     assert result["quotient_float"] == float(quotient)
@@ -49,8 +55,9 @@ def test_official_pdf_seats_through_real_cli(monkeypatch, capsys, year, expected
         assert result["quotient"] == "4001"
 
 
-@pytest.mark.parametrize("year,extra", [(1900, ()), (2015, ("--seats", "0")),
-                                        (2015, ("--seats", "-1"))])
+@pytest.mark.parametrize(
+    "year,extra", [(1900, ()), (2015, ("--seats", "0")), (2015, ("--seats", "-1"))]
+)
 def test_cli_rejects_unknown_year_or_nonpositive_seats(monkeypatch, capsys, year, extra):
     code, output = invoke(monkeypatch, capsys, year, *extra)
     assert code == 2
@@ -59,6 +66,7 @@ def test_cli_rejects_unknown_year_or_nonpositive_seats(monkeypatch, capsys, year
 
 def allocate(votes, seats):
     from etl.hare_seats import allocate_seats
+
     return allocate_seats(votes, seats)
 
 
@@ -83,8 +91,9 @@ def test_art110_reduced_divisor_without_overflow():
     assert result["quotient"] == "1103/18"
     assert result["eligible_list_ids"] == ["a", "b", "c"]
     assert result["seats"] == {k: {"a": 5, "b": 2, "c": 2}.get(k, 0) for k in votes}
-    assert result["rules"] == dict(quotient=True, residue=True, completion=True,
-                                   art110_halvings=1, art110_overflow=False)
+    assert result["rules"] == dict(
+        quotient=True, residue=True, completion=True, art110_halvings=1, art110_overflow=False
+    )
 
 
 def test_residue_tie_prefers_more_votes():
@@ -93,8 +102,9 @@ def test_residue_tie_prefers_more_votes():
     assert result["rules"]["residue"] is True
 
 
-@pytest.mark.parametrize("votes,seats", [({"a": 15, "b": 15, "c": 10}, 4),
-                                         ({str(i): 10 for i in range(12)}, 9)])
+@pytest.mark.parametrize(
+    "votes,seats", [({"a": 15, "b": 15, "c": 10}, 4), ({str(i): 10 for i in range(12)}, 9)]
+)
 def test_equal_votes_raise_explicit_ambiguous_tie(votes, seats):
     with pytest.raises(ValueError, match="ambiguous_tie"):
         allocate(votes, seats)
@@ -107,8 +117,10 @@ def test_completion_and_exclusion_below_quotient():
     assert result["rules"]["completion"] is True
 
 
-@pytest.mark.parametrize("votes,seats", [({}, 9), ({"a": 0}, 9), ({"a": -1}, 9),
-                                         ({"a": 1.5}, 9), ({"a": True}, 9), ({"a": 1}, 0)])
+@pytest.mark.parametrize(
+    "votes,seats",
+    [({}, 9), ({"a": 0}, 9), ({"a": -1}, 9), ({"a": 1.5}, 9), ({"a": True}, 9), ({"a": 1}, 0)],
+)
 def test_invalid_inputs(votes, seats):
     with pytest.raises(ValueError):
         allocate(votes, seats)

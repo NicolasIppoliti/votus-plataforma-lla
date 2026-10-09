@@ -1,4 +1,5 @@
 """Exact Provincia de Buenos Aires allocation under Ley 5109 arts. 109–110."""
+
 from fractions import Fraction
 
 
@@ -16,10 +17,15 @@ def allocate_seats(votes, seats=9):
     """
     if type(seats) is not int or seats <= 0:
         raise ValueError("seats must be a positive integer")
-    if not isinstance(votes, dict) or not votes or any(
-        not isinstance(k, str) or not k.strip() or type(v) is not int or v < 0
-        for k, v in votes.items()
-    ) or sum(votes.values()) == 0:
+    if (
+        not isinstance(votes, dict)
+        or not votes
+        or any(
+            not isinstance(k, str) or not k.strip() or type(v) is not int or v < 0
+            for k, v in votes.items()
+        )
+        or sum(votes.values()) == 0
+    ):
         raise ValueError("list votes must be nonnegative integers with a positive total")
     quotient = Fraction(sum(votes.values()), seats)
     halvings = 0
@@ -29,8 +35,13 @@ def allocate_seats(votes, seats=9):
         halvings += 1
         eligible = sorted(k for k, v in votes.items() if v >= quotient)
     allocation = dict.fromkeys(votes, 0)
-    rules = dict(quotient=False, residue=False, completion=False,
-                 art110_halvings=halvings, art110_overflow=len(eligible) > seats)
+    rules = dict(
+        quotient=False,
+        residue=False,
+        completion=False,
+        art110_halvings=halvings,
+        art110_overflow=len(eligible) > seats,
+    )
 
     def select(ranked, count, priority):
         # Only a tie crossing the award boundary affects representation.
@@ -49,7 +60,10 @@ def allocate_seats(votes, seats=9):
         rules["quotient"] = True
         remaining = seats - sum(allocation.values())
         if remaining:
-            priority = lambda k: (ratios[k] - allocation[k], votes[k])
+
+            def priority(k):
+                return (ratios[k] - allocation[k], votes[k])
+
             ranked = sorted(eligible, key=priority, reverse=True)
             for k in select(ranked, min(remaining, len(ranked)), priority):
                 allocation[k] += 1
@@ -60,5 +74,10 @@ def allocate_seats(votes, seats=9):
             winner = select(ranked, 1, lambda k: votes[k])[0]
             allocation[winner] += remaining
             rules["completion"] = True
-    return dict(seats=allocation, quotient=str(quotient), quotient_float=float(quotient),
-                eligible_list_ids=eligible, rules=rules)
+    return dict(
+        seats=allocation,
+        quotient=str(quotient),
+        quotient_float=float(quotient),
+        eligible_list_ids=eligible,
+        rules=rules,
+    )

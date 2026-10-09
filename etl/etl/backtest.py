@@ -35,10 +35,27 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def frozen_hashes(freeze_path, freeze):
+    """Declared hashes, with code re-hashed by style-only amendments bound to this freeze."""
+    files = {**freeze["code"]["files"], **freeze["inputs"], **freeze["documents"]}
+    freeze_sha = sha256(freeze_path)
+    path = Path(freeze_path)
+    for amendment_path in sorted(path.parent.glob(f"{path.stem}-amendment-*.json")):
+        amendment = json.loads(amendment_path.read_text(encoding="utf-8"))
+        if amendment.get("freeze_sha256") != freeze_sha or any(
+            files.get(p) != entry["original_sha256"] or p not in freeze["code"]["files"]
+            for p, entry in amendment["code_files"].items()
+        ):
+            raise ValueError(f"{amendment_path.name}: amendment does not match the freeze")
+        for p, entry in amendment["code_files"].items():
+            files[p] = entry["amended_sha256"]
+    return files
+
+
 def verify(freeze_path, panel_path):
     root = Path(freeze_path).resolve().parents[1]
     freeze = json.loads(Path(freeze_path).read_text(encoding="utf-8"))
-    files = {**freeze["code"]["files"], **freeze["inputs"], **freeze["documents"]}
+    files = frozen_hashes(freeze_path, freeze)
     changed = sorted(p for p, expected in files.items() if sha256(root / p) != expected)
     if changed:
         raise ValueError("frozen file changed: " + ", ".join(changed))

@@ -265,3 +265,55 @@ def test_final_rejects_development_result_that_does_not_reproduce(monkeypatch, c
 def test_development_stage_rejects_development_option(monkeypatch, capsys, tmp_path):
     code, err = run(monkeypatch, capsys, tmp_path, PASSING, extra=["--development", "stale.json"])
     assert code == 2 and "--development is only valid for the final stage" in err
+
+
+def test_style_amendment_rehashes_frozen_code_only_when_bound_to_the_freeze(
+    monkeypatch, capsys, tmp_path
+):
+    freeze_path = make_freeze(tmp_path)
+    code = tmp_path / "etl/etl/m.py"
+    code.parent.mkdir(parents=True)
+    code.write_bytes(b"x=1\n")
+    freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
+    freeze["code"]["files"] = {"etl/etl/m.py": sha(b"x=1\n")}
+    freeze_path.write_text(json.dumps(freeze), encoding="utf-8")
+    code.write_bytes(b"x = 1\n")
+    monkeypatch.setattr(relation_forecast, "forecast", lambda ns: PASSING[ns.pair[1]])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "x",
+            "--freeze",
+            str(freeze_path),
+            "--panel",
+            str(tmp_path / "panel.json"),
+            "--stage",
+            "development",
+        ],
+    )
+    assert cli.main() == 2 and "frozen file changed: etl/etl/m.py" in capsys.readouterr().err
+    amendment = tmp_path / "curated/slice-09-backtest-freeze-amendment-1.json"
+
+    def amend(original, freeze_sha=None):
+        amendment.write_text(
+            json.dumps(
+                dict(
+                    schema_version=1,
+                    freeze_sha256=freeze_sha or sha(freeze_path.read_bytes()),
+                    code_files={
+                        "etl/etl/m.py": dict(
+                            original_sha256=original, amended_sha256=sha(b"x = 1\n")
+                        )
+                    },
+                )
+            ),
+            encoding="utf-8",
+        )
+
+    amend(sha(b"x=1\n"))
+    assert cli.main() == 0 and json.loads(capsys.readouterr().out)["development_pass"] is True
+    amend(sha(b"other"))
+    assert cli.main() == 2 and "amendment does not match the freeze" in capsys.readouterr().err
+    amend(sha(b"x=1\n"), freeze_sha="0" * 64)
+    assert cli.main() == 2 and "amendment does not match the freeze" in capsys.readouterr().err
