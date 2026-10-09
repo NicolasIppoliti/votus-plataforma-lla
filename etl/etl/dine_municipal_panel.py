@@ -591,12 +591,19 @@ def main():
     command.add_argument("--jeba", type=Path, required=True)
     command.add_argument("--correspondence", type=Path, required=True)
     command.add_argument("--pair", type=int, nargs=2, required=True)
+    command = commands.add_parser('forecast', help='Forecast pooled relation-type transfers')
+    command.add_argument('--panel', required=True, help='Panel JSON path or - for stdin')
+    for flag in ('rules', 'transfer-recipe', 'forecast-recipe', 'correspondence', 'jeba', 'offer-map'):
+        command.add_argument('--' + flag, type=Path, required=True)
+    command.add_argument('--pair', type=int, nargs=2, required=True)
+    command.add_argument('--train', type=int, nargs='+', required=True)
     args = parser.parse_args()
     from etl.forecast_baselines import baselines
+    from etl.relation_forecast import forecast
     try:
         result = {"inventory": inventory, "mesas": mesas, "panel": panel,
                   "reconcile": reconcile, "align": align, "transfers": transfers,
-                  "seats": seats, "baselines": baselines}[args.command](args)
+                  "seats": seats, "baselines": baselines, "forecast": forecast}[args.command](args)
     except UnicodeDecodeError as error:
         # Offset is decoder-buffer-relative, not necessarily member-relative.
         print(f"error: results member is not valid UTF-8 at byte offset {error.start}", file=sys.stderr)
