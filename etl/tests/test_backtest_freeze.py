@@ -80,3 +80,11 @@ def test_gates_match_goal_thresholds():
     confirmation = load()['final_confirmation']
     assert Fraction(confirmation['max_tv_loss']) == Fraction(2, 100)
     assert confirmation['seat_error'] == 'not_worse_than_reference'
+
+
+def test_committed_development_result_belongs_to_this_freeze():
+    result = json.loads((ROOT / 'docs/research/slice-09-backtest-development.json').read_text(encoding='utf-8'))
+    assert result['freeze_sha256'] == hashlib.sha256(FREEZE.read_bytes()).hexdigest()
+    assert result['panel_sha256'] == load()['derived']['panel']['sha256']
+    assert result['stage'] == 'development'
+    assert [c['target'] for c in result['cuts']] == [c['target'] for c in load()['development_cuts']]
