@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 
 const capture = {
-  version: 1,
+  version: 2,
   urlMatchesBaseline: true,
   inputMatchesBaseline: true,
   resultMatchesBaseline: false,
@@ -12,6 +12,10 @@ const capture = {
   baselineLength: 1832,
   editorFirstListMatchesBaseline: true,
   elapsedMs: 5012,
+  status: "updating",
+  rscRequestsAfterBack: 1,
+  rscResponsesAfterBack: 0,
+  rscFailuresAfterBack: 0,
 };
 
 test("writes a bounded, private, facts-only capture", async () => {
@@ -28,6 +32,10 @@ test.each([
   ["raw page text", { ...capture, resultText: "ALIANZA" }],
   ["an out-of-range length", { ...capture, resultLength: -1 }],
   ["an out-of-range elapsed time", { ...capture, elapsedMs: 10_000_000 }],
+  ["a version 1 capture", { ...capture, version: 1 }],
+  ["raw status text", { ...capture, status: "Actualizando escenario…" }],
+  ["a capture without request counts", { ...capture, rscRequestsAfterBack: undefined }],
+  ["an out-of-range request count", { ...capture, rscResponsesAfterBack: 1_001 }],
 ])("rejects %s without filesystem calls", async (_name, invalid) => {
   const outputPath = vi.fn((name: string) => name);
   const writer = vi.fn().mockResolvedValue(undefined);

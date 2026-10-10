@@ -4,9 +4,10 @@ import { z } from "zod";
 // Facts about the same-document Browser Back restore in simulate.spec.ts (#395).
 // Booleans and bounded counts only: no page text leaves this diagnostic boundary.
 const length = z.number().int().min(0).max(1_000_000);
+const count = z.number().int().min(0).max(1_000);
 
 const captureSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   urlMatchesBaseline: z.boolean(),
   inputMatchesBaseline: z.boolean(),
   resultMatchesBaseline: z.boolean(),
@@ -16,6 +17,12 @@ const captureSchema = z.strictObject({
   baselineLength: length,
   editorFirstListMatchesBaseline: z.boolean(),
   elapsedMs: z.number().int().min(0).max(600_000),
+  // Which state the result status line announces, classified; never its text.
+  status: z.enum(["current", "updating", "invalid", "absent", "other"]),
+  // React Server Component requests for /simulate observed after Browser Back.
+  rscRequestsAfterBack: count,
+  rscResponsesAfterBack: count,
+  rscFailuresAfterBack: count,
 });
 
 export type SimulateBackRestoreCapture = z.infer<typeof captureSchema>;
