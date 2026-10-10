@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 
 interface ElementRectangle {
@@ -799,6 +799,22 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
   const baselineEvidence = await result.innerText();
   await page.evaluate(() => window.history.pushState(null, "", window.location.href));
   const servedDocument = await page.evaluateHandle(() => document);
+  // #398: count /simulate React Server Component traffic after Browser Back.
+  let trackRsc = false;
+  const rsc = { requests: 0, responses: 0, failures: 0 };
+  const isSimulateRsc = (request: Request) =>
+    trackRsc && request.headers()["rsc"] === "1" && new URL(request.url()).pathname === "/simulate";
+  const afterBack = new Set<Request>();
+  const onRequest = (request: Request) => {
+    if (!isSimulateRsc(request)) return;
+    afterBack.add(request);
+    rsc.requests += 1;
+  };
+  const onFinished = (request: Request) => { if (afterBack.has(request)) rsc.responses += 1; };
+  const onFailed = (request: Request) => { if (afterBack.has(request)) rsc.failures += 1; };
+  page.on("request", onRequest);
+  page.on("requestfinished", onFinished);
+  page.on("requestfailed", onFailed);
   async function draftSweep() {
     await sweep.getByLabel("Donante del muestreo").selectOption("110");
     await sweep.getByLabel("Receptora del muestreo").selectOption("999");
@@ -817,6 +833,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
     await expectSweepDefaults(page);
     expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
     await draftSweep();
+    trackRsc = true;
     const backStartedAt = Date.now();
     await page.goBack();
     await expect(page).toHaveURL(baselineUrl);
@@ -828,6 +845,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
       // #395: record facts about the intermittent restore failure, then rethrow it unchanged.
       const resultText = await result.innerText({ timeout: 1_000 }).catch(() => "");
       const firstListName = await editor.getByLabel("Nombre de la lista").first().inputValue({ timeout: 1_000 }).catch(() => "");
+      const statusText = await page.locator(".simulation-output__status").innerText({ timeout: 1_000 }).catch(() => null);
       let inputMatchesBaseline = false;
       try {
         inputMatchesBaseline = isDeepStrictEqual(
@@ -836,7 +854,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
         );
       } catch {}
       await writeSimulateBackRestore({
-        version: 1,
+        version: 2,
         urlMatchesBaseline: page.url() === baselineUrl,
         inputMatchesBaseline,
         resultMatchesBaseline: resultText === baselineEvidence,
@@ -846,6 +864,14 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
         baselineLength: baselineEvidence.length,
         editorFirstListMatchesBaseline: firstListName === sweepEvidenceInput.lists[0]?.listName,
         elapsedMs: Math.min(Date.now() - backStartedAt, 600_000),
+        status: statusText === null ? "absent"
+          : statusText.startsWith("Escenario actual") ? "current"
+          : statusText.startsWith("Actualizando escenario") ? "updating"
+          : statusText.startsWith("Complete o corrija") ? "invalid"
+          : "other",
+        rscRequestsAfterBack: Math.min(rsc.requests, 1_000),
+        rscResponsesAfterBack: Math.min(rsc.responses, 1_000),
+        rscFailuresAfterBack: Math.min(rsc.failures, 1_000),
       }, test.info());
       throw error;
     }
@@ -855,6 +881,9 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
     }
     await expectSweepDefaults(page);
   } finally {
+    page.off("request", onRequest);
+    page.off("requestfinished", onFinished);
+    page.off("requestfailed", onFailed);
     await servedDocument.dispose();
   }
 });
