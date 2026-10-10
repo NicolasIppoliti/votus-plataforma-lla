@@ -324,6 +324,27 @@ def test_build_refusal_writes_nothing(monkeypatch, capsys, tmp_path):
     assert not (tmp_path / "out").exists()
 
 
+def test_build_refuses_malformed_features_as_invalid_geometry(monkeypatch, capsys, tmp_path):
+    feature = json.loads(geojson())["features"][0]
+    cases = {
+        "string_feature": ["Feature"],
+        "number_feature": [7],
+        "null_feature": [None],
+        "string_properties": [{**feature, "properties": "CIRCUITO"}],
+        "list_geometry": [{**feature, "geometry": ["MultiPolygon"]}],
+        "object_features": {"0248": feature},
+        "string_features": "Feature",
+        "null_features": None,
+    }
+    for name, features in cases.items():
+        root = tmp_path / name
+        payload = json.dumps({"type": "FeatureCollection", "features": features}).encode()
+        archive(root, circuits=payload)
+        code, report = build(monkeypatch, capsys, root, root / "out")
+        assert (code, report) == (1, {"error": "invalid_geometry", "source": CIRCUITS_ID}), name
+        assert not (root / "out").exists(), name
+
+
 def test_failed_publication_leaves_no_partial_artifact(monkeypatch, capsys, tmp_path):
     archive(tmp_path)
 

@@ -141,9 +141,15 @@ def parse_circuits(payload):
         features = collection["features"]
     except (ValueError, KeyError, TypeError):
         raise Refusal("invalid_geometry", CIRCUITS_ID) from None
+    if not isinstance(features, list):
+        raise Refusal("invalid_geometry", CIRCUITS_ID)
     circuits = {}
     for feature in features:
+        if not isinstance(feature, dict):
+            raise Refusal("invalid_geometry", CIRCUITS_ID)
         properties, geometry = feature.get("properties") or {}, feature.get("geometry") or {}
+        if not isinstance(properties, dict) or not isinstance(geometry, dict):
+            raise Refusal("invalid_geometry", CIRCUITS_ID)
         if (properties.get("INDRA_P"), properties.get("INDRA_D")) != TERRITORY["circuits"]:
             raise Refusal("unexpected_territory", CIRCUITS_ID)
         code = properties.get("CIRCUITO")
