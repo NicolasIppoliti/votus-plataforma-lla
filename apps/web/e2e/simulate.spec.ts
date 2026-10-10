@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from "node:util";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { writeSimulateBackRestore } from "./simulate-back-restore";
 
 interface ElementRectangle {
   bottom: number;
@@ -815,11 +817,38 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
     await expectSweepDefaults(page);
     expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
     await draftSweep();
+    const backStartedAt = Date.now();
     await page.goBack();
     await expect(page).toHaveURL(baselineUrl);
     expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
     expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(sweepEvidenceInput);
-    await expect(result).toHaveText(baselineEvidence, { useInnerText: true });
+    try {
+      await expect(result).toHaveText(baselineEvidence, { useInnerText: true });
+    } catch (error) {
+      // #395: record facts about the intermittent restore failure, then rethrow it unchanged.
+      const resultText = await result.innerText({ timeout: 1_000 }).catch(() => "");
+      const firstListName = await editor.getByLabel("Nombre de la lista").first().inputValue({ timeout: 1_000 }).catch(() => "");
+      let inputMatchesBaseline = false;
+      try {
+        inputMatchesBaseline = isDeepStrictEqual(
+          JSON.parse(new URL(page.url()).searchParams.get("input") ?? "null"),
+          sweepEvidenceInput,
+        );
+      } catch {}
+      await writeSimulateBackRestore({
+        version: 1,
+        urlMatchesBaseline: page.url() === baselineUrl,
+        inputMatchesBaseline,
+        resultMatchesBaseline: resultText === baselineEvidence,
+        resultShowsEditedList: resultText.includes("Lista editada"),
+        resultBusy: (await page.locator('[aria-busy="true"]').count().catch(() => 0)) > 0,
+        resultLength: resultText.length,
+        baselineLength: baselineEvidence.length,
+        editorFirstListMatchesBaseline: firstListName === sweepEvidenceInput.lists[0]?.listName,
+        elapsedMs: Math.min(Date.now() - backStartedAt, 600_000),
+      }, test.info());
+      throw error;
+    }
     for (const [index, list] of sweepEvidenceInput.lists.entries()) {
       await expect(editor.getByLabel("Nombre de la lista").nth(index)).toHaveValue(list.listName);
       await expect(editor.getByLabel("Votos de la lista").nth(index)).toHaveValue(String(list.votes));
