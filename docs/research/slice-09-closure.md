@@ -16,7 +16,7 @@ decision; see the last section).
 | --- | --- | --- |
 | DINE 2015–2023 mesa panel, hash/size/encoding verified | Met, size by hash | `c47b15d`; `panel` rejects any archive whose SHA-256 differs from `expected_sha256` (which fixes its exact bytes, hence its size), records `archive_bytes`/`member_bytes` without a separate expected-size check, and decodes strict UTF-8 (`etl/etl/dine_municipal_panel.py:86–119`); rebuild sha `059cb471…0127`, reproduced by independent verifiers |
 | Concejales 2017/2021, Intendente proxy 2015/2019/2023 flagged per row with bias note | Met | `curated/slice-09-mesa-panel-inputs.json` (`proxy`, `proxy_note`); `is_proxy` on panel rows and on reconcile/align outputs |
-| 2027 base = JEBA definitive concejales 2025, 154 Argentine + 2 foreign mesas | Met, with an open discrepancy | `69a15c8`; positivos 32,291 (argentinos 32,184 + extranjeros). JEBA PDF says 154 mesas, HTML components 154 + 2 = 156; recorded `status: unresolved` |
+| 2027 base = JEBA definitive concejales 2025, 154 Argentine + 2 foreign mesas | Met | `69a15c8`; positivos 32,291 (argentinos 32,184 + extranjeros 107). The PDF's 154 mesas count only the Argentine electorate; see "2025 mesa count" below |
 | DINE vs JEBA reconciliation per election with per-reason breakdown; no missing mesa as zero | Met | `fb6504e`; `reconcile` reports per-field and per-offer deltas; missing mesas are counted, never zero-filled, and labelled "unidentified: district totals cannot identify which mesas" |
 | Explicit, audited mesa alignment, per-reason non-aligned counts | Met | `34d72f3`; aligned 112/131/122/133 mesas; per-reason counts (`only_in_origin`, `only_in_destination`, `electores_change_exceeds_threshold`, …) and per `mesa_tipo` |
 | Sourced offer correspondence; entries/exits explicit; no residual bucket | Met | `7230b95`; every offer covered, merges/splits declared, exits/entries explicit; `core_mapping` rejects incomplete coverage |
@@ -66,7 +66,8 @@ persistence seats 2206:5, 2200:2, 2201:2; EI alternative 2206:4, 2200:3,
 - **Absolute error is large** for every method (7–43 pp); even persistence
   misses by 17 pp on average.
 - **JEBA category header unauthenticated** (`jeba_category_unauthenticated`).
-- **2025 mesa count** 154 vs 156 unresolved; totals use both components.
+- **2025 mesa count** (explained after closure; see the section below). The frozen
+  input still records `status: unresolved`.
 - **2025 is spent.** A future validated model needs a new preregistration and
   a new holdout (for example 2027 itself).
 
@@ -97,9 +98,12 @@ script; 2019 and 2025 model TV recomputed from raw `forecast` shares.
 
 ### Failed, skipped or pending checks
 
-- Full ETL suite: 1807 passed, 87 skipped, **13 errors**. The same 13 errors
-  occur at the pre-retirement HEAD ("owned database fixtures require the
-  privileged test phase"); the privileged database phase was not run.
+- Full ETL suite run with plain `pytest`: 1807 passed, 87 skipped, **13 errors**.
+  These 13 tests are marked `owned_database` and refuse to run outside
+  `etl-verify`'s privileged phase ("owned database fixtures require the privileged
+  test phase"). Release Gates do run them: on main `8ffaf86`, `etl-release
+  (ordinary)` reported 1948 ordinary + 13 privileged passed, 1961 executed, 0
+  skipped.
 - Delegated subagent transcripts were not audited for raw-output exposure
   before the freeze (declared).
 - The Engram mirror of the ODD task file was not refreshed after the m7–m11
@@ -124,3 +128,27 @@ may build a scenario UI over `etl/etl/scenario_2027.py` only if it always shows
 "supuestos sin validar", uses persistence as the default and shows the backtest
 errors. It must never present a forecast as validated. A validated forecast
 needs a new preregistered backtest.
+
+## 2025 mesa count (explained after closure)
+
+The JEBA 2025 PDF reports **154** mesas, while the two JEBA HTML pages report
+**154 + 2 = 156**. The three archived sources agree once their scopes are read
+together:
+
+| Field | PDF (`59d044be…`) | Argentinos HTML (`7514c4e9…`) | Extranjeros HTML (`a8e3dbd5…`) | HTML sum |
+| --- | ---: | ---: | ---: | ---: |
+| Positivos | 32,291 | 32,184 | 107 | 32,291 |
+| Electores | 52,755 | 52,104 | 651 | 52,755 |
+| Total votes | 34,441 | 34,317 | 124 | 34,441 |
+| Mesas | 154 | 154 | 2 | 156 |
+
+The PDF's vote and elector totals include the foreign electorate, but its
+"TOTAL DE MESAS 154" counts only the Argentine electorate's mesas. Each HTML page
+reports its own mesas ("Mesas escrutadas" 154 and 2, both at 100 %). The district
+therefore had 156 mesas, all scrutinized. This reading follows from the published
+figures; JEBA has not stated it explicitly.
+
+The model is unaffected: it uses the combined votes, 32,291, which match all three
+sources. `curated/slice-09-jeba-definitive-totals.json` is a frozen backtest input,
+so it keeps its original `status: unresolved` record; this section supersedes that
+status.
