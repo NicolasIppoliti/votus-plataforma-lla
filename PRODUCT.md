@@ -74,6 +74,7 @@ The product name is Votus. Product language is direct, neutral, operational Span
 - Slice 1 merged research/lab (#362): 69,544-byte ARBA WFS partido MultiPolygon (SHA-256 `b502009185a5d6b1666312d2d91aa9b79053b2ee8a06f0aa683029b925c3ed13`), PBA `027` → national `(02,027)`; accepted standalone lab verification, not production rendering or blanket geographic/historical certification.
 - Slice 8 bounded scenarios delivered: W1 direct transfers (#388) and W2 deterministic samples (#389); neither supplies forecast probabilities or backtest evidence.
 - Slice 9 (#391): 2027 Coronel Rosales CONCEJALES scenario model with a preregistered backtest; transfers are **not validated** and are presented as "supuestos sin validar" ([closure](docs/research/slice-09-closure.md)).
+- Slice 11 (#399): CNE-supplied 2025 Coronel Rosales voting locations (31, 28 with coordinates) and 10 circuit outlines, checksum-verified and shown read-only in `/municipal` as reference geography — not results and not historical election geometry.
 - Historical CI/CD research and operational-verification documentation.
 
 Evidence is trusted by the internal users and should not dominate every primary view. It must remain available through a clear dedicated detail surface and stay attached to degraded or disputed results where omission would change interpretation.

@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
 import { MunicipalSectionMap } from "./MunicipalSectionMap";
+import { RosalesReferenceSection } from "./RosalesReferenceSection";
+import { loadRosalesReference, type RosalesReferenceResult } from "@/lib/geography/cne-rosales-reference";
 import styles from "./municipal.module.css";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { TableRegion } from "@/components/TableRegion";
@@ -133,6 +135,7 @@ export function renderMunicipalView(
   sources: MunicipalProvenance[] = [],
   year: MunicipalYear = 2025,
   section?: MunicipalSectionResult,
+  reference?: RosalesReferenceResult,
 ): ReactNode {
   if (view.status !== "ok") {
     const carried = describeExcluded(
@@ -344,6 +347,8 @@ export function renderMunicipalView(
             </>
           )}
         </section>
+        {/* 2025 CNE reference geography; not valid for historical elections. */}
+        {reference && !is2023 ? <RosalesReferenceSection result={reference} /> : null}
         <section className={styles.evidence} aria-labelledby="municipal-evidence-heading">
           <h2 id="municipal-evidence-heading">Referencias de la consulta</h2>
           {sources.some((source) => !source.sha256) ? (
@@ -476,5 +481,6 @@ export default async function MunicipalPage({
 
   const view = municipalViewFromOfficialEvidence(evidence, categoryId, year);
   const section = view.status === "ok" ? await loadMunicipalSectionGeometry() : undefined;
-  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : [], year, section);
+  const reference = view.status === "ok" && year === 2025 ? await loadRosalesReference() : undefined;
+  return renderMunicipalView(view, view.status === "ok" ? evidence.provenance : [], year, section, reference);
 }

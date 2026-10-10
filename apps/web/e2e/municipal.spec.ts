@@ -170,6 +170,28 @@ test.describe("the municipal route requires workspace-authorized official result
     }));
   });
 
+  test("test_authorized_workspace_cne_reference_circuits_and_locales_on_mobile_and_keyboard", async ({ page }) => {
+    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(new URL("/municipal", baseURL).toString());
+      const main = page.getByRole("main");
+      const reference = main.getByRole("region", { name: "Circuitos y locales de votación (referencia CNE 2025)" });
+      await expect(reference.getByRole("note")).toHaveText("Geografía de referencia CNE; no son resultados oficiales. No válida para elecciones históricas.");
+      await expect(reference.getByRole("img", { name: /10 circuitos y 28 locales con coordenadas/ })).toBeVisible();
+      await expect(reference.locator("circle")).toHaveCount(28);
+      const tableRegion = reference.getByRole("region", { name: "Tabla de locales de votación CNE 2025" });
+      await expect(tableRegion.getByRole("row")).toHaveCount(32);
+      await expect(tableRegion.getByRole("cell", { name: "Sin coordenadas: no se dibuja" })).toHaveCount(3);
+      await expect(tableRegion).toHaveAttribute("tabindex", "0");
+      await tableRegion.focus();
+      await expect(tableRegion).toBeFocused();
+      await page.keyboard.press("ArrowRight");
+      await expect(tableRegion).toBeFocused();
+      await expect(main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }).getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    }));
+  });
+
   test("test_authorized_workspace_ssr_readiness_without_javascript", async ({ page, browser }) => {
     const samples = await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () =>
       withAuthorizedMunicipalWorkspace(page, async () => {

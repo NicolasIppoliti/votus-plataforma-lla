@@ -78,9 +78,12 @@ Follow the [sequential slice plan](plans/territorial-intelligence-slices.md):
    delivered, including W1 #388 and W2 #389; deterministic samples are not forecasts.
 6. Slice 9 (#391) built a mesa-level ecological-inference model for 2027 Coronel
    Rosales CONCEJALES and backtested it under preregistration: it is **not validated**
-   ([closure](research/slice-09-closure.md)). Slice 10 (#393) presents those
+   ([closure](research/slice-09-closure.md)). Slice 10 (#394) presents those
    unvalidated scenarios read-only at `/scenarios`, labelled "supuestos sin validar";
    recommendations remain unauthorized.
+7. Slice 11 (#399) adds a read-only Coronel Rosales reference map in `/municipal`:
+   CNE 2025 circuits and voting locations with an accessible table. It is reference
+   geography, not results, and not valid for historical elections.
 
 Each dependent slice requires its own reviewed PR and merge; the bounded Slice 8
 merge dependency is fulfilled. The Slice 9 analytical gate was evaluated and not

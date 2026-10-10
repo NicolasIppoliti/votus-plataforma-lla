@@ -3,9 +3,10 @@
 **Reconciled through W1 #388 (`14741ab`) and W2 #389 (`1b37b37`) merged deliveries.**
 Slices 0–6 and accepted bounded Slice 8 work are complete, not every original
 expansion goal. Spatial Slice 7 is deferred. Slice 9 is delivered (#391): its
-preregistered backtest did **not** validate the transfer model. Slice 10 (#393) adds
-the read-only `/scenarios` explorer of unvalidated scenarios. This does not authorize spatial
-implementation or any Git operation.
+preregistered backtest did **not** validate the transfer model. Slice 10 (#394) adds
+the read-only `/scenarios` explorer of unvalidated scenarios. Slice 11 (#399) adds a
+read-only Coronel Rosales reference map of CNE 2025 circuits and voting locations. This
+does not authorize spatial analysis or any Git operation.
 Existing selector/chart/table workflows remain usable.
 [Product](../../PRODUCT.md) · [Design](../../DESIGN.md) ·
 [Proposal](../proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) · [Roadmap](../roadmap.md)
@@ -24,7 +25,8 @@ Existing selector/chart/table workflows remain usable.
 | 7 | Deferred: spatial operational heat awaits accepted evidence; existing Fiscalización remains usable | — |
 | 8 | Completed: accepted bounded seat relief, W1 transfers and W2 deterministic samples; broader exploration remains future | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388), [samples #389](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/389) |
 | 9 | Completed: mesa-level EI scenario model and preregistered backtest; **not validated** (loses to persistence). See [closure](../research/slice-09-closure.md) | [#391](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/391) |
-| 10 | Implemented for [#393](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/393): read-only `/scenarios` from a verified ETL artifact, labelled "supuestos sin validar"; recommendations remain unauthorized | — |
+| 10 | Completed for [#393](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/393): read-only `/scenarios` from a verified ETL artifact, labelled "supuestos sin validar"; recommendations remain unauthorized | [#394](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/394) |
+| 11 | Approved in [#399](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/399): read-only Coronel Rosales CNE 2025 reference map of circuits and voting locations; not results, not historical geometry | — |
 
 Source availability does not block already delivered bounded scopes or Slice 7 planning.
 New usable child geography and terrain require independent source acceptance and validation.
@@ -319,3 +321,30 @@ this status table and each delivered boundary below distinguish current delivery
   per-mesa projections, other territories or elections, live model re-estimation.
 - **Rollback:** The artifact and its presentation only; Slice 9 foundations stay.
 - **Dependencies/gate:** #391 merged. Approved issue, own PR, independent review.
+
+### 11 — Present the Coronel Rosales CNE 2025 reference map of circuits and voting locations
+
+- **Status:** Approved in #399 (2026-10-10).
+- **Goal/scope:** A read-only section in `/municipal`, "Circuitos y locales de votación
+  (referencia CNE 2025)", showing the 10 Coronel Rosales circuit outlines and the voting
+  locations that have coordinates, plus an accessible table of all 31 locations (circuit,
+  name, address, town, mesa count and range). The 3 locations without coordinates are
+  listed, not plotted.
+- **Sources:** The CNE-supplied 2025 locales spreadsheet and Rosales circuit GeoJSON,
+  archived in `67447e4` and verified by the SHA-256 in `archive-manifest.json`. Raw files
+  stay local and gitignored; only the derived artifact is committed.
+- **Entry points:** An ETL maintainer CLI validates both originals (columns, codes,
+  coordinate ranges, complete mesa ranges) and reports per-reason exclusions; it writes a
+  deterministic, content-addressed artifact under `apps/web/data/geography/`. The web
+  loader checks the pinned SHA-256 before parsing.
+- **RED/verification:** Refuse missing or corrupt originals; refuse an artifact whose hash
+  or schema does not match, with an explicit alert and no map; drift test; mobile and
+  keyboard e2e in the existing municipal spec.
+- **Caveats shown:** CNE reference geography, not official results; not election-effective
+  historical geometry; circuits `0248B`/`0248C` overlap; locales in circuit `0248` are not
+  assigned to a sub-circuit.
+- **Non-goals:** Vote ingestion from the CNE TXT, per-mesa results or projections,
+  assigning locales to sub-circuits or repairing the overlap, historical geometry claims,
+  Fiscalización heat (Slice 7), other municipalities, terrain, 3D or new map dependencies.
+- **Rollback:** The artifact and its section only.
+- **Dependencies/gate:** Approved issue #399, own PR, independent review.
