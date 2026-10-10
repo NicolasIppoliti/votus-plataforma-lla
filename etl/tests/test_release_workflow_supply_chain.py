@@ -140,6 +140,7 @@ test "$E2E_SQL_RESULT" = "$e2e"
         "path": (
             "apps/web/test-results/**/review-focus-geometry.json\n"
             "apps/web/test-results/**/review-scroll-completion.json\n"
+            "apps/web/test-results/**/simulate-back-restore.json\n"
         ),
         "retention-days": 1,
         "include-hidden-files": False,

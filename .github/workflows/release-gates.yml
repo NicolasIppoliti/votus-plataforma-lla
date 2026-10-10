@@ -200,6 +200,7 @@ jobs:
           path: |
             apps/web/test-results/**/review-focus-geometry.json
             apps/web/test-results/**/review-scroll-completion.json
+            apps/web/test-results/**/simulate-back-restore.json
           retention-days: 1
           include-hidden-files: false
           if-no-files-found: ignore
