@@ -946,3 +946,46 @@ describe("municipal page — truthful identified-party distribution", () => {
     expect(html).not.toContain("<svg");
   });
 });
+
+describe("municipal page — CNE Rosales 2025 circuits and voting locations (#399)", () => {
+  const okView: MunicipalView = {
+    status: "ok", rows: [{ ...MUNICIPAL_ROWS[0]!, partyName: "ALIANZA LA LIBERTAD AVANZA", canonicalPartyId: "lla" }],
+    excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } }, partyMappingConfigured: true,
+  };
+
+  it("shows the verified reference map, the full table and the unplotted locales through the real entry point", async () => {
+    process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
+    process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
+    entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+    expect(html).toContain("Circuitos y locales de votación (referencia CNE 2025)");
+    expect(html).toContain("Geografía de referencia CNE; no son resultados oficiales.");
+    expect(html).toContain("No válida para elecciones históricas.");
+    expect(html).toContain("Los circuitos 0248B y 0248C se superponen en el archivo CNE");
+    expect(html).toContain("no se asignan a subcircuitos");
+    expect(html).toContain('aria-label="Mapa de referencia CNE de Coronel Rosales: 10 circuitos y 28 locales con coordenadas');
+    expect(html.match(/<circle /g)).toHaveLength(28);
+    expect(html.match(/data-circuit=/g)).toHaveLength(10);
+    const table = html.slice(html.indexOf("<caption>Locales de votación CNE 2025"));
+    expect(table.slice(0, table.indexOf("</table>")).match(/<tr>/g)).toHaveLength(32);
+    expect(html.match(/Sin coordenadas: no se dibuja/g)).toHaveLength(3);
+    expect(html).toContain("fbd5deddbcf5abefd170d6841f76888c2bca8cb877f90fb4b9c4d73a287fdd4b");
+    expect(html).toContain('<td class="table-cell--number">4200</td>');
+  });
+
+  it("refuses an unverifiable artifact with an explicit alert and no map or table", () => {
+    const html = renderToStaticMarkup(renderMunicipalView(okView, [], 2025, undefined, { ok: false, reason: "hash_mismatch" }));
+    expect(html).toContain("Circuitos y locales de votación (referencia CNE 2025)");
+    expect(html).toContain('<p role="alert">No se muestra la referencia CNE: el archivo no coincide con su SHA-256 fijado.</p>');
+    expect(html).not.toContain("<circle ");
+    expect(html).not.toContain("Locales de votación CNE 2025");
+    expect(html).toContain('<td class="table-cell--number">4200</td>');
+  });
+
+  it("keeps the 2025 reference off the 2023 view", async () => {
+    const { loadRosalesReference } = await import("@/lib/geography/cne-rosales-reference");
+    const html = renderToStaticMarkup(renderMunicipalView(okView, [], 2023, undefined, await loadRosalesReference()));
+    expect(html).not.toContain("Circuitos y locales de votación");
+  });
+});
