@@ -78,8 +78,10 @@ or mesa continuity is established. Fiscalizacion data is excluded entirely.
 
 ## Local availability and restoration
 
-All seven raw originals are gitignored and local-only. A clone of this commit will
-contain the manifest and these documents, **not** the original bytes. The 217 MB
+Five of the seven raw originals are gitignored and local-only. The Rosales locales
+XLSX and the supplied Rosales GeoJSON are versioned, by maintainer decision, so CI
+can regenerate the Slice 11 reference artifact byte for byte. A clone otherwise
+contains the manifest and these documents, **not** the original bytes. The 217 MB
 TXT must not be force-added to Git. Keep a separate authorized backup of the raw
 package when transferring or retiring this worktree.
 

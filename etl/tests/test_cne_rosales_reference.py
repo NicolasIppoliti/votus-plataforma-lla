@@ -14,8 +14,6 @@ import sys
 import zipfile
 from pathlib import Path
 
-import pytest
-
 from etl import cne_rosales_reference as cli
 
 HEADER = [
@@ -364,18 +362,7 @@ def test_committed_artifact_is_content_addressed_and_pins_the_archived_sources()
     assert artifact["exclusions"] == {"not_plotted": {"missing_coordinates": 3}}
 
 
-LOCAL_ORIGINALS = all(
-    (ROOT / source["archived_path"]).is_file()
-    for path in ARTIFACT_DIR.glob(ARTIFACT_GLOB)
-    for source in json.loads(path.read_bytes())["sources"].values()
-)
-
-
-@pytest.mark.skipif(
-    not LOCAL_ORIGINALS,
-    reason="raw CNE Rosales originals are local-only (docs/research/cne-rosales-2025-archive)",
-)
-def test_committed_artifact_matches_regeneration_from_the_local_archive(
+def test_committed_artifact_matches_regeneration_from_the_versioned_archive(
     monkeypatch, capsys, tmp_path
 ):
     committed = sorted(ARTIFACT_DIR.glob(ARTIFACT_GLOB))
