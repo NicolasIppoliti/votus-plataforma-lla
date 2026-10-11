@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07111b">
+  <title>Votus — Exploración territorial · Prototipo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%2307111b'/%3E%3Cpath d='M12 12l12 26 12-26M18 12l6 13 6-13' fill='none' stroke='%2365e5f2' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./prototype.css">
+  <script src="./prototype.js" defer></script>
+</head>
+<body>
+  <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2zM9 3v16m6-14v16"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-compare" viewBox="0 0 24 24"><path d="M3 7h18m-4-4 4 4-4 4M21 17H3m4 4-4-4 4-4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 3v8m0 4v6M12 3v2m0 4v12m8-18v12m0 4v2M1 11h6m2-6h6m2 10h6"/></symbol>
+    <symbol id="i-files" viewBox="0 0 24 24"><path d="M14 2H5v20h14V7zM14 2v5h5M8 12h8m-8 4h8"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 4 8 8-8 8"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 9 7 7 7-7"/></symbol>
+    <symbol id="i-cross" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 4v6h6M3 10a9 9 0 1 1 1 8"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 5h18M3 12h18M3 19h18"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 1v4m0 14v4M1 12h4m14 0h4"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  </svg>
+  <a class="skip-link" href="#main">Ir al contenido</a>
+  <aside class="sidebar" aria-label="Barra lateral">
+    <a class="brand" href="#main" aria-label="Votus, inicio del prototipo"><svg viewBox="0 0 42 42" aria-hidden="true"><path d="M6 7 21 35 36 7M14 7l7 14 7-14"/></svg><span>votus<span class="brand-dot">.</span></span></a>
+    <div class="workspace-label">Espacio de análisis</div>
+    <nav class="main-nav" aria-label="Navegación principal de escritorio">
+      <button disabled><svg class="icon"><use href="#i-grid"/></svg>Panorama<svg class="lock-icon"><use href="#i-lock"/></svg></button>
+      <button class="nav-active" aria-current="page"><svg class="icon"><use href="#i-map"/></svg>Exploración</button>
+      <button disabled><svg class="icon"><use href="#i-compare"/></svg>Comparación<svg class="lock-icon"><use href="#i-lock"/></svg></button>
+      <button disabled><svg class="icon"><use href="#i-sliders"/></svg>Simulación<svg class="lock-icon"><use href="#i-lock"/></svg></button>
+      <button disabled><svg class="icon"><use href="#i-files"/></svg>Evidencia<svg class="lock-icon"><use href="#i-lock"/></svg></button>
+    </nav>
+    <p class="nav-caption">Solo Exploración está disponible en esta maqueta.</p>
+    <div class="sidebar-footer"><span class="design-indicator"></span><div><strong>Diseño en revisión</strong><span>Sin conexión a producción</span></div></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <header class="page-header">
+      <div class="header-heading">
+        <button class="mobile-menu icon-button" aria-label="Abrir navegación"><svg class="icon"><use href="#i-menu"/></svg></button>
+        <div><nav id="territorial-trail" class="breadcrumbs" aria-label="Recorrido territorial"><span aria-current="location">Argentina</span></nav><h1>Exploración territorial</h1><p>El territorio como punto de partida.</p></div>
+      </div>
+      <div class="prototype-badge"><span class="badge-dot"></span><span>Datos de demostración</span><small>Prototipo interactivo</small></div>
+    </header>
+    <section class="filters" aria-label="Filtros de exploración">
+      <div class="filter"><label for="territory">Territorio</label><div class="select-wrap"><select id="territory"><option value="argentina">Argentina</option><option value="buenos-aires">Buenos Aires</option><option value="rosales">Coronel Rosales</option></select><svg class="icon"><use href="#i-down"/></svg></div></div>
+      <div class="filter"><label for="election">Elección</label><div class="select-wrap"><select id="election"><option value="2025">2025 · muestra</option><option value="2023">2023 · muestra</option></select><svg class="icon"><use href="#i-down"/></svg></div></div>
+      <div class="filter"><label for="category">Categoría</label><div class="select-wrap"><select id="category"><option value="national-deputies">Diputados nacionales · demostración</option><option value="concejales">Concejales · demostración</option></select><svg class="icon"><use href="#i-down"/></svg></div></div>
+      <div class="filter"><label for="party">Agrupación</label><div class="select-wrap"><select id="party"><option value="all">Todas las agrupaciones</option><option value="a">Alianza A</option><option value="b">Alianza B</option><option value="c">Lista C</option><option value="d">Lista D</option></select><svg class="icon"><use href="#i-down"/></svg></div></div>
+      <div class="filter-summary"><svg class="icon"><use href="#i-sliders"/></svg><span>Alcance fijo<small>La cámara no cambia los resultados</small></span></div>
+    </section>
+    <div id="mobile-reading" class="mobile-reading" role="status" aria-label="Lectura actual"><strong>Cargando contexto</strong><p>Las muestras y referencias son locales y ficticias.</p></div>
+    <nav id="mobile-task-nav" class="mobile-section-nav" aria-label="Accesos de esta página"><a href="#map-panel">Mapa</a><a href="#results-panel">Resultados</a><a href="#territorial-detail">Detalle</a></nav>
+    <div class="analysis-workbench">
+      <section id="map-panel" tabindex="-1" class="map-panel" aria-label="Mapa territorial de referencia">
+        <header class="map-heading"><div><h2>Ganadores en el territorio</h2><span id="map-subtitle">Argentina · encuadre continental</span></div><span class="map-mode"><svg class="icon"><use href="#i-map"/></svg>Vista territorial</span></header>
+        <div class="map-selection-bar">
+          <button id="select-current-territory" class="territory-label" aria-label="Seleccionar Argentina"><span class="selection-bracket" aria-hidden="true"></span><svg class="icon"><use href="#i-target"/></svg><span><strong id="map-selection-name">Argentina</strong><small id="map-selection-context">Seleccionado · nivel nacional</small></span><svg class="icon label-check"><use href="#i-check"/></svg></button>
+        </div>
+        <div class="map-stage">
+          <div class="coordinate coordinate-north">Encuadre continental</div><div class="coordinate coordinate-south">Referencia IGN</div>
+          <div class="north-mark" role="img" aria-label="Norte"><span>N</span><svg viewBox="0 0 18 30" aria-hidden="true"><path d="m9 2 6 18-6-4-6 4z"/><path d="M9 16v12"/></svg></div>
+          <svg id="territory-map" viewBox="0 0 860 600" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Mapa de resultados de demostración">
+            <defs>
+              <pattern id="map-grid" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M60 0H0V60" fill="none" stroke="#244454" stroke-width=".6"/></pattern>
+              <pattern id="territory-grid" width="23" height="23" patternUnits="userSpaceOnUse"><path d="M23 0H0V23" fill="none" stroke="#69E8F2" stroke-width=".5" opacity=".22"/></pattern>
+              <linearGradient id="territory-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#48C4D6" stop-opacity=".24"/><stop offset=".65" stop-color="#153F53" stop-opacity=".54"/><stop offset="1" stop-color="#63E0F1" stop-opacity=".13"/></linearGradient>
+              <filter id="map-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
+              <clipPath id="territory-clip"><path id="clip-outline"/></clipPath>
+            </defs>
+            <rect width="860" height="600" fill="url(#map-grid)"/>
+            <g class="map-registration"><path d="M35 60V30h30M795 30h30v30M35 540v30h30M795 570h30v-30"/><path d="M425 25h10m-5-5v10M425 575h10m-5-5v10"/></g>
+            <g id="map-camera">
+              <path id="outline-depth" class="outline-depth" transform="translate(0 12)"/>
+              <path id="outline-glow" class="outline-glow" filter="url(#map-glow)"/>
+              <path id="outline-main" class="outline-main" fill="url(#territory-fill)"/>
+              <rect width="860" height="600" fill="url(#territory-grid)" clip-path="url(#territory-clip)"/>
+              <g id="child-geographies"></g>
+            </g>
+          </svg>
+          <div class="map-controls" role="group" aria-label="Controles de vista"><button class="icon-button" aria-label="Acercar mapa"><svg class="icon"><use href="#i-plus"/></svg></button><button class="icon-button" aria-label="Alejar mapa"><svg class="icon"><use href="#i-minus"/></svg></button><span></span><button class="icon-button" aria-label="Restablecer vista"><svg class="icon"><use href="#i-reset"/></svg></button></div>
+          <div class="map-scale"><span></span><small id="camera-label">Vista de referencia · 100 %</small></div>
+          <div id="national-reference-inset" class="national-reference-inset"><svg viewBox="0 0 400 400" role="img" aria-label="Extensión completa de la referencia argentina" data-components="1980"><path id="polar-reference-path"/></svg><span>Referencia completa IGN</span><small>Proyección polar independiente<br>No indica cobertura electoral</small></div>
+        </div>
+        <footer class="map-footer"><div><span class="legend-dot"></span>Territorio seleccionado<small>Referencia geográfica, no cobertura electoral</small></div><button class="text-button evidence-trigger"><svg class="icon"><use href="#i-info"/></svg>Ver evidencia</button></footer>
+        <div id="winner-legend" class="winner-legend" role="group" aria-label="Leyenda del mapa">
+          <span><i style="--legend-color:#65e5f2"></i>Alianza A</span><span><i style="--legend-color:#aac0f1"></i>Alianza B</span><span><i style="--legend-color:#efc58c"></i>Lista C</span><span><i style="--legend-color:#769598"></i>Lista D</span><span><i class="neutral-swatch"></i>Sin ganador definitivo</span>
+          <small>Cartografía observada: contorno neutral. Las muestras de votos son ficticias.</small>
+        </div>
+        <p id="reference-location-note" class="reference-location-note" hidden></p>
+        <div class="selection-status" role="status" aria-label="Estado de selección"><svg class="icon"><use href="#i-check"/></svg><span id="selection-copy">Argentina · todas las agrupaciones · muestra 2025</span></div>
+      </section>
+      <section id="territorial-detail" tabindex="-1" class="territorial-detail" aria-label="Detalle territorial">
+        <div class="detail-top"><span class="detail-label">Detalle territorial</span><span class="detail-scope">País</span></div>
+        <h2 id="detail-title">Argentina</h2><p class="detail-subtitle">Contexto electoral nacional</p><p id="detail-category" class="detail-category">Diputados nacionales · demostración</p>
+        <section class="territorial-navigator" aria-label="Navegador territorial">
+          <div class="navigator-label"><svg class="icon" aria-hidden="true"><use href="#i-map"/></svg>Navegador territorial</div>
+          <h3 id="navigator-title" tabindex="-1">Preparando recorrido</h3>
+          <nav id="navigator-route" class="navigator-route" aria-label="Ruta de exploración"></nav>
+          <button id="navigator-parent" class="navigator-parent" hidden></button>
+          <div id="navigator-search-wrap" class="navigator-search" hidden><label for="navigator-search">Buscar en el siguiente nivel</label><input id="navigator-search" type="search" placeholder="Buscar por nombre" autocomplete="off"></div>
+          <div id="navigator-children" class="navigator-children"></div>
+          <p id="navigator-empty" class="navigator-empty">Cargando las referencias locales.</p>
+        </section>
+        <div id="overall-outcome" class="overall-outcome"></div>
+        <div id="detail-supported">
+          <div class="total"><span>Votos positivos de muestra</span><strong id="total-votes"></strong><small id="total-caption">Total territorial · muestra 2025</small></div>
+          <div class="composition-heading"><h3>Distribución de votos</h3><span>Sobre votos positivos</span></div>
+          <div class="composition-strip" aria-hidden="true"><span data-strip="a"></span><span data-strip="b"></span><span data-strip="c"></span><span data-strip="d"></span></div>
+          <div id="party-breakdown" class="party-breakdown"></div>
+          <p class="sample-note"><svg class="icon"><use href="#i-info"/></svg>Las cifras y agrupaciones son ficticias. No describen resultados oficiales.</p>
+          <div class="reading-note"><div><svg class="icon"><use href="#i-files"/></svg><h3>Antes de interpretar</h3></div><p>Confirmar fuente, categoría y comparabilidad temporal.</p><span>Guía de diseño · no evaluada</span></div>
+        </div>
+        <div id="detail-unsupported" class="detail-unsupported" hidden><svg class="icon"><use href="#i-info"/></svg><h3>Sin muestra para esta categoría</h3><p>El contexto electoral se conserva. Este territorio no tiene cifras de demostración disponibles para la categoría seleccionada.</p></div>
+      </section>
+    </div>
+    <section id="results-panel" tabindex="-1" class="winner-results" aria-label="Ganadores por territorio">
+      <header class="winner-results-header"><div><h2 id="child-results-title">Desglose territorial</h2><p id="child-results-context">Muestras ficticias, referencia geográfica independiente</p></div><div class="child-search"><label for="child-search">Filtrar territorios</label><input id="child-search" type="search" placeholder="Buscar por nombre" autocomplete="off"></div></header>
+      <div class="child-table-scroll" tabindex="0" role="region" aria-label="Tabla de territorios desplazable"><table aria-label="Resultados por territorio"><caption id="child-table-caption">Resultados ficticios por territorio</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Resultado de muestra</th><th scope="col">% de votos positivos</th><th scope="col">Margen</th><th scope="col">Cobertura de muestra</th><th scope="col">Referencia</th></tr></thead><tbody id="child-results-rows"></tbody></table></div>
+      <p id="child-results-empty" class="child-results-empty" hidden></p><p id="child-results-summary" class="child-results-summary"></p>
+    </section>
+    <section class="exact-results" aria-label="Resultados exactos">
+      <div class="results-heading"><div><svg class="icon"><use href="#i-grid"/></svg><h2>Los números, sin aproximaciones</h2></div><button id="results-toggle" aria-expanded="false" aria-controls="results-content">Mostrar resultados exactos<svg class="icon"><use href="#i-down"/></svg></button></div>
+      <div id="results-content" hidden><div class="table-scroll" tabindex="0" role="region" aria-label="Tabla de resultados exactos desplazable"><table aria-label="Resultados de demostración"><caption id="results-caption">Coronel Rosales · muestra 2025 · cifras ficticias</caption><thead><tr><th scope="col">Agrupación</th><th scope="col">Votos positivos</th><th scope="col">% de votos positivos</th><th scope="col">Cambio frente a 2023</th></tr></thead><tbody id="result-rows"></tbody><tfoot><tr><th scope="row">Total de muestra</th><td id="table-total"></td><td>100,00 %</td><td id="table-delta">—</td></tr></tfoot></table></div><p class="table-explanation">Los porcentajes y cambios se calculan sobre esta muestra. La comparación no valida equivalencias entre elecciones reales.</p></div>
+      <p id="results-unavailable" hidden>Sin muestra para esta categoría en la maqueta. No equivale a cero votos.</p>
+    </section>
+    <footer class="page-footer"><span>Una pantalla para revisar el diseño, no para tomar decisiones electorales.</span><span>Maqueta local · sin datos personales</span></footer>
+  </main>
+  <dialog id="evidence-dialog" aria-labelledby="evidence-title">
+    <div class="dialog-heading"><h2 id="evidence-title">Evidencia del prototipo</h2><button class="icon-button" aria-label="Cerrar evidencia"><svg class="icon"><use href="#i-cross"/></svg></button></div>
+    <p id="evidence-intro">Argentina utiliza una referencia geográfica de IGN, conservada en el archivo local del proyecto.</p>
+    <dl><dt>Referencia geográfica</dt><dd id="evidence-geography"></dd><dt>Alcance</dt><dd id="evidence-scope"></dd><dt>Contexto de muestra</dt><dd id="evidence-context"></dd><dt>Resultados</dt><dd>Todos los votos, coberturas y circuitos, establecimientos y mesas de demostración son ficticios. El contexto electoral se conserva al navegar. Solo se suman particiones completas de hijos de la misma categoría. Concejales en Coronel Rosales reúne ocho mesas ficticias creadas para revisar el diseño, no una distribución derivada de resultados oficiales; los demás territorios no tienen muestra de Concejales.</dd><dt>Calidad y correspondencia</dt><dd>Los grupos y nombres de referencia CNE no constituyen un cruce electoral oficial. Cartografía observada: geometría de origen no válida, sin reparación ni exclusión. La cobertura ficticia de votos no valida la cartografía.</dd><dt>Archivo de origen</dt><dd><code id="evidence-source" class="source-hash"></code></dd></dl>
+    <div class="evidence-footer"><svg class="icon"><use href="#i-lock"/></svg>Esta maqueta no consulta la base de datos.</div>
+  </dialog>
+  <dialog id="navigation-dialog" aria-label="Navegación principal"><div class="dialog-heading"><div class="mobile-brand">votus<span>.</span></div><button class="icon-button" aria-label="Cerrar navegación"><svg class="icon"><use href="#i-cross"/></svg></button></div><nav class="main-nav" aria-label="Secciones del prototipo"><button disabled><svg class="icon"><use href="#i-grid"/></svg>Panorama<svg class="lock-icon"><use href="#i-lock"/></svg></button><button class="nav-active" aria-current="page"><svg class="icon"><use href="#i-map"/></svg>Exploración</button><button disabled><svg class="icon"><use href="#i-compare"/></svg>Comparación<svg class="lock-icon"><use href="#i-lock"/></svg></button><button disabled><svg class="icon"><use href="#i-sliders"/></svg>Simulación<svg class="lock-icon"><use href="#i-lock"/></svg></button><button disabled><svg class="icon"><use href="#i-files"/></svg>Evidencia<svg class="lock-icon"><use href="#i-lock"/></svg></button></nav><p class="nav-caption">Solo Exploración está disponible en esta maqueta.</p></dialog>
+</body>
+</html>

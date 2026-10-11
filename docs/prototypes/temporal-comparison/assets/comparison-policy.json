@@ -1,0 +1,25 @@
+{
+  "source": {
+    "kind": "demonstration",
+    "historicalBoundaryStatus": "unverified",
+    "official": false,
+    "description": "Authored comparison scenarios only; not findings about actual electoral correspondence or historical boundaries."
+  },
+  "correspondence": {
+    "kind": "synthetic-only",
+    "partyIds": ["a", "b", "c", "d"],
+    "territoryRule": "Same internal node ID in the frozen fictional fixture, not an official electoral crosswalk.",
+    "eligibility": "Distinct years, same category, complete positive samples and all four fictional groups matched."
+  },
+  "overrides": {
+    "province-mendoza": {
+      "status": "unmapped",
+      "unmappedPartyIds": ["d"],
+      "description": "Design scenario: fictional group D lacks correspondence; the all-group denominator cannot establish an eligible comparison."
+    },
+    "province-jujuy": {
+      "status": "discontinuous",
+      "description": "Design scenario: the synthetic unit is discontinuous between the two samples; no historical boundary claim is made."
+    }
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "checkedAt": "2026-10-01T00:40:30.922Z",
+  "scope": "Local code/archive audit; no database/API coverage query",
+  "officialScenarioVerified": false,
+  "liveDatabaseCoverage": "unknown",
+  "facts": [
+    {
+      "id": "motor",
+      "status": "available",
+      "title": "Cálculo hipotético disponible",
+      "detail": "Votus ya permite escenarios nacionales y provinciales con votos y parámetros ingresados por el usuario. No valida por sí solo la identidad de la elección, categoría y unidad electoral.",
+      "sources": [
+        "apps/web/src/app/(authenticated)/simulate/simulation-form.tsx",
+        "apps/web/src/app/(authenticated)/simulate/simulation-form-adapter.ts",
+        "apps/web/src/app/(authenticated)/simulate/projection-input.ts"
+      ]
+    },
+    {
+      "id": "historical",
+      "status": "pending",
+      "title": "Base histórica de Simulación pendiente",
+      "detail": "La pantalla de Simulación no conecta una carga histórica oficial confiable. Esto no demuestra que falten datos en otras partes de Votus.",
+      "sources": [
+        "apps/web/src/app/(authenticated)/simulate/page.tsx"
+      ]
+    },
+    {
+      "id": "source-fields",
+      "status": "pending",
+      "title": "Padrón y sección: existen en origen",
+      "detail": "Las fuentes nacionales archivadas incluyen electores y sección provincial. Los modelos normalizados inspeccionados no transportan esos campos como insumos históricos de Simulación. Integración pendiente, no fuente inexistente.",
+      "sources": [
+        "etl/etl/ingest/national.py",
+        "etl/etl/jurisdiction.py",
+        "etl/etl/db.py"
+      ]
+    },
+    {
+      "id": "pba-coverage",
+      "status": "limited",
+      "title": "Registro PBA acotado a 2 partidos",
+      "detail": "El registro y parser PBA 2025 admiten Rosales y Tigre; no representan cobertura provincial completa. Los cuatro PDF de Rosales son referencias archivadas, no resultados ingeridos.",
+      "sources": [
+        "etl/sources.yaml",
+        "etl/etl/ingest/pba.py",
+        "curated/crosswalk.yaml"
+      ]
+    },
+    {
+      "id": "archive",
+      "status": "snapshot",
+      "title": "Archivo local, no estado de la base alojada",
+      "detail": "Se verificaron cuatro ZIP nacionales y las referencias de Rosales. El HTML de Tigre falta en la ruta local registrada pese a un manifiesto ok. No se consultó la base alojada; su cobertura es desconocida.",
+      "sources": [
+        "archive-manifest.json"
+      ]
+    },
+    {
+      "id": "parameters",
+      "status": "unverified",
+      "title": "Convocatoria y composición no verificadas",
+      "detail": "El padrón, las bancas y los votos de esta ampliación son supuestos ficticios. No validan una renovación de 2027 ni la composición completa de una cámara.",
+      "sources": [
+        "apps/web/src/app/(authenticated)/simulate/page.tsx"
+      ]
+    },
+    {
+      "id": "guards",
+      "status": "limited",
+      "title": "Límites de cálculo y visualización",
+      "detail": "Sensibilidad: hasta 21 muestras y 600 posiciones (muestras × bancas × listas). Dibujo: hasta 60 bancas y 600 posiciones (bancas × listas); un límite de dibujo no anula un resultado exacto. Empates por convención y mayoría especial no resuelta bloquean esta demostración.",
+      "sources": [
+        "apps/web/src/app/(authenticated)/simulate/simulation-form-adapter.ts",
+        "apps/web/src/app/(authenticated)/simulate/page.tsx",
+        "apps/web/src/domain/seat-allocation/allocate.ts"
+      ]
+    },
+    {
+      "id": "geography",
+      "status": "prototype",
+      "title": "Límite cartográfico del prototipo",
+      "detail": "La referencia real contiene ocho secciones PBA, pero este prototipo no tiene una vinculación validada de polígonos por sección. Muestra el contorno provincial neutral y una selección textual; no inventa geometría. Las referencias nacionales observadas permanecen neutrales.",
+      "sources": []
+    }
+  ],
+  "sourceHashes": {
+    "apps/web/src/app/(authenticated)/simulate/simulation-form.tsx": "57556280366fcda0e9993cd4e4a849cdf8c7bd920b3225231a72d5737bde0038",
+    "apps/web/src/app/(authenticated)/simulate/simulation-form-adapter.ts": "d8a8eef9f41e4145fa815a0f3c41ba65bfcf122da841372f44bf7f144d095b75",
+    "apps/web/src/app/(authenticated)/simulate/projection-input.ts": "6c27209b128ddb3129eebef474cc3fecc1f4077f09d388f213679c038a7ef858",
+    "apps/web/src/app/(authenticated)/simulate/page.tsx": "5ce61ab86a2fb82c43dbd61d9599ddb1c07cb5f1965060d7f07fb2ab74a48104",
+    "etl/etl/ingest/national.py": "c4da81b835b100c7cf430be3598a90bcec1fc416f43ed502f4ede9255d750bf2",
+    "etl/etl/jurisdiction.py": "c24f8fdfbf285e0d3e7e4bbb659a861160cd0281e5b0a81645234a054a36e3d1",
+    "etl/etl/db.py": "04cb3448f2f69c3c3ec3bc6a876de310a701dac92610edc1fc924c6741160c58",
+    "etl/sources.yaml": "5287d014e2c1f937f7f65d6676e16ab018f9ed4c89be2ee60691d13717e04114",
+    "etl/etl/ingest/pba.py": "a009f5866ff830e49901bd29ca02da614020f9adf044799360f7881ba21c42df",
+    "curated/crosswalk.yaml": "139016fe4fa0c5b334f5517bebe7beaf49db0be2528037b073ff1188174a3d3c",
+    "archive-manifest.json": "921038006eea341f230e6249dccc57e1ebfcd7d39414f1b7c140e2635fdaf029",
+    "apps/web/src/domain/seat-allocation/allocate.ts": "f994924b746aad0dd0cfd23c8edd656b42ea2c58d291571ddd7e18c88653b84f"
+  },
+  "legislativeReference": {
+    "sections": 8,
+    "partidos": 135,
+    "counts": [
+      24,
+      15,
+      19,
+      19,
+      27,
+      22,
+      8,
+      1
+    ],
+    "years": [
+      "2023",
+      "2025"
+    ],
+    "conflicts": 0,
+    "rosalesSection": "6",
+    "tigreSection": "1"
+  },
+  "citations": [
+    {
+      "title": "Código Electoral Nacional",
+      "url": "https://www.argentina.gob.ar/normativa/nacional/ley-19945-19442/actualizacion"
+    },
+    {
+      "title": "Ley 5109",
+      "url": "https://normas.gba.gob.ar/documentos/VGW7pIWV.html"
+    }
+  ]
+}

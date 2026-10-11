@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Prototipo aislado de evidencia territorial de Votus. Cobertura ficticia, trazabilidad y límites explícitos.">
+  <title>Votus — Evidencia y calidad de datos</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2307111b' d='M0 0h32v32H0z'/%3E%3Cpath fill='none' stroke='%2365e5f2' stroke-width='3' d='m6 9 10 15L26 9'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./prototype.css">
+  <script type="module" src="./prototype.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Saltar al contenido</a>
+  <aside class="sidebar" aria-label="Espacio de trabajo">
+    <div class="brand"><svg aria-hidden="true" viewBox="0 0 34 40"><path d="m4 7 13 25L30 7M9 7l8 16 8-16"/></svg>votus<span>.</span></div>
+    <p class="workspace-label">Análisis territorial</p>
+    <nav class="module-nav" aria-label="Secciones del prototipo">
+      <button disabled>Panorama</button>
+      <a href="http://127.0.0.1:63193/">Exploración</a>
+      <a href="http://127.0.0.1:65171/">Comparación</a>
+      <a href="http://127.0.0.1:64232/">Simulación</a>
+      <span class="active" aria-current="page">Evidencia</span>
+    </nav>
+    <p class="rail-note">Un dato disponible.<br>Una fuente identificable.<br>Un límite que se puede entender.</p>
+    <div class="sidebar-footer"><i aria-hidden="true"></i><div>Laboratorio de diseño<small>Sin conexión a producción</small></div></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <header class="page-header">
+      <button id="navigation-open" class="mobile-nav-button" aria-label="Abrir navegación">☰</button>
+      <div><p class="top-trail">Espacio de trabajo / Evidencia</p><h1>Evidencia y calidad de datos</h1><p>Entender qué hay, de dónde viene y qué todavía no se puede afirmar.</p></div>
+      <div class="demo-badge"><i aria-hidden="true"></i><span>Prototipo aislado</span><small>Sin consulta a la base alojada</small></div>
+    </header>
+
+    <section class="shared-context" aria-label="Contexto de la evidencia">
+      <div class="field mode-field"><label for="evidence-mode">Vista de evidencia</label><select id="evidence-mode" disabled><option value="demonstration">Muestra de diseño</option><option value="verified">Capacidades verificadas en código</option></select></div>
+      <div class="field"><label for="territory">Territorio</label><select id="territory" disabled><option value="argentina">Argentina</option><option value="buenos-aires">Buenos Aires</option><option value="rosales" selected>Coronel Rosales</option></select></div>
+      <div class="field compact-field"><label for="base-year">Muestra base</label><select id="base-year" disabled><option value="2025">2025 · demostración</option><option value="2023">2023 · demostración</option></select></div>
+      <div class="field"><label for="category">Categoría</label><select id="category" disabled><option value="concejales">Concejales</option><option value="national-deputies">Diputados nacionales</option></select></div>
+      <div class="field"><label for="source-kind">Origen</label><select id="source-kind" disabled><option value="official">Oficial · muestra de diseño</option><option value="internal">Fiscalización interna · opt-in</option></select></div>
+    </section>
+    <div id="scope-notice" class="scope-notice" role="status">Cargando archivos locales. Todavía no hay cifras disponibles.</div>
+    <p id="case-notice" class="case-notice" hidden></p>
+
+    <section id="mobile-reading" class="mobile-task-summary" aria-label="Resumen de evidencia">
+      <strong id="mobile-evidence-context">Cargando contexto</strong>
+      <p id="mobile-evidence-reading">Sin evidencia validada.</p>
+      <nav id="mobile-task-nav" aria-label="Accesos a la evidencia"><a href="#selected-heading">Mapa</a><a href="#evidence-heading">Evidencia</a><a href="#detail-heading">Unidades</a><button id="provenance-quick" type="button" disabled>Ver trazabilidad</button></nav>
+    </section>
+
+    <section class="evidence-workbench" aria-label="Evidencia territorial">
+      <div class="map-panel">
+        <nav id="breadcrumbs" class="breadcrumbs" aria-label="Recorrido territorial"></nav>
+        <header class="map-toolbar"><div><h2 id="selected-heading" tabindex="-1">Coronel Rosales</h2><p id="map-subtitle">Referencia territorial; no certifica cobertura oficial.</p></div><span class="map-kind">Disponibilidad de la muestra</span></header>
+        <div class="map-stage">
+          <svg id="territory-map" viewBox="0 0 860 600" role="img" aria-labelledby="map-title map-description" data-scope="rosales" data-reference-scope="rosales">
+            <title id="map-title">Referencia territorial de Coronel Rosales</title><desc id="map-description">Cargando referencia geográfica.</desc>
+            <defs><pattern id="map-grid" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M60 0H0V60" fill="none" stroke="#1e394a" stroke-width="1"/></pattern><pattern id="missing-pattern" width="9" height="9" patternUnits="userSpaceOnUse"><path d="M-2 2L2-2M0 9L9 0M7 11L11 7" stroke="#8499a8" stroke-width="1"/></pattern></defs>
+            <rect width="860" height="600" fill="url(#map-grid)"/><g id="map-shapes"></g>
+          </svg>
+          <div class="map-caption"><strong id="map-reading">Sin evidencia cargada</strong><span id="map-color-note">Color = disponibilidad declarada, no ganador ni intensidad de votos.</span></div>
+        </div>
+        <div class="map-legend" role="group" aria-label="Estados de disponibilidad"><span><i class="complete-key"></i>Completa</span><span><i class="partial-key"></i>Parcial</span><span><i class="missing-key"></i>Sin datos</span><span><i class="observed-key"></i>Referencia observada</span></div>
+        <p id="geometry-note" class="geometry-note">El mapa y los resultados se evalúan por separado.</p>
+        <details id="polar-reference" class="polar-reference" hidden><summary>Alcance del encuadre nacional</summary><p>El mapa principal usa un encuadre continental. No representa el territorio completo. La referencia polar original se conserva aquí como contorno, sin resultados asignados.</p><svg id="polar-map" viewBox="0 0 860 600" role="img" aria-label="Contorno de referencia polar sin resultados"><path id="polar-shape" class="neutral-outline"/></svg></details>
+        <footer class="map-footer"><span>Geografía de referencia CNE / IGN</span><button id="method-open" class="text-button">Cómo interpretar la evidencia</button></footer>
+      </div>
+      <aside class="evidence-panel" aria-labelledby="evidence-heading">
+        <p class="panel-overline">Lectura de la selección</p><h2 id="evidence-heading" tabindex="-1">Qué respalda este dato</h2>
+        <div id="evidence-status" class="evidence-status" data-state="loading" role="status">Cargando evidencia</div>
+        <p id="status-explanation" class="panel-intro">No se muestran cifras hasta validar la muestra.</p>
+        <section id="reading-guide" class="reading-guide" aria-labelledby="reading-heading">
+          <h3 id="reading-heading">Qué permite esta evidencia</h3><p id="reading-scope" class="reading-scope">Sin selección validada</p>
+          <dl><div><dt>Se puede interpretar</dt><dd id="can-interpret">El estado de carga local; todavía no hay evidencia validada.</dd></div><div><dt>No permite afirmar</dt><dd id="cannot-claim">Resultados, cobertura ni condiciones para usar una base electoral.</dd></div><div><dt>Origen de la limitación</dt><dd id="reading-origin-reason">Validación local pendiente</dd></div><div><dt>Impacto de lectura</dt><dd id="reading-impact">No hay evidencia validada para Comparación o Simulación.</dd></div></dl>
+        </section>
+        <dl class="evidence-metrics">
+          <div class="coverage-block"><dt>Cobertura de demostración</dt><dd><strong id="coverage-ratio">—</strong><span id="coverage-unit">Sin unidad confirmada</span></dd></div>
+          <div class="percentage-block"><dt>Porcentaje de la muestra</dt><dd id="coverage-percent">—</dd></div>
+          <div><dt>Votos positivos de demostración</dt><dd id="positive-votes">—</dd></div>
+        </dl>
+        <p id="coverage-reason" class="coverage-reason">Sin denominador confirmado.</p>
+        <div class="geometry-axis"><span>Referencia geográfica</span><strong id="geometry-status">Sin referencia cargada</strong><p>Una geometría válida no acredita equivalencia electoral histórica.</p></div>
+        <button id="provenance-open" class="provenance-button" disabled>Ver trazabilidad</button>
+        <p id="provenance-summary" class="panel-note">La muestra no está vinculada a un archivo oficial.</p>
+        <button id="retry" hidden>Reintentar carga</button>
+        <details class="consultation-cases"><summary>Casos de consulta</summary><div class="field"><label for="consultation-case">Caso de consulta</label><select id="consultation-case" disabled><option value="normal">Muestra cargada</option></select></div><p>Estados simulados para revisar el diseño. No describen permisos ni fallos actuales.</p></details>
+      </aside>
+    </section>
+
+    <section class="territorial-detail" aria-labelledby="detail-heading">
+      <header class="section-heading"><div><h2 id="detail-heading" tabindex="-1">Inspeccionar las unidades</h2><p id="children-note">La tabla no recalcula el mapa ni la cobertura agregada.</p></div><p id="shown-count" role="status">Sin filas disponibles</p></header>
+      <div class="table-filters"><div class="field search-field"><label for="territory-search">Buscar unidad</label><input id="territory-search" type="search" placeholder="Nombre del territorio" autocomplete="off" disabled></div><div class="field"><label for="availability-filter">Estado de la muestra</label><select id="availability-filter" disabled><option value="all">Todos los estados</option><option value="complete">Completa</option><option value="partial">Parcial</option><option value="missing">Sin datos</option></select></div></div>
+      <div id="table-region" class="table-scroll" role="region" aria-label="Unidades territoriales de la muestra" tabindex="0"><table><thead><tr><th scope="col">Unidad territorial</th><th scope="col">Disponibilidad</th><th scope="col">Cobertura declarada</th><th scope="col">Referencia geográfica</th></tr></thead><tbody id="territory-body"></tbody></table></div>
+      <p id="table-empty" class="table-empty">La muestra se está cargando.</p>
+    </section>
+
+    <section class="boundary-panel" aria-labelledby="votus-boundaries"><header class="section-heading"><div><h2 id="votus-boundaries">Lo que Votus permite hoy</h2><p id="snapshot-date">Revisión local pendiente.</p></div><span class="snapshot-label">Código local, no cobertura alojada</span></header><p class="boundary-intro">La base alojada y los permisos de la organización no se consultaron. Su cobertura permanece desconocida.</p><div id="boundary-facts" class="boundary-facts"></div></section>
+    <footer class="page-footer"><span>Votus · laboratorio de diseño</span><span>Resultados ficticios. Sin acciones sobre datos reales.</span></footer>
+  </main>
+
+  <dialog id="provenance-dialog" aria-label="Trazabilidad de la evidencia"><div class="dialog-header"><h2>Trazabilidad de la evidencia</h2><button data-close="provenance-dialog" aria-label="Cerrar trazabilidad">Cerrar</button></div><div id="provenance-content"></div></dialog>
+  <dialog id="method-dialog" aria-label="Método y estados"><div class="dialog-header"><h2>Método y estados</h2><button data-close="method-dialog" aria-label="Cerrar método">Cerrar</button></div><div class="method-content"><h3>Una cobertura siempre necesita una unidad</h3><p>La relación muestra unidades declaradas presentes sobre el total declarado. Solo se calcula un porcentaje cuando la unidad está documentada y el denominador es válido y positivo. Circuitos, establecimientos, mesas, partidos y provincias no son intercambiables.</p><h3>Desconocido no es cero</h3><p>Cero votos puede ser un resultado válido y completo. Sin datos significa que no existe un vector de votos en la muestra. Un empate tampoco vuelve incompleta una muestra. La cobertura alojada desconocida no se presenta como 0 % ni como completa.</p><h3>Dos ejes independientes</h3><p>Disponibilidad de resultados y validez de la geometría son propiedades distintas. Las referencias observadas permanecen visibles y en la tabla, pero no reciben color de disponibilidad. Las unidades profundas ficticias no tienen ubicación propia: se conserva un contorno neutral de Rosales, sin polígonos ni puntos inventados.</p><h3>Fuentes separadas</h3><p>Fiscalización es una selección interna explícita, no una muestra aleatoria. Su cobertura necesita denominador y nunca se combina con votos oficiales. Este prototipo no contiene una muestra interna ni consultó permisos.</p><h3>Trazabilidad no es certificación</h3><p>Un SHA registrado no demuestra que se hayan verificado los bytes de un archivo. La huella de esta muestra identifica únicamente un archivo ficticio de diseño: no valida un archivo oficial, la base alojada ni la aplicabilidad histórica de una referencia geográfica.</p><h3>Consultas y filtros</h3><p>Vacío, no autorizado, no disponible, fuera de límite y respuesta no válida se presentan por separado. Los casos seleccionables son simulaciones. Las filas visibles y una búsqueda no constituyen un denominador de cobertura. El agregado nacional es independiente de las provincias visibles.</p></div></dialog>
+  <dialog id="navigation-dialog" aria-label="Navegación del prototipo"><div class="dialog-header"><h2>votus<span class="cyan">.</span></h2><button data-close="navigation-dialog" aria-label="Cerrar navegación">Cerrar</button></div><nav class="module-nav" aria-label="Secciones móviles"><button disabled>Panorama</button><a href="http://127.0.0.1:63193/">Exploración</a><a href="http://127.0.0.1:65171/">Comparación</a><a href="http://127.0.0.1:64232/">Simulación</a><span class="active" aria-current="page">Evidencia</span></nav></dialog>
+</body>
+</html>

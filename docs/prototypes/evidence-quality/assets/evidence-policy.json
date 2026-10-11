@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "checkedAt": "2026-10-01T01:30:46.772Z",
+  "sourceKind": "local-code-snapshot",
+  "liveDatabaseQueried": false,
+  "organizationPermissionsVerified": false,
+  "liveCoverage": "unknown",
+  "officialExpectedMesaDenominator": null,
+  "defaultSelection": {
+    "mode": "demonstration",
+    "nodeId": "rosales",
+    "year": "2025",
+    "category": "concejales",
+    "sourceKind": "official"
+  },
+  "demonstration": {
+    "notice": "Muestra de diseño: resultados y cobertura ficticios. No describe la ingesta ni la cobertura oficial.",
+    "fingerprint": "cf2c1db19469ddf04a12e3ab7cd2eaec954c0290421ada254b8f81eace84040f",
+    "coverageUnits": {
+      "argentina": {
+        "label": "provincias/CABA de demostración",
+        "kind": "authored_province_aggregates"
+      },
+      "buenos-aires": {
+        "label": "partidos de demostración",
+        "kind": "authored_partido_aggregates"
+      },
+      "rosales": {
+        "label": "circuitos de demostración",
+        "kind": "authored_circuits"
+      },
+      "demo-table-01-01-01": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-table-01-01-02": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-school-01-01": {
+        "label": "mesas de demostración",
+        "kind": "authored_school_reference_units"
+      },
+      "demo-table-01-02-01": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-table-01-02-02": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-school-01-02": {
+        "label": "mesas de demostración",
+        "kind": "authored_school_reference_units"
+      },
+      "demo-circuit-01": {
+        "label": "establecimientos de demostración",
+        "kind": "authored_circuit_reference_units"
+      },
+      "demo-table-02-01-01": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-table-02-01-02": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-school-02-01": {
+        "label": "mesas de demostración",
+        "kind": "authored_school_reference_units"
+      },
+      "demo-table-02-02-01": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-table-02-02-02": {
+        "label": "registros de demostración",
+        "kind": "authored_mesa_reference_units"
+      },
+      "demo-school-02-02": {
+        "label": "mesas de demostración",
+        "kind": "authored_school_reference_units"
+      },
+      "demo-circuit-02": {
+        "label": "establecimientos de demostración",
+        "kind": "authored_circuit_reference_units"
+      }
+    },
+    "untypedCoverageNotice": "Tipo de unidad no documentado en esta muestra; no se calcula un porcentaje.",
+    "nationalAggregateNotice": "El agregado nacional es una muestra independiente, no la suma de los resultados visibles por provincia."
+  },
+  "consultationCases": [
+    {
+      "id": "normal",
+      "label": "Muestra cargada",
+      "presentationState": "normal"
+    },
+    {
+      "id": "empty",
+      "label": "Consulta vacía · caso de diseño",
+      "presentationState": "empty"
+    },
+    {
+      "id": "denied",
+      "label": "Acceso no autorizado · caso de diseño",
+      "presentationState": "denied"
+    },
+    {
+      "id": "unavailable",
+      "label": "No disponible · caso de diseño",
+      "presentationState": "unavailable"
+    },
+    {
+      "id": "truncated",
+      "label": "Respuesta fuera de límite · caso de diseño",
+      "presentationState": "truncated"
+    },
+    {
+      "id": "malformed",
+      "label": "Respuesta no válida · caso de diseño",
+      "presentationState": "error"
+    }
+  ],
+  "safeProvenanceFields": [
+    "archiveEntryId",
+    "capability",
+    "mime",
+    "bytes",
+    "fetchedAt",
+    "status",
+    "sha256"
+  ],
+  "forbiddenProvenanceFields": [
+    "source",
+    "source_url",
+    "sourceUrl",
+    "archived_path",
+    "archivedPath",
+    "notes",
+    "url",
+    "path"
+  ],
+  "facts": [
+    {
+      "id": "official-denominator",
+      "title": "Resultados oficiales: falta el denominador esperado",
+      "detail": "El contrato oficial informa mesas presentes y filas/votos de origen, pero no cuántas mesas deberían existir para esta selección. Eso no permite calcular un porcentaje de cobertura oficial.",
+      "sources": [
+        "apps/web/src/lib/results/exploration-contract.ts"
+      ]
+    },
+    {
+      "id": "internal-source",
+      "title": "Fiscalización separada y opt-in",
+      "detail": "La cobertura interna tiene unidades observadas y un denominador, pero no es una muestra aleatoria. No debe combinarse con resultados oficiales; la cobertura y los votos son datos distintos.",
+      "sources": [
+        "apps/web/src/lib/workspace/context.ts",
+        "apps/web/src/app/(authenticated)/fiscalizacion/page.tsx"
+      ]
+    },
+    {
+      "id": "provenance",
+      "title": "Trazabilidad autorizada, sin rutas ni notas libres",
+      "detail": "La evidencia oficial permite identificador de archivo, capacidad, MIME, tamaño, fecha, estado y SHA. Un SHA registrado no prueba que el archivo haya sido verificado. No se exponen rutas, URL de origen, notas ni datos personales.",
+      "sources": [
+        "apps/web/src/lib/workspace/official-drilldown-evidence.ts"
+      ]
+    },
+    {
+      "id": "review",
+      "title": "Revisión de lectura, no resolución",
+      "detail": "La cola existente es paginada y de solo lectura: tipo, severidad y fecha. Su contrato no ofrece descripción territorial ni una acción para resolver observaciones.",
+      "sources": [
+        "apps/web/src/app/(authenticated)/review/page.tsx",
+        "apps/web/src/lib/workspace/review-items.ts"
+      ]
+    },
+    {
+      "id": "query-status",
+      "title": "Desconocido no significa vacío",
+      "detail": "Consulta vacía, acceso no autorizado, evidencia no disponible y respuesta no válida son estados diferentes. En esta maqueta no se consultó la base alojada ni se verificaron los permisos de la organización.",
+      "sources": [
+        "apps/web/src/components/EvidenceState.tsx",
+        "apps/web/src/lib/workspace/official-drilldown-evidence.ts"
+      ]
+    },
+    {
+      "id": "snapshot",
+      "title": "Fuentes y archivos no certifican cobertura alojada",
+      "detail": "La revisión local anterior comprobó fuentes nacionales archivadas y un registro HTML PBA 2025 acotado a Rosales/Tigre, no la cobertura completa de la base alojada. La identidad provincial y el padrón existen en origen, pero no son insumos históricos conectados a Simulación.",
+      "sources": [
+        "etl/sources.yaml",
+        "etl/etl/ingest/national.py",
+        "etl/etl/ingest/pba.py",
+        "etl/etl/jurisdiction.py",
+        "etl/etl/db.py"
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "apps/web/src/lib/results/exploration-contract.ts": "fef0808094589ca91ea649836189446cde430b2608c171deda2706ad6eaa2f5d",
+    "apps/web/src/lib/workspace/context.ts": "af4cbfd42b2b15e00efad72334688eda585ca7d9e57c99aba62a30bf0dde1380",
+    "apps/web/src/app/(authenticated)/fiscalizacion/page.tsx": "ec227a5c704d60686a9acca1aece414b608851a80bc3297f799ca350206e3581",
+    "apps/web/src/lib/workspace/official-drilldown-evidence.ts": "0127e02d26ae00997d98e2423f29e547d8c5d13956d6cb88b194d129e76ef1e6",
+    "apps/web/src/app/(authenticated)/review/page.tsx": "addf8f498342b2dae1979c57dfdb62b25e5b08790e4f368233ce64702a6855ab",
+    "apps/web/src/lib/workspace/review-items.ts": "346cf3e24a0dd741fb81d7bb3b681f17bd55a302cdd30c2993fbc98d12ae205a",
+    "apps/web/src/components/EvidenceState.tsx": "b30af3dc296d76cc90c66a3a3aa858f3aff23a250a90e715a28ed9c5f8c0402c",
+    "etl/sources.yaml": "5287d014e2c1f937f7f65d6676e16ab018f9ed4c89be2ee60691d13717e04114",
+    "etl/etl/ingest/national.py": "c4da81b835b100c7cf430be3598a90bcec1fc416f43ed502f4ede9255d750bf2",
+    "etl/etl/ingest/pba.py": "a009f5866ff830e49901bd29ca02da614020f9adf044799360f7881ba21c42df",
+    "etl/etl/jurisdiction.py": "c24f8fdfbf285e0d3e7e4bbb659a861160cd0281e5b0a81645234a054a36e3d1",
+    "etl/etl/db.py": "04cb3448f2f69c3c3ec3bc6a876de310a701dac92610edc1fc924c6741160c58"
+  },
+  "priorArchiveSnapshotAt": "2026-10-01T00:40:30.922Z",
+  "prototypeLimits": [
+    "No live database/API, authentication or official territorial-coverage query.",
+    "No official archive reference bound to the fictional result fixture.",
+    "Deep fictional units lack their own locations; use neutral Rosales ancestor.",
+    "Geometry validity is a source diagnostic, not a historical electoral crosswalk.",
+    "Displayed child rows/filter counts are not a coverage denominator."
+  ]
+}
