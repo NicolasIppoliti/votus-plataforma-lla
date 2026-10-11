@@ -139,6 +139,24 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(mocks.internas).not.toHaveBeenCalled();
   });
 
+  it.each(["DIPUTADOS/AS NACIONALES", "PRESIDENTE Y VICE"])("does not request internas for the 2023 PASO category %s", async (categoryName) => {
+    const bundle = authorizedBundle();
+    bundle.result.election_year = 2023; bundle.result.election_round = "paso";
+    bundle.result.category_name = categoryName;
+    mocks.bundle.mockResolvedValue(bundle);
+    await render();
+    expect(mocks.internas).not.toHaveBeenCalled();
+  });
+
+  it("does not request internas for the 2023 generales presidential category", async () => {
+    const bundle = authorizedBundle();
+    bundle.result.election_year = 2023; bundle.result.election_round = "generales";
+    bundle.result.category_name = "PRESIDENTE/A";
+    mocks.bundle.mockResolvedValue(bundle);
+    await render();
+    expect(mocks.internas).not.toHaveBeenCalled();
+  });
+
   it("places a national geographic orientation before the preserved provincial and exact-selection path", async () => {
     const markup = await render({});
     expect(markup).toContain("Argentina: referencia geográfica");
