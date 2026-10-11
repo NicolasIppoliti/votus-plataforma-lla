@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Prototipo aislado de escenarios electorales de Votus. Muestras ficticias, transferencias explícitas y cálculo verificable.">
+  <title>Votus — Simulación de escenarios</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2307111b' d='M0 0h32v32H0z'/%3E%3Cpath fill='none' stroke='%2365e5f2' stroke-width='3' d='m6 9 10 15L26 9'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./prototype.css">
+  <script type="module" src="./prototype.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Saltar al contenido</a>
+  <aside class="sidebar" aria-label="Espacio de trabajo">
+    <div class="brand"><svg aria-hidden="true" viewBox="0 0 34 40"><path d="m4 7 13 25L30 7M9 7l8 16 8-16"/></svg>votus<span>.</span></div>
+    <p class="workspace-label">Análisis territorial</p>
+    <nav class="module-nav" aria-label="Secciones del prototipo">
+      <button disabled>Panorama</button>
+      <a href="http://127.0.0.1:63193/">Exploración</a>
+      <a href="http://127.0.0.1:65171/">Comparación</a>
+      <span class="active" aria-current="page">Simulación</span>
+      <button disabled>Evidencia</button>
+    </nav>
+    <p class="rail-note">Un supuesto explícito.<br>Un territorio delimitado.<br>Un cálculo que se puede revisar.</p>
+    <div class="sidebar-footer"><i aria-hidden="true"></i><div>Laboratorio de diseño<small>Sin conexión a producción</small></div></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <header class="page-header">
+      <button id="navigation-open" class="mobile-nav-button" aria-label="Abrir navegación">☰</button>
+      <div><p class="top-trail">Espacio de trabajo / Simulación</p><h1>Simulación de escenarios</h1><p>Supuestos, no predicciones. Base histórica no conectada; <a href="#capability-panel">ver límites de Votus</a>.</p></div>
+      <div class="demo-badge"><i aria-hidden="true"></i><span>Datos de demostración</span><small>Agrupaciones y votos ficticios</small></div>
+    </header>
+
+    <section class="shared-context" aria-label="Contexto del escenario">
+      <div class="field"><label for="territory">Territorio</label><select id="territory" disabled><option value="argentina">Argentina</option><option value="buenos-aires">Buenos Aires</option><option value="rosales" selected>Coronel Rosales</option></select></div>
+      <div class="field"><label for="base-year">Muestra base</label><select id="base-year" disabled><option value="2025" selected>2025 · demostración</option><option value="2023">2023 · demostración</option></select></div>
+      <div id="scenario-category-field" class="field" hidden><label for="scenario-category">Categoría del escenario</label><select id="scenario-category" disabled></select></div>
+      <div id="allocation-unit-field" class="field" hidden><label for="allocation-unit">Unidad de reparto</label><select id="allocation-unit" disabled><option value="">Seleccione una unidad</option></select></div>
+      <div id="municipal-category" class="context-category"><span>Categoría del escenario</span><strong>Concejales</strong><small>9 bancas de renovación · no es una convocatoria real</small></div>
+    </section>
+    <p id="scope-note" class="scope-note">Cargando el contexto territorial…</p>
+    <p id="scenario-assumptions" class="scenario-assumptions" hidden></p>
+
+    <section id="mobile-reading" class="mobile-task-summary" aria-label="Resumen del escenario">
+      <strong id="mobile-scenario-context">Cargando contexto</strong>
+      <p id="mobile-scenario-reading">Sin escenario disponible.</p>
+      <nav id="mobile-task-nav" aria-label="Accesos al escenario"><a href="#map-heading">Mapa</a><a href="#scenario-heading">Escenario</a><a href="#results-heading">Resultados</a></nav>
+    </section>
+
+    <section class="simulation-workbench" aria-label="Laboratorio territorial">
+      <div class="map-panel">
+        <header class="map-toolbar"><div><h2 id="map-heading" tabindex="-1">Coronel Rosales</h2><p id="map-subtitle">Referencia geográfica del partido</p></div><div class="view-switch" role="group" aria-label="Vista del mapa"><button id="view-base" type="button" aria-pressed="false" disabled>Base</button><button id="view-scenario" type="button" aria-pressed="true" disabled>Escenario</button></div></header>
+        <div class="map-stage"><svg id="territory-map" viewBox="0 0 900 600" role="img" aria-labelledby="map-title map-description" data-scope="rosales"><title id="map-title">Referencia territorial de Coronel Rosales</title><desc id="map-description">Cargando la cartografía de referencia.</desc><defs><pattern id="map-grid" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M60 0H0V60" fill="none" stroke="#1e394a" stroke-width="1"/></pattern></defs><rect width="900" height="600" fill="url(#map-grid)"/><g id="map-shapes"></g></svg><div class="map-caption"><span id="map-winner-label">Sin resultado cargado</span><small id="map-color-note">Color = agrupación con más votos · no intensidad</small></div></div>
+        <div class="map-reading"><div class="winner-legend" role="group" aria-label="Colores ficticios"><span data-party="a"><i></i>Alianza A</span><span data-party="b"><i></i>Alianza B</span><span data-party="c"><i></i>Lista C</span><span data-party="d"><i></i>Lista D</span></div><p id="geometry-note">Cartografía de referencia; no acredita equivalencia electoral histórica.</p></div>
+        <section class="territory-inspection" aria-labelledby="inspection-heading"><div class="inspection-header"><div><h3 id="inspection-heading">Inspeccionar el territorio</h3><p id="inspection-note">La transferencia solo modifica el agregado del partido. No se distribuye entre circuitos, establecimientos ni mesas.</p></div><button id="inspection-return" type="button" hidden>Volver al escenario de Rosales</button></div><div id="inspection-children" class="inspection-children"></div><div id="inspection-results" hidden></div></section>
+        <footer class="map-footer"><span>Referencia CNE / IGN · muestra local</span><button id="method-open" type="button" class="text-button">Ver método y límites</button></footer>
+      </div>
+
+      <aside class="scenario-panel" aria-labelledby="scenario-heading">
+        <h2 id="scenario-heading" tabindex="-1">Construir el supuesto</h2><p class="panel-intro">Mover votos entre dos agrupaciones, sin cambiar el total.</p>
+        <form id="transfer-form" novalidate>
+          <div class="field"><label for="donor">Agrupación de origen</label><select id="donor" disabled><option value="a">Alianza A</option><option value="b" selected>Alianza B</option><option value="c">Lista C</option><option value="d">Lista D</option></select></div>
+          <div class="field"><label for="target">Agrupación de destino</label><select id="target" disabled><option value="a" selected>Alianza A</option><option value="b">Alianza B</option><option value="c">Lista C</option><option value="d">Lista D</option></select></div>
+          <div class="field"><label for="amount">Votos a transferir</label><input id="amount" type="text" inputmode="numeric" value="0" autocomplete="off" aria-describedby="amount-note transfer-error" disabled><small id="amount-note">Solo enteros; cero conserva la base exacta.</small></div>
+          <p id="transfer-error" class="error-note" role="alert"></p>
+          <button id="transfer-submit" class="primary-button" type="submit" disabled>Aplicar transferencia</button>
+          <button id="reset-base" class="reset-button" type="button" disabled>Restablecer base</button>
+        </form>
+        <p id="transfer-note" class="transfer-note">No se aplicó una transferencia.</p>
+        <section id="scenario-seat-impact" class="seat-impact" aria-labelledby="impact-heading"><h3 id="impact-heading">Impacto en la renovación</h3><div id="allocation-status" class="allocation-status" data-status="loading" role="status">Cargando muestras y método…</div><div class="renewal-heading"><span>Bancas calculadas</span><strong id="renewal-count"></strong></div><div id="seat-strip" class="seat-strip" aria-hidden="true"></div><p id="draw-status" hidden></p><p class="impact-key">Bancas: base → escenario (cambio)</p><div id="seat-summary" class="seat-summary"></div><p id="retained-note" class="retained-note">Sin composición de las 9 bancas que continúan. No se calcula una mayoría del concejo completo de 18.</p></section>
+      </aside>
+    </section>
+
+    <section id="unit-overview" class="unit-overview" aria-labelledby="overview-heading" hidden>
+      <header class="section-heading"><div><h2 id="overview-heading">Repartos independientes por unidad</h2><p id="unit-overview-note"></p></div><div class="total-pair"><div><span>Suma de bancas base</span><strong id="overview-base-total"></strong></div><div><span>Suma de bancas escenario</span><strong id="overview-scenario-total"></strong></div></div></header>
+      <div id="overview-party-totals" class="overview-party-totals" aria-label="Suma de bancas por agrupación"></div>
+      <div class="table-scroll overview-scroll" tabindex="0" role="region" aria-label="Asignación independiente de cada unidad"><table><thead><tr><th scope="col">Unidad de reparto</th><th scope="col">Bancas base</th><th scope="col">Bancas escenario</th><th scope="col">A · base → escenario</th><th scope="col">B · base → escenario</th><th scope="col">C · base → escenario</th><th scope="col">D · base → escenario</th><th scope="col">Estado</th></tr></thead><tbody id="unit-overview-body"></tbody></table></div>
+    </section>
+
+    <section class="exact-results" aria-labelledby="results-heading"><header class="section-heading"><div><h2 id="results-heading" tabindex="-1">Base y escenario, lado a lado</h2><p id="results-note">La base es una muestra ficticia; el escenario es una hipótesis derivada.</p></div><div class="total-pair"><div><span>Total base</span><strong id="base-total"></strong></div><div><span>Total escenario</span><strong id="scenario-total"></strong></div></div></header><div class="table-scroll" tabindex="0" role="region" aria-label="Comparación exacta de votos y bancas"><table><thead><tr><th scope="col">Agrupación</th><th scope="col">Votos base</th><th scope="col">Votos escenario</th><th scope="col">Cambio de votos</th><th scope="col">% de votos positivos base</th><th scope="col">% de votos positivos escenario</th><th scope="col">Bancas base</th><th scope="col">Bancas escenario</th></tr></thead><tbody id="comparison-body"></tbody></table></div></section>
+
+    <details class="sensitivity"><summary>Sensibilidad de la transferencia</summary><p>Repetir el mismo supuesto en puntos concretos. No es una probabilidad ni una estimación de cómo votarán las personas.</p><form id="sweep-form" novalidate><div class="field"><label for="sweep-maximum">Transferencia máxima</label><input id="sweep-maximum" type="text" inputmode="numeric" value="2500" disabled></div><div class="field"><label for="sweep-step">Paso de muestreo</label><input id="sweep-step" type="text" inputmode="numeric" value="800" disabled></div><button id="sweep-submit" type="submit" disabled>Explorar sensibilidad</button></form><div id="sweep-status" role="status" data-status="idle">Sin muestras calculadas.</div><p id="sweep-note">Hasta 21 muestras y 600 posiciones de cálculo (muestras × 9 bancas × 4 agrupaciones).</p><div class="table-scroll" tabindex="0" role="region" aria-label="Muestras deterministas"><table><thead><tr><th scope="col">Votos transferidos</th><th scope="col">A</th><th scope="col">B</th><th scope="col">C</th><th scope="col">D</th><th scope="col">Estado</th></tr></thead><tbody id="sweep-body"></tbody></table></div></details>
+
+    <details class="calculation"><summary>Cómo se asignaron las bancas</summary><div id="allocation-evidence">El método estará disponible al completar el cálculo.</div><ol id="award-trace"></ol><div id="quotient-evidence" hidden><h3>Cocientes D’Hondt de las listas habilitadas</h3><div class="table-scroll" tabindex="0" role="region" aria-label="Tabla de cocientes D’Hondt"><table><thead><tr><th scope="col">Agrupación</th><th scope="col">Divisor</th><th scope="col">Cociente</th></tr></thead><tbody id="quotient-body"></tbody></table></div></div></details>
+    <section id="capability-panel" class="capability-panel" aria-labelledby="capability-heading"><header><h2 id="capability-heading">Qué está disponible en Votus</h2><p id="capability-summary">Cargando la evidencia local de capacidades…</p></header><div id="capability-facts" class="capability-facts"></div><details><summary>Fecha y alcance de esta revisión</summary><p id="capability-snapshot"></p><div id="capability-sources"></div></details></section>
+    <footer class="page-footer">Prototipo aislado · no guarda escenarios · no consulta la aplicación ni la base de datos</footer>
+  </main>
+
+  <dialog id="method-dialog" aria-label="Método y límites del escenario"><header class="dialog-heading"><h2>Método y límites del escenario</h2><button id="method-close" type="button" aria-label="Cerrar método">Cerrar</button></header><dl><dt>Qué se modela</dt><dd>Una transferencia hipotética de votos positivos entre dos agrupaciones ficticias dentro de una única unidad de reparto. El total permanece fijo; no se modelan participación, blancos, nulos ni comportamiento individual.</dd><dt>Nacional</dt><dd>Diputados por provincia o CABA: D’Hondt, con umbral supuesto del 3 % del padrón ficticio. La suma nacional agrega repartos independientes; no reparte votos argentinos como un único distrito.</dd><dt>Buenos Aires</dt><dd>Diputados y senadores provinciales son categorías independientes por sección electoral. El núcleo existente aplica la Ley 5109, arts. 109–110: cuociente y residuos con sus reglas específicas. Las bancas, votos y años de la muestra no describen una convocatoria real.</dd><dt>Rosales</dt><dd>Se conserva la partición ficticia aprobada en Exploración. Se modelan 9 bancas renovadas, no las 18 totales; la composición de las 9 restantes es desconocida. Circuitos, establecimientos y mesas permiten inspección, no reparto de legislaturas.</dd><dt>Condiciones y bloqueos</dt><dd>Sin unidad seleccionada no hay escenario agregado. Cobertura incompleta, parámetros ausentes, empates decisivos por convención y mayoría especial no resuelta bloquean la salida. Los límites del dibujo no anulan un cálculo exacto válido.</dd><dt>Muestra, no resultado oficial</dt><dd>Los votos, padrón y bancas son supuestos ficticios. Los años son etiquetas ilustrativas, no calendarios electorales. No representan resultados históricos ni una predicción para 2027; los colores A–D no son identidades de partidos reales.</dd><dt>Cartografía</dt><dd>Referencias CNE/IGN preservadas, no una correspondencia electoral oficial. Sin polígonos validados por sección PBA se conserva el contorno provincial neutral. Las referencias nacionales observadas no reciben color. Los niveles profundos muestran el contorno ancestral neutral de Rosales, sin ubicación propia. El marco continental nacional no acredita cobertura territorial completa.</dd><dt>Sensibilidad</dt><dd>Puntos deterministas incluyendo cero y máximo una sola vez. Hasta 21 muestras y 600 posiciones (muestras × bancas de la unidad × listas), verificados antes del cálculo; límite conservador, no rendimiento medido. Las muestras bloqueadas permanecen con su motivo. No se infiere un umbral entre puntos ni una probabilidad.</dd><dt>Capacidades reales</dt><dd>Votus ya permite cálculos nacionales y provinciales manuales. La carga histórica confiable de Simulación y la integración de padrón y sección desde las fuentes siguen pendientes. Los límites del archivo local no demuestran ausencia de datos en la base alojada, cuya cobertura no fue consultada. El panel de capacidades distingue esas condiciones de los límites de esta maqueta.</dd></dl><p>Referencias: <a href="https://normas.gba.gob.ar/documentos/VGW7pIWV.html" target="_blank" rel="noopener">Ley 5109</a> · <a href="https://www.argentina.gob.ar/normativa/nacional/ley-19945-19442/actualizacion" target="_blank" rel="noopener">Código Electoral Nacional</a>.</p></dialog>
+  <dialog id="navigation-dialog" aria-label="Navegación principal"><header class="dialog-heading"><strong class="mobile-brand">votus<span>.</span></strong><button id="navigation-close" type="button" aria-label="Cerrar navegación">Cerrar</button></header><nav class="module-nav" aria-label="Secciones móviles"><button disabled>Panorama</button><a href="http://127.0.0.1:63193/">Exploración</a><a href="http://127.0.0.1:65171/">Comparación</a><span class="active" aria-current="page">Simulación</span><button disabled>Evidencia</button></nav></dialog>
+</body>
+</html>

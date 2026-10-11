@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07111b">
+  <title>Votus — Comparación electoral · Prototipo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%2307111b'/%3E%3Cpath d='M12 12l12 25 12-25' fill='none' stroke='%2365e5f2' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./prototype.css">
+  <script src="./prototype.js" defer></script>
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="map-icon" viewBox="0 0 24 24"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2zM9 3v16m6-14v16"/></symbol>
+    <symbol id="compare-icon" viewBox="0 0 24 24"><path d="M3 7h18m-4-4 4 4-4 4M21 17H3m4-4-4 4 4 4"/></symbol>
+    <symbol id="grid-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></symbol>
+    <symbol id="menu-icon" viewBox="0 0 24 24"><path d="M3 5h18M3 12h18M3 19h18"/></symbol>
+    <symbol id="close-icon" viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></symbol>
+    <symbol id="plus-icon" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
+    <symbol id="minus-icon" viewBox="0 0 24 24"><path d="M4 12h16"/></symbol>
+    <symbol id="reset-icon" viewBox="0 0 24 24"><path d="M3 4v6h6M3 10a9 9 0 1 1 1 8"/></symbol>
+    <symbol id="info-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></symbol>
+  </svg>
+  <a class="skip-link" href="#main">Ir al contenido</a>
+  <aside class="sidebar" aria-label="Barra lateral">
+    <a class="brand" href="#main" aria-label="Votus, inicio del prototipo"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 7 20 34 35 7M13 7l7 13 7-13"/></svg>votus<span>.</span></a>
+    <p class="workspace-label">Espacio de análisis</p>
+    <nav class="module-nav" aria-label="Navegación principal de escritorio">
+      <button disabled><svg class="icon"><use href="#grid-icon"/></svg><span>Panorama</span></button>
+      <a href="http://127.0.0.1:63193/"><svg class="icon"><use href="#map-icon"/></svg><span>Exploración</span></a>
+      <button class="active" aria-current="page"><svg class="icon"><use href="#compare-icon"/></svg><span>Comparación</span></button>
+      <button disabled><svg class="icon"><use href="#grid-icon"/></svg><span>Simulación</span></button>
+      <button disabled><svg class="icon"><use href="#info-icon"/></svg><span>Evidencia</span></button>
+    </nav>
+    <p class="rail-note">Exploración conserva su diseño aprobado. Comparación está en revisión.</p>
+    <div class="sidebar-footer"><span class="small-dot"></span><div>Diseño en revisión<small>Sin conexión a producción</small></div></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <header class="page-header">
+      <div class="header-heading"><button class="mobile-menu icon-button" aria-label="Abrir navegación"><svg class="icon"><use href="#menu-icon"/></svg></button><div><nav id="top-trail" class="top-trail" aria-label="Recorrido territorial"><span>Buenos Aires</span></nav><h1>Comparación electoral</h1><p>Dos muestras. El mismo territorio. Una lectura compartida.</p></div></div>
+      <div class="demo-badge"><span class="small-dot"></span><span>Datos de demostración</span><small>Prototipo interactivo</small></div>
+    </header>
+    <section class="shared-context" aria-label="Contexto compartido">
+      <div class="field"><label for="territory">Territorio</label><select id="territory"><option value="argentina">Argentina</option><option value="buenos-aires" selected>Buenos Aires</option><option value="rosales">Coronel Rosales</option></select></div>
+      <div class="field"><label for="party">Agrupación</label><select id="party"><option value="a">Alianza A</option><option value="b">Alianza B</option><option value="c">Lista C</option><option value="d">Lista D</option></select></div>
+      <p>Una selección territorial para ambas vistas.<small>El zoom no modifica las cifras.</small></p>
+    </section>
+    <section class="pair-contexts" aria-label="Muestras a comparar">
+      <div class="side-context side-a"><span class="side-letter">A</span><div class="field"><label for="year-a">Elección A</label><select id="year-a"><option value="2023">2023 · muestra</option><option value="2025">2025 · muestra</option></select></div><div class="field"><label for="category-a">Categoría A</label><select id="category-a"><option value="national-deputies">Diputados nacionales</option><option value="concejales">Concejales</option></select></div></div>
+      <button id="swap-contexts" class="swap-button" aria-label="Intercambiar A y B"><svg class="icon"><use href="#compare-icon"/></svg><span>Intercambiar</span></button>
+      <div class="side-context side-b"><span class="side-letter">B</span><div class="field"><label for="year-b">Elección B</label><select id="year-b"><option value="2025">2025 · muestra</option><option value="2023">2023 · muestra</option></select></div><div class="field"><label for="category-b">Categoría B</label><select id="category-b"><option value="national-deputies">Diputados nacionales</option><option value="concejales">Concejales</option></select></div></div>
+    </section>
+    <div id="mobile-reading" class="mobile-reading" role="status" aria-label="Lectura actual"><strong>Cargando contexto</strong><p>Las muestras y referencias son locales y ficticias.</p></div>
+    <nav id="mobile-task-nav" class="mobile-section-nav" aria-label="Accesos de esta página"><a href="#map-panel">Mapa</a><a href="#results-panel">Resultados</a><a href="#territorial-detail">Detalle</a></nav>
+    <div class="comparison-workbench">
+      <section id="map-panel" tabindex="-1" class="map-panel" aria-label="Mapas de comparación">
+        <header class="map-toolbar"><div><h2 id="map-heading">Porcentaje de votos positivos de Alianza A</h2><p id="map-subtitle">Muestras ficticias · referencia geográfica</p></div><div class="view-switch" role="group" aria-label="Vista del mapa"><button id="share-view" aria-pressed="true">% de votos</button><button id="change-view" aria-pressed="false">Cambio</button><button id="winner-view" aria-pressed="false">Ganadores</button></div></header>
+        <div id="paired-maps" class="paired-map-grid">
+          <article class="map-card"><header><span class="side-letter">A</span><div><h3 id="map-a-title">2023</h3><p id="map-a-context">Diputados nacionales</p></div></header><svg id="map-a" viewBox="0 0 860 600" role="group" aria-label="Mapa de participación A" data-scale="0-100"><g id="camera-a"></g></svg><footer id="map-a-caption">Escala fija · 0 a 100 %</footer></article>
+          <article class="map-card"><header><span class="side-letter">B</span><div><h3 id="map-b-title">2025</h3><p id="map-b-context">Diputados nacionales</p></div></header><svg id="map-b" viewBox="0 0 860 600" role="group" aria-label="Mapa de participación B" data-scale="0-100"><g id="camera-b"></g></svg><footer id="map-b-caption">Escala fija · 0 a 100 %</footer></article>
+        </div>
+        <div id="difference-view" hidden><article class="map-card difference-card"><header><span class="side-letter">Δ</span><div><h3>Cambio del porcentaje de votos positivos</h3><p id="change-context">B menos A · puntos porcentuales</p></div></header><svg id="change-map" viewBox="0 0 860 600" role="group" aria-label="Mapa de cambio B menos A" data-scale="-100-100"><g id="camera-change"></g></svg><footer>Escala fija y simétrica · −100 a +100 pp</footer></article></div>
+        <div class="map-reading"><div id="share-legend" class="scale-legend"><span>0 %</span><span class="scale-ramp share-ramp" aria-hidden="true"></span><span>100 %</span><small>Misma escala en A y B</small></div><div id="change-legend" class="scale-legend" hidden><span>−100 pp</span><span class="scale-ramp change-ramp" aria-hidden="true"></span><span>+100 pp</span><small>0 pp = sin cambio</small></div><div id="winner-legend" class="winner-legend" hidden role="group" aria-label="Leyenda de ganadores ficticios"><span data-party="a"><i aria-hidden="true"></i>Alianza A</span><span data-party="b"><i aria-hidden="true"></i>Alianza B</span><span data-party="c"><i aria-hidden="true"></i>Lista C</span><span data-party="d"><i aria-hidden="true"></i>Lista D</span><small>Neutral: empate, par excluido o cartografía observada. Colores de demostración, no partidos reales.</small></div><div class="camera-controls" role="group" aria-label="Vista sincronizada"><button class="icon-button" aria-label="Acercar mapas"><svg class="icon"><use href="#plus-icon"/></svg></button><button class="icon-button" aria-label="Alejar mapas"><svg class="icon"><use href="#minus-icon"/></svg></button><button class="icon-button" aria-label="Restablecer vista"><svg class="icon"><use href="#reset-icon"/></svg></button><button class="icon-button pan-control" aria-label="Desplazar mapas a la izquierda">←</button><button class="icon-button pan-control" aria-label="Desplazar mapas hacia arriba">↑</button><button class="icon-button pan-control" aria-label="Desplazar mapas hacia abajo">↓</button><button class="icon-button pan-control" aria-label="Desplazar mapas a la derecha">→</button></div></div>
+        <p class="camera-help">Acerca y arrastra para desplazar la vista. Los controles mueven los tres mapas juntos, sin cambiar las cifras.</p>
+        <p id="reference-note" class="reference-note">El color representa una muestra ficticia, no resultados oficiales.</p>
+        <div id="national-reference" class="national-reference" hidden><svg viewBox="0 0 400 400" role="img" aria-label="Extensión completa de la referencia argentina" data-components="1980"><path id="polar-reference"/></svg><div><strong>Referencia completa IGN</strong><p>Proyección polar independiente. No indica cobertura electoral.</p></div></div>
+        <footer class="map-footer"><span id="map-view-note">Sin ganador implícito · solo participación</span><button id="evidence-trigger" class="text-button"><svg class="icon"><use href="#info-icon"/></svg>Ver evidencia</button></footer>
+      </section>
+      <section id="territorial-detail" tabindex="-1" class="detail-panel" aria-label="Detalle de comparación">
+        <div class="detail-top"><span>Territorio compartido</span><span id="level-label" class="level-label">Provincia</span></div><h2 id="detail-title">Buenos Aires</h2><p id="detail-reference" class="detail-reference">Referencia territorial · muestras ficticias</p>
+        <section class="territorial-navigator" aria-label="Navegador territorial">
+          <div class="navigator-label"><svg class="icon"><use href="#map-icon"/></svg>Navegador territorial</div><h3 id="navigator-title" tabindex="-1">Preparando recorrido</h3>
+          <nav id="navigator-route" class="navigator-route" aria-label="Ruta de exploración"></nav><button id="navigator-parent" class="navigator-parent" hidden></button>
+          <div id="navigator-search-wrap" class="navigator-search" hidden><label for="navigator-search">Buscar en el siguiente nivel</label><input id="navigator-search" type="search" placeholder="Buscar por nombre" autocomplete="off"></div><div id="navigator-children" class="navigator-children"></div><p id="navigator-empty" class="navigator-empty">Cargando referencias locales.</p>
+        </section>
+        <div id="comparison-status" class="comparison-status" role="status" aria-label="Estado de comparación" data-status="loading"><strong id="status-title">Preparando comparación</strong><p id="status-reason">Cargando las muestras locales.</p></div>
+        <section id="winner-details" aria-label="Ganadores de muestras ficticias" hidden><h3>Líder de cada muestra</h3><div class="winner-summary-grid"><div><span id="winner-side-a">A</span><strong id="winner-a"></strong></div><div><span id="winner-side-b">B</span><strong id="winner-b"></strong></div></div><p>Muestras ficticias · todas las agrupaciones, no solo la resaltada.</p></section>
+        <div id="paired-figures" hidden><h3 id="selected-party-title">Alianza A</h3><div class="paired-figures-grid"><div><span id="side-label-a">A · 2023</span><strong id="share-a"></strong><small>% de votos positivos</small><dl><dt>Votos de agrupación</dt><dd id="votes-a"></dd><dt>Total incluido</dt><dd id="denominator-a"></dd></dl></div><div><span id="side-label-b">B · 2025</span><strong id="share-b"></strong><small>% de votos positivos</small><dl><dt>Votos de agrupación</dt><dd id="votes-b"></dd><dt>Total incluido</dt><dd id="denominator-b"></dd></dl></div></div><div class="delta-reading"><span>Cambio B − A</span><strong id="delta-pp"></strong><small>Puntos porcentuales, no crecimiento porcentual.</small><span class="absolute-vote-label">Votos B − A</span><strong id="delta-votes" class="absolute-vote-delta"></strong></div></div>
+        <p class="boundary-note">Correspondencia sintética. Límites históricos sin verificar.</p>
+      </section>
+    </div>
+    <section id="results-panel" tabindex="-1" class="exact-section" aria-label="Comparación exacta por agrupación"><header><div><h2>Las dos muestras, sin aproximaciones</h2><p id="party-table-context">Votos y participación sobre el total incluido de cada lado.</p></div><span class="table-tag">B − A · pp y votos</span></header><div id="party-table-wrap" class="table-scroll" tabindex="0" role="region" aria-label="Tabla comparativa desplazable"><table aria-label="Resultados comparados de demostración"><thead><tr><th scope="col">Agrupación</th><th scope="col" id="votes-a-heading">Votos A</th><th scope="col" id="share-a-heading">% de votos positivos A</th><th scope="col" id="votes-b-heading">Votos B</th><th scope="col" id="share-b-heading">% de votos positivos B</th><th scope="col">Cambio B − A (pp)</th><th scope="col">Votos B − A</th></tr></thead><tbody id="party-comparison-body"></tbody></table></div><p id="party-table-unavailable" hidden>No se calculan métricas para este par.</p></section>
+    <section class="children-section" aria-label="Comparación por territorio"><header><div><h2 id="child-table-title">Cambio por territorio</h2><p id="child-table-context">Misma agrupación y contexto compartido.</p></div><div class="child-table-controls"><div class="field child-search"><label for="child-search">Filtrar territorios de la tabla</label><input id="child-search" type="search" placeholder="Buscar por nombre" autocomplete="off"></div><div class="field child-order"><label for="child-order">Ordenar territorios</label><select id="child-order"><option value="delta-desc">Mayor cambio en pp</option><option value="delta-asc">Menor cambio en pp</option></select></div></div></header>
+      <div class="child-coverage-block">
+        <p id="child-coverage" role="status">Preparando comparabilidad del siguiente nivel.</p>
+        <ul id="coverage-reasons" aria-label="Motivos de exclusión del siguiente nivel"></ul>
+        <p class="coverage-note">Todos los hijos inmediatos · muestras ficticias · calidad cartográfica independiente</p>
+      </div>
+      <div class="table-scroll child-table-scroll" tabindex="0" role="region" aria-label="Tabla de territorios desplazable"><table aria-label="Comparación territorial de demostración"><thead><tr><th scope="col">Territorio</th><th scope="col">Estado del par</th><th scope="col">% de votos positivos A</th><th scope="col">% de votos positivos B</th><th scope="col">Cambio B − A (pp)</th><th scope="col">Votos B − A</th><th scope="col">Referencia</th></tr></thead><tbody id="child-comparison-body"></tbody></table></div><p id="child-empty" class="child-empty" hidden></p><p class="table-note">La cobertura ficticia de votos no valida la cartografía ni la comparabilidad de datos reales.</p></section>
+    <footer class="page-footer"><span>Una comparación para revisar el diseño, no para tomar decisiones electorales.</span><span>Maqueta local · sin datos personales</span></footer>
+  </main>
+  <dialog id="evidence-dialog" aria-labelledby="evidence-title"><div class="dialog-heading"><h2 id="evidence-title">Evidencia del prototipo</h2><button id="evidence-close" class="icon-button" aria-label="Cerrar evidencia"><svg class="icon"><use href="#close-icon"/></svg></button></div><p id="evidence-context"></p><dl><dt>Correspondencia</dt><dd>Todos los pares, votos, agrupaciones y unidades profundas son ficticios. El mismo ID interno solo establece identidad sintética, no un cruce electoral oficial.</dd><dt>Fórmula</dt><dd>Cada participación usa los votos de su propia muestra sobre la suma de cuatro agrupaciones incluidas. El cambio es participación B menos participación A, en puntos porcentuales.</dd><dt>Límites históricos</dt><dd>Sin verificar. Las referencias IGN/CNE no prueban equivalencia territorial entre elecciones.</dd><dt>Ganadores</dt><dd>La vista opcional identifica el máximo único de cada muestra ficticia entre cuatro agrupaciones. Empates y pares excluidos no tienen ganador definitivo; una referencia observada no recibe color. No demuestra equivalencia de partidos ni cambios históricos reales.</dd><dt>Escenarios de diseño</dt><dd>Mendoza ilustra una agrupación D sin correspondencia; Jujuy ilustra una unidad discontinua. Son escenarios creados para esta maqueta, no hallazgos sobre esas provincias.</dd><dt>Cartografía</dt><dd id="evidence-geography"></dd><dt>Alcance productivo</dt><dd>La aplicación actual compara selecciones oficiales en una misma sección; esta maqueta recorre un árbol ficticio más amplio. No amplía la cobertura real ni integra datos o servicios de producción.</dd><dt>Origen preservado</dt><dd>Referencias CNE sha256 964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673. Archivo de muestra y geometrías de Exploración permanecen intactos.</dd></dl><p class="boundary-note">No consulta la base de datos, servidores electorales ni APIs externas.</p></dialog>
+  <dialog id="navigation-dialog" aria-label="Navegación principal"><div class="dialog-heading"><strong class="mobile-brand">votus<span>.</span></strong><button id="navigation-close" class="icon-button" aria-label="Cerrar navegación"><svg class="icon"><use href="#close-icon"/></svg></button></div><nav class="module-nav" aria-label="Secciones del prototipo"><button disabled>Panorama</button><a href="http://127.0.0.1:63193/">Exploración</a><button class="active" aria-current="page">Comparación</button><button disabled>Simulación</button><button disabled>Evidencia</button></nav></dialog>
+</body>
+</html>

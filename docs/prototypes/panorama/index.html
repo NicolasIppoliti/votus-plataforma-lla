@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Panorama de Votus: prototipo territorial aislado con resultados ficticios y límites explícitos.">
+  <title>Votus — Panorama</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2307111b' d='M0 0h32v32H0z'/%3E%3Cpath fill='none' stroke='%2365e5f2' stroke-width='3' d='m6 9 10 15L26 9'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./prototype.css">
+  <script type="module" src="./prototype.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Saltar al contenido</a>
+  <aside class="sidebar" aria-label="Espacio de trabajo">
+    <div class="brand"><svg aria-hidden="true" viewBox="0 0 34 40"><path d="m4 7 13 25L30 7M9 7l8 16 8-16"/></svg>votus<span>.</span></div>
+    <p class="workspace-label">Análisis territorial</p>
+    <nav class="module-nav" aria-label="Secciones del prototipo">
+      <span class="active" aria-current="page">Panorama</span>
+      <a href="http://127.0.0.1:63193/" target="_blank" rel="noopener">Exploración</a>
+      <a href="http://127.0.0.1:65171/" target="_blank" rel="noopener">Comparación</a>
+      <a href="http://127.0.0.1:64232/" target="_blank" rel="noopener">Simulación</a>
+      <a href="http://127.0.0.1:53713/" target="_blank" rel="noopener">Evidencia</a>
+    </nav>
+    <p class="rail-note">Leer el territorio.<br>Reconocer sus límites.<br>Elegir dónde profundizar.</p>
+    <div class="sidebar-footer"><i aria-hidden="true"></i><div>Laboratorio de diseño<small>Sin conexión a producción</small></div></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <header class="page-header">
+      <button id="navigation-open" class="mobile-nav-button" aria-label="Abrir navegación">☰</button>
+      <div><p class="top-trail">Espacio de trabajo / Panorama</p><h1>Panorama</h1><p>Una lectura del territorio. Un punto de partida para el análisis.</p></div>
+      <div class="demo-badge"><i aria-hidden="true"></i><span>Prototipo aislado</span><small>Sin consulta a datos reales</small></div>
+    </header>
+    <section class="shared-context" aria-label="Contexto del panorama">
+      <div class="field"><label for="evidence-mode">Vista de datos</label><select id="evidence-mode" disabled><option value="demonstration">Muestra de diseño</option><option value="unknown">Datos reales no consultados</option></select></div>
+      <div class="field"><label for="territory">Territorio</label><select id="territory" disabled><option value="argentina">Argentina</option><option value="buenos-aires">Buenos Aires</option><option value="rosales">Coronel Rosales</option></select></div>
+      <div class="field"><label for="base-year">Muestra base</label><select id="base-year" disabled><option value="2025">2025 · demostración</option><option value="2023">2023 · demostración</option></select></div>
+      <div class="field"><label for="category">Categoría</label><select id="category" disabled><option value="national-deputies">Diputados nacionales</option><option value="concejales">Concejales</option></select></div>
+    </section>
+    <div id="scope-notice" class="scope-notice" role="status">Cargando y validando la muestra local. No hay cifras disponibles.</div>
+
+    <section id="mobile-reading" class="mobile-reading" aria-label="Lectura rápida del panorama">
+      <p id="mobile-summary">Cargando muestra; no hay cifras disponibles.</p>
+      <nav id="mobile-task-nav" aria-label="Accesos del panorama"><a href="#selected-heading">Mapa</a><a href="#result-heading">Resultados</a><a href="#detail-heading">Detalle territorial</a></nav>
+    </section>
+
+    <section class="panorama-workbench" aria-label="Panorama territorial">
+      <div class="map-panel">
+        <nav id="breadcrumbs" class="breadcrumbs" aria-label="Recorrido territorial"></nav>
+        <header class="map-toolbar"><div><h2 id="selected-heading" tabindex="-1">Argentina</h2><p id="map-subtitle">Encuadre continental de referencia</p></div><span class="map-kind">Lectura territorial</span></header>
+        <p id="map-keyboard-hint" class="map-keyboard-hint">Use las flechas para recorrer el mapa, Inicio/Fin para ir a los extremos y Enter o Espacio para inspeccionar. La lista permite buscar por nombre.</p>
+        <div class="map-stage">
+          <svg id="territory-map" viewBox="0 0 900 650" role="group" aria-labelledby="map-title map-description" data-scope="argentina" aria-describedby="map-keyboard-hint">
+            <title id="map-title">Mapa de referencia de Argentina</title><desc id="map-description">La muestra local se está cargando.</desc>
+            <defs><pattern id="map-grid" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M60 0H0V60" fill="none" stroke="#1e394a" stroke-width="1"/></pattern><pattern id="missing-pattern" width="9" height="9" patternUnits="userSpaceOnUse"><path d="M-2 2L2-2M0 9L9 0M7 11L11 7" stroke="#a4b7c3" stroke-width="1"/></pattern></defs>
+            <rect id="map-grid-background" width="900" height="650" fill="url(#map-grid)"/><g id="map-shapes"></g>
+          </svg>
+          <div class="map-caption"><strong id="map-reading">Sin muestra validada</strong><span>Color = primer lugar completo y único de la muestra, con referencia válida.</span></div>
+        </div>
+        <div id="map-legend" class="map-legend" role="group" aria-label="Agrupaciones y límites del mapa"></div>
+        <p id="geometry-note" class="geometry-note">La geometría y la disponibilidad de votos se evalúan por separado.</p>
+        <details id="polar-reference" class="polar-reference" hidden><summary>Alcance del encuadre nacional</summary><p>El mapa principal usa un encuadre continental, no el territorio completo. Se conserva la referencia polar original como contorno neutral, sin resultados asignados.</p><svg id="polar-map" viewBox="0 0 900 650" role="img" aria-label="Referencia polar original sin resultados"><path id="polar-shape" class="neutral-outline"/></svg></details>
+        <footer class="map-footer"><span>Geografía de referencia CNE / IGN</span><span>Equivalencia electoral histórica no verificada</span></footer>
+      </div>
+      <aside class="result-panel" aria-labelledby="result-heading">
+        <h2 id="result-heading" tabindex="-1">Lectura de la selección</h2>
+        <div id="evidence-status" class="evidence-status" data-state="loading" role="status">Cargando muestra</div>
+        <p id="status-explanation" class="panel-intro">No se muestran cifras antes de validar los archivos locales.</p>
+        <div class="leader-block"><span id="leader-label">Primer lugar de la muestra</span><strong id="leader-name">—</strong><div class="leader-metrics"><p><span>% de votos positivos incluidos</span><strong id="leader-share">—</strong></p><p><span>Margen sobre el segundo</span><strong id="lead-margin">—</strong></p></div></div>
+        <dl class="summary-metrics"><div><dt>Votos positivos ficticios</dt><dd id="positive-votes">—</dd></div><div><dt>Cobertura declarada de la muestra</dt><dd><strong id="coverage-ratio">—</strong><span id="coverage-percent">—</span></dd></div></dl>
+        <p id="coverage-unit" class="coverage-unit">Sin unidad confirmada</p>
+        <p id="coverage-note" class="panel-note">No se conoce la cobertura alojada ni un denominador oficial esperado.</p>
+        <ul id="party-distribution" class="party-distribution" aria-label="Distribución ficticia de votos positivos"></ul>
+        <button id="retry" hidden>Reintentar carga</button>
+      </aside>
+    </section>
+
+    <section class="observations" aria-labelledby="insights-heading"><header class="section-heading"><h2 id="insights-heading">Lo que se puede leer aquí</h2><span>Muestra, no diagnóstico oficial</span></header><ul id="insights-list"><li>Validación local pendiente; no hay un resultado interpretable.</li></ul></section>
+
+    <section class="territorial-detail" aria-labelledby="detail-heading">
+      <header class="section-heading"><div><h2 id="detail-heading" tabindex="-1">Elegir dónde profundizar</h2><p id="children-note">Las unidades se cargarán después de validar la muestra.</p></div><p id="row-count" role="status">Sin filas disponibles</p></header>
+      <div class="lookup-controls"><div class="field"><label for="territory-search">Buscar territorio</label><input id="territory-search" type="search" placeholder="Nombre de provincia o partido" autocomplete="off" disabled></div><p>Buscar o cambiar de página no altera el agregado ni su cobertura.</p></div>
+      <div class="table-scroll" role="region" aria-label="Territorios disponibles para inspeccionar" tabindex="0"><table><thead><tr><th scope="col">Territorio</th><th scope="col">Resultado en la muestra</th><th scope="col">Disponibilidad</th><th scope="col">Referencia geográfica</th></tr></thead><tbody id="territory-body"></tbody></table></div>
+      <p id="table-empty" class="table-empty">Validación local pendiente.</p>
+      <div class="pagination"><button id="previous-page" disabled>Página anterior</button><span id="page-number">—</span><button id="next-page" disabled>Página siguiente</button></div>
+    </section>
+
+    <section class="analysis-routes" aria-labelledby="routes-heading"><header class="section-heading"><h2 id="routes-heading">Continuar el análisis</h2><span>Se abren en otra pestaña</span></header><p id="navigation-notice">Cada prototipo abre su contexto inicial; la selección no se transfiere.</p><div class="route-grid"><a href="http://127.0.0.1:63193/" target="_blank" rel="noopener"><strong>Exploración</strong><span>Recorrer resultados y profundizar hasta las unidades disponibles.</span></a><a href="http://127.0.0.1:65171/" target="_blank" rel="noopener"><strong>Comparación</strong><span>Contrastar bases y reconocer sus condiciones de comparabilidad.</span></a><a href="http://127.0.0.1:64232/" target="_blank" rel="noopener"><strong>Simulación</strong><span>Revisar escenarios explícitos, sin confundirlos con pronósticos.</span></a><a href="http://127.0.0.1:53713/" target="_blank" rel="noopener"><strong>Evidencia</strong><span>Entender disponibilidad, trazabilidad y límites de lectura.</span></a></div></section>
+    <footer class="page-footer"><span>Votus · laboratorio de diseño</span><span>Resultados ficticios. Sin acciones sobre datos reales.</span></footer>
+  </main>
+  <dialog id="navigation-dialog" aria-label="Navegación del prototipo"><div class="dialog-header"><h2>votus<span class="cyan">.</span></h2><button id="navigation-close" aria-label="Cerrar navegación">Cerrar</button></div><nav class="module-nav" aria-label="Secciones móviles"><span class="active" aria-current="page">Panorama</span><a href="http://127.0.0.1:63193/" target="_blank" rel="noopener">Exploración</a><a href="http://127.0.0.1:65171/" target="_blank" rel="noopener">Comparación</a><a href="http://127.0.0.1:64232/" target="_blank" rel="noopener">Simulación</a><a href="http://127.0.0.1:53713/" target="_blank" rel="noopener">Evidencia</a></nav></dialog>
+</body>
+</html>

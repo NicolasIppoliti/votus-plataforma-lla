@@ -1,0 +1,1620 @@
+{
+  "version": 1,
+  "sourceKind": "demonstration",
+  "official": false,
+  "notice": "Votos, padrón y bancas ficticios. Los años son etiquetas de demostración, no calendarios electorales. No describe una convocatoria real.",
+  "contexts": {
+    "argentina": {
+      "label": "Argentina",
+      "level": "national",
+      "categories": [
+        {
+          "id": "diputados-nacionales",
+          "label": "Diputados nacionales"
+        }
+      ],
+      "units": [
+        {
+          "id": "buenos-aires",
+          "label": "Buenos Aires",
+          "referenceId": "buenos-aires",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18491,
+                  "b": 6817,
+                  "c": 1207,
+                  "d": 21487
+                },
+                "seatsToFill": 9,
+                "padron": 62893,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21487,
+                  "b": 18491,
+                  "c": 6817,
+                  "d": 1207
+                },
+                "seatsToFill": 9,
+                "padron": 62893,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-catamarca",
+          "label": "Catamarca",
+          "referenceId": "province-catamarca",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6860,
+                  "b": 1224,
+                  "c": 21590,
+                  "d": 18562
+                },
+                "seatsToFill": 7,
+                "padron": 63368,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18562,
+                  "b": 6860,
+                  "c": 1224,
+                  "d": 21590
+                },
+                "seatsToFill": 7,
+                "padron": 63368,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-chaco",
+          "label": "Chaco",
+          "referenceId": "province-chaco",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1241,
+                  "b": 21693,
+                  "c": 18633,
+                  "d": 6903
+                },
+                "seatsToFill": 11,
+                "padron": 63843,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6903,
+                  "b": 1241,
+                  "c": 21693,
+                  "d": 18633
+                },
+                "seatsToFill": 11,
+                "padron": 63843,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-chubut",
+          "label": "Chubut",
+          "referenceId": "province-chubut",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21796,
+                  "b": 18704,
+                  "c": 6946,
+                  "d": 1258
+                },
+                "seatsToFill": 5,
+                "padron": 64318,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1258,
+                  "b": 21796,
+                  "c": 18704,
+                  "d": 6946
+                },
+                "seatsToFill": 5,
+                "padron": 64318,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-ciudad-autonoma-de-buenos-aires",
+          "label": "Ciudad Autónoma de Buenos Aires",
+          "referenceId": "province-ciudad-autonoma-de-buenos-aires",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18775,
+                  "b": 6989,
+                  "c": 1275,
+                  "d": 21899
+                },
+                "seatsToFill": 9,
+                "padron": 64793,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21899,
+                  "b": 18775,
+                  "c": 6989,
+                  "d": 1275
+                },
+                "seatsToFill": 9,
+                "padron": 64793,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-cordoba",
+          "label": "Córdoba",
+          "referenceId": "province-cordoba",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7032,
+                  "b": 1292,
+                  "c": 22002,
+                  "d": 18846
+                },
+                "seatsToFill": 7,
+                "padron": 65268,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18846,
+                  "b": 7032,
+                  "c": 1292,
+                  "d": 22002
+                },
+                "seatsToFill": 7,
+                "padron": 65268,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-corrientes",
+          "label": "Corrientes",
+          "referenceId": "province-corrientes",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1309,
+                  "b": 22105,
+                  "c": 18917,
+                  "d": 7075
+                },
+                "seatsToFill": 11,
+                "padron": 65743,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7075,
+                  "b": 1309,
+                  "c": 22105,
+                  "d": 18917
+                },
+                "seatsToFill": 11,
+                "padron": 65743,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-entre-rios",
+          "label": "Entre Ríos",
+          "referenceId": "province-entre-rios",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22208,
+                  "b": 18988,
+                  "c": 7118,
+                  "d": 1326
+                },
+                "seatsToFill": 5,
+                "padron": 66218,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1326,
+                  "b": 22208,
+                  "c": 18988,
+                  "d": 7118
+                },
+                "seatsToFill": 5,
+                "padron": 66218,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-formosa",
+          "label": "Formosa",
+          "referenceId": "province-formosa",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19059,
+                  "b": 7161,
+                  "c": 1343,
+                  "d": 22311
+                },
+                "seatsToFill": 9,
+                "padron": 66693,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22311,
+                  "b": 19059,
+                  "c": 7161,
+                  "d": 1343
+                },
+                "seatsToFill": 9,
+                "padron": 66693,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-jujuy",
+          "label": "Jujuy",
+          "referenceId": "province-jujuy",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7204,
+                  "b": 1360,
+                  "c": 22414,
+                  "d": 19130
+                },
+                "seatsToFill": 7,
+                "padron": 67168,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19130,
+                  "b": 7204,
+                  "c": 1360,
+                  "d": 22414
+                },
+                "seatsToFill": 7,
+                "padron": 67168,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-la-pampa",
+          "label": "La Pampa",
+          "referenceId": "province-la-pampa",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1377,
+                  "b": 22517,
+                  "c": 19201,
+                  "d": 7247
+                },
+                "seatsToFill": 11,
+                "padron": 67643,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7247,
+                  "b": 1377,
+                  "c": 22517,
+                  "d": 19201
+                },
+                "seatsToFill": 11,
+                "padron": 67643,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-la-rioja",
+          "label": "La Rioja",
+          "referenceId": "province-la-rioja",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22620,
+                  "b": 19272,
+                  "c": 7290,
+                  "d": 1394
+                },
+                "seatsToFill": 5,
+                "padron": 68118,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1394,
+                  "b": 22620,
+                  "c": 19272,
+                  "d": 7290
+                },
+                "seatsToFill": 5,
+                "padron": 68118,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-mendoza",
+          "label": "Mendoza",
+          "referenceId": "province-mendoza",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19343,
+                  "b": 7333,
+                  "c": 1411,
+                  "d": 22723
+                },
+                "seatsToFill": 9,
+                "padron": 68593,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22723,
+                  "b": 19343,
+                  "c": 7333,
+                  "d": 1411
+                },
+                "seatsToFill": 9,
+                "padron": 68593,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-misiones",
+          "label": "Misiones",
+          "referenceId": "province-misiones",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7376,
+                  "b": 1428,
+                  "c": 22826,
+                  "d": 19414
+                },
+                "seatsToFill": 7,
+                "padron": 69068,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19414,
+                  "b": 7376,
+                  "c": 1428,
+                  "d": 22826
+                },
+                "seatsToFill": 7,
+                "padron": 69068,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-neuquen",
+          "label": "Neuquén",
+          "referenceId": "province-neuquen",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1445,
+                  "b": 22929,
+                  "c": 19485,
+                  "d": 7419
+                },
+                "seatsToFill": 11,
+                "padron": 69543,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7419,
+                  "b": 1445,
+                  "c": 22929,
+                  "d": 19485
+                },
+                "seatsToFill": 11,
+                "padron": 69543,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-rio-negro",
+          "label": "Río Negro",
+          "referenceId": "province-rio-negro",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 23032,
+                  "b": 19556,
+                  "c": 7462,
+                  "d": 1462
+                },
+                "seatsToFill": 5,
+                "padron": 70018,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1462,
+                  "b": 23032,
+                  "c": 19556,
+                  "d": 7462
+                },
+                "seatsToFill": 5,
+                "padron": 70018,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-salta",
+          "label": "Salta",
+          "referenceId": "province-salta",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19627,
+                  "b": 7505,
+                  "c": 1479,
+                  "d": 23135
+                },
+                "seatsToFill": 9,
+                "padron": 70493,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 23135,
+                  "b": 19627,
+                  "c": 7505,
+                  "d": 1479
+                },
+                "seatsToFill": 9,
+                "padron": 70493,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-san-juan",
+          "label": "San Juan",
+          "referenceId": "province-san-juan",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7548,
+                  "b": 1496,
+                  "c": 23238,
+                  "d": 19698
+                },
+                "seatsToFill": 7,
+                "padron": 70968,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19698,
+                  "b": 7548,
+                  "c": 1496,
+                  "d": 23238
+                },
+                "seatsToFill": 7,
+                "padron": 70968,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-san-luis",
+          "label": "San Luis",
+          "referenceId": "province-san-luis",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1513,
+                  "b": 23341,
+                  "c": 19769,
+                  "d": 7591
+                },
+                "seatsToFill": 11,
+                "padron": 71443,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7591,
+                  "b": 1513,
+                  "c": 23341,
+                  "d": 19769
+                },
+                "seatsToFill": 11,
+                "padron": 71443,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-santa-cruz",
+          "label": "Santa Cruz",
+          "referenceId": "province-santa-cruz",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 23444,
+                  "b": 19840,
+                  "c": 7634,
+                  "d": 1530
+                },
+                "seatsToFill": 5,
+                "padron": 71918,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1530,
+                  "b": 23444,
+                  "c": 19840,
+                  "d": 7634
+                },
+                "seatsToFill": 5,
+                "padron": 71918,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-santa-fe",
+          "label": "Santa Fe",
+          "referenceId": "province-santa-fe",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19911,
+                  "b": 7677,
+                  "c": 1547,
+                  "d": 23547
+                },
+                "seatsToFill": 9,
+                "padron": 72393,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 23547,
+                  "b": 19911,
+                  "c": 7677,
+                  "d": 1547
+                },
+                "seatsToFill": 9,
+                "padron": 72393,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-santiago-del-estero",
+          "label": "Santiago del Estero",
+          "referenceId": "province-santiago-del-estero",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7720,
+                  "b": 1564,
+                  "c": 23650,
+                  "d": 19982
+                },
+                "seatsToFill": 7,
+                "padron": 72868,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 19982,
+                  "b": 7720,
+                  "c": 1564,
+                  "d": 23650
+                },
+                "seatsToFill": 7,
+                "padron": 72868,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-tierra-del-fuego-antartida-e-islas-del-atlantico-sur",
+          "label": "Tierra del Fuego, Antártida e Islas del Atlántico Sur",
+          "referenceId": "province-tierra-del-fuego-antartida-e-islas-del-atlantico-sur",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1581,
+                  "b": 23753,
+                  "c": 20053,
+                  "d": 7763
+                },
+                "seatsToFill": 11,
+                "padron": 73343,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7763,
+                  "b": 1581,
+                  "c": 23753,
+                  "d": 20053
+                },
+                "seatsToFill": 11,
+                "padron": 73343,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "province-tucuman",
+          "label": "Tucumán",
+          "referenceId": "province-tucuman",
+          "samples": {
+            "2023": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 23856,
+                  "b": 20124,
+                  "c": 7806,
+                  "d": 1598
+                },
+                "seatsToFill": 5,
+                "padron": 73818,
+                "thresholdPercent": 3
+              }
+            },
+            "2025": {
+              "diputados-nacionales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1598,
+                  "b": 23856,
+                  "c": 20124,
+                  "d": 7806
+                },
+                "seatsToFill": 5,
+                "padron": 73818,
+                "thresholdPercent": 3
+              }
+            }
+          }
+        }
+      ]
+    },
+    "buenos-aires": {
+      "label": "Buenos Aires",
+      "level": "pba_provincial",
+      "categories": [
+        {
+          "id": "diputados-provinciales",
+          "label": "Diputados provinciales"
+        },
+        {
+          "id": "senadores-provinciales",
+          "label": "Senadores provinciales"
+        }
+      ],
+      "units": [
+        {
+          "id": "legislative-section-1",
+          "label": "Sección 1",
+          "sectionId": "1",
+          "referencePartidoCount": 24,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18491,
+                  "b": 6817,
+                  "c": 1207,
+                  "d": 21487
+                },
+                "seatsToFill": 9
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1207,
+                  "b": 21487,
+                  "c": 18491,
+                  "d": 6817
+                },
+                "seatsToFill": 5
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21487,
+                  "b": 18491,
+                  "c": 6817,
+                  "d": 1207
+                },
+                "seatsToFill": 9
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6817,
+                  "b": 1207,
+                  "c": 21487,
+                  "d": 18491
+                },
+                "seatsToFill": 5
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-2",
+          "label": "Sección 2",
+          "sectionId": "2",
+          "referencePartidoCount": 15,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6860,
+                  "b": 1224,
+                  "c": 21590,
+                  "d": 18562
+                },
+                "seatsToFill": 7
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21590,
+                  "b": 18562,
+                  "c": 6860,
+                  "d": 1224
+                },
+                "seatsToFill": 7
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18562,
+                  "b": 6860,
+                  "c": 1224,
+                  "d": 21590
+                },
+                "seatsToFill": 7
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1224,
+                  "b": 21590,
+                  "c": 18562,
+                  "d": 6860
+                },
+                "seatsToFill": 7
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-3",
+          "label": "Sección 3",
+          "sectionId": "3",
+          "referencePartidoCount": 19,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1241,
+                  "b": 21693,
+                  "c": 18633,
+                  "d": 6903
+                },
+                "seatsToFill": 11
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18633,
+                  "b": 6903,
+                  "c": 1241,
+                  "d": 21693
+                },
+                "seatsToFill": 3
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6903,
+                  "b": 1241,
+                  "c": 21693,
+                  "d": 18633
+                },
+                "seatsToFill": 11
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21693,
+                  "b": 18633,
+                  "c": 6903,
+                  "d": 1241
+                },
+                "seatsToFill": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-4",
+          "label": "Sección 4",
+          "sectionId": "4",
+          "referencePartidoCount": 19,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21796,
+                  "b": 18704,
+                  "c": 6946,
+                  "d": 1258
+                },
+                "seatsToFill": 5
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6946,
+                  "b": 1258,
+                  "c": 21796,
+                  "d": 18704
+                },
+                "seatsToFill": 9
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1258,
+                  "b": 21796,
+                  "c": 18704,
+                  "d": 6946
+                },
+                "seatsToFill": 5
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18704,
+                  "b": 6946,
+                  "c": 1258,
+                  "d": 21796
+                },
+                "seatsToFill": 9
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-5",
+          "label": "Sección 5",
+          "sectionId": "5",
+          "referencePartidoCount": 27,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18775,
+                  "b": 6989,
+                  "c": 1275,
+                  "d": 21899
+                },
+                "seatsToFill": 9
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1275,
+                  "b": 21899,
+                  "c": 18775,
+                  "d": 6989
+                },
+                "seatsToFill": 5
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 21899,
+                  "b": 18775,
+                  "c": 6989,
+                  "d": 1275
+                },
+                "seatsToFill": 9
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 6989,
+                  "b": 1275,
+                  "c": 21899,
+                  "d": 18775
+                },
+                "seatsToFill": 5
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-6",
+          "label": "Sección 6",
+          "sectionId": "6",
+          "referencePartidoCount": 22,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7032,
+                  "b": 1292,
+                  "c": 22002,
+                  "d": 18846
+                },
+                "seatsToFill": 7
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22002,
+                  "b": 18846,
+                  "c": 7032,
+                  "d": 1292
+                },
+                "seatsToFill": 7
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18846,
+                  "b": 7032,
+                  "c": 1292,
+                  "d": 22002
+                },
+                "seatsToFill": 7
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1292,
+                  "b": 22002,
+                  "c": 18846,
+                  "d": 7032
+                },
+                "seatsToFill": 7
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-7",
+          "label": "Sección 7",
+          "sectionId": "7",
+          "referencePartidoCount": 8,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1309,
+                  "b": 22105,
+                  "c": 18917,
+                  "d": 7075
+                },
+                "seatsToFill": 11
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18917,
+                  "b": 7075,
+                  "c": 1309,
+                  "d": 22105
+                },
+                "seatsToFill": 3
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7075,
+                  "b": 1309,
+                  "c": 22105,
+                  "d": 18917
+                },
+                "seatsToFill": 11
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22105,
+                  "b": 18917,
+                  "c": 7075,
+                  "d": 1309
+                },
+                "seatsToFill": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "legislative-section-8",
+          "label": "Sección 8",
+          "sectionId": "8",
+          "referencePartidoCount": 1,
+          "membershipEvidence": "Archived national Ambitos metadata 2023/2025; consistent 135 partido memberships. No validated polygon binding.",
+          "samples": {
+            "2023": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 22208,
+                  "b": 18988,
+                  "c": 7118,
+                  "d": 1326
+                },
+                "seatsToFill": 5
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 7118,
+                  "b": 1326,
+                  "c": 22208,
+                  "d": 18988
+                },
+                "seatsToFill": 9
+              }
+            },
+            "2025": {
+              "diputados-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 1326,
+                  "b": 22208,
+                  "c": 18988,
+                  "d": 7118
+                },
+                "seatsToFill": 5
+              },
+              "senadores-provinciales": {
+                "status": "complete",
+                "coverage": {
+                  "reported": 1,
+                  "total": 1
+                },
+                "votes": {
+                  "a": 18988,
+                  "b": 7118,
+                  "c": 1326,
+                  "d": 22208
+                },
+                "seatsToFill": 9
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
