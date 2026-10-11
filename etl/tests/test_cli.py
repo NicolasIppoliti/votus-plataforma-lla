@@ -5272,6 +5272,64 @@ def _archived_national_zip_corpus(
     return sources_path, local_root, manifest_path
 
 
+@pytest.mark.parametrize("unknown_list", [False, True])
+def test_validate_curated_paso_presidente_archived_names(tmp_path, capsys, unknown_list):
+    """Exact Rosales mesa 1 rows from 2023-paso-wayback.zip/ResultadosElectorales.csv.
+
+    Includes both JXC lists, zero votes, an accent and significant double spaces.
+    The negative case must remain visibly unmapped, not silently resolve a parent.
+    """
+    fixture = Path(__file__).parent / "fixtures" / "paso_presidente_2023.csv"
+    csv_text = fixture.read_text(encoding="utf-8")
+    if unknown_list:
+        csv_text = csv_text.replace(",3008,B- LA FUERZA", ",9999,B- LA FUERZA")
+    sources_path, local_root, manifest_path = _archived_national_zip_corpus(
+        tmp_path,
+        election_year=2023,
+        election_round="paso",
+        member_name="ResultadosElectorales.csv",
+        lista_numero="3008",
+        agrupacion_id="132",
+    )
+    record = json.loads(manifest_path.read_text())[0]
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("ResultadosElectorales.csv", csv_text)
+    payload = archive_buffer.getvalue()
+    filename = Path(record["archived_path"]).name
+    LocalArchiveStore(root=local_root).write("national", filename, payload)
+    record["sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest_path.write_text(json.dumps([record]))
+    result = main(
+        _main_args(sources_path, local_root, manifest_path)
+        + ["validate-curated", "--party-map-path", str(PARTY_MAP_PATH)]
+    )
+    reported = capsys.readouterr().err
+    assert result == (1 if unknown_list else 0), reported
+    assert reported.count("unmapped party:") == (1 if unknown_list else 0)
+    if unknown_list:
+        assert "list_id=132-9999" in reported
+    else:
+        table = load_party_map(PARTY_MAP_PATH)
+        for row in csv.DictReader(io.StringIO(csv_text)):
+            key = f"{row['agrupacion_id']}-{row['lista_numero']}"
+            mapping = table.resolve(
+                year=2023, jurisdiction="national", category="PRESIDENTE/A", list_id=key
+            )
+            assert mapping.party_name == row["lista_nombre"]
+            assert (
+                mapping.canonical_party
+                == {
+                    "132": "JXC",
+                    "57": "ACCION_VECINAL",
+                    "137": "PRINCIPIOS_Y_VALORES",
+                    "131": "LIBER_AR",
+                }[row["agrupacion_id"]]
+            )
+            assert mapping.verified is True
+            assert f"lista_numero {row['lista_numero']}" in mapping.source
+
+
 def _guard_selected_member_reads(monkeypatch: pytest.MonkeyPatch, *, member_name: str) -> None:
     original_read_bytes = Path.read_bytes
     original_open = Path.open

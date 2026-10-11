@@ -1053,7 +1053,7 @@ def test_tigre_curated_party_map_has_exact_present_identities_and_omits_absences
 def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
     table = _load_party_map_table()
 
-    assert len(table.entries) == 87
+    assert len(table.entries) == 114
     labels = {declaration.id: declaration.display_name for declaration in table.canonical_parties}
     assert labels == {
         "JXC": "JUNTOS POR EL CAMBIO",
@@ -1086,6 +1086,13 @@ def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
         "VALORES_REPUBLICANOS": "VALORES REPUBLICANOS",
         "POLITICA_OBRERA": "PARTIDO POLITICA OBRERA",
         "TIEMPO_DE_TODOS": "PARTIDO TIEMPO DE TODOS",
+        "MAS": "MOVIMIENTO AL SOCIALISMO",
+        "UCD": "UNION DEL CENTRO DEMOCRATICO",
+        "LIBRES_DEL_SUR": "MOVIMIENTO LIBRES DEL SUR",
+        "ACCION_VECINAL": "MOVIMIENTO DE ACCION VECINAL",
+        "MIJD": "MOVIMIENTO IZQUIERDA JUVENTUD Y DIGNIDAD",
+        "PROYECTO_JOVEN": "PROYECTO JOVEN",
+        "PRINCIPIOS_Y_VALORES": "PRINCIPIOS Y VALORES",
     }
 
 
