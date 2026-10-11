@@ -52,7 +52,7 @@ Analysts work inside an authenticated workspace, moving among operational briefi
 ## Capabilities and Constraints
 
 - Official data is the default source. Fiscalización data is request-opt-in and never combines with official figures in one number.
-- PASO internal-list exploration is in progress (#407): read-only official 2023 national PRESIDENTE/A results for Coronel Rosales in `/drilldown`, with exact list votes, share within the agrupación and share of positive votes. Single-list agrupaciones are marked, zero-vote lists stay visible and unmapped lists are labelled as unmapped. Non-positive vote kinds are explicitly unavailable because national ingestion does not persist them; persistence requires a follow-up issue. This boundary does not claim delivery or hosted availability.
+- PASO internal-list exploration (#407): read-only official 2023 national PRESIDENTE/A results for Coronel Rosales in `/drilldown`, with exact list votes, share within the agrupación and share of positive votes. Single-list agrupaciones are marked, zero-vote lists stay visible and unmapped lists are labelled as unmapped. Non-positive vote kinds are explicitly unavailable because national ingestion does not persist them; persistence is tracked in #408. Hosted data availability is not claimed.
 - Fiscalización coverage is non-random and always retains its denominator and literal `isRandomSample: false` meaning.
 - Review is currently read-only; resolution is a separate future workflow.
 - PBA seat allocation uses Hare quota with largest remainder; national allocation uses D'Hondt, according to the applicable statutes.

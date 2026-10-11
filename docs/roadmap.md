@@ -42,7 +42,7 @@ the obsolete adapter does not justify deleting the whole module.
 13,627,397 ingested, every exclusion accounted per reason and per category, no ambiguity
 quarantine, internal lists preserved. Max RSS 2.8 GB. The rerun was idempotent and the
 interrupted runs left no partial data.
-**In progress (#407):** expose official 2023 PASO presidential internas for Coronel Rosales in `/drilldown`; non-positive vote kinds remain explicitly unavailable because national ingestion does not persist them (persistence is a follow-up issue), and hosted load is out of scope.
+**Delivered (#407):** official 2023 PASO presidential internas for Coronel Rosales are visible in `/drilldown`; non-positive vote kinds remain explicitly unavailable because national ingestion does not persist them (persistence: #408), and hosted load is out of scope.
 **Open follow-ups (not scheduled):** a first load takes about 66 minutes and a reload about
 110 minutes, and a reload temporarily doubles the database footprint. Bulk-load speed and
 reload disk cost need their own scope decision.

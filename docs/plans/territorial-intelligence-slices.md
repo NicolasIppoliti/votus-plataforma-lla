@@ -27,7 +27,7 @@ Existing selector/chart/table workflows remain usable.
 | 9 | Completed: mesa-level EI scenario model and preregistered backtest; **not validated** (loses to persistence). See [closure](../research/slice-09-closure.md) | [#391](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/391) |
 | 10 | Completed for [#393](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/393): read-only `/scenarios` from a verified ETL artifact, labelled "supuestos sin validar"; recommendations remain unauthorized | [#394](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/394) |
 | 11 | Completed: read-only Coronel Rosales CNE 2025 reference map of circuits and voting locations; not results, not historical geometry | [#401](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/401) |
-| B — PASO internas | In progress (#407): read-only 2023 national PASO PRESIDENTE/A internal lists for Coronel Rosales in `/drilldown`; official positives only, non-positive vote kinds unavailable | — |
+| B — PASO internas | Completed for [#407](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/407): read-only 2023 national PASO PRESIDENTE/A internal lists for Coronel Rosales in `/drilldown`; official positives only, non-positive vote kinds unavailable ([#408](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/408)) | Branch `feat/slice-b-paso-internas` |
 
 Source availability does not block already delivered bounded scopes or Slice 7 planning.
 New usable child geography and terrain require independent source acceptance and validation.
@@ -352,7 +352,7 @@ this status table and each delivered boundary below distinguish current delivery
 
 ### B — Expose 2023 PASO presidential internal lists (#407)
 
-- **Status:** In progress (#407); no delivery or hosted availability claimed.
+- **Status:** Delivered for #407 (curated internal-list names, `workspace_api.official_internal_lists`, `/drilldown` Internas with browser e2e). Hosted data load not claimed; non-positive vote kinds tracked in #408.
 - **Goal/scope:** Read-only 2023 national PASO PRESIDENTE/A breakdown for Coronel
   Rosales, backed by a real-derived fixture: exact votes per internal list, share within
   its agrupación and share of positive votes. Mark single-list agrupaciones, retain
