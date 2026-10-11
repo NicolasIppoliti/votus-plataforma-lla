@@ -37,11 +37,16 @@ the obsolete adapter does not justify deleting the whole module.
 
 ## NEXT — Actual PASO-scale evidence
 
-**Status:** independent future change, not yet opened; streaming ingestion/validation already exists.
-**Dependencies:** separate offline authorization for actual PASO sources, bounded resources and evidence handling.
-**Done when:** the real ingestion entrypoint demonstrates actual source-shape/scale behavior,
-transactional/idempotent outcomes and memory observations, with per-category/per-reason exclusions.
-Synthetic streaming tests or local CI alone do not supply actual-scale evidence.
+**Status:** evidence recorded for the 2023 PASO national file in
+[PASO-scale ingestion evidence](research/paso-scale-evidence.md): 16,600,877 source rows,
+13,627,397 ingested, every exclusion accounted per reason and per category, no ambiguity
+quarantine, internal lists preserved. Max RSS 2.8 GB. The rerun was idempotent and the
+interrupted runs left no partial data.
+**Open follow-ups (not scheduled):** a first load takes about 66 minutes and a reload about
+110 minutes, and a reload temporarily doubles the database footprint. Bulk-load speed and
+reload disk cost need their own scope decision.
+**Done when:** met for the national PASO file. Synthetic streaming tests or local CI alone still
+do not supply actual-scale evidence for other sources.
 
 ## LATER — Product breadth and deferred reliability
 
