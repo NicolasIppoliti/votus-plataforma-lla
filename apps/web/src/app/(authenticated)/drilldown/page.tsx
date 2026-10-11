@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import styles from "./drilldown.module.css";
+import { InternalLists } from "./InternalLists";
 import { DrilldownDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
@@ -231,6 +232,7 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
         </Table>
       </TableRegion>
 
+      {evidence.internalLists ? <InternalLists evidence={evidence.internalLists} /> : null}
       <section aria-labelledby="school-breakdown-heading">
         <h2 id="school-breakdown-heading">Desglose oficial autorizado por establecimiento</h2>
         {schools.status === "unavailable"

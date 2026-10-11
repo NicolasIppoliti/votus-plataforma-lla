@@ -171,6 +171,10 @@ function officialSectionParameters(selection: OfficialSectionSelection) {
   };
 }
 
+export async function authorizedOfficialInternalLists(client: SupabaseClient, selection: OfficialSectionSelection) {
+  return rpcData(await verifiedWorkspaceApi(client), "official_internal_lists", officialSectionParameters(selection));
+}
+
 export async function authorizedOfficialBundle(client: SupabaseClient, selection: OfficialSelection) {
   if (!selection.seccionCode) throw new Error("Invalid workspace selection");
   const api = await verifiedWorkspaceApi(client);

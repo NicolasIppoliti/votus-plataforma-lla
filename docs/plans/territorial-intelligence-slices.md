@@ -26,7 +26,8 @@ Existing selector/chart/table workflows remain usable.
 | 8 | Completed: accepted bounded seat relief, W1 transfers and W2 deterministic samples; broader exploration remains future | [Relief #387](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/387), [transfers #388](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/388), [samples #389](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/389) |
 | 9 | Completed: mesa-level EI scenario model and preregistered backtest; **not validated** (loses to persistence). See [closure](../research/slice-09-closure.md) | [#391](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/391) |
 | 10 | Completed for [#393](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/393): read-only `/scenarios` from a verified ETL artifact, labelled "supuestos sin validar"; recommendations remain unauthorized | [#394](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/394) |
-| 11 | Approved in [#399](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/399): read-only Coronel Rosales CNE 2025 reference map of circuits and voting locations; not results, not historical geometry | — |
+| 11 | Completed: read-only Coronel Rosales CNE 2025 reference map of circuits and voting locations; not results, not historical geometry | [#401](https://github.com/NicolasIppoliti/votus-plataforma-lla/pull/401) |
+| B — PASO internas | Completed for [#407](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/407): read-only 2023 national PASO PRESIDENTE/A internal lists for Coronel Rosales in `/drilldown`; official positives only, non-positive vote kinds unavailable ([#408](https://github.com/NicolasIppoliti/votus-plataforma-lla/issues/408)) | Branch `feat/slice-b-paso-internas` |
 
 Source availability does not block already delivered bounded scopes or Slice 7 planning.
 New usable child geography and terrain require independent source acceptance and validation.
@@ -324,7 +325,7 @@ this status table and each delivered boundary below distinguish current delivery
 
 ### 11 — Present the Coronel Rosales CNE 2025 reference map of circuits and voting locations
 
-- **Status:** Approved in #399 (2026-10-10).
+- **Status:** Completed for #399; merged in PR #401.
 - **Goal/scope:** A read-only section in `/municipal`, "Circuitos y locales de votación
   (referencia CNE 2025)", showing the 10 Coronel Rosales circuit outlines and the voting
   locations that have coordinates, plus an accessible table of all 31 locations (circuit,
@@ -348,3 +349,28 @@ this status table and each delivered boundary below distinguish current delivery
   Fiscalización heat (Slice 7), other municipalities, terrain, 3D or new map dependencies.
 - **Rollback:** The artifact and its section only.
 - **Dependencies/gate:** Approved issue #399, own PR, independent review.
+
+### B — Expose 2023 PASO presidential internal lists (#407)
+
+- **Status:** Delivered for #407 (curated internal-list names, `workspace_api.official_internal_lists`, `/drilldown` Internas with browser e2e). Hosted data load not claimed; non-positive vote kinds tracked in #408.
+- **Goal/scope:** Read-only 2023 national PASO PRESIDENTE/A breakdown for Coronel
+  Rosales, backed by a real-derived fixture: exact votes per internal list, share within
+  its agrupación and share of positive votes. Mark single-list agrupaciones, retain
+  zero-vote lists and render unmapped lists as unmapped, never bare identifiers.
+  Official source only; the existing party aggregate remains unchanged.
+- **Entry point:** `/drilldown`, with an accessible Internas table and explicit empty,
+  unavailable and denied states. Non-positive vote kinds are shown as unavailable:
+  national ingestion does not persist them. Persisting them requires a follow-up issue,
+  not inferred values or a zero count.
+- **RED/verification:** Real curated-validation CLI, authorized list-level SQL projection
+  and rendered route tests before behavior; real-derived Rosales fixture in CI. Cover
+  source isolation, shares, single/zero/unmapped lists and explicit non-positive
+  unavailability; mobile and keyboard in the existing drilldown e2e spec, with its gate
+  unchanged. Independent verification and green CI remain delivery gates.
+- **Non-goals:** Other categories, territories or elections, non-positive vote totals,
+  hosted load, Fiscalización blending, forecasts or changes to the party aggregate.
+- **Rollback:** Internas presentation and new list-level projection via its verified
+  down migration; preserve existing aggregates, immutable archives and mapping evidence.
+- **Dependencies/gate:** Approved issue #407, archived-source mappings, reversible
+  authorized projection and Rosales fixture; own PR and independent review before merge.
+  Full local load procedure is documented separately; hosted load needs authorization.

@@ -1,0 +1,10 @@
+# Isolated archived PASO corpus for local curated-validation; no network fetch.
+national:
+  - id: national/2023-paso-wayback
+    election_year: 2023
+    election_round: paso
+    source: web.archive.org
+    source_url: https://web.archive.org/web/20240106010034if_/https://www.argentina.gob.ar/sites/default/files/dine-resultados/2023-PROVISORIOS_PASO.zip
+    mime: application/zip
+    notes: Official PASO archive; isolated to avoid unrelated historic schema failures.
+    filename: 2023-paso-wayback.zip

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+const pasoInternasFixture = createRequire(import.meta.url)("./fixtures/paso-2023-rosales-presidente.json") as typeof import("./fixtures/paso-2023-rosales-presidente.json");
 
 export const DATA_SCENARIO_SPECS = [
   "e2e/comparison.spec.ts",
@@ -92,13 +94,17 @@ function deterministicUuid(name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-export type ComparisonFixtureVariant = "spatial";
+export type ComparisonFixtureVariant = "spatial" | "paso";
+export const PASO_NAMED_LISTS = ["132-3008", "132-3007", "135-3016"];
+export function pasoOwnedParty(listId: string) { return `e2e-provenance-paso-${listId.split("-")[0]}`; }
+export function pasoOwnedMappingId(listId: string) { return deterministicUuid(`provenance-paso-mapping-${listId}`); }
+export function pasoOwnedListId(listId: string) { return deterministicUuid(`provenance-paso-list-${listId}`); }
 
 export function resultScenarioIdentity(spec: string, variant?: ComparisonFixtureVariant): ResultScenarioIdentity {
   const scenario = SCENARIO_BY_SPEC[spec as DataScenarioSpec];
   if (!scenario) throw new Error(`unknown data scenario: ${spec}`);
-  if (variant !== undefined && (variant !== "spatial" || scenario !== "comparison")) throw new Error("unsupported comparison fixture variant");
-  const prefix = `e2e-${scenario}${variant === "spatial" ? "-spatial" : ""}`;
+  if (variant !== undefined && !(variant === "spatial" && scenario === "comparison" || variant === "paso" && scenario === "provenance")) throw new Error("unsupported comparison fixture variant");
+  const prefix = `e2e-${scenario}${variant ? `-${variant}` : ""}`;
   const electionIds =
     scenario === "comparison"
       ? [
@@ -106,8 +112,8 @@ export function resultScenarioIdentity(spec: string, variant?: ComparisonFixture
           deterministicUuid(`${prefix}-election-2025`),
         ]
       : [deterministicUuid(`${prefix}-election`)];
-  const electionYears = scenario === "comparison" ? [2023, 2025] : [2025];
-  const electionRounds = variant === "spatial" ? ["generales", "legislativas"] : scenario === "municipal" ? ["provinciales"] : electionYears.map((year) => `${prefix}-round-${year}`);
+  const electionYears = scenario === "comparison" ? [2023, 2025] : variant === "paso" ? [2023] : [2025];
+  const electionRounds = variant === "paso" ? ["paso"] : variant === "spatial" ? ["generales", "legislativas"] : scenario === "municipal" ? ["provinciales"] : electionYears.map((year) => `${prefix}-round-${year}`);
   const archiveEntryIds =
     scenario === "comparison"
       ? [`national/${prefix}-result-2023`, `national/${prefix}-result-2025`]
@@ -120,6 +126,7 @@ export function resultScenarioIdentity(spec: string, variant?: ComparisonFixture
         : scenario === "municipal"
           ? ["pba/2025-distrito-027", `${prefix}-result-official-unmapped`,
               `${prefix}-result-fiscalizacion`]
+          : variant === "paso" ? [`national/${prefix}-result-official`, `national/${prefix}-result-unused`]
           : [`${prefix}-result-official`, `${prefix}-result-fiscalizacion`];
   const jurisdictionId = deterministicUuid(`${prefix}-jurisdiction`);
   const comparisonParty =
@@ -162,7 +169,7 @@ export function resultScenarioIdentity(spec: string, variant?: ComparisonFixture
     ...(comparisonOtherParty ? { comparisonOtherParty } : {}),
     ...(comparisonLeftOnlySection ? { comparisonLeftOnlySection } : {}),
     categoryId: deterministicUuid(`${prefix}-category`),
-    categoryName: variant === "spatial" ? "DIPUTADO NACIONAL" : scenario === "municipal" ? "CONCEJALES" : `${prefix}-synthetic-category`,
+    categoryName: variant === "paso" ? "PRESIDENTE/A" : variant === "spatial" ? "DIPUTADO NACIONAL" : scenario === "municipal" ? "CONCEJALES" : `${prefix}-synthetic-category`,
     jurisdictionId,
     jurisdictionIds,
     distritoCode: variant === "spatial" || scenario === "municipal" ? "02" : scenario === "fiscalizacion" ? "82" : scenario === "provenance" ? "83" : "84",
@@ -201,6 +208,12 @@ function plannedResultArchiveEntryIds(identity: ResultScenarioIdentity): string[
 
 export function planResultNaturalKeys(spec: string, variant?: ComparisonFixtureVariant): string[] {
   const identity = resultScenarioIdentity(spec, variant);
+  if (variant === "paso") return [
+    `category:${identity.categoryName}`, `jurisdiction:${identity.distritoCode}|${identity.seccionCode}|null|null|null`, `election:2023|paso`,
+    ...pasoInternasFixture.section_lists.map((list) => resultNaturalKey({ archiveEntryId: identity.archiveEntryIds[0]!, electionId: identity.electionIds[0]!, jurisdictionId: identity.jurisdictionId, categoryId: identity.categoryId, listId: list.list_id, sourceKind: "official" })),
+    ...[...new Set(PASO_NAMED_LISTS.map(pasoOwnedParty))].map((id) => `party_canonical:${id}`),
+    ...PASO_NAMED_LISTS.flatMap((id) => [`party_mapping:2023|national|PRESIDENTE/A|${id}`, `list_identity:2023|national|PRESIDENTE/A|${id}`]),
+  ];
   const sourceKinds =
     identity.scenario === "comparison"
       ? ["official", "official"]
@@ -300,7 +313,11 @@ export function planResultCleanup(spec: string, variant?: ComparisonFixtureVaria
       : []),
   ];
   return [
-    ...[...new Set(resultRowArchiveEntryIds)].map((id) => `result_row:${id}`),
+    ...[...new Set(variant === "paso" ? [identity.archiveEntryIds[0]!] : resultRowArchiveEntryIds)].map((id) => `result_row:${id}`),
+    ...(variant === "paso" ? [
+      ...[...new Set(PASO_NAMED_LISTS.map(pasoOwnedParty))].map((id) => `party_canonical:${id}`),
+      ...PASO_NAMED_LISTS.flatMap((id) => [`party_mapping:${pasoOwnedMappingId(id)}`, `list_identity:${pasoOwnedListId(id)}`]),
+    ] : []),
     ...(identity.scenario === "municipal" || identity.scenario === "comparison"
       ? planScenarioPartyCleanup(spec, variant)
       : []),

@@ -265,6 +265,7 @@ const MIGRATION_VERSIONS = [
 	CANONICAL_AUTHORIZED_OFFICIAL_FACET_METADATA_MIGRATION_VERSION,
 	MUNICIPAL_2023_PARTY_MAP_MIGRATION_VERSION,
 	MUNICIPAL_2023_IDENTITIES_MIGRATION_VERSION,
+	"20261011000000",
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -372,6 +373,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_authorized_facets.sql",
 		label: "disposable workspace-authorized-facets pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_official_internal_lists.sql",
+		label: "disposable workspace-official-internal-lists pgTAP",
 		timeoutMs: 120_000,
 	},
 	{

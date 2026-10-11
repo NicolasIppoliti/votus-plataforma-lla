@@ -94,7 +94,242 @@ canonical_parties:
   - id: TIEMPO_DE_TODOS
     display_name: PARTIDO TIEMPO DE TODOS
 
+  - id: MAS
+    display_name: MOVIMIENTO AL SOCIALISMO
+  - id: UCD
+    display_name: UNION DEL CENTRO DEMOCRATICO
+  - id: LIBRES_DEL_SUR
+    display_name: MOVIMIENTO LIBRES DEL SUR
+  - id: ACCION_VECINAL
+    display_name: MOVIMIENTO DE ACCION VECINAL
+  - id: MIJD
+    display_name: MOVIMIENTO IZQUIERDA JUVENTUD Y DIGNIDAD
+  - id: PROYECTO_JOVEN
+    display_name: PROYECTO JOVEN
+  - id: PRINCIPIOS_Y_VALORES
+    display_name: PRINCIPIOS Y VALORES
+
 mappings:
+  # --- 2023 PASO PRESIDENTE/A, national internal lists -------------------
+  # All 27 positive internal-list keys checked nationally (including zeros)
+  # in the immutable archive below. Names retain source accents and spaces.
+  # The bare DIPUTADO entries below are preserved, not presidential aliases.
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "13-3017"
+    canonical_party: MAS
+    party_name: A- IZQUIERDA ANTICAPITALISTA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3017)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "20-3018"
+    canonical_party: UCD
+    party_name: A- APERTURA LIBERAL ARGENTINA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3018)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "40-3019"
+    canonical_party: LIBRES_DEL_SUR
+    party_name: A- AZUL Y ROJO
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3019)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "57-3025"
+    canonical_party: ACCION_VECINAL
+    party_name: A- COMPROMISO VECINAL
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3025)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "90-3026"
+    canonical_party: MIJD
+    party_name: A- DIGNIDAD
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3026)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "90-3027"
+    canonical_party: MIJD
+    party_name: B- CONFEDERAL
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3027)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "92-3020"
+    canonical_party: POLITICA_OBRERA
+    party_name: A- UNIDAD OBRERA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3020)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "94-3022"
+    canonical_party: PROYECTO_JOVEN
+    party_name: A- COALICION PAZ DEMOCRACIA SOBERANIA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3022)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "94-3023"
+    canonical_party: PROYECTO_JOVEN
+    party_name: B- PATRIA UNIDA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3023)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "94-3024"
+    canonical_party: PROYECTO_JOVEN
+    party_name: C- TODEX
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3024)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "95-3021"
+    canonical_party: FRENTE_PATRIOTA_FEDERAL
+    party_name: A- PRIMERO LA PATRIA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3021)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "131-3002"
+    canonical_party: LIBER_AR
+    party_name: A- DEMOS
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3002)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "131-3003"
+    canonical_party: LIBER_AR
+    party_name: B- RECONQUISTA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3003)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "131-3004"
+    canonical_party: LIBER_AR
+    party_name: C- ANTICORRUPCIÓN
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3004)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "132-3007"
+    canonical_party: JXC
+    party_name: A- EL CAMBIO DE NUESTRAS VIDAS
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3007)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "132-3008"
+    canonical_party: JXC
+    party_name: B- LA FUERZA DEL CAMBIO
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3008)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "133-3001"
+    canonical_party: HXNP
+    party_name: A- HACEMOS
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3001)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "134-3005"
+    canonical_party: UP
+    party_name: A- CELESTE Y BLANCA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3005)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "134-3006"
+    canonical_party: UP
+    party_name: B- JUSTA Y SOBERANA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3006)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "135-3016"
+    canonical_party: LLA
+    party_name: A- LIBERTAD POR SIEMPRE
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3016)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "136-3009"
+    canonical_party: FIT
+    party_name: A- UNIR Y FORTALECER LA IZQUIERDA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3009)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "136-3010"
+    canonical_party: FIT
+    party_name: B- UNIDAD DE LUCHADORES Y LA IZQUIERDA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3010)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "137-3011"
+    canonical_party: PRINCIPIOS_Y_VALORES
+    party_name: "1A- TIERRA, TECHO  Y TRABAJO"
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3011)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "137-3012"
+    canonical_party: PRINCIPIOS_Y_VALORES
+    party_name: 2B- TRANSFORMAR
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3012)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "137-3013"
+    canonical_party: PRINCIPIOS_Y_VALORES
+    party_name: 3C- TRES BANDERAS
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3013)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "137-3014"
+    canonical_party: PRINCIPIOS_Y_VALORES
+    party_name: 4D- GENTE DE TRABAJO
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3014)"
+    verified: true
+  - year: 2023
+    jurisdiction: national
+    category: PRESIDENTE/A
+    list_id: "137-3015"
+    canonical_party: PRINCIPIOS_Y_VALORES
+    party_name: 5E- LABORISTA
+    source: "archive/national/2023-paso-wayback.zip -> ResultadosElectorales.csv (lista_numero 3015)"
+    verified: true
   # --- 2023 PASO, national (agrupacion_id) --------------------------------
   - year: 2023
     jurisdiction: national

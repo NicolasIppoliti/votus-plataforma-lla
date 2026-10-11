@@ -1,10 +1,12 @@
+import { pasoInternasFixture } from "./paso-internas-fixture";
+import { PASO_NAMED_LISTS, pasoOwnedParty, pasoOwnedMappingId, pasoOwnedListId } from "./scenario-ownership";
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { ownedResultArchiveEntryIds, planResultCleanup, planResultNaturalKeys,
   resultNaturalKey, resultScenarioIdentity, type ComparisonFixtureVariant, type DataScenarioSpec } from "./scenario-ownership";
 type SeedRow = Record<string, string | number | null>;
-export interface ResultFixtureSeed { category: SeedRow; jurisdictions: SeedRow[];
+export interface ResultFixtureSeed { listIdentities?: SeedRow[]; category: SeedRow; jurisdictions: SeedRow[];
   elections: SeedRow[]; archiveEntries?: SeedRow[]; partyCanonical?: Array<{ id: string; display_name: string }>;
   partyMappings?: Array<{ id: string; year: number; jurisdiction: string; category: string; list_id: string; canonical_party_id: string; source: string }>; rows: SeedRow[]; }
 interface SupabaseOperation { error: { message: string } | null; }
@@ -63,6 +65,26 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
     ],
   };
   return { scope, seed };
+}
+export function pasoFixture(spec: DataScenarioSpec) {
+  const identity = resultScenarioIdentity(spec, "paso");
+  const named = pasoInternasFixture.section_lists.filter((list) => PASO_NAMED_LISTS.includes(list.list_id));
+  const seed: ResultFixtureSeed = {
+    category: { id: identity.categoryId, name: identity.categoryName },
+    jurisdictions: [{ id: identity.jurisdictionId, distrito_code: identity.distritoCode, seccion_code: identity.seccionCode }],
+    elections: [{ id: identity.electionIds[0]!, year: 2023, round: "paso" }],
+    archiveEntries: archiveEntries(identity.archiveEntryIds, -1),
+    partyCanonical: [...new Set(named.map((list) => pasoOwnedParty(list.list_id)))].map((id) => ({ id,
+      display_name: id.endsWith("132") ? "Juntos por el Cambio" : "La Libertad Avanza" })),
+    partyMappings: named.map((list) => ({ id: pasoOwnedMappingId(list.list_id), year: 2023, jurisdiction: "national",
+      category: identity.categoryName, list_id: list.list_id, canonical_party_id: pasoOwnedParty(list.list_id), source: spec })),
+    listIdentities: named.map((list) => ({ id: pasoOwnedListId(list.list_id), year: 2023, jurisdiction: "national",
+      category: identity.categoryName, list_id: list.list_id, source_name: list.source_name })),
+    rows: pasoInternasFixture.section_lists.map((list, index) => ({ election_id: identity.electionIds[0]!, jurisdiction_id: identity.jurisdictionId,
+      category_id: identity.categoryId, archive_entry_id: identity.archiveEntryIds[0]!, source_row_index: index,
+      granularity: "seccion", list_id: list.list_id, votes: list.votes, source_kind: "official" })),
+  };
+  return { identity, seed };
 }
 export function comparisonFixture(spec: DataScenarioSpec, variant?: ComparisonFixtureVariant) {
   const identity = resultScenarioIdentity(spec, variant);
@@ -216,6 +238,7 @@ export function assertResultFixtureOwnership(
     ...exactStrings(seed.archiveEntries ?? [], "id").map((id) => `archive_entry:${id}`),
     ...cleanupArchiveEntryIds.map((id) => `result_row:${id}`),
     ...(seed.partyMappings ?? []).map(({ id }) => `party_mapping:${id}`),
+    ...(seed.listIdentities ?? []).map((row) => `list_identity:${row["id"]}`),
     ...(seed.partyCanonical ?? []).map(({ id }) => `party_canonical:${id}`),
   ].sort();
   const actualNaturalKeys = [
@@ -226,6 +249,7 @@ export function assertResultFixtureOwnership(
         ...(seed.partyCanonical ?? []).map(({ id }) => `party_canonical:${id}`),
         ...(seed.partyMappings ?? []).map((row) =>
           `party_mapping:${row.year}|${row.jurisdiction}|${row.category}|${row.list_id}`),
+        ...(seed.listIdentities ?? []).map((row) => `list_identity:${row["year"]}|${row["jurisdiction"]}|${row["category"]}|${row["list_id"]}`),
         ...rowNaturalKeys,
   ].sort();
   if (JSON.stringify(actualCleanup) !== JSON.stringify(planResultCleanup(spec, variant).sort()) ||
@@ -256,6 +280,8 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
     if (seed.partyMappings)
       assertOperation(await admin.from("party_mapping").insert(seed.partyMappings),
         "failed to seed party mappings");
+    if (seed.listIdentities)
+      assertOperation(await admin.from("list_identity").insert(seed.listIdentities), "failed to seed list identities");
     assertOperation(await admin.from("result_row").insert(seed.rows), "failed to seed result rows");
     outcome = { value: await run() };
   } catch (error) { outcome = { error }; }
@@ -266,6 +292,8 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
     } catch (error) { cleanupErrors.push(error); }
   };
       await cleanup("result rows", admin.from("result_row").delete().in("archive_entry_id", archiveEntryIds));
+      if (seed.listIdentities)
+        await cleanup("list identities", admin.from("list_identity").delete().in("id", seed.listIdentities.map((row) => String(row["id"]))));
       if (seed.partyMappings)
         await cleanup("party mappings", admin.from("party_mapping").delete().in("id", seed.partyMappings.map(({ id }) => id)));
       if (seed.partyCanonical)

@@ -152,3 +152,38 @@ blowup. Operational findings:
 
 Faster bulk loading (for example `COPY`) and reload strategies are possible follow-ups.
 This experiment does not decide them.
+
+## Slice B: local PASO load and CI fixture
+
+Hosted loading is **out of scope** and requires separate authorization. For a full local
+load, use the existing ETL environment and a running, migrated local Supabase stack,
+including the internal-list RPC migration and the verified PRESIDENTE/A curated mapping.
+The archive, manifest and source registry must match the SHA-256 above. Run from the
+repository root, with an owned temporary directory and a local-only database URL:
+
+```sh
+TMPDIR=<owned-temp> etl/.venv/bin/python -m etl \
+  --sources-path etl/sources.yaml --local-root archive --manifest-path archive-manifest.json \
+  ingest --source national/2023-paso-wayback --year 2023 --round paso \
+  --database-url <local-Supabase-Postgres-URL> --metrics-output <new-local-file>.json
+```
+
+Do not paste credentials into logs or documentation. Allow about 66 minutes for the
+first load, 110 for a reload, 2.8 GB peak RSS, 3.7 GB temporary extraction and 8.3 GB
+initial database storage; a reload temporarily doubles the database footprint. Keep at
+least 5 GiB free throughout (the watchdog thresholds above are the measured safety
+limits, not a built-in CLI watchdog). Confirm metrics: 13,627,397 emitted rows, no
+ambiguity quarantine, and non-positive exclusions separately reported per reason.
+Select election `2023/paso`, category `PRESIDENTE/A`, distrito `02`, seccion `027` in
+the authorized local workspace. Expected scope: 151 mesas, 33,250 positive votes.
+Non-positive counts are not persisted; the RPC explicitly reports unavailable.
+
+CI uses `apps/web/e2e/fixtures/paso-2023-rosales-presidente.json` through the typed
+`paso-internas-fixture.ts` module, without loading the full archive. Provenance records
+the member, exact filter, SHA-256 and extraction timestamp. Raw sample rows preserve
+all CSV string fields from the first two encountered Rosales mesas for agrupaciones
+132, 134, 135 and 131; section expectations aggregate **all** 151 mesas and 23 lists,
+including zero votes. The sample must not be mistaken for section totals. Names are
+archive evidence, not canonical mappings: future seeders must load the curated mapping
+rather than invent canonical identity. SQL fixture adoption and rendered-page/e2e
+reachability remain subsequent integration work; this unit supplies the shared fixture.

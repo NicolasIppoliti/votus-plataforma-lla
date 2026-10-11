@@ -432,6 +432,7 @@ describe("parallel scenario ownership", () => {
       "result_row",
       "party_canonical",
       "party_mapping",
+      "list_identity",
     ]) {
       expect(grants).toContain(`public.${table}`);
     }
