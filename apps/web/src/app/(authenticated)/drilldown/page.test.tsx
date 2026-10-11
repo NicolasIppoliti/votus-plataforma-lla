@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   facets: vi.fn(),
   bundle: vi.fn(),
+  internas: vi.fn(),
   createClient: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock("@/lib/supabase/server-client", () => ({
 }));
 vi.mock("@/lib/workspace/context", () => ({
   authorizedOfficialBundle: mocks.bundle,
+  authorizedOfficialInternalLists: mocks.internas,
 }));
 vi.mock("@/lib/workspace/official-facets", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/workspace/official-facets")>();
@@ -78,6 +80,7 @@ describe("DrilldownPage authorized official evidence", () => {
   beforeEach(() => {
     mocks.facets.mockReset().mockResolvedValue(FACETS);
     mocks.bundle.mockReset().mockResolvedValue(authorizedBundle());
+    mocks.internas.mockReset();
     mocks.createClient.mockReset().mockResolvedValue({
       rpc: () => Promise.resolve({ data: null, error: { message: "legacy result RPC must not run" } }),
     });
@@ -86,6 +89,55 @@ describe("DrilldownPage authorized official evidence", () => {
   async function render(params: Record<string, string | string[] | undefined> = COMPLETE_SECTION): Promise<string> {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
+
+  it("reaches exact official internas through the rendered PASO page", async () => {
+    const bundle = authorizedBundle();
+    bundle.result.election_year = 2023; bundle.result.election_round = "paso";
+    bundle.result.category_name = "PRESIDENTE/A";
+    mocks.bundle.mockResolvedValue(bundle);
+    mocks.internas.mockResolvedValue({ ...authorized, status: "ok", source_kind: "official", level: "seccion",
+      source_granularity: "mesa", category_name: "PRESIDENTE/A", positive_total: 100,
+      non_positive: { status: "unavailable", reason: "not_persisted_by_national_ingestion" },
+      lists: [
+        { canonical_party_id: "jxc", display_name: "Juntos por el Cambio", list_id: "3008", source_name: "La Fuerza del Cambio", identity_status: "canonical", votes: 60 },
+        { canonical_party_id: "jxc", display_name: "Juntos por el Cambio", list_id: "3007", source_name: "El Cambio de Nuestras Vidas", identity_status: "canonical", votes: 20 },
+        { canonical_party_id: "lla", display_name: "La Libertad Avanza", list_id: "3016", source_name: "Libertad por Siempre", identity_status: "canonical", votes: 20 },
+        { canonical_party_id: null, display_name: null, list_id: "9999", source_name: null, identity_status: "unmapped", votes: 0 },
+      ] });
+    const markup = await render();
+    expect(markup).toContain("Internas");
+    expect(mocks.internas).toHaveBeenCalled();
+    for (const text of ["La Fuerza del Cambio", "75.00%", "60.00%", "Lista única", "Lista sin mapear", "0 votos", "No disponible", "ingesta nacional", "Fuente: oficial", "Granularidad: mesa"])
+      expect(markup).toContain(text);
+    expect(markup).not.toContain("9999");
+    expect(markup).toContain('aria-label="Internas: votos y porcentajes por agrupación"');
+    expect(markup).toContain('tabindex="0"');
+  });
+
+  it.each([
+    ["authorization_denied", "Acceso denegado"], ["no_rows", "no encontró listas"],
+    ["unavailable", "Volvé a intentar"], ["malformed", "validación de integridad"],
+    ["payload_too_large", "No se muestran cifras parciales"],
+  ])("suppresses internal figures in %s state", async (status, message) => {
+    const bundle = authorizedBundle();
+    bundle.result.election_year = 2023; bundle.result.election_round = "paso";
+    bundle.result.category_name = "PRESIDENTE/A";
+    mocks.bundle.mockResolvedValue(bundle);
+    mocks.internas.mockResolvedValue(status === "authorization_denied"
+      ? { status, authorization_status: "denied", truncated: false }
+      : status === "no_rows" ? { status, ...authorized, reason: "no_rows", counts: { selected_rows: 0, requested_level_seccion: 0 } }
+      : status === "payload_too_large" ? { status, authorization_status: "authorized", truncated: true, total_bytes: 120001 }
+      : { status });
+    if (status === "unavailable") mocks.internas.mockRejectedValue(new Error("transport unavailable"));
+    const markup = await render();
+    expect(markup).toContain(message);
+    expect(markup).not.toContain('aria-label="Internas: votos y porcentajes por agrupación"');
+  });
+
+  it("does not request internas for other elections", async () => {
+    await render();
+    expect(mocks.internas).not.toHaveBeenCalled();
+  });
 
   it("places a national geographic orientation before the preserved provincial and exact-selection path", async () => {
     const markup = await render({});

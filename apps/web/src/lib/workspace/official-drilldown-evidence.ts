@@ -1,4 +1,5 @@
 import "server-only";
+import { loadOfficialInternalLists, type OfficialInternalLists } from "./official-internal-lists";
 
 import {
   parseOfficialExploration, parseSchoolBreakdown,
@@ -48,6 +49,7 @@ interface OfficialDrilldownEvidenceOk {
   status: typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK;
   result: ExplorationOk; schools: SchoolBreakdownOk | OfficialSchoolBreakdownUnavailable;
   reference: OfficialReferenceEvidence; provenance: OfficialProvenanceEvidence;
+  internalLists?: OfficialInternalLists;
 }
 interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes?: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
 interface OfficialDrilldownEvidenceAuthorizationDenied {
@@ -261,8 +263,13 @@ export async function loadAuthorizedOfficialDrilldownEvidence(selection: Officia
     const schoolIds = displayed.schools.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK
       ? displayed.schools.schools.flatMap((school) => school.archiveEntryIds) : [];
     const displayedIds = [...displayed.result.archiveEntryIds, ...schoolIds];
-    return displayedIds.every((id) => available.has(id))
-      ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK, ...displayed, reference: safeReference, provenance: safeProvenance }
-      : { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
+    if (!displayedIds.every((id) => available.has(id))) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
+    const eligible = displayed.result.electionYear === 2023 && displayed.result.electionRound === "paso" &&
+      displayed.result.categoryName === "PRESIDENTE/A" && selection.requestedLevel === "seccion" &&
+      selection.seccionCode && !selection.circuitoCode && !selection.establecimientoCode && selection.mesaCode === null;
+    const internalLists = eligible ? await loadOfficialInternalLists({ electionId: selection.electionId,
+      categoryId: selection.categoryId, distritoCode: selection.distritoCode, seccionCode: selection.seccionCode! }) : undefined;
+    return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK, ...displayed, reference: safeReference,
+      provenance: safeProvenance, ...(internalLists ? { internalLists } : {}) };
   } catch { return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE }; }
 }

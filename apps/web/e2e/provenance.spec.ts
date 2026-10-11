@@ -10,6 +10,7 @@ import {
   FISCALIZACION_VOTES,
   OFFICIAL_VOTES,
   sourceIsolationFixture,
+  pasoFixture,
   withResultFixture,
 } from "./result-fixture";
 import { resultScenarioIdentity, scenarioBaseUrl } from "./scenario-ownership";
@@ -33,6 +34,36 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 // `SourceDisclaimer.tsx`, task 11.17). No page rendered without an
 // explicit unofficial opt-in may ever contain it.
 const FISCALIZACION_MARKER = "party-internal, unofficial";
+
+test("PASO internas preserve exact lists on mobile and keyboard", async ({ page }) => {
+  const { identity: paso, seed } = pasoFixture(SPEC);
+  await withResultFixture(SPEC, seed, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const query = new URLSearchParams({ electionId: paso.electionIds[0]!, categoryId: paso.categoryId,
+      distritoCode: paso.distritoCode, seccionCode: paso.seccionCode, level: "seccion" });
+    await page.goto(`${baseURL}/drilldown?${query}`);
+    const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
+    await expect(region).toBeVisible();
+    for (const [name, votes, within, positive] of [
+      ["LA FUERZA DEL CAMBIO", "8698 votos", "68.52%", "26.16%"],
+      ["EL CAMBIO DE NUESTRAS VIDAS", "3997 votos", "31.48%", "12.02%"],
+      ["LIBERTAD POR SIEMPRE", "13206 votos", "100.00%", "39.72%"],
+    ]) {
+      const row = region.getByRole("row").filter({ hasText: name! });
+      for (const value of [votes!, within!, positive!]) await expect(row).toContainText(value);
+    }
+    await expect(region).toContainText("Lista única");
+    await expect(region).toContainText("Lista sin mapear");
+    await expect(region.getByRole("row").filter({ hasText: "Lista sin mapear" }).filter({ hasText: "0 votos" }).first()).toBeVisible();
+    await expect(page.getByText(/Votos no positivos/)).toContainText("No disponible");
+    await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).focus();
+    for (let i = 0; i < 12 && !await region.evaluate((element) => element === document.activeElement); i++) await page.keyboard.press("Tab");
+    await expect(region).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const audit = await new AxeBuilder({ page }).analyze();
+    expect(audit.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious")).toEqual([]);
+  }), "paso");
+});
 
 test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }) => {
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {

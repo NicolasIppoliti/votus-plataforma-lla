@@ -1,4 +1,5 @@
-import fixture from "./fixtures/paso-2023-rosales-presidente.json";
+import { createRequire } from "node:module";
+const fixture = createRequire(import.meta.url)("./fixtures/paso-2023-rosales-presidente.json") as typeof import("./fixtures/paso-2023-rosales-presidente.json");
 
 /** Source strings are untouched; normalized jurisdiction codes belong to the ETL. */
 export const pasoInternasFixture = fixture;
