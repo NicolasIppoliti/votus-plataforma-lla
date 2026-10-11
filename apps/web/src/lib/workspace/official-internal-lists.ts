@@ -7,7 +7,12 @@ import type { OfficialSectionSelection } from "../../app/api/workspace/official/
 const uint = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = z.string().min(1);
 const envelope = { authorization_status: z.literal("authorized"), truncated: z.literal(false) };
-const counts = z.record(z.string(), uint);
+const selectionCounts = z.object({ unknown_election_id: z.literal(1).optional(), unknown_category_id: z.literal(1).optional() })
+  .strict().refine((value) => value.unknown_election_id !== undefined || value.unknown_category_id !== undefined);
+const granularityCounts = z.object({ included_distrito_rows: uint.optional(), included_seccion_rows: uint.optional(),
+  included_circuito_rows: uint.optional(), included_establecimiento_rows: uint.optional(), included_mesa_rows: uint.optional(),
+  requested_seccion_rows: z.literal(0).optional() }).strict().refine((value) =>
+    Object.entries(value).some(([key, count]) => key.startsWith("included_") && count !== undefined && count > 0));
 const listSchema = z.object({
   canonical_party_id: text.nullable(), display_name: text.nullable(), list_id: text.nullable(),
   source_name: text.nullable(), identity_status: z.enum(["canonical", "unmapped"]), votes: uint,
@@ -20,14 +25,16 @@ const success = z.object({
   positive_total: uint, lists: z.array(listSchema).max(1000),
   non_positive: z.object({ status: z.literal("unavailable"), reason: z.literal("not_persisted_by_national_ingestion") }).strict(),
 }).strict();
-const reasonCounts = { ...envelope, reason: text, counts };
+const withReason = { ...envelope, reason: text };
 const refusal = z.union([
   z.object({ status: z.literal("authorization_denied"), authorization_status: text.refine((s) => s !== "authorized" && s !== "authorized_empty"), truncated: z.literal(false), reason: text.optional() }).strict(),
   z.object({ ...envelope, status: z.literal("source_unavailable"), counts: z.union([
     z.object({ unsupported_internal_list_source: uint.positive() }).strict(),
     z.object({ conflicting_result_identity: uint.positive() }).strict(),
   ]) }).strict(),
-  z.object({ ...reasonCounts, status: z.enum(["source_unavailable", "selection_invalid", "no_rows"]) }).strict(),
+  z.object({ ...withReason, status: z.literal("selection_invalid"), counts: selectionCounts }).strict(),
+  z.object({ ...withReason, status: z.literal("source_unavailable"), counts: granularityCounts }).strict(),
+  z.object({ ...withReason, status: z.literal("no_rows"), counts: z.object({ selected_rows: z.literal(0), requested_level_seccion: z.literal(0) }).strict() }).strict(),
   z.object({ ...envelope, status: z.literal("source_unavailable"), reason: text,
     exclusions: z.array(z.object({ reason: z.literal("official_rows_without_section_identity") }).strict()).length(1),
     source_exclusions: z.array(z.never()).length(0),

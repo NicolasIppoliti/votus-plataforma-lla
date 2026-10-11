@@ -37,7 +37,7 @@ it.each([
   { status: "source_unavailable", authorization_status: "authorized", truncated: false, counts: { unsupported_internal_list_source: 5 } },
   { status: "source_unavailable", authorization_status: "authorized", truncated: false, reason: "mixed", counts: { included_mesa_rows: 4, included_seccion_rows: 1 } },
   { status: "source_unavailable", authorization_status: "authorized", truncated: false, reason: "missing section", exclusions: [{ reason: "official_rows_without_section_identity" }], source_exclusions: [] },
-  { status: "selection_invalid", authorization_status: "authorized", truncated: false, reason: "unknown category_id", counts: { category_exists: 0 } },
+  { status: "selection_invalid", authorization_status: "authorized", truncated: false, reason: "unknown category_id", counts: { unknown_category_id: 1 } },
   { status: "no_rows", authorization_status: "authorized", truncated: false, reason: "no official rows exist for the selected scope", counts: { selected_rows: 0, requested_level_seccion: 0 } },
   { status: "payload_too_large", authorization_status: "authorized", truncated: true, total_bytes: 120001 },
 ])("preserves bounded refusal $status", async (data) => {
@@ -48,6 +48,11 @@ it.each(["extra", "total", "duplicate", "marker", "source", "identity", "unsafe"
   const data = payload();
   const bad = kind === "extra" ? { ...data, secret: "unexpected" } : kind === "total" ? { ...data, positive_total: 1 } : kind === "duplicate" ? { ...data, lists: [...data.lists, data.lists[0]] } : kind === "marker" ? { ...data, non_positive: { status: "ok" } } : kind === "source" ? { ...data, source_kind: "fiscalizacion" } : kind === "unsafe" ? { ...data, positive_total: Number.MAX_SAFE_INTEGER + 1 } : { ...data, lists: [{ ...data.lists[0], identity_status: "canonical" }] };
   mocks.rpc.mockResolvedValue({ data: bad, error: null });
+  await expect(loadOfficialInternalLists(selection)).resolves.toEqual({ status: "malformed" });
+});
+it.each(["selection_invalid", "source_unavailable", "no_rows"])("rejects unknown nested counts in %s", async (status) => {
+  mocks.rpc.mockResolvedValue({ data: { status, authorization_status: "authorized", truncated: false,
+    reason: "unknown", counts: { unexpected: 1 } }, error: null });
   await expect(loadOfficialInternalLists(selection)).resolves.toEqual({ status: "malformed" });
 });
 it("keeps zero-only canonical lists with undefined rather than fabricated shares", async () => {
