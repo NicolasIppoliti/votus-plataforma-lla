@@ -15,7 +15,7 @@
 - **Planned stack:** deck.gl + MapLibre. This supersedes chart-first constraints only for the territorial path; existing charts remain valid verification aids.
 - **Aesthetic:** Palantir-inspired information organization with Vercel-inspired visual precision: neutral work surfaces, compact typography, explicit context, exact tables, and progressive supporting detail. No vendor branding or assets.
 - **Decoration:** Intentional and minimal. Typography, hairline borders, tonal surfaces, and evidence structure do the visual work.
-- **Theme:** Support light and dark analytical surfaces. Initialize from the OS preference and provide an in-app selector with a persistent per-user override.
+- **Theme:** One midnight-navy analytical theme with cyan selection/focus, taken from the approved page prototypes in `docs/prototypes/` (2026-10-11 decision). There is no light theme and no theme selector.
 - **Layout:** Target map-led exploration with persistent scope, layer legends, exact-results access and supporting evidence; retain the grid-disciplined shell.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
 - **Current implementation (not the target map):** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now continues that direction with automatic territorial selection and full-width result evidence. Municipal now loads its fixed official scope automatically with an identified-party raw-vote chart and full-width exact evidence. Fiscalización continues with automatic four-field scope and raw unit coverage beside exact, separately qualified results. Review remains a later route-specific slice.
@@ -34,11 +34,11 @@
 
 ### Global shell
 
-- **Desktop:** Persistent `15rem` sidebar with a bottom workspace/account cluster and a lightweight topbar. Chrome follows the selected light/dark theme.
-- **Mobile:** Sidebar becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
+- **Desktop:** Persistent `218px` navy rail (`190px` at ≤1250px, `78px` icon rail at ≤980px) with a bottom workspace/account cluster and a lightweight topbar, per `docs/prototypes/territorial-exploration/APPROVED-DESIGN.md`.
+- **Mobile:** At ≤760px the rail becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
 - **Topbar responsibility:** Mobile navigation trigger and authorized review status only.
-- **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch, theme and account actions.
-- **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Desktop and mobile share the theme preference; crossing the breakpoint restores focus to a visible control.
+- **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch and account actions.
+- **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Crossing the breakpoint restores focus to a visible control.
 
 ### Target workspace and module boundaries
 
@@ -93,21 +93,22 @@ Existing non-redesigned routes retain their route-specific heading scales until 
 
 ### Core palette
 
-The values below describe the light-theme reference. Both themes retain Votus-owned semantic/source/status meanings and must meet the accessibility contract; the preset's neutral palette does not replace them.
+Navy values come from the approved Exploration prototype. Votus-owned semantic/source/status meanings stay separate from these neutrals and must meet the accessibility contract against them; the preset's neutral palette does not replace them.
 
 | Token | Value | Meaning |
 | --- | --- | --- |
-| `--shell` | `#FFFFFF` | Theme-consistent sidebar and application chrome |
-| `--canvas` | `#FAFAFA` | Neutral analytical background |
-| `--surface` | `#FFFFFF` | Primary work surface |
-| `--surface-muted` | `#F2F2F2` | Filter bars and secondary groupings |
-| `--ink` | `#171717` | Primary text |
-| `--muted-ink` | `#646464` | Secondary text; AA on canvas |
-| `--border` | `#E2E2E2` | Hairline structure |
-| `--accent` | `#333333` | Product action and active navigation |
-| `--accent-strong` | `#171717` | Hover/pressed action |
+| `--shell` | `#081522` | Sidebar rail and application chrome |
+| `--canvas` | `#07111B` | Page canvas |
+| `--surface` | `#0D1D2B` | Primary work surface |
+| `--surface-muted` | `#122635` | Raised surfaces, filter bars and secondary groupings |
+| `--map-stage` | `#091724` | Map stage background |
+| `--ink` | `#EDF5F7` | Primary text |
+| `--secondary-ink` | `#B9C8D2` | Secondary text |
+| `--muted-ink` | `#91A9B9` | Tertiary text |
+| `--border` | `#284255` | Structural separators |
+| `--accent` | `#65E5F2` | Selection, focus and active navigation |
 
-Dark neutrals: canvas `#0A0A0A`, shell/surface `#141414`, secondary surface `#222222`, ink `#EDEDED`, muted ink `#A8A8A8`, border `#383838`, action `#D4D4D4`. Semantic source/status tokens keep their separate accessible dark variants.
+The prototype's fictional group colors (`#AAC0F1`, `#EFC58C`, `#769598`) are demo encodings, not party colors; canonical party color remains factual electoral encoding.
 
 ### Source and semantic palette
 
@@ -382,6 +383,7 @@ New product features discovered during design become separate future work units.
 | 2026-09-22 | Map-first territorial workspace supersedes chart-first product direction | Geographic dominance and comparison become core; existing route behavior remains current until separately delivered |
 | 2026-09-22 | Plan deck.gl + MapLibre; separate physical terrain from electoral extrusion | Supersedes the no-new-chart-library constraint only for this planned path; feasibility and dependency review remain gates |
 | 2026-09-22 | Canonical party/alliance color is factual electoral encoding | Supersedes the blanket party-chart-color restriction, never source/status/UI semantics; ballot labels and non-color states remain required |
+| 2026-10-11 | Adopt the approved navy map-first page prototypes; single navy theme, no selector; 218px rail (supersedes the 2026-09-18 light/dark decision and the `15rem` sidebar) | User accepted the prototype integration program and chose "Navy único"; one theme is faithful to the approved design and halves visual/contrast verification |
 | 2026-09-22 | Slice 1 partido-only archive/CLI and standalone feasibility evaluator are implementation candidates | Next production scope after merge is only Coronel Rosales partido-boundary municipal evidence with exact fallback; terrain, child geography and expansion need separate validation |
 
 ## Automatic Interaction Contract

@@ -1,8 +1,8 @@
 # Votus UI page prototypes
 
 Five isolated, map-first page prototypes designed between 2026-09-30 and 2026-10-01.
-They are design references for the next redesign program, **not production routes**:
-none is wired into `apps/web`, and every number, coverage relation and deep unit in
+They are design references for the prototype integration program
+(`odd/tasks/prototype-integration.md`), **not production routes**: none is wired into `apps/web`, and every number, coverage relation and deep unit in
 them is fictional demo data, never product evidence.
 
 Shared approved style: one 218px navy sidebar, cyan focus/selection, IBM Plex Sans and
@@ -15,7 +15,7 @@ visible next-level navigator.
 | [`temporal-comparison/`](temporal-comparison/) | Compare (`/compare`) | Approved, with accepted enhancements (child coverage, selected-group pp) | `node serve.mjs` (serves Exploration's assets read-only) |
 | [`seat-simulation/`](seat-simulation/) | Simulation (`/simulate`) | Accepted, including a verified keyboard repair | `node serve.mjs` after rebuilding `kernel.js` (below) |
 | [`evidence-quality/`](evidence-quality/) | Evidence and data quality (new) | Accepted ("está bien"); not a data or WCAG certification | `node serve.mjs` |
-| [`panorama/`](panorama/) | Overview / landing (`/`) | **In progress**: a first candidate exists; no recorded visual approval | `node serve.mjs` |
+| [`panorama/`](panorama/) | Overview / landing (`/`) | Accepted 2026-10-01 ("todo ok", recorded in `odd/tasks/panorama-prototype.md`) | `node serve.mjs` |
 
 Each folder keeps its own `README.md` with the exact scope and limits recorded when it
 was built. Exploration's README notes that geographic reuse permissions are unverified.
