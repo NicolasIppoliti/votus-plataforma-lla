@@ -1,19 +1,20 @@
 begin;
-select plan(29);
+select plan(38);
 -- Tables: the expected mesa catalogue and per-category count status are ETL-written,
 -- never directly readable by clients.
 select ok(to_regclass('public.official_expected_mesa') is not null,'expected mesa catalogue table exists');
 select ok(to_regclass('public.official_mesa_count_status') is not null,'mesa count status table exists');
-select ok((select bool_and(c.relrowsecurity) from pg_class c where c.oid in ('public.official_expected_mesa'::regclass,'public.official_mesa_count_status'::regclass)),'both tables enforce RLS');
+select ok(to_regclass('public.official_mesa_completeness_quarantine') is not null,'quarantine table exists');
+select ok((select bool_and(c.relrowsecurity) from pg_class c where c.oid in ('public.official_expected_mesa'::regclass,'public.official_mesa_count_status'::regclass,'public.official_mesa_completeness_quarantine'::regclass)),'all completeness tables enforce RLS');
 select ok(not exists(select from unnest(array['anon','authenticated','service_role']) r,
- unnest(array['public.official_expected_mesa','public.official_mesa_count_status']) t,
+ unnest(array['public.official_expected_mesa','public.official_mesa_count_status','public.official_mesa_completeness_quarantine']) t,
  unnest(array['SELECT','INSERT','UPDATE','DELETE']) p where has_table_privilege(r,t,p)),'clients and service_role have no direct table privileges');
 select ok((select bool_and(has_table_privilege('etl_writer',t,'SELECT') and has_table_privilege('etl_writer',t,'INSERT') and has_table_privilege('etl_writer',t,'DELETE'))
- from unnest(array['public.official_expected_mesa','public.official_mesa_count_status']) t),'etl_writer can replace both tables');
+ from unnest(array['public.official_expected_mesa','public.official_mesa_count_status','public.official_mesa_completeness_quarantine']) t),'etl_writer can replace all completeness tables');
 select ok((select bool_and(has_table_privilege('workspace_query_owner',t,'SELECT') and not has_table_privilege('workspace_query_owner',t,'INSERT'))
- from unnest(array['public.official_expected_mesa','public.official_mesa_count_status']) t),'query owner reads but never writes');
-select is((select count(*) from pg_policies where schemaname='public' and tablename in ('official_expected_mesa','official_mesa_count_status')
- and roles=array['workspace_query_owner']::name[] and cmd='SELECT' and qual='true'),2::bigint,'each table has one explicit query-owner SELECT policy');
+ from unnest(array['public.official_expected_mesa','public.official_mesa_count_status','public.official_mesa_completeness_quarantine']) t),'query owner reads but never writes');
+select is((select count(*) from pg_policies where schemaname='public' and tablename in ('official_expected_mesa','official_mesa_count_status','official_mesa_completeness_quarantine')
+ and roles=array['workspace_query_owner']::name[] and cmd='SELECT' and qual='true'),3::bigint,'each table has one explicit query-owner SELECT policy');
 -- Fixture: one authorized section 97/997 with three catalogue mesas.
 grant workspace_admin_owner,workspace_context_owner to current_user;
 insert into public.election(id,year,round) values
@@ -84,14 +85,14 @@ create temporary table partial_payload as select workspace_api.official_section_
 select is((select p->>'status' from partial_payload),'ok','authorized completeness succeeds');
 select is((select p->'completeness'->>'status' from partial_payload),'partial','a not-counted or missing mesa makes the section partial');
 select is((select p->'completeness'->'counts' from partial_payload),
- '{"expected":3,"counted":1,"not_counted":1,"missing":1,"unexpected":0}'::jsonb,'every reason is reported separately');
+ '{"expected":3,"counted":1,"not_counted":1,"missing":1,"unexpected":0,"quarantined":0,"unattributed_quarantined":0}'::jsonb,'every reason is reported separately');
 select is((select p->'completeness'->>'category_applicability' from partial_payload),'district_reported_categories','the category assumption is stated, not implied');
 select is((select p->'completeness'->'sources' from partial_payload),
  '{"catalogue_archive_entry_ids":["national/2097-test"],"status_archive_entry_ids":["national/2097-test"]}'::jsonb,'catalogue and status provenance are returned');
 -- Complete.
 select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->>'status','complete','every expected mesa counted is complete');
 select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->'counts',
- '{"expected":3,"counted":3,"not_counted":0,"missing":0,"unexpected":0}'::jsonb,'complete counts reconcile');
+ '{"expected":3,"counted":3,"not_counted":0,"missing":0,"unexpected":0,"quarantined":0,"unattributed_quarantined":0}'::jsonb,'complete counts reconcile');
 -- Unexpected.
 select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000022','97','997')->'completeness'->>'status','partial','a mesa outside the catalogue is never complete');
 select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000022','97','997')->'completeness'->'counts'->>'unexpected','1','unexpected mesas are counted');
@@ -100,6 +101,26 @@ create temporary table unknown_payload as select workspace_api.official_section_
 select is((select p->'completeness'->>'status' from unknown_payload),'unknown','an election without a catalogue is unknown, never complete');
 select is((select p->'completeness'->>'reason' from unknown_payload),'no_expected_catalogue','unknown states its reason');
 select ok((select p->'completeness'->'counts' = 'null'::jsonb from unknown_payload),'unknown carries no counts, never 0 or 100 percent');
+reset role;
+select lives_ok($q$insert into public.official_mesa_completeness_quarantine(election_id,archive_entry_id,scope,category_id,distrito_code,seccion_code,mesa_code,reason)
+ values('57000000-0000-0000-0000-000000000001','national/2097-test','status','57000000-0000-0000-0000-000000000012','97','997',4,'conflicting estado_final')$q$,'quarantine lineage can be persisted');
+set local role authenticated;
+select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->>'status','partial','quarantine alone blocks complete');
+select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->'counts'->>'quarantined','1','section quarantine is counted');
+reset role;
+-- Switch to an unattributed anomaly without altering expected or accepted statuses.
+select lives_ok($q$update public.official_mesa_completeness_quarantine set distrito_code=null,seccion_code=null,mesa_code=null$q$,'unreadable identities remain election-attributed');
+set local role authenticated;
+select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->>'status','partial','unattributed quarantine blocks complete');
+select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->'counts'->>'unattributed_quarantined','1','unattributed quarantine is counted');
+reset role;
+-- Removing this section from the catalogue must preserve the exact unknown payload.
+delete from public.official_expected_mesa where election_id='57000000-0000-0000-0000-000000000001';
+select lives_ok($q$insert into public.official_mesa_completeness_quarantine(election_id,archive_entry_id,scope,distrito_code,seccion_code,mesa_code,reason)
+ values('57000000-0000-0000-0000-000000000001','national/2097-test','catalogue','97','997',5,'conflicting catalogue rows for one mesa')$q$,'quarantined catalogue establishes a catalogue universe');
+set local role authenticated;
+select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness',
+ '{"status":"unknown","reason":"section_absent_from_catalogue","counts":null,"unlisted_status_mesas":3,"quarantined_mesas":1,"unattributed_quarantined":1,"category_applicability":"district_reported_categories","sources":{"catalogue_archive_entry_ids":[],"status_archive_entry_ids":["national/2097-test"]}}'::jsonb,'absent section returns exact counts and anomaly keys');
 reset role;
 select * from finish();
 rollback;

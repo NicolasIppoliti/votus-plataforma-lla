@@ -102,6 +102,7 @@ class Connection:
                     "insert into archive_entry",
                     "delete from result_row",
                     "LOCK TABLE jurisdiction",
+                    "delete from official_mesa_completeness_quarantine",
                     "delete from official_mesa_count_status",
                     "delete from official_expected_mesa",
                 )

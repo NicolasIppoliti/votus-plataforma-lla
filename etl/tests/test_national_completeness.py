@@ -105,6 +105,32 @@ def test_conflicting_or_unrecognized_status_is_quarantined_per_reason_never_pick
     )
 
     assert completeness.statuses == ()
+    assert [vars(row) for row in completeness.quarantines] == [
+        {
+            "scope": "status",
+            "category": "DIPUTADO NACIONAL",
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 1,
+            "reason": "conflicting estado_final within one category and mesa",
+        },
+        {
+            "scope": "status",
+            "category": "DIPUTADO NACIONAL",
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 2,
+            "reason": "unrecognized estado_final",
+        },
+        {
+            "scope": "status",
+            "category": "DIPUTADO NACIONAL",
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 3,
+            "reason": "conflicting circuito within one category and mesa",
+        },
+    ]
     assert completeness.exclusions == {
         "conflicting estado_final within one category and mesa": 1,
         "unrecognized estado_final": 1,
@@ -124,12 +150,72 @@ def test_conflicting_catalogue_rows_are_quarantined_and_identical_duplicates_rep
     )
 
     assert completeness.expected == (ExpectedMesa("02", "027", 1, "NATIVOS", 300, 0),)
+    assert [vars(row) for row in completeness.quarantines] == [
+        {
+            "scope": "catalogue",
+            "category": None,
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 3,
+            "reason": "unreadable catalogue mesa_electores",
+        },
+        {
+            "scope": "catalogue",
+            "category": None,
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 4,
+            "reason": "unsupported catalogue mesa_tipo",
+        },
+        {
+            "scope": "catalogue",
+            "category": None,
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 2,
+            "reason": "conflicting catalogue rows for one mesa",
+        },
+    ]
     assert completeness.exclusions == {
         "duplicate identical catalogue row": 1,
         "conflicting catalogue rows for one mesa": 1,
         "unreadable catalogue mesa_electores": 1,
         "unsupported catalogue mesa_tipo": 1,
     }
+
+
+def test_unreadable_identities_and_absent_category_remain_unattributed() -> None:
+    completeness = _build(
+        _result(1, "", "POSITIVO", 10, "ESCRUTADO")
+        + _result(2, "DIPUTADO NACIONAL", "POSITIVO", 10, "ESCRUTADO", circuito="bad"),
+        _catalogue("bad"),
+    )
+    assert [vars(row) for row in completeness.quarantines] == [
+        {
+            "scope": "catalogue",
+            "category": None,
+            "distrito": None,
+            "seccion": None,
+            "mesa": None,
+            "reason": "unreadable catalogue distrito/seccion/mesa identity",
+        },
+        {
+            "scope": "status",
+            "category": None,
+            "distrito": None,
+            "seccion": None,
+            "mesa": None,
+            "reason": "absent results cargo_nombre",
+        },
+        {
+            "scope": "status",
+            "category": "DIPUTADO NACIONAL",
+            "distrito": None,
+            "seccion": None,
+            "mesa": None,
+            "reason": "unreadable results distrito/seccion/circuito/mesa identity",
+        },
+    ]
 
 
 def test_sources_without_catalogue_or_estado_final_have_no_completeness() -> None:

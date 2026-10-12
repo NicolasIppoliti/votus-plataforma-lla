@@ -2297,6 +2297,7 @@ def test_ingest_cli_persists_expected_mesas_and_count_status_idempotently(
             (1, "135", "POSITIVO", 120, "ESCRUTADO"),
             (2, "", "EN BLANCO", 0, "NO ESCRUTADO"),
             (3, "135", "POSITIVO", 0, "NO ESCRUTADO"),
+            (4, "", "EN BLANCO", 0, "INVALID"),
         )
     )
     catalogue_csv = (
@@ -2305,6 +2306,7 @@ def test_ingest_cli_persists_expected_mesas_and_count_status_idempotently(
         "02,027,37974,ESCUELA UNO,00002,310,NATIVOS\n"
         "02,027,37975,ESCUELA DOS,00003,320,NATIVOS\n"
         "02,027,37975,ESCUELA DOS,00004,330,NATIVOS\n"
+        "02,027,37975,ESCUELA DOS,00005,,NATIVOS\n"
     )
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -2348,7 +2350,7 @@ def test_ingest_cli_persists_expected_mesas_and_count_status_idempotently(
         "legislativas",
     ]
 
-    def snapshot(cur) -> tuple[list[tuple], list[tuple]]:
+    def snapshot(cur) -> tuple[list[tuple], list[tuple], list[tuple]]:
         cur.execute(
             "select distrito_code, seccion_code, mesa_code, mesa_tipo, electores"
             " from official_expected_mesa where archive_entry_id = %s order by mesa_code",
@@ -2361,7 +2363,15 @@ def test_ingest_cli_persists_expected_mesas_and_count_status_idempotently(
             " where s.archive_entry_id = %s order by s.mesa_code",
             (source_id,),
         )
-        return expected, cur.fetchall()
+        statuses = cur.fetchall()
+        cur.execute(
+            "select q.scope, c.name, q.distrito_code, q.seccion_code, q.mesa_code, q.reason"
+            " from official_mesa_completeness_quarantine q"
+            " left join category c on c.id=q.category_id"
+            " where q.archive_entry_id=%s order by q.scope, q.mesa_code",
+            (source_id,),
+        )
+        return expected, statuses, cur.fetchall()
 
     conn = psycopg.connect(TEST_DSN)
     try:
@@ -2384,11 +2394,20 @@ def test_ingest_cli_persists_expected_mesas_and_count_status_idempotently(
                 ("DIPUTADO NACIONAL", "00011", 2, "not_counted"),
                 ("DIPUTADO NACIONAL", "00011", 3, "not_counted"),
             ],
+            [
+                ("catalogue", None, "02", "027", 5, "unreadable catalogue mesa_electores"),
+                ("status", "DIPUTADO NACIONAL", "02", "027", 4, "unrecognized estado_final"),
+            ],
         )
-        assert "mesa completeness" not in capsys.readouterr().err
+        assert "unrecognized estado_final: 1" in capsys.readouterr().err
     finally:
         with conn.cursor() as cur:
-            for table in ("official_mesa_count_status", "official_expected_mesa", "result_row"):
+            for table in (
+                "official_mesa_completeness_quarantine",
+                "official_mesa_count_status",
+                "official_expected_mesa",
+                "result_row",
+            ):
                 cur.execute(f"delete from {table} where archive_entry_id = %s", (source_id,))
             cur.execute("delete from archive_entry where id = %s", (source_id,))
         conn.commit()

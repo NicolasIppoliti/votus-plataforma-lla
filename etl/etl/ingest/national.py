@@ -631,9 +631,20 @@ class MesaCountStatus:
 
 
 @dataclass(frozen=True)
+class MesaCompletenessQuarantine:
+    scope: str
+    category: str | None
+    distrito: str | None
+    seccion: str | None
+    mesa: int | None
+    reason: str
+
+
+@dataclass(frozen=True)
 class NationalCompleteness:
     expected: tuple[ExpectedMesa, ...]
     statuses: tuple[MesaCountStatus, ...]
+    quarantines: tuple[MesaCompletenessQuarantine, ...]
     exclusions: dict[str, int]
     unavailable_reason: str | None
 
@@ -643,7 +654,9 @@ def _unavailable_completeness(reason: str, *, report: bool = True) -> NationalCo
     # stays quiet; a catalogue that is present but unusable is surprising and reported.
     if report:
         print(f"mesa completeness unavailable: {reason}", file=sys.stderr)
-    return NationalCompleteness(expected=(), statuses=(), exclusions={}, unavailable_reason=reason)
+    return NationalCompleteness(
+        expected=(), statuses=(), quarantines=(), exclusions={}, unavailable_reason=reason
+    )
 
 
 def build_national_completeness(
@@ -676,21 +689,32 @@ def build_national_completeness(
     def exclude(reason: str) -> None:
         exclusions[reason] = exclusions.get(reason, 0) + 1
 
+    quarantines: list[MesaCompletenessQuarantine] = []
+
+    def quarantine(scope: str, category: str | None, key: CompanionKey | None, reason: str) -> None:
+        exclude(reason)
+        distrito, seccion, mesa = key if key is not None else (None, None, None)
+        quarantines.append(
+            MesaCompletenessQuarantine(scope, category, distrito, seccion, mesa, reason)
+        )
+
     catalogue_rows: dict[CompanionKey, list[ExpectedMesa]] = {}
     for index, raw in enumerate(catalogue):
         key = _national_companion_key(
             raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
         )
         if key is None:
-            exclude("unreadable catalogue distrito/seccion/mesa identity")
+            quarantine(
+                "catalogue", None, None, "unreadable catalogue distrito/seccion/mesa identity"
+            )
             continue
         mesa_tipo = (raw.get("mesa_tipo") or "").strip()
         if mesa_tipo not in SUPPORTED_MESA_TIPOS:
-            exclude("unsupported catalogue mesa_tipo")
+            quarantine("catalogue", None, key, "unsupported catalogue mesa_tipo")
             continue
         electores = _parse_int(raw.get("mesa_electores"))
         if electores is None or electores < 0:
-            exclude("unreadable catalogue mesa_electores")
+            quarantine("catalogue", None, key, "unreadable catalogue mesa_electores")
             continue
         catalogue_rows.setdefault(key, []).append(
             ExpectedMesa(key[0], key[1], key[2], mesa_tipo, electores, index)
@@ -699,7 +723,7 @@ def build_national_completeness(
     for key in sorted(catalogue_rows):
         rows = catalogue_rows[key]
         if len({(row.mesa_tipo, row.electores) for row in rows}) > 1:
-            exclude("conflicting catalogue rows for one mesa")
+            quarantine("catalogue", None, key, "conflicting catalogue rows for one mesa")
             continue
         for _ in rows[1:]:
             exclude("duplicate identical catalogue row")
@@ -712,12 +736,17 @@ def build_national_completeness(
             raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
         )
         raw_circuito = raw.get("circuito_id")
-        if key is None or not is_canonicalizable_circuito_code(raw_circuito):
-            exclude("unreadable results distrito/seccion/circuito/mesa identity")
+        category = (raw.get("cargo_nombre") or "").strip() or None
+        if category is None:
+            quarantine("status", None, None, "absent results cargo_nombre")
             continue
-        category = raw.get("cargo_nombre") or ""
-        if not category:
-            exclude("absent results cargo_nombre")
+        if key is None or not is_canonicalizable_circuito_code(raw_circuito):
+            quarantine(
+                "status",
+                category,
+                None,
+                "unreadable results distrito/seccion/circuito/mesa identity",
+            )
             continue
         circuito = normalize_circuito_code(raw_circuito)
         assert circuito is not None
@@ -727,11 +756,13 @@ def build_national_completeness(
     for category, key in sorted(estados):
         found = estados[(category, key)]
         if not found <= COUNT_STATUS_BY_ESTADO_FINAL.keys():
-            exclude("unrecognized estado_final")
+            quarantine("status", category, key, "unrecognized estado_final")
         elif len(found) > 1:
-            exclude("conflicting estado_final within one category and mesa")
+            quarantine(
+                "status", category, key, "conflicting estado_final within one category and mesa"
+            )
         elif len(circuits[(category, key)]) > 1:
-            exclude("conflicting circuito within one category and mesa")
+            quarantine("status", category, key, "conflicting circuito within one category and mesa")
         else:
             (estado,) = found
             (circuito,) = circuits[(category, key)]
@@ -746,6 +777,7 @@ def build_national_completeness(
     return NationalCompleteness(
         expected=tuple(expected),
         statuses=tuple(statuses),
+        quarantines=tuple(quarantines),
         exclusions=exclusions,
         unavailable_reason=None,
     )
@@ -987,6 +1019,11 @@ def load_national_rows(
             for status in completeness.statuses:
                 if status.category not in category_ids:
                     category_ids[status.category] = db.upsert_category(conn, name=status.category)
+            for quarantine in completeness.quarantines:
+                if quarantine.category is not None and quarantine.category not in category_ids:
+                    category_ids[quarantine.category] = db.upsert_category(
+                        conn, name=quarantine.category
+                    )
             db.replace_official_mesa_completeness(
                 conn,
                 archive_entry_id=archive_entry_id,
@@ -1005,6 +1042,17 @@ def load_national_rows(
                         s.count_status,
                     )
                     for s in completeness.statuses
+                ],
+                quarantines=[
+                    (
+                        q.scope,
+                        category_ids[q.category] if q.category is not None else None,
+                        q.distrito,
+                        q.seccion,
+                        q.mesa,
+                        q.reason,
+                    )
+                    for q in completeness.quarantines
                 ],
             )
         return inserted

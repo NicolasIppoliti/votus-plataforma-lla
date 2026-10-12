@@ -1067,6 +1067,7 @@ def replace_official_mesa_completeness(
     election_id: str,
     expected: Sequence[tuple[str, str, int, str, int, int]],
     statuses: Sequence[tuple[str, str, str, str, int, str]],
+    quarantines: Sequence[tuple[str, str | None, str | None, str | None, int | None, str]],
 ) -> None:
     """Replace one archive entry's expected mesas and count statuses for one election.
 
@@ -1079,7 +1080,11 @@ def replace_official_mesa_completeness(
     competing denominators are refused, never picked.
     """
     with conn.cursor() as cur:
-        for table in ("official_mesa_count_status", "official_expected_mesa"):
+        for table in (
+            "official_mesa_completeness_quarantine",
+            "official_mesa_count_status",
+            "official_expected_mesa",
+        ):
             cur.execute(
                 f"delete from {table} where archive_entry_id = %s and election_id = %s",
                 (archive_entry_id, election_id),
@@ -1099,6 +1104,14 @@ def replace_official_mesa_completeness(
             values (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             [(election_id, archive_entry_id, *row) for row in statuses],
+        )
+        cur.executemany(
+            """
+            insert into official_mesa_completeness_quarantine (election_id, archive_entry_id,
+              scope, category_id, distrito_code, seccion_code, mesa_code, reason)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [(election_id, archive_entry_id, *row) for row in quarantines],
         )
 
 
