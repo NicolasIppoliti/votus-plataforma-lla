@@ -12,6 +12,7 @@ be down.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import threading
@@ -22,6 +23,7 @@ from dataclasses import replace
 import psycopg
 import pytest
 
+from etl import db
 from etl.db import (
     ArchiveEntryNotFoundError,
     ArchiveEntrySourceKindMismatchError,
@@ -31,7 +33,7 @@ from etl.db import (
     load_result_rows,
     upsert_jurisdiction,
 )
-from etl.ingest.national import NationalRow, load_national_rows
+from etl.ingest.national import NationalRow, iter_national_rows, load_national_rows
 from etl.jurisdiction import make_result_row
 from etl.review_item import ReviewItemContext, ReviewItemRecord, ReviewItemSectionScope
 
@@ -1440,3 +1442,78 @@ def test_an_empty_national_reingest_leaves_another_election_on_the_entry_alone(
             cur.execute("delete from result_row where archive_entry_id = %s", (archive_entry_id,))
             cur.execute("delete from archive_entry where id = %s", (archive_entry_id,))
         pg_conn.commit()
+
+
+def _national_circuit_rows(archive_entry_id: str, circuito_nombre: str) -> list[NationalRow]:
+    results = (
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        f"97,Distrito Prueba,997,Seccion Prueba,0018A,{circuito_nombre},4,"
+        "DIPUTADO NACIONAL,135,POSITIVO,30\n"
+    )
+    return list(
+        iter_national_rows(
+            io.StringIO(results),
+            archive_entry_id=archive_entry_id,
+            election_year=2025,
+            election_round="legislativas",
+        )
+    )
+
+
+def _seed_circuit_name(conn: psycopg.Connection, circuito_name: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into jurisdiction (distrito_code, seccion_code, circuito_code, mesa_code,
+              distrito_name, seccion_name, circuito_name)
+            values ('97', '997', '0018A', 4, 'Distrito Prueba', 'Seccion Prueba', %s)
+            """,
+            (circuito_name,),
+        )
+
+
+def test_reingest_upgrades_a_pre_canonical_code_like_circuito_name(
+    pg_conn: psycopg.Connection,
+) -> None:
+    """Rows stored before 23775b4 kept the raw code-like name ("18A"); the source still
+    sends it, and ingestion now canonicalizes it to the circuito code ("0018A"). Both name
+    the same circuito, so re-ingestion must upgrade the stored form instead of refusing.
+    Measured on the hosted project: 38,698 national 2025 jurisdictions in this state.
+    """
+    archive_entry_id = f"test-national-{uuid.uuid4()}"
+    _record_archive_entry(pg_conn, archive_entry_id)
+    _seed_circuit_name(pg_conn, "18A")
+
+    inserted = load_national_rows(
+        pg_conn,
+        _national_circuit_rows(archive_entry_id, "18A"),
+        year=2025,
+        round_="legislativas",
+        archive_entry_id=archive_entry_id,
+    )
+
+    assert inserted == 1
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "select circuito_name from jurisdiction where distrito_code = '97'"
+            " and seccion_code = '997' and circuito_code = '0018A' and mesa_code = 4"
+        )
+        assert cur.fetchall() == [("0018A",)]
+
+
+def test_reingest_still_refuses_a_code_like_name_for_another_circuito(
+    pg_conn: psycopg.Connection,
+) -> None:
+    archive_entry_id = f"test-national-{uuid.uuid4()}"
+    _record_archive_entry(pg_conn, archive_entry_id)
+    _seed_circuit_name(pg_conn, "19")
+
+    with pytest.raises(db.JurisdictionNameConflictError):
+        load_national_rows(
+            pg_conn,
+            _national_circuit_rows(archive_entry_id, "18A"),
+            year=2025,
+            round_="legislativas",
+            archive_entry_id=archive_entry_id,
+        )
