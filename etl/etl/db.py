@@ -28,6 +28,7 @@ from etl.crosswalk import CrosswalkTable, MesaStability
 from etl.jurisdiction import (
     JurisdictionNames,
     normalize_circuito_code,
+    normalize_circuito_name,
     normalize_distrito_code,
     normalize_seccion_code,
 )
@@ -130,14 +131,21 @@ def _merge_jurisdiction_names(
     existing: JurisdictionNames,
     incoming: JurisdictionNames,
     *,
-    lineage_shape: str,
+    key: tuple[str, str | None, str | None, str | None, int | None],
 ) -> JurisdictionNames:
-    """Fill NULL names and reject different non-NULL evidence without leaking values."""
+    """Fill NULL names and reject different non-NULL evidence without leaking values.
+
+    A circuito name stored before code-like names were canonicalized (23775b4,
+    e.g. "18A" for circuito "0018A") is the same evidence as its canonical form,
+    so it is compared, and upgraded, in that form; any other difference refuses.
+    """
     merged: dict[str, str | None] = {}
     conflicting_columns: list[str] = []
     for field_name, column_name in _JURISDICTION_NAME_FIELDS:
         existing_value = getattr(existing, field_name)
         incoming_value = getattr(incoming, field_name)
+        if field_name == "circuito" and existing_value is not None and incoming_value is not None:
+            existing_value = normalize_circuito_name(existing_value, key[2])
         if (
             existing_value is not None
             and incoming_value is not None
@@ -148,7 +156,7 @@ def _merge_jurisdiction_names(
 
     if conflicting_columns:
         raise JurisdictionNameConflictError(
-            f"jurisdiction name conflict for {lineage_shape}; conflicting field(s): "
+            f"jurisdiction name conflict for {_lineage_shape(key)}; conflicting field(s): "
             f"{', '.join(conflicting_columns)}; refusing to overwrite authoritative metadata"
         )
     return JurisdictionNames(**merged)
@@ -507,7 +515,7 @@ def upsert_jurisdiction(
             merged_names = _merge_jurisdiction_names(
                 existing_names,
                 incoming_names,
-                lineage_shape=_lineage_shape(key),
+                key=key,
             )
             if merged_names != existing_names:
                 cur.execute(
@@ -763,7 +771,7 @@ def batch_upsert_jurisdictions(
             else _merge_jurisdiction_names(
                 previous,
                 row_names,
-                lineage_shape=_lineage_shape(normalized_key),
+                key=normalized_key,
             )
         )
 
@@ -861,7 +869,7 @@ def batch_upsert_jurisdictions(
             merged = _merge_jurisdiction_names(
                 existing,
                 incoming,
-                lineage_shape=_lineage_shape(key),
+                key=key,
             )
             if merged != existing:
                 pending_name_updates.append((resolved[key], merged))
