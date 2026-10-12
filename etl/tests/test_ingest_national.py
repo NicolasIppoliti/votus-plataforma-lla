@@ -439,7 +439,7 @@ def test_companion_conflict_classes_report_their_own_unique_key_counts(
 def test_an_establishment_code_reused_in_another_distrito_is_not_a_conflict(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`localvotacion_codigo` is unique per distrito, not nationally.
+    """`localvotacion_codigo` carries one name per distrito, not nationally.
 
     Measured on the hash-matching 2025 ZIP: 1,117 of 9,375 bare codes carry more
     than one name, but 0 of 17,289 (distrito, code) pairs do. Keying by the bare
