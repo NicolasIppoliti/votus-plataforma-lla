@@ -11,6 +11,7 @@ import {
   OFFICIAL_VOTES,
   sourceIsolationFixture,
   pasoFixture,
+  completenessFixture,
   withResultFixture,
 } from "./result-fixture";
 import { resultScenarioIdentity, scenarioBaseUrl } from "./scenario-ownership";
@@ -44,6 +45,7 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     await page.goto(`${baseURL}/drilldown?${query}`);
     const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
     await expect(region).toBeVisible();
+    await expect(page.getByText("Completitud desconocida: la fuente oficial de esta elección no publica un catálogo de mesas esperadas.", { exact: true })).toBeVisible();
     for (const [name, votes, within, positive] of [
       ["LA FUERZA DEL CAMBIO", "8698 votos", "68.52%", "26.16%"],
       ["EL CAMBIO DE NUESTRAS VIDAS", "3997 votos", "31.48%", "12.02%"],
@@ -63,6 +65,18 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     const audit = await new AxeBuilder({ page }).analyze();
     expect(audit.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious")).toEqual([]);
   }), "paso");
+});
+
+test("official section completeness is disclosed through the real RPC", async ({ page }) => {
+  const { seed } = completenessFixture(SPEC);
+  await withResultFixture(SPEC, seed, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    const query = new URLSearchParams({ electionId: identity.electionIds[0]!, categoryId: identity.categoryId,
+      distritoCode: identity.distritoCode, seccionCode: identity.seccionCode, level: "seccion" });
+    await page.goto(`${baseURL}/drilldown?${query}`);
+    // The paragraph also states the category assumption; anchor the exact count sentence at its start.
+    const completeness = page.getByText(/^Escrutinio parcial: 1 de 3 mesas esperadas escrutadas; 1 no escrutadas; 1 sin estado en la fuente; 0 fuera del catálogo\. Supone que todas las mesas esperadas de la sección votan esta categoría\.$/);
+    await expect(completeness).toBeVisible();
+  }));
 });
 
 test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }) => {

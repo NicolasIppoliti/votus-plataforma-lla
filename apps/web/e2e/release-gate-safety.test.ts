@@ -1,4 +1,14 @@
 import { chromium } from "@playwright/test";
+
+it("grants completeness fixture tables only select, insert and delete in the test lane", () => {
+  const sql = readFileSync(new URL("./service-role-grants.sql", import.meta.url), "utf8");
+  for (const table of ["official_expected_mesa", "official_mesa_count_status"]) {
+    const grants = sql.match(/grant\s+[\s\S]*?to service_role;/gi) ?? [];
+    const grant = grants.find((statement) => statement.includes(`public.${table}`));
+    expect(grant).toMatch(/^grant select, insert, delete\s/);
+    expect(grants.filter((statement) => statement.includes(`public.${table}`))).toHaveLength(1);
+  }
+});
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";

@@ -3,10 +3,10 @@ import { PASO_NAMED_LISTS, pasoOwnedParty, pasoOwnedMappingId, pasoOwnedListId }
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
-import { ownedResultArchiveEntryIds, planResultCleanup, planResultNaturalKeys,
+import { planCompletenessNaturalKeys, planCompletenessCleanup, ownedResultArchiveEntryIds, planResultCleanup, planResultNaturalKeys,
   resultNaturalKey, resultScenarioIdentity, type ComparisonFixtureVariant, type DataScenarioSpec } from "./scenario-ownership";
 type SeedRow = Record<string, string | number | null>;
-export interface ResultFixtureSeed { listIdentities?: SeedRow[]; category: SeedRow; jurisdictions: SeedRow[];
+export interface ResultFixtureSeed { officialExpectedMesas?: SeedRow[]; officialMesaCountStatuses?: SeedRow[]; listIdentities?: SeedRow[]; category: SeedRow; jurisdictions: SeedRow[];
   elections: SeedRow[]; archiveEntries?: SeedRow[]; partyCanonical?: Array<{ id: string; display_name: string }>;
   partyMappings?: Array<{ id: string; year: number; jurisdiction: string; category: string; list_id: string; canonical_party_id: string; source: string }>; rows: SeedRow[]; }
 interface SupabaseOperation { error: { message: string } | null; }
@@ -66,6 +66,19 @@ export function sourceIsolationFixture(spec: DataScenarioSpec) {
   };
   return { scope, seed };
 }
+export function completenessFixture(spec: DataScenarioSpec) {
+  const fixture = sourceIsolationFixture(spec);
+  const identity = resultScenarioIdentity(spec);
+  planCompletenessNaturalKeys(spec);
+  const base = { election_id: identity.electionIds[0]!, archive_entry_id: identity.archiveEntryIds[0]!,
+    distrito_code: identity.distritoCode, seccion_code: identity.seccionCode };
+  fixture.seed.officialExpectedMesas = [1, 2, 3].map((mesa) => ({ ...base, mesa_code: mesa,
+    mesa_tipo: "NATIVOS", electores: 100, source_row_index: mesa - 1 }));
+  fixture.seed.officialMesaCountStatuses = [1, 2].map((mesa) => ({ ...base, mesa_code: mesa,
+    category_id: identity.categoryId, circuito_code: "00001", count_status: mesa === 1 ? "counted" : "not_counted" }));
+  return fixture;
+}
+
 export function pasoFixture(spec: DataScenarioSpec) {
   const identity = resultScenarioIdentity(spec, "paso");
   const named = pasoInternasFixture.section_lists.filter((list) => PASO_NAMED_LISTS.includes(list.list_id));
@@ -231,6 +244,15 @@ export function assertResultFixtureOwnership(
   if (new Set(rowNaturalKeys).size !== rowNaturalKeys.length)
     throw new Error(`duplicate result natural key: ${spec}`);
   const cleanupArchiveEntryIds = [...new Set(rawArchiveEntryIds)].sort();
+  const hasCompleteness = seed.officialExpectedMesas !== undefined || seed.officialMesaCountStatuses !== undefined;
+  const completenessKeys = [
+    ...(seed.officialExpectedMesas ?? []).map((row) => `official_expected_mesa:${row["election_id"]}|${row["distrito_code"]}|${row["seccion_code"]}|${row["mesa_code"]}`),
+    ...(seed.officialMesaCountStatuses ?? []).map((row) => `official_mesa_count_status:${row["election_id"]}|${row["category_id"]}|${row["distrito_code"]}|${row["seccion_code"]}|${row["mesa_code"]}`),
+  ];
+  if (hasCompleteness && (variant !== undefined ||
+      JSON.stringify(completenessKeys.sort()) !== JSON.stringify(planCompletenessNaturalKeys(spec).sort()) ||
+      [...seed.officialExpectedMesas ?? [], ...seed.officialMesaCountStatuses ?? []].some((row) => row["archive_entry_id"] !== identity.archiveEntryIds[0])))
+    throw new Error(`completeness seed does not exactly match owned identity: ${spec}`);
   const actualCleanup = [
     `category:${seed.category["id"]}`,
     ...seed.jurisdictions.map((row) => `jurisdiction:${row["id"]}`),
@@ -260,6 +282,10 @@ export function assertResultFixtureOwnership(
     throw new Error(`fixture seed does not exactly match owned identity: ${spec}`);
   return cleanupArchiveEntryIds;
 }
+function identityCompletenessArchive(spec: DataScenarioSpec): string {
+  // The ownership plan permits only this scenario's official archive, never an election-wide delete.
+  return planCompletenessCleanup(spec)[0]!.slice("official_expected_mesa:".length);
+}
 export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultFixtureSeed,
   run: () => Promise<T>, variant?: ComparisonFixtureVariant): Promise<T> {
   const archiveEntryIds = assertResultFixtureOwnership(spec, seed, variant);
@@ -274,6 +300,9 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
     if (seed.archiveEntries && seed.archiveEntries.length > 0)
       assertOperation(await admin.from("archive_entry").insert(seed.archiveEntries),
         "failed to seed archive entries");
+    for (const [table, rows] of [["official_expected_mesa", seed.officialExpectedMesas],
+      ["official_mesa_count_status", seed.officialMesaCountStatuses]] as const)
+      if (rows) assertOperation(await admin.from(table).insert(rows), `failed to seed ${table}`);
     if (seed.partyCanonical)
       assertOperation(await admin.from("party_canonical").insert(seed.partyCanonical),
         "failed to seed canonical party");
@@ -291,6 +320,10 @@ export async function withResultFixture<T>(spec: DataScenarioSpec, seed: ResultF
       if (result.error) cleanupErrors.push(new Error(`${label}: ${result.error.message}`));
     } catch (error) { cleanupErrors.push(error); }
   };
+      if (seed.officialMesaCountStatuses)
+        await cleanup("official mesa count statuses", admin.from("official_mesa_count_status").delete().eq("archive_entry_id", identityCompletenessArchive(spec)));
+      if (seed.officialExpectedMesas)
+        await cleanup("official expected mesas", admin.from("official_expected_mesa").delete().eq("archive_entry_id", identityCompletenessArchive(spec)));
       await cleanup("result rows", admin.from("result_row").delete().in("archive_entry_id", archiveEntryIds));
       if (seed.listIdentities)
         await cleanup("list identities", admin.from("list_identity").delete().in("id", seed.listIdentities.map((row) => String(row["id"]))));

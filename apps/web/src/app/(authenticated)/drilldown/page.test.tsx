@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   facets: vi.fn(),
   bundle: vi.fn(),
   internas: vi.fn(),
+  completeness: vi.fn(),
   createClient: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("@/lib/supabase/server-client", () => ({
 vi.mock("@/lib/workspace/context", () => ({
   authorizedOfficialBundle: mocks.bundle,
   authorizedOfficialInternalLists: mocks.internas,
+  authorizedOfficialSectionCompleteness: mocks.completeness,
 }));
 vi.mock("@/lib/workspace/official-facets", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/workspace/official-facets")>();
@@ -81,6 +83,7 @@ describe("DrilldownPage authorized official evidence", () => {
     mocks.facets.mockReset().mockResolvedValue(FACETS);
     mocks.bundle.mockReset().mockResolvedValue(authorizedBundle());
     mocks.internas.mockReset();
+    mocks.completeness.mockReset();
     mocks.createClient.mockReset().mockResolvedValue({
       rpc: () => Promise.resolve({ data: null, error: { message: "legacy result RPC must not run" } }),
     });
@@ -514,5 +517,93 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain('href="/drilldown?');
     expect(markup).not.toContain("300 votos a nivel seccion");
     expect(markup).not.toContain("Distribución del voto oficial");
+  });
+});
+
+describe("DrilldownPage section completeness", () => {
+  const counts = (expected: number, counted: number, notCounted: number, missing: number, unexpected: number) =>
+    ({ expected, counted, not_counted: notCounted, missing, unexpected, quarantined: 0, unattributed_quarantined: 0 });
+  const known = (status: "complete" | "partial", values: ReturnType<typeof counts>) => ({
+    status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+    // Exact RPC shape (20261012000000): unlisted_status_mesas is always present, null when known.
+    completeness: { status, reason: null, unlisted_status_mesas: null, quarantined_mesas: null, unattributed_quarantined: null, counts: values, category_applicability: "district_reported_categories",
+      sources: { catalogue_archive_entry_ids: ["archive-1"], status_archive_entry_ids: ["archive-1"] } },
+  });
+
+  beforeEach(() => {
+    mocks.facets.mockReset().mockResolvedValue(FACETS);
+    mocks.bundle.mockReset().mockResolvedValue(authorizedBundle());
+    mocks.internas.mockReset();
+    mocks.completeness.mockReset();
+    mocks.createClient.mockReset().mockResolvedValue({
+      rpc: () => Promise.resolve({ data: null, error: { message: "legacy result RPC must not run" } }),
+    });
+  });
+
+  async function render(params: Record<string, string | string[] | undefined> = COMPLETE_SECTION): Promise<string> {
+    return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
+  }
+
+  it("states a complete count against the official expected-mesa catalogue for the exact section", async () => {
+    mocks.completeness.mockResolvedValue(known("complete", counts(153, 153, 0, 0, 0)));
+    const markup = await render();
+    expect(mocks.completeness).toHaveBeenCalledWith(expect.anything(), {
+      electionId: COMPLETE_SECTION.electionId, categoryId: COMPLETE_SECTION.categoryId, distritoCode: "02", seccionCode: "027",
+    });
+    expect(markup).toContain("Escrutinio completo: 153 de 153 mesas esperadas escrutadas según el catálogo oficial de mesas.");
+    expect(markup).toContain("Supone que todas las mesas esperadas de la sección votan esta categoría.");
+  });
+
+  it("reports every partial-count reason separately, never as a single total", async () => {
+    mocks.completeness.mockResolvedValue(known("partial", counts(153, 150, 2, 1, 0)));
+    const markup = await render();
+    expect(markup).toContain("Escrutinio parcial: 150 de 153 mesas esperadas escrutadas; 2 no escrutadas; 1 sin estado en la fuente; 0 fuera del catálogo.");
+    expect(markup).not.toContain("Escrutinio completo");
+  });
+
+  it("keeps an election without a catalogue unknown, never complete or 100 %", async () => {
+    mocks.completeness.mockResolvedValue({ status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+      completeness: { status: "unknown", reason: "no_expected_catalogue", counts: null,
+        category_applicability: "district_reported_categories", sources: null } });
+    const markup = await render();
+    expect(markup).toContain("Completitud desconocida: la fuente oficial de esta elección no publica un catálogo de mesas esperadas.");
+    expect(markup).not.toMatch(/Escrutinio (completo|parcial)/);
+  });
+
+  it("discloses section and election quarantine without claiming complete", async () => {
+    const values = counts(153, 153, 0, 0, 0);
+    values.quarantined = 1;
+    values.unattributed_quarantined = 2;
+    mocks.completeness.mockResolvedValue(known("partial", values));
+    expect(await render()).toContain("Escrutinio parcial: 153 de 153 mesas esperadas escrutadas; 0 no escrutadas; 0 sin estado en la fuente; 0 fuera del catálogo; 1 en cuarentena por conflicto en la fuente; 2 filas de la fuente sin sección identificable para esta elección.");
+    mocks.completeness.mockResolvedValue(known("complete", values));
+    expect(await render()).toContain("Completitud no disponible.");
+  });
+
+  it("discloses status mesas and quarantine for a section absent from the catalogue", async () => {
+    mocks.completeness.mockResolvedValue({ status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+      completeness: { status: "unknown", reason: "section_absent_from_catalogue", counts: null,
+        unlisted_status_mesas: 4, quarantined_mesas: 1, unattributed_quarantined: 2,
+        category_applicability: "district_reported_categories",
+        sources: { catalogue_archive_entry_ids: [], status_archive_entry_ids: ["archive-1"] } } });
+    expect(await render()).toContain("Completitud desconocida: el catálogo oficial de mesas no lista esta sección; la fuente de resultados informa 4 mesas con estado para ella; 1 en cuarentena por conflicto en la fuente; 2 filas de la fuente sin sección identificable para esta elección.");
+  });
+
+  it("refuses counts that do not reconcile instead of showing them", async () => {
+    mocks.completeness.mockResolvedValue(known("complete", counts(153, 150, 0, 0, 0)));
+    const markup = await render();
+    expect(markup).toContain("Completitud no disponible.");
+    expect(markup).not.toContain("150 de 153");
+  });
+
+  it("labels the completeness of a deeper selection as section-wide", async () => {
+    const bundle = authorizedBundle();
+    bundle.result.level = "mesa";
+    mocks.bundle.mockResolvedValueOnce(bundle);
+    mocks.completeness.mockResolvedValue(known("complete", counts(153, 153, 0, 0, 0)));
+    const markup = await render({ ...COMPLETE_SECTION, circuitoCode: "00001", establecimientoCode: "E1", mesaCode: "1", level: "mesa" });
+    expect(markup).toContain("300 votos a nivel mesa");
+    expect(markup).toContain("Escrutinio completo: 153 de 153 mesas esperadas escrutadas según el catálogo oficial de mesas.");
+    expect(markup).toContain("Referida a toda la sección, no solo a la selección.");
   });
 });
