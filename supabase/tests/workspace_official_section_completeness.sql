@@ -1,5 +1,5 @@
 begin;
-select plan(38);
+select plan(40);
 -- Tables: the expected mesa catalogue and per-category count status are ETL-written,
 -- never directly readable by clients.
 select ok(to_regclass('public.official_expected_mesa') is not null,'expected mesa catalogue table exists');
@@ -107,6 +107,13 @@ select lives_ok($q$insert into public.official_mesa_completeness_quarantine(elec
 set local role authenticated;
 select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->>'status','partial','quarantine alone blocks complete');
 select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->'counts'->>'quarantined','1','section quarantine is counted');
+reset role;
+-- A readable mesa whose source row lacks a category stays attributed to its section and
+-- blocks every category there.
+select lives_ok($q$update public.official_mesa_completeness_quarantine set category_id=null$q$,'absent-category status quarantine stays section-attributed');
+set local role authenticated;
+select is(workspace_api.official_section_completeness('57000000-0000-0000-0000-000000000001','57000000-0000-0000-0000-000000000012','97','997')->'completeness'->'counts',
+ '{"expected":3,"counted":3,"not_counted":0,"missing":0,"unexpected":0,"quarantined":1,"unattributed_quarantined":0}'::jsonb,'a section quarantine without category is counted for every category');
 reset role;
 -- Switch to an unattributed anomaly without altering expected or accepted statuses.
 select lives_ok($q$update public.official_mesa_completeness_quarantine set distrito_code=null,seccion_code=null,mesa_code=null$q$,'unreadable identities remain election-attributed');

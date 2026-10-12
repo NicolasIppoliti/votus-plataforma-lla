@@ -114,7 +114,8 @@ begin
  into expected,counted,not_counted,missing,unexpected;
  select count(*) into quarantined from public.official_mesa_completeness_quarantine
  where election_id=p_election_id and distrito_code=p_distrito_code and seccion_code=p_seccion_code
- and (scope='catalogue' or category_id=p_category_id);
+ -- A readable mesa whose source row lacked a category blocks every category in its section.
+ and (scope='catalogue' or category_id=p_category_id or category_id is null);
  select count(*) into unattributed_quarantined from public.official_mesa_completeness_quarantine
  where election_id=p_election_id and seccion_code is null
  and (scope='catalogue' or category_id=p_category_id or category_id is null);

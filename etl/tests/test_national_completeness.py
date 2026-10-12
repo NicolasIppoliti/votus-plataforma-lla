@@ -184,10 +184,11 @@ def test_conflicting_catalogue_rows_are_quarantined_and_identical_duplicates_rep
     }
 
 
-def test_unreadable_identities_and_absent_category_remain_unattributed() -> None:
+def test_readable_mesas_stay_section_attributed_and_only_unreadable_identities_are_not() -> None:
     completeness = _build(
         _result(1, "", "POSITIVO", 10, "ESCRUTADO")
-        + _result(2, "DIPUTADO NACIONAL", "POSITIVO", 10, "ESCRUTADO", circuito="bad"),
+        + _result(2, "DIPUTADO NACIONAL", "POSITIVO", 10, "ESCRUTADO", circuito="bad")
+        + _result(3, "DIPUTADO NACIONAL", "POSITIVO", 10, "ESCRUTADO").replace(",027,", ",x,", 1),
         _catalogue("bad"),
     )
     assert [vars(row) for row in completeness.quarantines] == [
@@ -202,10 +203,18 @@ def test_unreadable_identities_and_absent_category_remain_unattributed() -> None
         {
             "scope": "status",
             "category": None,
-            "distrito": None,
-            "seccion": None,
-            "mesa": None,
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 1,
             "reason": "absent results cargo_nombre",
+        },
+        {
+            "scope": "status",
+            "category": "DIPUTADO NACIONAL",
+            "distrito": "02",
+            "seccion": "027",
+            "mesa": 2,
+            "reason": "unreadable results circuito",
         },
         {
             "scope": "status",
@@ -213,7 +222,7 @@ def test_unreadable_identities_and_absent_category_remain_unattributed() -> None
             "distrito": None,
             "seccion": None,
             "mesa": None,
-            "reason": "unreadable results distrito/seccion/circuito/mesa identity",
+            "reason": "unreadable results distrito/seccion/mesa identity",
         },
     ]
 
@@ -243,3 +252,17 @@ def test_sources_without_catalogue_or_estado_final_have_no_completeness() -> Non
     )
     assert without_estado.unavailable_reason == "results source has no estado_final"
     assert without_estado.expected == () and without_estado.statuses == ()
+
+
+def test_a_header_only_catalogue_stores_no_statuses_or_quarantines() -> None:
+    # No expected universe: storing status quarantines would surface them nowhere.
+    completeness = _build(
+        _result(1, "DIPUTADO NACIONAL", "POSITIVO", 10, "ESCRUTADO")
+        + _result(2, "DIPUTADO NACIONAL", "POSITIVO", 10, "definitivo"),
+        "",
+    )
+
+    assert completeness.unavailable_reason == "expected mesa catalogue has no rows"
+    assert completeness.expected == ()
+    assert completeness.statuses == ()
+    assert completeness.quarantines == ()

@@ -728,6 +728,10 @@ def build_national_completeness(
         for _ in rows[1:]:
             exclude("duplicate identical catalogue row")
         expected.append(rows[0])
+    if not catalogue_rows and not quarantines:
+        # A header-only catalogue lists no expected universe; status quarantines stored
+        # against it would surface nowhere, so it is unavailable like a missing catalogue.
+        return _unavailable_completeness("expected mesa catalogue has no rows")
 
     estados: dict[tuple[str, CompanionKey], set[str]] = {}
     circuits: dict[tuple[str, CompanionKey], set[str]] = {}
@@ -737,16 +741,18 @@ def build_national_completeness(
         )
         raw_circuito = raw.get("circuito_id")
         category = (raw.get("cargo_nombre") or "").strip() or None
+        # A readable mesa stays attributed to its section; only an unreadable identity
+        # becomes an election-wide quarantine.
         if category is None:
-            quarantine("status", None, None, "absent results cargo_nombre")
+            quarantine("status", None, key, "absent results cargo_nombre")
             continue
-        if key is None or not is_canonicalizable_circuito_code(raw_circuito):
+        if key is None:
             quarantine(
-                "status",
-                category,
-                None,
-                "unreadable results distrito/seccion/circuito/mesa identity",
+                "status", category, None, "unreadable results distrito/seccion/mesa identity"
             )
+            continue
+        if not is_canonicalizable_circuito_code(raw_circuito):
+            quarantine("status", category, key, "unreadable results circuito")
             continue
         circuito = normalize_circuito_code(raw_circuito)
         assert circuito is not None
