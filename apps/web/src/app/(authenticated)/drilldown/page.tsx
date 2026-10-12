@@ -185,6 +185,26 @@ function refusalMessage(status: EvidenceRefusal["status"]): string {
   return "Se rechazó la solicitud: la evidencia autorizada no está disponible.";
 }
 
+function SectionCompleteness({ completeness, selection }: { completeness: EvidenceOk["completeness"]; selection: OfficialSelection }): ReactNode {
+  const deeper = selection.requestedLevel !== "seccion" || selection.circuitoCode !== null
+    || selection.establecimientoCode !== null || selection.mesaCode !== null;
+  const scope = deeper ? " Referida a toda la sección, no solo a la selección." : "";
+  if (completeness.status === "unavailable") return <p>Completitud no disponible.</p>;
+  const anomalies = (quarantined: number, unattributed: number) =>
+    (quarantined > 0 ? `; ${quarantined} en cuarentena por conflicto en la fuente` : "")
+    + (unattributed > 0 ? `; ${unattributed} filas de la fuente sin sección identificable para esta elección` : "");
+  if (completeness.status === "unknown") {
+    return <p>{completeness.reason === "no_expected_catalogue"
+      ? "Completitud desconocida: la fuente oficial de esta elección no publica un catálogo de mesas esperadas."
+      : `Completitud desconocida: el catálogo oficial de mesas no lista esta sección; la fuente de resultados informa ${completeness.unlisted_status_mesas} mesas con estado para ella${anomalies(completeness.quarantined_mesas, completeness.unattributed_quarantined)}.`}{scope}</p>;
+  }
+  const { expected, counted, not_counted: notCounted, missing, unexpected, quarantined, unattributed_quarantined: unattributed } = completeness.counts;
+  const summary = completeness.status === "complete"
+    ? `Escrutinio completo: ${counted} de ${expected} mesas esperadas escrutadas según el catálogo oficial de mesas.`
+    : `Escrutinio parcial: ${counted} de ${expected} mesas esperadas escrutadas; ${notCounted} no escrutadas; ${missing} sin estado en la fuente; ${unexpected} fuera del catálogo${anomalies(quarantined, unattributed)}.`;
+  return <p>{summary}{scope} Supone que todas las mesas esperadas de la sección votan esta categoría.</p>;
+}
+
 function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selection: OfficialSelection }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
   if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className={styles.state} role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
@@ -212,6 +232,7 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
           : ` en ${result.mesaCount} mesas.`}
       </p>
       <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
+      <SectionCompleteness completeness={evidence.completeness} selection={selection} />
       {sourceExclusionNotes(result.sourceExclusions, "oficial")}
       <DrilldownDistribution result={result} />
       <TableRegion label="Votos oficiales y porcentaje por partido">

@@ -8,6 +8,8 @@ import {
   planScenarioPartyCleanup,
   planScenarioPartyNaturalKeys,
   planResultNaturalKeys,
+  planCompletenessNaturalKeys,
+  planCompletenessCleanup,
   planResultCleanup,
   planScenarioServers,
   resultNaturalKey,
@@ -21,6 +23,19 @@ import {
 } from "./result-fixture";
 
 describe("parallel scenario ownership", () => {
+  it("plans election-aware completeness natural keys and archive-owned cleanup", () => {
+    const spec = "e2e/provenance.spec.ts";
+    const identity = resultScenarioIdentity(spec);
+    expect(planCompletenessNaturalKeys(spec)).toEqual([
+      ...[1, 2, 3].map((mesa) => `official_expected_mesa:${identity.electionIds[0]}|83|837|${mesa}`),
+      ...[1, 2].map((mesa) => `official_mesa_count_status:${identity.electionIds[0]}|${identity.categoryId}|83|837|${mesa}`),
+    ]);
+    expect(planCompletenessCleanup(spec)).toEqual([
+      `official_expected_mesa:${identity.archiveEntryIds[0]}`,
+      `official_mesa_count_status:${identity.archiveEntryIds[0]}`,
+    ]);
+    expect(() => planCompletenessNaturalKeys("e2e/municipal.spec.ts")).toThrow("unsupported completeness scenario");
+  });
   it("binds a separate supported comparison identity without changing the default or colliding with municipal ownership", () => {
     const spec = "e2e/comparison.spec.ts";
     const baseline = resultScenarioIdentity(spec);

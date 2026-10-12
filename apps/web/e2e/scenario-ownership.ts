@@ -206,6 +206,22 @@ function plannedResultArchiveEntryIds(identity: ResultScenarioIdentity): string[
     : identity.archiveEntryIds;
 }
 
+export function planCompletenessNaturalKeys(spec: string): string[] {
+  if (spec !== "e2e/provenance.spec.ts") throw new Error("unsupported completeness scenario");
+  const identity = resultScenarioIdentity(spec);
+  const section = `${identity.distritoCode}|${identity.seccionCode}`;
+  return [
+    ...[1, 2, 3].map((mesa) => `official_expected_mesa:${identity.electionIds[0]}|${section}|${mesa}`),
+    ...[1, 2].map((mesa) => `official_mesa_count_status:${identity.electionIds[0]}|${identity.categoryId}|${section}|${mesa}`),
+  ];
+}
+
+export function planCompletenessCleanup(spec: string): string[] {
+  planCompletenessNaturalKeys(spec);
+  const archive = resultScenarioIdentity(spec).archiveEntryIds[0]!;
+  return [`official_expected_mesa:${archive}`, `official_mesa_count_status:${archive}`];
+}
+
 export function planResultNaturalKeys(spec: string, variant?: ComparisonFixtureVariant): string[] {
   const identity = resultScenarioIdentity(spec, variant);
   if (variant === "paso") return [
