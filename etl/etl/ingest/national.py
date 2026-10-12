@@ -603,6 +603,154 @@ def _report_ambiguous_natural_keys(
     )
 
 
+COUNT_STATUS_BY_ESTADO_FINAL = {"ESCRUTADO": "counted", "NO ESCRUTADO": "not_counted"}
+
+
+@dataclass(frozen=True)
+class ExpectedMesa:
+    """One mesa listed by the official catalogue: the section-level denominator."""
+
+    distrito: str
+    seccion: str
+    mesa: int
+    mesa_tipo: str
+    electores: int
+    source_row_index: int
+
+
+@dataclass(frozen=True)
+class MesaCountStatus:
+    """Whether one mesa was counted for one category, read before vote filtering."""
+
+    category: str
+    distrito: str
+    seccion: str
+    circuito: str
+    mesa: int
+    count_status: str
+
+
+@dataclass(frozen=True)
+class NationalCompleteness:
+    expected: tuple[ExpectedMesa, ...]
+    statuses: tuple[MesaCountStatus, ...]
+    exclusions: dict[str, int]
+    unavailable_reason: str | None
+
+
+def _unavailable_completeness(reason: str, *, report: bool = True) -> NationalCompleteness:
+    # A source without any catalogue (every 2023 file) is the normal unknown case and
+    # stays quiet; a catalogue that is present but unusable is surprising and reported.
+    if report:
+        print(f"mesa completeness unavailable: {reason}", file=sys.stderr)
+    return NationalCompleteness(expected=(), statuses=(), exclusions={}, unavailable_reason=reason)
+
+
+def build_national_completeness(
+    csv_text: TextIO,
+    *,
+    establecimientos_csv_bytes: bytes | None,
+    source_label: str,
+) -> NationalCompleteness:
+    """Read the expected mesa catalogue and each (category, mesa) count status.
+
+    Verified against the hash-matching 2025 ZIP only (108,992 unique catalogue
+    mesas, all NATIVOS; `estado_final` is ESCRUTADO or NO ESCRUTADO and never
+    mixed within one category and mesa). 2023 sources carry neither the
+    catalogue nor `estado_final`, so their completeness stays unknown.
+    Statuses are read from every row, before ingestion keeps only POSITIVO
+    rows, so a mesa without a positive row is still counted or not counted.
+    """
+    if establecimientos_csv_bytes is None:
+        return _unavailable_completeness("no expected mesa catalogue in source", report=False)
+    catalogue = csv.DictReader(io.StringIO(establecimientos_csv_bytes.decode("utf-8-sig")))
+    if not {"mesa_tipo", "mesa_electores"} <= set(catalogue.fieldnames or ()):
+        return _unavailable_completeness("catalogue lacks mesa_tipo or mesa_electores")
+    csv_text.seek(0)
+    results = csv.DictReader(csv_text)
+    if "estado_final" not in (results.fieldnames or ()):
+        return _unavailable_completeness("results source has no estado_final")
+
+    exclusions: dict[str, int] = {}
+
+    def exclude(reason: str) -> None:
+        exclusions[reason] = exclusions.get(reason, 0) + 1
+
+    catalogue_rows: dict[CompanionKey, list[ExpectedMesa]] = {}
+    for index, raw in enumerate(catalogue):
+        key = _national_companion_key(
+            raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
+        )
+        if key is None:
+            exclude("unreadable catalogue distrito/seccion/mesa identity")
+            continue
+        mesa_tipo = (raw.get("mesa_tipo") or "").strip()
+        if mesa_tipo not in SUPPORTED_MESA_TIPOS:
+            exclude("unsupported catalogue mesa_tipo")
+            continue
+        electores = _parse_int(raw.get("mesa_electores"))
+        if electores is None or electores < 0:
+            exclude("unreadable catalogue mesa_electores")
+            continue
+        catalogue_rows.setdefault(key, []).append(
+            ExpectedMesa(key[0], key[1], key[2], mesa_tipo, electores, index)
+        )
+    expected: list[ExpectedMesa] = []
+    for key in sorted(catalogue_rows):
+        rows = catalogue_rows[key]
+        if len({(row.mesa_tipo, row.electores) for row in rows}) > 1:
+            exclude("conflicting catalogue rows for one mesa")
+            continue
+        for _ in rows[1:]:
+            exclude("duplicate identical catalogue row")
+        expected.append(rows[0])
+
+    estados: dict[tuple[str, CompanionKey], set[str]] = {}
+    circuits: dict[tuple[str, CompanionKey], set[str]] = {}
+    for raw in results:
+        key = _national_companion_key(
+            raw.get("distrito_id"), raw.get("seccion_id"), raw.get("mesa_id")
+        )
+        raw_circuito = raw.get("circuito_id")
+        if key is None or not is_canonicalizable_circuito_code(raw_circuito):
+            exclude("unreadable results distrito/seccion/circuito/mesa identity")
+            continue
+        category = raw.get("cargo_nombre") or ""
+        if not category:
+            exclude("absent results cargo_nombre")
+            continue
+        circuito = normalize_circuito_code(raw_circuito)
+        assert circuito is not None
+        estados.setdefault((category, key), set()).add((raw.get("estado_final") or "").strip())
+        circuits.setdefault((category, key), set()).add(circuito)
+    statuses: list[MesaCountStatus] = []
+    for category, key in sorted(estados):
+        found = estados[(category, key)]
+        if not found <= COUNT_STATUS_BY_ESTADO_FINAL.keys():
+            exclude("unrecognized estado_final")
+        elif len(found) > 1:
+            exclude("conflicting estado_final within one category and mesa")
+        elif len(circuits[(category, key)]) > 1:
+            exclude("conflicting circuito within one category and mesa")
+        else:
+            (estado,) = found
+            (circuito,) = circuits[(category, key)]
+            statuses.append(
+                MesaCountStatus(
+                    category, key[0], key[1], circuito, key[2], COUNT_STATUS_BY_ESTADO_FINAL[estado]
+                )
+            )
+    if exclusions:
+        breakdown = "; ".join(f"{reason}: {count}" for reason, count in sorted(exclusions.items()))
+        print(f"{source_label}: mesa completeness exclusions — {breakdown}", file=sys.stderr)
+    return NationalCompleteness(
+        expected=tuple(expected),
+        statuses=tuple(statuses),
+        exclusions=exclusions,
+        unavailable_reason=None,
+    )
+
+
 def iter_national_rows(
     csv_text: TextIO,
     *,
@@ -815,11 +963,17 @@ def load_national_rows(
     round_: str,
     archive_entry_id: str,
     batch_size: int = 1_000,
+    completeness: NationalCompleteness | None = None,
 ) -> int:
-    """Atomically replace one archive scope while preserving lazy row streaming."""
+    """Atomically replace one archive scope while preserving lazy row streaming.
+
+    `completeness` is replaced in the same transaction; an unavailable one
+    clears any rows a previous run of this source stored. `None` leaves the
+    completeness tables untouched (callers that never read the catalogue).
+    """
     transaction = conn.transaction() if hasattr(conn, "transaction") else nullcontext()
     with transaction:
-        return _load_national_rows(
+        inserted = _load_national_rows(
             conn,
             rows,
             year=year,
@@ -827,6 +981,33 @@ def load_national_rows(
             archive_entry_id=archive_entry_id,
             batch_size=batch_size,
         )
+        if completeness is not None:
+            election_id = db.upsert_election(conn, year=year, round_=round_)
+            category_ids: dict[str, str] = {}
+            for status in completeness.statuses:
+                if status.category not in category_ids:
+                    category_ids[status.category] = db.upsert_category(conn, name=status.category)
+            db.replace_official_mesa_completeness(
+                conn,
+                archive_entry_id=archive_entry_id,
+                election_id=election_id,
+                expected=[
+                    (m.distrito, m.seccion, m.mesa, m.mesa_tipo, m.electores, m.source_row_index)
+                    for m in completeness.expected
+                ],
+                statuses=[
+                    (
+                        category_ids[s.category],
+                        s.distrito,
+                        s.seccion,
+                        s.circuito,
+                        s.mesa,
+                        s.count_status,
+                    )
+                    for s in completeness.statuses
+                ],
+            )
+        return inserted
 
 
 def _load_national_rows(

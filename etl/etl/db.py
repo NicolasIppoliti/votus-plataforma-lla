@@ -1060,6 +1060,48 @@ def begin_result_rows_replacement(
     )
 
 
+def replace_official_mesa_completeness(
+    conn,
+    *,
+    archive_entry_id: str,
+    election_id: str,
+    expected: Sequence[tuple[str, str, int, str, int, int]],
+    statuses: Sequence[tuple[str, str, str, str, int, str]],
+) -> None:
+    """Replace one archive entry's expected mesas and count statuses for one election.
+
+    `expected` rows are `(distrito, seccion, mesa, mesa_tipo, electores,
+    source_row_index)`; `statuses` rows are `(category_id, distrito, seccion,
+    circuito, mesa, count_status)`. The delete is scoped to BOTH the archive
+    entry and the election, like `load_result_rows`, so an empty replacement
+    clears only this source's own rows. A second source listing the same
+    election mesa violates the primary key and fails the whole transaction:
+    competing denominators are refused, never picked.
+    """
+    with conn.cursor() as cur:
+        for table in ("official_mesa_count_status", "official_expected_mesa"):
+            cur.execute(
+                f"delete from {table} where archive_entry_id = %s and election_id = %s",
+                (archive_entry_id, election_id),
+            )
+        cur.executemany(
+            """
+            insert into official_expected_mesa (election_id, archive_entry_id, distrito_code,
+              seccion_code, mesa_code, mesa_tipo, electores, source_row_index)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [(election_id, archive_entry_id, *row) for row in expected],
+        )
+        cur.executemany(
+            """
+            insert into official_mesa_count_status (election_id, archive_entry_id, category_id,
+              distrito_code, seccion_code, circuito_code, mesa_code, count_status)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [(election_id, archive_entry_id, *row) for row in statuses],
+        )
+
+
 def load_result_rows(
     conn,
     *,

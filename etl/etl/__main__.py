@@ -88,6 +88,7 @@ from .ingest.national import (
     REQUIRED_COLUMNS,
     REQUIRED_ESTABLECIMIENTO_COLUMNS,
     NationalSchemaError,
+    build_national_completeness,
     extract_raw_mesa_identities_from_text,
     iter_national_rows,
     load_national_rows,
@@ -1165,6 +1166,11 @@ def ingest_source(
         project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
             with national_results_text(raw_bytes) as results_text:
+                completeness = build_national_completeness(
+                    results_text,
+                    establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
+                    source_label=source_id,
+                )
                 rows = iter_national_rows(
                     results_text,
                     archive_entry_id=source_id,
@@ -1179,6 +1185,7 @@ def ingest_source(
                     year=year,
                     round_=round_,
                     archive_entry_id=source_id,
+                    completeness=completeness,
                 )
         elif capability == "pba":
             parse_result = ingest_pba(raw_bytes, archive_entry_id=source_id)

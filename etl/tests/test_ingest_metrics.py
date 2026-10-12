@@ -102,6 +102,8 @@ class Connection:
                     "insert into archive_entry",
                     "delete from result_row",
                     "LOCK TABLE jurisdiction",
+                    "delete from official_mesa_count_status",
+                    "delete from official_expected_mesa",
                 )
             ), text
 
@@ -116,6 +118,9 @@ class Connection:
             self.batches += 1
             if self.batches == self.fail_batch:
                 raise psycopg.OperationalError("synthetic private exception detail")
+        elif "insert into official_" in query:
+            # Completeness replacement; these fixtures have no catalogue, so no rows.
+            assert list(params) == []
         else:
             assert "update jurisdiction" in query
 

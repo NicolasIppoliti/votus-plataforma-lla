@@ -2276,6 +2276,125 @@ def test_ingest_cli_streams_selected_national_member_into_real_db_without_unboun
         conn.close()
 
 
+def test_ingest_cli_persists_expected_mesas_and_count_status_idempotently(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """T3-0a: the real `ingest` entry point stores the 2025 catalogue denominator and
+    each (category, mesa) count status, including a mesa with no POSITIVO row."""
+    _require_ephemeral_postgres()
+    header = (
+        "distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        "mesa_id,mesa_tipo,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad,estado_final\n"
+    )
+    row = (
+        "02,BUENOS AIRES,027,CORONEL ROSALES,00011,,{mesa},NATIVOS,DIPUTADO NACIONAL,"
+        "{agr},{tipo},{votos},{estado}\n"
+    )
+    results_csv = header + "".join(
+        row.format(mesa=m, agr=a, tipo=t, votos=v, estado=e)
+        for m, a, t, v, e in (
+            (1, "135", "POSITIVO", 120, "ESCRUTADO"),
+            (2, "", "EN BLANCO", 0, "NO ESCRUTADO"),
+            (3, "135", "POSITIVO", 0, "NO ESCRUTADO"),
+        )
+    )
+    catalogue_csv = (
+        "distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id,mesa_electores,mesa_tipo\n"
+        "02,027,37974,ESCUELA UNO,00001,300,NATIVOS\n"
+        "02,027,37974,ESCUELA UNO,00002,310,NATIVOS\n"
+        "02,027,37975,ESCUELA DOS,00003,320,NATIVOS\n"
+        "02,027,37975,ESCUELA DOS,00004,330,NATIVOS\n"
+    )
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("resultados2025.csv", results_csv)
+        archive.writestr("localesDeVotacionyMesas.csv", catalogue_csv)
+    source_id = f"national/cli-completeness-{uuid.uuid4()}"
+    sources = {
+        "national": [
+            {
+                "id": source_id,
+                "source": "example.test",
+                "source_url": "https://example.test/completeness.zip",
+                "mime": "application/zip",
+                "election_year": 2025,
+                "election_round": "legislativas",
+                "notes": "mesa completeness fixture",
+                "filename": f"{uuid.uuid4().hex}.zip",
+            }
+        ]
+    }
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(yaml.safe_dump(sources), encoding="utf-8")
+    manifest_path = tmp_path / "archive-manifest.json"
+    local_root = tmp_path / "archive"
+    fetch_source(
+        source_id,
+        sources=sources,
+        fetcher=FakeFetcher(payload=archive_buffer.getvalue()),
+        local_root=local_root,
+        manifest_path=manifest_path,
+    )
+    args = _main_args(sources_path, local_root, manifest_path) + [
+        "ingest",
+        "--source",
+        source_id,
+        "--database-url",
+        TEST_DSN,
+        "--year",
+        "2025",
+        "--round",
+        "legislativas",
+    ]
+
+    def snapshot(cur) -> tuple[list[tuple], list[tuple]]:
+        cur.execute(
+            "select distrito_code, seccion_code, mesa_code, mesa_tipo, electores"
+            " from official_expected_mesa where archive_entry_id = %s order by mesa_code",
+            (source_id,),
+        )
+        expected = cur.fetchall()
+        cur.execute(
+            "select c.name, s.circuito_code, s.mesa_code, s.count_status"
+            " from official_mesa_count_status s join category c on c.id = s.category_id"
+            " where s.archive_entry_id = %s order by s.mesa_code",
+            (source_id,),
+        )
+        return expected, cur.fetchall()
+
+    conn = psycopg.connect(TEST_DSN)
+    try:
+        assert main(args) == 0
+        with conn.cursor() as cur:
+            first = snapshot(cur)
+        assert main(args) == 0
+        with conn.cursor() as cur:
+            second = snapshot(cur)
+        assert first == second
+        assert first == (
+            [
+                ("02", "027", 1, "NATIVOS", 300),
+                ("02", "027", 2, "NATIVOS", 310),
+                ("02", "027", 3, "NATIVOS", 320),
+                ("02", "027", 4, "NATIVOS", 330),
+            ],
+            [
+                ("DIPUTADO NACIONAL", "00011", 1, "counted"),
+                ("DIPUTADO NACIONAL", "00011", 2, "not_counted"),
+                ("DIPUTADO NACIONAL", "00011", 3, "not_counted"),
+            ],
+        )
+        assert "mesa completeness" not in capsys.readouterr().err
+    finally:
+        with conn.cursor() as cur:
+            for table in ("official_mesa_count_status", "official_expected_mesa", "result_row"):
+                cur.execute(f"delete from {table} where archive_entry_id = %s", (source_id,))
+            cur.execute("delete from archive_entry where id = %s", (source_id,))
+        conn.commit()
+        conn.close()
+
+
 def test_ingest_refuses_conflicting_archive_projection_before_result_rows(tmp_path: Path) -> None:
     _require_ephemeral_postgres()
     source_id = f"national/cli-conflict-{uuid.uuid4()}"
