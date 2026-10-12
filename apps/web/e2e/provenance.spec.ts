@@ -170,6 +170,7 @@ test("national reference renders both views on desktop and mobile without changi
           client: { width: canvas.clientWidth, height: canvas.clientHeight },
           dpr: devicePixelRatio, scroll: { x: scrollX, y: scrollY },
           canvasBackground: style.backgroundColor, rootBackground: root.backgroundColor,
+          stageBackground: getComputedStyle(canvas.closest("[aria-label^='Mapa continental']")!).backgroundColor,
           borders: { top: parseFloat(style.borderTopWidth), right: parseFloat(style.borderRightWidth),
             bottom: parseFloat(style.borderBottomWidth), left: parseFloat(style.borderLeftWidth) },
         };
@@ -183,7 +184,8 @@ test("national reference renders both views on desktop and mobile without changi
     }
     const diagnostics = [];
     for (const { name, png, captureMs, regionMs, postRegionCanvas } of canvasCaptures) {
-      const pixels = await page.evaluate(async (encoded) => {
+      const stageBackground = (postRegionCanvas as { stageBackground: string }).stageBackground;
+      const pixels = await page.evaluate(async ([encoded, background]) => {
         const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
         const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
         const canvas = document.createElement("canvas");
@@ -204,10 +206,13 @@ test("national reference renders both views on desktop and mobile without changi
             .sort((a, b) => b[1] - a[1]).slice(0, 4).map(([rgba, count]) => ({ rgba, count })) };
         });
         const interiorIndex = (Math.floor(canvas.height / 2) * canvas.width + 4) * 4;
+        // Land is whatever the layer paints over the map stage's computed background,
+        // so the check does not depend on the theme's hue.
+        const [backgroundR, backgroundG, backgroundB] = background.match(/\d+/g)!.map(Number);
         const differs = (x: number, y: number) => {
           const index = (y * canvas.width + x) * 4;
-          // The layer paints blue geography; neutral white/gray capture strips are not land.
-          return data[index + 2]! - data[index]! > 12 && data[index + 2]! - data[index + 1]! > 3;
+          return Math.max(Math.abs(data[index]! - backgroundR!), Math.abs(data[index + 1]! - backgroundG!),
+            Math.abs(data[index + 2]! - backgroundB!)) > 12;
         };
         let foreground = 0;
         let northEdge = 0;
@@ -220,7 +225,7 @@ test("national reference renders both views on desktop and mobile without changi
         }
         return { foreground, northEdge, width: canvas.width, height: canvas.height,
           topLeft: [...data.slice(0, 4)], interiorSample: [...data.slice(interiorIndex, interiorIndex + 4)], firstRows };
-      }, png.toString("base64"));
+      }, [png.toString("base64"), stageBackground] as const);
       diagnostics.push({ name, captureMs, regionMs, postRegionCanvas, pixels });
       expect.soft(pixels.foreground, `${name}: continental canvas has visible foreground`).toBeGreaterThan(0);
       expect.soft(pixels.northEdge, `${name}: mainland must not touch the north canvas edge after resize`).toBe(0);

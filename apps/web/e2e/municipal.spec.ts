@@ -374,8 +374,6 @@ test.describe("the municipal route requires workspace-authorized official result
       }
 
       await page.setViewportSize({ width: 1440, height: 900 });
-      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
-      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
       await expect(distribution).toBeVisible();
       await page.emulateMedia({ reducedMotion: "reduce" });
       expect(await distribution.locator("rect").evaluate((element) =>
@@ -386,7 +384,6 @@ test.describe("the municipal route requires workspace-authorized official result
       await tableRegion.focus();
       await expect(tableRegion).toBeFocused();
       await page.locator("html").evaluate((element) => { element.style.zoom = ""; });
-      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("light");
       await page.emulateMedia({ reducedMotion: "no-preference" });
 
     }));

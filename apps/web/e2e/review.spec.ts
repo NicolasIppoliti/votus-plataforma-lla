@@ -369,11 +369,7 @@ for (const windowWidth of [1280, 640]) {
         await tabTo(page, account, true);
         await tabTo(page, submit, true, false, "org-submit");
         await tabTo(page, organization, true, false, "org-select");
-        const theme = drawer.getByRole("combobox", { name: "Tema", exact: true });
-        await tabTo(page, theme, true);
-        await expectControlSize(theme);
         await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true, false, "last-drawer-link");
-        await tabTo(page, theme);
         await tabTo(page, organization, false, false, "org-select");
         await expectControlSize(organization);
         await tabTo(page, submit, false, false, "org-submit");
@@ -533,7 +529,6 @@ test.describe("the review route reflects the disposable database", () => {
           await tabTo(page, drawer.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, drawer.getByRole("link", { name, exact: true }));
         }
-        await tabTo(page, page.getByRole("combobox", { name: "Tema", exact: true }));
         const organization = page.getByRole("combobox", { name: "Organización" });
         const submit = page.getByRole("button", { name: "Cambiar organización" });
         await expect(organization).toBeEnabled();
@@ -739,7 +734,7 @@ test.describe("the review route reflects the disposable database", () => {
             return { rail: style.borderBlockStartWidth, background: style.backgroundColor };
           });
           expect(panelStyle.rail).toBe("3px");
-          expect(panelStyle.background).toBe(state.role === "alert" ? "rgb(255, 244, 219)" : "rgb(242, 242, 242)");
+          expect(panelStyle.background).toBe(state.role === "alert" ? "rgb(61, 48, 32)" : "rgb(18, 38, 53)");
           await expectDocumentNotToOverflow(page);
           await expectReducedMotion(page, attention);
         }

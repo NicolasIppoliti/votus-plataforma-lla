@@ -1,5 +1,6 @@
 "use client";
 
+import { REFERENCE_FILL, REFERENCE_LINE } from "@/components/maps/reference-colors";
 import { useEffect, useRef, useState } from "react";
 import styles from "./drilldown.module.css";
 import { NATIONAL_REFERENCE_PATH, loadNationalReference, polarReferencePath, type ReferenceFeature } from "./national-reference-geometry";
@@ -64,7 +65,7 @@ export function NationalReferenceMap() {
             // The continental window is a viewport, not a filtered data source: retain every polygon.
             map.addControl(new MapLibreOverlay({ layers: [new GeoJsonLayer({
               id: "ign-argentina-reference", data: verifiedFeature, filled: true, stroked: true,
-              getFillColor: [37, 88, 120, 45], getLineColor: [27, 69, 96, 255],
+              getFillColor: [...REFERENCE_FILL], getLineColor: [...REFERENCE_LINE],
               getLineWidth: 1, lineWidthMinPixels: 1, pickable: false,
             })] }));
             loaded = true;

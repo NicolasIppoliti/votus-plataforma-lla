@@ -14,55 +14,35 @@ async function expectNoSevereAccessibilityIssues(page: Page) {
     .map(issue => ({ id: issue.id, impact: issue.impact, affectedNodes: issue.nodes.length }))).toEqual([]);
 }
 
-test("the authenticated page follows the system theme and persists explicit theme choices", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: ROOT_CONTENT })).toBeVisible();
-  const theme = page.getByRole("combobox", { name: "Tema", exact: true });
-  const root = page.locator("html");
-  await expect(root).toHaveCSS("color-scheme", "dark");
-  await expect(theme.locator("option:checked")).toHaveText("Sistema");
-  await expect(theme.locator("option")).toHaveText(["Sistema", "Claro", "Oscuro"]);
-
-  await theme.focus();
-  await expect(theme).toBeFocused();
-  await theme.selectOption({ label: "Claro" });
-  await expect(theme.locator("option:checked")).toHaveText("Claro");
-  await expect(root).toHaveCSS("color-scheme", "light");
-  await page.reload();
-  await expect(theme.locator("option:checked")).toHaveText("Claro");
-  await expect(root).toHaveCSS("color-scheme", "light");
-
-  await theme.selectOption({ label: "Oscuro" });
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.reload();
-  await expect(theme.locator("option:checked")).toHaveText("Oscuro");
-  await expect(root).toHaveCSS("color-scheme", "dark");
-
-  await theme.selectOption({ label: "Sistema" });
-  await expect(root).toHaveCSS("color-scheme", "light");
-  await page.reload();
-  await expect(theme.locator("option:checked")).toHaveText("Sistema");
-  await expect(root).toHaveCSS("color-scheme", "light");
-  await page.emulateMedia({ colorScheme: "dark" });
-  await expect(root).toHaveCSS("color-scheme", "dark");
-  await page.emulateMedia({ colorScheme: "light" });
-  await expect(root).toHaveCSS("color-scheme", "light");
+test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1, name: ROOT_CONTENT })).toBeVisible();
+    const root = page.locator("html");
+    await expect(root).toHaveCSS("color-scheme", "dark");
+    await expect(root).not.toHaveAttribute("data-theme");
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(7, 17, 27)");
+    await expect(page.locator(".app-shell > aside.situation-sidebar")).toHaveCSS("background-color", "rgb(8, 21, 34)");
+    await expect(page.getByRole("combobox", { name: "Tema", exact: true, includeHidden: true })).toHaveCount(0);
+  }
   await expect(page).toHaveURL(/\/$/);
 });
 
-test("sidebar footer anchors workspace controls and shares the theme across desktop and mobile", async ({ page }) => {
+test("sidebar footer anchors workspace controls in a 218px rail that narrows and then becomes a drawer", async ({ page }) => {
   await withReviewItem(page, async () => {
-    await page.emulateMedia({ colorScheme: "light" });
     await page.setViewportSize({ width: 1440, height: 1400 });
     await page.goto("/");
     const sidebar = page.locator(".app-shell > aside.situation-sidebar");
     const controls = sidebar.getByRole("group", { name: "Organización y cuenta", exact: true });
     const topbar = page.getByRole("banner");
+    const trigger = page.getByRole("button", { name: "Abrir navegación" });
     await expect(controls).toBeVisible();
     await expect(controls).toContainText("Organización activa: E2E Authorized Review Browser");
     await expect(topbar.getByRole("combobox")).toHaveCount(0);
     await expect(topbar.locator("summary")).toHaveCount(0);
+    await expect(trigger).toBeHidden();
+    expect((await sidebar.boundingBox())!.width).toBe(218);
     const navigationBox = await sidebar.getByRole("navigation", { name: "principal" }).boundingBox();
     const controlsBox = await controls.boundingBox();
     const sidebarBox = await sidebar.boundingBox();
@@ -71,34 +51,31 @@ test("sidebar footer anchors workspace controls and shares the theme across desk
     expect(sidebarBox).not.toBeNull();
     expect(controlsBox!.y).toBeGreaterThan(navigationBox!.y + navigationBox!.height);
     expect(sidebarBox!.y + sidebarBox!.height - controlsBox!.y - controlsBox!.height).toBeLessThanOrEqual(25);
+    expect((await page.locator(".app-shell__workspace").boundingBox())!.x).toBe(218);
 
-    const desktopTheme = sidebar.getByRole("combobox", { name: "Tema", exact: true, includeHidden: true });
-    await page.setViewportSize({ width: 320, height: 400 });
-    await page.getByRole("button", { name: "Abrir navegación" }).click();
+    await page.setViewportSize({ width: 1100, height: 1400 });
+    expect((await sidebar.boundingBox())!.width).toBe(190);
+    expect((await page.locator(".app-shell__workspace").boundingBox())!.x).toBe(190);
+    await expect(controls).toBeVisible();
+    await expect(trigger).toBeHidden();
+
+    await page.setViewportSize({ width: 981, height: 900 });
+    await expect(sidebar).toBeVisible();
+    await expect(trigger).toBeHidden();
+
+    await page.setViewportSize({ width: 980, height: 900 });
+    await expect(sidebar).toBeHidden();
+    await expect(trigger).toBeVisible();
+    await trigger.click();
     const drawer = page.getByRole("dialog", { name: "Navegación principal" });
-    const mobileTheme = drawer.getByRole("combobox", { name: "Tema", exact: true });
-    await mobileTheme.selectOption("dark");
-    await expect(desktopTheme).toHaveValue("dark");
-    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.emulateMedia({ colorScheme: "light" });
-    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await expect(drawer.getByRole("group", { name: "Organización y cuenta", exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 400 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await page.setViewportSize({ width: 1440, height: 400 });
     await expect(drawer).toBeHidden();
     const account = controls.locator("summary", { hasText: "Cuenta" });
     await expect(account).toBeFocused();
     await expect(account).toBeInViewport({ ratio: 1 });
-    await expect(desktopTheme).toHaveValue("dark");
-    await desktopTheme.selectOption("light");
-    await page.setViewportSize({ width: 320, height: 400 });
-    await page.getByRole("button", { name: "Abrir navegación" }).click();
-    await expect(mobileTheme).toHaveValue("light");
-    await mobileTheme.selectOption("system");
-    await expect(desktopTheme).toHaveValue("system");
-    await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.keyboard.press("Escape");
   });
 });
 
@@ -234,10 +211,6 @@ test("the short mobile drawer keeps the real organization and account group keyb
     await expect(organization).toBeFocused();
     await expect(organization).toBeInViewport({ ratio: 1 });
     await expect(organization.locator("option:checked")).toHaveText("E2E Authorized Review Browser");
-    await page.keyboard.press("Shift+Tab");
-    const theme = drawer.getByRole("combobox", { name: "Tema", exact: true });
-    await expect(theme).toBeFocused();
-    await expect(theme).toBeInViewport({ ratio: 1 });
     const selectorIds = await page.locator(".workspace-footer form select").evaluateAll(elements => elements.map(element => element.id));
     expect(selectorIds).toHaveLength(2);
     expect(new Set(selectorIds).size).toBe(2);
@@ -618,7 +591,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     expect(topbarContainer).not.toBeNull();
     expect(contentContainer).not.toBeNull();
     expect(sidebarBox!.x).toBe(0);
-    expect(sidebarBox!.width).toBe(240);
+    expect(sidebarBox!.width).toBe(218);
     expect(topbarBox!.height).toBe(64);
     expect(contentContainer!.x).toBeGreaterThanOrEqual(
       sidebarBox!.x + sidebarBox!.width,

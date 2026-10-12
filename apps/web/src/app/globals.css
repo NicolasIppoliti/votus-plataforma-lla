@@ -34,24 +34,25 @@
   --text-command-label--line-height: 1.2;
 }
 
+/* One navy analytical theme (DESIGN.md 2026-10-11; docs/prototypes/territorial-exploration). */
 :root {
-  color-scheme: light;
-  --shell: #ffffff;
-  --canvas: #fafafa;
-  --surface: #ffffff;
-  --surface-muted: #f2f2f2;
-  --ink: #171717;
-  --muted-ink: #646464;
-  --border: #e2e2e2;
-  --accent: #333333;
-  --accent-strong: #171717;
-  --official: #245a92;
-  --fiscalizacion: #9a5a13;
-  --simulation: #6a4c93;
-  --success: #237a57;
-  --danger: #b42318;
-  --warning-ink: #7a4d00;
-  --warning-surface: #fff4db;
+  color-scheme: dark;
+  --shell: #081522;
+  --canvas: #07111b;
+  --surface: #0d1d2b;
+  --surface-muted: #122635;
+  --ink: #edf5f7;
+  --muted-ink: #91a9b9;
+  --border: #284255;
+  --accent: #65e5f2;
+  --accent-strong: #a5f1f8;
+  --official: #9bc8f5;
+  --fiscalizacion: #efbb79;
+  --simulation: #cdb3ee;
+  --success: #8ad5b0;
+  --danger: #ffaaa2;
+  --warning-ink: #f5d49a;
+  --warning-surface: #3d3020;
   --font-sans:
     "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -64,49 +65,16 @@
   --color-ink: var(--ink);
   --color-muted: var(--muted-ink);
   --color-line: var(--border);
-  --color-line-strong: #a3a3a3;
+  --color-line-strong: #5b8196;
   --color-accent: var(--accent);
   --color-accent-dark: var(--accent-strong);
-  --color-accent-soft: #ebebeb;
-  --color-focus: #245a92;
-  --color-warning-soft: #f5ead7;
-  --color-warning-line: #b9822a;
+  --color-accent-soft: #153242;
+  --color-focus: #65e5f2;
+  --color-warning-soft: var(--warning-surface);
+  --color-warning-line: #d4a85f;
   --max-content-width: 72rem;
   --content-gutter: max(1rem, env(safe-area-inset-left))
     max(1rem, env(safe-area-inset-right));
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --shell: #141414;
-  --canvas: #0a0a0a;
-  --surface: #141414;
-  --surface-muted: #222222;
-  --ink: #ededed;
-  --muted-ink: #a8a8a8;
-  --border: #383838;
-  --accent: #d4d4d4;
-  --accent-strong: #ededed;
-  --official: #9bc8f5;
-  --fiscalizacion: #efbb79;
-  --simulation: #cdb3ee;
-  --success: #8ad5b0;
-  --danger: #ffaaa2;
-  --warning-ink: #f5d49a;
-  --warning-surface: #3d3020;
-  --color-canvas: var(--canvas);
-  --color-surface: var(--surface);
-  --color-surface-muted: var(--surface-muted);
-  --color-ink: var(--ink);
-  --color-muted: var(--muted-ink);
-  --color-line: var(--border);
-  --color-line-strong: #707070;
-  --color-accent: var(--accent);
-  --color-accent-dark: var(--accent-strong);
-  --color-accent-soft: #292929;
-  --color-focus: #9bc8f5;
-  --color-warning-soft: var(--warning-surface);
-  --color-warning-line: #d4a85f;
 }
 
 *,
@@ -443,23 +411,6 @@ select option {
   gap: 0.5rem 1rem;
   min-height: 4rem;
   padding-block: 0.5rem;
-}
-
-.theme-selector {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  justify-content: space-between;
-  font-size: 0.8125rem;
-}
-
-.theme-selector select {
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  max-width: 100%;
-  flex: 1;
-  padding-block: 0.4rem;
 }
 
 .workspace-identity {
@@ -1044,7 +995,7 @@ select option {
   }
 }
 
-@media (min-width: 64rem) {
+@media (min-width: 981px) {
   .app-shell > .situation-sidebar {
     display: flex;
   }
@@ -1060,14 +1011,14 @@ select option {
     z-index: 1;
     inset-block: 0;
     inset-inline-start: 0;
-    width: 15rem;
+    width: 218px;
     align-content: start;
     overflow-y: auto;
     padding: 1.5rem 0.875rem;
   }
 
   .app-shell__workspace {
-    margin-inline-start: 15rem;
+    margin-inline-start: 218px;
   }
 
   .workspace-topbar__inner {
@@ -1093,6 +1044,11 @@ select option {
     font-size: 0.8125rem;
     line-height: 1.2;
   }
+}
+
+@media (min-width: 981px) and (max-width: 1250px) {
+  .situation-sidebar { width: 190px; }
+  .app-shell__workspace { margin-inline-start: 190px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

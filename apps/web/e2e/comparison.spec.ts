@@ -120,8 +120,8 @@ test.describe("authorized official comparison", () => {
       const secondMap = second.locator(".maplibregl-map");
       await expect(firstMap.locator("canvas.maplibregl-canvas")).toBeVisible();
       const original = await settledMap(firstMap, "initial first map");
-      const leftFill = [103, 141, 165]; // 60% of fixed [230,241,247] → [18,75,110], rounded per channel.
-      const rightFill = [71, 117, 144]; // 75% of the same independent fixed endpoints.
+      const leftFill = [69, 157, 172]; // 60% of fixed [21,50,66] → [101,229,242], rounded per channel.
+      const rightFill = [81, 184, 198]; // 75% of the same independent fixed endpoints.
       await expectElectoralFill(page, firstMap, original.image, leftFill, "initial first map");
       const bounds = await firstMap.boundingBox();
       if (!bounds) throw new Error("first map has no bounds");

@@ -18,7 +18,7 @@ export function MobileNavigation({ sidebar }: MobileNavigationProps): ReactNode 
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 64rem)");
+    const desktop = window.matchMedia("(min-width: 981px)");
     function closeOnDesktop() {
       if (desktop.matches) setIsOpen(false);
     }

@@ -34,8 +34,8 @@
 
 ### Global shell
 
-- **Desktop:** Persistent `218px` navy rail (`190px` at ≤1250px, `78px` icon rail at ≤980px) with a bottom workspace/account cluster and a lightweight topbar, per `docs/prototypes/territorial-exploration/APPROVED-DESIGN.md`.
-- **Mobile:** At ≤760px the rail becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
+- **Desktop:** Persistent `218px` navy rail (`190px` at ≤1250px) with a bottom workspace/account cluster and a lightweight topbar, per `docs/prototypes/territorial-exploration/APPROVED-DESIGN.md`. The prototype's `78px` icon rail is not adopted: it hides the footer, and the workspace/account controls must stay reachable.
+- **Mobile:** At ≤980px the rail becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
 - **Topbar responsibility:** Mobile navigation trigger and authorized review status only.
 - **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch and account actions.
 - **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Crossing the breakpoint restores focus to a visible control.
@@ -330,7 +330,7 @@ The shadcn migration is complete at base commit `146bacf1dad38b76c54a27ccc38bff5
 3. Redesign the remaining routes in coherent, tested slices, preserving their distinct domain states.
 4. Complete whole-product responsive, accessibility, and regression validation.
 
-Track implementation in `odd/tasks/product-ui-redesign.md` and its project-scoped Engram mirror. Use strict TDD against production entry points. Visual previews use actual production components with explicitly fictional adapters and no real session; they do not replace functional browser tests. The authenticated E2E screenshot/trace policy remains off.
+Track implementation in the local `odd/tasks/prototype-integration.md` (superseding `odd/tasks/product-ui-redesign.md`) and its project-scoped Engram mirror. Use strict TDD against production entry points. Visual previews use actual production components with explicitly fictional adapters and no real session; they do not replace functional browser tests. The authenticated E2E screenshot/trace policy remains off.
 
 Taste's project-local `redesign-existing-projects` skill is pinned to `Leonxlnx/taste-skill@5217fb45be2c0b302f29c9cd31cbd3237501c684`. Its general guidance is subordinate to product truth, accessibility, the operational brief, and the prohibition on invented metrics or decorative effects.
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { REFERENCE_FILL, REFERENCE_LINE } from "@/components/maps/reference-colors";
 import { useEffect, useRef, useState } from "react";
 import styles from "./drilldown.module.css";
 
@@ -49,7 +50,7 @@ export function ProvinceReferenceMap() {
           try {
             map.addControl(new MapLibreOverlay({ layers: [new GeoJsonLayer({
               id: "ign-buenos-aires-reference", data: feature, stroked: true, filled: true,
-              getFillColor: [37, 88, 120, 45], getLineColor: [27, 69, 96, 255],
+              getFillColor: [...REFERENCE_FILL], getLineColor: [...REFERENCE_LINE],
               getLineWidth: 2, lineWidthMinPixels: 2, pickable: true,
               onClick: () => { document.getElementById("explorer-election")?.focus(); setStatus("Elegí una elección y una categoría para continuar hacia Coronel Rosales."); },
             })] }));

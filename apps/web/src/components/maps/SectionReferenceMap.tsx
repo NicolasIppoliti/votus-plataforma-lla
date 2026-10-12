@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import styles from "./SectionReferenceMap.module.css";
+import { REFERENCE_FILL, REFERENCE_LINE } from "./reference-colors";
 
 // Fixed 0–100% domain; legend and layer use these same stops.
-export const SHARE_COLORS = { low: [230, 241, 247], high: [18, 75, 110] } as const;
+export const SHARE_COLORS = { low: [21, 50, 66], high: [101, 229, 242] } as const;
 export function shareFill(percent: number): [number, number, number, number] {
   const fraction = Math.max(0, Math.min(100, percent)) / 100;
   return [0, 1, 2].map((index) => Math.round(SHARE_COLORS.low[index]! + (SHARE_COLORS.high[index]! - SHARE_COLORS.low[index]!) * fraction)).concat(220) as [number, number, number, number];
@@ -66,8 +67,8 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
         cleanup = () => { mapRef.current = null; map.remove(); };
         const overlay = new MapLibreOverlay({ layers: [new GeoJsonLayer({
           id: "cne-section-outline", data: { type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates } },
-          stroked: true, filled: true, getFillColor: sharePercent === undefined ? [37, 88, 120, 45] : shareFill(sharePercent),
-          getLineColor: [27, 69, 96, 255], getLineWidth: 2, lineWidthMinPixels: 2,
+          stroked: true, filled: true, getFillColor: sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent),
+          getLineColor: [...REFERENCE_LINE], getLineWidth: 2, lineWidthMinPixels: 2,
           pickable: true, onClick: () => {
             if (selectCallback.current) selectCallback.current();
             else document.getElementById(resultId)?.focus();
