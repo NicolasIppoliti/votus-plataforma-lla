@@ -1785,7 +1785,7 @@ async function executeReleaseGatePlan(plan: ReleaseGatePlan): Promise<void> {
 	if (plan.mode === RELEASE_GATE_MODE.SQL || plan.mode === RELEASE_GATE_MODE.BROWSER) {
 		process.stdout.write(
 			plan.mode === RELEASE_GATE_MODE.SQL
-				? "SQL lane passed: 13 pgTAP proofs, 2 rollback/reapply proofs, cleanup complete; partial release coverage\n"
+				? `SQL lane passed: ${plan.pgTapProofs.length} pgTAP proofs, ${plan.rollbackReapplyProofs.length} rollback/reapply proofs, cleanup complete; partial release coverage\n`
 				: "Browser lane passed: 8 passed, 0 skipped, disposable stack cleaned; partial release coverage\n",
 		);
 		return;
