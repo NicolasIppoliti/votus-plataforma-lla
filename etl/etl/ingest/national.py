@@ -444,6 +444,11 @@ def _candidate_from_raw(
     if agrupacion_id == "0":
         exclude('agrupacion_id "0"', raw.get("votos_cantidad"))
         return None
+    # A not-counted mesa has no measured votes; storing its rows would present it as a
+    # counted mesa with zero votes. Completeness reports it separately as not counted.
+    if (raw.get("estado_final") or "").strip() == "NO ESCRUTADO":
+        exclude("estado_final='NO ESCRUTADO'", raw.get("votos_cantidad"))
+        return None
 
     invalid_code_field = next(
         (
