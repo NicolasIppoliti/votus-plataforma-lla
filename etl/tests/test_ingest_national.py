@@ -436,6 +436,44 @@ def test_companion_conflict_classes_report_their_own_unique_key_counts(
     )
 
 
+def test_an_establishment_code_reused_in_another_distrito_is_not_a_conflict(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`localvotacion_codigo` is unique per distrito, not nationally.
+
+    Measured on the hash-matching 2025 ZIP: 1,117 of 9,375 bare codes carry more
+    than one name, but 0 of 17,289 (distrito, code) pairs do. Keying by the bare
+    code quarantined 59,750 legitimate mesas (867,881 rows, 17,400,623 votes).
+    """
+    results = (
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,1,DIPUTADO NACIONAL,110,POSITIVO,90\n"
+        b"03,Catamarca,001,Capital,1,Circuito 1,1,DIPUTADO NACIONAL,110,POSITIVO,40\n"
+    )
+    companion = (
+        b"distrito_id,seccion_id,localvotacion_codigo,localvotacion_nombre,mesa_id\n"
+        b"02,027,100,ESCUELA DE ROSALES,00001\n"
+        b"03,001,100,ESCUELA DE CATAMARCA,00001\n"
+    )
+
+    rows = list(
+        iter_national_rows(
+            _text_of(results),
+            archive_entry_id="national/companion-code-per-distrito",
+            election_year=2025,
+            election_round="legislativas",
+            establecimientos_csv_bytes=companion,
+        )
+    )
+
+    assert [(row.result.distrito, row.establecimiento, row.result.votes) for row in rows] == [
+        ("02", "100", 90),
+        ("03", "100", 40),
+    ]
+    assert "quarantined" not in capsys.readouterr().err
+
+
 def test_overlapping_companion_conflicts_quarantine_each_result_once_in_stable_order(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

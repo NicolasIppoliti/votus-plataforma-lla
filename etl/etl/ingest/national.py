@@ -271,7 +271,9 @@ def _parse_establecimientos(
     """Read the optional companion using its measured distrito/seccion/mesa key.
 
     The hash-matching 2025 source has 108,992 unique normalized mesa keys and
-    maps each establecimiento code to exactly one name. Both assumptions are
+    maps each establecimiento code to exactly one name WITHIN A DISTRITO: the
+    code is reused across distritos (1,117 of 9,375 bare codes carry more than
+    one name; 0 of 17,289 (distrito, code) pairs do). Both assumptions are
     checked here; registered 2023 sources have no companion and remain unknown.
     """
     if csv_bytes is None:
@@ -288,8 +290,8 @@ def _parse_establecimientos(
 
     by_mesa: dict[CompanionKey, tuple[str, str]] = {}
     metadata_by_key: dict[CompanionKey, set[tuple[str, str]]] = {}
-    names_by_code: dict[str, set[str]] = {}
-    keys_by_code: dict[str, set[CompanionKey]] = {}
+    names_by_code: dict[tuple[str, str], set[str]] = {}
+    keys_by_code: dict[tuple[str, str], set[CompanionKey]] = {}
     excluded: dict[str, int] = {}
     if metrics is not None:
         metrics.data["companion_conflicts"] = {
@@ -319,8 +321,9 @@ def _parse_establecimientos(
         metadata = (code, name)
         by_mesa.setdefault(key, metadata)
         metadata_by_key.setdefault(key, set()).add(metadata)
-        names_by_code.setdefault(code, set()).add(name)
-        keys_by_code.setdefault(code, set()).add(key)
+        # Establishment codes are distrito-scoped; a bare code is not an identity.
+        names_by_code.setdefault((key[0], code), set()).add(name)
+        keys_by_code.setdefault((key[0], code), set()).add(key)
 
     conflict_reasons: dict[CompanionKey, set[str]] = {}
     for key, metadata in metadata_by_key.items():
