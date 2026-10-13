@@ -6,7 +6,7 @@ export const NAVIGATION_GROUPS = {
   evidence: {
     label: "Evidencia",
     description: "Fuente no oficial, separada de los resultados oficiales.",
-    items: [{ label: "Evidencia", href: "/review" }, { label: "Fiscalización (no oficial)", href: "/fiscalizacion" }],
+    items: [{ label: "Evidencia", href: "/evidencia" }, { label: "Revisión de datos", href: "/review" }, { label: "Fiscalización (no oficial)", href: "/fiscalizacion" }],
   },
 } as const;
 

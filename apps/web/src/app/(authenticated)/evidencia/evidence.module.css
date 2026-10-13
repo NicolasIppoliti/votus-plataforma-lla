@@ -1,0 +1,84 @@
+.root, .layout, .workbench, .mapPanel, .inspector, .units { min-width: 0; }
+.root { padding-top: 30px; }
+.layout { max-width: 1900px; padding-inline: 32px; }
+.header { margin-bottom: 26px; }
+.header h1 { font-size: 2rem; line-height: 1.18; letter-spacing: -.7px; margin: 0; font-weight: 500; text-wrap: balance; }
+.header p { color: var(--secondary-ink); margin: 8px 0 0; }
+.header p:first-child { margin: 0 0 9px; font-size: .8125rem; }
+.context { display: grid; grid-template-columns: 1.2fr 1fr .8fr 1fr 1.1fr; gap: 16px; padding: 16px 0; border-block: 1px solid var(--border); }
+.field { min-width: 0; }
+.field label, .field > span { display: block; color: var(--secondary-ink); font-size: .8125rem; margin-bottom: 5px; }
+.field :is(select, input) { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #355367; border-radius: 5px; padding: 10px 12px; background: #0d2130; color: var(--ink); font: inherit; font-size: .875rem; }
+.field > strong { display: flex; align-items: center; min-height: 44px; font-size: .875rem; font-weight: 400; }
+.notice { color: var(--secondary-ink); border-left: 2px solid var(--accent); padding: 8px 12px; margin: 17px 0 19px; background: #11303c40; font-size: .875rem; }
+.notice h2 { font-size: 1rem; }
+.workbench { display: grid; grid-template-columns: minmax(0, 1fr) 316px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: hidden; }
+.mapPanel { background: var(--map-stage); }
+.trail { display: flex; flex-wrap: wrap; gap: 8px; padding: 20px 20px 8px; color: var(--secondary-ink); font-size: .8125rem; }
+.trail [aria-current] { color: var(--accent); }
+.mapHeader { display: flex; justify-content: space-between; gap: 12px; padding: 8px 20px 18px; }
+.mapHeader h2 { font-size: 1.4375rem; margin: 0; letter-spacing: -.4px; }
+.mapHeader p { color: var(--muted-ink); font-size: .8125rem; margin: 5px 0 0; }
+.mapHeader > span { align-self: flex-start; font-size: .8125rem; padding: 7px 9px; max-width: 130px; border: 1px solid var(--border); border-radius: 4px; }
+.mapStage { height: 340px; min-height: 340px; border-top: 1px solid var(--border); background-size: 34px 34px; }
+.mapDrawing { height: 100%; padding: 45px 70px 35px; display: flex; align-items: center; justify-content: center; }
+.mapDrawing svg { height: 100%; width: 100%; }
+.mapDrawing p { max-width: 45ch; color: var(--secondary-ink); }
+.mapDrawing path { stroke: #91d9e1; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.complete { fill: #1f7580; }
+.partial { fill: #785e39; }
+.unknown { fill: #152b38; stroke-dasharray: 4 3; }
+.mapCaption { padding: 0 20px 16px; border-bottom: 1px solid var(--border); }
+.mapCaption strong { font-size: 1rem; font-weight: 500; }
+.mapCaption p { color: var(--muted-ink); font-size: .8125rem; margin: 3px 0 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 16px 20px 4px; font-size: .8125rem; color: var(--secondary-ink); }
+.legend span { display: flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 11px; height: 11px; border: 1px solid #8fa5b4; }
+.completeKey { background: #1f7580; }
+.partialKey { background: #785e39; }
+.unknownKey { background: #152b38; border-style: dashed !important; }
+.geometryNote { color: var(--muted-ink); font-size: .8125rem; margin: 11px 20px 14px; }
+.mapFooter { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 20px; padding: 10px 0; border-top: 1px solid var(--border); font-size: .8125rem; color: var(--muted-ink); }
+.mapFooter a { color: var(--accent); display: inline-flex; align-items: center; min-height: 44px; }
+.inspector { padding: 23px 22px 16px; border-left: 1px solid var(--border); }
+.inspector h2, .units h2, .exclusions h2, .provenance h2, .boundaries h2 { font-size: 1.0625rem; font-weight: 500; margin: 0; }
+.inspector p { color: var(--secondary-ink); font-size: .875rem; line-height: 1.7; }
+.inspector .overline { color: var(--muted-ink); font-size: .8125rem; margin: 0 0 5px; }
+.inspector .status { color: var(--accent); }
+.reading { border-top: 1px solid var(--border); padding: 12px 0; }
+.reading h3, .boundaries h3 { font-size: .875rem; font-weight: 500; margin: 0; }
+.reading dl { margin: 0; }
+.reading dl > div + div { margin-top: 9px; }
+.reading dt, .metrics dt, .provenance dt { color: var(--muted-ink); font-size: .8125rem; }
+.reading dd { color: var(--secondary-ink); font-size: .875rem; margin: 2px 0 0; }
+.metrics { display: grid; gap: 18px; margin: 0; padding-top: 14px; border-top: 1px solid var(--border); }
+.metrics dd { font: 400 1.5rem/1.3 var(--font-mono); margin: 4px 0 0; }
+.traceLink { display: flex; align-items: center; min-height: 44px; border: 1px solid #355367; border-radius: 5px; padding: 10px 14px; color: var(--accent); text-decoration: none; }
+.units { margin-top: 25px; }
+.sectionHeading { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 15px; }
+.sectionHeading p { font-size: .8125rem; color: var(--muted-ink); margin: 5px 0 0; }
+.tableFilters { display: flex; gap: 18px; padding: 13px 0 18px; border-top: 1px solid var(--border); }
+.tableFilters .field { width: 220px; }
+.tableFilters .field:first-child { width: 320px; }
+.tableScroll { overflow: auto; max-height: 440px; border-block: 1px solid var(--border); }
+.tableScroll table { width: 100%; border-collapse: collapse; text-align: left; font-size: .875rem; min-width: 680px; }
+.tableScroll :is(th, td) { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; font-weight: 400; }
+.tableScroll thead th { background: var(--surface); color: var(--secondary-ink); }
+.tableScroll caption { text-align: left; color: var(--muted-ink); padding: 10px 14px; }
+.tableScroll details { max-width: 36ch; }
+.unassigned { border-top: 1px solid var(--border); padding-top: 12px; }
+.unassigned p { color: var(--secondary-ink); font-size: .875rem; }
+.root summary { cursor: pointer; min-height: 44px; padding-block: 10px; color: var(--accent); }
+.provenance, .exclusions, .boundaries { margin-top: 27px; border-top: 1px solid var(--border); padding-top: 20px; }
+.provenance { overflow-wrap: anywhere; }
+.provenance dd { margin: 5px 0 12px; font-size: .875rem; }
+.boundaries > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 28px; margin-top: 15px; }
+.boundaries article { border-top: 1px solid var(--border); padding: 17px 0; }
+.boundaries p { color: var(--secondary-ink); font-size: .875rem; line-height: 1.8; margin: 7px 0 0; }
+.root :is(a, input, select, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (min-width: 1500px) { .mapStage { height: 390px; min-height: 390px; } .workbench { grid-template-columns: minmax(0, 1fr) 340px; } }
+@media (max-width: 1250px) { .layout { padding-inline: 23px; } .context { gap: 12px; } .workbench { grid-template-columns: minmax(0, 1fr) 295px; } .mapHeader > span { display: none; } }
+@media (max-width: 980px) { .workbench { grid-template-columns: minmax(0, 1fr) 275px; } .context { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .root { padding-top: 23px; } .layout { padding-inline: 18px; } .workbench { grid-template-columns: minmax(0, 1fr); } .inspector { border-left: 0; border-top: 1px solid var(--border); } .boundaries > div { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 650px) { .header h1 { font-size: 1.6875rem; } .context { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; } .context > :first-child { grid-column: 1 / -1; } .mapHeader, .mapCaption { padding-inline: 15px; } .trail, .legend { padding-inline: 15px; } .geometryNote, .mapFooter { margin-inline: 15px; } .mapStage { height: 290px; min-height: 290px; } .mapDrawing { padding: 35px 32px; } .mapFooter, .sectionHeading { flex-direction: column; align-items: flex-start; gap: 6px; } .inspector { padding: 20px 17px 16px; } .tableFilters { flex-direction: column; gap: 12px; } .tableFilters .field, .tableFilters .field:first-child { width: 100%; } }
+@media (max-width: 360px) { .layout { padding-inline: 12px; } }

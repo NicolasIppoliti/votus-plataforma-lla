@@ -8,9 +8,9 @@ it("defines five prototype modules and every existing route exactly once", () =>
   expect(items.map(({ label, href }) => [label, href])).toEqual([
     ["Panorama", "/"], ["Exploración", "/drilldown"], ["Municipal", "/municipal"],
     ["Comparación", "/compare"], ["Simulación", "/simulate"], ["Escenarios Rosales 2027", "/scenarios"],
-    ["Evidencia", "/review"], ["Fiscalización (no oficial)", "/fiscalizacion"],
+    ["Evidencia", "/evidencia"], ["Revisión de datos", "/review"], ["Fiscalización (no oficial)", "/fiscalizacion"],
   ]);
-  expect(new Set(items.map(({ href }) => href)).size).toBe(8);
+  expect(new Set(items.map(({ href }) => href)).size).toBe(9);
 });
 
 it("matches exact and descendant routes without matching shared prefixes", () => {

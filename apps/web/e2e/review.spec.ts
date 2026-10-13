@@ -170,7 +170,7 @@ async function expectPopulatedReviewLayout(
 
 const PREVIOUS_PAGE = "Página anterior de la cola de revisión";
 const NEXT_PAGE = "Página siguiente de la cola de revisión";
-const NAVIGATION_NAMES = ["Panorama", "Exploración", "Municipal", "Comparación", "Simulación", "Escenarios Rosales 2027", "Evidencia", "Fiscalización (no oficial)"];
+const NAVIGATION_NAMES = ["Panorama", "Exploración", "Municipal", "Comparación", "Simulación", "Escenarios Rosales 2027", "Evidencia", "Revisión de datos", "Fiscalización (no oficial)"];
 
 async function expectKeyboardFocus(target: Locator, region = false, control: ReviewFocusControl = "unlabelled"): Promise<void> {
   const capture = () => target.evaluate((element) => {
