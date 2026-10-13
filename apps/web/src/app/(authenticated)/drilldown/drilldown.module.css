@@ -88,6 +88,11 @@
 .provinceCopy p { font-size: 0.875rem; line-height: 1.5; }
 .provinceCopy .attribution { color: var(--muted-ink); font-size: 0.75rem; }
 .provinceCopy a:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+/* The optional two-view reference is a document, not a single fixed-height map.
+   Keep both canvases and their navigation in flow at every viewport/zoom. */
+.mapStage:has(.nationalMap) { height: auto; }
+.mapCamera:has(.nationalMap) { height: auto; }
+.mapCamera > .nationalMap { height: auto; }
 .nationalMap { display: grid; justify-items: start; gap: 0.65rem; min-width: 0; }
 .nationalMap p { margin: 0; font-size: 0.8125rem; line-height: 1.5; }
 .nationalMap button { min-height: 2.75rem; cursor: pointer; }
