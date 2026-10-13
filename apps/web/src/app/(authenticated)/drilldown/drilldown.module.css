@@ -93,7 +93,13 @@
 .mapStage:has(.nationalMap) { height: auto; }
 .mapCamera:has(.nationalMap) { height: auto; }
 .mapCamera > .nationalMap { height: auto; }
-.nationalMap { display: grid; justify-items: start; gap: 0.65rem; min-width: 0; }
+/* Canvas screenshots and browser rasterization round fractional edges outward.
+   Give the surrounding document the same opaque surface as its canvases so
+   the stage grid cannot bleed into those edges. Stage overlays belong only
+   to the single-map workspace, not this two-view reference document. */
+.mapStage:has(.nationalMap) > :is(.coordinate, .northMark, .territoryLabel, .mapControls, .mapScale) { display: none; }
+.mapCamera:has(.nationalMap) { transform: none !important; }
+.nationalMap { display: grid; justify-items: start; gap: 0.65rem; min-width: 0; background: var(--surface-muted); }
 .nationalMap p { margin: 0; font-size: 0.8125rem; line-height: 1.5; }
 .nationalMap button { min-height: 2.75rem; cursor: pointer; }
 .nationalMap > a { display: inline-flex; align-items: center; min-height: 2.75rem; }
