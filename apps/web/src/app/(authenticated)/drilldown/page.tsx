@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import styles from "./drilldown.module.css";
+import { TerritorialBreakdown } from "./TerritorialBreakdown";
 import { InternalLists } from "./InternalLists";
 import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution } from "./DrilldownDistribution";
@@ -49,6 +50,7 @@ interface ExplorerFormProps {
   header?: ReactNode;
   workbench?: boolean;
   showTrail?: boolean;
+  exactEvidence?: boolean;
   selected: {
     electionId?: string;
     categoryId?: string;
@@ -236,6 +238,17 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <ObservedLeader result={result} completeness={<SectionCompleteness completeness={evidence.completeness} selection={selection} />} />
         </section>
       </section>
+      <TerritorialBreakdown key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()} context={`${result.categoryName} · ${result.electionYear} ${result.electionRound} · fuente oficial`}>
+        {selection.requestedLevel === "seccion" && evidence.circuitOutcomes
+          ? <CircuitOutcomes outcomes={evidence.circuitOutcomes} circuitNames={Object.fromEntries(facets.circuitos.filter(child => child.nameStatus === "present" && child.name).map(child => [child.code, child.name!]))} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} view="table" />
+          : <TableRegion label="Resultados de los territorios hijos"><Table className="data-table"><TableCaption>Resultados de los territorios hijos</TableCaption><TableHeader><TableRow><TableHead scope="col">Territorio</TableHead><TableHead scope="col">Resultado</TableHead></TableRow></TableHeader><TableBody>
+            {(selection.requestedLevel === "circuito" ? facets.establecimientos : selection.requestedLevel === "establecimiento" ? facets.mesas.map(mesa => ({ code: String(mesa.code), name: `Mesa ${mesa.code}`, nameStatus: "present" as const, nameVariantCount: 1 })) : []).map(child => <TableRow key={child.code}><TableHead scope="row">{formatFacetOptionLabel(child)}</TableHead><TableCell>Resultado por hijo no disponible en esta consulta autorizada.</TableCell></TableRow>)}
+          </TableBody></Table></TableRegion>}
+      </TerritorialBreakdown>
+      <section className={styles.exactSection} aria-labelledby="exact-heading">
+        <h2 id="exact-heading">Los números, sin aproximaciones</h2>
+        <details className={styles.exactDisclosure}>
+          <summary>Mostrar resultados exactos</summary>
         <section className={styles.context} aria-labelledby="submitted-scope-heading">
           <h3 id="submitted-scope-heading">Alcance aplicado</h3>
           <dl className={styles.scope}>
@@ -279,7 +292,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
       </TableRegion>
 
       {evidence.internalLists ? <InternalLists evidence={evidence.internalLists} /> : null}
-      {evidence.circuitOutcomes && <CircuitOutcomes outcomes={evidence.circuitOutcomes} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} view="table" />}
+      {selection.requestedLevel !== "seccion" && evidence.circuitOutcomes && <CircuitOutcomes outcomes={evidence.circuitOutcomes} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} view="table" />}
       <section aria-labelledby="school-breakdown-heading">
         <h2 id="school-breakdown-heading">Desglose oficial autorizado por establecimiento</h2>
         {schools.status === "unavailable"
@@ -289,6 +302,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
             </>
           : <>
               {schoolExclusionNotes(schools.exclusions, schools.sourceExclusions)}
+              <div className="boundedEstablishments">
               <TableRegion label="Votos oficiales por circuito y establecimiento">
                 <Table className="data-table">
                   <TableCaption>Votos oficiales por circuito y establecimiento</TableCaption>
@@ -306,6 +320,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
                   </TableBody>
                 </Table>
               </TableRegion>
+              </div>
             </>}
       </section>
       </section>
@@ -350,6 +365,10 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
         </details>
         </section>
       </section>
+        <GeographicEvidence />
+        </details>
+      </section>
+      <footer className={styles.disclaimer}>Resultados oficiales y fiscalización permanecen separados. La referencia geográfica no certifica límites electorales.</footer>
     </CircuitSelectionProvider>
   );
 }
@@ -426,7 +445,7 @@ function ExplorerHeader({ facets, selected }: { facets?: ExplorationFacets | und
   );
 }
 
-function PageShell({ facets, selected, children, workbench = true, showTrail = true }: ExplorerFormProps): ReactNode {
+function PageShell({ facets, selected, children, workbench = true, showTrail = true, exactEvidence = false }: ExplorerFormProps): ReactNode {
   return (
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
@@ -438,6 +457,15 @@ function PageShell({ facets, selected, children, workbench = true, showTrail = t
           <section className={styles.inspector} aria-label="Detalle territorial"><div className={styles.detailTop}><span>Detalle territorial</span><span className={styles.levelBadge}>{levelLabel(selected.level)}</span></div><h2>{territorialItems(facets, selected).at(-1)?.name}</h2><Navigator facets={facets} selected={selected} /><p>Sin cifras hasta contar con una selección exacta autorizada.</p></section>
         </section>}
         {children}
+        {!exactEvidence && <GeographicEvidence />}
+        </ExplorerForm>
+      </div>
+    </main>
+  );
+}
+
+function GeographicEvidence() {
+  return <>
         <section className={styles.province} aria-label="Evidencia de referencia argentina">
           <div className={styles.provinceCopy}>
             <h2 id="national-reference-heading">Argentina: referencia geográfica</h2>
@@ -455,10 +483,7 @@ function PageShell({ facets, selected, children, workbench = true, showTrail = t
             <p className={styles.attribution}>FUENTE: Instituto Geográfico Nacional de la República Argentina · Datos geográficos recuperados el 28/09/2026; metadatos IGN 2019. Sin aval del IGN ni correspondencia electoral certificada.</p>
           </div>
         </section>
-        </ExplorerForm>
-      </div>
-    </main>
-  );
+  </>;
 }
 
 function refusalPage(message: ReactNode): ReactNode {
@@ -599,7 +624,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     );
   }
 
-  return <PageShell facets={facets} selected={selected} workbench={false}>
+  return <PageShell facets={facets} selected={selected} workbench={false} exactEvidence>
     <ResultEvidence evidence={evidence} selection={selection} facets={facets} selected={selected} />
   </PageShell>;
 }

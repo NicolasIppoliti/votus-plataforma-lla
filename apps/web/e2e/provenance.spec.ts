@@ -47,6 +47,7 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     const query = new URLSearchParams({ electionId: paso.electionIds[0]!, categoryId: paso.categoryId,
       distritoCode: paso.distritoCode, seccionCode: paso.seccionCode, level: "seccion" });
     await page.goto(`${baseURL}/drilldown?${query}`);
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
     const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
     await expect(region).toBeVisible();
     await expect(page.getByText("Completitud desconocida: la fuente oficial de esta elección no publica un catálogo de mesas esperadas.", { exact: true })).toBeVisible();
@@ -422,6 +423,7 @@ nextTest("retries unavailable official evidence with the served canonical select
     await expect(page).toHaveURL(submittedUrl);
     await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
     await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
     await expect(page.getByRole("main")).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa`);
     await expect(page.getByText("Archivo y procedencia", { exact: true })).toBeVisible();
     await page.getByText("Archivo y procedencia", { exact: true }).click();
@@ -574,6 +576,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page).toHaveURL(explorerUrl);
       await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       const explorer = page.getByRole("main");
+      await page.getByText("Mostrar resultados exactos", { exact: true }).click();
       await expect(explorer).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa, obtenidos de filas de fuente mesa`);
       await expect(explorer).toContainText(
         `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);

@@ -13,7 +13,7 @@ export function CircuitSelectionProvider({ children }: { children: ReactNode }) 
   return <CircuitSelection.Provider value={{ selected, onSelect }}>{children}</CircuitSelection.Provider>;
 }
 
-export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean; view?: "map" | "table" | "geometry" | "legend" }) {
+export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "table" }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean; circuitNames?: Record<string, string>; view?: "map" | "table" | "geometry" | "legend" }) {
   const [Map, setMap] = useState<ComponentType<CircuitMapProps> | null>(null);
   const [geometry, setGeometry] = useState<CircuitMapProps["geometry"] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -69,7 +69,7 @@ export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcome
         <tbody>{outcomes.circuits.map((c: CircuitOutcome) => {
           const p = circuitPresentation(c);
           return <tr key={c.circuito_code} data-hatched={c.status === "partial"} aria-selected={selected === c.circuito_code}>
-            <th scope="row"><button type="button" className={styles.select} aria-pressed={selected === c.circuito_code} onClick={() => setSelected(c.circuito_code)}>{c.circuito_code}</button></th>
+            <th scope="row"><button type="button" className={styles.select} aria-pressed={selected === c.circuito_code} onClick={() => setSelected(c.circuito_code)}>{c.circuito_code}</button>{circuitNames[c.circuito_code] && <span> — {circuitNames[c.circuito_code]}</span>}</th>
             <td>{p.winner}</td><td>{p.margin === null ? "—" : p.margin.toFixed(2)}</td><td>{c.positive_total}</td>
             <td>{c.counts.counted}/{c.counts.expected}</td><td>{p.coverage}
               <div>no escrutadas: {c.counts.not_counted}; sin estado: {c.counts.missing}; inesperadas: {c.counts.unexpected}; cuarentena: {c.counts.quarantined}</div>

@@ -96,6 +96,19 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("keeps exact evidence in a collapsed disclosure and bounds territorial and establishment tables", async () => {
+    const markup = await render();
+    expect(markup).toMatch(/<details[^>]*class="[^"]*exactDisclosure[^"]*"[^>]*>/);
+    const exact = markup.slice(markup.indexOf('<summary>Mostrar resultados exactos</summary>'));
+    expect(exact).toContain('Alcance aplicado');
+    expect(exact).toContain('Desglose oficial autorizado');
+    expect(exact).toContain('Referencias de la consulta');
+    expect(markup).not.toMatch(/<details[^>]*open/);
+    expect(markup).toContain('Desglose territorial');
+    expect(markup).toContain('Filtrar territorios');
+    expect(markup).toContain('class="boundedEstablishments"');
+  });
+
   it("ports the approved header, compact filters, map stage and inspector through the real page", async () => {
     const markup = await render();
     expect(markup).toContain("<h1>Exploración territorial</h1>");
@@ -160,7 +173,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).toContain("Preparando mapa de circuitos…");
     expect(markup).not.toContain("Mostrar mapa de circuitos");
     expect(markup.indexOf('aria-labelledby="circuit-map-heading"')).toBeLessThan(markup.indexOf('aria-label="Detalle territorial"'));
-    expect(markup.indexOf('aria-label="Votos oficiales y porcentaje por partido"')).toBeLessThan(markup.indexOf('aria-label="Resultados exactos por circuito"'));
+    expect(markup.indexOf('aria-label="Resultados exactos por circuito"')).toBeLessThan(markup.indexOf('<summary>Mostrar resultados exactos</summary>'));
     expect(markup.indexOf('aria-label="Resultados exactos por circuito"')).toBeLessThan(markup.indexOf('aria-labelledby="school-breakdown-heading"'));
     expect(markup).toContain('data-hatched="true"');
     expect(markup).toContain("20.00");

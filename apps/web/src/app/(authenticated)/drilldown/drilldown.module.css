@@ -1,5 +1,18 @@
 .root, .layout, .filters, .context, .results, .evidence, .state, .province { min-width: 0; }
 .root { padding-top: 32px; }
+.territorialBreakdown, .exactSection { min-width: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 20px; }
+.breakdownHeader { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+.breakdownHeader h2 { margin: 0; font-size: 1rem; }
+.breakdownHeader p, .breakdownHeader label { color: var(--secondary-ink); font-size: .8125rem; }
+.breakdownHeader input { display: block; min-height: 44px; width: 100%; background: var(--surface-muted); border: 1px solid var(--border); color: var(--ink); padding: 8px; border-radius: 4px; }
+.childScroll :global(.table-scroll), .root :global(.boundedEstablishments .table-scroll) { max-height: 310px; overflow: auto; }
+.childScroll :global(table) { min-width: 890px; }
+.exactSection > h2 { margin: 0 0 8px; font-size: .875rem; }
+.exactDisclosure > summary { color: var(--accent); cursor: pointer; min-height: 44px; padding: 12px 0; }
+.exactDisclosure > section { margin-top: 20px; }
+.exactDisclosure summary:focus-visible, .breakdownHeader input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.disclaimer { color: var(--muted-ink); font-size: .8125rem; }
+@media (max-width: 760px) { .breakdownHeader { align-items: stretch; flex-direction: column; } .childScroll :global(.table-scroll), .root :global(.boundedEstablishments .table-scroll) { max-height: 280px; } }
 .layout { max-width: 2040px; padding-inline: 34px; }
 .selectionBoundary { display: grid; gap: 23px; min-width: 0; }
 .mapHeading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px 23px 0; }
