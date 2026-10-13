@@ -266,6 +266,7 @@ const MIGRATION_VERSIONS = [
 	MUNICIPAL_2023_PARTY_MAP_MIGRATION_VERSION,
 	MUNICIPAL_2023_IDENTITIES_MIGRATION_VERSION,
 	"20261011000000",
+	"20261012000000",
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -378,6 +379,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_official_internal_lists.sql",
 		label: "disposable workspace-official-internal-lists pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_official_section_completeness.sql",
+		label: "disposable workspace-official-section-completeness pgTAP",
 		timeoutMs: 120_000,
 	},
 	{

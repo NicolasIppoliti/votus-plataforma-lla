@@ -1,5 +1,6 @@
 import "server-only";
 import { loadOfficialInternalLists, type OfficialInternalLists } from "./official-internal-lists";
+import { loadOfficialSectionCompleteness, type OfficialSectionCompleteness } from "./official-section-completeness";
 
 import {
   parseOfficialExploration, parseSchoolBreakdown,
@@ -50,6 +51,7 @@ interface OfficialDrilldownEvidenceOk {
   result: ExplorationOk; schools: SchoolBreakdownOk | OfficialSchoolBreakdownUnavailable;
   reference: OfficialReferenceEvidence; provenance: OfficialProvenanceEvidence;
   internalLists?: OfficialInternalLists;
+  completeness: OfficialSectionCompleteness;
 }
 interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes?: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
 interface OfficialDrilldownEvidenceAuthorizationDenied {
@@ -269,7 +271,10 @@ export async function loadAuthorizedOfficialDrilldownEvidence(selection: Officia
       selection.seccionCode && !selection.circuitoCode && !selection.establecimientoCode && selection.mesaCode === null;
     const internalLists = eligible ? await loadOfficialInternalLists({ electionId: selection.electionId,
       categoryId: selection.categoryId, distritoCode: selection.distritoCode, seccionCode: selection.seccionCode! }) : undefined;
+    // Section-level denominator, also for deeper selections; the page labels it section-wide.
+    const completeness = await loadOfficialSectionCompleteness({ electionId: selection.electionId,
+      categoryId: selection.categoryId, distritoCode: selection.distritoCode, seccionCode: selection.seccionCode });
     return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK, ...displayed, reference: safeReference,
-      provenance: safeProvenance, ...(internalLists ? { internalLists } : {}) };
+      provenance: safeProvenance, completeness, ...(internalLists ? { internalLists } : {}) };
   } catch { return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE }; }
 }

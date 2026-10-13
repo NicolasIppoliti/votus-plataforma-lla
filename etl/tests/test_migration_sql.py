@@ -1206,6 +1206,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     official_category_name_migration_version = "20260904035355"
     sql = (SQL_TESTS / "results_exploration_release.sql").read_text(encoding="utf-8").lower()
     sequence = (
+        "\\ir ../migrations/down/20261012000000_official_section_completeness.down.sql",
         "\\ir ../migrations/down/20261011000000_authorized_official_internal_lists.down.sql",
         "\\ir ../migrations/down/20260923000001_curate_2023_municipal_identities.down.sql",
         "\\ir ../migrations/down/20260923000000_map_2023_dine_municipal_party.down.sql",
@@ -1302,6 +1303,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20260923000000_map_2023_dine_municipal_party.sql",
         "\\ir ../migrations/20260923000001_curate_2023_municipal_identities.sql",
         "\\ir ../migrations/20261011000000_authorized_official_internal_lists.sql",
+        "\\ir ../migrations/20261012000000_official_section_completeness.sql",
     )
     assert [sql.index(step) for step in sequence] == sorted(sql.index(step) for step in sequence)
     for required in (
@@ -1316,9 +1318,9 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "69 as migration_inventory_count",
-        "20261011000000-down,20260923000001-down,20260923000000-down",
-        "20260923000000-up,20260923000001-up,20261011000000-up",
+        "70 as migration_inventory_count",
+        "20261012000000-down,20261011000000-down,20260923000001-down",
+        "20260923000001-up,20261011000000-up,20261012000000-up",
         "0037 internal facets base remained directly executable",
         (
             "canonical authorized official facet metadata reapply did not restore "
