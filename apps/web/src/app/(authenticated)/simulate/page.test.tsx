@@ -2,6 +2,8 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import SimulatePage from "./page";
+import { allocateSeats } from "@/domain/seat-allocation/allocate";
+import { projectionInputSchema, projectionToAllocationInput } from "./projection-input";
 
 const transferHarness = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -85,7 +87,38 @@ async function renderSimulation(
   );
 }
 
+const ROSALES_NATIONAL_POSITIVES = {
+  ...ALLOCATION_INPUT, totalVotes: 33146, granularity: "seccion",
+  lists: [
+    ["LA LIBERTAD AVANZA", 20427], ["ALIANZA FUERZA PATRIA", 6851],
+    ["FRENTE DE IZQUIERDA", 1218], ["PROPUESTA FEDERAL PARA EL CAMBIO", 1057],
+    ["ALIANZA PROVINCIAS UNIDAS", 819], ["ALIANZA POTENCIA", 791],
+    ["PARTIDO NUEVO BUENOS AIRES", 377], ["FRENTE PATRIOTA FEDERAL", 311],
+    ["COALICION CIVICA - A.R.I.", 291], ["MOVIMIENTO POLITICO SOCIAL Y CULTURAL PROYECTO SUR", 227],
+    ["MOVIMIENTO AVANZADA SOCIALISTA", 224], ["UNION LIBERAL", 201],
+    ["ALIANZA NUEVOS AIRES", 136], ["ALIANZA UNION FEDERAL", 126], ["LIBER.AR", 90],
+  ].map(([listName, votes], index) => ({ listId: `L${index + 1}`, listName, votes })),
+};
+
 describe("simulate page — approved workbench composition", () => {
+  it("states the precise real-input allocation refusal without changing statutory rules", async () => {
+    expect(() => allocateSeats(projectionToAllocationInput(projectionInputSchema.parse(ROSALES_NATIONAL_POSITIVES))))
+      .toThrow("cannot allocate all 9 seats from the supplied lists; only 8 seat awards were produced");
+    const markup = await renderSimulation(ROSALES_NATIONAL_POSITIVES);
+    expect(markup).toContain("solo se produjeron 8 adjudicaciones");
+    expect(markup).not.toContain("No se pudo completar la asignación porque");
+    expect(markup).toContain("councilTotal=18");
+  });
+
+  it("uses the approved title, truthful scope row and collapsed secondary disclosures", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+    expect(markup).toContain("<h1>Simulación de escenarios</h1>");
+    expect(markup).toContain('aria-label="Contexto del escenario"');
+    expect(markup).toContain("Territorio no vinculado");
+    expect(markup).toContain("<summary>Sensibilidad de la transferencia</summary>");
+    expect(markup).toContain("<summary>Cómo se asignaron las bancas</summary>");
+    expect(markup).not.toMatch(/<details[^>]*open/);
+  });
   it("renders a territorial workbench with explicit unbound geography and hypothesis limits", async () => {
     const markup = await renderSimulation(ALLOCATION_INPUT);
     expect(markup).toContain('aria-label="Laboratorio territorial"');
@@ -427,7 +460,7 @@ describe("simulate page — fixed-total transfer entry", () => {
     expect(errors).toEqual([]);
     const query = new URL(url!, "https://example.invalid").searchParams;
     const served = await renderSimulation(undefined, Object.fromEntries(query));
-    expect(served).toContain("no cumplen sus reglas");
+    expect(served).toContain("listed and unmodeled votes exceed the vote-coverage basis");
     expect(served).not.toContain('data-testid="allocation-result"');
     expect(served).not.toContain("Huella de los datos proporcionados");
   });
@@ -569,7 +602,7 @@ describe("simulate page — normal-user entry", () => {
     );
 
     expect(markup).toContain('role="alert"');
-    expect(markup).toContain("no cumplen sus reglas");
+    expect(markup).toContain("listed and unmodeled votes exceed the vote-coverage basis");
     expect(markup).not.toContain('data-testid="allocation-result"');
     expect(markup).not.toContain('aria-label="Distribución de bancas"');
     expect(markup).not.toContain("Huella de los datos proporcionados");

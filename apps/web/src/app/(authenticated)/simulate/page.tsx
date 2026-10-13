@@ -98,7 +98,11 @@ function allocationErrorMessage(error: unknown): string {
   if (message.includes("MAYORIA is not implemented")) {
     return "MAYORIA no está implementada según la Ley 5109; se rechazó la asignación";
   }
-  return "No se pudo completar la asignación porque los datos proporcionados no cumplen sus reglas.";
+  const incomplete = message.match(/cannot allocate all (\d+) seats from the supplied lists; only (\d+) seat awards were produced/);
+  if (incomplete) {
+    return `Asignación rechazada: se solicitaron ${incomplete[1]} bancas, pero solo se produjeron ${incomplete[2]} adjudicaciones con las listas que alcanzan el cociente Hare (Ley 5109, arts. 109–110). No se presenta un reparto parcial como completo.`;
+  }
+  return `Asignación rechazada: ${message}`;
 }
 
 function parseInputParam(raw: string | undefined): ParsedInput {
@@ -469,7 +473,7 @@ export default async function SimulatePage({
     <main className="simulation-page">
       <header className="simulation-page-header">
         <p>Espacio de trabajo / Simulación</p>
-        <h1>Simulación de bancas</h1>
+        <h1>Simulación de escenarios</h1>
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
@@ -544,7 +548,9 @@ export default async function SimulatePage({
               Huella de los datos proporcionados (no es procedencia de archivo): sha256 {inputTrace}
             </p>
           ) : null}
-          <AllocationEvidence result={result} />
+          <details className="simulation-disclosure"><summary>Cómo se asignaron las bancas</summary>
+            <AllocationEvidence result={result} />
+          </details>
         </section>
       ) : null}
       </SimulationForm>

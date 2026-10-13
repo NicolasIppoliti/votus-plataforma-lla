@@ -2,6 +2,21 @@ import { isDeepStrictEqual } from "node:util";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 
+async function openSimulationDisclosure(page: Page, name: string): Promise<void> {
+  const summary = page.locator("details > summary").filter({ hasText: name });
+  await expect(summary).toBeVisible();
+  const details = summary.locator("..");
+  if (!await details.evaluate((element) => (element as HTMLDetailsElement).open)) {
+    // Opening supporting evidence must not disturb the editor-focus assertions.
+    const previousFocus = await page.evaluateHandle(() => document.activeElement);
+    await summary.click();
+    await previousFocus.evaluate((element) => {
+      if (element instanceof HTMLElement && element.isConnected && element !== document.body) element.focus();
+    });
+    await previousFocus.dispose();
+  }
+}
+
 interface ElementRectangle {
   bottom: number;
   left: number;
@@ -317,6 +332,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     });
     expect(decodedInput).not.toHaveProperty("method");
 
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     const result = page.getByRole("region", {
       name: "Resultado de la asignación",
     });
@@ -370,19 +386,23 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await listVotes.nth(0).fill("5000");
     await listVotes.nth(0).fill("6000");
     await expect(result).toBeVisible();
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(listARow.getByRole("cell").last()).toHaveText("5");
     await expect(listVotes.nth(0)).toHaveValue("6000");
     await expect(listVotes.nth(0)).toBeFocused();
     await listVotes.nth(0).fill("8000");
     await listVotes.nth(1).fill("2000");
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(listARow.getByRole("cell").last()).toHaveText("7");
     await expect(listBRow.getByRole("cell").last()).toHaveText("2");
     await expect(seatChart).toBeVisible();
     await listVotes.nth(0).fill("6000");
     await listVotes.nth(1).fill("4000");
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(listARow.getByRole("cell").last()).toHaveText("5");
     await expect(listBRow.getByRole("cell").last()).toHaveText("4");
     await page.reload();
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(listNames.nth(0)).toHaveValue("Lista A");
     await expect(listVotes.nth(0)).toHaveValue("6000");
     await expect(seatChart).toBeVisible();
@@ -625,6 +645,7 @@ test("transfers a rich baseline losslessly with keyboard controls and resets aft
   expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual({ ...input, lists: [
     { ...input.lists[0], votes: 5000 }, { ...input.lists[1], votes: 4000 },
   ] });
+  await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
   await expect(result).toContainText("1.000 explícitamente fuera del modelo");
   await expect(result.getByText(/Huella de los datos proporcionados/)).not.toHaveText(baselineTrace);
   await expect(result.getByRole("table", { name: "Asignación Hare por lista" })).toBeVisible();
@@ -690,6 +711,7 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
   await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
   const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
   const exact = page.getByRole("region", { name: "Resultado de la asignación" });
+  await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
   const trace = await exact.getByText(/Huella de los datos proporcionados/).innerText();
   const baselineUrl = page.url();
   await sweep.getByLabel("Donante del muestreo").selectOption("A");
@@ -704,6 +726,7 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
   await sweep.getByLabel("Paso del muestreo").fill("600");
   await sweep.getByRole("button", { name: "Evaluar muestras" }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("sweepMax")).toBe("1000");
+  await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
   const samples = page.getByRole("region", { name: "Resultados del muestreo", exact: true });
   await expect(samples).toContainText("3 muestras evaluadas; 3 válidas; 0 rechazadas");
   await expect(samples).toContainText("Último intervalo más corto: 400 votos");
@@ -740,6 +763,8 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
   await endpoint.click();
   await expect.poll(() => new URL(page.url()).searchParams.get("input")).toBe(pointUrl.searchParams.get("input"));
   await expect(samples).toHaveCount(0);
+  await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
+  await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
   await expect(exact.getByRole("table", { name: "Tabla de cocientes D’Hondt" })).toBeVisible();
   await expect(exact.getByText(/Huella de los datos proporcionados/)).not.toHaveText(trace);
   await expect(sweep.getByLabel("Donante del muestreo")).toHaveValue("");
@@ -765,6 +790,7 @@ function sweepEvidenceQuery(fields: Record<string, string> = {}): string {
 }
 
 async function expectSweepDefaults(page: Page): Promise<void> {
+  await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
   const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
   await expect(sweep.getByLabel("Donante del muestreo")).toHaveValue("");
   await expect(sweep.getByLabel("Receptora del muestreo")).toHaveValue("");
@@ -810,11 +836,13 @@ for (const invalid of [
     await page.goto(`/simulate?${sweepEvidenceQuery()}`);
     const result = page.getByRole("region", { name: "Resultado de la asignación" });
     await expect(result).toBeVisible();
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     const baselineEvidence = await result.innerText();
     const invalidFields = Object.assign({
       sweepDonor: "110", sweepTarget: "999", sweepMax: "1000", sweepStep: "600",
     }, invalid.fields);
     await page.goto(`/simulate?${sweepEvidenceQuery(invalidFields)}`);
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(page.getByRole("main").getByRole("alert")).toHaveText(
       `Muestreo rechazado; la base se conserva. ${invalid.reason}`,
     );
@@ -833,6 +861,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
   const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
   await expect(editor).toBeVisible();
   const baselineUrl = page.url();
+  await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
   const baselineEvidence = await result.innerText();
   await page.evaluate(() => window.history.pushState(null, "", window.location.href));
   const servedDocument = await page.evaluateHandle(() => document);
@@ -853,6 +882,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
   page.on("requestfinished", onFinished);
   page.on("requestfailed", onFailed);
   async function draftSweep() {
+    await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
     await sweep.getByLabel("Donante del muestreo").selectOption("110");
     await sweep.getByLabel("Receptora del muestreo").selectOption("999");
     await sweep.getByLabel("Máximo a transferir").fill("1000");
@@ -866,6 +896,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
     await draftSweep();
     await editor.getByLabel("Nombre de la lista").first().fill("Lista editada");
     await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get("input")!).lists[0].listName).toBe("Lista editada");
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(result).toContainText("Lista editada");
     await expectSweepDefaults(page);
     expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
@@ -876,6 +907,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
     await expect(page).toHaveURL(baselineUrl);
     expect(await page.evaluate((previous) => document === previous, servedDocument)).toBe(true);
     expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(sweepEvidenceInput);
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     try {
       await expect(result).toHaveText(baselineEvidence, { useInnerText: true });
     } catch (error) {
@@ -927,6 +959,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
 
 test("releases a real superseded sweep response without restoring stale samples", async ({ page }) => {
   await page.goto(`/simulate?${sweepEvidenceQuery()}`);
+  await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
   const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
   await sweep.getByLabel("Donante del muestreo").selectOption("110");
   await sweep.getByLabel("Receptora del muestreo").selectOption("999");
@@ -980,6 +1013,7 @@ test("releases a real superseded sweep response without restoring stale samples"
       return input ? JSON.parse(input).lists[0].listName : null;
     }).toBe("Lista nueva A");
     const result = page.getByRole("region", { name: "Resultado de la asignación" });
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(result.getByRole("table", { name: "Tabla de cocientes D’Hondt" })).toBeVisible();
     const newerUrl = page.url();
     const newerInput = JSON.parse(new URL(newerUrl).searchParams.get("input")!);
@@ -998,6 +1032,7 @@ test("releases a real superseded sweep response without restoring stale samples"
     }));
     await expect(page).toHaveURL(newerUrl);
     expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(newerInput);
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(result).toHaveText(newerEvidence, { useInnerText: true });
     await expect(editor.getByLabel("Nombre de la lista").first()).toHaveValue("Lista nueva A");
     await expect(editor.getByLabel("Votos de la lista").first()).toHaveValue("6000");
@@ -1046,6 +1081,7 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
     await expect(chart.locator('[data-seat-state="awarded"]')).toHaveCount(2);
     await expect(chart.locator('[data-seat-state="empty"]')).toHaveCount(4);
     await expect(chart.getByRole("img", { name: "Lista C: 0 de 2 bancas", exact: true })).toBeVisible();
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(result.getByRole("table", { name: "Cocientes ganadores ordenados" }).getByRole("row")).toHaveCount(3);
     await expect(trace).toHaveText(servedTrace);
     await expectNoHorizontalOverflow(page);
@@ -1069,11 +1105,13 @@ test("preserves a rich supplied scenario until another scenario is explicitly st
   const suppliedUrl = page.url();
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
   await expect(page.getByText("Escenario proporcionado", { exact: true })).toBeVisible();
+  await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
   await expect(result).toContainText("1.000 explícitamente fuera del modelo");
   await expect(page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true })).toBeVisible();
   await expect(page.getByRole("form", { name: "Formulario de simulación de bancas" })).toHaveCount(0);
   await page.reload();
   await expect(page).toHaveURL(suppliedUrl);
+  await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
   await expect(result).toContainText("1.000 explícitamente fuera del modelo");
   await page.getByRole("button", { name: "Crear otro escenario", exact: true }).click();
   await expect(page.getByRole("form", { name: "Formulario de simulación de bancas" })).toBeVisible();
@@ -1141,6 +1179,7 @@ test("restores the served scenario while a superseded response is pending", asyn
     await expect(chart.getByRole("img", { name: "Lista B: 4 de 9 bancas", exact: true })).toBeVisible();
     await expect(result).not.toContainText("Lista pendiente");
     await expect(trace).toHaveText(servedTrace);
+    await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     const allocation = result.getByRole("table", { name: "Asignación Hare por lista" });
     await expect(allocation.getByRole("rowheader", { name: "Lista A", exact: true }).locator("..").getByRole("cell").last()).toHaveText("5");
     await expect(allocation.getByRole("rowheader", { name: "Lista B", exact: true }).locator("..").getByRole("cell").last()).toHaveText("4");
