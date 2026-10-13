@@ -18,6 +18,8 @@
 .hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .sharedRow { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,450px) minmax(0,225px) minmax(0,1fr); gap: 22px; padding-block: 16px; border-block: 1px solid var(--border); align-items: start; }
 .sideRow { display: contents; }
+.fixedLabel { font-weight: 700; }
+.fixedValue { display: flex; align-items: center; min-height: 44px; padding: 0.65rem 0.75rem; color: var(--muted-ink); font-size: 14px; border: 1px solid var(--color-line-strong); border-radius: 0.15rem; }
 .sharedNote { margin: auto 0 auto auto; color: var(--secondary-ink); font-size: 12px; }
 .sharedNote small { display: block; margin-top: 4px; color: var(--muted-ink); }
 .badge { display: inline-grid; place-items: center; width: 25px; height: 25px; color: var(--accent); border: 1px solid #375f72; border-radius: 4px; font: 12px var(--font-mono); }

@@ -143,7 +143,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                 ))}
               </fieldset>
               {index === 0 && <>
-                <div className="field"><label htmlFor="compare-group">Agrupación</label><select id="compare-group" disabled aria-describedby="compare-group-reason"><option>Todas las agrupaciones</option></select></div>
+                <div className="field" role="group" aria-labelledby="compare-group-label" aria-describedby="compare-group-reason"><span id="compare-group-label" className={styles.fixedLabel}>Agrupación</span><span className={styles.fixedValue}>Todas las agrupaciones</span></div>
                 <p className={styles.sharedNote}>Una selección territorial para ambas vistas.<small>El zoom no modifica las cifras.</small><small>Solo opciones presentes en ambos lados.</small></p>
               </>}
               </div>

@@ -48,8 +48,11 @@ it("renders the approved header and paired selection without changing authorized
   for (const text of ["Territorio", "Agrupación", "Todas las agrupaciones", "Elección A (2023)", "Categoría A", "Elección B (2025)", "Categoría B"]) expect(markup).toContain(text);
   expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="compare-swap-reason"[^>]*>[\s\S]*?Intercambiar<\/button>/);
   expect(markup).toContain("A está limitada a 2023 y B a 2025");
-  expect(markup).toMatch(/<select id="compare-group" disabled=""[^>]*><option>Todas las agrupaciones<\/option>/);
   const editor = markup.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
+  // The shared Agrupación is a fixed reading, not a dead control: the form keeps only its six real selectors.
+  expect(editor.match(/<select\b/g)).toHaveLength(6);
+  expect(editor).not.toContain('id="compare-group"');
+  expect(editor).toMatch(/<div[^>]*role="group"[^>]*aria-describedby="compare-group-reason"[^>]*>[\s\S]*?Agrupación[\s\S]*?Todas las agrupaciones/);
   expect(editor).toMatch(/aria-hidden="true">A<\/span>/);
   expect(editor).toMatch(/aria-hidden="true">B<\/span>/);
   expect(editor.indexOf("Elección A (2023)")).toBeLessThan(editor.indexOf("Intercambiar"));
