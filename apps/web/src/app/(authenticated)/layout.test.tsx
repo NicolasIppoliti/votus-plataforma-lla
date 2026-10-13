@@ -334,14 +334,16 @@ it("renders all eight shared destinations in contract order with explicit source
   expect(navigationMarkup).toContain("Revisión de datos");
 });
 
-it("keeps workspace, theme and account below navigation and only review status in the header", async () => {
+it("keeps workspace and account below navigation, offers no theme choice, and only review status in the header", async () => {
   const markup = await renderLayout("/compare");
   const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
   const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
-  for (const label of ["Organización activa:", "Tema", "Cambiar organización", "Cerrar sesión"]) {
+  for (const label of ["Organización activa:", "Cambiar organización", "Cerrar sesión"]) {
     expect(sidebar).toContain(label);
     expect(topbar).not.toContain(label);
   }
+  expect(markup).not.toContain("Tema");
+  expect(markup).not.toContain('class="theme-selector"');
   expect(sidebar.indexOf('class="workspace-identity"')).toBeGreaterThan(sidebar.indexOf("</nav>"));
   expect(sidebar).toContain("Esta herramienta no es una fuente electoral oficial.");
   expect(topbar).toContain("Sin elementos pendientes");

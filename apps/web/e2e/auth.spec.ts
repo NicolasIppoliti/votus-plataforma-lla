@@ -63,9 +63,7 @@ test.describe("no anonymous read path", () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole("heading", { name: IN_SCOPE_MARKER, exact: true })).toBeVisible();
 
-    // A real hydrated control establishes that the protected shell is running.
-    await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    // The client session monitor's first probe establishes that the protected shell is running.
     const healthy = await initialProbe;
     expect(healthy.status()).toBe(200);
     expect(healthy.headers()["cache-control"]).toBe("private, no-store, max-age=0");

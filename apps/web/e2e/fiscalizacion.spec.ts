@@ -166,13 +166,10 @@ test.describe("the fiscalizacion route explores coverage", () => {
       }
       expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
       await page.setViewportSize({ width: 1440, height: 900 });
-      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
-      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
       await expect(unitChart).toBeVisible();
       await page.emulateMedia({ reducedMotion: "reduce" });
       const duration = await unitChart.locator("rect").evaluate((element) => getComputedStyle(element).transitionDuration);
       expect(duration.endsWith("ms") ? Number.parseFloat(duration) : Number.parseFloat(duration) * 1000).toBeLessThanOrEqual(0.01);
-      await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("light");
       await page.emulateMedia({ reducedMotion: "no-preference" });
       const reusableUrl = page.url();
       await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
