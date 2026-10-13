@@ -495,7 +495,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
 
       await page
         .getByRole("navigation", { name: "principal" })
-        .getByRole("link", { name: "Explorar", exact: true })
+        .getByRole("link", { name: "Exploración", exact: true })
         .click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
       await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
