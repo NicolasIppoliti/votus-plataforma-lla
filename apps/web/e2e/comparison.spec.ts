@@ -291,7 +291,12 @@ test.describe("authorized official comparison", () => {
       await expect(rightSide).toContainText(`Categoría: ${identity.categoryName}`);
       const tableRegion = main.getByRole("region", { name: /Tabla exacta/ });
       await expect(main.getByText("Comparación aplicada", { exact: true })).toBeVisible();
-      await expect(main.getByRole("combobox")).toHaveCount(6);
+      await expect(main.locator('form[action="/compare"]').getByRole("combobox")).toHaveCount(6);
+      await expect(main.getByRole("combobox", { name: "Agrupación", exact: true })).toBeVisible();
+      const workbench = main.getByRole("region", { name: "Mesa de comparación territorial", exact: true });
+      const inspector = workbench.getByRole("complementary", { name: "Detalle de comparación", exact: true });
+      await expect(inspector.getByRole("region", { name: "Navegador territorial", exact: true })).toBeVisible();
+      await expect(main.getByRole("heading", { name: "Cambio por territorio", exact: true })).toBeVisible();
       for (const side of ["A", "B"]) await expect(main.getByRole("group", { name: new RegExp(`^Lado ${side}\\b`) })).toHaveCount(1);
       const appliedHeading = main.getByRole("heading", { name: "Resultados exactos", exact: true });
       await expect(appliedHeading).toHaveCSS("font-size", "20px");
@@ -377,16 +382,20 @@ test.describe("authorized official comparison", () => {
         if (!afterElement) throw new Error("Missing ordered comparison region");
         expect(await before.evaluate((element, next) => Boolean(element.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING), afterElement)).toBe(true);
       };
-      await test.step("1440px aligned editors and territory above full-width exact results and evidence", async () => {
+      await test.step("1440px shared territory precedes paired editors and the map/inspector workbench", async () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         const a = await bounds(editA), b = await bounds(editB), territory = await bounds(shared);
         expect(Math.abs(a.width - b.width)).toBeLessThanOrEqual(2);
         expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(2);
         expect(Math.abs(a.height - b.height)).toBeLessThanOrEqual(2);
         expect(a.x + a.width).toBeLessThanOrEqual(b.x + 2);
-        expect(Math.abs(territory.y - a.y)).toBeLessThanOrEqual(2);
-        expect(Math.abs(territory.width - a.width)).toBeLessThanOrEqual(2);
-        expect(b.x + b.width).toBeLessThanOrEqual(territory.x + 2);
+        expect(territory.y + territory.height).toBeLessThanOrEqual(a.y + 2);
+        expect(territory.width).toBeGreaterThan(a.width);
+        const bench = await bounds(workbench), detail = await bounds(inspector);
+        expect(bench.y).toBeGreaterThanOrEqual(a.y + a.height - 2);
+        expect(detail.x + detail.width).toBeLessThanOrEqual(bench.x + bench.width + 2);
+        expect(detail.width).toBeGreaterThanOrEqual(275);
+        expect(detail.width).toBeLessThanOrEqual(324);
         await expect(shared).toHaveCount(1);
         const exact = await bounds(tableRegion);
         for (const evidence of [evidenceA, evidenceB]) {
@@ -408,7 +417,7 @@ test.describe("authorized official comparison", () => {
       });
       await test.step("390px preserves reading order from editors through both evidence rails", async () => {
         await page.setViewportSize({ width: 390, height: 844 });
-        const ordered = [editA, editB, shared, contexts, chart, tableRegion, evidenceA, evidenceB];
+        const ordered = [shared, editA, editB, contexts, workbench, main.getByRole("region", { name: "Cambio por territorio", exact: true }), chart, tableRegion, evidenceA, evidenceB];
         for (let index = 1; index < ordered.length; index++) {
           const before = ordered[index - 1]!, after = ordered[index]!;
           await precedes(before, after);

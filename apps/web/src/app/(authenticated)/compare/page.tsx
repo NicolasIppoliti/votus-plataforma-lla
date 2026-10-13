@@ -2,6 +2,10 @@ import type { ComponentProps, ReactNode } from "react";
 import { ComparisonSelectionForm, type SelectionGroup } from "./ComparisonSelectionForm";
 import { ComparisonChart } from "./ComparisonChart";
 import { ComparisonMap } from "./ComparisonMap";
+import { ComparisonWorkbench } from "./ComparisonWorkbench";
+import { loadOfficialSectionCompleteness } from "@/lib/workspace/official-section-completeness";
+import { loadOfficialSectionCircuitOutcomes } from "@/lib/workspace/official-section-circuit-outcomes";
+import styles from "./comparison.module.css";
 import { loadMunicipalSectionGeometry } from "@/lib/workspace/municipal-section-geometry";
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
@@ -196,7 +200,7 @@ function CompareSelector({
   ];
 
   return (
-    <main className="page-shell official-compare">
+    <main className={`page-shell official-compare ${styles.root}`}>
       <div className="shell-container official-compare__layout">
         <header className="page-header official-compare__header">
           <h1>Comparación oficial autorizada</h1>
@@ -204,7 +208,7 @@ function CompareSelector({
             Compare dos selecciones oficiales independientes dentro de una misma sección autorizada.
           </p>
         </header>
-        <ComparisonSelectionForm selected={selected} groups={groups}>
+        <ComparisonSelectionForm selected={selected} groups={[groups[2]!, groups[0]!, groups[1]!]}>
           {!alert && unique && (
             <aside className="official-compare__state" aria-label="Opciones no compartidas">
               {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
@@ -477,6 +481,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     return refusalPage("La evidencia oficial autorizada no superó la validación integral y no se muestran cifras.");
   }
 
+  if (evidence.left.result.categoryName !== evidence.right.result.categoryName) {
+    return refusalPage("Las categorías oficiales no son compatibles; seleccione la misma categoría en ambos lados. No se muestran cifras comparadas.");
+  }
+
   const unitId = `${selectedDistrito.code}/${selectedSeccion.code}`;
   const comparison = compareResults({
     granularity2023: evidence.left.result.sourceGranularity,
@@ -512,6 +520,12 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       reference.year === side.result.electionYear && reference.round === side.result.electionRound &&
       reference.categoryName === "DIPUTADO NACIONAL"));
   const section = spatialScope ? await loadMunicipalSectionGeometry() : null;
+  const scopeA = { electionId: leftSelection.electionId, categoryId: leftSelection.categoryId, distritoCode: selectedDistrito.code, seccionCode: selectedSeccion.code };
+  const scopeB = { electionId: rightSelection.electionId, categoryId: rightSelection.categoryId, distritoCode: selectedDistrito.code, seccionCode: selectedSeccion.code };
+  const [completenessA, completenessB, circuitsA, circuitsB] = await Promise.all([
+    loadOfficialSectionCompleteness(scopeA), loadOfficialSectionCompleteness(scopeB),
+    loadOfficialSectionCircuitOutcomes(scopeA), loadOfficialSectionCircuitOutcomes(scopeB),
+  ]);
   const summedFrom = evidence.left.result.sourceGranularity === evidence.right.result.sourceGranularity && evidence.left.result.sourceGranularity !== "seccion"
     ? evidence.left.result.sourceGranularity
     : undefined;
@@ -528,6 +542,12 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       message="Comparación aplicada"
     >
         {comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
+        <ComparisonWorkbench territory={optionLabel(selectedSeccion)} swing={swing}
+          leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
+          rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
+          completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
+          maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
+        />
         <div className="official-compare__analysis">
         <section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading" tabIndex={-1}>Resultados exactos</h2>
@@ -538,11 +558,10 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
         />
-        {section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : spatialScope ? <p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p> : null}
         <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
           <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>
-            <thead><tr><th scope="col">Partido izquierdo</th><th scope="col">Participación izquierda</th><th scope="col">Partido derecho</th><th scope="col">Participación derecha</th><th scope="col">Variación</th></tr></thead>
+            <thead><tr><th scope="col">Partido izquierdo</th><th scope="col">Votos izquierda</th><th scope="col">Participación izquierda</th><th scope="col">Partido derecho</th><th scope="col">Votos derecha</th><th scope="col">Participación derecha</th><th scope="col">Variación</th><th scope="col">Votos B − A</th></tr></thead>
             <tbody>
               {[...swing.swings].sort((left, right) => left.party.localeCompare(right.party)).map((partySwing) => {
                 const share2023 = swing.shares2023.find((share) => share.party === partySwing.party)?.sharePercent;
@@ -550,10 +569,13 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
                 return (
                   <tr key={partySwing.party}>
                     <th scope="row">{leftName(partySwing.party)}</th>
+                    <td className="table-cell--number">{swing.shares2023.find(share => share.party === partySwing.party)?.votes ?? "Observación no disponible"}</td>
                     <td className="table-cell--number">{share2023 === undefined ? "Observación no disponible" : formatPercentage(share2023)}</td>
                     <td>{rightName(partySwing.party)}</td>
+                    <td className="table-cell--number">{swing.shares2025.find(share => share.party === partySwing.party)?.votes ?? "Observación no disponible"}</td>
                     <td className="table-cell--number">{share2025 === undefined ? "Observación no disponible" : formatPercentage(share2025)}</td>
                     <td className="table-cell--number">{share2023 === undefined || share2025 === undefined ? "Observación no disponible" : formatSwing(partySwing.swingPercentPoints)}</td>
+                    <td className="table-cell--number">{share2023 === undefined || share2025 === undefined ? "Observación no disponible" : `${swing.shares2025.find(share => share.party === partySwing.party)!.votes - swing.shares2023.find(share => share.party === partySwing.party)!.votes} votos`}</td>
                   </tr>
                 );
               })}
