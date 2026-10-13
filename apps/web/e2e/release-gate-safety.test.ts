@@ -1413,7 +1413,7 @@ describe("explicit release-gate lanes", () => {
 		expect(result.trace.filter((phase) => /^sql\d$/.test(phase))).toHaveLength(lane === "browser" ? 2 : 4);
 		if (lane === "sql") {
 			expect(result.trace.slice(-3)).toEqual(["sql3", "sql4", "cleanup"]);
-			expect(result.output).toContain("SQL lane passed: 13 pgTAP proofs, 2 rollback/reapply proofs, cleanup complete; partial release coverage");
+			expect(result.output).toContain(`SQL lane passed: ${pgTap.length} pgTAP proofs, 2 rollback/reapply proofs, cleanup complete; partial release coverage`);
 			expect(result.output).not.toContain("8 passed");
 		} else {
 			expect(result.trace.slice(-11)).toEqual([
