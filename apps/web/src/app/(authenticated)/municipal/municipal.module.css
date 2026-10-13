@@ -8,13 +8,24 @@
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  max-width: 96.25rem;
+  max-width: 2040px;
+  padding-inline: 34px;
   gap: 1.5rem;
 }
 .header { display: grid; gap: 0.5rem; margin-block: 0 0.5rem; }
 .header h1, .root > h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
 .header p { margin: 0; max-width: 70ch; color: var(--muted-ink); font-size: 0.875rem; }
-.context { display: grid; gap: 0.75rem; }
+.trail { color: var(--secondary-ink); font-size: 0.8125rem; }
+.header nav a { display: inline-flex; align-items: center; min-height: 44px; padding-inline: 8px; }
+.workbench { composes: workbench from "../drilldown/drilldown.module.css"; }
+.context { composes: inspector from "../drilldown/drilldown.module.css"; display: grid; align-content: start; gap: 16px; grid-column: 2; grid-row: 1; }
+.context .scope { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.workbench > .reference { grid-column: 1; grid-row: 1; border: 0; border-radius: 0; background: var(--map-stage); }
+@media (max-width: 760px) { .workbench > .context, .workbench > .reference { grid-column: 1; grid-row: auto; } }
+.reference > svg { justify-self: center; color: var(--accent); background: var(--map-stage); }
+.root :is(button, select, summary) { min-height: 44px; }
+.root :is(a, button, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 360px) { .header h1 { font-size: 24px; } }
 .context h2 { margin: 0; font-size: 1rem; line-height: 1.3; }
 .scope { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1.5rem; margin: 0; }
 .scope > div { min-width: 0; }
@@ -72,6 +83,9 @@
 @media (min-width: 48rem) {
   .scope { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
+@media (max-width: 1250px) { .layout { padding-inline: 23px; } }
+@media (max-width: 760px) { .layout { padding-inline: 18px; } }
+@media (max-width: 360px) { .layout { padding-inline: 12px; } }
 @media (max-width: 47.999rem) {
   .results, .evidence, .state { padding: 1rem; }
   .layout { gap: 1rem; }

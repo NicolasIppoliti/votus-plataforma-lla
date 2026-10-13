@@ -25,6 +25,11 @@ describe("/scenarios", () => {
   it("renders both scenarios from the verified artifact, persistence first", async () => {
     loader.override = null;
     const html = await render();
+    expect(html).toContain('aria-label="Recorrido de la página"');
+    expect(html).toContain('Simulación / Escenarios');
+    expect(html).toContain('aria-label="Contexto del escenario hipotético"');
+    expect(html).toContain('<caption>Listas del escenario Persistencia</caption>');
+    expect(html).toContain('Escenarios hipotéticos para la renovación municipal.');
     expect(html).toContain("Escenarios Rosales 2027");
     expect(html).toContain("supuestos sin validar");
     const persistence = html.indexOf("Persistencia");

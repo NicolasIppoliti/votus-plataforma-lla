@@ -195,6 +195,16 @@ async function renderComplete(): Promise<string> {
   return renderPage(COMPLETE_SELECTION);
 }
 
+it("renders the evidence trail before the authorized scope workspace", async () => {
+  mocks.facets.mockResolvedValue(FACETS);
+  mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+  mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+  const markup = await renderComplete();
+  expect(markup).toContain('aria-label="Recorrido de la página"');
+  expect(markup).toContain('Evidencia / Fiscalización');
+  expect(markup).toContain('aria-label="Detalle de cobertura no oficial"');
+});
+
 beforeEach(() => {
   mocks.coverage.mockReset(); mocks.result.mockReset(); mocks.facets.mockReset();
   mocks.createFacetRepository.mockReset().mockReturnValue({ facets: mocks.facets });

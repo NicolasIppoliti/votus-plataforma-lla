@@ -20,6 +20,14 @@ function decimal(text: string) {
   return text.replace(".", ",");
 }
 
+function PageHeader() {
+  return <header className="scenarios-page__header">
+    <nav aria-label="Recorrido de la página">Simulación / Escenarios</nav>
+    <h1>Escenarios Rosales 2027</h1>
+    <p>Escenarios hipotéticos para la renovación municipal.</p>
+  </header>;
+}
+
 function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"][number] }) {
   return (
     <section aria-labelledby={`scenario-${scenario.id}`} data-testid={`scenario-${scenario.id}`}>
@@ -32,6 +40,7 @@ function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"]
       ) : null}
       <div className="table-scroll" role="region" aria-label={`Listas del escenario ${scenario.name}`} tabIndex={0}>
         <table className="data-table">
+          <caption>Listas del escenario {scenario.name}</caption>
           <thead>
             <tr>
               <th scope="col">Lista</th>
@@ -59,7 +68,7 @@ export default async function ScenariosPage() {
   if (!result.ok) {
     return (
       <main className="scenarios-page">
-        <h1>Escenarios Rosales 2027</h1>
+        <PageHeader />
         <p role="alert">{REFUSAL_MESSAGE[result.reason]} No se muestran escenarios.</p>
       </main>
     );
@@ -69,7 +78,8 @@ export default async function ScenariosPage() {
   const { backtest } = artifact;
   return (
     <main className="scenarios-page">
-      <h1>Escenarios Rosales 2027</h1>
+      <PageHeader />
+      <div className="scenarios-page__context" role="region" aria-label="Contexto del escenario hipotético">
       <p>
         Concejales de {artifact.territory.name}, renovación de {artifact.seats_per_renewal} bancas,
         a partir de los resultados definitivos {artifact.base_year}.
@@ -88,6 +98,7 @@ export default async function ScenariosPage() {
           {decimal(backtest.final_tv_pp.reference)} pp.
         </p>
       </section>
+      </div>
       {scenarios.map((scenario) => (
         <ScenarioSection key={scenario.id} scenario={scenario} />
       ))}

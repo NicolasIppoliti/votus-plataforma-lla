@@ -1,4 +1,5 @@
 import Link from "next/link";
+import "./review.css";
 import type { ReactNode } from "react";
 import { EvidenceState } from "@/components/EvidenceState";
 import { TableRegion } from "@/components/TableRegion";
@@ -41,6 +42,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     return (
       <main className="review-queue page-shell">
         <header className="review-queue__header">
+          <p className="review-trail">Evidencia / Revisión de datos</p>
           <p className="eyebrow">Operaciones · revisión</p>
           <h1>Cola de revisión</h1>
         </header>
@@ -60,11 +62,12 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   return (
     <main className="review-queue page-shell">
       <header className="review-queue__header">
+        <nav className="review-trail" aria-label="Recorrido de la página">Evidencia / Revisión de datos</nav>
         <p className="eyebrow">Operaciones · revisión</p>
         <h1>Cola de revisión</h1>
         <p className="review-queue__lede">Atención operativa sobre señales pendientes.</p>
       </header>
-      <aside className="review-queue__attention" role="status">
+      <aside className="review-queue__attention" role="status" aria-label="Detalle de la cola autorizada">
         <p className="eyebrow">Atención operativa</p>
         <p>{total} elementos requieren revisión.</p>
         <p>

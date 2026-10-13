@@ -89,6 +89,7 @@ function FiscalizacionWorkspace({ facets, selected, children }: {
 function PageHeader(): ReactNode {
   return (
     <header className={styles.header}>
+      <nav className={styles.trail} aria-label="Recorrido de la página">Evidencia / Fiscalización</nav>
       <h1>Fiscalización (no oficial)</h1>
       <p className={styles.lede}>
         Examine la presencia no oficial sin perder de vista el denominador oficial.
@@ -341,6 +342,7 @@ function CoverageQualification({
   return (
     <section
       className={styles.qualification}
+      aria-label="Detalle de cobertura no oficial"
       aria-labelledby="workspace-qualification"
     >
       <h2 id="workspace-qualification">Calificación de la evidencia</h2>

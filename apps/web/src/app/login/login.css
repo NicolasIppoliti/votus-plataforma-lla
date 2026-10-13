@@ -1,0 +1,14 @@
+.login-page { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; min-height: 100svh; padding: 32px 18px; background: var(--canvas); }
+.login-page .login-brand { width: min(100%, 440px); text-align: center; }
+.login-page .login-brand__name { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 32px; font-weight: 600; letter-spacing: -1px; }
+.login-brand__name svg { width: 32px; height: 38px; fill: none; stroke: var(--accent); stroke-width: 2; }
+.login-brand__dot { color: var(--accent); margin-left: -10px; }
+.login-page .login-brand__purpose { margin-top: 12px; color: var(--secondary-ink); }
+.login-page .login-brand__description { color: var(--muted-ink); font-size: 0.8125rem; }
+.login-page .login-card { width: min(100%, 440px); padding: 24px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: none; }
+.login-card h1 { font-size: 1.5rem; }
+.login-card__header { margin-bottom: 24px; }
+.login-card .panel__copy, .login-card__access { color: var(--secondary-ink); font-size: 0.875rem; }
+.login-page :is(input, button) { min-height: 44px; }
+.login-page :is(input, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 360px) { .login-page { padding-inline: 12px; } .login-page .login-card { padding: 18px; } }

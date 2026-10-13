@@ -192,7 +192,7 @@ test.describe("no anonymous read path", () => {
       const loginCard = page.getByRole("region", { name: "Iniciar sesión" });
       const loginForm = page.getByRole("form", { name: "Iniciar sesión" });
       const brand = page.locator(".login-brand");
-      await expect(brand).toContainText("Votus");
+      await expect(brand.getByLabel("votus.")).toBeVisible();
       await expect(brand).toContainText("Análisis electoral, con evidencia.");
       const emailInput = page.getByLabel("Correo electrónico");
       const passwordInput = page.getByLabel("Contraseña");

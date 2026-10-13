@@ -143,7 +143,7 @@ export function renderMunicipalView(
     );
     return (
       <main className={`page-shell ${styles.root}`}>
-        <h1>Municipal (Concejales)</h1>
+        <MunicipalStateHeading />
         <p role="alert">Se rechazó la lectura: {view.reason}</p>
         {view.status === "read_failed" && (view.unmapped || view.withoutListId) ? (
           <UnmappedListIds
@@ -216,7 +216,7 @@ export function renderMunicipalView(
   if (foreignRows.length > 0) {
     return (
       <main className={`page-shell ${styles.root}`}>
-        <h1>Municipal (Concejales)</h1>
+        <MunicipalStateHeading />
         <p role="alert">
           Se rechazó la solicitud: {describeExcluded(tallyByKind(foreignRows))} de{" "}
           {rows.length} filas no son oficiales. Las cifras oficiales y de
@@ -244,7 +244,7 @@ export function renderMunicipalView(
     partyTotals = unsummable !== null ? [] : votesByParty(rows);
   } catch {
     return <main className={`page-shell ${styles.root}`}>
-      <h1>Municipal (Concejales)</h1>
+      <MunicipalStateHeading />
       <p role="alert">Se rechazó la solicitud: un mismo partido canónico tiene nombres
         incompatibles. No se muestran cifras hasta resolver el conflicto.</p>
       {excludedNote}
@@ -266,13 +266,15 @@ export function renderMunicipalView(
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
         <header className={styles.header}>
+          <nav className={styles.trail} aria-label="Recorrido de la página">Exploración / Municipal</nav>
           <h1>Coronel Rosales</h1>
           <p>Resultados municipales · {is2023 ? "Cuerpo municipal (rótulo DINE: INTENDENTE)" : "Concejales"} · Fuente oficial</p>
           <nav aria-label="Elección municipal"><a href="/municipal">2025 · Provinciales</a>{" · "}<a href="/municipal?year=2023">2023 · Generales</a></nav>
           <p>Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.</p>
           {is2023 ? <p role="note">El archivo DINE 2023 registra 153 mesas y 10 códigos de circuito para 02/027; son datos del archivo, no cobertura confirmada de esta proyección ni límites geográficos vigentes.</p> : null}
         </header>
-        <section className={styles.context} aria-labelledby="municipal-context-heading">
+        <div className={styles.workbench} role="region" aria-label="Mesa de trabajo municipal">
+        <section className={styles.context} aria-label="Detalle municipal" aria-labelledby="municipal-context-heading">
           <h2 id="municipal-context-heading">Contexto de la consulta</h2>
           <dl className={styles.scope}>
             <div><dt>Elección</dt><dd>{is2023 ? "2023 · Generales · escrutinio provisorio" : "2025 · Provinciales · escrutinio definitivo"}</dd></div>
@@ -282,7 +284,7 @@ export function renderMunicipalView(
             <div><dt>Granularidad solicitada</dt><dd>Sección</dd></div>
           </dl>
         </section>
-        {section ? <section aria-label="Referencia geográfica de sección">
+        {section ? <section className={styles.reference} aria-label="Referencia geográfica de sección">
           <h2>Referencia geográfica de sección</h2>
           {section.status === "ok" ? <>
             <p>Contorno CNE: {section.name}. Referencia geográfica únicamente; vigencia electoral no verificada para {year}.</p>
@@ -291,6 +293,7 @@ export function renderMunicipalView(
             <p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p>
           </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
         </section> : null}
+        </div>
         <section className={styles.results} aria-labelledby="municipal-results-heading">
           <header className={styles.sectionHeading}>
             <h2 id="municipal-results-heading" tabIndex={-1}>Resultados exactos</h2>
@@ -383,13 +386,19 @@ function SectionOutline({ coordinates }: { coordinates: number[][][][] }): React
   </svg>;
 }
 
+function MunicipalStateHeading(): ReactNode {
+  return <header className={styles.header}>
+    <p className={styles.trail}>Exploración / Municipal</p>
+    <h1>Municipal (Concejales)</h1>
+    <p>Resultados municipales · Fuente oficial</p>
+  </header>;
+}
+
 function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode {
   return (
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
-        <header className={styles.header}>
-          <h1>Municipal (Concejales)</h1>
-        </header>
+        <MunicipalStateHeading />
         <section className={styles.state} role={role} aria-labelledby="municipal-state-heading">
           <h2 id="municipal-state-heading">Estado de la evidencia</h2>
           <p>{message}</p>
@@ -423,7 +432,7 @@ export default async function MunicipalPage({
   if (repeated.length > 0) {
     return (
       <main className={`page-shell ${styles.root}`}>
-        <h1>Municipal (Concejales)</h1>
+        <MunicipalStateHeading />
         <p role="alert">
           Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
           más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.

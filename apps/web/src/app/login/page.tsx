@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { LoginForm } from "./login-form";
+import "./login.css";
 
 /**
  * The one public route this app exposes (task 9.5/9.6). Deliberately
@@ -8,8 +9,8 @@ import { LoginForm } from "./login-form";
 export default function LoginPage(): ReactNode {
   return (
     <main id="main-content" className="login-page" tabIndex={-1}>
-      <header className="login-brand">
-        <span className="login-brand__name">Votus</span>
+      <header className="login-brand" aria-label="Acceso a Votus">
+        <span className="login-brand__name" aria-label="votus."><svg viewBox="0 0 42 42" aria-hidden="true"><path d="M6 7 21 35 36 7M14 7l7 14 7-14" /></svg>votus<span className="login-brand__dot">.</span></span>
         <p className="login-brand__purpose">Análisis electoral, con evidencia.</p>
         <p className="login-brand__description">
           Resultados oficiales, comparación de elecciones y escenarios en un mismo espacio de trabajo.
