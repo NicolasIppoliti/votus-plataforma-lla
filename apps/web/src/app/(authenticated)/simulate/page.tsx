@@ -23,6 +23,7 @@ import {
 import { SimulationForm } from "./simulation-form";
 import {
   simulationSweep,
+  simulationOriginalInputFromQuery,
   SimulationFormError,
   SWEEP_KEYS,
   transferBaselineFromQuery,
@@ -30,6 +31,7 @@ import {
 } from "./simulation-form-adapter";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { SeatDistribution } from "./seat-distribution";
+import { RenewalStrip, SimulationComparison } from "./simulation-comparison";
 import "./simulation.css";
 import "./workbench.css";
 
@@ -322,6 +324,12 @@ export default async function SimulatePage({
   searchParams,
 }: SimulatePageProps): Promise<ReactNode> {
   const params = await searchParams;
+  const requestQuery = new URLSearchParams(
+    Object.entries(params).flatMap(([key, value]) =>
+      typeof value === "string" ? [[key, value]] : Array.isArray(value) ? value.map((entry) => [key, entry]) : [],
+    ),
+  );
+  requestQuery.sort();
 
   // Refused BEFORE anything is read, like the other three routes: without
   // this, `?input=A&input=B` renders "Pass an `input` query parameter" for a
@@ -345,6 +353,18 @@ export default async function SimulatePage({
   );
 
   let result: AllocationResult | undefined;
+  let baseResult: AllocationResult | undefined;
+  let baseProjection: ProjectionInput | undefined;
+  let baseError: string | undefined;
+  if (projectionInput) {
+    try {
+      baseProjection = simulationOriginalInputFromQuery(requestQuery.toString()) ?? undefined;
+    } catch (error) {
+      baseError = error instanceof SimulationFormError ? error.messages.join(" ") : "Base no disponible.";
+    }
+  } else if (requestQuery.has("baseInput")) {
+    baseError = "La base proporcionada requiere un escenario válido.";
+  }
   let allocationError: string | undefined;
   let council: CouncilComposition | undefined;
   let councilError: string | undefined;
@@ -364,8 +384,12 @@ export default async function SimulatePage({
     }
   }
 
-  if (input && !councilError) {
+  if (input && !councilError && !baseError) {
     try {
+      // Both views cross the same authoritative server validation/allocation path.
+      const baseInput = baseProjection ? projectionToAllocationInput(baseProjection) : input;
+      validateCouncilInput({ input: baseInput, council: councilJurisdiction, rawHeldOver });
+      baseResult = allocateSeats(baseInput);
       result = allocateSeats(input);
     } catch (error) {
       allocationError = allocationErrorMessage(error);
@@ -441,13 +465,6 @@ export default async function SimulatePage({
       )
     : undefined;
 
-  const requestQuery = new URLSearchParams(
-    Object.entries(params).flatMap(([key, value]) =>
-      typeof value === "string" ? [[key, value]] : Array.isArray(value) ? value.map((entry) => [key, entry]) : [],
-    ),
-  );
-  requestQuery.sort();
-
   return (
     <main className="simulation-page">
       <header className="simulation-page-header">
@@ -456,8 +473,12 @@ export default async function SimulatePage({
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
-      <SimulationForm requestKey={requestQuery.toString()} impact={result ? <SeatDistribution result={result} /> : null}>
-      <SweepResult query={requestQuery.toString()} baselineError={councilError ?? parseError} />
+      <SimulationForm requestKey={requestQuery.toString()}
+        impact={result ? <><RenewalStrip result={result} /><SeatDistribution result={result} /></> : null}
+        baseImpact={result && baseResult ? <><RenewalStrip result={baseResult} /><SeatDistribution result={baseResult} /></> : null}
+        comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
+      <SweepResult query={requestQuery.toString()} baselineError={baseError ?? councilError ?? parseError} />
+      {baseError ? <p role="alert">{baseError}</p> : null}
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}

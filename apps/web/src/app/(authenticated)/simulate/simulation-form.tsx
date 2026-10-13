@@ -19,6 +19,7 @@ import { projectionGranularitySchema } from "./projection-input";
 import {
   createSimulationScenario,
   simulationSweepQuery,
+  simulationResetQuery,
   sweepBaselineQuery,
   SimulationFormError,
   simulationScenarioQuery,
@@ -94,6 +95,8 @@ interface SimulationFormProps {
   requestKey: string;
   children: ReactNode;
   impact: ReactNode;
+  baseImpact: ReactNode;
+  comparison: ReactNode;
 }
 
 interface TransferFormProps {
@@ -228,10 +231,11 @@ function restoredEditor(requestKey: string): EditorState {
   };
 }
 
-export function SimulationForm({ requestKey, children, impact }: SimulationFormProps) {
+export function SimulationForm({ requestKey, children, impact, baseImpact, comparison }: SimulationFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editor, setEditor] = useState(() => restoredEditor(requestKey));
+  const [distributionView, setDistributionView] = useState<"base" | "scenario">("scenario");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revision = useRef(0);
   const nextListId = useRef(2);
@@ -437,9 +441,25 @@ export function SimulationForm({ requestKey, children, impact }: SimulationFormP
         <h2>Construir el supuesto</h2>
         <p>Mover votos entre dos listas, sin cambiar el total.</p>
         {showResult ? <TransferForm key={`transfer-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
-        {showResult && impact ? <section aria-label="Impacto en la asignación"><h3>Impacto en la asignación</h3>{impact}</section> : <p>Sin asignación disponible para el escenario actual.</p>}
+        {showResult && impact && baseImpact ? <>
+          <a className="simulation-reset" href={`/simulate?${simulationResetQuery(requestKey)}`} onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            navigateOperation(simulationResetQuery(requestKey));
+            setDistributionView("scenario");
+          }}>Restablecer base</a>
+          <div className="simulation-view-switch" role="group" aria-label="Vista de la distribución">
+            <Button type="button" variant="outline" aria-pressed={distributionView === "base"} onClick={() => setDistributionView("base")}>Base</Button>
+            <Button type="button" variant="outline" aria-pressed={distributionView === "scenario"} onClick={() => setDistributionView("scenario")}>Escenario</Button>
+          </div>
+          <section aria-label="Impacto en la asignación">
+            <p className="simulation-view-label">{distributionView === "base" ? "Base aportada · sin transferencias" : "Escenario actual · hipótesis aplicada"}</p>
+            {distributionView === "base" ? baseImpact : impact}
+          </section>
+        </> : <p>Sin asignación disponible para el escenario actual.</p>}
       </aside>
     </section>
+    {showResult ? comparison : null}
     <section className="simulation-capabilities" aria-label="Disponibilidad de datos">
       <h2>Qué está disponible en Votus</h2>
       <p>Base histórica no conectada. Esta ruta calcula escenarios aportados por quien consulta; no carga resultados históricos oficiales ni verifica una convocatoria futura.</p>

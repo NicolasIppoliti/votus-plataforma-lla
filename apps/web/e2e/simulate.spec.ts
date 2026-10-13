@@ -48,6 +48,41 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
     .toBe(true);
 }
 
+test("compares server-calculated base and scenario, switches distribution and resets at desktop and mobile widths", async ({ page }) => {
+  const input = {
+    level: "pba_municipal", totalVotes: 10000, blankVotes: 0, annulledVotes: 0,
+    unmodeledVotes: 0, unmodeledVoteBreakdown: [], seatsToFill: 9,
+    isProjection: true, granularity: "seccion",
+    lists: [{ listId: "A", listName: "Lista A", votes: 6000 }, { listId: "B", listName: "Lista B", votes: 4000 }],
+  };
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+    const transfer = page.getByRole("form", { name: "Transferencia de votos a total fijo" });
+    await transfer.getByLabel("Lista donante").selectOption("A");
+    await transfer.getByLabel("Lista receptora").selectOption("B");
+    await transfer.getByLabel("Cantidad a transferir").fill("2000");
+    await transfer.getByRole("button", { name: "Transferir votos", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Comparación exacta de base y escenario", exact: true })).toContainText("−2.000");
+    await page.reload();
+    const view = page.getByRole("group", { name: "Vista de la distribución", exact: true });
+    const impact = page.getByRole("complementary", { name: "Construir el supuesto", exact: true });
+    await expect(impact.getByRole("region", { name: "Bancas calculadas: 9 de 9", exact: true })).toBeVisible();
+    await expect(impact).toContainText("Divisor Hare: 9 bancas renovadas, no 18 bancas totales");
+    await expect(impact.getByRole("img", { name: "Lista A: 4 de 9 bancas", exact: true })).toBeVisible();
+    await view.getByRole("button", { name: "Base", exact: true }).click();
+    await expect(view.getByRole("button", { name: "Base", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(impact.getByRole("img", { name: "Lista A: 5 de 9 bancas", exact: true })).toBeVisible();
+    await view.getByRole("button", { name: "Escenario", exact: true }).click();
+    await expect(impact.getByRole("img", { name: "Lista A: 4 de 9 bancas", exact: true })).toBeVisible();
+    await impact.getByRole("link", { name: "Restablecer base", exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.has("baseInput")).toBe(false);
+    await expect(impact.getByRole("img", { name: "Lista A: 5 de 9 bancas", exact: true })).toBeVisible();
+    expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
+    await expectNoHorizontalOverflow(page);
+  }
+});
+
 test.describe("the simulation route labels caller-supplied projections", () => {
   test("test_projection_form_reaches_the_municipal_hare_result", async ({
     page,

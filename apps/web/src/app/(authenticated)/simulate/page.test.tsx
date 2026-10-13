@@ -109,6 +109,80 @@ describe("simulate page — approved workbench composition", () => {
   });
 });
 
+describe("simulate page — base and scenario workbench", () => {
+  it("retains the authored base through the rendered transfer and exposes reset, comparison and view controls", async () => {
+    transferHarness.replace.mockClear();
+    transferHarness.actions.length = 0;
+    await renderSimulation(ALLOCATION_INPUT);
+    const data = new FormData();
+    data.set("donor", "110"); data.set("target", "999"); data.set("amount", "2000");
+    expect(await transferHarness.actions[0]!([], data)).toEqual([]);
+    const url = new URL(transferHarness.replace.mock.calls[0]![0], "https://example.invalid");
+    expect(JSON.parse(url.searchParams.get("baseInput")!)).toEqual(ALLOCATION_INPUT);
+    const markup = await renderSimulation(undefined, Object.fromEntries(url.searchParams));
+    expect(markup).toContain('aria-label="Vista de la distribución"');
+    expect(markup).toContain('aria-label="Comparación exacta de base y escenario"');
+    expect(markup).toContain("Restablecer base");
+    expect(markup).toContain("Divisor Hare: 9 bancas renovadas, no 18 bancas totales");
+    expect(markup).toContain('aria-label="Bancas calculadas: 9 de 9"');
+    expect(markup).toContain('<th scope="row">LA LIBERTAD AVANZA</th><td>6.000</td><td>4.000</td><td>−2.000</td><td>60,00 %</td><td>40,00 %</td><td>5</td><td>4</td>');
+  });
+
+  it("keeps the original base across successive transfers, reloads and a lossless reset link", async () => {
+    const roster = { council: "Coronel de Marina Leonardo Rosales", heldOver: JSON.stringify(HELD_OVER) };
+    let params: Record<string, string> = { ...roster, input: JSON.stringify(ALLOCATION_INPUT) };
+    const original = await renderSimulation(undefined, params);
+    for (const amount of ["1000", "500"]) {
+      transferHarness.replace.mockClear(); transferHarness.actions.length = 0;
+      await renderSimulation(undefined, params);
+      const data = new FormData();
+      data.set("donor", "110"); data.set("target", "999"); data.set("amount", amount);
+      expect(await transferHarness.actions[0]!([], data)).toEqual([]);
+      params = Object.fromEntries(new URL(transferHarness.replace.mock.calls[0]![0], "https://example.invalid").searchParams);
+      expect(JSON.parse(params.baseInput!)).toEqual(ALLOCATION_INPUT);
+    }
+    expect(JSON.parse(params.input!).lists[0].votes).toBe(4500);
+    const served = await renderSimulation(undefined, params);
+    const resetHref = served.match(/href="([^"]+)"[^>]*>Restablecer base/)?.[1];
+    expect(resetHref).toBeDefined();
+    const reset = new URL(resetHref!.replaceAll("&amp;", "&"), "https://example.invalid");
+    expect(Object.fromEntries(reset.searchParams)).toEqual({ ...roster, input: JSON.stringify(ALLOCATION_INPUT) });
+    const restored = await renderSimulation(undefined, Object.fromEntries(reset.searchParams));
+    expect(restored.match(/sha256 [a-f0-9]+/)?.[0]).toBe(original.match(/sha256 [a-f0-9]+/)?.[0]);
+    expect(restored).toContain('data-testid="council-composition"');
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify({ ...ALLOCATION_INPUT, lists: [...ALLOCATION_INPUT.lists].reverse() }),
+    JSON.stringify({ ...ALLOCATION_INPUT, isProjection: false }),
+    JSON.stringify({ ...ALLOCATION_INPUT, lists: ALLOCATION_INPUT.lists.map((list) => ({ ...list, votes: list.votes + 1 })) }),
+  ])("refuses malformed, historical, reordered or non-conserving comparison bases: %s", async (baseInput) => {
+    const markup = await renderSimulation(ALLOCATION_INPUT, { baseInput });
+    expect(markup).toContain("La base proporcionada no corresponde al mismo escenario a total fijo");
+    expect(markup).not.toContain('data-testid="allocation-result"');
+    expect(markup).not.toContain('aria-label="Comparación exacta de base y escenario"');
+  });
+
+  it("uses national server awards and lists zero seats in both views", async () => {
+    const input = { level: "national", seatsToFill: 2, padron: 20000, totalVotes: 10000,
+      isProjection: true, granularity: "distrito", unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+      threshold: { value: 3, basis: "padron" }, lists: [...ALLOCATION_INPUT.lists, { listId: "zero", listName: "Lista cero", votes: 0 }] };
+    const markup = await renderSimulation(input);
+    expect(markup).toContain("D’Hondt · Ley 19.945, art. 161");
+    expect(markup).not.toContain("Divisor Hare");
+    expect(markup).toContain('<th scope="row">Lista cero</th><td>0</td><td>0</td><td>0</td><td>0,00 %</td><td>0,00 %</td><td>0</td><td>0</td>');
+  });
+
+  it("withholds both distributions and comparison when a supplied base changes non-vote assumptions", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT, { baseInput: JSON.stringify({ ...ALLOCATION_INPUT, seatsToFill: 8 }) });
+    expect(markup).toContain("La base proporcionada no corresponde al mismo escenario a total fijo");
+    expect(markup).not.toContain('data-testid="allocation-result"');
+    expect(markup).not.toContain('aria-label="Comparación exacta de base y escenario"');
+    expect(markup).not.toContain('aria-label="Distribución de bancas"');
+  });
+});
+
 describe("simulate page — bounded sample entry", () => {
   it("submits the rendered sweep action and evaluates endpoint samples on the canonical page", async () => {
     transferHarness.replace.mockClear();
@@ -629,8 +703,8 @@ describe("simulate page — complete statutory evidence", () => {
           'class="allocation-column allocation-column--identity"',
         );
         expect(markup).toContain('class="table-cell--number">14.550</td>');
-        expect(markup.match(/class="table-scroll"/g)).toHaveLength(2);
-    expect(markup.match(/scope="col"/g)).toHaveLength(13);
+        expect(markup.match(/class="table-scroll"/g)).toHaveLength(3);
+    expect(markup.match(/scope="col"/g)).toHaveLength(21);
     expect(markup).toMatch(
       /<div class="table-scroll" role="region" aria-label="Asignación Hare por lista" tabindex="0">/,
     );
