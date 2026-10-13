@@ -688,6 +688,9 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const workbench = explorer.getByRole("region", { name: "Mesa de trabajo territorial", exact: true });
       const map = workbench.getByRole("region", { name: "Mapa territorial de referencia", exact: true });
       const inspector = workbench.getByRole("region", { name: "Detalle territorial", exact: true });
+      // Returning to the served selection re-renders the page with the exact disclosure collapsed.
+      const exactToggle = page.getByText("Mostrar resultados exactos", { exact: true });
+      if (!(await page.locator("details").filter({ has: exactToggle }).evaluate((element) => (element as HTMLDetailsElement).open))) await exactToggle.click();
       const exactBeforeCamera = await voteTable.textContent();
       const closer = map.getByRole("button", { name: "Acercar mapa", exact: true });
       const farther = map.getByRole("button", { name: "Alejar mapa", exact: true });
