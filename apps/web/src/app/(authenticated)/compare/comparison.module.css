@@ -16,7 +16,8 @@
 
 .trail { display: flex; flex-wrap: wrap; gap: 7px 10px; margin-bottom: 9px; color: var(--secondary-ink); font-size: 12px; }
 .hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.sharedRow { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,450px) minmax(0,225px) minmax(0,1fr); gap: 22px; padding-block: 16px; border-block: 1px solid var(--border); align-items: start; }
+/* The shared territory spans wider than either side editor: it applies to both. */
+.sharedRow { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,560px) minmax(0,225px) minmax(0,1fr); gap: 22px; padding-block: 16px; border-block: 1px solid var(--border); align-items: start; }
 .sideRow { display: contents; }
 .fixedLabel { font-weight: 700; }
 .fixedValue { display: flex; align-items: center; min-height: 44px; padding: 0.65rem 0.75rem; color: var(--muted-ink); font-size: 14px; border: 1px solid var(--color-line-strong); border-radius: 0.15rem; }
@@ -147,3 +148,5 @@
   .spatial { padding: 18px; }
 }
 @media (max-width: 360px) { .root :global(.official-compare__layout) { padding-inline: 12px; } .root :global(.official-compare__header) h1 { font-size: 24px; } .pairedFigures strong { font-size: 20px; } }
+/* Readable controls at narrow widths: every visible button keeps a 14px label. */
+@media (max-width: 760px) { .swap { font-size: 14px; } }
