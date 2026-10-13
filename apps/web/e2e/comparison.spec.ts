@@ -251,10 +251,10 @@ test.describe("authorized official comparison", () => {
         if (!leftOnlySection) throw new Error("comparison fixture left-only section is missing");
         const comparisonNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparación", exact: true });
       await comparisonNavigationLink.click(); await expect(page).toHaveURL(/\/compare$/); await expect(comparisonNavigationLink).toHaveAttribute("aria-current", "page");
-      const leftCategory = page.getByLabel("Categoría izquierda", { exact: true });
-      const rightCategory = page.getByLabel("Categoría derecha", { exact: true });
-      const leftElection = page.getByLabel("Elección izquierda (2023)");
-      const rightElection = page.getByLabel("Elección derecha (2025)");
+      const leftCategory = page.getByLabel("Categoría A", { exact: true });
+      const rightCategory = page.getByLabel("Categoría B", { exact: true });
+      const leftElection = page.getByLabel("Elección A (2023)");
+      const rightElection = page.getByLabel("Elección B (2025)");
       // Independent rapid edits must survive overlapping automatic navigations.
       await leftElection.selectOption(identity.electionIds[0]!);
       await rightElection.focus();
@@ -268,7 +268,7 @@ test.describe("authorized official comparison", () => {
       await expect(page.getByRole("button", { name: /Actualizar opciones|Comparar resultados/ })).toHaveCount(0);
       await leftCategory.selectOption(identity.categoryId);
       await rightCategory.selectOption(identity.categoryId);
-      const sharedDistrict = page.getByLabel("Distrito compartido");
+      const sharedDistrict = page.getByLabel("Territorio", { exact: true });
       await expect(sharedDistrict).toBeEnabled();
       await sharedDistrict.selectOption(identity.distritoCode);
       const sharedSection = page.getByRole("combobox", { name: "Sección compartida", exact: true });
@@ -367,7 +367,7 @@ test.describe("authorized official comparison", () => {
       await expect(tableRegion).toBeFocused();
       const editA = main.getByRole("group", { name: /^Lado A\b/ });
       const editB = main.getByRole("group", { name: /^Lado B\b/ });
-      const shared = main.getByRole("group", { name: /^Jurisdicción compartida\b/ });
+      const shared = main.getByRole("group", { name: /^Territorio\b/ });
       const contexts = main.getByRole("region", { name: "Contexto de comparación autorizada" });
       const evidenceA = main.getByRole("article", { name: "Evidencia oficial — Lado A", exact: true });
       const evidenceB = main.getByRole("article", { name: "Evidencia oficial — Lado B", exact: true });

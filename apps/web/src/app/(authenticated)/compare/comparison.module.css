@@ -14,6 +14,16 @@
 @media (max-width: 760px) { .spatialPair { grid-template-columns: minmax(0, 1fr); } .spatialPair article + article { box-shadow: inset 0 1px 0 var(--border); } }
 @media (max-width: 47.999rem) { .spatialPair { grid-template-columns: minmax(0, 1fr); } }
 
+.trail { display: flex; flex-wrap: wrap; gap: 7px 10px; margin-bottom: 9px; color: var(--secondary-ink); font-size: 12px; }
+.hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.sharedRow { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,450px) minmax(0,225px) minmax(0,1fr); gap: 22px; padding-block: 16px; border-block: 1px solid var(--border); align-items: start; }
+.sideRow { display: contents; }
+.sharedNote { margin: auto 0 auto auto; color: var(--secondary-ink); font-size: 12px; }
+.sharedNote small { display: block; margin-top: 4px; color: var(--muted-ink); }
+.badge { display: inline-grid; place-items: center; width: 25px; height: 25px; color: var(--accent); border: 1px solid #375f72; border-radius: 4px; font: 12px var(--font-mono); }
+.swap { grid-column: 2; grid-row: 2; align-self: end; display: flex; flex-direction: column; align-items: center; gap: 5px; min-height: 44px; min-width: 44px; padding: 3px; border: 0; background: transparent; color: var(--muted-ink); font-size: 12px; cursor: not-allowed; }
+.swap span { font-size: 22px; }
+
 .guidance {
   margin: 1.25rem 0 0;
   padding-block-start: 0.75rem;
@@ -75,11 +85,11 @@
 .root :global(.official-compare__header) h1 { font-size: 32px; line-height: 1.18; font-weight: 500; letter-spacing: -.7px; }
 .root :global(.official-compare__selection) { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .root :global(.official-compare__selection) > :global(.panel__heading) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.root :global(.official-compare__selector-grid) { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 20px 36px; }
-.root :global(.official-compare__selector-grid) fieldset { min-width: 0; padding: 0; border: 0; background: transparent; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.root :global(.official-compare__selector-grid) { display: grid; grid-template-columns: minmax(0,1fr) 84px minmax(0,1fr); gap: 20px 14px; }
+.root :global(.official-compare__selector-grid) fieldset { min-width: 0; padding: 0; border: 0; background: transparent; display: grid; grid-template-columns: 26px minmax(0,.75fr) minmax(0,1fr); gap: 12px; align-items: center; }
 .root :global(.official-compare__selector-grid) legend { margin-bottom: 8px; font-size: 13px; color: var(--accent); }
 .root :global(.official-compare__selector-grid) legend span { color: var(--muted-ink); }
-.root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-column: 1 / -1; grid-row: 1; padding-block: 16px; border-block: 1px solid var(--border); grid-template-columns: minmax(0,225px) minmax(0,225px); }
+.root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .root :global(.field) { min-width: 0; }
 .root :global(.field) label { font-size: 13px; }
 .root :global(select) { min-width: 0; width: 100%; min-height: 44px; font-size: 14px; }
@@ -126,7 +136,10 @@
   .root { padding-top: 23px; }
   .root :global(.official-compare__layout) { padding-inline: 18px; }
   .root :global(.official-compare__selector-grid) { grid-template-columns: minmax(0,1fr); }
-  .root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .sharedRow { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  .root .swap { grid-column: 1; grid-row: auto; flex-direction: row; justify-content: center; }
+  .root .sharedNote { grid-column: 1 / -1; }
+  .root :global(.official-compare__selector-grid) fieldset { gap: 8px; }
   .childControls, .children header { flex-direction: column; align-items: stretch; }
   .childControls > div { width: 100%; }
   .spatial { padding: 18px; }

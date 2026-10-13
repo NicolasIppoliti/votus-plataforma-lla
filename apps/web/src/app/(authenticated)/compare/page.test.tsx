@@ -38,6 +38,26 @@ function supportedSpatialEvidence() {
   return value;
 }
 
+it("renders the approved header and paired selection without changing authorized query keys", async () => {
+  const markup = await render(PARAMS);
+  expect(markup).toContain("<h1>Comparación electoral</h1>");
+  expect(markup).toContain("Dos muestras. El mismo territorio. Una lectura compartida.");
+  expect(markup).toContain('aria-label="Recorrido territorial"');
+  expect(markup).toContain("Una selección territorial para ambas vistas.");
+  expect(markup).toContain("El zoom no modifica las cifras.");
+  for (const text of ["Territorio", "Agrupación", "Todas las agrupaciones", "Elección A (2023)", "Categoría A", "Elección B (2025)", "Categoría B"]) expect(markup).toContain(text);
+  expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="compare-swap-reason"[^>]*>[\s\S]*?Intercambiar<\/button>/);
+  expect(markup).toContain("A está limitada a 2023 y B a 2025");
+  expect(markup).toMatch(/<select id="compare-group" disabled=""[^>]*><option>Todas las agrupaciones<\/option>/);
+  const editor = markup.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
+  expect(editor).toMatch(/aria-hidden="true">A<\/span>/);
+  expect(editor).toMatch(/aria-hidden="true">B<\/span>/);
+  expect(editor.indexOf("Elección A (2023)")).toBeLessThan(editor.indexOf("Intercambiar"));
+  expect(editor.indexOf("Intercambiar")).toBeLessThan(editor.indexOf("Elección B (2025)"));
+  for (const name of Object.keys(PARAMS)) expect(markup).toContain(`name="${name}"`);
+  expect(markup).not.toContain("Datos de demostración");
+});
+
 it("places the territorial navigator before paired analytics in the approved comparison workbench", async () => {
   supportedSpatialEvidence();
   const markup = await render(PARAMS);
@@ -278,7 +298,8 @@ describe("authorized comparison page", () => {
   });
   it("keeps the native GET field contract and exact table without manual submit actions", async () => {
     const markup = await render(PARAMS);
-    expect(markup).not.toMatch(/<button\b/);
+    expect(markup).not.toMatch(/<button\b[^>]*type="submit"/);
+    expect(markup).toMatch(/<button\b[^>]*type="button"[^>]*disabled=""/);
     expect(markup.match(/<select\b[^>]*required=""/g)).toHaveLength(6);
     expect(markup).toContain('<form action="/compare" method="get">');
     expect(markup.match(/class="table-scroll"/g)).toHaveLength(1);
@@ -288,10 +309,10 @@ describe("authorized comparison page", () => {
   it("keeps the selector context while a denied comparison removes both sides of evidence", async () => {
     mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
     const markup = await render(PARAMS);
-    expect(markup).toContain("Elección izquierda (2023)");
+    expect(markup).toContain("Elección A (2023)");
       expect(markup).not.toContain("Opciones no compartidas");
       expect(markup).not.toContain("disponibles solo en ese lado");
-    expect(markup).toContain("Elección derecha (2025)");
+    expect(markup).toContain("Elección B (2025)");
     expect(markup).not.toMatch(/PARTIDO A|official\/archive|puntos porcentuales|100 votos/);
   });
 });

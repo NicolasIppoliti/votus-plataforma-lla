@@ -74,7 +74,7 @@ function refusalPage(message: ReactNode): ReactNode {
     <main className="page-shell official-compare">
       <div className="shell-container official-compare__layout">
         <header className="official-compare__header">
-          <h1>Comparación oficial autorizada</h1>
+          <h1>Comparación electoral</h1>
         </header>
         <p className="official-compare__state" role="alert">{message}</p>
       </div>
@@ -179,21 +179,21 @@ function CompareSelector({
     {
       id: "compare-edit-a-heading", title: "Lado A", description: "Selección oficial de 2023", className: "official-compare__side",
       fields: [
-        { key: "leftElectionId", id: "compare-left-election", label: "Elección izquierda (2023)", placeholder: "Elegir elección de 2023", options: elections.filter((option) => option.year === 2023).map((option) => ({ value: option.id, label: option.label })) },
-        { key: "leftCategoryId", id: "compare-left-category", label: "Categoría izquierda", placeholder: "Elegir categoría izquierda", options: leftCategories.map((option) => ({ value: option.id, label: option.name })) },
+        { key: "leftElectionId", id: "compare-left-election", label: "Elección A (2023)", placeholder: "Elegir elección de 2023", options: elections.filter((option) => option.year === 2023).map((option) => ({ value: option.id, label: option.label })) },
+        { key: "leftCategoryId", id: "compare-left-category", label: "Categoría A", placeholder: "Elegir categoría izquierda", options: leftCategories.map((option) => ({ value: option.id, label: option.name })) },
       ],
     },
     {
       id: "compare-edit-b-heading", title: "Lado B", description: "Selección oficial de 2025", className: "official-compare__side",
       fields: [
-        { key: "rightElectionId", id: "compare-right-election", label: "Elección derecha (2025)", placeholder: "Elegir elección de 2025", options: elections.filter((option) => option.year === 2025).map((option) => ({ value: option.id, label: option.label })) },
-        { key: "rightCategoryId", id: "compare-right-category", label: "Categoría derecha", placeholder: "Elegir categoría derecha", options: rightCategories.map((option) => ({ value: option.id, label: option.name })) },
+        { key: "rightElectionId", id: "compare-right-election", label: "Elección B (2025)", placeholder: "Elegir elección de 2025", options: elections.filter((option) => option.year === 2025).map((option) => ({ value: option.id, label: option.label })) },
+        { key: "rightCategoryId", id: "compare-right-category", label: "Categoría B", placeholder: "Elegir categoría derecha", options: rightCategories.map((option) => ({ value: option.id, label: option.name })) },
       ],
     },
     {
-      id: "compare-shared-heading", title: "Jurisdicción compartida", description: "Solo opciones presentes en ambos lados", className: "official-compare__shared",
+      id: "compare-shared-heading", title: "Territorio", description: "Solo opciones presentes en ambos lados", className: "official-compare__shared",
       fields: [
-        { key: "distritoCode", id: "compare-distrito", label: "Distrito compartido", placeholder: "Elegir distrito compartido", options: distritos.map((option) => ({ value: option.code, label: optionLabel(option) })) },
+        { key: "distritoCode", id: "compare-distrito", label: "Territorio", placeholder: "Elegir distrito compartido", options: distritos.map((option) => ({ value: option.code, label: optionLabel(option) })) },
         { key: "seccionCode", id: "compare-seccion", label: "Sección compartida", placeholder: "Elegir sección compartida", options: secciones.map((option) => ({ value: option.code, label: optionLabel(option) })) },
       ],
     },
@@ -203,10 +203,12 @@ function CompareSelector({
     <main className={`page-shell official-compare ${styles.root}`}>
       <div className="shell-container official-compare__layout">
         <header className="page-header official-compare__header">
-          <h1>Comparación oficial autorizada</h1>
-          <p className="official-compare__context">
-            Compare dos selecciones oficiales independientes dentro de una misma sección autorizada.
-          </p>
+          <nav className={styles.trail} aria-label="Recorrido territorial">
+            <span>Argentina</span>
+            {[distritos.find((option) => option.code === selected.distritoCode), secciones.find((option) => option.code === selected.seccionCode)].filter((option) => option !== undefined).map((option) => <span key={option.code}>/ {optionLabel(option)}</span>)}
+          </nav>
+          <h1>Comparación electoral</h1>
+          <p className="official-compare__context">Dos muestras. El mismo territorio. Una lectura compartida.</p>
         </header>
         <ComparisonSelectionForm selected={selected} groups={[groups[2]!, groups[0]!, groups[1]!]}>
           {!alert && unique && (
