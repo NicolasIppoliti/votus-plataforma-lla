@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { SlidersHorizontal } from "lucide-react";
 import styles from "./drilldown.module.css";
 import {
   SCOPE_CONTROL_NAMES, SCOPE_FORM_KIND, canonicalScopeSearchParams,
@@ -12,6 +13,7 @@ import {
 interface SelectionOption {
   value: string;
   label: string;
+  shortLabel?: string;
 }
 
 export interface SelectionField {
@@ -36,11 +38,8 @@ interface SelectionState {
   draft: ScopeControlValues;
 }
 
-const GROUPS = [
-  { title: "Elección", names: ["electionId", "categoryId"] },
-  { title: "Territorio", names: ["distritoCode", "seccionCode"] },
-  { title: "Detalle del informe", names: ["circuitoCode", "establecimientoCode", "mesaCode", "level"] },
-];
+const SelectionNavigation = createContext<{ navigate: (values: ScopeControlValues) => void }>({ navigate: () => {} });
+export const useSelectionNavigation = () => useContext(SelectionNavigation);
 
 const selectionKey = (values: ScopeControlValues) => canonicalScopeSearchParams(values).toString();
 
@@ -50,6 +49,15 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
   const servedKey = selectionKey(selected);
   const [state, setState] = useState<SelectionState>({ servedKey, requestedKey: null, draft: selected });
   const latestDraft = useRef(selected);
+  const focusNavigator = useRef(false);
+  useEffect(() => {
+    if (focusNavigator.current && !isPending && selectionKey(state.draft) === servedKey) {
+      const title = document.getElementById("navigator-title");
+      title?.focus();
+      title?.scrollIntoView({ block: "nearest", behavior: "instant" });
+      focusNavigator.current = false;
+    }
+  }, [isPending, servedKey, state.draft]);
 
   if (state.servedKey !== servedKey) {
     // A served intermediate selection must never overwrite a newer independent edit.
@@ -76,11 +84,20 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
     }])) as Record<ScopeControlName, ScopeControl>;
     synchronizeScopeControls(controls, SCOPE_FORM_KIND.DRILLDOWN, name);
     const draft = Object.fromEntries(SCOPE_CONTROL_NAMES.map((key) => [key, controls[key].value]));
+    if (name === "seccionCode") draft.level = value ? "seccion" : "";
+    request(draft);
+  }
+
+  function request(draft: ScopeControlValues) {
     latestDraft.current = draft;
     const requestedKey = selectionKey(draft);
     setState((previous) => ({ ...previous, draft, requestedKey }));
     // Always supersede an outstanding request, including a return to the served selection.
     startTransition(() => router.replace(requestedKey ? `/drilldown?${requestedKey}` : "/drilldown", { scroll: false }));
+  }
+  function navigate(values: ScopeControlValues) {
+    focusNavigator.current = true;
+    request(values);
   }
 
   const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, state.draft);
@@ -89,36 +106,49 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
     .every((parent) => state.draft[parent] === selected[parent]);
   const showEvidence = !isPending && selectionKey(state.draft) === servedKey;
 
-  return <>
-    {showEvidence ? header : <header className={styles.header}><h1>Explorador oficial</h1></header>}
-    <section className={styles.filters} aria-labelledby="explorer-form-heading">
-      <div className="panel__heading">
-        <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>
-      </div>
+  const renderField = (field: SelectionField) => <div className={styles.filter} key={field.name}>
+    <label htmlFor={field.id}>{field.label}</label>
+    <select id={field.id} name={field.name} value={state.draft[field.name] ?? ""}
+      required={controlStates[field.name].required}
+      disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}
+      onChange={(event) => change(field.name, event.target.value)}>
+      <option value="">{field.placeholder}</option>
+      {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  </div>;
+  const territoryOption = fields.find(field => field.name === "seccionCode")?.options.find(option => option.value === state.draft.seccionCode)
+    ?? fields.find(field => field.name === "distritoCode")?.options.find(option => option.value === state.draft.distritoCode);
+  const territoryName = territoryOption?.shortLabel ?? territoryOption?.label ?? "Elegir territorio";
+  return <SelectionNavigation.Provider value={{ navigate }}><div className={styles.selectionBoundary} onClick={(event) => {
+    const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>("a[data-territorial-navigation]");
+    if (!anchor || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const params = new URL(anchor.href).searchParams;
+    navigate(Object.fromEntries(SCOPE_CONTROL_NAMES.map(name => [name, params.get(name) ?? ""])));
+  }}>
+    {showEvidence ? header : <header className={styles.header}><h1>Exploración territorial</h1><p>El territorio como punto de partida.</p></header>}
+    <section className={styles.filters} aria-label="Filtros de exploración">
+      <h2 id="explorer-form-heading" className="sr-only">Elegir el alcance de los resultados</h2>
       <form action="/drilldown" method="get" aria-busy={!showEvidence || undefined} onSubmit={(event) => event.preventDefault()}>
-        <div className={styles.selectorGroups}>
-        {GROUPS.map((group) => <fieldset className={styles.selectorGroup} key={group.title}>
-          <legend>{group.title}</legend>
-          <div className={styles.fields}>
-          {fields.filter((field) => group.names.includes(field.name)).map((field) => <div className="field" key={field.name}>
-            <label htmlFor={field.id}>{field.label}</label>
-            <select id={field.id} name={field.name} value={state.draft[field.name] ?? ""}
-              required={controlStates[field.name].required}
-              disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}
-              onChange={(event) => change(field.name, event.target.value)}>
-              <option value="">{field.placeholder}</option>
-              {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </div>)}
+        <div className={styles.filterRow}>
+          <div className={styles.filter}><span className={styles.filterLabel}>Territorio</span>
+            <details className={styles.territoryPicker}><summary>{territoryName}</summary><div className={styles.territoryOptions}>
+              {fields.filter(field => ["distritoCode", "seccionCode"].includes(field.name)).map(renderField)}
+            </div></details>
           </div>
-        </fieldset>)}
+          {fields.filter(field => ["electionId", "categoryId"].includes(field.name)).map(renderField)}
+          <div className={styles.filter}><label htmlFor="explorer-party">Agrupación</label>
+            <select id="explorer-party" disabled aria-describedby="party-highlight-note"><option>Todas las agrupaciones</option></select>
+          </div>
+          <div className={styles.filterSummary}><SlidersHorizontal xmlns={undefined} aria-hidden="true" size={18} /><span>Alcance fijo<small>La cámara no cambia los resultados</small></span></div>
         </div>
       </form>
-      <p className={styles.guidance}>Los resultados se actualizan al cambiar la selección.</p>
+      <p id="party-highlight-note" className={styles.guidance}>Agrupación sin resaltado: se conservan todas las identidades, incluidas las listas sin mapear. Los resultados se actualizan al cambiar la selección.</p>
       {showEvidence ? notes : null}
     </section>
-    {showEvidence ? children : <p className={styles.state} role="status" aria-live="polite">
-      Actualizando resultados… La evidencia se mostrará cuando la selección esté verificada.
-    </p>}
-  </>;
+    {showEvidence ? children : <section className={styles.state}>
+      <p role="status" aria-live="polite">Actualizando resultados… La evidencia se mostrará cuando la selección esté verificada.</p>
+      <button type="button" onClick={() => request(selected)}>Volver a la selección verificada</button>
+    </section>}
+  </div></SelectionNavigation.Provider>;
 }

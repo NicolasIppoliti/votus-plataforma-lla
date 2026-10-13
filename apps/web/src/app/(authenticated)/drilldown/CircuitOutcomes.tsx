@@ -13,13 +13,13 @@ export function CircuitSelectionProvider({ children }: { children: ReactNode }) 
   return <CircuitSelection.Provider value={{ selected, onSelect }}>{children}</CircuitSelection.Provider>;
 }
 
-export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean; view?: "map" | "table" }) {
+export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean; view?: "map" | "table" | "geometry" | "legend" }) {
   const [Map, setMap] = useState<ComponentType<CircuitMapProps> | null>(null);
   const [geometry, setGeometry] = useState<CircuitMapProps["geometry"] | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const { selected, onSelect: setSelected } = useContext(CircuitSelection);
-  const eligible = view === "map" && rosales && outcomes.status === "ok" && outcomes.circuit_membership === "known";
+  const eligible = (view === "map" || view === "geometry") && rosales && outcomes.status === "ok" && outcomes.circuit_membership === "known";
   useEffect(() => {
     if (!eligible) return;
     let active = true;
@@ -36,15 +36,17 @@ export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcome
   const parties = new MapConstructor(outcomes.circuits.flatMap(c => c.parties).map(p => p.identity_status === "canonical"
     ? [p.canonical_party_id!, p.display_name!] as const : [`unmapped:${p.list_id}`, `Lista sin mapear ${p.list_id ?? "no identificada"}`] as const));
   const u = outcomes.unassigned;
-  return <section className={styles.root} aria-labelledby={view === "map" ? "circuit-map-heading" : "circuit-outcomes-heading"}>
-    <h3 id={view === "map" ? "circuit-map-heading" : "circuit-outcomes-heading"}>{view === "map" ? "Mapa de circuitos" : "Resultados por circuito"}</h3>
-    {view === "map" && <>
+  return <section className={view === "geometry" ? styles.geometry : styles.root} aria-labelledby={view === "map" || view === "geometry" ? "circuit-map-heading" : view === "table" ? "circuit-outcomes-heading" : "circuit-legend-heading"}>
+    <h3 className={view === "geometry" ? "sr-only" : undefined} id={view === "map" || view === "geometry" ? "circuit-map-heading" : view === "table" ? "circuit-outcomes-heading" : "circuit-legend-heading"}>{view === "table" ? "Resultados por circuito" : view === "legend" ? "Leyenda de circuitos" : "Mapa de circuitos"}</h3>
+    {(view === "map" || view === "geometry") && <>
     {membershipUnknown && <p>Pertenencia de mesas a circuitos desconocida: no se muestra un mapa de circuitos.</p>}
     {!membershipUnknown && (rosales ? <>
       {!Map && !failed && <p role="status">Preparando mapa de circuitos…</p>}
       {failed && <><p role="alert">Geometría no disponible; consulte la tabla exacta.</p><button type="button" className={styles.select} onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>Reintentar mapa de circuitos</button></>}
       {Map && geometry && <Map geometry={geometry} circuits={outcomes.circuits} selected={selected} onSelect={setSelected} />}
     </> : <p>Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</p>)}
+    </>}
+    {(view === "map" || view === "legend") && <>
     <p>Fuente: oficial · Todas las agrupaciones. Margen: (1.º − 2.º) / votos positivos.</p>
     <p>Supone que todas las mesas esperadas votan las categorías informadas por el distrito.</p>
     <p>Sin asignar a circuito: {u.catalogue_mesas_without_membership} mesas del catálogo; {u.membership_quarantined_mesas} mesas con pertenencia en cuarentena; {u.completeness_quarantines} cuarentenas de completitud; {u.unexpected_status_mesas} estados inesperados.</p>
@@ -60,7 +62,7 @@ export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcome
         <p>0248B/0248C: superposición en la fuente · área compartida neutra y rayada; sin reparación.</p></>}
     </div>
     </>}
-    <p role="status">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</p>
+    {view !== "geometry" && <p role="status">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</p>}
     {view === "table" && <TableRegion label="Resultados exactos por circuito">
       <table className="data-table"><caption>Resultados exactos por circuito</caption>
         <thead><tr>{["Circuito", "Ganador", "Margen pp", "Votos positivos", "Mesas escrutadas/esperadas", "Estado"].map(h => <th scope="col" key={h}>{h}</th>)}</tr></thead>

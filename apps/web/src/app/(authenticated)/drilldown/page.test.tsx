@@ -96,6 +96,43 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("ports the approved header, compact filters, map stage and inspector through the real page", async () => {
+    const markup = await render();
+    expect(markup).toContain("<h1>Exploración territorial</h1>");
+    expect(markup).toContain("El territorio como punto de partida.");
+    const filters = markup.slice(markup.indexOf('aria-label="Filtros de exploración"'), markup.indexOf('aria-label="Mesa de trabajo territorial"'));
+    for (const label of ["Territorio", "Elección", "Categoría", "Agrupación", "Todas las agrupaciones", "Alcance fijo", "La cámara no cambia los resultados"]) expect(filters).toContain(label);
+    for (const name of ["circuitoCode", "establecimientoCode", "mesaCode", "level"]) expect(filters).not.toMatch(new RegExp(`<select[^>]*name="${name}"`));
+    expect(filters).toMatch(/<select[^>]*id="explorer-party"[^>]*disabled/);
+    for (const label of ["Ganadores en el territorio", "Vista territorial", 'aria-label="Acercar mapa"', 'aria-label="Alejar mapa"', 'aria-label="Restablecer vista"', 'aria-label="Norte"', "Vista de referencia · 100 %", "Contorno de referencia", "Detalle territorial", "Navegador territorial", "Circuitos de Coronel Rosales", "Volver a Buenos Aires", "Participación", "Votos positivos"]) expect(markup).toContain(label);
+    expect(markup).toContain('aria-label="Abrir 00001 — nombre no disponible"');
+    expect(markup.indexOf('aria-label="Navegador territorial"')).toBeLessThan(markup.indexOf('aria-label="Liderazgo observado"'));
+  });
+
+  it.each([
+    ["circuito", { circuitoCode: "00001" }, "Establecimientos de", "Abrir E1 — School", "Volver a Coronel Rosales"],
+    ["establecimiento", { circuitoCode: "00001", establecimientoCode: "E1" }, "Mesas de", "Abrir Mesa 1", "Volver a 00001"],
+    ["mesa", { circuitoCode: "00001", establecimientoCode: "E1", mesaCode: "1" }, "Mesa seleccionada", null, "Volver a School"],
+  ])("reaches facet-backed navigator and ancestor reference at %s", async (level, codes, title, child, back) => {
+    const bundle = authorizedBundle(); bundle.result.level = level;
+    mocks.bundle.mockResolvedValue(bundle);
+    const markup = await render({ ...COMPLETE_SECTION, ...codes, level });
+    expect(markup).toContain(title);
+    expect(markup).toContain(back);
+    if (child) expect(markup).toContain(`aria-label="${child}"`);
+    else expect(markup).toContain("Fin del recorrido");
+    expect(markup).toContain("Contorno de referencia: Coronel Rosales");
+    expect(markup).toContain("sin geometría propia");
+  });
+
+  it("offers next-level search only for at least ten authorized children", async () => {
+    expect(await render()).not.toContain('id="navigator-search"');
+    mocks.facets.mockResolvedValue({ ...FACETS, circuitos: Array.from({ length: 10 }, (_, i) => ({ code: String(i + 1).padStart(5, "0"), name: null, nameStatus: "missing", nameVariantCount: 0 })) });
+    const markup = await render();
+    expect(markup).toContain('id="navigator-search"');
+    expect(markup.match(/aria-label="Abrir /g)).toHaveLength(10);
+  });
+
   it("reaches circuit legend and exact provisional table through the real page", async () => {
     mocks.circuits.mockResolvedValue({
       status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
@@ -147,7 +184,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(inspector).toContain(leader);
     expect(inspector).toContain(margin);
     expect(inspector).toContain(`${first + second} votos positivos`);
-    expect(inspector.indexOf("Completitud no disponible.")).toBeLessThan(inspector.indexOf("Liderazgo observado"));
+    expect(inspector.indexOf("Completitud no disponible.")).toBeGreaterThan(inspector.indexOf("Liderazgo observado"));
   });
 
   it("builds only canonical ancestor links from authorized names and clears descendants", async () => {
@@ -261,7 +298,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).toContain('aria-current="location">Argentina');
     expect(markup).toContain("Vista continental americana");
     expect(markup).toContain("Vista completa desde el polo sur");
-    const national = markup.slice(markup.indexOf('aria-labelledby="national-reference-heading"'), markup.indexOf('aria-labelledby="province-reference-heading"'));
+    const national = markup.slice(markup.indexOf('aria-label="Evidencia de referencia argentina"'), markup.indexOf('aria-label="Evidencia de referencia Buenos Aires"'));
     expect(national).toContain("Vista continental americana");
     expect(markup).toContain('href="#explorer-election"');
     expect(mocks.bundle).not.toHaveBeenCalled();
@@ -551,7 +588,7 @@ describe("DrilldownPage authorized official evidence", () => {
     const markup = await render();
 
     for (const text of [
-      "<h1>Explorador oficial</h1>",
+      "<h1>Exploración territorial</h1>",
       "Distribución del voto oficial",
       "Archivo y procedencia",
       'role="region" aria-label="Votos oficiales y porcentaje por partido" tabindex="0"',
@@ -572,7 +609,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).not.toContain("Aplicar selección");
     expect(markup).toContain("Los resultados se actualizan al cambiar la selección.");
     expect([...markup.matchAll(/<select\b[^>]*name="([^"]+)"/g)].map(match => match[1])).toEqual([
-      "electionId", "categoryId", "distritoCode", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode", "level",
+      "distritoCode", "seccionCode", "electionId", "categoryId",
     ]);
     expect(markup).not.toContain('class="button button--primary"');
   });
@@ -596,7 +633,7 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(chart).toContain("100 %");
     expect(markup).toContain("75.00%");
     expect(markup).toContain("25.00%");
-    const disclosure = markup.slice(markup.indexOf("<details"));
+    const disclosure = markup.slice(markup.indexOf("<summary>Archivo y procedencia</summary>"), markup.indexOf("</details>", markup.indexOf("<summary>Archivo y procedencia</summary>")));
     expect(disclosure).toContain("SHA-256");
     expect(disclosure).not.toContain("Se excluyeron");
   });
