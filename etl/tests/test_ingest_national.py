@@ -1418,3 +1418,37 @@ def test_signed_and_permissive_python_integer_forms_are_excluded_by_source_field
         "excluded 1 row(s) as out of scope for normalized list votes -- "
         f"unreadable {field}: 1 rows / {vote_summary}\n"
     )
+
+
+def test_a_not_counted_mesa_is_excluded_not_stored_as_zero_votes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`estado_final=NO ESCRUTADO` means the mesa was not counted, not that it got 0 votes.
+
+    Measured on the hash-matching 2025 ZIP: 1,131 (cargo, mesa) pairs are NO ESCRUTADO
+    (DIPUTADO NACIONAL 851, SENADOR NACIONAL 280), every one with 0 votes; storing them
+    made each look like a counted mesa with zero votes. 2023 sources have no estado_final.
+    """
+    results = (
+        b"distrito_id,distrito_nombre,seccion_id,seccion_nombre,circuito_id,circuito_nombre,"
+        b"mesa_id,cargo_nombre,agrupacion_id,votos_tipo,votos_cantidad,estado_final\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,1,DIPUTADO NACIONAL,110,POSITIVO,90,"
+        b"ESCRUTADO\n"
+        b"02,Buenos Aires,027,Coronel Rosales,1,Circuito 1,2,DIPUTADO NACIONAL,110,POSITIVO,0,"
+        b"NO ESCRUTADO\n"
+    )
+
+    rows = list(
+        iter_national_rows(
+            _text_of(results),
+            archive_entry_id="national/not-counted",
+            election_year=2025,
+            election_round="legislativas",
+        )
+    )
+
+    assert [(row.mesa, row.result.votes) for row in rows] == [(1, 90)]
+    assert capsys.readouterr().err == (
+        "excluded 1 row(s) as out of scope for normalized list votes -- "
+        "estado_final='NO ESCRUTADO': 1 rows / 0 votes\n"
+    )
