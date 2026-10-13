@@ -85,6 +85,30 @@ async function renderSimulation(
   );
 }
 
+describe("simulate page — approved workbench composition", () => {
+  it("renders a territorial workbench with explicit unbound geography and hypothesis limits", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+    expect(markup).toContain('aria-label="Laboratorio territorial"');
+    expect(markup).toContain("Geografía no disponible");
+    expect(markup).toContain("Supuestos, no predicciones");
+    expect(markup).toContain("Base histórica no conectada");
+    expect(markup).toContain('aria-label="Construir el supuesto"');
+    expect(markup).toContain('data-testid="allocation-result"');
+    const panel = markup.split('aria-label="Construir el supuesto"')[1]!.split('</aside>')[0]!;
+    expect(panel).toContain('aria-label="Distribución de bancas"');
+    expect(markup.match(/aria-label="Distribución de bancas"/g)).toHaveLength(1);
+  });
+
+  it("keeps geography unavailable and withholds impact on missing or refused inputs", async () => {
+    for (const input of [undefined, { ...ALLOCATION_INPUT, seatsToFill: 8 }]) {
+      const markup = await renderSimulation(input);
+      expect(markup).toContain("Geografía no disponible");
+      expect(markup).not.toContain('aria-label="Distribución de bancas"');
+      expect(markup).not.toContain('data-testid="allocation-result"');
+    }
+  });
+});
+
 describe("simulate page — bounded sample entry", () => {
   it("submits the rendered sweep action and evaluates endpoint samples on the canonical page", async () => {
     transferHarness.replace.mockClear();

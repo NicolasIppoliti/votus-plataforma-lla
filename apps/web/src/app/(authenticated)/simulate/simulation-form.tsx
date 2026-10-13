@@ -93,6 +93,7 @@ function NumberField({
 interface SimulationFormProps {
   requestKey: string;
   children: ReactNode;
+  impact: ReactNode;
 }
 
 interface TransferFormProps {
@@ -227,7 +228,7 @@ function restoredEditor(requestKey: string): EditorState {
   };
 }
 
-export function SimulationForm({ requestKey, children }: SimulationFormProps) {
+export function SimulationForm({ requestKey, children, impact }: SimulationFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editor, setEditor] = useState(() => restoredEditor(requestKey));
@@ -419,6 +420,31 @@ export function SimulationForm({ requestKey, children }: SimulationFormProps) {
 
   return (
     <div className={`simulation-workspace${editor.values === null ? " simulation-workspace--supplied" : ""}`}>
+    <section className="simulation-territorial-workbench" aria-label="Laboratorio territorial">
+      <section className="simulation-geography" aria-labelledby="simulation-geography-heading">
+        <header><h2 id="simulation-geography-heading">Referencia territorial</h2><p>Geografía examinada ≠ distrito que asigna bancas</p></header>
+        <div className="simulation-geography-stage">
+          <h3>Geografía no disponible</h3>
+          <p>El escenario aportado no incluye una vinculación territorial verificada. No se infiere un distrito electoral a partir de la granularidad ni del tipo de elección.</p>
+        </div>
+        <footer>
+          <h3>Inspeccionar el territorio</h3>
+          <p>Sin unidades geográficas vinculadas a este escenario. La transferencia no se distribuye entre circuitos, establecimientos ni mesas.</p>
+          <a href="/drilldown">Explorar evidencia territorial oficial</a>
+        </footer>
+      </section>
+      <aside className="simulation-scenario-panel" aria-label="Construir el supuesto">
+        <h2>Construir el supuesto</h2>
+        <p>Mover votos entre dos listas, sin cambiar el total.</p>
+        {showResult ? <TransferForm key={`transfer-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
+        {showResult && impact ? <section aria-label="Impacto en la asignación"><h3>Impacto en la asignación</h3>{impact}</section> : <p>Sin asignación disponible para el escenario actual.</p>}
+      </aside>
+    </section>
+    <section className="simulation-capabilities" aria-label="Disponibilidad de datos">
+      <h2>Qué está disponible en Votus</h2>
+      <p>Base histórica no conectada. Esta ruta calcula escenarios aportados por quien consulta; no carga resultados históricos oficiales ni verifica una convocatoria futura.</p>
+      <p>El método estatutario y su evidencia se muestran junto al resultado autorizado. El distrito de reparto debe corresponder al conjunto completo de votos ingresado; una unidad de inspección no recibe una legislatura.</p>
+    </section>
     {editor.values === null ? (
       <section aria-label="Escenario proporcionado" className="simulation-supplied panel">
         <h2>Escenario proporcionado</h2>
@@ -683,7 +709,6 @@ export function SimulationForm({ requestKey, children }: SimulationFormProps) {
     </section>
     )}
     <div className="simulation-output" aria-busy={editor.dirty || isPending}>
-      {showResult ? <TransferForm key={`transfer-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
       {showResult ? <SweepForm key={`sweep-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /> : null}
       <p role="status" className="simulation-output__status">
         {showResult ? "Escenario actual" : errors.length

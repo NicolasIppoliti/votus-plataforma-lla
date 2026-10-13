@@ -93,6 +93,8 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       name: "Formulario de simulación de bancas",
     });
     await expect(form).toBeVisible();
+    await expect(page.getByRole("region", { name: "Laboratorio territorial", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Geografía no disponible", exact: true })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Crear un escenario" }),
     ).toBeVisible();
@@ -314,7 +316,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       .locator("..");
     await expect(listARow.getByRole("cell").last()).toHaveText("5");
     await expect(listBRow.getByRole("cell").last()).toHaveText("4");
-    const seatChart = result.getByRole("region", { name: "Distribución de bancas", exact: true });
+    const seatChart = page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true });
     await expect(seatChart).toBeVisible();
     await expect(seatChart).toContainText("Lista A");
     await expect(seatChart).toContainText("Lista B");
@@ -994,7 +996,7 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
   };
   await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
-  const chart = result.getByRole("region", { name: "Distribución de bancas", exact: true });
+  const chart = page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true });
   const trace = result.getByText(/Huella de los datos proporcionados/);
   await expect(chart).toBeVisible();
   const servedTrace = await trace.innerText();
@@ -1033,7 +1035,7 @@ test("preserves a rich supplied scenario until another scenario is explicitly st
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
   await expect(page.getByText("Escenario proporcionado", { exact: true })).toBeVisible();
   await expect(result).toContainText("1.000 explícitamente fuera del modelo");
-  await expect(result.getByRole("region", { name: "Distribución de bancas", exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true })).toBeVisible();
   await expect(page.getByRole("form", { name: "Formulario de simulación de bancas" })).toHaveCount(0);
   await page.reload();
   await expect(page).toHaveURL(suppliedUrl);
@@ -1058,7 +1060,7 @@ test("restores the served scenario while a superseded response is pending", asyn
   await votes.nth(1).fill("4000");
   await form.getByLabel("Total de votos").fill("10000");
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
-  const chart = result.getByRole("region", { name: "Distribución de bancas", exact: true });
+  const chart = page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true });
   const trace = result.getByText(/Huella de los datos proporcionados/);
   await expect(chart).toBeVisible();
   const servedUrl = page.url();

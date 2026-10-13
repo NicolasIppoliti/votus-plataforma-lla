@@ -31,6 +31,7 @@ import {
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { SeatDistribution } from "./seat-distribution";
 import "./simulation.css";
+import "./workbench.css";
 
 interface SimulatePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -449,8 +450,13 @@ export default async function SimulatePage({
 
   return (
     <main className="simulation-page">
-      <h1>Simulación de bancas</h1>
-      <SimulationForm requestKey={requestQuery.toString()}>
+      <header className="simulation-page-header">
+        <p>Espacio de trabajo / Simulación</p>
+        <h1>Simulación de bancas</h1>
+        <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
+        <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
+      </header>
+      <SimulationForm requestKey={requestQuery.toString()} impact={result ? <SeatDistribution result={result} /> : null}>
       <SweepResult query={requestQuery.toString()} baselineError={councilError ?? parseError} />
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
@@ -517,7 +523,6 @@ export default async function SimulatePage({
               Huella de los datos proporcionados (no es procedencia de archivo): sha256 {inputTrace}
             </p>
           ) : null}
-          <SeatDistribution result={result} />
           <AllocationEvidence result={result} />
         </section>
       ) : null}
