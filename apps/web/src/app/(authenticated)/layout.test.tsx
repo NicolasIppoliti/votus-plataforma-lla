@@ -107,12 +107,12 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
     .toEqual([
       "/",
       "/drilldown",
-      "/compare",
       "/municipal",
-      "/fiscalizacion",
+      "/compare",
       "/simulate",
       "/scenarios",
       "/review",
+      "/fiscalizacion",
     ]);
 });
 
@@ -190,14 +190,14 @@ it("links authenticated operators to the seat simulation route", async () => {
   expect(markup.match(/id="main-content"/g) ?? []).toHaveLength(1);
   expect(markup).toContain('nav aria-label="principal"');
   expect(markup).toContain('href="/simulate"');
-  expect(markup).toContain("Simulación 2027");
+  expect(markup).toContain("Simulación");
 });
 
 it("links authenticated operators to the official results explorer", async () => {
   const markup = await renderLayout("/dashboard");
 
   expect(markup).toContain('href="/drilldown"');
-  expect(markup).toContain("Explorar");
+  expect(markup).toContain("Exploración");
 });
 
 it("surfaces an unknown review state", async () => { workspace.reviewItems.mockRejectedValueOnce(new Error("unavailable")); expect(await renderLayout("/dashboard")).toContain("No se pudo verificar el estado de revisión."); });
@@ -290,48 +290,15 @@ it("renders all eight shared destinations in contract order with explicit source
     .filter((href): href is string => typeof href === "string");
 
   expect(markup).toContain("Esta herramienta no es una fuente electoral oficial.");
-  expect(hrefs).toEqual([
-    "/",
-    "/drilldown",
-    "/compare",
-    "/municipal",
-    "/fiscalizacion",
-    "/simulate",
-    "/scenarios",
-    "/review",
-  ]);
-  expect(navigationMarkup).toContain(
-    '<section aria-labelledby="primary-navigation-situation-heading">',
-  );
-  expect(navigationMarkup).toContain(
-    '<h2 id="primary-navigation-situation-heading">Situación</h2>',
-  );
-  expect(navigationMarkup).toContain(
-    '<h2 id="primary-navigation-officialResults-heading">Resultados oficiales</h2>',
-  );
-  expect(navigationMarkup).toContain(
-    '<section aria-describedby="primary-navigation-fiscalizacion-description" aria-labelledby="primary-navigation-fiscalizacion-heading">',
-  );
-  expect(navigationMarkup).toContain(
-    '<h2 id="primary-navigation-fiscalizacion-heading">Fiscalización</h2>',
-  );
-  expect(navigationMarkup).toContain(
-    '<p id="primary-navigation-fiscalizacion-description">Fuente no oficial, separada de los resultados oficiales.</p>',
-  );
-  expect(navigationMarkup).toContain(
-    '<h2 id="primary-navigation-scenarios-heading">Escenarios</h2>',
-  );
-  expect(navigationMarkup).toContain(
-    '<h2 id="primary-navigation-operations-heading">Operaciones</h2>',
-  );
-  expect(navigationMarkup).toContain("Resumen operativo");
-  expect(navigationMarkup).toContain("Explorar");
-  expect(navigationMarkup).toContain("Comparar");
-  expect(navigationMarkup).toContain("Municipal");
-  expect(navigationMarkup).toContain("Fiscalización (no oficial)");
-  expect(navigationMarkup).toContain("Simulación 2027");
-  expect(navigationMarkup).toContain("Escenarios Rosales 2027");
-  expect(navigationMarkup).toContain("Revisión de datos");
+  expect(hrefs).toEqual(["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/review", "/fiscalizacion"]);
+  const modules = [...navigationMarkup.matchAll(/class="navigation-module"[^>]*>[\s\S]*?<span>([^<]+)<\/span>/g)].map((match) => match[1]);
+  expect(modules).toEqual(["Panorama", "Exploración", "Comparación", "Simulación", "Evidencia"]);
+  expect(navigationMarkup.match(/class="navigation-subitem"/g)).toHaveLength(3);
+  expect(navigationMarkup).toContain("Fuente no oficial, separada de los resultados oficiales.");
+  expect(markup).toContain('aria-label="Panel de Votus"');
+  expect(markup).toContain('class="site-brand__glyph"');
+  expect(markup).toContain('votus<span class="site-brand__dot">.</span>');
+  expect(markup).toContain("Espacio de análisis");
 });
 
 it("keeps workspace and account below navigation, offers no theme choice, and only review status in the header", async () => {
@@ -348,7 +315,7 @@ it("keeps workspace and account below navigation, offers no theme choice, and on
   expect(sidebar).toContain("Esta herramienta no es una fuente electoral oficial.");
   expect(topbar).toContain("Sin elementos pendientes");
   expect(topbar).toContain("Abrir navegación");
-  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(8);
+  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(5);
   expect(currentPrimaryHrefs(markup)).toEqual(["/compare"]);
 });
 

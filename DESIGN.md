@@ -51,18 +51,18 @@ until its authorized production entry point works.
 
 ### Current navigation groups
 
-- **Situation**
-  - Operational briefing — `/`
-- **Official Results**
-  - Explore — `/drilldown`
-  - Compare — `/compare`
+- **Panorama** — `/`
+- **Exploración** — `/drilldown`
   - Municipal — `/municipal`
-- **Fiscalización**
-  - Coverage and results — `/fiscalizacion`
-- **Scenarios**
-  - 2027 simulation — `/simulate`
-- **Operations**
-  - Data review — `/review`
+- **Comparación** — `/compare`
+- **Simulación** — `/simulate`
+  - Escenarios Rosales 2027 — `/scenarios`
+- **Evidencia** — `/review` (data review; no duplicate sub-item)
+  - Fiscalización (no oficial) — `/fiscalizacion`
+
+The five modules follow the approved prototype's `votus.` identity and icons;
+sub-items are smaller and indented with 44px minimum targets. Fiscalización retains
+its separate unofficial-source note. Each current route appears exactly once.
 
 `/dashboard` redirects to `/`. Compare and Municipal are visible navigation destinations. Review indicators must not expose counts when the user cannot access evidence.
 

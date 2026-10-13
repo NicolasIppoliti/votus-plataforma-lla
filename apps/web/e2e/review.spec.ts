@@ -170,7 +170,7 @@ async function expectPopulatedReviewLayout(
 
 const PREVIOUS_PAGE = "Página anterior de la cola de revisión";
 const NEXT_PAGE = "Página siguiente de la cola de revisión";
-const NAVIGATION_NAMES = ["Resumen operativo", "Explorar", "Comparar", "Municipal", "Fiscalización (no oficial)", "Simulación 2027", "Escenarios Rosales 2027", "Revisión de datos"];
+const NAVIGATION_NAMES = ["Panorama", "Exploración", "Municipal", "Comparación", "Simulación", "Escenarios Rosales 2027", "Evidencia", "Fiscalización (no oficial)"];
 
 async function expectKeyboardFocus(target: Locator, region = false, control: ReviewFocusControl = "unlabelled"): Promise<void> {
   const capture = () => target.evaluate((element) => {
@@ -369,7 +369,7 @@ for (const windowWidth of [1280, 640]) {
         await tabTo(page, account, true);
         await tabTo(page, submit, true, false, "org-submit");
         await tabTo(page, organization, true, false, "org-select");
-        await tabTo(page, drawer.getByRole("link", { name: "Revisión de datos", exact: true }), true, false, "last-drawer-link");
+        await tabTo(page, drawer.getByRole("link", { name: "Fiscalización (no oficial)", exact: true }), true, false, "last-drawer-link");
         await tabTo(page, organization, false, false, "org-select");
         await expectControlSize(organization);
         await tabTo(page, submit, false, false, "org-submit");

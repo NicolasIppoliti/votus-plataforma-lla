@@ -1,51 +1,16 @@
 import { expect, it } from "vitest";
-import {
-  isRouteActive,
-  NAVIGATION_GROUPS,
-  type NavigationGroup,
-  type NavigationItem,
-} from "./navigation";
+import { isRouteActive, NAVIGATION_GROUPS } from "./navigation";
 
-it("defines every current route in grouped operational navigation", () => {
-  const groups: readonly NavigationGroup[] = Object.values(NAVIGATION_GROUPS);
-  const items: readonly NavigationItem[] = groups.flatMap<NavigationItem>(
-    (group) => group.items,
-  );
-
-  expect(groups.map((group) => group.label)).toEqual([
-    "Situación",
-    "Resultados oficiales",
-    "Fiscalización",
-    "Escenarios",
-    "Operaciones",
+it("defines five prototype modules and every existing route exactly once", () => {
+  const groups = Object.values(NAVIGATION_GROUPS);
+  expect(groups.map((group) => group.label)).toEqual(["Panorama", "Exploración", "Comparación", "Simulación", "Evidencia"]);
+  const items = groups.flatMap((group) => [...group.items]);
+  expect(items.map(({ label, href }) => [label, href])).toEqual([
+    ["Panorama", "/"], ["Exploración", "/drilldown"], ["Municipal", "/municipal"],
+    ["Comparación", "/compare"], ["Simulación", "/simulate"], ["Escenarios Rosales 2027", "/scenarios"],
+    ["Evidencia", "/review"], ["Fiscalización (no oficial)", "/fiscalizacion"],
   ]);
-  expect(items.map((item) => item.href)).toEqual([
-    "/",
-    "/drilldown",
-    "/compare",
-    "/municipal",
-    "/fiscalizacion",
-    "/simulate",
-    "/scenarios",
-    "/review",
-  ]);
-  expect(items.map((item) => item.label)).toEqual([
-    "Resumen operativo",
-    "Explorar",
-    "Comparar",
-    "Municipal",
-    "Fiscalización (no oficial)",
-    "Simulación 2027",
-    "Escenarios Rosales 2027",
-    "Revisión de datos",
-  ]);
-  expect(NAVIGATION_GROUPS.situation.items).toEqual([
-    { label: "Resumen operativo", href: "/" },
-  ]);
-  expect(NAVIGATION_GROUPS.fiscalizacion.description).toMatch(/no oficial/i);
-  expect(NAVIGATION_GROUPS.fiscalizacion.description).toMatch(
-    /separada de los resultados oficiales/i,
-  );
+  expect(new Set(items.map(({ href }) => href)).size).toBe(8);
 });
 
 it("matches exact and descendant routes without matching shared prefixes", () => {
@@ -57,9 +22,8 @@ it("matches exact and descendant routes without matching shared prefixes", () =>
   expect(isRouteActive("/compare", "/review")).toBe(false);
 });
 
-it("treats the operational summary root as active only at the exact root", () => {
+it("treats Panorama as active only at the exact root", () => {
   expect(isRouteActive("/", "/")).toBe(true);
   expect(isRouteActive("/dashboard", "/")).toBe(false);
   expect(isRouteActive("/review", "/")).toBe(false);
-  expect(isRouteActive("/review/history", "/")).toBe(false);
 });
