@@ -1,0 +1,47 @@
+{
+  "scope": "local Supabase only; T3-0b.1 and T3-0b.2",
+  "election_id": "ca6b3280-9c65-4489-bc94-1a18f87e2e60",
+  "category_id": "e77f056e-6bb4-45c5-a1d6-7a29180bed9e",
+  "category": "DIPUTADO NACIONAL",
+  "year": 2025,
+  "round": "legislativas",
+  "distrito_code": "02",
+  "seccion_code": "027",
+  "migration": "20261013000000_official_section_circuit_outcomes.sql",
+  "archive_entry_id": "geography/cne-rosales-2025-locales",
+  "source_sha256": "fbd5deddbcf5abefd170d6841f76888c2bca8cb877f90fb4b9c4d73a287fdd4b",
+  "reconciliation": {
+    "expected": 153,
+    "persisted": 153,
+    "quarantined_mesas": 0,
+    "reasons": {
+      "catalogue_mesa_not_covered": 0,
+      "overlapping_or_duplicate_ranges": 0,
+      "unrecognized_xlsx_circuit": 0,
+      "xlsx_mesa_not_in_catalogue": 0,
+      "xlsx_status_circuit_mismatch": 0
+    }
+  },
+  "rpc_payload_file": "circuit-outcomes-local-2025.json",
+  "rpc_session": "synthetic authenticated workspace context and entitlement, transaction rolled back",
+  "circuit_summary": [
+    {"circuito_code": "00248", "expected": 49, "counted": 49, "positive_total": 10834},
+    {"circuito_code": "00249", "expected": 1, "counted": 1, "positive_total": 161},
+    {"circuito_code": "0248A", "expected": 2, "counted": 2, "positive_total": 344},
+    {"circuito_code": "0248B", "expected": 1, "counted": 1, "positive_total": 45},
+    {"circuito_code": "0248C", "expected": 41, "counted": 41, "positive_total": 8673},
+    {"circuito_code": "0248D", "expected": 18, "counted": 18, "positive_total": 3862},
+    {"circuito_code": "0248E", "expected": 31, "counted": 31, "positive_total": 7125},
+    {"circuito_code": "0248F", "expected": 4, "counted": 4, "positive_total": 799},
+    {"circuito_code": "0249A", "expected": 5, "counted": 5, "positive_total": 1108},
+    {"circuito_code": "0249B", "expected": 1, "counted": 1, "positive_total": 195}
+  ],
+  "all_circuits_complete": true,
+  "all_missing_not_counted_unexpected_quarantined_and_unassigned_counts": 0,
+  "official_section_vote_total": 33146,
+  "limitations": [
+    "Local DB contains zero verified 2025 national DIPUTADO NACIONAL party mappings; all 15 list identities are truthfully unmapped, not assigned party names.",
+    "Geometry is not used for membership and election applicability of the geometry remains outside this slice.",
+    "Initial SQL RED reported this proof's exit 1 with empty failedAssertions/sqlstates diagnostics; individual assertion failures were not exposed by the runner."
+  ]
+}
