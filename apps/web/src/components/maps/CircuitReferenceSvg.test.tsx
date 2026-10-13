@@ -24,7 +24,7 @@ describe("reference circuits and presentation", () => {
     expect(html).toContain('data-hatched="true"');
     expect(html).toContain("Partido 0; provisorio · 66 % de mesas");
   });
-  it.each([[52,48,"light"],[53,47,"medium"],[57.5,42.5,"medium"],[58,42,"intense"]] as const)("bands %s/%s as %s", (a,b,band) => {
+  it.each([[52,48,"light"],[52.5,47.5,"medium"],[53,47,"medium"],[57.5,42.5,"medium"],[58,42,"intense"]] as const)("bands %s/%s as %s", (a,b,band) => {
     expect(circuitPresentation(outcome([a,b])).band).toBe(band);
   });
   it("ranks every group, preserves ties and zero denominator, caps partial coverage", () => {
