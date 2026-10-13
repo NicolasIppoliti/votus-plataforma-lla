@@ -66,6 +66,10 @@ begin
  ), membership_reasons as (
   select reason,count(distinct mesa_code) n from public.official_mesa_circuit_membership_quarantine
   where election_id=p_election_id and distrito_code=p_distrito_code and seccion_code=p_seccion_code group by reason
+ ), unassigned_quarantines as (
+  -- Not attributable to one circuit: no readable section/mesa, or a mesa without membership.
+  select q.reason from relevant_quarantines q where q.seccion_code is null
+   or not exists(select from members m where m.mesa_code=q.mesa_code)
  )
  select jsonb_build_object(
   'catalogue_mesas_without_membership',(select count(*) from public.official_expected_mesa e
@@ -74,8 +78,9 @@ begin
   'membership_quarantined_mesas',(select count(distinct mesa_code) from public.official_mesa_circuit_membership_quarantine
    where election_id=p_election_id and distrito_code=p_distrito_code and seccion_code=p_seccion_code),
   'membership_quarantine_reasons',coalesce((select jsonb_object_agg(reason,n) from membership_reasons),'{}'::jsonb),
-  'completeness_quarantines',(select count(*) from relevant_quarantines q where q.seccion_code is null
-   or not exists(select from members m where m.mesa_code=q.mesa_code)),
+  'completeness_quarantines',(select count(*) from unassigned_quarantines),
+  'completeness_quarantine_reasons',coalesce((select jsonb_object_agg(reason,n) from
+   (select reason,count(*) n from unassigned_quarantines group by reason) r),'{}'::jsonb),
   'unexpected_status_mesas',(select count(*) from public.official_mesa_count_status s
    where s.election_id=p_election_id and s.category_id=p_category_id and s.distrito_code=p_distrito_code and s.seccion_code=p_seccion_code
    and not exists(select from members m where m.mesa_code=s.mesa_code)

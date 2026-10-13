@@ -1,5 +1,5 @@
 begin;
-select plan(40);
+select plan(42);
 select ok(to_regclass('public.official_mesa_circuit_membership') is not null,'independent circuit membership exists');
 select ok(to_regclass('public.official_mesa_circuit_membership_quarantine') is not null,'excluded membership survives as lineage');
 select ok(to_regprocedure('workspace_api.official_section_circuit_outcomes(uuid,uuid,text,text)') is not null,'authorized circuit outcomes RPC exists');
@@ -90,6 +90,13 @@ insert into public.official_mesa_completeness_quarantine(election_id,archive_ent
 set local role authenticated;
 select is(workspace_api.official_section_circuit_outcomes('58000000-0000-0000-0000-000000000001','58000000-0000-0000-0000-000000000002','98','998')->'unassigned'->>'completeness_quarantines','1','election-unattributed null-category quarantine blocks');
 select is(workspace_api.official_section_circuit_outcomes('58000000-0000-0000-0000-000000000001','58000000-0000-0000-0000-000000000002','98','998')->'circuits'->0->>'status','partial','unattributed quarantine forces complete circuit partial');
+reset role;
+insert into public.official_mesa_completeness_quarantine(election_id,archive_entry_id,scope,reason) values('58000000-0000-0000-0000-000000000001','national/2098-test','status','absent results cargo_nombre');
+set local role authenticated;
+select is(workspace_api.official_section_circuit_outcomes('58000000-0000-0000-0000-000000000001','58000000-0000-0000-0000-000000000002','98','998')->'unassigned'->>'completeness_quarantines','2','every unassigned completeness quarantine is counted');
+select is(workspace_api.official_section_circuit_outcomes('58000000-0000-0000-0000-000000000001','58000000-0000-0000-0000-000000000002','98','998')->'unassigned'->'completeness_quarantine_reasons',
+ '{"absent results cargo_nombre":1,"unreadable identity":1}'::jsonb,'unassigned completeness quarantines are reported per reason');
+reset role;
 rollback to savepoint unattributed_quarantine;
 insert into public.official_mesa_completeness_quarantine(election_id,archive_entry_id,scope,category_id,distrito_code,seccion_code,mesa_code,reason) values
  ('58000000-0000-0000-0000-000000000001','national/2098-test','status','58000000-0000-0000-0000-000000000002','98','998',1,'conflict');
