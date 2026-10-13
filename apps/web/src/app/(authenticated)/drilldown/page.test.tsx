@@ -109,6 +109,20 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup).toContain('class="boundedEstablishments"');
   });
 
+  it("shows the real official distribution and interpretation guidance in the inspector", async () => {
+    const bundle = authorizedBundle();
+    const votes = [120, 60, 45, 30, 30, 15];
+    mocks.bundle.mockResolvedValue({ ...bundle, result: { ...bundle.result, parties: votes.map((votes, i) => ({ identity_status: i === 5 ? "unmapped" : "canonical", canonical_party_id: i === 5 ? null : `p${i}`, display_name: i === 5 ? null : `Grupo ${i}`, list_id: i === 5 ? "999" : null, votes, vote_share: String(votes / 300) })) } });
+    const markup = await render();
+    const inspector = markup.slice(markup.indexOf('aria-label="Detalle territorial"'), markup.indexOf('Desglose territorial', markup.indexOf('aria-label="Detalle territorial"')));
+    expect(inspector).toContain("Distribución de votos");
+    expect(inspector).toContain("Otras agrupaciones (1)");
+    expect(inspector).toContain("Lista sin mapear 999");
+    expect(inspector).toContain("40,00 %");
+    expect(inspector).toContain("Antes de interpretar");
+    expect(inspector).toContain("comparabilidad temporal");
+  });
+
   it("ports the approved header, compact filters, map stage and inspector through the real page", async () => {
     const markup = await render();
     expect(markup).toContain("<h1>Exploración territorial</h1>");
@@ -170,6 +184,7 @@ describe("DrilldownPage authorized official evidence", () => {
       "&lt;5 pp", "5–15 pp", "&gt;15 pp", "provisorio · 66 % de mesas", "Lista sin mapear 110", "Empate",
       "Sin votos positivos", "superposición en la fuente", "Margen pp", "Votos positivos", "Mesas escrutadas/esperadas"])
       expect(markup).toContain(text);
+    expect(markup).toMatch(/<details[^>]*><summary>Notas de la leyenda<\/summary>/);
     expect(markup).toContain("Preparando mapa de circuitos…");
     expect(markup).not.toContain("Mostrar mapa de circuitos");
     expect(markup.indexOf('aria-labelledby="circuit-map-heading"')).toBeLessThan(markup.indexOf('aria-label="Detalle territorial"'));
@@ -590,7 +605,8 @@ describe("DrilldownPage authorized official evidence", () => {
     });
     const markup = await render();
     expect(markup).toContain("0 votos a nivel seccion");
-    expect(markup.match(/Lista sin mapear 999/g)).toHaveLength(4);
+    expect(markup.slice(markup.indexOf('<summary>Mostrar resultados exactos</summary>')).match(/Lista sin mapear 999/g)).toHaveLength(4);
+    expect(markup.match(/Lista sin mapear 999/g)).toHaveLength(5);
     expect(markup.match(/porcentaje no disponible/g)).toHaveLength(4);
     expect(markup).not.toMatch(/>999<|\d+\.\d+%/);
     expect(markup).toContain("SHA-256");

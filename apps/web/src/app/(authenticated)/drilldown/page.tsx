@@ -3,7 +3,7 @@ import styles from "./drilldown.module.css";
 import { TerritorialBreakdown } from "./TerritorialBreakdown";
 import { InternalLists } from "./InternalLists";
 import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
-import { DrilldownDistribution } from "./DrilldownDistribution";
+import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
 import { TerritorialMapStage } from "./TerritorialMapStage";
@@ -236,6 +236,8 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
           <p className={styles.categoryChip}>{result.categoryName}</p>
           <Navigator facets={facets} selected={selected} />
           <ObservedLeader result={result} completeness={<SectionCompleteness completeness={evidence.completeness} selection={selection} />} />
+          <InspectorDistribution result={result} />
+          <section className={styles.readingNote} aria-label="Antes de interpretar"><h3>Antes de interpretar</h3><p>Confirmá la fuente oficial y la categoría {result.categoryName}. Verificá la comparabilidad temporal de categorías, agrupaciones y límites territoriales antes de comparar elecciones.</p></section>
         </section>
       </section>
       <TerritorialBreakdown key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()} context={`${result.categoryName} · ${result.electionYear} ${result.electionRound} · fuente oficial`}>

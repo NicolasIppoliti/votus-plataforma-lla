@@ -47,6 +47,8 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
     </> : <p>Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</p>)}
     </>}
     {(view === "map" || view === "legend") && <>
+    <div className={styles.compactLegend}><span className={styles.swatch} style={{ background: "#dccab7" }} aria-hidden="true" /><span className={styles.swatch} style={{ background: "#c1a281" }} aria-hidden="true" /><span className={styles.swatch} style={{ background: "#a77a4b" }} aria-hidden="true" /><span>Intensidad del margen</span></div>
+    <details><summary>Notas de la leyenda</summary>
     <p>Fuente: oficial · Todas las agrupaciones. Margen: (1.º − 2.º) / votos positivos.</p>
     <p>Supone que todas las mesas esperadas votan las categorías informadas por el distrito.</p>
     <p>Sin asignar a circuito: {u.catalogue_mesas_without_membership} mesas del catálogo; {u.membership_quarantined_mesas} mesas con pertenencia en cuarentena; {u.completeness_quarantines} cuarentenas de completitud; {u.unexpected_status_mesas} estados inesperados.</p>
@@ -61,6 +63,7 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
         <p>Fuente: CNE · GeoJSON adjunto a correspondencia del 2026-10-09 (no es fecha de publicación). reference_only · Aplicabilidad electoral desconocida.</p>
         <p>0248B/0248C: superposición en la fuente · área compartida neutra y rayada; sin reparación.</p></>}
     </div>
+    </details>
     </>}
     {view !== "geometry" && <p role="status">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</p>}
     {view === "table" && <TableRegion label="Resultados exactos por circuito">

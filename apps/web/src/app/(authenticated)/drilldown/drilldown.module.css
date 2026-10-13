@@ -1,5 +1,5 @@
 .root, .layout, .filters, .context, .results, .evidence, .state, .province { min-width: 0; }
-.root { padding-top: 32px; }
+.root { padding-top: 32px; margin-top: -1rem; margin-inline: calc(-1 * var(--content-gutter)); }
 .territorialBreakdown, .exactSection { min-width: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 20px; }
 .breakdownHeader { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
 .breakdownHeader h2 { margin: 0; font-size: 1rem; }
@@ -19,7 +19,7 @@
 .mapHeading h2 { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
 .mapHeading p { color: var(--muted-ink); font-size: 0.8125rem; margin: 0; }
 .mapMode { display: flex; align-items: center; gap: 7px; color: var(--secondary-ink); font-size: 0.8125rem; white-space: nowrap; }
-.mapStage { position: relative; height: 500px; min-height: 490px; overflow: hidden; background-color: var(--map-stage); background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 60px 60px; }
+.mapStage { position: relative; height: 500px; min-height: 490px; overflow: hidden; background-color: var(--map-stage); background-image: linear-gradient(#24445499 .6px, transparent .6px), linear-gradient(90deg, #24445499 .6px, transparent .6px), radial-gradient(ellipse at 49% 52%, #143a494d 0, #09172400 66%); background-size: 50px 50px, 50px 50px, 100% 100%; }
 .mapCamera { height: 100%; padding: 75px 70px 85px; transform-origin: center; }
 .mapCamera > * { height: 100%; width: 100%; }
 .referenceOutline { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -78,7 +78,7 @@
 @media (max-width: 500px) { .mapStage { height: 370px; min-height: 370px; } .mapCamera { padding: 70px 30px; } .territoryLabel { left: 45%; transform: translate(-45%, -50%); max-width: 180px; padding: 9px 10px; } .territoryLabel strong { font-size: 14px; } .mapControls { right: 13px; bottom: 56px; } .coordinate { left: 16px; } .mapFooter { margin-inline: 16px; flex-wrap: wrap; } }
 @media (max-width: 360px) { .root { padding-top: 18px; } .layout { padding-inline: 12px; } .header h1 { font-size: 24px; } .mapStage { height: 335px; min-height: 335px; } .inspector { padding: 22px 18px; } }
 @media (prefers-reduced-motion: no-preference) { .mapCamera { transition: transform 250ms ease; } }
-.trail { display: flex; flex-wrap: wrap; gap: 0.5rem; color: var(--secondary-ink); font-size: 0.875rem; }
+.trail { display: flex; flex-wrap: wrap; gap: 0.5rem; color: var(--secondary-ink); font-size: 0.75rem; margin-block: -12px -3px; }
 .trail a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
 .trail [aria-current] { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink); }
 .workbench { display: grid; grid-template-columns: minmax(0, 1fr) 322px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface); min-width: 0; }
@@ -206,3 +206,23 @@
   .mark { transition: width 160ms cubic-bezier(0.16, 1, 0.3, 1); }
 }
 @media (max-width: 360px) { .header h1 { font-size: 24px; } }
+.inspectorDistribution { padding-top: 20px; }
+.inspector .inspectorDistribution h3, .inspector .readingNote h3 { font-size: .8125rem; font-weight: 500; }
+.compositionStrip { display: flex; height: 6px; gap: 2px; margin: 12px 0 16px; overflow: hidden; }
+.compositionStrip span { min-width: 0; flex-shrink: 1; }
+.inspectorDistribution ul { padding: 0; margin: 0; list-style: none; display: grid; gap: 12px; }
+.inspectorDistribution li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; font-size: .8125rem; }
+.inspectorDistribution i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; }
+.inspectorDistribution strong { font: 400 .8125rem var(--font-mono); }
+.inspector .inspectorDistribution p { margin-top: 16px; font-size: .8125rem; color: var(--muted-ink); }
+.readingNote { border-top: 1px solid var(--border); padding-top: 17px; margin-top: 20px; }
+.inspector .readingNote p { margin-top: 8px; font-size: .8125rem; color: var(--secondary-ink); }
+@media (max-width: 480px) {
+  .territoryLabel { left: 16px; top: 55px; transform: none; max-width: 60%; padding: 7px 8px; gap: 6px; }
+  .territoryLabel strong { font-size: 12px; line-height: 1.3; }
+  .territoryLabel small { font-size: 11px; line-height: 1.3; }
+  .territoryLabel > svg { width: 14px; height: 14px; }
+  .territoryLabel > svg:last-child { display: none; }
+  .mapControls { right: 8px; bottom: 48px; }
+}
+
