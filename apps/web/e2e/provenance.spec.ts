@@ -30,6 +30,10 @@ const identity = resultScenarioIdentity(SPEC);
 const { scope: SOURCE_SCOPE, seed: SOURCE_ISOLATION_FIXTURE } =
   sourceIsolationFixture(SPEC);
 const baseURL = scenarioBaseUrl(SPEC, environment);
+// The renderer moved into the workbench; the Argentina heading now labels supporting evidence.
+function nationalReferenceStage(page: Page) {
+  return page.getByRole("region", { name: "Mapa territorial de referencia", exact: true });
+}
 // The badge marker rendered only when a figure's `sourceKind` is
 // `fiscalizacion` (see `src/components/GranularityBadge.tsx` /
 // `SourceDisclaimer.tsx`, task 11.17). No page rendered without an
@@ -94,7 +98,7 @@ test("national reference links and no-WebGL polar view preserve exact selection"
       } as typeof original;
     });
     await page.goto(new URL("/drilldown", baseURL).toString());
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
     await expect(national).toContainText("WebGL no disponible");
@@ -119,7 +123,7 @@ test("national reference renders both views on desktop and mobile without changi
     const cdp = await page.context().newCDPSession(page);
     const beforeHeap = await cdp.send("Runtime.getHeapUsage");
     const started = Date.now();
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     const continental = national.getByRole("region", { name: "Vista continental americana" });
     const polar = national.getByRole("region", { name: "Vista completa desde el polo sur" });
     try {
@@ -247,14 +251,23 @@ test("national reference renders both views on desktop and mobile without changi
 
 test("national reference integrity failure leaves exact selectors available for retry", async ({ page }) => {
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
-    await page.route("**/geography/argentina-reference.*.geojson", (route) => route.fulfill({ status: 200, body: "{}" }));
+    let corrupt = true;
+    await page.route("**/geography/argentina-reference.*.geojson", (route) => corrupt
+      ? route.fulfill({ status: 200, body: "{}" }) : route.continue());
     await page.goto(new URL("/drilldown", baseURL).toString());
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national).toContainText("No se pudo verificar la referencia IGN");
     await expect(national.getByRole("img", { name: /Extensión completa/ })).toHaveCount(0);
     await expect(national.getByRole("button", { name: "Reintentar mapa nacional" })).toBeEnabled();
-    await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeEnabled();
+    const election = page.getByRole("combobox", { name: "Elección", exact: true });
+    await expect(election).toBeEnabled();
+    await expect(election).toHaveValue("");
+    corrupt = false;
+    await national.getByRole("button", { name: "Reintentar mapa nacional" }).click();
+    await expect(national).toContainText("Referencia IGN verificada");
+    await expect(national.getByRole("img", { name: /Extensión completa/ })).toBeVisible();
+    await expect(election).toHaveValue("");
   }));
 });
 
@@ -262,7 +275,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto(new URL("/drilldown", baseURL).toString());
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     const activation = national.getByRole("button", { name: "Mostrar referencia nacional" });
     await activation.focus();
     await expect(activation).toBeFocused();
@@ -310,7 +323,7 @@ test.describe("national reference touch", () => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(new URL("/drilldown", baseURL).toString());
-      const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+      const national = nationalReferenceStage(page);
       await national.getByRole("button", { name: "Mostrar referencia nacional" }).tap();
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
@@ -347,7 +360,7 @@ zoomTest.describe("national reference at native 200% zoom", () => {
       expect(Math.abs(after.client - before.client / 2)).toBeLessThanOrEqual(20);
       expect(after.outer).toBe(before.outer);
       expect(Math.abs(after.inner - 320)).toBeLessThanOrEqual(2);
-      const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+      const national = nationalReferenceStage(page);
       await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
