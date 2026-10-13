@@ -805,7 +805,7 @@ test.describe("the review route reflects the disposable database", () => {
     // Layout/touch checks may move the page; prove denial at the review destination,
     // not whichever sidebar link happens to be last in the redesigned navigation.
     const reviewLink = page.getByRole("navigation", { name: "principal", exact: true })
-      .getByRole("link", { name: "Evidencia", exact: true });
+      .getByRole("link", { name: "Revisión de datos", exact: true });
     await expect(reviewLink).toHaveAttribute("href", "/review");
     await reviewLink.click();
     await expect(page).toHaveURL(/\/review$/);
