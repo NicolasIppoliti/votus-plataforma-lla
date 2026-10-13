@@ -1,0 +1,60 @@
+.page { min-width: 0; color: var(--ink, #edf5f7); }
+.heading { margin-bottom: 26px; }
+.heading h1 { margin: 0; font-size: 34px; font-weight: 500; line-height: 1.18; letter-spacing: -.7px; }
+.heading p { color: #b9c8d2; font-size: 14px; margin: 8px 0; }
+.heading p:first-child { font-size: 13px; margin-bottom: 9px; }
+.context { display: grid; grid-template-columns: 1.2fr 1fr .85fr 1.2fr; gap: 16px; padding: 16px 0; border-block: 1px solid #284255; }
+.context > div { min-width: 0; }
+.context span, .context label { display: block; color: #b9c8d2; font-size: 13px; margin-bottom: 5px; }
+.context strong, .context select { display: block; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #355367; border-radius: 5px; background: #0d2130; font-size: 14px; font-weight: 400; overflow-wrap: anywhere; }
+.notice { color: #efc58c; border-left: 2px solid #efc58c; padding: 8px 12px; font-size: 13px; margin: 17px 0 19px; background: #171c20; }
+.workbench { display: grid; grid-template-columns: minmax(0, 1fr) 310px; border: 1px solid #2b4658; border-radius: 9px; background: #0d1d2b; overflow: hidden; }
+.map { min-width: 0; background: #091724; }
+.trail { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 20px 0; }
+.trail button { color: #b9c8d2; padding: 6px 0; min-height: 44px; border: 0; background: none; font-size: 13px; cursor: pointer; }
+.trail button[aria-current] { color: #65e5f2; }
+.trail button + button::before { content: '/'; margin-right: 8px; color: #91a9b9; }
+.mapTitle { padding: 8px 20px 18px; }
+.page h2 { font-size: 17px; font-weight: 500; margin: 0 0 12px; }
+.mapTitle h2 { font-size: 24px; letter-spacing: -.4px; }
+.mapTitle p { font-size: 13px; color: #b9c8d2; margin: 0; }
+/* The shared stage supplies verified geometry and accessible camera controls.
+   Its Exploration-only winner heading is redundant with this overview heading. */
+.map > section { border: 0; border-radius: 0; }
+.map > section > header { display: none; }
+.noMap { min-height: 420px; display: flex; flex-direction: column; justify-content: center; padding: 24px; background: #091724; color: #b9c8d2; }
+.summary { border-left: 1px solid #284255; padding: 24px 22px 18px; min-width: 0; }
+.summary p { font-size: 13px; color: #b9c8d2; line-height: 1.7; }
+.summary > p[role=status] { color: #efc58c; }
+.leader { padding: 14px 0; border-block: 1px solid #284255; }
+.leader > span { font-size: 13px; color: #b9c8d2; }
+.leader > strong { display: block; font-size: 25px; font-weight: 500; margin-top: 4px; overflow-wrap: anywhere; }
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.metrics span { display: block; }
+.metrics b { display: block; font-size: 20px; font-weight: 400; color: #edf5f7; font-variant-numeric: tabular-nums; }
+.totals dt { color: #b9c8d2; font-size: 13px; }
+.totals dd { margin: 5px 0 15px; font-size: 27px; font-variant-numeric: tabular-nums; }
+.distribution { list-style: none; padding: 14px 0 0; border-top: 1px solid #284255; }
+.distribution li { display: grid; gap: 5px; margin-top: 12px; font-size: 13px; }
+.distribution meter { width: 100%; height: 8px; accent-color: #65e5f2; }
+.observations { padding: 22px 0 18px; border-bottom: 1px solid #284255; }
+.observations ul { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px; }
+.observations li { border-left: 2px solid #284255; padding-left: 12px; font-size: 14px; line-height: 1.8; color: #b9c8d2; }
+.evidence { padding: 22px 0; }
+.evidence p { color: #b9c8d2; font-size: 14px; overflow-wrap: anywhere; }
+.evidence summary { min-height: 44px; padding-block: 10px; cursor: pointer; }
+.routes, .secondary { border-top: 1px solid #284255; padding-top: 20px; }
+.routes > p { color: #efc58c; font-size: 13px; }
+.routes > ul { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 22px; }
+.routes ul, .secondary ul { list-style: none; padding: 0; }
+.routes li a, .secondary li a { display: block; text-decoration: none; padding: 10px 0 16px; border-bottom: 1px solid #284255; min-height: 44px; }
+.routes li strong, .secondary li strong { display: flex; justify-content: space-between; color: #65e5f2; font-size: 14px; font-weight: 500; }
+.routes li span, .secondary li span { display: block; font-size: 14px; color: #b9c8d2; margin-top: 5px; line-height: 1.8; }
+.attention { margin: 20px 0; }
+.attention > p { font-size: 13px; color: #b9c8d2; }
+.secondary ul { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px; }
+.footer { border-top: 1px solid #284255; margin-top: 25px; padding: 22px 0; color: #b9c8d2; font-size: 13px; }
+.page :focus-visible { outline: 2px solid #65e5f2; outline-offset: 3px; }
+@media (max-width: 1100px) { .context { grid-template-columns: repeat(2,minmax(0,1fr)); } .workbench { grid-template-columns: minmax(0,1fr) 285px; } .observations ul { grid-template-columns: 1fr; gap: 12px; } }
+@media (max-width: 900px) { .workbench { grid-template-columns: minmax(0,1fr); } .summary { border-left: 0; border-top: 1px solid #284255; } }
+@media (max-width: 650px) { .heading h1 { font-size: 30px; } .context { gap: 14px 12px; } .trail { padding-inline: 15px; } .mapTitle { padding-inline: 15px; } .summary { padding: 20px 17px 16px; } .routes > ul, .secondary ul { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; } .noMap { min-height: 290px; } }

@@ -2,48 +2,28 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { ReviewAttention } from "./WorkspacePresentation";
+import { Panorama } from "./panorama/Panorama";
+import type { PanoramaData } from "./panorama/load-panorama";
+import styles from "./panorama/panorama.module.css";
 
-function Workflow({ href, title, children }: { href: string; title: string; children: ReactNode }) {
-  const descriptionId = `workflow-${href.slice(1)}-description`;
-  return (
-    <li className="briefing-workflow">
-      <Link href={href} aria-label={title} aria-describedby={descriptionId}>
-        <span className="briefing-workflow__copy">
-          <span className="briefing-workflow__title">{title}</span>
-          <span id={descriptionId} className="briefing-workflow__description">{children}</span>
-        </span>
-        <ArrowUpRight size={18} strokeWidth={1.75} aria-hidden="true" />
-      </Link>
-    </li>
-  );
+function Workflow({ href, id, title, children }: { href: string; id: string; title: string; children: ReactNode }) {
+  const descriptionId = `workflow-${id}-description`;
+  return <li><Link href={href} aria-label={title} aria-describedby={descriptionId}><strong>{title}<ArrowUpRight size={18} aria-hidden="true" /></strong><span id={descriptionId}>{children}</span></Link></li>;
 }
 
-export function OperationalBriefing(): ReactNode {
-  return (
-    <main className="operational-briefing">
-      <header className="briefing-heading">
-        <h1>Panel operativo</h1>
-        <p>Consulte resultados, contraste elecciones y explore escenarios.</p>
-      </header>
-      <div className="briefing-grid">
-        <section className="briefing-panel briefing-work" aria-labelledby="briefing-official-heading">
-          <h2 id="briefing-official-heading">Resultados oficiales</h2>
-          <ul>
-            <Workflow href="/drilldown" title="Explorar resultados">Elección, categoría y territorio. Tabla exacta y nivel real de la fuente.</Workflow>
-            <Workflow href="/compare" title="Comparar elecciones">Elecciones nacionales de 2023 y 2025. Sección compartida y evidencia independiente.</Workflow>
-            <Workflow href="/municipal" title="Resultados municipales">Coronel Rosales · Concejales 2025. Elección configurada.</Workflow>
-          </ul>
-        </section>
-        <ReviewAttention />
-        <section className="briefing-panel briefing-separate" aria-labelledby="briefing-separate-heading">
-          <h2 id="briefing-separate-heading">Flujos separados</h2>
-          <ul>
-            <Workflow href="/fiscalizacion" title="Cobertura y resultados">Fiscalización no oficial, por acceso explícito. La cobertura no es una muestra aleatoria.</Workflow>
-            <Workflow href="/simulate" title="Simular escenario">Hipótesis de asignación. No es una predicción ni un resultado histórico.</Workflow>
-          </ul>
-        </section>
-      </div>
-      <p className="briefing-scope">Las consultas conservan el alcance de cada fuente. La disponibilidad depende del territorio y del acceso autorizado.</p>
-    </main>
-  );
+export function OperationalBriefing({ data = { href: "/drilldown", exclusions: [] } }: { data?: PanoramaData }): ReactNode {
+  return <main className={styles.page}>
+    <header className={styles.heading}><p>Espacio de trabajo / Panorama</p><h1>Panorama</h1><p>Una lectura del territorio. Un punto de partida para el análisis.</p></header>
+    <Panorama data={data} />
+    <section className={styles.routes} aria-labelledby="panorama-routes"><h2 id="panorama-routes">Continuar el análisis</h2><p>Exploración conserva la selección oficial verificada. Los demás módulos abren su contexto inicial.</p><ul>
+      <Workflow href={data.href} id="drilldown" title="Explorar resultados">Exploración · Resultados oficiales. Tabla exacta y nivel real de la fuente.</Workflow>
+      <Workflow href="/compare" id="compare" title="Comparar elecciones">Comparación · Contrastar bases y reconocer sus condiciones de comparabilidad.</Workflow>
+      <Workflow href="/simulate" id="simulate" title="Simular escenario">Simulación · Hipótesis de asignación. No es una predicción ni un resultado histórico.</Workflow>
+    </ul><div className={styles.attention}><ReviewAttention /><p>Evidencia abre la revisión de datos disponible en este workspace.</p></div></section>
+    <section className={styles.secondary} aria-labelledby="panorama-separated"><h2 id="panorama-separated">Otros alcances · flujos separados</h2><ul>
+      <Workflow href="/municipal" id="municipal" title="Resultados municipales">Coronel Rosales · Concejales 2025. Elección configurada.</Workflow>
+      <Workflow href="/fiscalizacion" id="fiscalizacion" title="Cobertura y resultados">Fiscalización no oficial, por acceso explícito. La cobertura no es una muestra aleatoria.</Workflow>
+    </ul></section>
+    <p className={styles.footer}>Las consultas conservan el alcance de cada fuente. La disponibilidad depende del territorio y del acceso autorizado.</p>
+  </main>;
 }

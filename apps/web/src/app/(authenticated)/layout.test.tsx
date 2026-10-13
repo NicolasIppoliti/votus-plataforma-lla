@@ -4,8 +4,13 @@ import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
 import SessionMonitor from "@/components/SessionMonitor";
 import AuthenticatedLayout from "./layout";
-import OperationalBriefingPage from "./page";
+import HomePage from "./page";
+import { OperationalBriefing as OperationalBriefingPage } from "./OperationalBriefing";
 
+const panorama = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));
+vi.mock("@/lib/workspace/official-facets", () => ({ createAuthorizedOfficialFacetRepository: () => ({ facets: panorama.facets }) }));
+vi.mock("@/lib/workspace/official-drilldown-evidence", () => ({ loadAuthorizedOfficialDrilldownEvidence: panorama.evidence }));
+panorama.facets.mockRejectedValue(new Error("unavailable"));
 const navigation = vi.hoisted(() => ({ pathname: "/" }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 const supabase = vi.hoisted(() => ({
@@ -320,6 +325,39 @@ it("keeps workspace and account below navigation, offers no theme choice, and on
   expect(topbar).toContain("Abrir navegación");
   expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(5);
   expect(currentPrimaryHrefs(markup)).toEqual(["/compare"]);
+});
+
+it("renders the real Panorama page with an explicit unavailable default and map-first summary", async () => {
+  const markup = renderToStaticMarkup(await HomePage() as ReactElement);
+  expect(markup).toContain("<h1>Panorama</h1>");
+  expect(markup).toContain('aria-label="Panorama territorial"');
+  expect(markup).toContain("La selección oficial predeterminada no está disponible.");
+  expect(markup).toContain("Lectura de la selección");
+  expect(markup).not.toContain("27.400.000");
+});
+
+it("resolves only the uniquely authorized Rosales scope and links its real explorer", async () => {
+  panorama.facets.mockResolvedValueOnce({ elections: [{ id: "election-2025", year: 2025, round: "legislativas" }] });
+  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "DIPUTADO NACIONAL" }] });
+  panorama.facets.mockResolvedValueOnce({ distritos: [{ code: "02" }], secciones: [{ code: "027" }], availableLevels: ["seccion"], exclusions: [] });
+  panorama.evidence.mockResolvedValueOnce({ status: "authorization_denied" });
+  const markup = renderToStaticMarkup(await HomePage() as ReactElement);
+  expect(panorama.evidence).toHaveBeenLastCalledWith({ electionId: "election-2025", categoryId: "deputies", distritoCode: "02", seccionCode: "027", requestedLevel: "seccion", circuitoCode: null, establecimientoCode: null, mesaCode: null });
+  expect(markup).toContain("Acceso a resultados oficiales denegado");
+  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
+  expect(markup).not.toContain("Votos positivos oficiales</dt>");
+});
+
+it.each([
+  [[]],
+  [[{ id: "a", year: 2023, round: "legislativas" }]],
+  [[{ id: "a", year: 2025, round: "legislativas" }, { id: "b", year: 2025, round: "legislativas" }]],
+])("never falls back from an absent or ambiguous 2025 election %j", async elections => {
+  panorama.evidence.mockClear();
+  panorama.facets.mockResolvedValueOnce({ elections });
+  const markup = renderToStaticMarkup(await HomePage() as ReactElement);
+  expect(markup).toContain("La selección oficial predeterminada no está disponible.");
+  expect(panorama.evidence).not.toHaveBeenCalled();
 });
 
 it("offers each home workflow once and keeps source qualifications next to its task", async () => {

@@ -6,7 +6,7 @@ import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
 
 const environment = assertE2eEnvironment(process.env);
-const ROOT_CONTENT = "Panel operativo";
+const ROOT_CONTENT = "Panorama";
 
 async function expectNoSevereAccessibilityIssues(page: Page) {
   const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
@@ -358,12 +358,12 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
   });
 });
 
-test("briefing places attention beside desktop actions and after mobile actions", async ({ page }) => {
+test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   await expect(heading).toBeVisible();
-  await expect(heading).toHaveCSS("font-size", "32px");
+  await expect(heading).toHaveCSS("font-size", "34px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();
   const attention = main.getByRole("complementary", { name: "Atención operativa" });
@@ -371,16 +371,24 @@ test("briefing places attention beside desktop actions and after mobile actions"
   const attentionBox = await attention.boundingBox();
   expect(actionBox).not.toBeNull();
   expect(attentionBox).not.toBeNull();
-  expect(attentionBox!.x).toBeGreaterThan(actionBox!.x + actionBox!.width);
+  expect(attentionBox!.y).toBeGreaterThan(actionBox!.y + actionBox!.height);
+  const map = main.getByRole("region", { name: "Mapa territorial de referencia" });
+  const summary = main.getByRole("complementary", { name: "Lectura de la selección" });
+  const mapBox = await map.boundingBox();
+  const summaryBox = await summary.boundingBox();
+  expect(summaryBox!.x).toBeGreaterThanOrEqual(mapBox!.x + mapBox!.width);
   await expectNoSevereAccessibilityIssues(page);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     const action = await explore.boundingBox();
     const rail = await attention.boundingBox();
+    const mobileMap = await map.boundingBox();
+    const mobileSummary = await summary.boundingBox();
+    expect(mobileSummary!.y).toBeGreaterThanOrEqual(mobileMap!.y + mobileMap!.height);
     expect(action!.y + action!.height).toBeLessThan(rail!.y);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     for (const href of ["/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate", "/review"]) {
-      await expect(main.locator(`a[href="${href}"]`).first()).toBeVisible();
+      await expect(main.locator(`a[href^="${href}"]`).first()).toBeVisible();
     }
     await expectNoSevereAccessibilityIssues(page);
     await page.getByRole("button", { name: "Abrir navegación" }).click();
@@ -428,7 +436,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/$/);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Panel operativo" }),
+      page.getByRole("heading", { level: 1, name: ROOT_CONTENT }),
     ).toBeVisible();
     const topbar = page.locator("header.workspace-topbar");
     const desktopSidebar = page.locator(".app-shell > aside.situation-sidebar");
@@ -633,8 +641,8 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(desktopNavigation.getByRole("link", { name: "Evidencia", exact: true })).toHaveAttribute("href", "/evidencia");
     await expect(desktopNavigation.getByRole("link", { name: "Revisión de datos", exact: true })).toHaveAttribute("href", "/review");
 
-    const officialRoutes = page.getByRole("main").getByRole("region", { name: "Resultados oficiales", exact: true });
-    await expect(officialRoutes).toContainText("Sección compartida y evidencia independiente.");
+    const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
+    await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
     await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
     await expect(officialRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
     await expect(officialRoutes.getByRole("link", { name: "Resultados municipales" })).toHaveAttribute("href", "/municipal");
