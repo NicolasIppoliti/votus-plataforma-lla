@@ -123,9 +123,9 @@
 .filter label, .filterLabel { display: block; color: var(--secondary-ink); margin-bottom: 5px; }
 .filterSummary { display: flex; align-items: center; gap: 10px; color: var(--secondary-ink); font-size: 0.8125rem; align-self: center; }
 .filterSummary small { display: block; color: var(--muted-ink); margin-top: 3px; }
-.territoryPicker { position: relative; }
 .territoryPicker summary { min-height: 44px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; font-size: 0.875rem; overflow-wrap: anywhere; }
-.territoryOptions { position: absolute; top: calc(100% + 6px); z-index: 5; left: 0; width: max(100%, 240px); max-width: calc(100vw - 48px); display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border); background: var(--surface); border-radius: 5px; box-shadow: 0 12px 35px #0003; }
+/* In flow, never floating: an open picker must not cover the pending-state recovery action. */
+.territoryOptions { margin-top: 6px; width: 100%; display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border); background: var(--surface); border-radius: 5px; box-shadow: 0 12px 35px #0003; }
 .filters label { font-size: 0.8125rem; font-weight: 500; }
 .filters select { width: 100%; max-width: 100%; min-width: 0; min-height: 2.75rem; border-radius: 0.1875rem; font-size: 0.875rem; }
 .filters select:disabled { color: var(--muted-ink); background: var(--surface-muted); }
