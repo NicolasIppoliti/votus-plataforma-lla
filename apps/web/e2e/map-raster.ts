@@ -13,7 +13,11 @@ export function alignedOccupiedGeometry(first: Raster, firstFill: readonly numbe
   if (first.width !== second.width || first.height !== second.height || first.width <= 0 || first.height <= 0) return false;
   const a = occupiedPixels(first, firstFill, minimum), b = occupiedPixels(second, secondFill, minimum);
   if (!a.length || !b.length) return false;
+  // A pixel rendered identically in both views cannot evidence a geometric offset, even when an
+  // antialiased outline tone happens to fall inside only one side's fill tolerance.
+  const identical = (index: number) => [0, 1, 2, 3].every((component) => first.rgba[index * 4 + component] === second.rgba[index * 4 + component]);
   const nearby = (source: number[], target: Set<number>) => source.every((index) => {
+    if (identical(index)) return true;
     const x = index % first.width, y = Math.floor(index / first.width);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const nx = x + dx, ny = y + dy;

@@ -7,10 +7,11 @@
 .spatialTicks { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-size: 0.75rem; }
 .spatialPair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-block: 1px solid var(--border); }
 .spatialPair article { min-width: 0; padding: 16px 12px; }
-.spatialPair article + article { border-left: 1px solid var(--border); }
+/* Separator must not take layout width: both paired maps keep identical viewports. */
+.spatialPair article + article { box-shadow: inset 1px 0 0 var(--border); }
 .spatialPair article > p { color: var(--secondary-ink); }
 .spatialPair article > div { background-image: linear-gradient(#28425540 1px, transparent 1px), linear-gradient(90deg, #28425540 1px, transparent 1px); background-size: 24px 24px; }
-@media (max-width: 760px) { .spatialPair { grid-template-columns: minmax(0, 1fr); } .spatialPair article + article { border-left: 0; border-top: 1px solid var(--border); } }
+@media (max-width: 760px) { .spatialPair { grid-template-columns: minmax(0, 1fr); } .spatialPair article + article { box-shadow: inset 0 1px 0 var(--border); } }
 @media (max-width: 47.999rem) { .spatialPair { grid-template-columns: minmax(0, 1fr); } }
 
 .guidance {
