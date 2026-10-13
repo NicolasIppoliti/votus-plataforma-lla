@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   bundle: vi.fn(),
   internas: vi.fn(),
   completeness: vi.fn(),
+  circuits: vi.fn(),
   createClient: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ vi.mock("@/lib/workspace/context", () => ({
   authorizedOfficialBundle: mocks.bundle,
   authorizedOfficialInternalLists: mocks.internas,
   authorizedOfficialSectionCompleteness: mocks.completeness,
+  authorizedOfficialSectionCircuitOutcomes: mocks.circuits,
 }));
 vi.mock("@/lib/workspace/official-facets", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/workspace/official-facets")>();
@@ -80,6 +82,7 @@ function unavailableBundle() {
 
 describe("DrilldownPage authorized official evidence", () => {
   beforeEach(() => {
+    mocks.circuits.mockReset();
     mocks.facets.mockReset().mockResolvedValue(FACETS);
     mocks.bundle.mockReset().mockResolvedValue(authorizedBundle());
     mocks.internas.mockReset();
@@ -92,6 +95,58 @@ describe("DrilldownPage authorized official evidence", () => {
   async function render(params: Record<string, string | string[] | undefined> = COMPLETE_SECTION): Promise<string> {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
+
+  it("reaches circuit legend and exact provisional table through the real page", async () => {
+    mocks.circuits.mockResolvedValue({
+      status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+      circuit_membership: "known", category_applicability: "district_reported_categories", truncated: false,
+      unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0,
+        membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 },
+      circuits: [
+        { circuito_code: "00248", positive_total: 100, status: "partial",
+          counts: { expected: 3, counted: 2, not_counted: 1, missing: 0, unexpected: 0, quarantined: 0 },
+          parties: [{ identity_status: "unmapped", canonical_party_id: null, display_name: null, list_id: "110", votes: 60 },
+            { identity_status: "canonical", canonical_party_id: "other", display_name: "Otra agrupación", list_id: null, votes: 40 }] },
+        { circuito_code: "0248B", positive_total: 20, status: "complete",
+          counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 },
+          parties: [{ identity_status: "canonical", canonical_party_id: "a", display_name: "Agrupación A", list_id: null, votes: 10 },
+            { identity_status: "canonical", canonical_party_id: "b", display_name: "Agrupación B", list_id: null, votes: 10 }] },
+        { circuito_code: "0248C", positive_total: 0, status: "complete",
+          counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 }, parties: [] },
+      ],
+    });
+    const markup = await render();
+    for (const text of ["Resultados por circuito", "Geometría de referencia CNE; no certificada como límite electoral 2025",
+      "&lt;5 pp", "5–15 pp", "&gt;15 pp", "provisorio · 66 % de mesas", "Lista sin mapear 110", "Empate",
+      "Sin votos positivos", "superposición en la fuente", "Margen pp", "Votos positivos", "Mesas escrutadas/esperadas"])
+      expect(markup).toContain(text);
+    expect(markup).toContain('data-hatched="true"');
+    expect(markup).toContain("20.00");
+    expect(mocks.circuits).toHaveBeenCalled();
+  });
+
+  it("does not show a circuit map when independent membership is unknown", async () => {
+    mocks.circuits.mockResolvedValue({ status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+      circuit_membership: "unknown", circuits: [], truncated: false,
+      unassigned: { catalogue_mesas_without_membership: 3, membership_quarantined_mesas: 0, membership_quarantine_reasons: {},
+        completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 } });
+    const markup = await render();
+    expect(markup).toContain("Pertenencia de mesas a circuitos desconocida: no se muestra un mapa de circuitos.");
+    expect(markup).not.toContain("Mostrar mapa de circuitos");
+  });
+
+  it("does not show figures from a non-reconciling circuit payload", async () => {
+    mocks.circuits.mockResolvedValue({ status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+      circuit_membership: "known", category_applicability: "district_reported_categories", truncated: false,
+      unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0, membership_quarantine_reasons: {},
+        completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 },
+      circuits: [{ circuito_code: "00248", positive_total: 999999, parties: [], status: "complete",
+        counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 } }] });
+    const markup = await render();
+    expect(markup).toContain("Resultados por circuito no disponibles.");
+    expect(markup).not.toContain("999999");
+    expect(markup).not.toContain("Mostrar mapa de circuitos");
+  });
 
   it("reaches exact official internas through the rendered PASO page", async () => {
     const bundle = authorizedBundle();

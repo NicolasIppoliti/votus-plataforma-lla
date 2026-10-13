@@ -175,6 +175,10 @@ export async function authorizedOfficialInternalLists(client: SupabaseClient, se
   return rpcData(await verifiedWorkspaceApi(client), "official_internal_lists", officialSectionParameters(selection));
 }
 
+export async function authorizedOfficialSectionCircuitOutcomes(client: SupabaseClient, selection: OfficialSectionSelection) {
+  return rpcData(await verifiedWorkspaceApi(client), "official_section_circuit_outcomes", officialSectionParameters(selection));
+}
+
 export async function authorizedOfficialSectionCompleteness(client: SupabaseClient, selection: OfficialSectionSelection) {
   return rpcData(await verifiedWorkspaceApi(client), "official_section_completeness", officialSectionParameters(selection));
 }

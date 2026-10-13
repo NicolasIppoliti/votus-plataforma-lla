@@ -76,6 +76,10 @@ test("official section completeness is disclosed through the real RPC", async ({
     // The paragraph also states the category assumption; anchor the exact count sentence at its start.
     const completeness = page.getByText(/^Escrutinio parcial: 1 de 3 mesas esperadas escrutadas; 1 no escrutadas; 1 sin estado en la fuente; 0 fuera del catálogo\. Supone que todas las mesas esperadas de la sección votan esta categoría\.$/);
     await expect(completeness).toBeVisible();
+    const circuits = page.getByRole("region", { name: "Resultados exactos por circuito", exact: true });
+    await expect(circuits.getByRole("row").filter({ has: page.getByRole("button", { name: "00001", exact: true }) })).toContainText("provisorio · 50 % de mesas");
+    await expect(circuits.getByRole("row").filter({ has: page.getByRole("button", { name: "00002", exact: true }) })).toContainText("Sin votos positivos");
+    await expect(circuits.getByRole("row")).toHaveCount(3);
   }));
 });
 

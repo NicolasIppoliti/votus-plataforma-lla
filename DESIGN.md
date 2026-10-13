@@ -215,9 +215,17 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 
 ## Target Territorial Workspace
 
-**Delivery state:** not implemented. Existing routes remain selector/chart/table-first;
-one partido reference is archived and structurally validated, but terrain, child
-geography and production scene contracts remain future work. The
+**Delivery state:** routes remain selector/chart/table-first; `/drilldown` now adds
+an exact-section circuit outcomes table through the authorized official RPC. Coronel
+Rosales has an optional, lazily loaded 10-circuit SVG from the existing checksum-pinned
+CNE reference. All-group leadership uses three margin bands over positive votes;
+partial leadership is explicitly provisional and hatched. Ties and zero-positive
+circuits are neutral. The 0248B/0248C intersection is neutral and hatched via SVG
+clipping, without repairing either polygon. Reference provenance and unknown electoral
+applicability stay inline. No curated canonical party-color source was found: the
+labeled palette is categorical by canonical identity, not asserted party branding.
+Unmapped identities remain neutral and explicitly named. Terrain, broader child
+geography, navigator replacement and production scene contracts remain future work. The
 [proposal](docs/proposals/2026-09-22-3d-electoral-heroes-and-navigation.md) defines the
 scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates delivery.
 
@@ -227,7 +235,9 @@ scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates del
 - **Color:** Geographic units use the canonical winning party/alliance color with
   ballot label and legend. Ties have no selected winner; unmapped identity, missing
   observation, unavailable view and incomplete coverage each have distinct text and
-  non-color cues. No missing value becomes zero; incomplete totals imply no winner.
+  non-color cues. No missing value becomes zero; partial circuit leadership is
+  provisional, never a certified winner. Its hatched label floors counted/expected
+  coverage and never displays 100 % unless complete.
 - **Interaction:** Select/focus a unit to synchronize detail and exact evidence;
   explicit drilldown changes served scope and camera together. Breadcrumbs, back,
   reset-view and non-pointer controls preserve orientation. No hover-only evidence.

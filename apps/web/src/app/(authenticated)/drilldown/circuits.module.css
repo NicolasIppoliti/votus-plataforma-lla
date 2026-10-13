@@ -1,0 +1,6 @@
+.root { margin-block: 24px; padding: 16px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); min-width: 0; }
+.root p { margin-block: 8px; }
+.swatch { display: inline-block; width: 16px; height: 16px; margin-right: 8px; border: 1px solid var(--ink); }
+.select { min-height: 44px; min-width: 44px; padding: 8px; border: 1px solid var(--border); background: var(--surface-muted); color: var(--ink); cursor: pointer; }
+.select:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.root tr[aria-selected="true"] { outline: 2px solid var(--ink); outline-offset: -2px; }
