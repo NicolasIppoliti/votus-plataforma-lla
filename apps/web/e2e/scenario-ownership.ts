@@ -216,6 +216,12 @@ export function planCompletenessNaturalKeys(spec: string): string[] {
   ];
 }
 
+export function planCircuitMembershipNaturalKeys(spec: string): string[] {
+  planCompletenessNaturalKeys(spec);
+  const i = resultScenarioIdentity(spec);
+  return [1, 2, 3].map(m => `official_mesa_circuit_membership:${i.electionIds[0]}|${i.distritoCode}|${i.seccionCode}|${m}`);
+}
+
 export function planCompletenessCleanup(spec: string): string[] {
   planCompletenessNaturalKeys(spec);
   const archive = resultScenarioIdentity(spec).archiveEntryIds[0]!;

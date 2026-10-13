@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import styles from "./drilldown.module.css";
 import { InternalLists } from "./InternalLists";
+import { CircuitOutcomes } from "./CircuitOutcomes";
 import { DrilldownDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
@@ -233,6 +234,7 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
       </p>
       <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
       <SectionCompleteness completeness={evidence.completeness} selection={selection} />
+      {evidence.circuitOutcomes && <CircuitOutcomes outcomes={evidence.circuitOutcomes} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} />}
       {sourceExclusionNotes(result.sourceExclusions, "oficial")}
       <DrilldownDistribution result={result} />
       <TableRegion label="Votos oficiales y porcentaje por partido">

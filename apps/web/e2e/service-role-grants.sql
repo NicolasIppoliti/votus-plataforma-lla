@@ -11,7 +11,8 @@ on table public.party_canonical,
 public.party_mapping,
 public.list_identity,
 public.official_expected_mesa,
-public.official_mesa_count_status
+public.official_mesa_count_status,
+public.official_mesa_circuit_membership
 to service_role;
 
 grant insert (id, kind, severity, subject_ref, detected_at, note)

@@ -3570,12 +3570,23 @@ def cmd_reconcile_pba_pdf_evidence(args: argparse.Namespace) -> int:
     return 1 if report["failure_counts"] else 0
 
 
+def cmd_reconcile_cne_rosales_membership(args: argparse.Namespace) -> int:
+    from .circuit_membership import run
+
+    args.database_url = resolve_database_url(args.database_url)
+    return run(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m etl", description=__doc__)
     parser.add_argument("--sources-path", default=str(DEFAULT_SOURCES_PATH))
     parser.add_argument("--local-root", default=str(DEFAULT_LOCAL_ROOT))
     parser.add_argument("--manifest-path", default=str(DEFAULT_MANIFEST_PATH))
     subparsers = parser.add_subparsers(dest="command", required=True)
+    membership = subparsers.add_parser("reconcile-cne-rosales-membership")
+    membership.add_argument("--election-id", type=uuid.UUID, required=True)
+    membership.add_argument("--database-url")
+    membership.set_defaults(func=cmd_reconcile_cne_rosales_membership)
     reconciliation = subparsers.add_parser(
         "reconcile-pba-pdf-evidence", help="Read verified municipal PDF evidence; review required."
     )

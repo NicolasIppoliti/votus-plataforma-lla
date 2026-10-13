@@ -1,4 +1,13 @@
 import { expect, it } from "vitest";
+
+it("seeds two circuits with archive-owned membership for the real RPC", () => {
+  const { seed } = completenessFixture("e2e/provenance.spec.ts");
+  expect(seed.officialMesaCircuitMembership).toHaveLength(3);
+  expect(new Set(seed.officialMesaCircuitMembership!.map(row => row["circuito_code"])).size).toBe(2);
+  expect(assertResultFixtureOwnership("e2e/provenance.spec.ts", seed)).toHaveLength(2);
+  seed.officialMesaCircuitMembership![0]!["archive_entry_id"] = "foreign-archive";
+  expect(() => assertResultFixtureOwnership("e2e/provenance.spec.ts", seed)).toThrow("circuit membership seed does not exactly match owned identity");
+});
 import { assertResultFixtureOwnership, pasoFixture, completenessFixture } from "./result-fixture";
 import { pasoInternasFixture } from "./paso-internas-fixture";
 

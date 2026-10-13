@@ -1,4 +1,5 @@
 import "server-only";
+import { loadOfficialSectionCircuitOutcomes, type OfficialSectionCircuitOutcomes } from "./official-section-circuit-outcomes";
 import { loadOfficialInternalLists, type OfficialInternalLists } from "./official-internal-lists";
 import { loadOfficialSectionCompleteness, type OfficialSectionCompleteness } from "./official-section-completeness";
 
@@ -52,6 +53,7 @@ interface OfficialDrilldownEvidenceOk {
   reference: OfficialReferenceEvidence; provenance: OfficialProvenanceEvidence;
   internalLists?: OfficialInternalLists;
   completeness: OfficialSectionCompleteness;
+  circuitOutcomes?: OfficialSectionCircuitOutcomes;
 }
 interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes?: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
 interface OfficialDrilldownEvidenceAuthorizationDenied {
@@ -274,7 +276,11 @@ export async function loadAuthorizedOfficialDrilldownEvidence(selection: Officia
     // Section-level denominator, also for deeper selections; the page labels it section-wide.
     const completeness = await loadOfficialSectionCompleteness({ electionId: selection.electionId,
       categoryId: selection.categoryId, distritoCode: selection.distritoCode, seccionCode: selection.seccionCode });
+    const exactSection = selection.requestedLevel === "seccion" && selection.circuitoCode === null &&
+      selection.establecimientoCode === null && selection.mesaCode === null;
+    const circuitOutcomes = exactSection ? await loadOfficialSectionCircuitOutcomes({ electionId: selection.electionId,
+      categoryId: selection.categoryId, distritoCode: selection.distritoCode, seccionCode: selection.seccionCode }) : undefined;
     return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK, ...displayed, reference: safeReference,
-      provenance: safeProvenance, completeness, ...(internalLists ? { internalLists } : {}) };
+      provenance: safeProvenance, completeness, ...(circuitOutcomes ? { circuitOutcomes } : {}), ...(internalLists ? { internalLists } : {}) };
   } catch { return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE }; }
 }

@@ -8,6 +8,7 @@ import {
   planScenarioPartyCleanup,
   planScenarioPartyNaturalKeys,
   planResultNaturalKeys,
+  planCircuitMembershipNaturalKeys,
   planCompletenessNaturalKeys,
   planCompletenessCleanup,
   planResultCleanup,
@@ -23,6 +24,12 @@ import {
 } from "./result-fixture";
 
 describe("parallel scenario ownership", () => {
+  it("owns three circuit membership keys only for provenance", () => {
+    const spec = "e2e/provenance.spec.ts";
+    const i = resultScenarioIdentity(spec);
+    expect(planCircuitMembershipNaturalKeys(spec)).toEqual([1,2,3].map(m => `official_mesa_circuit_membership:${i.electionIds[0]}|${i.distritoCode}|${i.seccionCode}|${m}`));
+    expect(() => planCircuitMembershipNaturalKeys("e2e/municipal.spec.ts")).toThrow("unsupported completeness scenario");
+  });
   it("plans election-aware completeness natural keys and archive-owned cleanup", () => {
     const spec = "e2e/provenance.spec.ts";
     const identity = resultScenarioIdentity(spec);
