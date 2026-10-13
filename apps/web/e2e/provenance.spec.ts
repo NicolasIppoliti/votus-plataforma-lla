@@ -59,7 +59,8 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     await expect(region.getByRole("row").filter({ hasText: "Lista sin mapear" }).filter({ hasText: "0 votos" }).first()).toBeVisible();
     await expect(page.getByText(/Votos no positivos/)).toContainText("No disponible");
     await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).focus();
-    for (let i = 0; i < 12 && !await region.evaluate((element) => element === document.activeElement); i++) await page.keyboard.press("Tab");
+    // The map/table controls now precede PASO evidence; preserve keyboard reachability, not the old Tab distance.
+    for (let i = 0; i < 40 && !await region.evaluate((element) => element === document.activeElement); i++) await page.keyboard.press("Tab");
     await expect(region).toBeFocused();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const audit = await new AxeBuilder({ page }).analyze();
@@ -656,19 +657,35 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await expect(level).toBeFocused();
       } finally { releaseReversal(); await page.unrouteAll({ behavior: "wait" }); }
       const filters = explorer.getByRole("region", { name: "Elegir el alcance de los resultados", exact: true });
-      await expect.poll(async () => {
-        const [filterBox, resultBox, evidenceBox] = await Promise.all(
-          [filters, results, evidence].map((region) => region.evaluate((element) => {
-            const { top, bottom, left, right, width } = element.getBoundingClientRect();
-            return { top, bottom, left, right, width };
-          })),
-        );
-        return {
-          filtersAbove: filterBox!.bottom <= Math.min(resultBox!.top, evidenceBox!.top),
-          evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
-          fullWidth: Math.abs(resultBox!.width - evidenceBox!.width) <= 2 && Math.abs(resultBox!.width - filterBox!.width) <= 2,
-        };
-      }).toEqual({ filtersAbove: true, evidenceBelow: true, fullWidth: true });
+      const workbench = explorer.getByRole("region", { name: "Mesa de trabajo territorial", exact: true });
+      const map = workbench.getByRole("region", { name: "Mapa territorial de referencia", exact: true });
+      const inspector = workbench.getByRole("region", { name: "Detalle territorial", exact: true });
+      for (const [width, inspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect.poll(async () => {
+          const [filterBox, workBox, mapBox, detailBox, resultBox, evidenceBox] = await Promise.all(
+            [filters, workbench, map, inspector, results, evidence].map(region => region.evaluate(element => {
+              const { top, bottom, left, right, width } = element.getBoundingClientRect();
+              return { top, bottom, left, right, width };
+            })),
+          );
+          return {
+            filtersAbove: filterBox!.bottom <= workBox!.top,
+            workbenchAboveResults: workBox!.bottom <= resultBox!.top,
+            evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
+            inspectorGeometry: inspectorWidth === null
+              ? mapBox!.bottom <= detailBox!.top && Math.abs(mapBox!.width - detailBox!.width) <= 2
+              : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
+          };
+        }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        for (const link of await explorer.getByRole("navigation", { name: "Ruta de exploración" }).getByRole("link").all()) {
+          const box = await link.boundingBox();
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+          expect(box!.width).toBeGreaterThanOrEqual(44);
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
 
       await draft("Mesa", "");
       await draft("Nivel del informe", "establecimiento");

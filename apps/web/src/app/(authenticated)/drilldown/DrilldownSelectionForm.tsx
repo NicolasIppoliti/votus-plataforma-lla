@@ -27,6 +27,7 @@ interface Props {
   fields: SelectionField[];
   notes: ReactNode;
   children: ReactNode;
+  header?: ReactNode;
 }
 
 interface SelectionState {
@@ -43,7 +44,7 @@ const GROUPS = [
 
 const selectionKey = (values: ScopeControlValues) => canonicalScopeSearchParams(values).toString();
 
-export function DrilldownSelectionForm({ selected, fields, notes, children }: Props) {
+export function DrilldownSelectionForm({ selected, fields, notes, children, header }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const servedKey = selectionKey(selected);
@@ -89,6 +90,7 @@ export function DrilldownSelectionForm({ selected, fields, notes, children }: Pr
   const showEvidence = !isPending && selectionKey(state.draft) === servedKey;
 
   return <>
+    {showEvidence ? header : <header className={styles.header}><h1>Explorador oficial</h1></header>}
     <section className={styles.filters} aria-labelledby="explorer-form-heading">
       <div className="panel__heading">
         <h2 id="explorer-form-heading">Elegir el alcance de los resultados</h2>

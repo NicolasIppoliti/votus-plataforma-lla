@@ -1,5 +1,5 @@
 "use client";
-import { useState, type ComponentType } from "react";
+import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { TableRegion } from "@/components/TableRegion";
 import type { OfficialSectionCircuitOutcomes, CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
 import { circuitPresentation, circuitColor } from "@/lib/geography/circuit-presentation";
@@ -7,28 +7,44 @@ import type { CircuitMapProps } from "@/components/maps/CircuitReferenceSvg";
 import { loadCircuitGeometry } from "./circuit-geometry";
 import styles from "./circuits.module.css";
 
-export function CircuitOutcomes({ outcomes, rosales }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean }) {
+const CircuitSelection = createContext<{ selected: string | null; onSelect: (code: string) => void }>({ selected: null, onSelect: () => {} });
+export function CircuitSelectionProvider({ children }: { children: ReactNode }) {
+  const [selected, onSelect] = useState<string | null>(null);
+  return <CircuitSelection.Provider value={{ selected, onSelect }}>{children}</CircuitSelection.Provider>;
+}
+
+export function CircuitOutcomes({ outcomes, rosales, view = "table" }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean; view?: "map" | "table" }) {
   const [Map, setMap] = useState<ComponentType<CircuitMapProps> | null>(null);
   const [geometry, setGeometry] = useState<CircuitMapProps["geometry"] | null>(null);
-  const [loading, setLoading] = useState(false), [failed, setFailed] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const { selected, onSelect: setSelected } = useContext(CircuitSelection);
+  const eligible = view === "map" && rosales && outcomes.status === "ok" && outcomes.circuit_membership === "known";
+  useEffect(() => {
+    if (!eligible) return;
+    let active = true;
+    Promise.all([import("@/components/maps/CircuitReferenceSvg"), loadCircuitGeometry()])
+      .then(([module, asset]) => {
+        if (!active) return;
+        if (!asset) throw new Error("Reference unavailable");
+        setGeometry(asset); setMap(() => module.CircuitReferenceSvg);
+      }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [eligible, attempt]);
   if (outcomes.status !== "ok") return <p>Resultados por circuito no disponibles.</p>;
   const membershipUnknown = outcomes.circuit_membership === "unknown";
   const parties = new MapConstructor(outcomes.circuits.flatMap(c => c.parties).map(p => p.identity_status === "canonical"
     ? [p.canonical_party_id!, p.display_name!] as const : [`unmapped:${p.list_id}`, `Lista sin mapear ${p.list_id ?? "no identificada"}`] as const));
-  async function showMap() {
-    setLoading(true); setFailed(false);
-    try {
-      const [module, asset] = await Promise.all([import("@/components/maps/CircuitReferenceSvg"), loadCircuitGeometry()]);
-      if (!asset) throw new Error("Reference unavailable");
-      setGeometry(asset); setMap(() => module.CircuitReferenceSvg);
-    } catch { setFailed(true); }
-    finally { setLoading(false); }
-  }
   const u = outcomes.unassigned;
-  return <section className={styles.root} aria-labelledby="circuit-outcomes-heading">
-    <h3 id="circuit-outcomes-heading">Resultados por circuito</h3>
+  return <section className={styles.root} aria-labelledby={view === "map" ? "circuit-map-heading" : "circuit-outcomes-heading"}>
+    <h3 id={view === "map" ? "circuit-map-heading" : "circuit-outcomes-heading"}>{view === "map" ? "Mapa de circuitos" : "Resultados por circuito"}</h3>
+    {view === "map" && <>
     {membershipUnknown && <p>Pertenencia de mesas a circuitos desconocida: no se muestra un mapa de circuitos.</p>}
+    {!membershipUnknown && (rosales ? <>
+      {!Map && !failed && <p role="status">Preparando mapa de circuitos…</p>}
+      {failed && <><p role="alert">Geometría no disponible; consulte la tabla exacta.</p><button type="button" className={styles.select} onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>Reintentar mapa de circuitos</button></>}
+      {Map && geometry && <Map geometry={geometry} circuits={outcomes.circuits} selected={selected} onSelect={setSelected} />}
+    </> : <p>Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</p>)}
     <p>Fuente: oficial · Todas las agrupaciones. Margen: (1.º − 2.º) / votos positivos.</p>
     <p>Supone que todas las mesas esperadas votan las categorías informadas por el distrito.</p>
     <p>Sin asignar a circuito: {u.catalogue_mesas_without_membership} mesas del catálogo; {u.membership_quarantined_mesas} mesas con pertenencia en cuarentena; {u.completeness_quarantines} cuarentenas de completitud; {u.unexpected_status_mesas} estados inesperados.</p>
@@ -43,13 +59,9 @@ export function CircuitOutcomes({ outcomes, rosales }: { outcomes: OfficialSecti
         <p>Fuente: CNE · GeoJSON adjunto a correspondencia del 2026-10-09 (no es fecha de publicación). reference_only · Aplicabilidad electoral desconocida.</p>
         <p>0248B/0248C: superposición en la fuente · área compartida neutra y rayada; sin reparación.</p></>}
     </div>
-    {!membershipUnknown && (rosales ? <>
-      {!Map && <button type="button" className={styles.select} onClick={showMap} disabled={loading}>{loading ? "Cargando circuitos…" : "Mostrar mapa de circuitos"}</button>}
-      {failed && <p role="alert">Geometría no disponible; consulte la tabla exacta.</p>}
-      {Map && geometry && <Map geometry={geometry} circuits={outcomes.circuits} selected={selected} onSelect={setSelected} />}
-    </> : <p>Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</p>)}
+    </>}
     <p role="status">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</p>
-    <TableRegion label="Resultados exactos por circuito">
+    {view === "table" && <TableRegion label="Resultados exactos por circuito">
       <table className="data-table"><caption>Resultados exactos por circuito</caption>
         <thead><tr>{["Circuito", "Ganador", "Margen pp", "Votos positivos", "Mesas escrutadas/esperadas", "Estado"].map(h => <th scope="col" key={h}>{h}</th>)}</tr></thead>
         <tbody>{outcomes.circuits.map((c: CircuitOutcome) => {
@@ -61,7 +73,7 @@ export function CircuitOutcomes({ outcomes, rosales }: { outcomes: OfficialSecti
               <div>no escrutadas: {c.counts.not_counted}; sin estado: {c.counts.missing}; inesperadas: {c.counts.unexpected}; cuarentena: {c.counts.quarantined}</div>
             </td></tr>;
         })}</tbody></table>
-    </TableRegion>
+    </TableRegion>}
   </section>;
 }
 // Avoid shadowing the JS collection with the lazy renderer state.

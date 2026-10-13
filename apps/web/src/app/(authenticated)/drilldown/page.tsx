@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import styles from "./drilldown.module.css";
 import { InternalLists } from "./InternalLists";
-import { CircuitOutcomes } from "./CircuitOutcomes";
+import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
@@ -44,6 +44,9 @@ interface DrilldownPageProps {
 interface ExplorerFormProps {
   facets: ExplorationFacets;
   children: ReactNode;
+  header?: ReactNode;
+  workbench?: boolean;
+  showTrail?: boolean;
   selected: {
     electionId?: string;
     categoryId?: string;
@@ -70,7 +73,7 @@ type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusalWithDetails = Exclude<EvidenceRefusal, { status: "authorization_denied" }>;
 
-function ExplorerForm({ facets, selected, children }: ExplorerFormProps): ReactNode {
+function ExplorerForm({ facets, selected, children, header }: ExplorerFormProps): ReactNode {
   const values = {
     electionId: selected.electionId ?? "",
     categoryId: selected.categoryId ?? "",
@@ -94,7 +97,7 @@ function ExplorerForm({ facets, selected, children }: ExplorerFormProps): ReactN
     { name: "mesaCode", id: "explorer-mesa", label: "Mesa", placeholder: "Cualquier mesa", options: facets.mesas.map((option) => ({ value: String(option.code), label: String(option.code) })) },
     { name: "level", id: "explorer-level", label: "Nivel del informe", placeholder: "Elegir un nivel", options: facets.availableLevels.map((level) => ({ value: level, label: level })) },
   ];
-  return <DrilldownSelectionForm selected={values} fields={fields} notes={facetExclusionNotes(facets.exclusions ?? [])}>
+  return <DrilldownSelectionForm selected={values} fields={fields} header={header} notes={facetExclusionNotes(facets.exclusions ?? [])}>
     {children}
   </DrilldownSelectionForm>;
 }
@@ -206,11 +209,24 @@ function SectionCompleteness({ completeness, selection }: { completeness: Eviden
   return <p>{summary}{scope} Supone que todas las mesas esperadas de la sección votan esta categoría.</p>;
 }
 
-function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selection: OfficialSelection }): ReactNode {
+function ResultEvidence({ evidence, selection, facets, selected }: { evidence: EvidenceOk; selection: OfficialSelection; facets: ExplorationFacets; selected: ExplorerFormProps["selected"] }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
   if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className={styles.state} role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
   return (
-    <>
+    <CircuitSelectionProvider>
+      <section className={styles.workbench} aria-label="Mesa de trabajo territorial">
+        <section className={styles.mapPanel} aria-label="Mapa territorial de referencia">
+          {selection.requestedLevel === "seccion" && selection.circuitoCode === null && selection.establecimientoCode === null && selection.mesaCode === null && evidence.circuitOutcomes
+            ? <CircuitOutcomes outcomes={evidence.circuitOutcomes} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} view="map" />
+            : <p>Sin mapa de circuitos para el nivel seleccionado; consulte la evidencia exacta.</p>}
+        </section>
+        <section className={styles.inspector} aria-label="Detalle territorial">
+          <h2>{territorialItems(facets, selected).at(-1)?.name}</h2>
+          <p>Nivel: {selection.requestedLevel}</p>
+          <SectionCompleteness completeness={evidence.completeness} selection={selection} />
+          <ObservedLeader result={result} />
+        </section>
+      </section>
         <section className={styles.context} aria-labelledby="submitted-scope-heading">
           <h3 id="submitted-scope-heading">Alcance aplicado</h3>
           <dl className={styles.scope}>
@@ -233,8 +249,6 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
           : ` en ${result.mesaCount} mesas.`}
       </p>
       <p>Tipo de elección: {result.electionYear} {result.electionRound}.</p>
-      <SectionCompleteness completeness={evidence.completeness} selection={selection} />
-      {evidence.circuitOutcomes && <CircuitOutcomes outcomes={evidence.circuitOutcomes} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} />}
       {sourceExclusionNotes(result.sourceExclusions, "oficial")}
       <DrilldownDistribution result={result} />
       <TableRegion label="Votos oficiales y porcentaje por partido">
@@ -256,6 +270,7 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
       </TableRegion>
 
       {evidence.internalLists ? <InternalLists evidence={evidence.internalLists} /> : null}
+      {evidence.circuitOutcomes && <CircuitOutcomes outcomes={evidence.circuitOutcomes} rosales={selection.distritoCode === "02" && selection.seccionCode === "027"} view="table" />}
       <section aria-labelledby="school-breakdown-heading">
         <h2 id="school-breakdown-heading">Desglose oficial autorizado por establecimiento</h2>
         {schools.status === "unavailable"
@@ -326,34 +341,81 @@ function ResultEvidence({ evidence, selection }: { evidence: EvidenceOk; selecti
         </details>
         </section>
       </section>
-    </>
+    </CircuitSelectionProvider>
   );
 }
 
-function ExplorerHeader(): ReactNode {
+function territorialItems(facets: ExplorationFacets, selected: ExplorerFormProps["selected"]) {
+  const items: { name: string; values: ExplorerFormProps["selected"] }[] = [{ name: "Argentina", values: { ...(selected.electionId ? { electionId: selected.electionId } : {}), ...(selected.categoryId ? { categoryId: selected.categoryId } : {}) } }];
+  const values = { ...items[0]!.values };
+  for (const [key, options] of [
+    ["distritoCode", facets.distritos], ["seccionCode", facets.secciones],
+    ["circuitoCode", facets.circuitos], ["establecimientoCode", facets.establecimientos],
+  ] as const) {
+    const option = options.find(option => option.code === selected[key]);
+    if (!option) break;
+    values[key] = option.code;
+    if (key !== "distritoCode") values.level = key === "seccionCode" ? "seccion" : key === "circuitoCode" ? "circuito" : "establecimiento";
+    items.push({ name: option.nameStatus === "present" && option.name ? option.name : formatFacetOptionLabel(option), values: { ...values } });
+  }
+  if (selected.mesaCode !== undefined && facets.mesas.some(option => option.code === selected.mesaCode)) {
+    items.push({ name: `Mesa ${selected.mesaCode}`, values: { ...values, mesaCode: selected.mesaCode, level: "mesa" } });
+  }
+  return items;
+}
+
+function ObservedLeader({ result }: { result: EvidenceOk["result"] }): ReactNode {
+  const ranked = [...result.parties].sort((a, b) => b.votes - a.votes);
+  const positive = ranked.reduce((total, party) => total + party.votes, 0);
+  const first = ranked[0], second = ranked[1];
+  const tie = positive > 0 && first?.votes === second?.votes;
+  const label = positive === 0 ? "Sin votos positivos" : tie ? "Empate" : first?.identityStatus === "canonical" ? first.displayName : `Lista sin mapear ${first?.listId ?? "(ID de lista no disponible)"}`;
+  const margin = positive === 0 ? null : ((first?.votes ?? 0) - (second?.votes ?? 0)) / positive * 100;
+  return <div aria-label="Liderazgo observado">
+    <h3>Líder observado · todas las agrupaciones</h3><p>{label}</p>
+    <p>Margen sobre votos positivos: {margin === null ? "no disponible" : `${margin.toFixed(2)} pp`}.</p>
+    <p>{positive} votos positivos · {result.totalVotes} votos totales informados.</p>
+    <p>Liderazgo observado, no certificación de ganador.</p>
+  </div>;
+}
+
+function ExplorerHeader({ facets, selected }: { facets?: ExplorationFacets | undefined; selected?: ExplorerFormProps["selected"] } = {}): ReactNode {
   return (
     <header className={styles.header}>
+      {facets && selected && <nav className={styles.trail} aria-label="Ruta de exploración">
+        {territorialItems(facets, selected).map((item, index, items) => <span key={index}>
+          {index > 0 && <span aria-hidden="true"> › </span>}
+          {index === items.length - 1 ? <span aria-current="location">{item.name}</span>
+            : <a href={`/drilldown?${canonicalScopeSearchParams(Object.fromEntries(Object.entries(item.values).map(([key, value]) => [key, String(value)])))}`}>{item.name}</a>}
+        </span>)}
+      </nav>}
       <h1>Explorador oficial</h1>
       <p className="page-header__lede">Explore el territorio, compare la distribución del voto y consulte la evidencia oficial de cada selección.</p>
     </header>
   );
 }
 
-function PageShell({ facets, selected, children }: ExplorerFormProps): ReactNode {
+function PageShell({ facets, selected, children, workbench = true, showTrail = true }: ExplorerFormProps): ReactNode {
   return (
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
-        <ExplorerHeader />
-        <section className={styles.province} aria-labelledby="national-reference-heading">
+        <ExplorerForm facets={facets} selected={selected} header={<ExplorerHeader facets={showTrail ? facets : undefined} selected={selected} />}>
+        {workbench && <section className={styles.workbench} aria-label="Mesa de trabajo territorial">
+          <section className={styles.mapPanel} aria-label="Mapa territorial de referencia" aria-labelledby={selected.seccionCode ? undefined : selected.distritoCode ? "province-reference-heading" : "national-reference-heading"}>
+            {selected.seccionCode ? <p>Sin mapa de circuitos disponible para esta selección.</p> : selected.distritoCode === "02" ? <ProvinceReferenceMap /> : selected.distritoCode ? <p>Referencia geográfica no disponible para este distrito.</p> : <NationalReferenceMap />}
+          </section>
+          <section className={styles.inspector} aria-label="Detalle territorial"><h2>{territorialItems(facets, selected).at(-1)?.name}</h2><p>Nivel: {selected.seccionCode ? "seccion" : selected.distritoCode ? "distrito · referencia" : "país · referencia"}</p><p>Sin cifras hasta contar con una selección exacta autorizada.</p></section>
+        </section>}
+        {children}
+        <section className={styles.province} aria-label="Evidencia de referencia argentina">
           <div className={styles.provinceCopy}>
             <h2 id="national-reference-heading">Argentina: referencia geográfica</h2>
             <p>Vista continental americana y Vista completa desde el polo sur: escalas y proyecciones distintas. Contornos de referencia IGN, no límites electorales ni cobertura de resultados nacionales.</p>
             <p>El mapa orienta; la selección electoral sólo cambia mediante los selectores.</p>
             <a href="#explorer-election">Continuar con la selección exacta</a>
           </div>
-          <NationalReferenceMap />
         </section>
-        <section className={styles.province} aria-labelledby="province-reference-heading">
+        <section className={styles.province} aria-label="Evidencia de referencia Buenos Aires">
           <div className={styles.provinceCopy}>
             <h2 id="province-reference-heading">Buenos Aires: referencia geográfica</h2>
             <p>El contorno provincial orienta la navegación. No hay resultados electorales provinciales disponibles en este mapa.</p>
@@ -361,9 +423,8 @@ function PageShell({ facets, selected, children }: ExplorerFormProps): ReactNode
             <a href="#explorer-election">Elegir elección para explorar Coronel Rosales</a>
             <p className={styles.attribution}>FUENTE: Instituto Geográfico Nacional de la República Argentina · Datos geográficos recuperados el 28/09/2026; metadatos IGN 2019. Sin aval del IGN ni correspondencia electoral certificada.</p>
           </div>
-          <ProvinceReferenceMap />
         </section>
-        <ExplorerForm facets={facets} selected={selected}>{children}</ExplorerForm>
+        </ExplorerForm>
       </div>
     </main>
   );
@@ -484,7 +545,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   const evidence = await loadAuthorizedOfficialDrilldownEvidence(selection);
   if (evidence.status !== OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK) {
     return (
-      <PageShell facets={facets} selected={selected}>
+      <PageShell facets={facets} selected={selected} workbench={false} showTrail={false}>
         <section className={styles.state} role="alert">
           <p>{refusalMessage(evidence.status)}</p>
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE
@@ -507,7 +568,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     );
   }
 
-  return <PageShell facets={facets} selected={selected}>
-    <ResultEvidence evidence={evidence} selection={selection} />
+  return <PageShell facets={facets} selected={selected} workbench={false}>
+    <ResultEvidence evidence={evidence} selection={selection} facets={facets} selected={selected} />
   </PageShell>;
 }
