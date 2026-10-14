@@ -316,7 +316,7 @@ export function renderMunicipalView(
                 granularity={totalLevel.granularity}
                 {...(totalLevel.summedFrom !== undefined ? { summedFrom: totalLevel.summedFrom } : {})}
                 {...(totalLevel.degradedFrom !== undefined ? { degradedFrom: totalLevel.degradedFrom } : {})}
-                {...(requestedLevel !== undefined && requestedLevel !== levels.granularity ? { requestedGranularity: requestedLevel } : {})}
+                {...(requestedLevel !== undefined ? { requestedGranularity: requestedLevel } : {})}
               />
             ) : null}
           </section>
