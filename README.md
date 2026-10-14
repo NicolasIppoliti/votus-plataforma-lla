@@ -45,7 +45,7 @@ eval "$(mise activate zsh)"
 # Abrí una shell nueva y, en la raíz del repo:
 mise install
 pnpm --dir apps/web install --frozen-lockfile
-pnpm toolchain:check
+pnpm --dir apps/web toolchain:check
 ```
 
 `toolchain:check` compara las versiones realmente ejecutadas de Node, pnpm,
