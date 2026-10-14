@@ -52,6 +52,14 @@ it("shares the compact rule with Exploration, keeps every unmapped ID separate a
   for (const label of ["Otras agrupaciones (2)", "Lista sin mapear X", "Lista sin mapear Y"]) expect(exploration).toContain(label);
 });
 
+it("renders a circuit whose source name is its code without duplicating the code (#452)", () => {
+  const html = renderToStaticMarkup(<PanoramaChildren data={{ ...data, circuitOptions: [{ code: "00248", name: "00248", nameStatus: "present", nameVariantCount: 1 }] }} />);
+  expect(html).not.toContain("00248 — 00248");
+  expect(html).toContain(">00248</a>");
+  expect(html).toContain(">00249</a>");
+  expect(html).not.toContain("00249 — nombre no disponible");
+});
+
 it("filters names locally while retaining all child rows and canonical links in the DOM", () => {
   states.push("norte");
   const html = renderToStaticMarkup(<PanoramaChildren data={data} />);

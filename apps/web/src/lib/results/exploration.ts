@@ -112,9 +112,14 @@ function parseTextOptions(value: unknown): FacetOption[] {
   });
 }
 export function formatFacetOptionLabel(option: FacetOption): string {
-  if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return `${option.code} — ${option.name}`;
+  // Some sources name a unit by its own code; repeating it reads as "00248 — 00248".
+  if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return option.name === option.code ? option.code : `${option.code} — ${option.name}`;
   if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — nombre no disponible`;
   return `${option.code} — nombres contradictorios (${option.nameVariantCount} variantes)`;
+}
+/** A circuit row label: its name when known, otherwise its code exactly once (#452). */
+export function formatCircuitLabel(code: string, option: FacetOption | undefined): string {
+  return option && option.nameStatus !== FACET_NAME_STATUS.MISSING ? formatFacetOptionLabel(option) : code;
 }
 function parseFacetExclusions(value: unknown): ExplorationFacetExclusion[] {
   if (!Array.isArray(value)||value.length>2) throw new Error("invalid facet exclusions"); const reasons=new Set<string>();

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ALLOCATION_LEVEL } from "@/domain/seat-allocation/types";
+import { GRANULARITY_ORDER, granularityLabel } from "@/lib/results/granularity";
 import { GRANULARITY } from "@/lib/results/types";
 import { projectionGranularitySchema } from "./projection-input";
 import {
@@ -53,14 +54,6 @@ const LIST_FIELD = {
 } as const;
 
 type ListField = (typeof LIST_FIELD)[keyof typeof LIST_FIELD];
-
-const GRANULARITY_LABELS = {
-  [GRANULARITY.MESA]: "Mesa",
-  [GRANULARITY.ESTABLECIMIENTO]: "Establecimiento",
-  [GRANULARITY.CIRCUITO]: "Circuito",
-  [GRANULARITY.SECCION]: "Sección",
-  [GRANULARITY.DISTRITO]: "Distrito",
-} as const;
 
 interface NumberFieldProps {
   describedBy: string;
@@ -559,9 +552,9 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
               onChange={handleGranularityChange}
               value={values.granularity}
             >
-              {Object.entries(GRANULARITY_LABELS).map(([value, label]) => (
+              {GRANULARITY_ORDER.toReversed().map((value) => (
                 <option key={value} value={value}>
-                  {label}
+                  {granularityLabel(value)}
                 </option>
               ))}
             </select>

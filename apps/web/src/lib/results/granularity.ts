@@ -14,6 +14,19 @@ export const GRANULARITY_ORDER: Granularity[] = [
   GRANULARITY.MESA,
 ];
 
+const GRANULARITY_LABELS: Record<Granularity, string> = {
+  [GRANULARITY.DISTRITO]: "Distrito",
+  [GRANULARITY.SECCION]: "Sección",
+  [GRANULARITY.CIRCUITO]: "Circuito",
+  [GRANULARITY.ESTABLECIMIENTO]: "Establecimiento",
+  [GRANULARITY.MESA]: "Mesa",
+};
+
+/** The one dictionary for level names shown to people; unknown values never render raw. */
+export function granularityLabel(level: string | null | undefined): string {
+  return Object.hasOwn(GRANULARITY_LABELS, level ?? "") ? GRANULARITY_LABELS[level as Granularity] : "Sin clasificar";
+}
+
 /**
  * The level a total for ONE jurisdiction carries.
  *

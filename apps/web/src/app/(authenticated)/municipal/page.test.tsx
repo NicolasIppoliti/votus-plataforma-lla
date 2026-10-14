@@ -58,7 +58,7 @@ describe("municipal page — renderMunicipalView", () => {
     );
 
     expect(html).toContain("Por tipo de fuente: 1 fila oficial / 11.111 votos.");
-    expect(html).toContain("granularidad: seccion");
+    expect(html).toContain("granularidad: sección");
     expect(html).toContain("1 fila fiscalización / 22.222 votos");
     expect(html).not.toContain("33333");
   });
@@ -76,13 +76,13 @@ describe("municipal page — renderMunicipalView", () => {
     // NOT `distrito`. The query filters one `jurisdiction_id`, so the figure
     // covers one partido however the source labelled its rows — announcing the
     // province is the 32.291-vote misattribution rule 8 records.
-    expect(html).toContain('granularidad: seccion');
+    expect(html).toContain('granularidad: sección');
     expect(html).not.toContain('aria-label="granularidad: mesa"');
     expect(html).not.toContain('aria-label="granularidad: distrito"');
     // provenance-display spec: name what the caller requested and the source
     // could not provide, not merely the coarser level the row carries.
     expect(html.toLowerCase()).toContain("granularidad solicitada: mesa");
-    expect(html.toLowerCase()).toContain("granularidad real: seccion");
+    expect(html.toLowerCase()).toContain("granularidad real: sección");
   });
 
   it("test_requested_level_equal_to_the_shown_level_renders_no_granularity_alert", () => {
@@ -97,7 +97,7 @@ describe("municipal page — renderMunicipalView", () => {
       }),
     );
 
-    expect(html).toContain('aria-label="granularidad: seccion"');
+    expect(html).toContain('aria-label="granularidad: sección"');
     expect(html.toLowerCase()).not.toContain("granularidad real:");
   });
 

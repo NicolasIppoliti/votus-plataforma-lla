@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatFacetOptionLabel } from "@/lib/results/exploration";
+import { formatCircuitLabel } from "@/lib/results/exploration";
 import { circuitPresentation } from "@/lib/geography/circuit-presentation";
 import type { PanoramaData } from "./load-panorama";
 import styles from "./panorama.module.css";
@@ -13,8 +13,7 @@ export function PanoramaChildren({ data }: { data: PanoramaData }) {
   const outcomes = data.evidence?.status === "ok" ? data.evidence.circuitOutcomes : undefined;
   const available = outcomes?.status === "ok" && outcomes.circuit_membership === "known";
   const rows = available ? outcomes.circuits.map(circuit => {
-    const option = data.circuitOptions?.find(item => item.code === circuit.circuito_code);
-    const label = option ? formatFacetOptionLabel(option) : `${circuit.circuito_code} — nombre no disponible`;
+    const label = formatCircuitLabel(circuit.circuito_code, data.circuitOptions?.find(item => item.code === circuit.circuito_code));
     const query = new URLSearchParams(data.href.split("?")[1]);
     query.set("level", "circuito");
     query.set("circuitoCode", circuit.circuito_code);

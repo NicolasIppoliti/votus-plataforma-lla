@@ -343,7 +343,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       "Proyección hipotética aportada por quien realiza la consulta",
     );
     await expect(
-      result.getByRole("status", { name: "granularidad: seccion" }),
+      result.getByRole("status", { name: "granularidad: sección" }),
     ).toBeVisible();
     await expect(result).toContainText(
       /Huella de los datos proporcionados \(no es procedencia de archivo\): sha256 [a-f0-9]{64}/,
