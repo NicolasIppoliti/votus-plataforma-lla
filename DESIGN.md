@@ -18,7 +18,7 @@
 - **Theme:** One midnight-navy analytical theme with cyan selection/focus, taken from the approved page prototypes in `docs/prototypes/` (2026-10-11 decision). There is no light theme and no theme selector.
 - **Layout:** Target map-led exploration with persistent scope, layer legends, exact-results access and supporting evidence; retain the grid-disciplined shell.
 - **Brand posture:** Analytically neutral. LLA identity may appear in institutional context but must not become data semantics.
-- **Current implementation (not the target map):** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now continues that direction with automatic territorial selection and full-width result evidence. Municipal now loads its fixed official scope automatically with an identified-party raw-vote chart and full-width exact evidence. Fiscalización continues with automatic four-field scope and raw unit coverage beside exact, separately qualified results. Review remains a later route-specific slice.
+- **Current implementation (not the target map):** Login, shared shell, operational briefing, reactive official comparison and hypothetical simulation. The user accepted the reactive visual direction and requested a quieter header, sidebar-footer controls and automatic return to login when the session ends. The official explorer now uses a served-selection territorial trail, canonical automatic filters, a map/inspector workbench, and full-width exact result evidence. Municipal now loads its fixed official scope automatically with an identified-party raw-vote chart and full-width exact evidence. Fiscalización continues with automatic four-field scope and raw unit coverage beside exact, separately qualified results. Review remains a later route-specific slice.
 
 ## Design Principles
 
@@ -51,18 +51,18 @@ until its authorized production entry point works.
 
 ### Current navigation groups
 
-- **Situation**
-  - Operational briefing — `/`
-- **Official Results**
-  - Explore — `/drilldown`
-  - Compare — `/compare`
+- **Panorama** — `/`
+- **Exploración** — `/drilldown`
   - Municipal — `/municipal`
-- **Fiscalización**
-  - Coverage and results — `/fiscalizacion`
-- **Scenarios**
-  - 2027 simulation — `/simulate`
-- **Operations**
-  - Data review — `/review`
+- **Comparación** — `/compare`
+- **Simulación** — `/simulate`
+  - Escenarios Rosales 2027 — `/scenarios`
+- **Evidencia** — `/review` (data review; no duplicate sub-item)
+  - Fiscalización (no oficial) — `/fiscalizacion`
+
+The five modules follow the approved prototype's `votus.` identity and icons;
+sub-items are smaller and indented with 44px minimum targets. Fiscalización retains
+its separate unofficial-source note. Each current route appears exactly once.
 
 `/dashboard` redirects to `/`. Compare and Municipal are visible navigation destinations. Review indicators must not expose counts when the user cannot access evidence.
 
@@ -140,7 +140,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Mobile:** Full product capability, not a read-only subset.
 - **Tables:** Exact tables remain available inside labelled, focusable horizontal-scroll regions.
 - **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, context, chart, exact table, and evidence stack in reading order. Selector changes automatically update the authorized comparison; there is no Apply step. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
-- **Official explorer:** Group election, territory and report depth controls; automatically load existing authorized data without an Apply step. Applied scope precedes full-width distribution and exact result/school tables; reference evidence follows, never competes in a narrow sidebar. Only supporting archive details start collapsed. Source exclusions, granularity and unavailable school qualifiers stay inline.
+- **Official explorer:** Served-selection header/trail → election/category followed by the existing territorial/report controls → map/inspector workbench → applied scope and full-width exact evidence. The inspector is 322px, 295px at ≤1250px, 275px at ≤980px and stacks below the map at ≤760px. Exact-section Rosales circuits load automatically through client-side lazy imports; other unsupported scopes disclose unavailable geography rather than inventing a map. The inspector names the authorized territory, keeps the unchanged section-completeness sentence, and reports all-group observed leadership, positive votes and supplied total votes. Party evidence, eligible PASO internas, circuit evidence, schools and reference/provenance follow in that order. Supporting archive details start collapsed; source exclusions, granularity and unavailable school qualifiers stay inline. Territorial selectors remain until T3b; URL keys and the served/draft suppression boundary are unchanged.
 - **Municipal:** The single configured official election loads automatically on route entry, after existing query and authorization guards. Compact fixed context precedes full-width raw identified-party votes and the exact table. Source audits, exclusions, unresolved identities and granularity remain inline; supporting archive references follow in native disclosures, with missing-hash/non-OK status qualifications outside.
 - **Fiscalización:** Group election and territory selectors above full-width evidence. Preserve the explicit unofficial source, nonrandom-sample and official-denominator qualifications. Unit coverage precedes exact list/granularity rows and uncovered-unit detail; only supporting archive references collapse, never verification warnings or truncation/exclusion counts.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
@@ -216,10 +216,13 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 
 ## Target Territorial Workspace
 
-**Delivery state:** routes remain selector/chart/table-first; `/drilldown` now adds
-an exact-section circuit outcomes table through the authorized official RPC. Coronel
-Rosales has an optional, lazily loaded 10-circuit SVG from the existing checksum-pinned
-CNE reference. All-group leadership uses three margin bands over positive votes;
+**Delivery state:** `/drilldown` has a map/inspector workbench with an authorized
+territorial trail and exact-section circuit outcomes through the existing official RPC.
+Coronel Rosales automatically loads the 10-circuit SVG client-side from the existing
+checksum-pinned CNE reference. Light and medium margin bands use opaque white-tinted
+categorical colors (60% and 30% white respectively); intense retains the base color.
+Every categorical band meets 3:1 against the navy map surfaces, with the ink stroke
+retained. Exact circuit-table selectors and the map share the same selected circuit. All-group leadership uses three margin bands over positive votes;
 partial leadership is explicitly provisional and hatched. Ties and zero-positive
 circuits are neutral. The 0248B/0248C intersection is neutral and hatched via SVG
 clipping, without repairing either polygon. Reference provenance and unknown electoral

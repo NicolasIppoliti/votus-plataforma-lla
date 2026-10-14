@@ -1,9 +1,25 @@
 import type { ExplorationOk } from "@/lib/results/exploration";
+import { circuitColor } from "@/lib/geography/circuit-presentation";
 import styles from "./drilldown.module.css";
 
 const percent = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const count = new Intl.NumberFormat("es-AR");
 const TICKS = [0, 25, 50, 75, 100];
+
+export function InspectorDistribution({ result }: { result: ExplorationOk }) {
+  const ranked = [...result.parties].sort((a, b) => b.votes - a.votes);
+  // Unmapped identities remain individually visible, even below the top four.
+  const visible = ranked.filter((party, index) => index < 4 || party.identityStatus !== "canonical");
+  const remainder = ranked.filter((party, index) => index >= 4 && party.identityStatus === "canonical");
+  const rows = visible.map(party => ({ name: party.identityStatus === "canonical" ? party.displayName : `Lista sin mapear ${party.listId ?? "(ID de lista no disponible)"}`, share: party.voteShare === null ? null : Number(party.voteShare) * 100, color: circuitColor(party.canonicalPartyId) }));
+  if (remainder.length) rows.push({ name: `Otras agrupaciones (${remainder.length})`, share: remainder.some(p => p.voteShare === null) ? null : remainder.reduce((sum, p) => sum + Number(p.voteShare) * 100, 0), color: "var(--muted-ink)" });
+  return <section className={styles.inspectorDistribution} aria-label="Distribución de votos">
+    <h3>Distribución de votos</h3>
+    <div className={styles.compositionStrip} aria-hidden="true">{rows.map(row => row.share === null ? null : <span key={row.name} style={{ width: `${row.share}%`, background: row.color }} />)}</div>
+    <ul>{rows.map(row => <li key={row.name}><span><i style={{ background: row.color }} aria-hidden="true" />{row.name}</span><strong>{row.share === null ? "Porcentaje no disponible" : `${percent.format(row.share)} %`}</strong></li>)}</ul>
+    <p>Fuente oficial · Base: {count.format(result.totalVotes)} votos partidarios de esta selección; no representa el padrón ni todos los votos emitidos.</p>
+  </section>;
+}
 
 export function DrilldownDistribution({ result }: { result: ExplorationOk }) {
   return <section className={styles.distribution} aria-labelledby="drilldown-distribution-heading" aria-describedby="drilldown-denominator">

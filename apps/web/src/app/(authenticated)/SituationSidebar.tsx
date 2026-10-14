@@ -7,9 +7,10 @@ export function SituationSidebar({ children }: { children?: ReactNode }): ReactN
   return (
     <aside className="situation-sidebar">
       <Link className="site-brand" href="/" aria-label="Panel de Votus">
-        <span className="site-brand__name">Votus</span>
-        <span className="site-brand__descriptor">Análisis electoral</span>
+        <svg className="site-brand__glyph" viewBox="0 0 42 42" aria-hidden="true"><path d="M6 7 21 35 36 7M14 7l7 14 7-14" /></svg>
+        <span className="site-brand__name">votus<span className="site-brand__dot">.</span></span>
       </Link>
+      <p className="workspace-label">Espacio de análisis</p>
       <PrimaryNavigation />
       <div className="situation-sidebar__footer">
         <div className="source-disclaimer"><SourceDisclaimer /></div>

@@ -240,7 +240,7 @@ test.describe("authorized official comparison", () => {
       await expect(panel.getByRole("status").first()).toContainText("Mapa no disponible; los resultados exactos siguen disponibles.");
       await expect(panel.locator("canvas.maplibregl-canvas")).toHaveCount(0);
       await expect(table).toBeVisible();
-      await expect(page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparar", exact: true })).toBeVisible();
+      await expect(page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparación", exact: true })).toBeVisible();
       await expect(main).not.toContainText("999 votos");
     }, spatial.identity), "spatial");
   });
@@ -249,7 +249,7 @@ test.describe("authorized official comparison", () => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
       const leftOnlySection = identity.comparisonLeftOnlySection;
         if (!leftOnlySection) throw new Error("comparison fixture left-only section is missing");
-        const comparisonNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparar", exact: true });
+        const comparisonNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparación", exact: true });
       await comparisonNavigationLink.click(); await expect(page).toHaveURL(/\/compare$/); await expect(comparisonNavigationLink).toHaveAttribute("aria-current", "page");
       const leftCategory = page.getByLabel("Categoría izquierda", { exact: true });
       const rightCategory = page.getByLabel("Categoría derecha", { exact: true });

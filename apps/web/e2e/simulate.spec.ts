@@ -67,7 +67,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       name: "Navegación principal",
     });
     const simulationNavigationLink = drawer.getByRole("link", {
-      name: "Simulación 2027",
+      name: "Simulación",
       exact: true,
     });
     await expect(drawer).toBeVisible();
@@ -79,7 +79,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await drawerTrigger.click();
     await expect(drawer).toBeVisible();
     const currentSimulationNavigationLink = drawer.getByRole("link", {
-      name: "Simulación 2027",
+      name: "Simulación",
       exact: true,
     });
     await expect(currentSimulationNavigationLink).toHaveAttribute(

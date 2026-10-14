@@ -6,6 +6,13 @@ export function circuitColor(id: string | null): string {
   const hash = [...id].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
   return ["#487a9f", "#a77a4b", "#77875a", "#8f719e", "#548b86", "#ae6e7d"][hash % 6]!;
 }
+export function circuitBandColor(color: string, band: string): string {
+  if (!color.startsWith("#") || band === "neutral" || band === "intense") return color;
+  // Opaque lightness steps, not alpha over navy: all categorical fills stay >=3:1.
+  const white = band === "light" ? 0.6 : 0.3;
+  return "#" + color.slice(1).match(/../g)!.map(channel =>
+    Math.round(parseInt(channel, 16) * (1 - white) + 255 * white).toString(16).padStart(2, "0")).join("");
+}
 export function circuitPresentation(c: CircuitOutcome) {
   const ranked = [...c.parties].sort((a, b) => b.votes - a.votes);
   const first = ranked[0], second = ranked[1];

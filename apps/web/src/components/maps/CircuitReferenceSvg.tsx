@@ -1,7 +1,7 @@
 "use client";
 import { useId } from "react";
 import type { CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
-import { circuitPresentation } from "@/lib/geography/circuit-presentation";
+import { circuitPresentation, circuitBandColor } from "@/lib/geography/circuit-presentation";
 import styles from "./circuit-reference.module.css";
 export interface CircuitMapProps {
   geometry: { code: string; coordinates: [number, number][][][] }[];
@@ -28,7 +28,7 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: 
       const p = outcome ? circuitPresentation(outcome) : null;
       const name = `Circuito ${g.code}: ${p ? `${p.winner}; ${p.coverage}; margen ${p.margin === null ? "no disponible" : p.margin.toFixed(2) + " pp"}` : "sin resultados"}`;
       return <g key={g.code}>
-        <path d={path(g)} fill={p?.color ?? "var(--surface-muted)"} fillOpacity={p?.band === "light" ? 0.35 : p?.band === "medium" ? 0.65 : 1}
+        <path d={path(g)} fill={p ? circuitBandColor(p.color, p.band) : "var(--surface-muted)"} fillOpacity={1}
           fillRule="evenodd" stroke="currentColor" strokeWidth={selected === g.code ? 3 : 1} vectorEffect="non-scaling-stroke"
           tabIndex={0} role="button" aria-label={name} aria-pressed={selected === g.code} className={styles.unit}
           onClick={() => onSelect(g.code)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(g.code); } }}><title>{name}</title></path>

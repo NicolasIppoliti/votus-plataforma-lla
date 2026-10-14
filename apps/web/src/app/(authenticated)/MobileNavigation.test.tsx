@@ -10,6 +10,8 @@ test("the closed navigation exposes an opener without a second inline account gr
     <MobileNavigation sidebar={<div role="group" aria-label="Organización y cuenta">Server-composed account controls</div>} />,
   );
   expect(markup).toContain("Abrir navegación");
+  expect(markup).toContain('aria-label="Abrir navegación"');
+  expect(markup).toContain('class="mobile-navigation__label"');
   expect(markup).toContain('aria-haspopup="dialog"');
   expect(markup).toContain('aria-expanded="false"');
   expect(markup).toContain('aria-controls="mobile-navigation-drawer"');

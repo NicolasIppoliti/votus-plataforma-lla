@@ -469,25 +469,21 @@ test.describe("the production root preserves its authentication boundary", () =>
       "Esta herramienta no es una fuente electoral oficial.",
     );
     for (const groupLabel of [
-      "Situación",
-      "Resultados oficiales",
-      "Fiscalización",
-      "Escenarios",
-      "Operaciones",
+      "Panorama", "Exploración", "Comparación", "Simulación", "Evidencia",
     ]) {
       await expect(
-        drawerNavigation.getByRole("heading", { name: groupLabel, exact: true }),
+        drawerNavigation.getByRole("link", { name: groupLabel, exact: true }),
       ).toBeVisible();
     }
     for (const [label, href] of [
-      ["Resumen operativo", "/"],
-      ["Explorar", "/drilldown"],
-      ["Comparar", "/compare"],
+      ["Panorama", "/"],
+      ["Exploración", "/drilldown"],
       ["Municipal", "/municipal"],
-      ["Fiscalización (no oficial)", "/fiscalizacion"],
-      ["Simulación 2027", "/simulate"],
+      ["Comparación", "/compare"],
+      ["Simulación", "/simulate"],
       ["Escenarios Rosales 2027", "/scenarios"],
-      ["Revisión de datos", "/review"],
+      ["Evidencia", "/review"],
+      ["Fiscalización (no oficial)", "/fiscalizacion"],
     ] as const) {
       await expect(
         drawerNavigation.getByRole("link", { name: label, exact: true }),
@@ -498,7 +494,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     ).toHaveCount(1);
     await expect(
       drawerNavigation.getByRole("link", {
-        name: "Resumen operativo",
+        name: "Panorama",
         exact: true,
       }),
     ).toHaveAttribute("aria-current", "page");
@@ -509,7 +505,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(closeDrawer).toBeFocused();
 
     const comparisonDrawerLink = drawerNavigation.getByRole("link", {
-      name: "Comparar",
+      name: "Exploración",
       exact: true,
     });
     const municipalDrawerLink = drawerNavigation.getByRole("link", {
@@ -541,7 +537,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(drawerTrigger).toBeFocused();
 
     await drawerTrigger.click();
-    await drawerNavigation.getByRole("link", { name: "Comparar", exact: true }).click();
+    await drawerNavigation.getByRole("link", { name: "Comparación", exact: true }).click();
     await expect(page).toHaveURL(/\/compare$/);
     await expect(drawer).toBeHidden();
 
@@ -607,18 +603,18 @@ test.describe("the production root preserves its authentication boundary", () =>
     ).toHaveCount(1);
     await expect(
       desktopNavigation.getByRole("link", {
-        name: "Resumen operativo",
+        name: "Panorama",
         exact: true,
       }),
     ).toHaveAttribute("aria-current", "page");
     for (const navigationLabel of [
-      "Explorar",
-      "Comparar",
+      "Exploración",
       "Municipal",
-      "Fiscalización (no oficial)",
-      "Simulación 2027",
+      "Comparación",
+      "Simulación",
       "Escenarios Rosales 2027",
-      "Revisión de datos",
+      "Evidencia",
+      "Fiscalización (no oficial)",
     ]) {
       await expect(
         desktopNavigation.getByRole("link", {

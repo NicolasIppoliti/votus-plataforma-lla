@@ -30,6 +30,10 @@ const identity = resultScenarioIdentity(SPEC);
 const { scope: SOURCE_SCOPE, seed: SOURCE_ISOLATION_FIXTURE } =
   sourceIsolationFixture(SPEC);
 const baseURL = scenarioBaseUrl(SPEC, environment);
+// The renderer moved into the workbench; the Argentina heading now labels supporting evidence.
+function nationalReferenceStage(page: Page) {
+  return page.getByRole("region", { name: "Mapa territorial de referencia", exact: true });
+}
 // The badge marker rendered only when a figure's `sourceKind` is
 // `fiscalizacion` (see `src/components/GranularityBadge.tsx` /
 // `SourceDisclaimer.tsx`, task 11.17). No page rendered without an
@@ -43,6 +47,7 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     const query = new URLSearchParams({ electionId: paso.electionIds[0]!, categoryId: paso.categoryId,
       distritoCode: paso.distritoCode, seccionCode: paso.seccionCode, level: "seccion" });
     await page.goto(`${baseURL}/drilldown?${query}`);
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
     const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
     await expect(region).toBeVisible();
     await expect(page.getByText("Completitud desconocida: la fuente oficial de esta elección no publica un catálogo de mesas esperadas.", { exact: true })).toBeVisible();
@@ -58,8 +63,9 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     await expect(region).toContainText("Lista sin mapear");
     await expect(region.getByRole("row").filter({ hasText: "Lista sin mapear" }).filter({ hasText: "0 votos" }).first()).toBeVisible();
     await expect(page.getByText(/Votos no positivos/)).toContainText("No disponible");
-    await page.getByRole("combobox", { name: "Nivel del informe", exact: true }).focus();
-    for (let i = 0; i < 12 && !await region.evaluate((element) => element === document.activeElement); i++) await page.keyboard.press("Tab");
+    await page.getByRole("button", { name: "Restablecer vista", exact: true }).focus();
+    // The map/table controls now precede PASO evidence; preserve keyboard reachability, not the old Tab distance.
+    for (let i = 0; i < 40 && !await region.evaluate((element) => element === document.activeElement); i++) await page.keyboard.press("Tab");
     await expect(region).toBeFocused();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const audit = await new AxeBuilder({ page }).analyze();
@@ -93,7 +99,7 @@ test("national reference links and no-WebGL polar view preserve exact selection"
       } as typeof original;
     });
     await page.goto(new URL("/drilldown", baseURL).toString());
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
     await expect(national).toContainText("WebGL no disponible");
@@ -118,7 +124,7 @@ test("national reference renders both views on desktop and mobile without changi
     const cdp = await page.context().newCDPSession(page);
     const beforeHeap = await cdp.send("Runtime.getHeapUsage");
     const started = Date.now();
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     const continental = national.getByRole("region", { name: "Vista continental americana" });
     const polar = national.getByRole("region", { name: "Vista completa desde el polo sur" });
     try {
@@ -246,14 +252,23 @@ test("national reference renders both views on desktop and mobile without changi
 
 test("national reference integrity failure leaves exact selectors available for retry", async ({ page }) => {
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
-    await page.route("**/geography/argentina-reference.*.geojson", (route) => route.fulfill({ status: 200, body: "{}" }));
+    let corrupt = true;
+    await page.route("**/geography/argentina-reference.*.geojson", (route) => corrupt
+      ? route.fulfill({ status: 200, body: "{}" }) : route.continue());
     await page.goto(new URL("/drilldown", baseURL).toString());
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national).toContainText("No se pudo verificar la referencia IGN");
     await expect(national.getByRole("img", { name: /Extensión completa/ })).toHaveCount(0);
     await expect(national.getByRole("button", { name: "Reintentar mapa nacional" })).toBeEnabled();
-    await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeEnabled();
+    const election = page.getByRole("combobox", { name: "Elección", exact: true });
+    await expect(election).toBeEnabled();
+    await expect(election).toHaveValue("");
+    corrupt = false;
+    await national.getByRole("button", { name: "Reintentar mapa nacional" }).click();
+    await expect(national).toContainText("Referencia IGN verificada");
+    await expect(national.getByRole("img", { name: /Extensión completa/ })).toBeVisible();
+    await expect(election).toHaveValue("");
   }));
 });
 
@@ -261,7 +276,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto(new URL("/drilldown", baseURL).toString());
-    const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+    const national = nationalReferenceStage(page);
     const activation = national.getByRole("button", { name: "Mostrar referencia nacional" });
     await activation.focus();
     await expect(activation).toBeFocused();
@@ -309,7 +324,7 @@ test.describe("national reference touch", () => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(new URL("/drilldown", baseURL).toString());
-      const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+      const national = nationalReferenceStage(page);
       await national.getByRole("button", { name: "Mostrar referencia nacional" }).tap();
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
@@ -346,7 +361,7 @@ zoomTest.describe("national reference at native 200% zoom", () => {
       expect(Math.abs(after.client - before.client / 2)).toBeLessThanOrEqual(20);
       expect(after.outer).toBe(before.outer);
       expect(Math.abs(after.inner - 320)).toBeLessThanOrEqual(2);
-      const national = page.getByRole("region", { name: "Argentina: referencia geográfica" });
+      const national = nationalReferenceStage(page);
       await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
@@ -407,7 +422,8 @@ nextTest("retries unavailable official evidence with the served canonical select
     expect(bodies).toEqual([expectedBody, expectedBody]);
     await expect(page).toHaveURL(submittedUrl);
     await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
-    await expect(page.getByRole("combobox", { name: "Nivel del informe", exact: true })).toHaveValue("mesa");
+    await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
     await expect(page.getByRole("main")).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa`);
     await expect(page.getByText("Archivo y procedencia", { exact: true })).toBeVisible();
     await page.getByText("Archivo y procedencia", { exact: true }).click();
@@ -494,14 +510,12 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
 
       await page
         .getByRole("navigation", { name: "principal" })
-        .getByRole("link", { name: "Explorar", exact: true })
+        .getByRole("link", { name: "Exploración", exact: true })
         .click();
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
       await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
-      for (const label of [
-        "Categoría", "Distrito", "Sección", "Circuito", "Establecimiento", "Mesa",
-        "Nivel del informe",
-      ]) {
+      await page.locator("details").filter({ has: page.locator("#explorer-distrito") }).locator("summary").click();
+      for (const label of ["Categoría", "Distrito", "Sección"]) {
         const descendant = page.getByRole("combobox", { name: label, exact: true });
         await expect(descendant).toBeDisabled();
         expect(await descendant.evaluate((element) => {
@@ -525,22 +539,32 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
       await draft("Elección", SOURCE_SCOPE.electionId, "Categoría"); await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito");
-      await draft("Distrito", identity.distritoCode, "Sección", `${identity.distritoCode} — Buenos Aires`); await draft("Sección", identity.seccionCode, "Circuito", `${identity.seccionCode} — Coronel de Marina L. Rosales`);
-      await draft("Nivel del informe", "seccion"); await draft("Circuito", "00001", "Establecimiento", "00001 — 00001");
-      await draft("Establecimiento", "E1", "Mesa", "E1 — Synthetic school"); await draft("Mesa", "1"); await draft("Nivel del informe", "");
+      await draft("Distrito", identity.distritoCode, "Sección", `${identity.distritoCode} — Buenos Aires`);
+      await draft("Sección", identity.seccionCode, undefined, `${identity.seccionCode} — Coronel de Marina L. Rosales`);
+      const openChild = async (name: string, level: string): Promise<void> => {
+        await page.getByRole("button", { name: `Abrir ${name}`, exact: true }).click();
+        await expect(page).toHaveURL(url => url.searchParams.get("level") === level);
+        await expect(form).not.toHaveAttribute("aria-busy", "true");
+        await expect(page.locator("#navigator-title")).toBeFocused();
+        await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
+      };
+      await openChild("00001 — 00001", "circuito");
+      await openChild("E1 — Synthetic school", "establecimiento");
+      await openChild("Mesa 1", "mesa");
+      await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
       const section = page.getByRole("combobox", { name: "Sección", exact: true });
       await section.focus(); await section.selectOption("");
       await expect(section).toBeFocused();
-      for (const label of ["Circuito", "Establecimiento", "Mesa"]) {
-        const child = page.getByRole("combobox", { name: label, exact: true });
-        await expect(child).toHaveValue(""); await expect(child).toBeDisabled();
+      for (const key of ["circuitoCode", "establecimientoCode", "mesaCode", "level"]) {
+        await expect(page).toHaveURL(url => !url.searchParams.has(key));
       }
+      for (const label of ["Circuito", "Establecimiento", "Mesa", "Nivel del informe"]) await expect(page.getByRole("combobox", { name: label, exact: true })).toHaveCount(0);
       await expect(page).toHaveURL((url) => !url.searchParams.has("seccionCode"));
       await expect(form).not.toHaveAttribute("aria-busy", "true");
-      await draft("Sección", identity.seccionCode, "Circuito");
-      await draft("Circuito", "00001", "Establecimiento");
-      await draft("Establecimiento", "E1", "Mesa");
-      await draft("Mesa", "1"); await draft("Nivel del informe", "mesa");
+      await draft("Sección", identity.seccionCode);
+      await openChild("00001 — 00001", "circuito");
+      await openChild("E1 — Synthetic school", "establecimiento");
+      await openChild("Mesa 1", "mesa");
       await expectNoBlankSearchParams(page);
       const explorerUrl = new URL(
         `/drilldown?electionId=${SOURCE_SCOPE.electionId}&categoryId=${SOURCE_SCOPE.categoryId}` +
@@ -552,13 +576,14 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page).toHaveURL(explorerUrl);
       await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       const explorer = page.getByRole("main");
+      await page.getByText("Mostrar resultados exactos", { exact: true }).click();
       await expect(explorer).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa, obtenidos de filas de fuente mesa`);
       await expect(explorer).toContainText(
         `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);
       await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votos a nivel mesa`);
       await expect(explorer).not.toContainText(FISCALIZACION_MARKER);
       await page.setViewportSize({ width: 1440, height: 900 });
-      await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toBeVisible();
+      await expect(explorer.getByRole("heading", { name: "Exploración territorial" })).toBeVisible();
       await expect(explorer.getByRole("heading", { name: "Referencia electoral autorizada" })).toBeVisible();
       const voteTable = explorer.getByRole("region", { name: "Votos oficiales y porcentaje por partido" });
       await voteTable.focus();
@@ -571,7 +596,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       }
 
       await page.setViewportSize({ width: 320, height: 720 });
-      await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toBeVisible();
+      await expect(explorer.getByRole("heading", { name: "Exploración territorial" })).toBeVisible();
       await expect(explorer.getByRole("region", { name: "Distribución del voto oficial", exact: true })).toBeVisible();
       await expect(voteTable).toBeVisible();
       await voteTable.focus();
@@ -595,9 +620,9 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const submittedHeading = results.getByRole("heading", { name: "Desglose oficial autorizado", exact: true });
       await expect(submittedHeading).toBeVisible();
       await expect(submittedHeading).toHaveCSS("font-size", "20px");
-      await expect(explorer.getByRole("heading", { name: "Explorador oficial" })).toHaveCSS("font-size", "32px");
+      await expect(explorer.getByRole("heading", { name: "Exploración territorial" })).toHaveCSS("font-size", "32px");
       await expect(submittedScope).toBeVisible();
-      const level = form.getByRole("combobox", { name: "Nivel del informe", exact: true });
+      const parent = page.getByRole("button", { name: "Volver a Synthetic school", exact: true });
       // Keep a real server response outstanding during an independent edit.
       let ready = false;
       let delivered = false;
@@ -605,7 +630,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const held = new Promise<void>((resolve) => { release = resolve; });
       await page.route("**/drilldown?**", async (route) => {
         const params = new URL(route.request().url()).searchParams;
-        if (params.get("level") !== "establecimiento" || params.get("mesaCode") !== "1") {
+        if (params.get("level") !== "establecimiento" || params.has("mesaCode")) {
           await route.continue(); return;
         }
         const response = await route.fetch();
@@ -615,23 +640,27 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         delivered = true;
       });
       try {
-        await level.selectOption("establecimiento");
+        await parent.click();
         await expect.poll(() => ready).toBe(true);
         await expect(results).toHaveCount(0);
         await expect(evidence).toHaveCount(0);
         await expect(provenance).toHaveCount(0);
-        // Mesa and report depth are independently editable at this scope.
-        await form.getByRole("combobox", { name: "Mesa", exact: true }).selectOption("");
+        // A newer independent context edit must survive the held territorial response.
+        await form.getByRole("combobox", { name: "Categoría", exact: true }).selectOption("");
         release();
         await expect.poll(() => delivered).toBe(true);
-        await expect(page).toHaveURL(explorerUrl.replace("&mesaCode=1&level=mesa", "&level=establecimiento"));
-        await expect(level).toHaveValue("establecimiento");
-        await expect(form.getByRole("combobox", { name: "Mesa", exact: true })).toHaveValue("");
-        await expect(explorer).toContainText("votos a nivel establecimiento");
+        await expect(page).toHaveURL(url => !url.searchParams.has("categoryId") && !url.searchParams.has("mesaCode") && !url.searchParams.has("level"));
+        await expect(form.getByRole("combobox", { name: "Categoría", exact: true })).toHaveValue("");
+        await expect(results).toHaveCount(0);
+        await expect(evidence).toHaveCount(0);
       } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
 
-      await draft("Mesa", "1");
-      await draft("Nivel del informe", "mesa");
+      await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito");
+      await draft("Distrito", identity.distritoCode, "Sección");
+      await draft("Sección", identity.seccionCode);
+      await openChild("00001 — 00001", "circuito");
+      await openChild("E1 — Synthetic school", "establecimiento");
+      await openChild("Mesa 1", "mesa");
       // Returning A → pending B → A must supersede B, not merely clear a dirty flag.
       ready = false; delivered = false;
       let releaseReversal: () => void = () => {};
@@ -644,41 +673,79 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await reversal; await route.fulfill({ response }); delivered = true;
       });
       try {
-        await level.selectOption("establecimiento");
+        await parent.click();
         await expect.poll(() => ready).toBe(true);
         await expect(results).toHaveCount(0);
-        await level.focus(); await level.selectOption("mesa");
+        await page.getByRole("button", { name: "Volver a la selección verificada", exact: true }).click();
         releaseReversal();
         await expect.poll(() => delivered).toBe(true);
         await expect(page).toHaveURL(explorerUrl);
         await expect(explorer).toContainText("votos a nivel mesa");
-        await expect(level).toHaveValue("mesa");
-        await expect(level).toBeFocused();
+        await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
+        await expect(page).toHaveURL(url => url.searchParams.get("mesaCode") === "1" && url.searchParams.get("level") === "mesa");
       } finally { releaseReversal(); await page.unrouteAll({ behavior: "wait" }); }
-      const filters = explorer.getByRole("region", { name: "Elegir el alcance de los resultados", exact: true });
-      await expect.poll(async () => {
-        const [filterBox, resultBox, evidenceBox] = await Promise.all(
-          [filters, results, evidence].map((region) => region.evaluate((element) => {
-            const { top, bottom, left, right, width } = element.getBoundingClientRect();
-            return { top, bottom, left, right, width };
-          })),
-        );
-        return {
-          filtersAbove: filterBox!.bottom <= Math.min(resultBox!.top, evidenceBox!.top),
-          evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
-          fullWidth: Math.abs(resultBox!.width - evidenceBox!.width) <= 2 && Math.abs(resultBox!.width - filterBox!.width) <= 2,
-        };
-      }).toEqual({ filtersAbove: true, evidenceBelow: true, fullWidth: true });
+      const filters = explorer.getByRole("region", { name: "Filtros de exploración", exact: true });
+      const workbench = explorer.getByRole("region", { name: "Mesa de trabajo territorial", exact: true });
+      const map = workbench.getByRole("region", { name: "Mapa territorial de referencia", exact: true });
+      const inspector = workbench.getByRole("region", { name: "Detalle territorial", exact: true });
+      // Returning to the served selection re-renders the page with the exact disclosure collapsed.
+      const exactToggle = page.getByText("Mostrar resultados exactos", { exact: true });
+      if (!(await page.locator("details").filter({ has: exactToggle }).evaluate((element) => (element as HTMLDetailsElement).open))) await exactToggle.click();
+      const exactBeforeCamera = await voteTable.textContent();
+      const closer = map.getByRole("button", { name: "Acercar mapa", exact: true });
+      const farther = map.getByRole("button", { name: "Alejar mapa", exact: true });
+      for (let i = 0; i < 4; i++) await closer.click();
+      await expect(closer).toBeDisabled();
+      await expect(map).toContainText("Vista de referencia · 180 %");
+      for (let i = 0; i < 5; i++) await farther.click();
+      await expect(farther).toBeDisabled();
+      await expect(map).toContainText("Vista de referencia · 80 %");
+      await map.getByRole("button", { name: "Restablecer vista", exact: true }).click();
+      await expect(map).toContainText("Vista de referencia · 100 %");
+      await expect(page).toHaveURL(explorerUrl);
+      expect(await voteTable.textContent()).toBe(exactBeforeCamera);
+      for (const [width, inspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect.poll(async () => {
+          const [filterBox, workBox, mapBox, detailBox, resultBox, evidenceBox] = await Promise.all(
+            [filters, workbench, map, inspector, results, evidence].map(region => region.evaluate(element => {
+              const { top, bottom, left, right, width } = element.getBoundingClientRect();
+              return { top, bottom, left, right, width };
+            })),
+          );
+          return {
+            filtersAbove: filterBox!.bottom <= workBox!.top,
+            workbenchAboveResults: workBox!.bottom <= resultBox!.top,
+            evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
+            inspectorGeometry: inspectorWidth === null
+              ? mapBox!.bottom <= detailBox!.top && Math.abs(mapBox!.width - detailBox!.width) <= 2
+              : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
+          };
+        }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        for (const control of await map.getByRole("group", { name: "Controles de vista", exact: true }).getByRole("button").all()) {
+          const box = await control.boundingBox();
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+          expect(box!.width).toBeGreaterThanOrEqual(44);
+        }
+        for (const link of await explorer.getByRole("navigation", { name: "Ruta de exploración" }).getByRole("link").all()) {
+          const box = await link.boundingBox();
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+          expect(box!.width).toBeGreaterThanOrEqual(44);
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
 
-      await draft("Mesa", "");
-      await draft("Nivel del informe", "establecimiento");
+      await parent.click();
+      await expect(form).not.toHaveAttribute("aria-busy", "true");
+      await expect(page.locator("#navigator-title")).toBeFocused();
       const secondUrl = explorerUrl.replace("&mesaCode=1&level=mesa", "&level=establecimiento");
       await expect(page).toHaveURL(secondUrl); await expectNoBlankSearchParams(page);
       await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       await expect(explorer).toContainText("votos a nivel establecimiento");
       await page.goto(new URL("/dashboard", baseURL).toString()); await page.goBack();
       await expect(page).toHaveURL(secondUrl);
-      await expect(page.getByRole("combobox", { name: "Nivel del informe", exact: true })).toHaveValue("establecimiento");
+      await expect(page.getByRole("button", { name: "Abrir Mesa 1", exact: true })).toBeVisible();
       await page.reload(); await expect(page).toHaveURL(secondUrl);
 
       await page.goto(new URL(

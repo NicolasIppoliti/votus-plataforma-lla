@@ -1,71 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { House, Search, Columns2, MapPin, ClipboardCheck, SlidersHorizontal, Layers, ListChecks } from "lucide-react";
 import { usePathname } from "next/navigation";
-import {
-  isRouteActive,
-  NAVIGATION_GROUPS,
-  type NavigationGroup,
-} from "./navigation";
+import { isRouteActive, NAVIGATION_GROUPS } from "./navigation";
 
-const navigationIcons = {
-  "/": House,
-  "/drilldown": Search,
-  "/compare": Columns2,
-  "/municipal": MapPin,
-  "/fiscalizacion": ClipboardCheck,
-  "/simulate": SlidersHorizontal,
-  "/scenarios": Layers,
-  "/review": ListChecks,
-} as const;
-
-const navigationGroups = Object.entries(NAVIGATION_GROUPS) as readonly (
-  readonly [string, NavigationGroup]
-)[];
+// The five module glyphs follow the approved prototype, not route-specific icons.
+const moduleGlyphs = [
+  <g key="grid"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></g>,
+  <path key="map" d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2zM9 3v16m6-14v16" />,
+  <path key="compare" d="M3 7h18m-4-4 4 4-4 4M21 17H3m4 4-4-4 4-4" />,
+  <path key="sliders" d="M4 3v8m0 4v6M12 3v2m0 4v12m8-18v12m0 4v2M1 11h6m2-6h6m2 10h6" />,
+  <path key="files" d="M14 2H5v20h14V7zM14 2v5h5M8 12h8m-8 4h8" />,
+];
 
 export function PrimaryNavigation() {
   const pathname = usePathname();
-
   return (
     <nav aria-label="principal" className="main-navigation">
       <ul className="navigation-list">
-        {navigationGroups.map(([groupId, group]) => {
-          const { label, items } = group;
-          const description =
-            "description" in group ? group.description : undefined;
-          const headingId = `primary-navigation-${groupId}-heading`;
-          const descriptionId = description
-            ? `primary-navigation-${groupId}-description`
-            : undefined;
-
+        {Object.values(NAVIGATION_GROUPS).map((group, index) => {
+          const [module, ...subitems] = group.items;
           return (
-            <li key={groupId}>
-              <section
-                aria-describedby={descriptionId}
-                aria-labelledby={headingId}
-              >
-                <h2 id={headingId}>{label}</h2>
-                {description ? <p id={descriptionId}>{description}</p> : null}
-                <ul>
-                  {items.map(({ href, label: itemLabel }) => {
-                    const isActive = isRouteActive(pathname, href);
-                    const Icon = navigationIcons[href];
-
-                    return (
-                      <li key={href}>
-                        <Link
-                          href={href}
-                          aria-current={isActive ? "page" : undefined}
-                        >
-                          <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
-                          <span>{itemLabel}</span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
+            <li key={module.href}>
+              <Link className="navigation-module" href={module.href} aria-current={isRouteActive(pathname, module.href) ? "page" : undefined}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{moduleGlyphs[index]}</svg>
+                <span>{module.label}</span>
+              </Link>
+              {subitems.length ? <ul>
+                {subitems.map((item) => (
+                  <li key={item.href}>
+                    <Link className="navigation-subitem" href={item.href} aria-current={isRouteActive(pathname, item.href) ? "page" : undefined} aria-describedby={item.href === "/fiscalizacion" ? "navigation-unofficial-source" : undefined}>{item.label}</Link>
+                  </li>
+                ))}
+              </ul> : null}
+              {"description" in group ? <p id="navigation-unofficial-source">{group.description}</p> : null}
             </li>
           );
         })}

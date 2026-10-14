@@ -1,7 +1,6 @@
 "use client";
 
-import { REFERENCE_FILL, REFERENCE_LINE } from "@/components/maps/reference-colors";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./drilldown.module.css";
 
 interface ProvinceFeature {
@@ -10,70 +9,32 @@ interface ProvinceFeature {
   geometry: { type: "MultiPolygon"; coordinates: number[][][][] };
 }
 
+/** Public, verified IGN ancestor reference; no child areas or electoral figures are inferred. */
 export function ProvinceReferenceMap() {
-  const container = useRef<HTMLDivElement>(null);
-  const [active, setActive] = useState(false);
-  const [status, setStatus] = useState("Mapa opcional; los selectores funcionan sin él.");
-
+  const [path, setPath] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!active || !container.current) return;
     const controller = new AbortController();
-    let disposed = false;
-    let cleanup: (() => void) | undefined;
-    async function initialize() {
+    async function load() {
       try {
         const response = await fetch("/api/geography/buenos-aires", { signal: controller.signal, cache: "no-store" });
-        if (!response.ok) throw new Error("geometry unavailable");
+        if (!response.ok) throw new Error("reference unavailable");
         const feature = await response.json() as ProvinceFeature;
-        if (disposed || !container.current) return;
-        if (!document.createElement("canvas").getContext("webgl2")) throw new Error("WebGL unavailable");
-        await import("maplibre-gl/dist/maplibre-gl.css");
-        const [maplibregl, { MapLibreOverlay }, { GeoJsonLayer }] = await Promise.all([
-          import("maplibre-gl"), import("@deck.gl/maplibre"), import("@deck.gl/layers"),
-        ]);
-        if (disposed || !container.current) return;
-        // Bounded accumulation: never spread hundreds of thousands of points into Math.min/max.
         let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
         for (const polygon of feature.geometry.coordinates) for (const ring of polygon) for (const [lon, lat] of ring) {
           west = Math.min(west, lon!); east = Math.max(east, lon!);
           south = Math.min(south, lat!); north = Math.max(north, lat!);
         }
-        if (![west, east, south, north].every(Number.isFinite)) throw new Error("invalid bounds");
-        const map = new maplibregl.Map({
-          container: container.current, style: { version: 8, sources: {}, layers: [] },
-          center: [(west + east) / 2, (south + north) / 2], zoom: 5, attributionControl: false,
-        });
-        cleanup = () => map.remove();
-        map.on("error", () => { if (!disposed) { cleanup?.(); cleanup = undefined; setActive(false); setStatus("No se pudo mostrar el mapa. Usá los selectores para continuar."); } });
-        map.on("load", () => {
-          if (disposed) return;
-          try {
-            map.addControl(new MapLibreOverlay({ layers: [new GeoJsonLayer({
-              id: "ign-buenos-aires-reference", data: feature, stroked: true, filled: true,
-              getFillColor: [...REFERENCE_FILL], getLineColor: [...REFERENCE_LINE],
-              getLineWidth: 2, lineWidthMinPixels: 2, pickable: true,
-              onClick: () => { document.getElementById("explorer-election")?.focus(); setStatus("Elegí una elección y una categoría para continuar hacia Coronel Rosales."); },
-            })] }));
-            map.fitBounds([[west, south], [east, north]], { padding: 24, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300 });
-            setStatus("Contorno geográfico de Buenos Aires disponible; no muestra resultados electorales.");
-          } catch {
-            cleanup?.(); cleanup = undefined; setActive(false);
-            setStatus("No se pudo mostrar el mapa. Usá los selectores para continuar.");
-          }
-        });
-      } catch {
-        cleanup?.(); cleanup = undefined;
-        if (!disposed) { setActive(false); setStatus("Mapa no disponible. Usá los selectores para continuar."); }
-      }
+        if (![west, east, south, north].every(Number.isFinite) || east <= west || north <= south) throw new Error("invalid reference");
+        const aspect = Math.cos((north + south) / 2 * Math.PI / 180);
+        const width = 600 * (east - west) * aspect / (north - south);
+        const d = feature.geometry.coordinates.flat().map(ring => ring.map(([x, y], i) => `${i ? "L" : "M"}${(600 - width) / 2 + (x! - west) / (east - west) * width} ${(north - y!) / (north - south) * 600}`).join(" ") + " Z").join(" ");
+        if (!controller.signal.aborted) setPath(d);
+      } catch { if (!controller.signal.aborted) setFailed(true); }
     }
-    void initialize();
-    return () => { disposed = true; controller.abort(); cleanup?.(); };
-  }, [active]);
-
-  return <div className={styles.provinceMap}>
-    <button type="button" disabled={active} onClick={() => { setStatus("Cargando contorno provincial…"); setActive(true); }}>Mostrar mapa geográfico</button>
-    <p role="status">{status}</p>
-    <div ref={container} className={active ? styles.provinceCanvas : styles.provinceInactive} aria-label="Mapa geográfico de Buenos Aires sin resultados electorales" />
-    <a href="#explorer-election">Continuar con los selectores</a>
-  </div>;
+    void load();
+    return () => controller.abort();
+  }, []);
+  return path ? <svg className={styles.referenceOutline} viewBox="-20 -20 640 640" role="img" aria-label="Contorno de referencia IGN de Buenos Aires; sin resultados electorales"><path d={path} fillRule="evenodd" /></svg>
+    : <p role="status">{failed ? "Contorno de referencia no disponible; consulte la evidencia exacta." : "Preparando contorno de referencia provincial…"}</p>;
 }

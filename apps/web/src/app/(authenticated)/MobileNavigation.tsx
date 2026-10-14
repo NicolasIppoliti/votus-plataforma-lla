@@ -35,9 +35,9 @@ export function MobileNavigation({ sidebar }: MobileNavigationProps): ReactNode 
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
       <SheetTrigger asChild aria-controls={drawerId}>
-        <Button ref={triggerRef} className="mobile-navigation__trigger" type="button">
+        <Button ref={triggerRef} className="mobile-navigation__trigger" type="button" aria-label="Abrir navegación">
           <MenuIcon size={16} aria-hidden="true" />
-          <span>Abrir navegación</span>
+          <span className="mobile-navigation__label">Abrir navegación</span>
         </Button>
       </SheetTrigger>
       <SheetContent

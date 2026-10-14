@@ -1,3 +1,3 @@
-.map { width: 100%; max-height: 520px; color: var(--ink); background: var(--surface); border: 1px solid var(--border); }
-.unit { cursor: pointer; }
+.map { display: block; width: 100%; height: 100%; color: var(--ink); background: transparent; overflow: visible; }
+.unit { cursor: pointer; stroke: var(--accent); filter: drop-shadow(0 0 3px var(--accent)); }
 .unit:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; stroke-width: 3; }
