@@ -152,7 +152,6 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
         </form>
         <p id="compare-swap-reason" className={styles.hidden}>Intercambiar no está disponible: A está limitada a 2023 y B a 2025; el intercambio no sería una selección autorizada.</p>
         <p id="compare-group-reason" className={styles.hidden}>El filtro compartido de agrupación no está disponible. La selección de agrupación del detalle conserva su alcance local.</p>
-        <p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
       </section>
       {showResults ? children : (
         <p className={styles.pending} role="status" aria-live="polite">Actualizando comparación… Los resultados se mostrarán cuando la selección esté verificada.</p>

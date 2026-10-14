@@ -121,7 +121,7 @@ test.describe("authorized official comparison", () => {
       await expect(firstMap.locator("canvas.maplibregl-canvas")).toBeVisible();
       const original = await settledMap(firstMap, "initial first map");
       const leftFill = [69, 157, 172]; // 60% of fixed [21,50,66] → [101,229,242], rounded per channel.
-      const rightFill = [81, 184, 198]; // 75% of the same independent fixed endpoints.
+      const rightFill = [41, 95, 110]; // Selected canonical party: 25%, not the other party's 75% leader share.
       await expectElectoralFill(page, firstMap, original.image, leftFill, "initial first map");
       const bounds = await firstMap.boundingBox();
       if (!bounds) throw new Error("first map has no bounds");
@@ -417,7 +417,8 @@ test.describe("authorized official comparison", () => {
       });
       await test.step("390px preserves reading order from editors through both evidence rails", async () => {
         await page.setViewportSize({ width: 390, height: 844 });
-        const ordered = [shared, editA, editB, contexts, workbench, main.getByRole("region", { name: "Cambio por territorio", exact: true }), chart, tableRegion, evidenceA, evidenceB];
+        // Selection details now follow the workbench and its child comparison, rather than preceding maps.
+        const ordered = [shared, editA, editB, workbench, main.getByRole("region", { name: "Cambio por territorio", exact: true }), contexts, chart, tableRegion, evidenceA, evidenceB];
         for (let index = 1; index < ordered.length; index++) {
           const before = ordered[index - 1]!, after = ordered[index]!;
           await precedes(before, after);

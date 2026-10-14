@@ -1,4 +1,17 @@
 .spatial { margin: 0; padding: 20px; min-width: 0; }
+.mapHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.mapHeader h2 { flex: 1 1 220px; }
+.metricSwitch { display: flex; flex-wrap: wrap; padding: 3px; border: 1px solid var(--border); border-radius: 5px; gap: 2px; }
+.metricSwitch button { min-height: 44px; padding: 6px 9px; font-size: 14px; border: 0; border-radius: 3px; background: transparent; color: var(--secondary-ink); }
+.metricSwitch button[aria-pressed="true"] { background: #163747; color: var(--accent); }
+.metricSwitch button:disabled { opacity: .6; cursor: not-allowed; }
+.swatch { display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 1px solid var(--border); }
+.provenance { overflow-wrap: anywhere; }
+.selectionDetails { min-width: 0; border-block: 1px solid var(--border); padding-block: 12px; }
+.selectionDetails h2 { margin: 0; font-size: 14px; }
+.selectionDetails .guidance { margin-top: 8px; padding-top: 0; border: 0; }
+.selectionDetails :global(.official-compare__contexts) h2 { font-size: 16px; }
+.selectionDetails p { margin-block: 6px; }
 .spatial h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
 .spatial h3 { margin: 0; font-size: 1rem; }
 .spatial p { font-size: 0.8125rem; line-height: 1.55; }

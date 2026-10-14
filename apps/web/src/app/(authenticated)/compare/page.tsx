@@ -160,6 +160,8 @@ interface CompareSelectorProps {
   alert?: boolean;
   evidenceNotice?: ComparisonEvidenceNotice | undefined;
   children?: ReactNode;
+  workbench?: ReactNode;
+  context?: ReactNode;
 }
 
 function CompareSelector({
@@ -174,6 +176,8 @@ function CompareSelector({
   alert = false,
   evidenceNotice,
   children,
+  workbench,
+  context,
 }: CompareSelectorProps): ReactNode {
   const groups: SelectionGroup[] = [
     {
@@ -211,6 +215,10 @@ function CompareSelector({
           <p className="official-compare__context">Dos muestras. El mismo territorio. Una lectura compartida.</p>
         </header>
         <ComparisonSelectionForm selected={selected} groups={[groups[2]!, groups[0]!, groups[1]!]}>
+          {workbench}
+          <section className={styles.selectionDetails} aria-label="Detalles de la selección">
+          <h2>Detalles de la selección</h2>
+          <p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
           {!alert && unique && (
             <aside className="official-compare__state" aria-label="Opciones no compartidas">
               {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
@@ -224,6 +232,8 @@ function CompareSelector({
           ) : (
             <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
           )}
+          {context}
+          </section>
           {children}
         </ComparisonSelectionForm>
       </div>
@@ -542,14 +552,14 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       selected={selected}
       unique={unique}
       message="Comparación aplicada"
-    >
-        {comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
-        <ComparisonWorkbench territory={optionLabel(selectedSeccion)} swing={swing}
+      context={comparisonContext(selectedLeftElection, selectedRightElection, leftCategory, rightCategory, unitId)}
+      workbench={<ComparisonWorkbench territory={optionLabel(selectedSeccion)} swing={swing}
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
           maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
-        />
+        />}
+    >
         <div className="official-compare__analysis">
         <section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading" tabIndex={-1}>Resultados exactos</h2>
