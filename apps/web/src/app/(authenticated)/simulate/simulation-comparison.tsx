@@ -12,13 +12,13 @@ export function RenewalStrip({ result, children }: { result: AllocationResult; c
   return (
     <section className="simulation-renewal" aria-label={`Bancas calculadas: ${awarded} de ${result.seatsToFill}`}>
       <h3>{result.level === "pba_municipal" ? "Impacto en la renovación" : "Bancas de la unidad de reparto"}</h3>
-      <p className="simulation-renewal__method">{result.level === "national" ? "D’Hondt · Ley 19.945, art. 161" : "Hare y mayor residuo · Ley 5109, arts. 109–110"}</p>
-      <p>{result.level === "pba_municipal" ? "Divisor Hare: 9 bancas renovadas, no 18 bancas totales" : `Bancas por asignar: ${result.seatsToFill}`}</p>
       <div className="simulation-renewal__count"><span>Bancas calculadas</span><strong>{awarded}</strong></div>
       {canDraw ? <div className="simulation-renewal__strip" aria-hidden="true">
         {result.results.flatMap((row, listIndex) => Array.from({ length: seats(result, row.listId) }, (_, index) => <span key={`${row.listId}-${index}`} style={{ backgroundColor: COLORS[listIndex % COLORS.length] }} />))}
         {Array.from({ length: result.seatsToFill - awarded }, (_, index) => <span key={`empty-${index}`} className="simulation-renewal__empty" />)}
       </div> : <p>Dibujo limitado a 60 bancas y 600 posiciones; los conteos exactos permanecen disponibles.</p>}
+      <p className="simulation-renewal__method">{result.level === "national" ? "D’Hondt · Ley 19.945, art. 161" : "Hare y mayor residuo · Ley 5109, arts. 109–110"}</p>
+      <p>{result.level === "pba_municipal" ? "Divisor Hare: 9 bancas renovadas, no 18 bancas totales" : `Bancas por asignar: ${result.seatsToFill}`}</p>
       {result.results.some((row) => seats(result, row.listId) === 0) ? <details className="simulation-disclosure simulation-impact-disclosure"><summary>Sin bancas ({result.results.filter((row) => seats(result, row.listId) === 0).length})</summary><p>{result.results.filter((row) => seats(result, row.listId) === 0).map((row) => `${row.listName}: 0 bancas`).join(" · ")}</p></details> : null}
       <details className="simulation-disclosure simulation-impact-disclosure"><summary>Cómo se calcula</summary>
       <ul className="simulation-renewal__summary">{result.results.map((row, index) => seats(result, row.listId) > 0 ? <li key={row.listId} style={{ "--list-color": COLORS[index % COLORS.length] } as CSSProperties}><span>{row.listName}</span><strong>{seats(result, row.listId)}</strong></li> : null)}</ul>
