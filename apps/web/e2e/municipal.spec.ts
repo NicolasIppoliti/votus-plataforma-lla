@@ -124,7 +124,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.getByRole("rowheader")).toHaveCount(0);
       await expect(main).not.toContainText(`ALIANZA LA LIBERTAD AVANZA: ${OFFICIAL_VOTES} voto(s)`);
       await expect(main).not.toContainText("110: 1 filas");
-      await expect(main.getByRole("status", { name: "granularidad: seccion" })).toHaveCount(0);
+      await expect(main.getByRole("status", { name: "granularidad: sección" })).toHaveCount(0);
       await expect(main).not.toContainText(`1 fila fiscalización / ${FISCALIZACION_VOTES} votos`);
       await expect(main.getByRole("list", { name: "procedencia" })).toHaveCount(0);
       await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));

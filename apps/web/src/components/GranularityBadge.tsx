@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { granularityLabel } from "@/lib/results/granularity";
 import type { Granularity } from "@/lib/results/types";
 
 export interface GranularityBadgeProps {
@@ -29,23 +30,24 @@ export function GranularityBadge({
   requestedGranularity,
   summedFrom,
 }: GranularityBadgeProps): ReactNode {
+  const inline = (level: Granularity) => granularityLabel(level).toLocaleLowerCase("es");
   return (
-    <span role="status" aria-label={`granularidad: ${granularity}`}>
-      <span>{granularity}</span>
+    <span role="status" aria-label={`granularidad: ${inline(granularity)}`}>
+      <span>{granularityLabel(granularity)}</span>
       {degradedFrom ? (
         <span role="alert">
-          {` — degradada desde ${degradedFrom} (la fuente publicó totales a nivel ${degradedFrom}, por lo que no hay datos más detallados disponibles)`}
+          {` — degradada desde ${inline(degradedFrom)} (la fuente publicó totales a nivel ${inline(degradedFrom)}, por lo que no hay datos más detallados disponibles)`}
         </span>
       ) : null}
       {requestedGranularity && requestedGranularity !== granularity ? (
         <span role="alert">
-          {` — granularidad solicitada: ${requestedGranularity}; granularidad real: ${granularity}`}
+          {` — granularidad solicitada: ${inline(requestedGranularity)}; granularidad real: ${inline(granularity)}`}
         </span>
       ) : null}
       {summedFrom ? (
         <span role="note">
           {" "}
-          — sumado a partir de filas de nivel {summedFrom}
+          — sumado a partir de filas de nivel {inline(summedFrom)}
         </span>
       ) : null}
     </span>

@@ -1,5 +1,6 @@
 "use client";
 
+import { granularityLabel } from "@/lib/results/granularity";
 import { useState } from "react";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
 import { PanoramaChildren } from "./PanoramaChildren";
@@ -45,7 +46,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
           </div>
           <dl className={styles.totals}><dt>Votos positivos oficiales</dt><dd>{integer.format(result.totalVotes)}</dd><dt>Completitud de mesas</dt><dd>{completeness?.status === "complete" || completeness?.status === "partial" ? `${integer.format(completeness.counts.counted)} / ${integer.format(completeness.counts.expected)}` : "No disponible"}</dd></dl>
           <p>Denominador de porcentajes y margen: {integer.format(result.totalVotes)} votos positivos suministrados. No es participación ni padrón.</p>
-          <p>Nivel del informe: {result.level}. Granularidad real de la fuente: {result.sourceGranularity}.</p>
+          <p>Nivel del informe: {granularityLabel(result.level)}. Granularidad real de la fuente: {granularityLabel(result.sourceGranularity)}.</p>
           {(completeness?.status === "complete" || completeness?.status === "partial") && <p>No escrutadas: {completeness.counts.not_counted}; faltantes: {completeness.counts.missing}; inesperadas: {completeness.counts.unexpected}; en cuarentena: {completeness.counts.quarantined}; cuarentenas no atribuidas: {completeness.counts.unattributed_quarantined}. Catálogo esperado para las categorías informadas en el distrito.</p>}
           {completeness?.status === "unknown" && <p>Completitud desconocida: {completeness.reason}. {completeness.reason === "section_absent_from_catalogue" && <>Mesas en la fuente: {completeness.unlisted_status_mesas}; cuarentenas: {completeness.quarantined_mesas}; no atribuidas: {completeness.unattributed_quarantined}.</>}</p>}
           <ul className={styles.distribution} aria-label="Distribución de votos positivos oficiales">{inspectorDistribution(result.parties).map((row, index) => <li key={index}><span>{row.name}</span><span>{integer.format(row.votes)} votos · {row.share === null ? "Porcentaje no disponible" : `${decimal.format(row.share)} %`}</span>{row.share !== null && <meter min={0} max={100} value={row.share} aria-label={`${row.name}: porcentaje de votos positivos`} />}</li>)}</ul>
