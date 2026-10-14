@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { formatCount } from "../src/lib/format/number";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./review-test-fixture";
 import { zoomTest } from "./review-zoom-test-fixture";
@@ -190,7 +191,7 @@ const fiscalUrl = new URL(`/fiscalizacion?${new URLSearchParams({
   distritoCode: COVERAGE_SCOPE.distritoCode, seccionCode: COVERAGE_SCOPE.seccionCode,
 })}`, baseURL).toString();
 const pair = fiscalWirePair(COVERAGE_SCOPE);
-const figureSentinels = /7 unidades observadas|denominador 108|Sentinel school|Sentinel Party|876543|456789|sentinel-unmapped|missing_identity|fiscal\/sentinel|SHA-256/;
+const figureSentinels = /7 unidades observadas|denominador 108|Sentinel school|Sentinel Party|876\.?543|456\.?789|sentinel-unmapped|missing_identity|fiscal\/sentinel|SHA-256/;
 
 async function expectSuppressed(page: Page): Promise<void> {
   const main = page.getByRole("main");
@@ -205,7 +206,7 @@ async function expectReady(page: Page): Promise<void> {
   const main = page.getByRole("main");
   await expect(main.getByRole("heading", { name: "Cobertura autorizada", exact: true })).toBeVisible();
   await expect(main.getByRole("heading", { name: "Resultado autorizado", exact: true })).toBeVisible();
-  for (const text of ["7 unidades observadas de 108", "Sentinel school", "Sentinel Party", "876543", "456789", "missing_identity", "fiscal/sentinel"])
+  for (const text of ["7 unidades observadas de 108", "Sentinel school", "Sentinel Party", "876543", formatCount(456789), "missing_identity", "fiscal/sentinel"])
     await expect(main).toContainText(text);
   for (const label of ["Unidades sin cobertura", "Resultados"])
     await expect(main.getByRole("alert").filter({ hasText: `${label}: se muestran 100 de 101; respuesta truncada` })).toBeVisible();

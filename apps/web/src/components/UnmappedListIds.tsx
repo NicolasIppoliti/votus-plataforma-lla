@@ -80,8 +80,8 @@ export function UnmappedListIds({
       {rows === 0 ? null : (
         <p role="alert">
           {label ? `${label}: ` : ""}
-          {rows} de {formatCount(totalRows)} filas
-          {unsummable === null ? ` (${votes} votos)` : ""}{" "}
+          {formatCount(rows)} de {formatCount(totalRows)} filas
+          {unsummable === null ? ` (${formatCount(votes)} votos)` : ""}{" "}
           {mappingConfigured
             ? "se resolvieron sin un partido curado"
             : "no se pudieron resolver porque no hay una fuente de mapeo curado configurada para esta lectura"}

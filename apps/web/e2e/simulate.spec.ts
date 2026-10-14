@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { formatCount } from "../src/lib/format/number";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 
@@ -734,10 +735,10 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
   await expect(samples).toContainText("Último intervalo más corto: 400 votos");
   const sampledTable = samples.getByRole("table", { name: "Muestras evaluadas", exact: true });
   await expect(sampledTable.getByRole("row")).toHaveCount(4);
-  await expect(sampledTable.locator("tbody").getByRole("rowheader")).toHaveText(["0", "600", "1000"]);
+  await expect(sampledTable.locator("tbody").getByRole("rowheader")).toHaveText([0, 600, 1000].map(formatCount));
   await expect(samples).toContainText("Sin probabilidades, garantías entre puntos ni umbral general para ganar bancas");
   for (const amount of [0, 600, 1000]) {
-    const link = samples.getByRole("link", { name: `Ver escenario exacto: ${amount} votos`, exact: true });
+    const link = samples.getByRole("link", { name: `Ver escenario exacto: ${formatCount(amount)} votos`, exact: true });
     await expect(link).toHaveCount(1);
     const url = new URL((await link.getAttribute("href"))!, page.url());
     expect([...url.searchParams.keys()].some((key) => key.startsWith("sweep"))).toBe(false);
@@ -810,11 +811,11 @@ test("serves varying sample allocations and numeric extrema for every list", asy
   })}`);
   const samples = page.getByRole("region", { name: "Resultados del muestreo", exact: true });
   const points = samples.getByRole("table", { name: "Muestras evaluadas", exact: true });
-  await expect(points.locator("tbody").getByRole("rowheader")).toHaveText(["0", "2000", "4000"]);
+  await expect(points.locator("tbody").getByRole("rowheader")).toHaveText([0, 2000, 4000].map(formatCount));
   for (const [amount, seats] of [["0", ["1", "1", "0"]], ["2000", ["1", "1", "0"]], ["4000", ["0", "2", "0"]]] as const) {
-    const row = points.getByRole("rowheader", { name: amount, exact: true }).locator("..");
+    const row = points.getByRole("rowheader", { name: formatCount(Number(amount)), exact: true }).locator("..");
     await expect(row.getByRole("cell")).toHaveText([
-      "Válida", ...seats, `Ver escenario exacto: ${amount} votos`,
+      "Válida", ...seats, `Ver escenario exacto: ${formatCount(Number(amount))} votos`,
     ]);
   }
   const extrema = samples.getByRole("table", { name: "Mínimo y máximo de bancas en las muestras válidas" });
