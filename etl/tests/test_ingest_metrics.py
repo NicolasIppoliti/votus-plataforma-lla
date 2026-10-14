@@ -86,6 +86,22 @@ class Connection:
     def execute(self, query, params=()):
         text = " ".join((query if isinstance(query, str) else query.as_string()).split())
         self.response = None
+        if text.startswith("select current_setting('server_version_num')"):
+            self.response = (
+                170011,
+                False,
+                True,
+                {
+                    "fsync": "on",
+                    "full_page_writes": "on",
+                    "synchronous_commit": "on",
+                    "shared_buffers": "128MB",
+                    "work_mem": "4MB",
+                },
+                False,
+                "0" * 32,
+            )
+            return
         if text.startswith("select capability is not distinct"):
             return
         if text.startswith("select source_kind from archive_entry"):
@@ -207,6 +223,147 @@ def scenario(tmp_path, monkeypatch):
         return argv, conn, tmp_path / "metrics.json"
 
     return prepare
+
+
+def test_performance_cli_report_is_separate_and_exclusive(scenario, capsys):
+    argv, conn, output = scenario([row(), row(lista_numero="B")])
+    assert main([*argv, "--performance-output", str(output)]) == 0
+    assert capsys.readouterr() == ("ingested 2 rows from synthetic\n", "")
+    report = json.loads(output.read_text())
+    assert report["version"] == 1
+    assert report["kind"] == "national_ingest_performance"
+    assert report["status"] == "succeeded"
+    assert report["commit_returned"] is True
+    assert report["database_settings"] == {
+        "fsync": "on",
+        "full_page_writes": "on",
+        "synchronous_commit": "on",
+        "shared_buffers": "128MB",
+        "work_mem": "4MB",
+    }
+    phases = report["phases"]
+    assert set(phases) == {
+        "archive_read_hash",
+        "extraction",
+        "completeness",
+        "preflight",
+        "active_emission",
+        "jurisdiction_resolution",
+        "scoped_delete",
+        "result_writes",
+        "commit",
+        "other",
+    }
+    assert sum(p["wall_ns"] for p in phases.values()) == report["ingest_wall_ns"]
+    assert all(p["wall_ns"] >= 0 for p in phases.values())
+    assert phases["preflight"]["calls"] == 1
+    assert phases["active_emission"]["calls"] >= 3
+    expected_sha = hashlib.sha256(csv_bytes([row(), row(lista_numero="B")])).hexdigest()
+    assert report["source_sha256"] == expected_sha
+    assert "nonexistent-votus" not in output.read_text()
+    assert "Synthetic" not in output.read_text()
+    assert (conn.commits, conn.rollbacks) == (1, 0)
+
+
+def test_performance_protects_existing_destination(scenario):
+    argv, conn, output = scenario([row()])
+    output.write_text("protected")
+    assert main([*argv, "--performance-output", str(output)]) == 1
+    assert output.read_text() == "protected"
+    assert conn.connections == 0
+
+
+def test_performance_failure_is_bounded(scenario):
+    argv, conn, output = scenario([row()])
+    conn.fail_batch = 1
+    with pytest.raises(psycopg.OperationalError):
+        main([*argv, "--performance-output", str(output)])
+    report = json.loads(output.read_text())
+    assert report["status"] == "failed"
+    assert report["commit_returned"] is False
+    assert "private exception" not in output.read_text()
+    assert output.stat().st_size < 16384
+
+
+def test_performance_interruption_publishes_without_exception_details(scenario):
+    argv, conn, output = scenario([row()])
+
+    def interrupt(*args):
+        raise KeyboardInterrupt("private detail")
+
+    conn.executemany = interrupt
+    with pytest.raises(KeyboardInterrupt):
+        main([*argv, "--performance-output", str(output)])
+    report = json.loads(output.read_text())
+    assert report["status"] == "interrupted"
+    assert report["commit_returned"] is False
+    assert "private detail" not in output.read_text()
+    assert sum(p["wall_ns"] for p in report["phases"].values()) == report["ingest_wall_ns"]
+
+
+def test_performance_nested_phases_and_generator_suspension(monkeypatch):
+    import etl.ingest_performance as perf
+
+    clock = [0]
+    monkeypatch.setattr(perf, "perf_counter_ns", lambda: clock[0])
+    monkeypatch.setattr(perf, "process_time_ns", lambda: clock[0])
+    profiler = perf.Performance()
+    token = perf._CURRENT.set(profiler)
+
+    @perf.active_emission
+    def rows():
+        clock[0] += 3
+        perf.emission_started()
+        clock[0] += 2
+        yield 1
+        clock[0] += 5
+
+    try:
+        with perf.ingest_span():
+            iterator = rows()
+            assert next(iterator) == 1
+            with perf.phase("result_writes"):
+                clock[0] += 7
+                with perf.phase("jurisdiction_resolution"):
+                    clock[0] += 11
+                clock[0] += 13
+            with pytest.raises(StopIteration):
+                next(iterator)
+        assert profiler.data["ingest_wall_ns"] == 41
+        nonzero = {
+            name: p["wall_ns"] for name, p in profiler.data["phases"].items() if p["wall_ns"]
+        }
+        assert nonzero == {
+            "preflight": 3,
+            "active_emission": 7,
+            "result_writes": 20,
+            "jurisdiction_resolution": 11,
+        }
+    finally:
+        perf._CURRENT.reset(token)
+
+
+@pytest.mark.parametrize("destination", ["archive", "sources", "manifest"])
+def test_performance_protects_inputs(scenario, tmp_path, destination):
+    argv, conn, _ = scenario([row()])
+    target = {
+        "archive": tmp_path / "archive" / "new.json",
+        "sources": tmp_path / "sources.yaml",
+        "manifest": tmp_path / "manifest.json",
+    }[destination]
+    before = target.read_bytes() if target.exists() else None
+    assert main([*argv, "--performance-output", str(target)]) == 1
+    assert conn.connections == 0
+    assert (target.read_bytes() if target.exists() else None) == before
+
+
+def test_performance_and_count_reports_are_independent(scenario, tmp_path):
+    argv, _, output = scenario([row()])
+    counts = tmp_path / "counts.json"
+    assert main([*argv, "--performance-output", str(output), "--metrics-output", str(counts)]) == 0
+    assert json.loads(counts.read_text())["records_seen"] == 1
+    assert "phases" not in json.loads(counts.read_text())
+    assert "records_seen" not in json.loads(output.read_text())
 
 
 def test_no_flag_cli_baseline(scenario, capsys):

@@ -5,6 +5,12 @@ Add `--metrics-output /existing/writable/directory/new-report.json` to the exist
 are supported. Without the option, ingestion output, return values and data flow
 are unchanged; `ingest_source` still returns an integer.
 
+For opt-in phase timing, client CPU/RSS observations and repeated owned-local
+benchmarks, see [performance profiling](etl-performance-profiling.md). Its
+`--performance-output` report is a separate versioned contract; no timing or
+resource fields are added to the count metrics below. Both flags may be used
+together with distinct new output files.
+
 ## File and failure contract
 
 The destination must be new, outside the immutable archive root, and distinct from
