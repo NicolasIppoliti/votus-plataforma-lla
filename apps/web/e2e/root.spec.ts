@@ -644,8 +644,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
     await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
-    await expect(officialRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
-    await expect(officialRoutes.getByRole("link", { name: "Resultados municipales" })).toHaveAttribute("href", "/municipal");
+    // Municipal is a separated flow in the approved Panorama, outside the official routes.
+    const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
+    await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
+    await expect(separatedRoutes.getByRole("link", { name: "Resultados municipales" })).toHaveAttribute("href", "/municipal");
     await page
       .getByRole("link", { name: "Ir al contenido principal" })
       .press("Enter");
