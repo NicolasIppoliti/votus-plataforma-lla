@@ -21,7 +21,7 @@ export function PrimaryNavigation() {
         {Object.values(NAVIGATION_GROUPS).map((group, index) => {
           const [module, ...subitems] = group.items;
           return (
-            <li key={module.href}>
+            <li key={module.href} data-navigation-group={group.label}>
               <Link className="navigation-module" href={module.href} aria-current={isRouteActive(pathname, module.href) ? "page" : undefined}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{moduleGlyphs[index]}</svg>
                 <span>{module.label}</span>

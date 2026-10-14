@@ -482,7 +482,8 @@ test.describe("the production root preserves its authentication boundary", () =>
       ["Comparación", "/compare"],
       ["Simulación", "/simulate"],
       ["Escenarios Rosales 2027", "/scenarios"],
-      ["Evidencia", "/review"],
+      ["Evidencia", "/evidencia"],
+      ["Revisión de datos", "/review"],
       ["Fiscalización (no oficial)", "/fiscalizacion"],
     ] as const) {
       await expect(
@@ -614,6 +615,7 @@ test.describe("the production root preserves its authentication boundary", () =>
       "Simulación",
       "Escenarios Rosales 2027",
       "Evidencia",
+      "Revisión de datos",
       "Fiscalización (no oficial)",
     ]) {
       await expect(
@@ -623,6 +625,13 @@ test.describe("the production root preserves its authentication boundary", () =>
         }),
       ).toBeVisible();
     }
+
+    await expect(desktopNavigation.getByRole("link")).toHaveText([
+      "Panorama", "Exploración", "Municipal", "Comparación", "Simulación",
+      "Escenarios Rosales 2027", "Evidencia", "Revisión de datos", "Fiscalización (no oficial)",
+    ]);
+    await expect(desktopNavigation.getByRole("link", { name: "Evidencia", exact: true })).toHaveAttribute("href", "/evidencia");
+    await expect(desktopNavigation.getByRole("link", { name: "Revisión de datos", exact: true })).toHaveAttribute("href", "/review");
 
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Resultados oficiales", exact: true });
     await expect(officialRoutes).toContainText("Sección compartida y evidencia independiente.");

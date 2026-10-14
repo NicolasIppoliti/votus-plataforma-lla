@@ -170,7 +170,7 @@ async function expectPopulatedReviewLayout(
 
 const PREVIOUS_PAGE = "Página anterior de la cola de revisión";
 const NEXT_PAGE = "Página siguiente de la cola de revisión";
-const NAVIGATION_NAMES = ["Panorama", "Exploración", "Municipal", "Comparación", "Simulación", "Escenarios Rosales 2027", "Evidencia", "Fiscalización (no oficial)"];
+const NAVIGATION_NAMES = ["Panorama", "Exploración", "Municipal", "Comparación", "Simulación", "Escenarios Rosales 2027", "Evidencia", "Revisión de datos", "Fiscalización (no oficial)"];
 
 async function expectKeyboardFocus(target: Locator, region = false, control: ReviewFocusControl = "unlabelled"): Promise<void> {
   const capture = () => target.evaluate((element) => {
@@ -805,7 +805,7 @@ test.describe("the review route reflects the disposable database", () => {
     // Layout/touch checks may move the page; prove denial at the review destination,
     // not whichever sidebar link happens to be last in the redesigned navigation.
     const reviewLink = page.getByRole("navigation", { name: "principal", exact: true })
-      .getByRole("link", { name: "Evidencia", exact: true });
+      .getByRole("link", { name: "Revisión de datos", exact: true });
     await expect(reviewLink).toHaveAttribute("href", "/review");
     await reviewLink.click();
     await expect(page).toHaveURL(/\/review$/);

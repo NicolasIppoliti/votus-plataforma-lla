@@ -111,6 +111,7 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
       "/compare",
       "/simulate",
       "/scenarios",
+      "/evidencia",
       "/review",
       "/fiscalizacion",
     ]);
@@ -162,6 +163,7 @@ it.each([
   ["/fiscalizacion", "/fiscalizacion"],
   ["/simulate", "/simulate"],
   ["/scenarios", "/scenarios"],
+  ["/evidencia", "/evidencia"],
   ["/review", "/review"],
 ])("marks only the %s route as the current page", async (pathname, href) => {
   expect(currentPrimaryHrefs(await renderLayout(pathname))).toEqual([href]);
@@ -282,7 +284,7 @@ it("keeps real root attention unknown after the review request throws", async ()
   expect(markup).not.toContain("Sin elementos pendientes");
 });
 
-it("renders all eight shared destinations in contract order with explicit source status", async () => {
+it("renders all nine shared destinations in contract order with explicit source status", async () => {
   const markup = await renderLayout("/dashboard");
   const navigationMarkup = primaryNavigation(markup);
   const hrefs = [...navigationMarkup.matchAll(/<a ([^>]*)>/g)]
@@ -290,10 +292,11 @@ it("renders all eight shared destinations in contract order with explicit source
     .filter((href): href is string => typeof href === "string");
 
   expect(markup).toContain("Esta herramienta no es una fuente electoral oficial.");
-  expect(hrefs).toEqual(["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/review", "/fiscalizacion"]);
+  expect(hrefs).toEqual(["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/evidencia", "/review", "/fiscalizacion"]);
   const modules = [...navigationMarkup.matchAll(/class="navigation-module"[^>]*>[\s\S]*?<span>([^<]+)<\/span>/g)].map((match) => match[1]);
   expect(modules).toEqual(["Panorama", "Exploración", "Comparación", "Simulación", "Evidencia"]);
-  expect(navigationMarkup.match(/class="navigation-subitem"/g)).toHaveLength(3);
+  expect(navigationMarkup.match(/class="navigation-subitem"/g)).toHaveLength(4);
+  expect(navigationMarkup).toMatch(/data-navigation-group="Evidencia"[\s\S]*?href="\/evidencia"[\s\S]*?href="\/review"[\s\S]*?Revisión de datos[\s\S]*?href="\/fiscalizacion"/);
   expect(navigationMarkup).toContain("Fuente no oficial, separada de los resultados oficiales.");
   expect(markup).toContain('aria-label="Panel de Votus"');
   expect(markup).toContain('class="site-brand__glyph"');
