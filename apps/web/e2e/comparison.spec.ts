@@ -121,7 +121,7 @@ test.describe("authorized official comparison", () => {
       await expect(firstMap.locator("canvas.maplibregl-canvas")).toBeVisible();
       const original = await settledMap(firstMap, "initial first map");
       const leftFill = [69, 157, 172]; // 60% of fixed [21,50,66] → [101,229,242], rounded per channel.
-      const rightFill = [41, 95, 110]; // Selected canonical party: 25%, not the other party's 75% leader share.
+      const rightFill = [81, 184, 198]; // Same selected party as A: 9,000 / (9,000 + 3,000) = 75%, using the fixed endpoints.
       await expectElectoralFill(page, firstMap, original.image, leftFill, "initial first map");
       const bounds = await firstMap.boundingBox();
       if (!bounds) throw new Error("first map has no bounds");

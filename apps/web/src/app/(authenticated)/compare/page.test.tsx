@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { comparisonFixture } from "../../../../e2e/result-fixture";
 import type { ReactElement } from "react";
 import { ComparisonMapView, type MapMetric } from "./ComparisonMap";
 import type { UnitSwing } from "@/lib/results/compare";
@@ -105,6 +107,25 @@ it("disables absent-observation metrics with accessible reasons rather than zero
   expect(markup).toContain("se requieren observaciones de la agrupación en ambos lados");
   expect(markup).toContain("Observación no disponible");
   expect(markup).not.toContain("PARTIDO A 2025: 0,00 %");
+});
+
+it("pins the spatial fixture side-B selected-party fill to the interactive raster contract", async () => {
+  const value = supportedSpatialEvidence();
+  // Only build the pure seed; no e2e environment, database setup, or browser is invoked.
+  const { identity, seed } = comparisonFixture("e2e/comparison.spec.ts", "spatial");
+  for (const [index, side] of [value.left, value.right].entries()) {
+    side.result.parties[0]!.votes = Number(seed.rows.find(row => row.election_id === identity.electionIds[index] && row.list_id === identity.comparisonParty!.listIds[index] && row.jurisdiction_id === identity.jurisdictionId)!.votes);
+    side.result.parties[1]!.votes = Number(seed.rows.find(row => row.election_id === identity.electionIds[index] && row.list_id === identity.comparisonOtherParty!.listIds[index])!.votes);
+  }
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  const sideB = markup.match(/<article[^>]*aria-label="Lado B — 2025 legislativas"[^>]*>[\s\S]*?<\/article>/)?.[0] ?? "";
+  expect(sideB).toContain("PARTIDO A 2025: 75,00 %");
+  expect(sideB).toContain("rgba(81,184,198,");
+  // The e2e screenshot must expect the same selected-party RGB as the route's static map.
+  const spec = readFileSync(new URL("../../../../e2e/comparison.spec.ts", import.meta.url), "utf8");
+  const expected = spec.match(/const rightFill = \[([^\]]+)\]/)?.[1]?.split(",").map(Number);
+  expect(expected).toEqual([81, 184, 198]);
 });
 
 it("renders the approved header and paired selection without changing authorized query keys", async () => {
