@@ -30,6 +30,8 @@ import {
   type SimulationFormValues,
 } from "./simulation-form-adapter";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
+import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
+import type { RosalesReference } from "@/lib/geography/cne-rosales-reference";
 
 const INITIAL_VALUES: SimulationFormValues = {
   level: ALLOCATION_LEVEL.PBA_MUNICIPAL,
@@ -92,6 +94,8 @@ function NumberField({
 }
 
 interface SimulationFormProps {
+  reference?: RosalesReference | undefined;
+  hasScenarioInput?: boolean;
   requestKey: string;
   children: ReactNode;
   impact: ReactNode;
@@ -231,10 +235,14 @@ function restoredEditor(requestKey: string): EditorState {
   };
 }
 
-export function SimulationForm({ requestKey, children, impact, baseImpact, comparison }: SimulationFormProps) {
+export function SimulationForm({ requestKey, children, impact, baseImpact, comparison, reference, hasScenarioInput = false }: SimulationFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editor, setEditor] = useState(() => restoredEditor(requestKey));
+  const [selectedCircuit, setSelectedCircuit] = useState<string | null>(null);
+  // Native disclosure state survives live updates from this editor. A fresh
+  // page with supplied input starts closed; an empty editor starts expanded.
+  const [editorOpen, setEditorOpen] = useState(!hasScenarioInput);
   const [distributionView, setDistributionView] = useState<"base" | "scenario">("scenario");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revision = useRef(0);
@@ -396,6 +404,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
   }
 
   function createAnotherScenario() {
+    setEditorOpen(true);
     cancelScheduledRequest();
     setEditor((current) => ({
       ...restoredEditor(""),
@@ -425,7 +434,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
   return (
     <div className={`simulation-workspace${editor.values === null ? " simulation-workspace--supplied" : ""}`}>
     <section className="simulation-context" aria-label="Contexto del escenario">
-      <div><span>Territorio</span><strong>Territorio no vinculado</strong><small>Sin identificación territorial verificada</small></div>
+      <div><span>Territorio</span><strong>{reference ? "Coronel Rosales" : "Territorio no vinculado"}</strong><small>{reference ? "Referencia geográfica del partido; no verifica la vinculación electoral de los votos aportados" : "Sin identificación territorial verificada"}</small></div>
       <div><span>Muestra base</span><strong>Datos aportados por quien consulta</strong><small>Base histórica no conectada</small></div>
       <div><span>Categoría del escenario</span><strong>{transferBaselineFromQuery(requestKey)?.level ?? "Sin escenario"}</strong><small>{transferBaselineFromQuery(requestKey)?.seatsToFill ?? "—"} bancas · proyección hipotética · granularidad: {transferBaselineFromQuery(requestKey)?.granularity ?? "no disponible"}. No es una convocatoria real.</small></div>
     </section>
@@ -437,13 +446,19 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
             <Button type="button" variant="outline" aria-pressed={distributionView === "scenario"} onClick={() => setDistributionView("scenario")}>Escenario</Button>
           </div> : null}
         </header>
-        <div className="simulation-geography-stage">
-          <h3>Geografía no disponible</h3>
-          <p>El escenario aportado no incluye una vinculación territorial verificada. No se infiere un distrito electoral a partir de la granularidad ni del tipo de elección.</p>
+        <div className={`simulation-geography-stage${reference ? " simulation-geography-stage--reference" : ""}`}>
+          {reference ? <>
+            <CircuitReferenceSvg geometry={reference.circuits} circuits={[]} selected={selectedCircuit} onSelect={setSelectedCircuit} />
+            <p>Referencia geográfica del partido de Coronel Rosales · CNE 2025. {reference.counts.circuits} circuitos mostrados solo como referencia, sin resultados electorales. No válida para elecciones históricas. 0248B/0248C se superponen en la fuente.</p>
+            {selectedCircuit ? <p role="status">Circuito {selectedCircuit}: referencia solamente; sin votos ni transferencia asignados.</p> : null}
+          </> : <>
+            <h3>Geografía no disponible</h3>
+            <p>El escenario aportado no incluye una vinculación territorial verificada. No se infiere un distrito electoral a partir de la granularidad ni del tipo de elección.</p>
+          </>}
         </div>
         <footer>
           <h3>Inspeccionar el territorio</h3>
-          <p>Sin unidades geográficas vinculadas a este escenario. La transferencia no se distribuye entre circuitos, establecimientos ni mesas.</p>
+          <p>{reference ? "Circuitos mostrados solo como referencia del partido, no como vinculación electoral verificada del escenario." : "Sin unidades geográficas vinculadas a este escenario."} La transferencia no se distribuye entre circuitos, establecimientos ni mesas.</p>
           <a href="/drilldown">Explorar evidencia territorial oficial</a>
         </footer>
       </section>
@@ -478,6 +493,9 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
         </Button>
       </section>
     ) : (
+    <details className="simulation-disclosure simulation-editor-disclosure" open={editorOpen}
+      onToggle={(event) => setEditorOpen(event.currentTarget.open)}>
+    <summary>Editar los datos del escenario</summary>
     <section
       aria-labelledby="simulation-form-heading"
       className="simulation-builder"
@@ -730,6 +748,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
 
       </form>
     </section>
+    </details>
     )}
     <div className="simulation-output" aria-busy={editor.dirty || isPending}>
       {showResult ? <details className="simulation-disclosure"><summary>Sensibilidad de la transferencia</summary><SweepForm key={`sweep-${baselineKey}`} requestKey={baselineKey} navigate={navigateOperation} /></details> : null}

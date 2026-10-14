@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import SimulatePage from "./page";
 import { allocateSeats } from "@/domain/seat-allocation/allocate";
 import { projectionInputSchema, projectionToAllocationInput } from "./projection-input";
+import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
+import * as referenceLoader from "@/lib/geography/cne-rosales-reference";
+import { SIMULATION_COUNCIL } from "./simulation-configuration";
 
 const transferHarness = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -99,6 +102,45 @@ const ROSALES_NATIONAL_POSITIVES = {
     ["ALIANZA NUEVOS AIRES", 136], ["ALIANZA UNION FEDERAL", 126], ["LIBER.AR", 90],
   ].map(([listName, votes], index) => ({ listId: `L${index + 1}`, listName, votes })),
 };
+
+describe("simulate page — reference geography and editor disclosure", () => {
+  it("renders the verified reference circuit count only for the declared municipal council", async () => {
+    const loaded = await loadRosalesReference();
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) throw new Error(loaded.reason);
+    const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 }, { council: SIMULATION_COUNCIL.JURISDICTION });
+    expect(markup).toContain('aria-label="Circuitos de Coronel Rosales: geometría de referencia CNE"');
+    expect(markup.match(/aria-label="Circuito [^\"]+: sin resultados"/g)).toHaveLength(loaded.reference.counts.circuits);
+    expect(markup).toContain("Referencia geográfica del partido");
+    expect(markup).toContain("no verifica la vinculación electoral de los votos aportados");
+    expect(markup).not.toContain("Geografía no disponible");
+    expect(await renderSimulation(ALLOCATION_INPUT)).toContain("Geografía no disponible");
+  });
+
+  it("keeps the unavailable panel on reference refusal or non-municipal input", async () => {
+    const loader = vi.spyOn(referenceLoader, "loadRosalesReference").mockResolvedValue({ ok: false, reason: "hash_mismatch" });
+    try {
+      const markup = await renderSimulation(ALLOCATION_INPUT, { council: SIMULATION_COUNCIL.JURISDICTION });
+      expect(markup).toContain("Geografía no disponible");
+      expect(markup).toContain("Territorio no vinculado");
+      expect(markup).not.toContain("geometría de referencia CNE");
+      loader.mockClear();
+      expect(await renderSimulation({ ...ALLOCATION_INPUT, level: "pba_provincial" }, { council: SIMULATION_COUNCIL.JURISDICTION })).toContain("Geografía no disponible");
+      expect(loader).not.toHaveBeenCalled();
+    } finally {
+      loader.mockRestore();
+    }
+  });
+
+  it("closes the editable scenario disclosure when valid input is loaded", async () => {
+    const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 }, { council: SIMULATION_COUNCIL.JURISDICTION });
+    expect(markup).toMatch(/<details class="simulation-disclosure simulation-editor-disclosure"><summary>Editar los datos del escenario<\/summary>[\s\S]*Formulario de simulación de bancas[\s\S]*<\/details>/);
+  });
+
+  it("expands the editor disclosure without input", async () => {
+    expect(await renderSimulation()).toContain('<details class="simulation-disclosure simulation-editor-disclosure" open="">');
+  });
+});
 
 describe("simulate page — approved workbench composition", () => {
   it("states the precise real-input allocation refusal without changing statutory rules", async () => {

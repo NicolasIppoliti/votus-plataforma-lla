@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { GranularityBadge } from "@/components/GranularityBadge";
@@ -465,6 +466,11 @@ export default async function SimulatePage({
     }
   }
 
+  const referenceResult = input?.level === "pba_municipal" && councilJurisdiction === SIMULATION_COUNCIL.JURISDICTION
+    ? await loadRosalesReference()
+    : undefined;
+  const reference = referenceResult?.ok ? referenceResult.reference : undefined;
+
   const inputTrace = projectionInput && result && !councilError
     ? suppliedInputTrace(
         projectionInput,
@@ -481,7 +487,7 @@ export default async function SimulatePage({
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
-      <SimulationForm requestKey={requestQuery.toString()}
+      <SimulationForm requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
         impact={result ? <><RenewalStrip result={result} /><SeatDistribution result={result} /></> : null}
         baseImpact={result && baseResult ? <><RenewalStrip result={baseResult} /><SeatDistribution result={baseResult} /></> : null}
         comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>

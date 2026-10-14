@@ -402,6 +402,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(listARow.getByRole("cell").last()).toHaveText("5");
     await expect(listBRow.getByRole("cell").last()).toHaveText("4");
     await page.reload();
+    await openSimulationDisclosure(page, "Editar los datos del escenario");
     await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
     await expect(listNames.nth(0)).toHaveValue("Lista A");
     await expect(listVotes.nth(0)).toHaveValue("6000");
@@ -688,6 +689,7 @@ test("transfers a rich baseline losslessly with keyboard controls and resets aft
   await transfer.getByLabel("Lista receptora").selectOption("B");
   await transfer.getByLabel("Cantidad a transferir").fill("100");
   const editor = page.getByRole("form", { name: "Formulario de simulación de bancas" });
+  await openSimulationDisclosure(page, "Editar los datos del escenario");
   await editor.getByLabel("Nombre de la lista").first().fill("Lista A editada");
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get("input")!).lists[0].listName).toBe("Lista A editada");
   await expect(transfer.getByLabel("Lista donante")).toHaveValue("");
@@ -859,6 +861,7 @@ test("resets drafted sweep controls after a custom edit and same-document Browse
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
   const editor = page.getByRole("form", { name: "Formulario de simulación de bancas" });
   const sweep = page.getByRole("form", { name: "Muestreo de transferencias a total fijo" });
+  await openSimulationDisclosure(page, "Editar los datos del escenario");
   await expect(editor).toBeVisible();
   const baselineUrl = page.url();
   await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
@@ -1005,6 +1008,7 @@ test("releases a real superseded sweep response without restoring stale samples"
     // The editable baseline remains available during the sweep transition.
     // Supersede through its real debounced router request, never page.goto or abort.
     const editor = page.getByRole("form", { name: "Formulario de simulación de bancas" });
+    await openSimulationDisclosure(page, "Editar los datos del escenario");
     await expect(editor).toBeVisible();
     await editor.getByLabel("Nombre de la lista").first().fill("Lista nueva A");
     await editor.getByLabel("Nombre de la lista").nth(1).fill("Lista nueva B");
