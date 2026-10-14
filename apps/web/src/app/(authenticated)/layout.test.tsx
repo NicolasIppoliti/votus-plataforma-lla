@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
 import SessionMonitor from "@/components/SessionMonitor";
 import AuthenticatedLayout from "./layout";
-import HomePage from "./page";
+import HomePage from "./(home)/page";
 import { OperationalBriefing as OperationalBriefingPage } from "./OperationalBriefing";
 
 const panorama = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));

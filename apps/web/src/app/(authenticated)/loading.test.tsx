@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 // #431: Next renders these files while the route's server work is pending.
 const ROUTES = {
-  "/": () => import("./loading"),
+  "/": () => import("./(home)/loading"),
   "/drilldown": () => import("./drilldown/loading"),
   "/compare": () => import("./compare/loading"),
   "/municipal": () => import("./municipal/loading"),
