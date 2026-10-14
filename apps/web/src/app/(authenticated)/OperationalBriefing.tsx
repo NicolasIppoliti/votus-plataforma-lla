@@ -19,7 +19,8 @@ export function OperationalBriefing({ data = { href: "/drilldown", exclusions: [
       <Workflow href={data.href} id="drilldown" title="Explorar resultados">Exploración · Resultados oficiales. Tabla exacta y nivel real de la fuente.</Workflow>
       <Workflow href="/compare" id="compare" title="Comparar elecciones">Comparación · Contrastar bases y reconocer sus condiciones de comparabilidad.</Workflow>
       <Workflow href="/simulate" id="simulate" title="Simular escenario">Simulación · Hipótesis de asignación. No es una predicción ni un resultado histórico.</Workflow>
-    </ul><div className={styles.attention}><ReviewAttention /><p>Evidencia abre la revisión de datos disponible en este workspace.</p></div></section>
+      <Workflow href="/evidencia" id="evidencia" title="Revisar evidencia">Evidencia · Disponibilidad, trazabilidad y límites de lectura de la selección oficial.</Workflow>
+    </ul><div className={styles.attention}><ReviewAttention /><p>Revisión de datos abre la cola de revisión disponible en este workspace.</p></div></section>
     <section className={styles.secondary} aria-labelledby="panorama-separated"><h2 id="panorama-separated">Otros alcances · flujos separados</h2><ul>
       <Workflow href="/municipal" id="municipal" title="Resultados municipales">Coronel Rosales · Concejales 2025. Elección configurada.</Workflow>
       <Workflow href="/fiscalizacion" id="fiscalizacion" title="Cobertura y resultados">Fiscalización no oficial, por acceso explícito. La cobertura no es una muestra aleatoria.</Workflow>

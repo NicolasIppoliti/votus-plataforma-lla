@@ -27,7 +27,11 @@ it("renders the root operational briefing with evidence and review routes", asyn
   expect(markup).toContain("Otros alcances · flujos separados");
   expect(markup).toContain("La disponibilidad depende del territorio y del acceso autorizado.");
   const hrefs = [...markup.matchAll(/href="([^"]+)"/g)].map((match) => match[1]).filter((href) => href?.startsWith("/"));
-  expect([...new Set(hrefs)].sort()).toEqual(["/compare", "/drilldown", "/fiscalizacion", "/municipal", "/review", "/simulate"]);
+  expect([...new Set(hrefs)].sort()).toEqual(["/compare", "/drilldown", "/evidencia", "/fiscalizacion", "/municipal", "/review", "/simulate"]);
+  // The approved "Continuar el análisis" row ends with the Evidencia module.
+  expect(markup).toMatch(/<a[^>]*aria-label="Revisar evidencia"[^>]*href="\/evidencia"|<a[^>]*href="\/evidencia"[^>]*aria-label="Revisar evidencia"/);
+  expect(markup.indexOf("Simular escenario")).toBeLessThan(markup.indexOf("Revisar evidencia"));
+  expect(markup.indexOf("Revisar evidencia")).toBeLessThan(markup.indexOf("Atención operativa"));
   expect(markup.indexOf("Explorar resultados")).toBeLessThan(markup.indexOf("Atención operativa"));
   expect(markup.indexOf("Comparar elecciones")).toBeLessThan(markup.indexOf("Atención operativa"));
   expect(markup).toContain('href="/review"');
