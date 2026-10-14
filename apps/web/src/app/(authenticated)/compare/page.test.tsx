@@ -213,6 +213,9 @@ it("shows paired current-reference geography for the exact authorized national d
   expect(markup).toContain("Mayor participación en la sección: PARTIDO A 2025 — 55,00 % (55 votos de 100 votos partidarios incluidos)");
   expect(markup.match(/Mostrar mapa interactivo/g)).toHaveLength(2);
   expect(markup).toContain("no certifica límites históricos");
+  for (const side of ["A", "B"]) {
+    expect(markup).toMatch(new RegExp(`<details class="[^"]*sideFigures[^"]*"><summary>Cifras — Lado ${side}</summary><p>Denominador: `));
+  }
   expect(markup).toContain("Resultados exactos");
   expect(mocks.geometry).toHaveBeenCalledOnce();
 });
@@ -305,6 +308,13 @@ describe("authorized comparison page", () => {
     expect(markup).toContain('aria-label="Tabla exacta de participación y variación por partido en 02/027" tabindex="0"');
     expect(markup).toContain("Referencia oficial — Lado A");
     expect(markup).toContain("Procedencia oficial — Lado B");
+  });
+  it("folds the exact party table and selection notes into closed disclosures that name what they hold", async () => {
+    const markup = await render(PARAMS);
+    expect(markup).toMatch(/<details class="[^"]*exactTable[^"]*"><summary>Tabla exacta — \d+ agrupaciones, votos y variación por lado<\/summary><div[^>]*aria-label="Tabla exacta de participación/);
+    expect(markup).toMatch(/<details class="[^"]*selectionNotes[^"]*"><summary>Notas de la selección<\/summary><p[^>]*>La comparación se actualiza al cambiar la selección\.<\/p>/);
+    expect(markup).toContain("Comparación aplicada");
+    expect(markup).not.toMatch(/<details[^>]*open/);
   });
   it("keeps six native edit controls and uniquely labelled sides beside the applied comparison", async () => {
     const markup = await render(PARAMS);
@@ -412,7 +422,8 @@ describe("authorized comparison page", () => {
 
 it("progressively discloses archive detail without hiding source exclusions or result context", async () => {
   const markup = await render(PARAMS);
-  const disclosures = [...markup.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)].map(([html]) => html);
+  // Archive detail = the two provenance disclosures; other compact disclosures (exact table, notes) are pinned separately.
+  const disclosures = [...markup.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)].map(([html]) => html).filter((html) => html.includes("Procedencia oficial"));
   expect(disclosures).toHaveLength(2);
   for (const [index, side] of ["A", "B"].entries()) {
     const disclosure = disclosures[index]!;
