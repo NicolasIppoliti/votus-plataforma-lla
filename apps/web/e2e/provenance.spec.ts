@@ -548,7 +548,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await expect(page.locator("#navigator-title")).toBeFocused();
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
-      await openChild("00001 — 00001", "circuito");
+      await openChild("00001", "circuito");
       await openChild("E1 — Synthetic school", "establecimiento");
       await openChild("Mesa 1", "mesa");
       await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
@@ -562,7 +562,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page).toHaveURL((url) => !url.searchParams.has("seccionCode"));
       await expect(form).not.toHaveAttribute("aria-busy", "true");
       await draft("Sección", identity.seccionCode);
-      await openChild("00001 — 00001", "circuito");
+      await openChild("00001", "circuito");
       await openChild("E1 — Synthetic school", "establecimiento");
       await openChild("Mesa 1", "mesa");
       await expectNoBlankSearchParams(page);
@@ -658,7 +658,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await draft("Categoría", SOURCE_SCOPE.categoryId, "Distrito");
       await draft("Distrito", identity.distritoCode, "Sección");
       await draft("Sección", identity.seccionCode);
-      await openChild("00001 — 00001", "circuito");
+      await openChild("00001", "circuito");
       await openChild("E1 — Synthetic school", "establecimiento");
       await openChild("Mesa 1", "mesa");
       // Returning A → pending B → A must supersede B, not merely clear a dirty flag.
