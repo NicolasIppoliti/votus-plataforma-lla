@@ -74,13 +74,13 @@ describe("review page — responsive review evidence", () => {
       "Severidad",
       "Detectado",
     ]);
-    expect(markup).toMatch(/<th\b[^>]*scope="row"[^>]*class="[^"]*\btable-cell--short"[^>]*>fetch_failure<\/th>/);
+    expect(markup).toMatch(/<th\b[^>]*scope="row"[^>]*class="[^"]*\btable-cell--short"[^>]*>Error al descargar la fuente<\/th>/);
     expect(markup.match(/scope="row"/g)).toHaveLength(1);
     expect(markup.match(/<td\b/g)).toHaveLength(2);
     expect(markup.match(/class="table-scroll"/g)).toHaveLength(1);
     expect(markup).toMatch(/tabindex="0"><table\b/);
     expect(markup).not.toContain('data-slot="table-container"');
-    expect(markup).toContain('class="table-cell--short">warning');
+    expect(markup).toContain('class="table-cell--short">Advertencia');
     expect(markup).toContain(
       'class="table-cell--timestamp">2026-02-01T12:00:00Z',
     );
