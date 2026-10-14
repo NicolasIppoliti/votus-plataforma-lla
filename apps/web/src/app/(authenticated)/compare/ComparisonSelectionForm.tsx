@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./comparison.module.css";
+import { serializeElectoralContext } from "@/lib/context/url";
 
 const KEYS = ["leftElectionId", "rightElectionId", "leftCategoryId", "rightCategoryId", "distritoCode", "seccionCode"] as const;
 type Key = (typeof KEYS)[number];
 type Values = Partial<Record<Key, string>>;
+const URL_KEYS = { leftElectionId: "electionId", rightElectionId: "bElectionId", leftCategoryId: "categoryId", rightCategoryId: "bCategoryId", distritoCode: "distritoCode", seccionCode: "seccionCode" } as const;
 
 interface SelectionOption {
   value: string;
@@ -52,9 +54,7 @@ const PARENTS: Record<Key, Key[]> = {
 };
 
 function selectionKey(values: Values): string {
-  const params = new URLSearchParams();
-  for (const key of KEYS) if (values[key]) params.set(key, values[key]);
-  return params.toString();
+  return serializeElectoralContext({ sourceKind: "official", ...Object.fromEntries(KEYS.filter((key) => values[key]).map((key) => [URL_KEYS[key], values[key]])) }).toString();
 }
 
 export function ComparisonSelectionForm({ selected, groups, children }: Props) {
@@ -81,7 +81,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
       const params = new URLSearchParams(window.location.search);
       const draft: Values = {};
       for (const key of KEYS) {
-        const value = params.get(key);
+        const value = params.get(URL_KEYS[key]);
         if (value) draft[key] = value;
       }
       latestDraft.current = draft;
@@ -130,7 +130,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                     <label htmlFor={field.id}>{field.label}</label>
                     <select
                       id={field.id}
-                      name={field.key}
+                      name={URL_KEYS[field.key]}
                       value={state.draft[field.key] ?? ""}
                       disabled={!parentsResolved(field.key)}
                       onChange={(event) => change(field.key, event.target.value)}
