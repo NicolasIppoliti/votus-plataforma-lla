@@ -8,6 +8,69 @@ import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import * as referenceLoader from "@/lib/geography/cne-rosales-reference";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 
+// Static rendering cannot measure layout, but it can pin the native-disclosure
+// visibility boundary that caused reset/restoration to hide the served chart.
+function outsideDisclosures(html: string): string {
+  let depth = 0;
+  return html.split(/(<\/?details\b[^>]*>)/).filter((part) => {
+    if (part.startsWith("<details")) { depth += 1; return false; }
+    if (part === "</details>") { depth -= 1; return false; }
+    return depth === 0;
+  }).join("");
+}
+
+describe("default-visible impact contracts", () => {
+  it("keeps seated and zero-seat images outside disclosures on each served render", async () => {
+    const input = { ...ALLOCATION_INPUT, lists: [...ALLOCATION_INPUT.lists,
+      { listId: "zero", listName: "Lista sin banca", votes: 0 },
+    ] };
+    for (const query of [{}, { baseInput: JSON.stringify(input) }, {}]) {
+      const html = await renderSimulation(input, query);
+      const panel = html.slice(html.indexOf('<aside class="simulation-scenario-panel"'), html.indexOf("</aside>"));
+      const visible = outsideDisclosures(panel);
+      expect(visible.includes('aria-label="LA LIBERTAD AVANZA: 5 de 9 bancas"')).toBe(true);
+      expect(visible.includes('aria-label="Lista sin banca: 0 de 9 bancas"')).toBe(true);
+    }
+  });
+
+  it("keeps the distribution region outside disclosures after a fresh served render", async () => {
+    const html = await renderSimulation(ALLOCATION_INPUT);
+    expect(outsideDisclosures(html).includes('aria-label="Distribución de bancas"')).toBe(true);
+    expect(outsideDisclosures(html).includes("Cada bloque en relieve es una banca asignada.")).toBe(false);
+    expect(html.includes("Cada bloque en relieve es una banca asignada.")).toBe(true);
+  });
+
+  it("preserves municipal and national result heading contracts", async () => {
+    const municipal = await renderSimulation(ALLOCATION_INPUT);
+    const national = await renderSimulation({ level: "national", padron: 20000,
+      totalVotes: 10000, seatsToFill: 2, isProjection: true, granularity: "distrito",
+      unmodeledVotes: 0, unmodeledVoteBreakdown: [],
+      threshold: { value: 3, basis: "padron" }, lists: ALLOCATION_INPUT.lists,
+    });
+    expect(municipal.includes("<h2>Resultado (municipal de PBA)</h2>")).toBe(true);
+    expect(national.includes("<h2>Resultado (nacional)</h2>")).toBe(true);
+  });
+});
+
+describe("compact impact and Spanish context", () => {
+  it("labels the scenario category and granularity at the page entry point", async () => {
+    const html = await renderSimulation({ ...ALLOCATION_INPUT, granularity: "seccion" });
+    expect(html).toContain("Concejales (concejo municipal)");
+    expect(html).toContain("granularidad: sección. No es una convocatoria real.");
+  });
+
+  it("keeps zero-seat lists and calculation notes in closed disclosures", async () => {
+    const html = await renderSimulation({ ...ALLOCATION_INPUT, lists: [
+      ...ALLOCATION_INPUT.lists,
+      { listId: "zero", listName: "Lista sin banca", votes: 0 },
+    ] });
+    expect(html).toMatch(/<details[^>]*><summary>Sin bancas \(1\)<\/summary>/);
+    expect(html).toMatch(/<details[^>]*><summary>Cómo se calcula<\/summary>/);
+    expect(html).toContain("Lista sin banca: 0 de 9 bancas");
+    expect(html).toContain("Cada bloque en relieve es una banca asignada.");
+  });
+});
+
 const transferHarness = vi.hoisted(() => ({
   replace: vi.fn(),
   actions: [] as Array<(state: readonly string[], data: FormData) => Promise<readonly string[]>>,

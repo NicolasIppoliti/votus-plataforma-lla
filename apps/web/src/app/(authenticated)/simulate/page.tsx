@@ -488,8 +488,8 @@ export default async function SimulatePage({
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
       <SimulationForm requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
-        impact={result ? <><RenewalStrip result={result} /><SeatDistribution result={result} /></> : null}
-        baseImpact={result && baseResult ? <><RenewalStrip result={baseResult} /><SeatDistribution result={baseResult} /></> : null}
+        impact={result ? <RenewalStrip result={result}><SeatDistribution result={result} /></RenewalStrip> : null}
+        baseImpact={result && baseResult ? <RenewalStrip result={baseResult}><SeatDistribution result={baseResult} /></RenewalStrip> : null}
         comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
       <SweepResult query={requestQuery.toString()} baselineError={baseError ?? councilError ?? parseError} />
       {baseError ? <p role="alert">{baseError}</p> : null}
