@@ -19,14 +19,14 @@ export function RenewalStrip({ result, children }: { result: AllocationResult; c
         {result.results.flatMap((row, listIndex) => Array.from({ length: seats(result, row.listId) }, (_, index) => <span key={`${row.listId}-${index}`} style={{ backgroundColor: COLORS[listIndex % COLORS.length] }} />))}
         {Array.from({ length: result.seatsToFill - awarded }, (_, index) => <span key={`empty-${index}`} className="simulation-renewal__empty" />)}
       </div> : <p>Dibujo limitado a 60 bancas y 600 posiciones; los conteos exactos permanecen disponibles.</p>}
-      <ul className="simulation-renewal__summary">{result.results.map((row, index) => seats(result, row.listId) > 0 ? <li key={row.listId} style={{ "--list-color": COLORS[index % COLORS.length] } as CSSProperties}><span>{row.listName}</span><strong>{seats(result, row.listId)}</strong></li> : null)}</ul>
       {result.results.some((row) => seats(result, row.listId) === 0) ? <details className="simulation-disclosure simulation-impact-disclosure"><summary>Sin bancas ({result.results.filter((row) => seats(result, row.listId) === 0).length})</summary><p>{result.results.filter((row) => seats(result, row.listId) === 0).map((row) => `${row.listName}: 0 bancas`).join(" · ")}</p></details> : null}
       <details className="simulation-disclosure simulation-impact-disclosure"><summary>Cómo se calcula</summary>
+      <ul className="simulation-renewal__summary">{result.results.map((row, index) => seats(result, row.listId) > 0 ? <li key={row.listId} style={{ "--list-color": COLORS[index % COLORS.length] } as CSSProperties}><span>{row.listName}</span><strong>{seats(result, row.listId)}</strong></li> : null)}</ul>
       <p>Paleta categórica de listas; no representa colores oficiales de partidos.</p>
       {awarded < result.seatsToFill ? <p role="note">Sin asignar: {result.seatsToFill - awarded} bancas. Consulte las limitaciones en la evidencia exacta.</p> : null}
       {result.level === "pba_municipal" ? <p className="simulation-renewal__retained">Las 9 bancas que continúan no se infieren de este reparto. Sin nómina aportada no se determina la composición ni una mayoría del concejo de 18 bancas.</p> : <p className="simulation-renewal__retained">Este reparto no determina la composición ni una mayoría de la cámara completa.</p>}
-      {children}
       </details>
+      {children}
     </section>
   );
 }

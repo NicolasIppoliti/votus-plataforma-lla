@@ -82,7 +82,10 @@
 .simulation-impact-disclosure { margin-block: .5rem; overflow-wrap: anywhere; min-width: 0; }
 .simulation-impact-disclosure > summary { min-height: 44px; padding-block: 10px; }
 .simulation-scenario-panel .seat-distribution { margin-block: .75rem; }
-.simulation-scenario-panel .seat-distribution__rows { gap: .75rem; }
+.simulation-scenario-panel .seat-distribution__rows { gap: .375rem; margin-block: .5rem; }
+.simulation-scenario-panel .seat-distribution__rows > li { padding-block: .25rem; }
+.simulation-scenario-panel .seat-distribution__label { font-size: .75rem; gap: .375rem; }
+.simulation-scenario-panel .seat-distribution__rows > li[data-zero-seats="true"] { padding-block: .125rem; }
 .simulation-capabilities { border-block: 1px solid var(--border); padding-block: 1rem; }
 .simulation-capabilities p { color: var(--secondary-ink); max-width: 100ch; }
 .simulation-workspace { gap: 1.5rem; }

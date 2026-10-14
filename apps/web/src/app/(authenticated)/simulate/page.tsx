@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import type { ReactNode } from "react";
 import { z } from "zod";
-import { simulationDisplayLabel } from "./display-label";
+import { GranularityBadge } from "@/components/GranularityBadge";
 import { allocateSeats } from "@/domain/seat-allocation/allocate";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
@@ -45,6 +45,12 @@ interface ParsedInput {
   projectionInput?: ProjectionInput;
   granularity?: Granularity;
   parseError?: string;
+}
+
+function allocationLevelLabel(level: AllocationResult["level"]): string {
+  if (level === "pba_municipal") return "municipal de PBA";
+  if (level === "pba_provincial") return "provincial de PBA";
+  return "nacional";
 }
 
 function canonicalJson(value: unknown): string {
@@ -206,7 +212,7 @@ function validateCouncilInput({
   if (input.level !== "pba_municipal") {
     throw new CouncilCompositionError(
       `${COUNCIL_JURISDICTION_LABEL} solo está disponible para proyecciones ` +
-        `${simulationDisplayLabel("pba_municipal")}; se recibió ${simulationDisplayLabel(input.level)}`,
+        `pba_municipal; se recibió ${input.level}`,
     );
   }
   if (rawHeldOver === undefined) {
@@ -539,12 +545,12 @@ export default async function SimulatePage({
       ) : null}
       {result ? (
         <section data-testid="allocation-result" aria-label="Resultado de la asignación">
-          <h2>Resultado ({simulationDisplayLabel(result.level)})</h2>
+          <h2>Resultado ({allocationLevelLabel(result.level)})</h2>
           <p>Proyección hipotética aportada por quien realiza la consulta</p>
           {granularity ? (
             <p>
               <strong>Granularidad de entrada:</strong>{" "}
-              <span role="status" aria-label={`granularidad: ${granularity}`}>{simulationDisplayLabel(granularity)}</span>
+              <GranularityBadge granularity={granularity} />
             </p>
           ) : null}
           {inputTrace ? (

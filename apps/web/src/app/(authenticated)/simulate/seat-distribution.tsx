@@ -20,27 +20,9 @@ export function SeatDistribution({ result }: SeatDistributionProps) {
         <h3>Distribución de bancas</h3>
         <span>Proyección hipotética</span>
       </header>
-      <p>
-        Escala común: {result.seatsToFill} bancas por asignar.
-        {result.level === "pba_municipal"
-          ? " No representa la composición total del concejo."
-          : " Se muestran todas las listas, incluidas las que no reciben bancas."}
-      </p>
-      {drawIndividualSeats ? (
-        <p className="seat-distribution__legend">
-          Cada bloque en relieve es una banca asignada. Cada contorno vacío es
-          una posición de la escala no asignada a esa lista, no una banca adicional.
-          Todas las filas usan la misma capacidad y el mismo tamaño de bloque.
-        </p>
-      ) : (
-        <p role="note">
-          Dibujo de una banca por bloque no disponible para esta escala:
-          se muestran los conteos exactos sobre la misma capacidad, sin truncar.
-        </p>
-      )}
       <ul className="seat-distribution__rows">
         {rows.map((row) => (
-          <li key={row.listId}>
+          <li key={row.listId} data-zero-seats={row.count === 0 ? "true" : undefined}>
             <div role="img" aria-label={`${row.listName}: ${row.count} de ${result.seatsToFill} bancas`}>
               <div className="seat-distribution__label">
                 <span>{row.listName}</span>
@@ -61,9 +43,39 @@ export function SeatDistribution({ result }: SeatDistributionProps) {
           </li>
         ))}
       </ul>
+      <details className="simulation-disclosure simulation-impact-disclosure"><summary>Cómo leer la distribución</summary>
+        <SeatDistributionNotes result={result} />
+      </details>
       {unallocated > 0 ? (
         <p role="note">Sin asignar: {unallocated} de {result.seatsToFill} bancas. La evidencia inferior explica las limitaciones de la asignación.</p>
       ) : null}
     </section>
+  );
+}
+
+function SeatDistributionNotes({ result }: SeatDistributionProps) {
+  const drawIndividualSeats = result.seatsToFill <= 60 &&
+    result.results.length * result.seatsToFill <= 600;
+  return (
+    <>
+      <p>
+        Escala común: {result.seatsToFill} bancas por asignar.
+        {result.level === "pba_municipal"
+          ? " No representa la composición total del concejo."
+          : " Se muestran todas las listas, incluidas las que no reciben bancas."}
+      </p>
+      {drawIndividualSeats ? (
+        <p className="seat-distribution__legend">
+          Cada bloque en relieve es una banca asignada. Cada contorno vacío es
+          una posición de la escala no asignada a esa lista, no una banca adicional.
+          Todas las filas usan la misma capacidad y el mismo tamaño de bloque.
+        </p>
+      ) : (
+        <p role="note">
+          Dibujo de una banca por bloque no disponible para esta escala:
+          se muestran los conteos exactos sobre la misma capacidad, sin truncar.
+        </p>
+      )}
+    </>
   );
 }
