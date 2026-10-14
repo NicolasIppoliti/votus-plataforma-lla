@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRANULARITY_ORDER, readGranularity } from "./granularity";
+import { GRANULARITY_ORDER, granularityLabel, readGranularity } from "./granularity";
 import { GRANULARITY } from "./types";
 
 describe("readGranularity", () => {
@@ -50,5 +50,13 @@ describe("readGranularity", () => {
 
   it("test_a_uniform_set_is_not_reported_as_mixed", () => {
     expect(readGranularity([{ granularity: "mesa" }, { granularity: "mesa" }]).mixed).toEqual([]);
+  });
+});
+
+describe("granularityLabel (#453)", () => {
+  it("names every shared level in Spanish and never renders an unknown value raw", () => {
+    expect(GRANULARITY_ORDER.map(granularityLabel)).toEqual(["Distrito", "Sección", "Circuito", "Establecimiento", "Mesa"]);
+    expect(granularityLabel("municipio")).toBe("Sin clasificar");
+    expect(granularityLabel(null)).toBe("Sin clasificar");
   });
 });

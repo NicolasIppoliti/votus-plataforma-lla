@@ -29,6 +29,13 @@ describe("GranularityBadge", () => {
     expect(degradedHtml).toContain("mesa");
   });
 
+  it("shows the human level label, not the raw value (#453)", () => {
+    const html = renderToStaticMarkup(<GranularityBadge granularity="seccion" requestedGranularity="mesa" />);
+    expect(html).toContain('aria-label="granularidad: sección"');
+    expect(html).toContain("<span>Sección</span>");
+    expect(html).toContain("granularidad solicitada: mesa; granularidad real: sección");
+  });
+
   it("does not show a degradation note when no degradation occurred", () => {
     const html = renderToStaticMarkup(<GranularityBadge granularity="mesa" />);
     expect(html.toLowerCase()).not.toContain("degrad");
