@@ -8,7 +8,7 @@ import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
 const { states } = vi.hoisted(() => ({ states: [] as string[] }));
 vi.mock("react", async importOriginal => ({ ...await importOriginal<typeof import("react")>(), useState: (initial: unknown) => [states.length ? states.shift() : initial, vi.fn()] }));
-vi.mock("../drilldown/TerritorialMapStage", () => ({ TerritorialMapStage: () => <div>Mapa de referencia</div> }));
+vi.mock("../drilldown/TerritorialMapStage", async importOriginal => ({ ...await importOriginal<typeof import("../drilldown/TerritorialMapStage")>(), TerritorialMapStage: ({ heading }: { heading: string }) => <div>Mapa de referencia · {heading}</div> }));
 afterEach(() => { states.length = 0; });
 const result: ExplorationOk = {
   status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
@@ -110,4 +110,10 @@ it.each([undefined, { status: "unavailable" } as const])("discloses unavailable 
   expect(html).toContain("Resultados oficiales por circuito no disponibles. No se muestran unidades ni cifras inventadas.");
   expect(html).not.toContain("<table>");
   expect(html).not.toContain("00248 — Norte");
+});
+
+it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {
+  const html = renderToStaticMarkup(<Panorama data={data} />);
+  expect(html).toContain("Mapa de referencia · Referencia territorial");
+  expect(html).not.toContain("Ganadores en el territorio");
 });

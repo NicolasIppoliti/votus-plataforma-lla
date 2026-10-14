@@ -6,7 +6,7 @@ import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
 import { TerritorialNavigator } from "./TerritorialNavigator";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
@@ -217,10 +217,13 @@ function SectionCompleteness({ completeness, selection }: { completeness: Eviden
 function ResultEvidence({ evidence, selection, facets, selected }: { evidence: EvidenceOk; selection: OfficialSelection; facets: ExplorationFacets; selected: ExplorerFormProps["selected"] }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
   if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className={styles.state} role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
+  const circuitLeadersMap = selection.requestedLevel === "seccion" && selection.circuitoCode === null && selection.establecimientoCode === null && selection.mesaCode === null
+    && evidence.circuitOutcomes?.status === "ok" && evidence.circuitOutcomes.circuit_membership === "known" && selection.distritoCode === "02" && selection.seccionCode === "027";
   return (
     <CircuitSelectionProvider>
       <section className={styles.workbench} aria-label="Mesa de trabajo territorial">
         <TerritorialMapStage key={canonicalScopeSearchParams(Object.fromEntries(Object.entries(selected).map(([key, value]) => [key, String(value)]))).toString()}
+          heading={circuitLeadersMap ? MAP_HEADING.CIRCUIT_LEADERS : MAP_HEADING.REFERENCE}
           title={territorialItems(facets, selected).at(-1)?.name ?? "Territorio seleccionado"}
           subtitle={selection.requestedLevel === "seccion" && selection.distritoCode === "02" && selection.seccionCode === "027" ? "Contorno de referencia · circuitos y margen sobre votos positivos" : selection.distritoCode === "02" && selection.seccionCode === "027" ? "Contorno de referencia: Coronel Rosales · sin geometría propia" : selection.distritoCode === "02" ? "Contorno de referencia: Buenos Aires · sin geometría propia" : "Referencia geográfica no disponible"}
           referenceRosales={selection.requestedLevel !== "seccion" && selection.distritoCode === "02" && selection.seccionCode === "027"}
@@ -422,7 +425,7 @@ function ObservedLeader({ result, completeness }: { result: EvidenceOk["result"]
   return <div aria-label="Liderazgo observado">
     <div className={styles.leader}>
       <h3>Líder observado · todas las agrupaciones</h3><strong>{label}</strong>
-      <p>Participación {share === null ? "no disponible" : `${share.toFixed(2)} %`} · margen {margin === null ? "no disponible" : `${margin.toFixed(2)} pp`}.</p>
+      <p>{share === null ? "Porcentaje no disponible" : `${share.toFixed(2)} % de los votos positivos`} · margen {margin === null ? "no disponible" : `${margin.toFixed(2)} pp`}.</p>
       <small>Sobre votos positivos; no representa participación del padrón.</small>
       {completeness}
       <p>Liderazgo observado, no certificación de ganador.</p>
@@ -453,7 +456,7 @@ function PageShell({ facets, selected, children, workbench = true, showTrail = t
       <div className={`shell-container ${styles.layout}`}>
         <ExplorerForm facets={facets} selected={selected} header={<ExplorerHeader facets={showTrail ? facets : undefined} selected={selected} />}>
         {workbench && <section className={styles.workbench} aria-label="Mesa de trabajo territorial">
-          <TerritorialMapStage title={territorialItems(facets, selected).at(-1)?.name ?? "Argentina"} subtitle="Contorno de referencia · sin resultados electorales" referenceRosales={selected.distritoCode === "02" && selected.seccionCode === "027"}>
+          <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title={territorialItems(facets, selected).at(-1)?.name ?? "Argentina"} subtitle="Contorno de referencia · sin resultados electorales" referenceRosales={selected.distritoCode === "02" && selected.seccionCode === "027"}>
             {selected.distritoCode === "02" ? <ProvinceReferenceMap /> : selected.distritoCode ? <p>Referencia geográfica no disponible para este distrito.</p> : <NationalReferenceMap />}
           </TerritorialMapStage>
           <section className={styles.inspector} aria-label="Detalle territorial"><div className={styles.detailTop}><span>Detalle territorial</span><span className={styles.levelBadge}>{levelLabel(selected.level)}</span></div><h2>{territorialItems(facets, selected).at(-1)?.name}</h2><Navigator facets={facets} selected={selected} /><p>Sin cifras hasta contar con una selección exacta autorizada.</p></section>
