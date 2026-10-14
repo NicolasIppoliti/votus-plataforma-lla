@@ -1,10 +1,11 @@
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { loadAuthorizedOfficialDrilldownEvidence, type OfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";
-import type { ExplorationFacetExclusion } from "@/lib/results/exploration";
+import type { ExplorationFacetExclusion, FacetOption } from "@/lib/results/exploration";
 
 export interface PanoramaData {
   href: string;
   evidence?: OfficialDrilldownEvidence;
+  circuitOptions?: readonly FacetOption[];
   exclusions: readonly ExplorationFacetExclusion[];
 }
 
@@ -27,7 +28,7 @@ export async function loadPanorama(): Promise<PanoramaData> {
     const evidence = await loadAuthorizedOfficialDrilldownEvidence({ ...selection, requestedLevel: "seccion", circuitoCode: null, establecimientoCode: null, mesaCode: null });
     const query = new URLSearchParams({ ...selection, level: "seccion" });
     // Each facet response carries a scoped exclusion report; do not sum overlapping reads.
-    return { href: `/drilldown?${query}`, evidence, exclusions: territory.exclusions ?? [] };
+    return { href: `/drilldown?${query}`, evidence, circuitOptions: territory.circuitos, exclusions: territory.exclusions ?? [] };
   } catch {
     return unavailable;
   }

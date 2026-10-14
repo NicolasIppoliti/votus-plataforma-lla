@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { inspectorDistribution } from "@/lib/results/inspector-distribution";
+import { PanoramaChildren } from "./PanoramaChildren";
 import { TerritorialMapStage } from "../drilldown/TerritorialMapStage";
 import type { PanoramaData } from "./load-panorama";
 import styles from "./panorama.module.css";
@@ -46,11 +48,13 @@ export function Panorama({ data }: { data: PanoramaData }) {
           <p>Nivel del informe: {result.level}. Granularidad real de la fuente: {result.sourceGranularity}.</p>
           {(completeness?.status === "complete" || completeness?.status === "partial") && <p>No escrutadas: {completeness.counts.not_counted}; faltantes: {completeness.counts.missing}; inesperadas: {completeness.counts.unexpected}; en cuarentena: {completeness.counts.quarantined}; cuarentenas no atribuidas: {completeness.counts.unattributed_quarantined}. Catálogo esperado para las categorías informadas en el distrito.</p>}
           {completeness?.status === "unknown" && <p>Completitud desconocida: {completeness.reason}. {completeness.reason === "section_absent_from_catalogue" && <>Mesas en la fuente: {completeness.unlisted_status_mesas}; cuarentenas: {completeness.quarantined_mesas}; no atribuidas: {completeness.unattributed_quarantined}.</>}</p>}
-          <ul className={styles.distribution} aria-label="Distribución de votos positivos oficiales">{result.parties.map((party, index) => <li key={index}><span>{name(party)}</span><span>{integer.format(party.votes)} votos · {party.voteShare === null ? "Porcentaje no disponible" : `${decimal.format(Number(party.voteShare) * 100)} %`}</span>{party.voteShare !== null && <meter min={0} max={100} value={Number(party.voteShare) * 100} aria-label={`${name(party)}: porcentaje de votos positivos`} />}</li>)}</ul>
+          <ul className={styles.distribution} aria-label="Distribución de votos positivos oficiales">{inspectorDistribution(result.parties).map((row, index) => <li key={index}><span>{row.name}</span><span>{integer.format(row.votes)} votos · {row.share === null ? "Porcentaje no disponible" : `${decimal.format(row.share)} %`}</span>{row.share !== null && <meter min={0} max={100} value={row.share} aria-label={`${row.name}: porcentaje de votos positivos`} />}</li>)}</ul>
+          <a className={styles.exactLink} href={data.href}>Ver resultados exactos en Exploración</a>
         </>}
       </aside>
     </section>
     <section className={styles.observations} aria-labelledby="panorama-observations"><h2 id="panorama-observations">Lo que se puede leer aquí</h2><ul><li>{state}</li><li>Panorama termina en el partido. Circuitos, establecimientos, mesas e internas se consultan en Exploración.</li><li>No hay participación, comparación histórica ni pronóstico disponibles en esta lectura.</li></ul></section>
+    <PanoramaChildren key={territory} data={rosales ? data : { href: "/drilldown", exclusions: [] }} />
     <section className={styles.evidence} aria-labelledby="official-evidence-heading"><h2 id="official-evidence-heading">Límites y evidencia</h2>
       {data.exclusions.map(item => <p key={item.reason}>Opciones excluidas · {item.reason}: {item.rows} filas.</p>)}
       {result?.sourceExclusions.map(item => <p key={item.kind}>Excluidas del resultado · fuente {item.kind}: {item.rows} filas / {item.votes} votos.</p>)}
