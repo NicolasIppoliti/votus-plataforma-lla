@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
+import { comparisonFixture } from "../../../../e2e/result-fixture";
 import type { ReactElement } from "react";
+import { ComparisonMapView, type MapMetric } from "./ComparisonMap";
+import type { UnitSwing } from "@/lib/results/compare";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { FacetOption } from "@/lib/results/exploration";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +41,92 @@ function supportedSpatialEvidence() {
   mocks.evidence.mockResolvedValue(value);
   return value;
 }
+
+it("puts the workbench before selection details and paints static maps on load", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  const workbench = markup.indexOf('aria-label="Mesa de comparación territorial"');
+  for (const text of ["La comparación se actualiza al cambiar la selección.", "Opciones no compartidas — Distrito", "Comparación aplicada", 'aria-label="Contexto de comparación autorizada"']) expect(workbench).toBeLessThan(markup.indexOf(text));
+});
+
+it("paints two static maps on load", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup.match(/aria-label="Mapa estático/g)).toHaveLength(2);
+});
+
+it("offers the three map metrics with participation selected", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup).toMatch(/aria-pressed="true"[^>]*>Participación/);
+  for (const text of ["Cambio", "Ganadores"]) expect(markup).toMatch(new RegExp(`aria-pressed="false"[^>]*>${text}`));
+});
+
+function metricMarkup(metric: MapMetric, party = "party-a", missing = false) {
+  const swing: UnitSwing = { unitId: "02/027", flipped: true,
+    shares2023: [{ party: "party-a", votes: 60, sharePercent: 60 }, { party: "party-b", votes: 40, sharePercent: 40 }],
+    shares2025: [{ party: "party-a", votes: 25, sharePercent: 25 }, { party: "party-b", votes: 75, sharePercent: 75 }], swings: [] };
+  if (missing) swing.shares2025 = swing.shares2025.filter(entry => entry.party !== party);
+  return renderToStaticMarkup(<ComparisonMapView coordinates={[[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]]} name="Rosales" fetchedAt="2026-09-24" sha256="verified" swing={swing} leftNames={{ "party-a": "PARTIDO A 2023", "party-b": "PARTIDO B 2023" }} rightNames={{ "party-a": "PARTIDO A 2025", "party-b": "PARTIDO B 2025" }} party={party} metric={metric} onMetric={() => {}} />);
+}
+it("renders each controlled metric with its own scale and pressed state", () => {
+  for (const metric of ["Participación", "Cambio", "Ganadores"] as const) {
+    const markup = metricMarkup(metric);
+    expect(markup).toMatch(new RegExp(`aria-pressed="true"[^>]*>${metric}`));
+    expect(markup.match(/aria-pressed="true"/g)).toHaveLength(1);
+    expect(markup.match(/aria-label="Mapa estático/g)).toHaveLength(2);
+    if (metric === "Participación") {
+      expect(markup).toContain("PARTIDO A 2025: 25,00 %");
+      expect(markup).toContain("rgba(41,95,110,");
+      expect(markup).not.toContain("Leyenda categórica");
+    } else if (metric === "Cambio") {
+      expect(markup).toContain("Línea de base A; cambio 0,00 pp");
+      expect(markup).toContain("PARTIDO A 2025: B − A -35,00 pp");
+      expect(markup).toContain("−100 pp");
+      expect(markup).toContain("+100 pp");
+      expect(markup).toContain("rgba(110,112,104,");
+    } else {
+      expect(markup).toContain("Ganador: PARTIDO A 2023");
+      expect(markup).toContain("Ganador: PARTIDO B 2025");
+      expect(markup).toContain("rgba(170,192,241,");
+      expect(markup).toContain("Leyenda categórica de ganadores");
+      expect(markup).not.toContain("Escala de color común");
+      expect(metricMarkup(metric, "party-b")).toContain("Ganador: PARTIDO A 2023");
+    }
+  }
+});
+it("updates selected-party fills and computes positive change without changing the winners", () => {
+  expect(metricMarkup("Participación", "party-b")).toContain("PARTIDO B 2025: 75,00 %");
+  const change = metricMarkup("Cambio", "party-b");
+  expect(change).toContain("B − A +35,00 pp");
+  expect(change).toContain("rgba(61,123,140,");
+});
+it("disables absent-observation metrics with accessible reasons rather than zero filling", () => {
+  const markup = metricMarkup("Participación", "party-a", true);
+  for (const metric of ["Participación", "Cambio"]) expect(markup).toMatch(new RegExp(`disabled="" aria-describedby="metric-reason-${metric}"`));
+  expect(markup).toContain("se requieren observaciones de la agrupación en ambos lados");
+  expect(markup).toContain("Observación no disponible");
+  expect(markup).not.toContain("PARTIDO A 2025: 0,00 %");
+});
+
+it("pins the spatial fixture side-B selected-party fill to the interactive raster contract", async () => {
+  const value = supportedSpatialEvidence();
+  // Only build the pure seed; no e2e environment, database setup, or browser is invoked.
+  const { identity, seed } = comparisonFixture("e2e/comparison.spec.ts", "spatial");
+  for (const [index, side] of [value.left, value.right].entries()) {
+    side.result.parties[0]!.votes = Number(seed.rows.find(row => row.election_id === identity.electionIds[index] && row.list_id === identity.comparisonParty!.listIds[index] && row.jurisdiction_id === identity.jurisdictionId)!.votes);
+    side.result.parties[1]!.votes = Number(seed.rows.find(row => row.election_id === identity.electionIds[index] && row.list_id === identity.comparisonOtherParty!.listIds[index])!.votes);
+  }
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  const sideB = markup.match(/<article[^>]*aria-label="Lado B — 2025 legislativas"[^>]*>[\s\S]*?<\/article>/)?.[0] ?? "";
+  expect(sideB).toContain("PARTIDO A 2025: 75,00 %");
+  expect(sideB).toContain("rgba(81,184,198,");
+  // The e2e screenshot must expect the same selected-party RGB as the route's static map.
+  const spec = readFileSync(new URL("../../../../e2e/comparison.spec.ts", import.meta.url), "utf8");
+  const expected = spec.match(/const rightFill = \[([^\]]+)\]/)?.[1]?.split(",").map(Number);
+  expect(expected).toEqual([81, 184, 198]);
+});
 
 it("renders the approved header and paired selection without changing authorized query keys", async () => {
   const markup = await render(PARAMS);
@@ -135,7 +225,7 @@ it("shows different election leaders on one fixed share legend through the autho
   const markup = await render(PARAMS);
   expect(markup).toContain("PARTIDO A 2023 — 60,00 % (60 votos de 100 votos partidarios incluidos)");
   expect(markup).toContain("PARTIDO B 2025 — 75,00 % (75 votos de 100 votos partidarios incluidos)");
-  expect(markup).toContain("Mayor participación del partido canónico por elección");
+  expect(markup).toContain("Participación de la agrupación seleccionada.");
   expect(markup).toContain("Escala de color común: 0 %");
   expect(markup).toContain("100 %");
 });

@@ -21,9 +21,11 @@ interface Props {
   onSelect?: (() => void) | undefined;
   municipal?: boolean;
   sharePercent?: number | undefined;
+  fillColor?: [number, number, number, number] | undefined;
+  staticLabel?: string | undefined;
 }
 
-export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent }: Props) {
+export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent, fillColor, staticLabel }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const cameraCallback = useRef(onCamera);
@@ -67,7 +69,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
         cleanup = () => { mapRef.current = null; map.remove(); };
         const overlay = new MapLibreOverlay({ layers: [new GeoJsonLayer({
           id: "cne-section-outline", data: { type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates } },
-          stroked: true, filled: true, getFillColor: sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent),
+          stroked: true, filled: true, getFillColor: fillColor ?? (sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent)),
           getLineColor: [...REFERENCE_LINE], getLineWidth: 2, lineWidthMinPixels: 2,
           pickable: true, onClick: () => {
             if (selectCallback.current) selectCallback.current();
@@ -104,7 +106,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
     }
     void initialize();
     return () => { disposed = true; cleanup?.(); };
-  }, [active, coordinates, name, resultId, municipal, sharePercent]);
+  }, [active, coordinates, name, resultId, municipal, sharePercent, fillColor]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -114,7 +116,23 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
     map.jumpTo(camera);
   }, [camera]);
 
+  // Local equirectangular projection with longitude correction at this section's latitude.
+  // Preserve every polygon and hole from the verified loader; identical frames on both sides.
+  const points = coordinates.flat(2);
+  const west = Math.min(...points.map(point => point[0]!));
+  const east = Math.max(...points.map(point => point[0]!));
+  const south = Math.min(...points.map(point => point[1]!));
+  const north = Math.max(...points.map(point => point[1]!));
+  const longitudeScale = Math.cos((south + north) / 2 * Math.PI / 180);
+  const width = (east - west) * longitudeScale;
+  const height = north - south;
+  const scale = 260 / Math.max(width, height, Number.EPSILON);
+  const project = ([longitude, latitude]: number[]) => `${(160 + ((longitude! - west) * longitudeScale - width / 2) * scale).toFixed(3)},${(160 - (latitude! - south - height / 2) * scale).toFixed(3)}`;
+  const fill = fillColor ?? (sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent));
   return <div className={styles.root}>
+    {!active && staticLabel && <svg className={styles.staticMap} viewBox="0 0 320 320" role="img" aria-label={`Mapa estático de ${name}; ${label}; ${staticLabel}`}>
+      {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke="rgb(101,229,242)" strokeWidth="1" />)}
+    </svg>}
     <button type="button" onClick={() => { setStatus("Cargando mapa de la sección…"); setActive(true); }} disabled={active} aria-label={`Activar mapa interactivo de ${label}`}>Mostrar mapa interactivo</button>
     <button type="button" onClick={focusResults}>Seleccionar sección y consultar resultados</button>
     <p role="status">{status}</p>

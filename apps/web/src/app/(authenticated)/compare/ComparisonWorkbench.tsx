@@ -6,6 +6,7 @@ import type { OfficialSectionCompleteness } from "@/lib/workspace/official-secti
 import house from "../drilldown/drilldown.module.css";
 import styles from "./comparison.module.css";
 import { ComparisonChildren } from "./ComparisonChildren";
+import { ComparisonPartyContext } from "./ComparisonMap";
 import type { OfficialSectionCircuitOutcomes } from "@/lib/workspace/official-section-circuit-outcomes";
 
 const decimal = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -30,7 +31,7 @@ export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, m
   const a = swing.shares2023.find(entry => entry.party === party);
   const b = swing.shares2025.find(entry => entry.party === party);
   return <><section className={house.workbench} aria-label="Mesa de comparación territorial">
-    <div className={house.mapPanel}>{maps}</div>
+    <div className={house.mapPanel}><ComparisonPartyContext.Provider value={party}>{maps}</ComparisonPartyContext.Provider></div>
     <aside className={house.inspector} aria-label="Detalle de comparación">
       <div className={house.detailTop}><span>Territorio compartido</span><span className={house.levelBadge}>Sección</span></div>
       <h2>{territory}</h2><p className={house.detailSubtitle}>Dos elecciones oficiales · mismo alcance autorizado</p>
@@ -50,7 +51,7 @@ export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, m
         <div className={styles.deltaReading}><span>Cambio B − A</span><strong>{a && b ? delta(b.sharePercent - a.sharePercent) : "Observación no disponible"}</strong><small>Puntos porcentuales, no crecimiento porcentual.</small><span>Votos B − A</span><p>{a && b ? votes(b.votes - a.votes) : "Observación no disponible"}</p></div>
       </section>
       <section className={styles.coverage} aria-label="Completitud oficial por lado"><h3>Completitud de la sección</h3><Completeness value={completeness[0]} side="Lado A" /><Completeness value={completeness[1]} side="Lado B" /></section>
-      <p className={house.navigatorEmpty}>Las referencias actuales no certifican límites históricos ni transferencia de votos. El mapa conserva su lectura de mayor participación, independiente de la agrupación resaltada.</p>
+      <p className={house.navigatorEmpty}>Las referencias actuales no certifican límites históricos ni transferencia de votos. Participación y Cambio describen la agrupación seleccionada; Ganadores considera todos los partidos canónicos.</p>
       <a className={styles.evidenceLink} href="#compare-evidence-heading">Ver evidencia oficial</a>
     </aside>
   </section><ComparisonChildren outcomes={outcomes} party={party} /></>;

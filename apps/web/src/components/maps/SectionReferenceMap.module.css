@@ -3,5 +3,6 @@
 .root p { margin: 0; color: var(--muted-ink); font-size: 0.8125rem; }
 .canvas { height: min(22rem, 60vh); min-height: 16rem; border: 1px solid var(--border); background: var(--surface); }
 .inactive { display: none; }
+.staticMap { display: block; width: 100%; height: auto; max-height: 22rem; min-width: 0; background: var(--map-stage, var(--surface)); }
 .root a { justify-self: start; }
 .root :focus-visible { outline: 2px solid var(--official); outline-offset: 2px; }
