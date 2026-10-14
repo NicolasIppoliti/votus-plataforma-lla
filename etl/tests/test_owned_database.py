@@ -352,11 +352,11 @@ def test_migration_level_does_not_require_private_table_privileges(monkeypatch):
 
     def execute(statement, _parameters=()):
         visible = "information_schema.columns" not in statement
-        return SimpleNamespace(fetchone=lambda: (True, visible, False, True, True, True))
+        return SimpleNamespace(fetchone=lambda: (True, visible, False, True, True, True, True))
 
     connection = SimpleNamespace(execute=execute)
     monkeypatch.setattr(migrations.psycopg, "connect", lambda _dsn: nullcontext(connection))
-    assert migrations._review_context_migration_level("explicit-owned-target") == 6
+    assert migrations._review_context_migration_level("explicit-owned-target") == 7
 
 
 def test_migration_runner_rejects_malformed_record_without_ambient_fallback(owned, monkeypatch):

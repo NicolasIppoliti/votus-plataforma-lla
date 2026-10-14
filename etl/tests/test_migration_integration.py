@@ -51,6 +51,7 @@ DINE_2023_MUNICIPAL_IDENTITIES_VERSION = "20260923000001"
 AUTHORIZED_OFFICIAL_INTERNAL_LISTS_MIGRATION_VERSION = "20261011000000"
 OFFICIAL_SECTION_COMPLETENESS_MIGRATION_VERSION = "20261012000000"
 OFFICIAL_SECTION_CIRCUIT_OUTCOMES_MIGRATION_VERSION = "20261013000000"
+HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION = "20261014000000"
 LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS = (
     REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
     REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
@@ -58,6 +59,7 @@ LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS = (
     RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION,
     YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION,
     PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION,
+    HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION,
 )
 SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
     {
@@ -93,6 +95,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         AUTHORIZED_OFFICIAL_INTERNAL_LISTS_MIGRATION_VERSION,
         OFFICIAL_SECTION_COMPLETENESS_MIGRATION_VERSION,
         OFFICIAL_SECTION_CIRCUIT_OUTCOMES_MIGRATION_VERSION,
+        HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION,
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -171,16 +174,18 @@ def _review_context_migration_level(database_dsn: str) -> int:
             "to_regprocedure('workspace_private.record_review_item_v2"
             "(text,text,text,text,text[],text[],jsonb)') is not null,"
             "coalesce(position('source_archive_not_attributable' in pg_get_functiondef(to_regprocedure('workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)')))>0,false),"  # noqa: E501
-            "to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') is not null",  # noqa: E501
+            "to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') is not null,"
+            "coalesce(position('historical_count' in pg_get_functiondef(to_regprocedure('workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)')))>0,false)",  # noqa: E501
         )
     chronological_states = (
-        (False, False, False, False, False, False),
-        (True, False, False, False, False, False),
-        (True, True, False, False, False, False),
-        (True, True, True, False, False, False),
-        (True, True, False, True, False, False),
-        (True, True, False, True, True, False),
-        (True, True, False, True, True, True),
+        (False, False, False, False, False, False, False),
+        (True, False, False, False, False, False, False),
+        (True, True, False, False, False, False, False),
+        (True, True, True, False, False, False, False),
+        (True, True, False, True, False, False, False),
+        (True, True, False, True, True, False, False),
+        (True, True, False, True, True, True, False),
+        (True, True, False, True, True, True, True),
     )
     if installed not in chronological_states:
         raise AssertionError(
@@ -212,7 +217,7 @@ def _set_latest_review_context_level(database_dsn: str, target_level: int) -> No
         _apply_migration(database_dsn, version)
 
 
-def test_review_context_migration_plan_covers_all_six_migrations() -> None:
+def test_review_context_migration_plan_covers_all_seven_migrations() -> None:
     assert LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS == (
         REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
         REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
@@ -220,8 +225,9 @@ def test_review_context_migration_plan_covers_all_six_migrations() -> None:
         RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION,
         YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION,
         PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION,
+        HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION,
     )
-    assert _review_context_migration_plan(6, 0)[0] == tuple(
+    assert _review_context_migration_plan(7, 0)[0] == tuple(
         reversed(LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS)
     )
 
@@ -258,7 +264,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 70
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 71
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -407,6 +413,7 @@ def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
         (RECORD_REVIEW_ITEM_CONTEXTS_MIGRATION_VERSION, "record_review_item_contexts"),
         (YEAR_LEVEL_REVIEW_CONTEXTS_MIGRATION_VERSION, "allow_year_level_review_contexts"),
         (PLATFORM_REVIEW_BREAKDOWN_MIGRATION_VERSION, "platform_review_breakdown"),
+        (HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION, "upgrade_historical_review_contexts"),
     ):  # noqa: E501
         for down, suffix in ((False, ".sql"), (True, ".down.sql")):
             assert _validated_migration_path(version, down=down).name == f"{version}_{stem}{suffix}"
@@ -2398,7 +2405,7 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login(
     def assert_level_state(level: int, stable_authority) -> None:
         expected_select_count = 3 if level >= 3 else 0
         expected_policies = set(context_policies) if level >= 3 else set()
-        if level == 6:
+        if level >= 6:
             expected_policies |= breakdown_policies
         expected_functions = {
             1: (False, False, False),
@@ -2407,6 +2414,7 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login(
             4: (False, True, False),
             5: (False, True, False),
             6: (False, True, True),
+            7: (False, True, True),
         }[level]
         with owned_database.connect() as connection:
             authority = connection.execute(
@@ -2463,7 +2471,7 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login(
                 )
                 assert_level_state(level, stable_authority)
                 forward_levels.append(level)
-            for level, version in zip(range(5, 0, -1), reversed(remaining_versions), strict=True):
+            for level, version in zip(range(6, 0, -1), reversed(remaining_versions), strict=True):
                 connection.execute(_validated_migration_path(version, down=True).read_bytes())
                 assert connection.execute("select session_user,current_user").fetchone() == (
                     runner_role,
@@ -2472,8 +2480,8 @@ def test_remaining_review_context_migrations_run_as_supabase_temporary_login(
                 assert_level_state(level, stable_authority)
                 down_levels.append(level)
 
-        assert forward_levels == [2, 3, 4, 5, 6]
-        assert down_levels == [5, 4, 3, 2, 1]
+        assert forward_levels == [2, 3, 4, 5, 6, 7]
+        assert down_levels == [6, 5, 4, 3, 2, 1]
         assert table_acl_snapshot() == baseline_table_acls
     finally:
         _set_latest_review_context_level(admin_dsn, original_review_context_level)
