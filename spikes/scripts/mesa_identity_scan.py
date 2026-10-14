@@ -42,9 +42,13 @@ def main(archive: str, scratch: str) -> None:
         tmp.seek(0)
         rows = 0
         mesas, pairs, lineages = set(), set(), set()
-        for row in iter_national_rows(tmp, archive_entry_id="national/2025-legislativas",
-                                      election_year=2025, election_round="legislativas",
-                                      establecimientos_csv_bytes=companion):
+        for row in iter_national_rows(
+            tmp,
+            archive_entry_id="national/2025-legislativas",
+            election_year=2025,
+            election_round="legislativas",
+            establecimientos_csv_bytes=companion,
+        ):
             rows += 1
             r = row.result
             if r.mesa is None:
