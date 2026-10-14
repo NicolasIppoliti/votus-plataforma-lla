@@ -52,7 +52,8 @@ describe("repository toolchain pins", () => {
     expect(web.devDependencies.supabase).toMatch(/^\d+\.\d+\.\d+$/);
     expect(read(".github/workflows/release-gates.yml")).toContain("devDependencies?.supabase");
     expect(web.scripts["toolchain:check"]).toBe("node --experimental-strip-types ./scripts/toolchain-check.ts");
-    expect(JSON.parse(read("package.json")).scripts["toolchain:check"]).toBe("pnpm --dir apps/web toolchain:check");
+    // The root manifest stays pin-only (etl/tests/test_toolchain_pins.py): no root scripts.
+    expect(JSON.parse(read("package.json"))).toEqual({ private: true, packageManager: web.packageManager });
   });
   it.each(["test:e2e:gate", "test:e2e:focused", "verify:etl-isolated"])("preflights %s before starting its runtime", (entry) => {
     expect(web.scripts[entry]).toMatch(new RegExp(`^pnpm toolchain:check --scope ${entry === "verify:etl-isolated" ? "etl" : "web"} && `));
