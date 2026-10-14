@@ -33,6 +33,35 @@ still selector/chart/table-first; the map is not yet delivered.
 Run examples from the repository root. They are local development instructions,
 not permission to contact a hosted project, ingest data, or deploy a release.
 
+## Entorno de desarrollo
+
+La toolchain local usa versiones exactas en [mise.toml](mise.toml), independientes
+ de las actualizaciones de Homebrew. Instalá mise y activalo en tu shell:
+
+```sh
+brew install mise
+# Agregá esta línea a ~/.zshrc (para Bash, usá ~/.bashrc y `mise activate bash`):
+eval "$(mise activate zsh)"
+# Abrí una shell nueva y, en la raíz del repo:
+mise install
+pnpm --dir apps/web install --frozen-lockfile
+pnpm --dir apps/web toolchain:check
+```
+
+`toolchain:check` compara las versiones realmente ejecutadas de Node, pnpm,
+Python y uv con mise, y la CLI de Supabase con su devDependency del paquete web.
+Ante diferencias o herramientas ausentes, falla con una indicación para corregirlas.
+Supabase se instala con pnpm, no con mise. El chequeo completo usa `--scope all`
+por defecto; `--scope web` comprueba Node/pnpm/Supabase y `--scope etl`
+Node/pnpm/Python/uv. Los gates web y la verificación ETL ejecutan primero su
+scope correspondiente, también en CI: los jobs web no instalan Python ni uv.
+
+Para actualizar versiones, editá mise.toml y los pins correspondientes
+(`.node-version`, `.python-version`, ambos `packageManager`, el engine pnpm
+ y `etl/pyproject.toml`). El test de consistencia exige que coincidan y que Node
+satisfaga el engine `24.x`. Supabase se actualiza en el devDependency web y su
+lockfile; CI obtiene esa misma versión desde el manifest.
+
 ## Web quick path
 
 Use Node.js **24.21.0** from [.node-version](.node-version) and **pnpm 12.6.0**,
