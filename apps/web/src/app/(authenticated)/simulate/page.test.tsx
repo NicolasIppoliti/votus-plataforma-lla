@@ -460,7 +460,8 @@ describe("simulate page — fixed-total transfer entry", () => {
     expect(errors).toEqual([]);
     const query = new URL(url!, "https://example.invalid").searchParams;
     const served = await renderSimulation(undefined, Object.fromEntries(query));
-    expect(served).toContain("listed and unmodeled votes exceed the vote-coverage basis");
+    expect(served).toContain("los votos de las listas y los no modelados superan el total informado; los totales no son consistentes");
+    expect(served).not.toContain("vote-coverage basis");
     expect(served).not.toContain('data-testid="allocation-result"');
     expect(served).not.toContain("Huella de los datos proporcionados");
   });
@@ -602,7 +603,7 @@ describe("simulate page — normal-user entry", () => {
     );
 
     expect(markup).toContain('role="alert"');
-    expect(markup).toContain("listed and unmodeled votes exceed the vote-coverage basis");
+    expect(markup).toContain("los votos de las listas y los no modelados superan el total informado; los totales no son consistentes");
     expect(markup).not.toContain('data-testid="allocation-result"');
     expect(markup).not.toContain('aria-label="Distribución de bancas"');
     expect(markup).not.toContain("Huella de los datos proporcionados");

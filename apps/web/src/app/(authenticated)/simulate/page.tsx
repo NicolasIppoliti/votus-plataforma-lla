@@ -102,7 +102,11 @@ function allocationErrorMessage(error: unknown): string {
   if (incomplete) {
     return `Asignación rechazada: se solicitaron ${incomplete[1]} bancas, pero solo se produjeron ${incomplete[2]} adjudicaciones con las listas que alcanzan el cociente Hare (Ley 5109, arts. 109–110). No se presenta un reparto parcial como completo.`;
   }
-  return `Asignación rechazada: ${message}`;
+  if (message.includes("listed and unmodeled votes exceed the vote-coverage basis")) {
+    return "Asignación rechazada: los votos de las listas y los no modelados superan el total informado; los totales no son consistentes.";
+  }
+  // Never surface raw allocator text: unknown refusals keep the generic Spanish statement.
+  return "No se pudo completar la asignación porque los datos proporcionados no cumplen sus reglas.";
 }
 
 function parseInputParam(raw: string | undefined): ParsedInput {
