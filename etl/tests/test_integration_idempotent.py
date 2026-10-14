@@ -85,6 +85,22 @@ class _RecordingCursor:
         self.last_query = query
         self.statements.append((query, list(params)))
 
+    def copy(self, query: str):
+        cursor = self
+
+        class Copy:
+            def __enter__(self):
+                cursor.statements.append((query, []))
+                return self
+
+            def write_row(self, row):
+                cursor.statements[-1][1].append(row)
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+        return Copy()
+
     def fetchone(self) -> tuple[str] | None:
         if "from archive_entry" in self.last_query:
             if self.archive_source_kind is None:
@@ -124,6 +140,38 @@ def _result_record(*, archive_entry_id: str, source_kind: str = "official") -> R
         archive_entry_id=archive_entry_id,
         source_row_index=0,
     )
+
+
+def test_load_result_rows_copies_all_eleven_fields_without_committing() -> None:
+    conn = _RecordingConnection()
+    record = _result_record(archive_entry_id="entry-1")
+
+    assert (
+        load_result_rows(
+            conn, archive_entry_id="entry-1", election_id="election-1", records=[record]
+        )
+        == 1
+    )
+
+    query, rows = conn.statements[-1]
+    assert "copy result_row" in query.lower()
+    assert "from stdin" in query.lower()
+    assert rows == [
+        (
+            record.election_id,
+            record.jurisdiction_id,
+            record.category_id,
+            record.granularity,
+            record.requested_granularity,
+            record.list_id,
+            record.votes,
+            record.source_kind,
+            record.archive_entry_id,
+            record.source_row_index,
+            record.mesa_tipo,
+        )
+    ]
+    assert conn.commit_calls == 0
 
 
 def test_load_result_rows_refuses_a_foreign_archive_entry_before_any_sql() -> None:
@@ -228,7 +276,7 @@ def test_load_result_rows_matching_archive_entry_keeps_delete_insert_idempotency
     assert "select source_kind" in first_statements[0][0]
     assert "from archive_entry" in first_statements[0][0]
     assert "delete from result_row" in first_statements[1][0]
-    assert "insert into result_row" in first_statements[2][0]
+    assert "copy result_row" in first_statements[2][0]
     assert conn.commit_calls == 0
 
 

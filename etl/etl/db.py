@@ -965,32 +965,32 @@ class ResultRowsReplacement:
         if not records:
             return 0
         with self.conn.cursor() as cur:
-            cur.executemany(
+            with cur.copy(
                 """
-                insert into result_row (
+                copy result_row (
                     election_id, jurisdiction_id, category_id, granularity,
                     requested_granularity,
                     list_id, votes, source_kind,
                     archive_entry_id, source_row_index, mesa_tipo
-                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                [
-                    (
-                        record.election_id,
-                        record.jurisdiction_id,
-                        record.category_id,
-                        record.granularity,
-                        record.requested_granularity,
-                        record.list_id,
-                        record.votes,
-                        record.source_kind,
-                        record.archive_entry_id,
-                        record.source_row_index,
-                        record.mesa_tipo,
+                ) from stdin
+                """
+            ) as copy:
+                for record in records:
+                    copy.write_row(
+                        (
+                            record.election_id,
+                            record.jurisdiction_id,
+                            record.category_id,
+                            record.granularity,
+                            record.requested_granularity,
+                            record.list_id,
+                            record.votes,
+                            record.source_kind,
+                            record.archive_entry_id,
+                            record.source_row_index,
+                            record.mesa_tipo,
+                        )
                     )
-                    for record in records
-                ],
-            )
         self.inserted += len(records)
         return len(records)
 
