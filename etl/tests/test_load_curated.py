@@ -333,8 +333,8 @@ def test_real_party_projection_loads_exact_president_and_pba_category_sets() -> 
     summary = load_party_map_rows(conn, table)
 
     assert summary.party_canonical.loaded == 37
-    assert summary.list_identity.loaded == 114
-    assert summary.party_mapping.loaded == 114
+    assert summary.list_identity.loaded == 117
+    assert summary.party_mapping.loaded == 117
     for count in (summary.party_canonical, summary.list_identity, summary.party_mapping):
         assert count.deleted_by_reason == {"absent_from_desired_projection": 0}
     assert {
@@ -383,8 +383,8 @@ def test_tigre_curated_projection_persists_exact_identities_idempotently() -> No
     second = load_party_map_rows(conn, table)
 
     assert first.party_canonical.loaded == second.party_canonical.loaded == 37
-    assert first.list_identity.loaded == second.list_identity.loaded == 114
-    assert first.party_mapping.loaded == second.party_mapping.loaded == 114
+    assert first.list_identity.loaded == second.list_identity.loaded == 117
+    assert first.party_mapping.loaded == second.party_mapping.loaded == 117
     assert first_snapshot == (
         conn.projection.canonical,
         conn.projection.list_identity,
