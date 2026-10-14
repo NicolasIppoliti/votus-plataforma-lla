@@ -32,7 +32,9 @@ it("presents Votus identity and product purpose before the protected sign-in for
   const markup = renderToStaticMarkup(<LoginPage /> as ReactElement);
 
   expect(markup).toContain('class="login-brand"');
-  expect(markup).toContain('class="login-brand__name">Votus</span>');
+  expect(markup).toContain('aria-label="votus."');
+  expect(markup).toContain('aria-label="Acceso a Votus"');
+  expect(markup).toContain('votus<span');
   expect(markup).toContain("Análisis electoral, con evidencia.");
   expect(markup).toContain("Resultados oficiales, comparación de elecciones y escenarios en un mismo espacio de trabajo.");
   expect(markup.indexOf('class="login-brand"')).toBeLessThan(markup.indexOf('id="login-heading"'));

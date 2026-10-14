@@ -1,6 +1,6 @@
 .root, .layout, .filters, .evidence, .qualification, .result, .coverage, .state { min-width: 0; }
 :global(.app-content):has(> .root) { max-width: none; padding-inline: 0; }
-.layout { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 96.25rem; gap: 1.5rem; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 2040px; padding-inline: 34px; gap: 23px; }
 .header { display: grid; gap: 0.5rem; margin-block: 0 0.5rem; }
 .header h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
 .lede { margin: 0; max-width: 70ch; color: var(--muted-ink); font-size: 0.875rem; }
@@ -16,7 +16,9 @@
 .root h2 { font-size: 1.25rem; line-height: 1.3; font-weight: 600; }
 .root h3, .filters h2 { font-size: 1rem; line-height: 1.3; font-weight: 600; }
 .root p { font-size: 0.875rem; }
-.selectorGroups, .fields { display: grid; gap: 1rem; }
+.trail { color: var(--secondary-ink); font-size: 0.8125rem; }
+.selectorGroups, .fields { display: grid; gap: 12px; }
+.filters { padding: 16px 0; border-inline: 0; border-radius: 0; background: transparent; }
 .selectorGroup { margin: 0; padding: 0; min-width: 0; border: 0; }
 .selectorGroup legend { margin-block-end: 0.75rem; padding: 0; font-size: 0.875rem; font-weight: 600; }
 .filters :global(.field) { min-width: 0; gap: 0.375rem; }
@@ -26,7 +28,10 @@
 .guidance { padding-block-start: 0.75rem; border-block-start: 1px solid var(--border); color: var(--muted-ink); }
 .root .guidance { font-size: 0.8125rem; }
 .evidence { display: grid; gap: 1.25rem; }
+.qualification { border-inline-start: 3px solid var(--fiscalizacion); background: var(--surface-muted); }
+.qualification > p + p { padding-block-start: 8px; border-block-start: 1px solid var(--border); }
 .qualification > [role="status"] { font-weight: 500; font-variant-numeric: tabular-nums; }
+.root :global(.data-table) tbody th { background: var(--surface); font-weight: 500; }
 .root :where([role="note"], .scaleDescription) { color: var(--muted-ink); font-size: 0.8125rem; }
 .evidence :where(ul, .provenance) { overflow-wrap: anywhere; }
 .evidence ul { display: grid; gap: 0.5rem; margin: 0; padding-inline-start: 1.25rem; font-size: 0.8125rem; }
@@ -59,6 +64,9 @@
   .selectorGroups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
   .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+@media (max-width: 1250px) { .layout { padding-inline: 23px; } }
+@media (max-width: 760px) { .layout { padding-inline: 18px; } }
+@media (max-width: 360px) { .layout { padding-inline: 12px; } }
 @media (max-width: 47.999rem) {
   .filters, .qualification, .result, .coverage, .state { padding: 1rem; }
   .layout, .evidence { gap: 1rem; }

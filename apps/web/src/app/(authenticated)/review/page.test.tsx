@@ -53,6 +53,9 @@ describe("review page — responsive review evidence", () => {
       (await ReviewPage({ searchParams: Promise.resolve({}) })) as ReactElement,
     );
 
+    expect(markup).toContain('aria-label="Recorrido de la página"');
+    expect(markup).toContain('Evidencia / Revisión de datos');
+    expect(markup).toContain('aria-label="Detalle de la cola autorizada"');
     expect(markup).toContain(READ_ONLY_NOTICE);
     expect(markup).toContain("Mostrando 1 de 51.");
     expect(markup).toContain('href="/review?offset=50"');

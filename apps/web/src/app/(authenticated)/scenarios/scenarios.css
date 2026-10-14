@@ -1,34 +1,20 @@
-.scenarios-page > h1 {
-  font-size: 2rem;
-  line-height: 1.15;
-  letter-spacing: -0.035em;
-}
-
-.scenarios-page > p {
-  max-width: 65ch;
-}
-
-.scenarios-page__status {
-  margin-block: 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--color-warning-line);
-  border-inline-start-width: 4px;
-  background: var(--color-warning-soft);
-  color: var(--color-ink);
-}
-
-.scenarios-page > section {
-  margin-block-start: 2rem;
-}
-
-.scenarios-page > section > h2 {
-  margin-block-end: 0.75rem;
-  font-size: 1.25rem;
-  line-height: 1.3;
-}
-
-@media (max-width: 480px) {
-  .scenarios-page > h1 {
-    font-size: 1.75rem;
-  }
-}
+.scenarios-page { display: grid; gap: 24px; min-width: 0; }
+.scenarios-page__header { display: grid; gap: 8px; }
+.scenarios-page__header nav { color: var(--secondary-ink); font-size: 0.8125rem; }
+.scenarios-page__header h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
+.scenarios-page__header p, .scenarios-page > p { margin: 0; max-width: 70ch; color: var(--secondary-ink); font-size: 0.875rem; }
+.scenarios-page__context { display: grid; gap: 16px; padding: 20px 23px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); }
+.scenarios-page__context p { margin: 0; color: var(--secondary-ink); font-size: 0.875rem; }
+.scenarios-page__context section { display: grid; gap: 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+.scenarios-page__context h2 { margin: 0; font-size: 1rem; }
+.scenarios-page .scenarios-page__status { max-width: none; padding: 16px 23px; border: 1px solid var(--border); border-inline-start: 3px solid var(--simulation); border-radius: 6px; background: var(--surface-muted); color: var(--ink); }
+.scenarios-page > section { min-width: 0; display: grid; gap: 14px; padding: 20px 23px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.scenarios-page > section > h2 { margin: 0; font-size: 1.25rem; line-height: 1.3; }
+.scenarios-page section p { margin: 0; font-size: 0.875rem; color: var(--secondary-ink); }
+.scenarios-page .data-table :is(th, td) { padding: 14px 12px; border-width: 0 0 1px; font-variant-numeric: tabular-nums; }
+.scenarios-page .data-table tbody th { background: var(--surface); font-weight: 500; }
+.scenarios-page .data-table tbody tr:hover :is(th, td) { background: var(--surface-muted); }
+.scenarios-page .table-scroll { max-width: 100%; }
+.scenarios-page caption { text-align: left; padding-block: 12px; color: var(--muted-ink); font-size: 0.8125rem; }
+@media (max-width: 760px) { .scenarios-page { gap: 18px; } .scenarios-page > section { padding: 16px; } }
+@media (max-width: 360px) { .scenarios-page__header h1 { font-size: 24px; } }

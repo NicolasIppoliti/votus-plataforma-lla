@@ -1,0 +1,17 @@
+.review-queue { display: grid; gap: 24px; min-width: 0; }
+.review-queue .review-queue__header { display: grid; gap: 8px; padding: 0; border: 0; background: transparent; }
+.review-queue__header h1 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -0.03em; }
+.review-trail { color: var(--secondary-ink); font-size: 0.8125rem; }
+.review-queue__header p { margin: 0; color: var(--secondary-ink); font-size: 0.875rem; }
+.review-queue .review-queue__attention, .review-queue .review-queue__results { min-width: 0; padding: 20px 23px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.review-queue .review-queue__attention { display: grid; gap: 12px; background: var(--surface-muted); border-inline-start: 3px solid var(--accent); }
+.review-queue__attention > p + p { padding-top: 8px; border-top: 1px solid var(--border); }
+.review-queue__attention p { margin: 0; }
+.review-queue__results-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.review-queue__results-heading h2 { font-size: 1.25rem; }
+.review-queue .data-table :is(th, td) { padding: 14px 12px; border-width: 0 0 1px; font-variant-numeric: tabular-nums; }
+.review-queue .data-table tbody tr:hover :is(th, td) { background: var(--surface-muted); }
+.review-queue__pagination { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.review-queue :is(a, summary) { min-height: 44px; }
+@media (max-width: 760px) { .review-queue { gap: 18px; } .review-queue .review-queue__attention, .review-queue .review-queue__results { padding: 16px; } }
+@media (max-width: 360px) { .review-queue__header h1 { font-size: 24px; } }

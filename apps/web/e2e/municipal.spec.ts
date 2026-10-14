@@ -275,6 +275,7 @@ test.describe("the municipal route requires workspace-authorized official result
       const municipalNavigationLink = page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Municipal", exact: true });
       await municipalNavigationLink.click();
       const coldMain = page.getByRole("main");
+      await expect(coldMain.getByRole("navigation", { name: "Recorrido de la página" })).toHaveText("Exploración / Municipal");
       await expect(coldMain.getByRole("heading", { name: "Coronel Rosales", level: 1 })).toBeVisible();
       await expect(coldMain).toContainText("Distrito 02 · Sección 027");
       await expect(coldMain.getByRole("button", { name: "Ver resultados oficiales" })).toHaveCount(0);

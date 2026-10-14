@@ -412,6 +412,8 @@ describe("municipal page — the real entry point", () => {
           })) as ReactElement,
         );
 
+        expect(markup).toContain('aria-label="Recorrido de la página"');
+        expect(markup).toContain('Exploración / Municipal');
         expect(markup).toContain('aria-labelledby="municipal-results-heading"');
         expect(markup).toContain('role="region" aria-label="Tabla de resultados oficiales exactos por partido" tabindex="0"');
         expect(markup).toContain("<caption>Resultados oficiales exactos por partido y votos</caption>");
@@ -426,7 +428,8 @@ describe("municipal page — the real entry point", () => {
         expect(markup).toContain("<summary>Archivo y procedencia</summary>");
         const positions = ["Contexto de la consulta", "Votos por partido identificado", "<caption>", "<summary>"].map((label) => markup.indexOf(label));
         expect(positions).toEqual([...positions].sort((a, b) => a - b));
-        expect(markup).not.toContain("<aside");
+        expect(markup).toContain('aria-label="Detalle municipal"');
+        expect(markup).toContain('aria-label="Mesa de trabajo municipal"');
         expect(markup).toContain("aaaabbbbccccdddd");
       });
 
