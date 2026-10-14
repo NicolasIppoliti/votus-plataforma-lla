@@ -174,7 +174,7 @@ def _review_context_migration_level(database_dsn: str) -> int:
             "to_regprocedure('workspace_private.record_review_item_v2"
             "(text,text,text,text,text[],text[],jsonb)') is not null,"
             "coalesce(position('source_archive_not_attributable' in pg_get_functiondef(to_regprocedure('workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)')))>0,false),"  # noqa: E501
-            "to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') is not null,"
+            "to_regprocedure('workspace_private.platform_review_breakdown(integer,integer)') is not null,"  # noqa: E501
             "coalesce(position('historical_count' in pg_get_functiondef(to_regprocedure('workspace_private.record_review_item_v2(text,text,text,text,text[],text[],jsonb)')))>0,false)",  # noqa: E501
         )
     chronological_states = (
