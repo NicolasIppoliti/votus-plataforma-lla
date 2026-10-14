@@ -136,10 +136,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
   return (
     <form aria-label="Transferencia de votos a total fijo" action={action}
       className="simulation-transfer simulation-form__section panel form-grid" noValidate aria-busy={pending}>
-      <h3>Transferir votos entre listas</h3>
-      <p id="transfer-help">Operación hipotética a total fijo: resta votos de una lista y suma
-        la misma cantidad a otra, sin cambiar los demás datos del escenario actual.
-        Cero conserva exactamente el escenario. Al cambiar la base, seleccione las listas de nuevo.</p>
+      <h3 className="sr-only">Transferir votos entre listas</h3>
       {[{ name: "donor", label: "Lista donante" }, { name: "target", label: "Lista receptora" }].map(({ name, label }) => (
         <div className="field" key={name}>
           <Label htmlFor={`transfer-${name}`}>{label}</Label>
@@ -163,6 +160,9 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
         {errors.length ? <ul role="alert">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : null}
       </div>
       <Button type="submit" disabled={pending}>Transferir votos</Button>
+      <details className="simulation-help"><summary>Cómo funciona la transferencia</summary><p id="transfer-help">Operación hipotética a total fijo: resta votos de una lista y suma
+        la misma cantidad a otra, sin cambiar los demás datos del escenario actual.
+        Cero conserva exactamente el escenario. Al cambiar la base, seleccione las listas de nuevo.</p></details>
     </form>
   );
 }

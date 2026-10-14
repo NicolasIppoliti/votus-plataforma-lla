@@ -245,6 +245,23 @@ describe("simulate page — approved workbench composition", () => {
       expect(markup).not.toContain('data-testid="allocation-result"');
     }
   });
+
+  it("keeps the transfer action before its folded explanation so the first fold reaches the impact", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+    const form = markup.split('aria-label="Transferencia de votos a total fijo"')[1]!.split("</form>")[0]!;
+    expect(form).toMatch(/<details class="simulation-help"><summary>Cómo funciona la transferencia<\/summary><p id="transfer-help">Operación hipotética a total fijo/);
+    expect(form.indexOf("Transferir votos</button>")).toBeGreaterThan(-1);
+    expect(form.indexOf("Transferir votos</button>")).toBeLessThan(form.indexOf("Cómo funciona la transferencia"));
+    expect(form).not.toMatch(/<details[^>]*open/);
+  });
+
+  it("shows the seat total and strip before the statutory method notes, as in the approved impact block", async () => {
+    const markup = await renderSimulation(ALLOCATION_INPUT);
+    const renewal = markup.split('class="simulation-renewal"')[1]!;
+    expect(renewal.indexOf("Bancas calculadas")).toBeGreaterThan(-1);
+    expect(renewal.indexOf("simulation-renewal__strip")).toBeLessThan(renewal.indexOf("Hare y mayor residuo"));
+    expect(renewal.indexOf("Bancas calculadas")).toBeLessThan(renewal.indexOf("Divisor Hare: 9 bancas renovadas, no 18 bancas totales"));
+  });
 });
 
 describe("simulate page — base and scenario workbench", () => {
