@@ -1053,7 +1053,7 @@ def test_tigre_curated_party_map_has_exact_present_identities_and_omits_absences
 def test_real_curated_party_map_declares_all_public_canonical_labels() -> None:
     table = _load_party_map_table()
 
-    assert len(table.entries) == 114
+    assert len(table.entries) == 117
     labels = {declaration.id: declaration.display_name for declaration in table.canonical_parties}
     assert labels == {
         "JXC": "JUNTOS POR EL CAMBIO",
@@ -1195,6 +1195,9 @@ def test_real_curated_party_map_has_exact_primary_source_category_coverage() -> 
     [
         (2023, "national", "DIPUTADO NACIONAL", "135", "LLA"),
         (2023, "national", "DIPUTADO NACIONAL", "20135", "LLA"),
+        (2023, "national", "DIPUTADO NACIONAL", "20132", "JXC"),
+        (2023, "national", "DIPUTADO NACIONAL", "20134", "UP"),
+        (2023, "national", "DIPUTADO NACIONAL", "20136", "FIT"),
         (2025, "national", "DIPUTADO NACIONAL", "110", "LLA"),
         (2025, "coronel_rosales_municipal", "CONCEJALES", "2206", "LLA_PRO_ALLIANCE"),
         (2023, "coronel_rosales_municipal", "CONCEJALES", "962", "PRIMERO_ROSALES"),
