@@ -17,9 +17,10 @@
     "typecheck": "node -e \"const v=require('@typescript/native').version;if(!/^7\\./.test(v))throw new Error('TypeScript 7.x required')\" && tsc --version && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:gate": "node --experimental-strip-types ./scripts/e2e-release-gate.ts",
-    "test:e2e:focused": "node --experimental-strip-types ./scripts/e2e-release-gate.ts --focused",
-    "verify:etl-isolated": "node --experimental-strip-types ./scripts/etl-verification.ts",
+    "toolchain:check": "node --experimental-strip-types ./scripts/toolchain-check.ts",
+    "test:e2e:gate": "pnpm toolchain:check --scope web && node --experimental-strip-types ./scripts/e2e-release-gate.ts",
+    "test:e2e:focused": "pnpm toolchain:check --scope web && node --experimental-strip-types ./scripts/e2e-release-gate.ts --focused",
+    "verify:etl-isolated": "pnpm toolchain:check --scope etl && node --experimental-strip-types ./scripts/etl-verification.ts",
     "evaluate:territorial-renderer": "node --experimental-strip-types ./scripts/territorial-renderer-evaluation.ts"
   },
   "dependencies": {
