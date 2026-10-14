@@ -211,7 +211,7 @@
 
 @media (min-width: 70rem) {
   .simulation-workspace:not(.simulation-workspace--supplied) {
-    grid-template-columns: minmax(17rem, 0.85fr) minmax(0, 1.5fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
   }
 

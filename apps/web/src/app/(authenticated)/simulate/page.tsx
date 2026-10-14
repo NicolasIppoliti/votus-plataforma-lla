@@ -23,6 +23,7 @@ import {
 import { SimulationForm } from "./simulation-form";
 import {
   simulationSweep,
+  simulationOriginalInputFromQuery,
   SimulationFormError,
   SWEEP_KEYS,
   transferBaselineFromQuery,
@@ -30,7 +31,9 @@ import {
 } from "./simulation-form-adapter";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { SeatDistribution } from "./seat-distribution";
+import { RenewalStrip, SimulationComparison } from "./simulation-comparison";
 import "./simulation.css";
+import "./workbench.css";
 
 interface SimulatePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -95,6 +98,14 @@ function allocationErrorMessage(error: unknown): string {
   if (message.includes("MAYORIA is not implemented")) {
     return "MAYORIA no está implementada según la Ley 5109; se rechazó la asignación";
   }
+  const incomplete = message.match(/cannot allocate all (\d+) seats from the supplied lists; only (\d+) seat awards were produced/);
+  if (incomplete) {
+    return `Asignación rechazada: se solicitaron ${incomplete[1]} bancas, pero solo se produjeron ${incomplete[2]} adjudicaciones con las listas que alcanzan el cociente Hare (Ley 5109, arts. 109–110). No se presenta un reparto parcial como completo.`;
+  }
+  if (message.includes("listed and unmodeled votes exceed the vote-coverage basis")) {
+    return "Asignación rechazada: los votos de las listas y los no modelados superan el total informado; los totales no son consistentes.";
+  }
+  // Never surface raw allocator text: unknown refusals keep the generic Spanish statement.
   return "No se pudo completar la asignación porque los datos proporcionados no cumplen sus reglas.";
 }
 
@@ -321,6 +332,12 @@ export default async function SimulatePage({
   searchParams,
 }: SimulatePageProps): Promise<ReactNode> {
   const params = await searchParams;
+  const requestQuery = new URLSearchParams(
+    Object.entries(params).flatMap(([key, value]) =>
+      typeof value === "string" ? [[key, value]] : Array.isArray(value) ? value.map((entry) => [key, entry]) : [],
+    ),
+  );
+  requestQuery.sort();
 
   // Refused BEFORE anything is read, like the other three routes: without
   // this, `?input=A&input=B` renders "Pass an `input` query parameter" for a
@@ -344,6 +361,18 @@ export default async function SimulatePage({
   );
 
   let result: AllocationResult | undefined;
+  let baseResult: AllocationResult | undefined;
+  let baseProjection: ProjectionInput | undefined;
+  let baseError: string | undefined;
+  if (projectionInput) {
+    try {
+      baseProjection = simulationOriginalInputFromQuery(requestQuery.toString()) ?? undefined;
+    } catch (error) {
+      baseError = error instanceof SimulationFormError ? error.messages.join(" ") : "Base no disponible.";
+    }
+  } else if (requestQuery.has("baseInput")) {
+    baseError = "La base proporcionada requiere un escenario válido.";
+  }
   let allocationError: string | undefined;
   let council: CouncilComposition | undefined;
   let councilError: string | undefined;
@@ -363,8 +392,12 @@ export default async function SimulatePage({
     }
   }
 
-  if (input && !councilError) {
+  if (input && !councilError && !baseError) {
     try {
+      // Both views cross the same authoritative server validation/allocation path.
+      const baseInput = baseProjection ? projectionToAllocationInput(baseProjection) : input;
+      validateCouncilInput({ input: baseInput, council: councilJurisdiction, rawHeldOver });
+      baseResult = allocateSeats(baseInput);
       result = allocateSeats(input);
     } catch (error) {
       allocationError = allocationErrorMessage(error);
@@ -440,18 +473,20 @@ export default async function SimulatePage({
       )
     : undefined;
 
-  const requestQuery = new URLSearchParams(
-    Object.entries(params).flatMap(([key, value]) =>
-      typeof value === "string" ? [[key, value]] : Array.isArray(value) ? value.map((entry) => [key, entry]) : [],
-    ),
-  );
-  requestQuery.sort();
-
   return (
     <main className="simulation-page">
-      <h1>Simulación de bancas</h1>
-      <SimulationForm requestKey={requestQuery.toString()}>
-      <SweepResult query={requestQuery.toString()} baselineError={councilError ?? parseError} />
+      <header className="simulation-page-header">
+        <p>Espacio de trabajo / Simulación</p>
+        <h1>Simulación de escenarios</h1>
+        <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
+        <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
+      </header>
+      <SimulationForm requestKey={requestQuery.toString()}
+        impact={result ? <><RenewalStrip result={result} /><SeatDistribution result={result} /></> : null}
+        baseImpact={result && baseResult ? <><RenewalStrip result={baseResult} /><SeatDistribution result={baseResult} /></> : null}
+        comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
+      <SweepResult query={requestQuery.toString()} baselineError={baseError ?? councilError ?? parseError} />
+      {baseError ? <p role="alert">{baseError}</p> : null}
       {parseError ? <p role="alert">{parseError}</p> : null}
       {allocationError ? <p role="alert">{allocationError}</p> : null}
       {councilError ? <p role="alert">{councilError}</p> : null}
@@ -517,8 +552,9 @@ export default async function SimulatePage({
               Huella de los datos proporcionados (no es procedencia de archivo): sha256 {inputTrace}
             </p>
           ) : null}
-          <SeatDistribution result={result} />
-          <AllocationEvidence result={result} />
+          <details className="simulation-disclosure"><summary>Cómo se asignaron las bancas</summary>
+            <AllocationEvidence result={result} />
+          </details>
         </section>
       ) : null}
       </SimulationForm>

@@ -48,6 +48,36 @@ export function transferBaselineFromQuery(query: string): ProjectionInput | null
   }
 }
 
+/** Caller-authored comparison base, never historical provenance. */
+export function simulationOriginalInputFromQuery(query: string): ProjectionInput | null {
+  const params = new URLSearchParams(sweepBaselineQuery(query));
+  const current = transferBaselineFromQuery(params.toString());
+  if (!params.has("baseInput")) return current;
+  const message = "La base proporcionada no corresponde al mismo escenario a total fijo.";
+  try {
+    if (!current || params.getAll("baseInput").length !== 1) throw new Error(message);
+    const base = projectionInputSchema.parse(JSON.parse(params.get("baseInput")!));
+    const assumptions = (input: ProjectionInput) => JSON.stringify({
+      ...input, lists: input.lists.map(({ listId, listName }) => ({ listId, listName })),
+    });
+    const listedVotes = (input: ProjectionInput) => input.lists.reduce((sum, list) => sum + BigInt(list.votes), 0n);
+    if (assumptions(base) !== assumptions(current) || listedVotes(base) !== listedVotes(current)) throw new Error(message);
+    return base;
+  } catch {
+    throw new SimulationFormError([message]);
+  }
+}
+
+export function simulationResetQuery(query: string): string {
+  const base = simulationOriginalInputFromQuery(query);
+  if (!base) throw new SimulationFormError(["El escenario de base no es válido para restablecerlo."]);
+  const params = new URLSearchParams(sweepBaselineQuery(query));
+  if (params.has("baseInput")) params.set("input", params.get("baseInput")!);
+  params.delete("baseInput");
+  params.sort();
+  return params.toString();
+}
+
 /** Change only two vote counts; all other input and query evidence survives. */
 export function transferSimulationQuery(
   query: string,
@@ -57,6 +87,7 @@ export function transferSimulationQuery(
 ): string {
   const input = transferBaselineFromQuery(query);
   if (!input) throw new SimulationFormError(["El escenario de base no es válido para transferir votos."]);
+  simulationOriginalInputFromQuery(query);
   const donor = input.lists.find((list) => list.listId === donorId);
   const target = input.lists.find((list) => list.listId === targetId);
   if (!donor || !target || donorId === targetId) {
@@ -77,6 +108,7 @@ export function transferSimulationQuery(
       : list.listId === targetId ? { ...list, votes: list.votes + votes } : list),
   };
   const params = new URLSearchParams(query);
+  if (!params.has("baseInput")) params.set("baseInput", params.get("input")!);
   params.set("input", JSON.stringify(adjusted));
   params.sort();
   return params.toString();
@@ -149,6 +181,9 @@ export function simulationSweepQuery(query: string, data: FormData): string {
 /** Only restore scenarios the editor can reproduce without losing evidence. */
 export function simulationValuesFromQuery(query: string): SimulationFormValues | null {
   const params = new URLSearchParams(query);
+  // The editable scenario is the current input; editing it starts a new base.
+  try { simulationOriginalInputFromQuery(query); } catch { return null; }
+  params.delete("baseInput");
   if ([...params.keys()].some((key) => key !== "input" && key !== "council")) return null;
   if (params.getAll("input").length !== 1 || params.getAll("council").length > 1) return null;
   try {
