@@ -85,6 +85,22 @@ describe("municipal page — renderMunicipalView", () => {
     expect(html.toLowerCase()).toContain("granularidad real: sección");
   });
 
+  it("test_requested_level_equal_to_the_shown_level_renders_no_granularity_alert", () => {
+    // #454: mesa rows summed into the seccion total of a seccion request were
+    // announced as "solicitada: seccion; real: seccion".
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "ok",
+        rows: [{ ...MUNICIPAL_ROWS[0]!, granularity: "mesa", requestedGranularity: "seccion" }],
+        excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } },
+        partyMappingConfigured: true,
+      }),
+    );
+
+    expect(html).toContain('aria-label="granularidad: sección"');
+    expect(html.toLowerCase()).not.toContain("granularidad real:");
+  });
+
   it("test_exact_and_historical_unknown_requests_do_not_invent_degradation", () => {
     for (const requestedGranularity of ["seccion", null] as const) {
       const html = renderToStaticMarkup(

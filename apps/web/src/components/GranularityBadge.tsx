@@ -6,7 +6,7 @@ export interface GranularityBadgeProps {
   granularity: Granularity;
   /** Actual coarser source-row level used for this figure. */
   degradedFrom?: Granularity;
-  /** Persisted requested level, when it differs from the actual row level. */
+  /** Persisted requested level; announced only when it differs from `granularity`. */
   requestedGranularity?: Granularity;
   /**
    * Set when finer rows were SUMMED into this figure.
@@ -39,7 +39,7 @@ export function GranularityBadge({
           {` — degradada desde ${inline(degradedFrom)} (la fuente publicó totales a nivel ${inline(degradedFrom)}, por lo que no hay datos más detallados disponibles)`}
         </span>
       ) : null}
-      {requestedGranularity ? (
+      {requestedGranularity && requestedGranularity !== granularity ? (
         <span role="alert">
           {` — granularidad solicitada: ${inline(requestedGranularity)}; granularidad real: ${inline(granularity)}`}
         </span>

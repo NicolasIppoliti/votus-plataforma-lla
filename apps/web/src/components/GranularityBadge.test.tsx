@@ -34,6 +34,18 @@ describe("GranularityBadge", () => {
     expect(html).toContain('aria-label="granularidad: sección"');
     expect(html).toContain("<span>Sección</span>");
     expect(html).toContain("granularidad solicitada: mesa; granularidad real: sección");
+  it("renders the requested-level alert only when requested and shown levels differ", () => {
+    const equal = renderToStaticMarkup(
+      <GranularityBadge granularity="seccion" requestedGranularity="seccion" />,
+    );
+    expect(equal).not.toContain('role="alert"');
+    expect(equal).not.toContain("granularidad solicitada");
+
+    const different = renderToStaticMarkup(
+      <GranularityBadge granularity="seccion" requestedGranularity="mesa" />,
+    );
+    expect(different).toContain('role="alert"');
+    expect(different).toContain("granularidad solicitada: mesa; granularidad real: seccion");
   });
 
   it("does not show a degradation note when no degradation occurred", () => {
