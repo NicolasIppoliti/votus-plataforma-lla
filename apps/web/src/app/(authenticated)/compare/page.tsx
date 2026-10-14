@@ -218,13 +218,13 @@ function CompareSelector({
           {workbench}
           <section className={styles.selectionDetails} aria-label="Detalles de la selección">
           <h2>Detalles de la selección</h2>
-          <p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
+          <details className={styles.selectionNotes}><summary>Notas de la selección</summary><p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
           {!alert && unique && (
             <aside className="official-compare__state" aria-label="Opciones no compartidas">
               {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
               {unique.seccion && <p>Opciones no compartidas — Sección: {unique.seccion.leftOnly} Lado A / {unique.seccion.rightOnly} Lado B (disponibles solo en ese lado).</p>}
             </aside>
-          )}
+          )}</details>
           {evidenceNotice ? (
             <EvidenceState {...evidenceNotice} titleId="compare-evidence-state-heading">
               <p>{message}</p>
@@ -570,6 +570,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
         />
+        <details className={styles.exactTable} data-results-for="compare-results-heading"><summary>Tabla exacta — {swing.swings.length} agrupaciones, votos y variación por lado</summary>
         <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
           <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>
@@ -594,6 +595,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
             </tbody>
           </Table>
         </TableRegion>
+        </details>
         </section>
         <aside className="official-compare__evidence" aria-labelledby="compare-evidence-heading">
           <h2 id="compare-evidence-heading">Evidencia oficial por lado</h2>

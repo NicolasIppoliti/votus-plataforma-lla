@@ -10,13 +10,14 @@ interface Props {
 const percentage = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const count = new Intl.NumberFormat("es-AR");
 const TICKS = [0, 25, 50, 75, 100];
+const VISIBLE_PARTIES = 4;
 
 function ShareBar({ side, name, share }: { side: string; name: string; share: number | undefined }) {
   return (
     <div className={styles.barRow}>
       <div className={styles.barLabel}><span className={styles.side}>{side}</span><span>{name}</span></div>
       {share === undefined ? (
-        <span className={styles.value}>{side}: observación no disponible</span>
+        <span className={styles.unavailable}>{side}: observación no disponible</span>
       ) : (
         <>
           <svg className={styles.bar} viewBox="0 0 100 12" preserveAspectRatio="none" role="img" aria-label={`${side}: ${name}, ${percentage.format(share)} %`}>
@@ -34,6 +35,18 @@ function ShareBar({ side, name, share }: { side: string; name: string; share: nu
 export function ComparisonChart({ swing, leftNames, rightNames }: Props) {
   const leftTotal = swing.shares2023.reduce((sum, share) => sum + share.votes, 0);
   const rightTotal = swing.shares2025.reduce((sum, share) => sum + share.votes, 0);
+  const shareA = (party: string) => swing.shares2023.find((share) => share.party === party)?.sharePercent;
+  const shareB = (party: string) => swing.shares2025.find((share) => share.party === party)?.sharePercent;
+  // Approved compact chart: the largest agrupaciones by their higher observed share stay in view;
+  // every other one stays named and charted inside a closed disclosure (never dropped).
+  const ranked = [...swing.swings].map(({ party }) => party).sort((left, right) =>
+    Math.max(shareB(right) ?? 0, shareA(right) ?? 0) - Math.max(shareB(left) ?? 0, shareA(left) ?? 0) || left.localeCompare(right));
+  const pair = (party: string) => (
+    <div className={styles.pair} key={party}>
+      <ShareBar side="Lado A" name={leftNames[party]!} share={shareA(party)} />
+      <ShareBar side="Lado B" name={rightNames[party]!} share={shareB(party)} />
+    </div>
+  );
   return (
     <section className={styles.chart} aria-labelledby="compare-chart-heading" aria-describedby="compare-chart-denominator">
       <header className={styles.chartHeader}>
@@ -48,14 +61,13 @@ export function ComparisonChart({ swing, leftNames, rightNames }: Props) {
         <span>Escala común</span>
         <div>{TICKS.map((tick) => <span key={tick}>{tick} %</span>)}</div>
       </div>
-      <div className={styles.series}>
-        {[...swing.swings].sort((left, right) => left.party.localeCompare(right.party)).map(({ party }) => (
-          <div className={styles.pair} key={party}>
-            <ShareBar side="Lado A" name={leftNames[party]!} share={swing.shares2023.find((share) => share.party === party)?.sharePercent} />
-            <ShareBar side="Lado B" name={rightNames[party]!} share={swing.shares2025.find((share) => share.party === party)?.sharePercent} />
-          </div>
-        ))}
-      </div>
+      <div className={styles.series}>{ranked.slice(0, VISIBLE_PARTIES).map(pair)}</div>
+      {ranked.length > VISIBLE_PARTIES ? (
+        <details className={styles.chartMore}>
+          <summary>Otras agrupaciones ({ranked.length - VISIBLE_PARTIES})</summary>
+          <div className={styles.series}>{ranked.slice(VISIBLE_PARTIES).map(pair)}</div>
+        </details>
+      ) : null}
     </section>
   );
 }

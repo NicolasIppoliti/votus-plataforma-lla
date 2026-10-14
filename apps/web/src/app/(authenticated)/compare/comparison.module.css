@@ -152,7 +152,8 @@
   .root { padding-top: 23px; }
   .root :global(.official-compare__layout) { padding-inline: 18px; }
   .root :global(.official-compare__selector-grid) { grid-template-columns: minmax(0,1fr); }
-  .sharedRow { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  /* One column: the territory fieldset keeps its two selects at readable width (was quartered to "0:" at 320). */
+  .sharedRow { grid-template-columns: minmax(0,1fr); }
   .root .swap { grid-column: 1; grid-row: auto; flex-direction: row; justify-content: center; }
   .root .sharedNote { grid-column: 1 / -1; }
   .root :global(.official-compare__selector-grid) fieldset { gap: 8px; }
@@ -163,3 +164,11 @@
 @media (max-width: 360px) { .root :global(.official-compare__layout) { padding-inline: 12px; } .root :global(.official-compare__header) h1 { font-size: 24px; } .pairedFigures strong { font-size: 20px; } }
 /* Readable controls at narrow widths: every visible button keeps a 14px label. */
 @media (max-width: 760px) { .swap { font-size: 14px; } }
+
+.unavailable { grid-column: 1 / -1; color: var(--muted-ink); font-family: var(--font-mono); font-size: 0.75rem; overflow-wrap: anywhere; }
+.chartMore { border-block-start: 1px solid var(--border); margin-block-start: 0.5rem; }
+.chartMore > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 0.8125rem; color: var(--secondary-ink); }
+.sideFigures { font-size: 0.8125rem; color: var(--secondary-ink); }
+.sideFigures > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.exactTable, .selectionNotes { border-block: 1px solid var(--border); margin-block: 0.75rem; min-width: 0; }
+.exactTable > summary, .selectionNotes > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 0.875rem; }

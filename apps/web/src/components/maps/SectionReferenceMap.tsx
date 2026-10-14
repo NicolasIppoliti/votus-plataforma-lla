@@ -25,6 +25,17 @@ interface Props {
   staticLabel?: string | undefined;
 }
 
+interface ResultsDocument {
+  getElementById(id: string): { focus(): void } | null;
+  querySelectorAll(selector: string): ArrayLike<{ open: boolean }>;
+}
+
+/** Focus the exact-results heading and open any disclosure that folds the table it announces. */
+export function revealExactResults(doc: ResultsDocument, resultId: string): void {
+  Array.from(doc.querySelectorAll(`[data-results-for="${resultId}"]`)).forEach((disclosure) => { disclosure.open = true; });
+  doc.getElementById(resultId)?.focus();
+}
+
 export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent, fillColor, staticLabel }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
@@ -36,7 +47,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
   const [status, setStatus] = useState(municipal ? "Mapa opcional: el contorno y la tabla están disponibles sin interacción." : "Mapa opcional: los resultados exactos están disponibles sin interacción.");
   const focusResults = () => {
     if (selectCallback.current) selectCallback.current();
-    else document.getElementById(resultId)?.focus();
+    else revealExactResults(document as unknown as ResultsDocument, resultId);
     setStatus(`Sección ${name} seleccionada. Resultados exactos en la tabla.`);
   };
 
@@ -73,7 +84,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
           getLineColor: [...REFERENCE_LINE], getLineWidth: 2, lineWidthMinPixels: 2,
           pickable: true, onClick: () => {
             if (selectCallback.current) selectCallback.current();
-            else document.getElementById(resultId)?.focus();
+            else revealExactResults(document as unknown as ResultsDocument, resultId);
             setStatus(`Sección ${name} seleccionada. Resultados exactos en la tabla.`);
           },
         })] });
