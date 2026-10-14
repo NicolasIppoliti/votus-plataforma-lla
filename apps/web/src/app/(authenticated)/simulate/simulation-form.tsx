@@ -30,6 +30,7 @@ import {
   type SimulationFormValues,
 } from "./simulation-form-adapter";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
+import { simulationDisplayLabel } from "./display-label";
 import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
 import type { RosalesReference } from "@/lib/geography/cne-rosales-reference";
 
@@ -436,7 +437,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
     <section className="simulation-context" aria-label="Contexto del escenario">
       <div><span>Territorio</span><strong>{reference ? "Coronel Rosales" : "Territorio no vinculado"}</strong><small>{reference ? "Referencia geográfica del partido; no verifica la vinculación electoral de los votos aportados" : "Sin identificación territorial verificada"}</small></div>
       <div><span>Muestra base</span><strong>Datos aportados por quien consulta</strong><small>Base histórica no conectada</small></div>
-      <div><span>Categoría del escenario</span><strong>{transferBaselineFromQuery(requestKey)?.level ?? "Sin escenario"}</strong><small>{transferBaselineFromQuery(requestKey)?.seatsToFill ?? "—"} bancas · proyección hipotética · granularidad: {transferBaselineFromQuery(requestKey)?.granularity ?? "no disponible"}. No es una convocatoria real.</small></div>
+      <div><span>Categoría del escenario</span><strong>{simulationDisplayLabel(transferBaselineFromQuery(requestKey)?.level ?? "Sin escenario")}</strong><small>{transferBaselineFromQuery(requestKey)?.seatsToFill ?? "—"} bancas · proyección hipotética · granularidad: {simulationDisplayLabel(transferBaselineFromQuery(requestKey)?.granularity ?? "no disponible")}. No es una convocatoria real.</small></div>
     </section>
     <section className="simulation-territorial-workbench" aria-label="Laboratorio territorial">
       <section className="simulation-geography" aria-labelledby="simulation-geography-heading">

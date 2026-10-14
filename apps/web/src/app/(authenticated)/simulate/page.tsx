@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import type { ReactNode } from "react";
 import { z } from "zod";
-import { GranularityBadge } from "@/components/GranularityBadge";
+import { simulationDisplayLabel } from "./display-label";
 import { allocateSeats } from "@/domain/seat-allocation/allocate";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
 import {
@@ -45,12 +45,6 @@ interface ParsedInput {
   projectionInput?: ProjectionInput;
   granularity?: Granularity;
   parseError?: string;
-}
-
-function allocationLevelLabel(level: AllocationResult["level"]): string {
-  if (level === "pba_municipal") return "municipal de PBA";
-  if (level === "pba_provincial") return "provincial de PBA";
-  return "nacional";
 }
 
 function canonicalJson(value: unknown): string {
@@ -212,7 +206,7 @@ function validateCouncilInput({
   if (input.level !== "pba_municipal") {
     throw new CouncilCompositionError(
       `${COUNCIL_JURISDICTION_LABEL} solo está disponible para proyecciones ` +
-        `pba_municipal; se recibió ${input.level}`,
+        `${simulationDisplayLabel("pba_municipal")}; se recibió ${simulationDisplayLabel(input.level)}`,
     );
   }
   if (rawHeldOver === undefined) {
@@ -488,8 +482,8 @@ export default async function SimulatePage({
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
       <SimulationForm requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
-        impact={result ? <><RenewalStrip result={result} /><SeatDistribution result={result} /></> : null}
-        baseImpact={result && baseResult ? <><RenewalStrip result={baseResult} /><SeatDistribution result={baseResult} /></> : null}
+        impact={result ? <RenewalStrip result={result}><SeatDistribution result={result} /></RenewalStrip> : null}
+        baseImpact={result && baseResult ? <RenewalStrip result={baseResult}><SeatDistribution result={baseResult} /></RenewalStrip> : null}
         comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
       <SweepResult query={requestQuery.toString()} baselineError={baseError ?? councilError ?? parseError} />
       {baseError ? <p role="alert">{baseError}</p> : null}
@@ -545,12 +539,12 @@ export default async function SimulatePage({
       ) : null}
       {result ? (
         <section data-testid="allocation-result" aria-label="Resultado de la asignación">
-          <h2>Resultado ({allocationLevelLabel(result.level)})</h2>
+          <h2>Resultado ({simulationDisplayLabel(result.level)})</h2>
           <p>Proyección hipotética aportada por quien realiza la consulta</p>
           {granularity ? (
             <p>
               <strong>Granularidad de entrada:</strong>{" "}
-              <GranularityBadge granularity={granularity} />
+              <span role="status" aria-label={`granularidad: ${granularity}`}>{simulationDisplayLabel(granularity)}</span>
             </p>
           ) : null}
           {inputTrace ? (

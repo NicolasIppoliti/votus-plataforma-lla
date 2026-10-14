@@ -8,6 +8,25 @@ import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import * as referenceLoader from "@/lib/geography/cne-rosales-reference";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 
+describe("compact impact and Spanish context", () => {
+  it("labels the scenario category and granularity at the page entry point", async () => {
+    const html = await renderSimulation({ ...ALLOCATION_INPUT, granularity: "seccion" });
+    expect(html).toContain("Concejales (concejo municipal)");
+    expect(html).toContain("granularidad: sección. No es una convocatoria real.");
+  });
+
+  it("keeps zero-seat lists and calculation notes in closed disclosures", async () => {
+    const html = await renderSimulation({ ...ALLOCATION_INPUT, lists: [
+      ...ALLOCATION_INPUT.lists,
+      { listId: "zero", listName: "Lista sin banca", votes: 0 },
+    ] });
+    expect(html).toMatch(/<details[^>]*><summary>Sin bancas \(1\)<\/summary>/);
+    expect(html).toMatch(/<details[^>]*><summary>Cómo se calcula<\/summary>/);
+    expect(html).toContain("Lista sin banca: 0 de 9 bancas");
+    expect(html).toContain("Cada bloque en relieve es una banca asignada.");
+  });
+});
+
 const transferHarness = vi.hoisted(() => ({
   replace: vi.fn(),
   actions: [] as Array<(state: readonly string[], data: FormData) => Promise<readonly string[]>>,
@@ -1075,7 +1094,7 @@ describe("simulate page — the roster belongs to one statute", () => {
 
     // The message now names the PARTIDO too: the seat counts are Coronel
     // Rosales's, not every PBA municipality's.
-    expect(markup).toContain("solo está disponible para proyecciones pba_municipal");
+    expect(markup).toContain("solo está disponible para proyecciones Concejales (concejo municipal)");
     expect(markup).not.toContain("council-composition");
     expect(markup).not.toContain("allocation-result");
     expect(markup).not.toContain("Supplied-input trace");

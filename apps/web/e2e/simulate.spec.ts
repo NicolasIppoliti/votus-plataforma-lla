@@ -84,6 +84,7 @@ test("compares server-calculated base and scenario, switches distribution and re
     const impact = page.getByRole("complementary", { name: "Construir el supuesto", exact: true });
     await expect(impact.getByRole("region", { name: "Bancas calculadas: 9 de 9", exact: true })).toBeVisible();
     await expect(impact).toContainText("Divisor Hare: 9 bancas renovadas, no 18 bancas totales");
+    await openSimulationDisclosure(page, "Cómo se calcula");
     await expect(impact.getByRole("img", { name: "Lista A: 4 de 9 bancas", exact: true })).toBeVisible();
     await view.getByRole("button", { name: "Base", exact: true }).click();
     await expect(view.getByRole("button", { name: "Base", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -367,6 +368,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
       .locator("..");
     await expect(listARow.getByRole("cell").last()).toHaveText("5");
     await expect(listBRow.getByRole("cell").last()).toHaveText("4");
+    await openSimulationDisclosure(page, "Cómo se calcula");
     const seatChart = page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true });
     await expect(seatChart).toBeVisible();
     await expect(seatChart).toContainText("Lista A");
@@ -1069,6 +1071,7 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
     ],
   };
   await page.goto(`/simulate?${new URLSearchParams({ input: JSON.stringify(input) })}`);
+  await openSimulationDisclosure(page, "Cómo se calcula");
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
   const chart = page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true });
   const trace = result.getByText(/Huella de los datos proporcionados/);
@@ -1111,6 +1114,7 @@ test("preserves a rich supplied scenario until another scenario is explicitly st
   await expect(page.getByText("Escenario proporcionado", { exact: true })).toBeVisible();
   await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
   await expect(result).toContainText("1.000 explícitamente fuera del modelo");
+  await openSimulationDisclosure(page, "Cómo se calcula");
   await expect(page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true })).toBeVisible();
   await expect(page.getByRole("form", { name: "Formulario de simulación de bancas" })).toHaveCount(0);
   await page.reload();
@@ -1136,6 +1140,7 @@ test("restores the served scenario while a superseded response is pending", asyn
   await names.nth(1).fill("Lista B");
   await votes.nth(1).fill("4000");
   await form.getByLabel("Total de votos").fill("10000");
+  await openSimulationDisclosure(page, "Cómo se calcula");
   const result = page.getByRole("region", { name: "Resultado de la asignación" });
   const chart = page.getByRole("complementary", { name: "Construir el supuesto" }).getByRole("region", { name: "Distribución de bancas", exact: true });
   const trace = result.getByText(/Huella de los datos proporcionados/);
