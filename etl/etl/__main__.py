@@ -2804,9 +2804,9 @@ def official_mesa_votes_from_national(
     """Project an archived national CSV onto per-mesa official tallies WITHIN
     ONE `(distrito, seccion, category)` scope.
 
-    The scope is not optional. `mesa_id` is globally unique in the 2025
-    national file and NOT in the 2023 one, so keying on it alone collapses two
-    physically different mesas in two distritos into one entry. And the 2023
+    The scope is not optional. `mesa_id` is not unique in the 2023 nor the 2025
+    national file, so keying on it alone collapses physically different mesas
+    in different distritos or secciones into one entry. And the 2023
     file bundles ten categories from PRESIDENTE Y VICE down to MIEMBROS DE
     JUNTA COMUNAL, so without a category filter one mesa's ten tallies for the
     same agrupación overwrite each other and an arbitrary survivor is compared
