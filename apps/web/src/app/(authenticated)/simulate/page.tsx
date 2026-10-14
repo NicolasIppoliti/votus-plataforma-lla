@@ -33,6 +33,7 @@ import {
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { SeatDistribution } from "./seat-distribution";
 import { RenewalStrip, SimulationComparison } from "./simulation-comparison";
+import { formatCount } from "@/lib/format/number";
 import "./simulation.css";
 import "./workbench.css";
 
@@ -299,7 +300,7 @@ function SweepResult({ query, baselineError }: SweepResultProps) {
                 {baseline.lists.map((list) => (
                   <td key={list.listId}>{point.result ? seats(point.result, list.listId) : "No disponible"}</td>
                 ))}
-                <td><a href={`/simulate?${point.query}`}>Ver escenario exacto: {point.amount} votos</a></td>
+                <td><a href={`/simulate?${point.query}`}>Ver escenario exacto: {formatCount(point.amount)} votos</a></td>
               </tr>
             ))}
           </tbody>

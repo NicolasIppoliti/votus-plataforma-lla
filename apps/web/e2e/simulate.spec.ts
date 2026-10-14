@@ -675,8 +675,8 @@ test("transfers a rich baseline losslessly with keyboard controls and resets aft
   await expect(transfer.getByLabel("Lista receptora")).toHaveValue("");
   await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
   await expect(transfer.getByLabel("Lista donante").getByRole("option", {
-    name: "Lista A — 6000 votos", exact: true,
-  })).toHaveText("Lista A — 6000 votos");
+    name: "Lista A — 6.000 votos", exact: true,
+  })).toHaveText("Lista A — 6.000 votos");
 
   // A custom-editor baseline change must also discard a drafted operation.
   const custom = { ...input, voteTotals: undefined, totalVotes: 10000,
@@ -752,7 +752,7 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
     .getByRole("row", { name: "Lista cero 0 0", exact: true })).toBeVisible();
   await expect(exact.getByText(/Huella de los datos proporcionados/)).toHaveText(trace);
   expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
-  const endpoint = samples.getByRole("link", { name: "Ver escenario exacto: 1000 votos", exact: true });
+  const endpoint = samples.getByRole("link", { name: "Ver escenario exacto: 1.000 votos", exact: true });
   const pointUrl = new URL((await endpoint.getAttribute("href"))!, page.url());
   expect(pointUrl.searchParams.has("sweepMax")).toBe(false);
   expect(JSON.parse(pointUrl.searchParams.get("input")!)).toEqual({ ...input, lists: [
@@ -1079,8 +1079,8 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
     await page.setViewportSize({ width, height: 800 });
     for (const label of ["Lista donante", "Lista receptora"]) {
       await expect(transfer.getByLabel(label).getByRole("option", {
-        name: `${longName} — 10000 votos`, exact: true,
-      })).toHaveText(`${longName} — 10000 votos`);
+        name: `${longName} — 10.000 votos`, exact: true,
+      })).toHaveText(`${longName} — 10.000 votos`);
     }
     await expect(chart.locator('[data-seat-state="awarded"]')).toHaveCount(2);
     await expect(chart.locator('[data-seat-state="empty"]')).toHaveCount(4);

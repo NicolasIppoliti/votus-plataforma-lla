@@ -19,6 +19,7 @@ import {
   votesByParty,
 } from "@/lib/results/result-rows";
 import { repeatedParams, stringParam } from "@/lib/results/query-params";
+import { formatCount } from "@/lib/format/number";
 import {
   jurisdictionTotalLevel,
   mixedGranularityReason,
@@ -341,7 +342,7 @@ export function renderMunicipalView(
                     {partyTotals.map((entry) => (
                       <tr key={entry.label}>
                         <th scope="row">{entry.label}</th>
-                        <td className="table-cell--number">{entry.votes}</td>
+                        <td className="table-cell--number">{formatCount(entry.votes)}</td>
                       </tr>
                     ))}
                   </tbody>
