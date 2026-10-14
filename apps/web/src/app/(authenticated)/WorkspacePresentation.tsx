@@ -48,7 +48,10 @@ export function WorkspaceIdentity() {
 }
 
 export function WorkspaceReviewStatus() {
-  const count = useContext(WorkspaceContext)?.snapshot.unresolvedCount;
+  const snapshot = useContext(WorkspaceContext)?.snapshot;
+  const count = snapshot?.unresolvedCount;
+  // A missing organization is a next step, not a failure (#429).
+  if (snapshot?.status === "selection_required") return <p>Seleccioná una organización para ver el estado de revisión.</p>;
   if (count === undefined) return <p>No se pudo verificar el estado de revisión.</p>;
   if (count === 0) return <p>Sin elementos pendientes</p>;
   return <p><Link href="/review">{count} elemento(s) de revisión pendiente(s)</Link></p>;
