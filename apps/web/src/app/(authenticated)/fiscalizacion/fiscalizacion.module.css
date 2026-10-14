@@ -19,7 +19,6 @@
 .trail { color: var(--secondary-ink); font-size: 0.8125rem; }
 .selectorGroups, .fields { display: grid; gap: 12px; }
 .filters { padding: 16px 0; border-inline: 0; border-radius: 0; background: transparent; }
-@media (max-width: 360px) { .header h1 { font-size: 24px; } }
 .selectorGroup { margin: 0; padding: 0; min-width: 0; border: 0; }
 .selectorGroup legend { margin-block-end: 0.75rem; padding: 0; font-size: 0.875rem; font-weight: 600; }
 .filters :global(.field) { min-width: 0; gap: 0.375rem; }
