@@ -177,7 +177,7 @@ function numericCode(raw: string | undefined, width: number): string | null | un
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return undefined;
-  if (!/^[0-9]+$/.test(trimmed)) return null;
+  if (!/^[0-9]+$/.test(trimmed) || trimmed.length > width) return null;
   return trimmed.padStart(width, "0");
 }
 export function normalizeExplorationParams(raw: RawAdministrativeParams): NormalizedExplorationParams {
@@ -196,7 +196,7 @@ export function normalizeExplorationParams(raw: RawAdministrativeParams): Normal
   const establecimientoCode = raw.establecimientoCode?.trim() || undefined;
   const rawMesaCode = raw.mesaCode?.trim();
   const mesaCode = !rawMesaCode ? undefined
-    : /^[0-9]+$/.test(rawMesaCode) ? Number(rawMesaCode) : null;
+    : /^[0-9]+$/.test(rawMesaCode) && Number.isSafeInteger(Number(rawMesaCode)) ? Number(rawMesaCode) : null;
   const invalid = Object.fromEntries(Object.entries({ distritoCode, seccionCode, circuitoCode, mesaCode })
     .filter(([, value]) => value === null)
     .map(([key]) => [key, 1]));

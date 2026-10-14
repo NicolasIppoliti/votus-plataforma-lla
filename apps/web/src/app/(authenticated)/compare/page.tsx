@@ -1,4 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { ELECTORAL_CONTEXT_KEYS, COMPARISON_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
 import { ComparisonSelectionForm, type SelectionGroup } from "./ComparisonSelectionForm";
 import { ComparisonChart } from "./ComparisonChart";
 import { ComparisonMap } from "./ComparisonMap";
@@ -40,11 +42,11 @@ const QUERY_KEY = {
   SECCION_CODE: "seccionCode",
 } as const;
 
-const ALLOWED_QUERY_KEYS: ReadonlySet<string> = new Set(Object.values(QUERY_KEY));
+const ALLOWED_QUERY_KEYS: ReadonlySet<string> = new Set([...ELECTORAL_CONTEXT_KEYS, ...COMPARISON_CONTEXT_KEYS, "leftElectionId", "leftCategoryId", "rightElectionId", "rightCategoryId"]);
+const OLD_COMPARE_KEYS = { leftElectionId: "electionId", leftCategoryId: "categoryId", rightElectionId: "bElectionId", rightCategoryId: "bCategoryId" } as const;
 const LEGACY_QUERY_KEYS = new Set([
   "election2023",
   "election2025",
-  "categoryId",
   "jurisdictionId",
   "partyCategory",
   "partyJurisdiction",
@@ -357,7 +359,7 @@ function comparisonContext(
 }
 
 export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
-  const params = await searchParams;
+  const params = { ...await searchParams };
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: estos parámetros se proporcionaron más de una vez: {repeated.join(", ")}.</>);
@@ -371,6 +373,26 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   if (unknown.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: parámetros de consulta no admitidos: {unknown.join(", ")}.</>);
   }
+
+  const oldKeys = Object.keys(OLD_COMPARE_KEYS) as (keyof typeof OLD_COMPARE_KEYS)[];
+  if (oldKeys.some((key) => params[key] !== undefined)) {
+    for (const key of oldKeys) {
+      if (params[key] === undefined) continue;
+      const canonical = OLD_COMPARE_KEYS[key];
+      if (params[canonical] !== undefined) return refusalPage("Se rechazó la solicitud: parámetros antiguos y nuevos en conflicto.");
+      params[canonical] = params[key];
+      delete params[key];
+    }
+    const migrated = parseElectoralContext(params);
+    if (migrated.status === "invalid") return refusalPage(`Se rechazó la solicitud: ${migrated.reason}.`);
+    redirect(`/compare?${serializeElectoralContext(migrated.value)}`);
+  }
+  const context = parseElectoralContext(params);
+  if (context.status === "invalid") return refusalPage(`Se rechazó la solicitud: ${context.reason}.`);
+  if (context.value.sourceKind !== "official") return refusalPage("Se rechazó la solicitud: la comparación admite solo fuentes oficiales.");
+  if (context.value.circuitoCode || context.value.establecimientoCode || context.value.mesaCode !== undefined) return refusalPage("Se rechazó la solicitud: la comparación requiere una sección compartida.");
+  Object.assign(params, Object.fromEntries(serializeElectoralContext(context.value)));
+  for (const key of oldKeys) params[key] = params[OLD_COMPARE_KEYS[key]];
 
   const selected: CompareSelectorProps["selected"] = Object.fromEntries(
     Object.values(QUERY_KEY)
