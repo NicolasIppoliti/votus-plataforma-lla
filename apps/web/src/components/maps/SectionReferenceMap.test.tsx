@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shareFill } from "./SectionReferenceMap";
+import { shareFill, revealExactResults } from "./SectionReferenceMap";
 import { REFERENCE_FILL, REFERENCE_LINE } from "./reference-colors";
 
 describe("fixed electoral fill domain", () => {
@@ -21,5 +21,19 @@ describe("reference geography colors", () => {
   it("paints unfilled reference geography in the approved cyan", () => {
     expect(REFERENCE_FILL).toEqual([101, 229, 242, 40]);
     expect(REFERENCE_LINE).toEqual([101, 229, 242, 200]);
+  });
+});
+
+describe("revealExactResults", () => {
+  it("focuses the results heading and opens the folded exact table it promises", () => {
+    const focused: string[] = [];
+    const disclosure = { open: false };
+    const doc = {
+      getElementById: (id: string) => (id === "compare-results-heading" ? { focus: () => focused.push(id) } : null),
+      querySelectorAll: (selector: string) => (selector === '[data-results-for="compare-results-heading"]' ? [disclosure] : []),
+    };
+    revealExactResults(doc, "compare-results-heading");
+    expect(disclosure.open).toBe(true);
+    expect(focused).toEqual(["compare-results-heading"]);
   });
 });

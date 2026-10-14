@@ -570,7 +570,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
         />
-        <details className={styles.exactTable}><summary>Tabla exacta — {swing.swings.length} agrupaciones, votos y variación por lado</summary>
+        <details className={styles.exactTable} data-results-for="compare-results-heading"><summary>Tabla exacta — {swing.swings.length} agrupaciones, votos y variación por lado</summary>
         <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
           <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>

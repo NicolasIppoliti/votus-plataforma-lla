@@ -311,7 +311,7 @@ describe("authorized comparison page", () => {
   });
   it("folds the exact party table and selection notes into closed disclosures that name what they hold", async () => {
     const markup = await render(PARAMS);
-    expect(markup).toMatch(/<details class="[^"]*exactTable[^"]*"><summary>Tabla exacta — \d+ agrupaciones, votos y variación por lado<\/summary><div[^>]*aria-label="Tabla exacta de participación/);
+    expect(markup).toMatch(/<details class="[^"]*exactTable[^"]*" data-results-for="compare-results-heading"><summary>Tabla exacta — \d+ agrupaciones, votos y variación por lado<\/summary><div[^>]*aria-label="Tabla exacta de participación/);
     expect(markup).toMatch(/<details class="[^"]*selectionNotes[^"]*"><summary>Notas de la selección<\/summary><p[^>]*>La comparación se actualiza al cambiar la selección\.<\/p>/);
     expect(markup).toContain("Comparación aplicada");
     expect(markup).not.toMatch(/<details[^>]*open/);

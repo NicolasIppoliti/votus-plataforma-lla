@@ -230,6 +230,8 @@ test.describe("authorized official comparison", () => {
       await page.goto(new URL(`/compare?${params}`, baseURL).toString());
       const main = page.getByRole("main"), panel = main.getByRole("region", { name: "Comparación territorial de referencia" });
       const table = main.getByRole("table");
+      // The exact table is folded behind its own disclosure; open it before reading (assertion unchanged).
+      await main.locator("details", { hasText: "Tabla exacta —" }).locator("summary").click();
       await expect(table).toContainText(spatial.identity.comparisonParty!.displayName);
       await expect(main).toContainText(spatial.identity.archiveEntryIds[0]!);
       await expect(main).toContainText(spatial.identity.archiveEntryIds[1]!);
