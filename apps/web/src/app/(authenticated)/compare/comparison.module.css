@@ -152,7 +152,8 @@
   .root { padding-top: 23px; }
   .root :global(.official-compare__layout) { padding-inline: 18px; }
   .root :global(.official-compare__selector-grid) { grid-template-columns: minmax(0,1fr); }
-  .sharedRow { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  /* One column: the territory fieldset keeps its two selects at readable width (was quartered to "0:" at 320). */
+  .sharedRow { grid-template-columns: minmax(0,1fr); }
   .root .swap { grid-column: 1; grid-row: auto; flex-direction: row; justify-content: center; }
   .root .sharedNote { grid-column: 1 / -1; }
   .root :global(.official-compare__selector-grid) fieldset { gap: 8px; }
