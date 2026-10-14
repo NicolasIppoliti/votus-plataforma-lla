@@ -91,7 +91,7 @@ it.each([
 });
 
 it.each(["authorization_denied", "unavailable", "empty"] as const)("never shows child figures for refused evidence (%s)", status => {
-  const html = renderToStaticMarkup(<PanoramaChildren data={{ ...data, evidence: { status } }} />);
+  const html = renderToStaticMarkup(<PanoramaChildren data={{ ...data, evidence: status === "authorization_denied" ? { status, access: "denied" } : { status } }} />);
   expect(html).toContain("Sin filas disponibles");
   expect(html).not.toContain("<table>");
   expect(html).not.toContain("0 visibles");
