@@ -57,7 +57,8 @@ until its authorized production entry point works.
 - **Comparación** — `/compare`
 - **Simulación** — `/simulate`
   - Escenarios Rosales 2027 — `/scenarios`
-- **Evidencia** — `/review` (data review; no duplicate sub-item)
+- **Evidencia** — `/evidencia` (availability, traceability and reading limits of an exact official selection)
+  - Revisión de datos — `/review`
   - Fiscalización (no oficial) — `/fiscalizacion`
 
 The five modules follow the approved prototype's `votus.` identity and icons;
@@ -387,6 +388,7 @@ New product features discovered during design become separate future work units.
 | 2026-09-22 | Plan deck.gl + MapLibre; separate physical terrain from electoral extrusion | Supersedes the no-new-chart-library constraint only for this planned path; feasibility and dependency review remain gates |
 | 2026-09-22 | Canonical party/alliance color is factual electoral encoding | Supersedes the blanket party-chart-color restriction, never source/status/UI semantics; ballot labels and non-color states remain required |
 | 2026-10-11 | Adopt the approved navy map-first page prototypes; single navy theme, no selector; 218px rail (supersedes the 2026-09-18 light/dark decision and the `15rem` sidebar) | User accepted the prototype integration program and chose "Navy único"; one theme is faithful to the approved design and halves visual/contrast verification |
+| 2026-10-13 | Production screens follow the approved prototypes: Panorama `/`, Exploración `/drilldown`, Comparación `/compare`, Simulación `/simulate`, Evidencia `/evidencia`; Municipal, Fiscalización, Revisión, Escenarios and Login reuse the same shell, header, panel and table language | Real authorized data only: unavailable states stay explicit (no fictional geography or figures); exact evidence collapses under "Los números, sin aproximaciones"; inspector distributions show the top four groups, "Otras agrupaciones (n)" and every unmapped identity separately; pinned layout contracts (32 px page titles, 48 px login controls) are preserved |
 | 2026-09-22 | Slice 1 partido-only archive/CLI and standalone feasibility evaluator are implementation candidates | Next production scope after merge is only Coronel Rosales partido-boundary municipal evidence with exact fallback; terrain, child geography and expansion need separate validation |
 
 ## Automatic Interaction Contract
