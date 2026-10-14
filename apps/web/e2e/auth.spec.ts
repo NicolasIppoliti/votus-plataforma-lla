@@ -24,7 +24,8 @@ test.use({ storageState: storageStateForSpec("e2e/auth.spec.ts", environment.VOT
 // The in-scope content marker rendered only inside `(authenticated)/`
 // routes (see `src/app/(authenticated)/page.tsx`). No anonymous
 // response, cached or otherwise, may ever contain it.
-const IN_SCOPE_MARKER = "Panel operativo";
+// The authenticated root is Panorama; its page heading only renders for an authorized session.
+const IN_SCOPE_MARKER = "Panorama";
 const PROTECTED_ROUTES = [
   "/",
   "/dashboard",
