@@ -271,6 +271,11 @@ describe("AuthorizedOfficialFacetRepository", () => {
 
   it.each([
     ["denial", payload([], { status: "context_stale" }), {}, OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED],
+    ["revoked membership", payload([], { status: "membership_revoked" }), {}, OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED],
+    ["missing organization", payload([], { status: "selection_required" }), {}, OFFICIAL_FACETS_ERROR.SELECTION_REQUIRED],
+    ["expired context", payload([], { status: "context_expired" }), {}, OFFICIAL_FACETS_ERROR.CONTEXT_ENDED],
+    ["revoked context", payload([], { status: "context_revoked" }), {}, OFFICIAL_FACETS_ERROR.CONTEXT_ENDED],
+    ["non-text status", payload([], { status: 7 }), {}, OFFICIAL_FACETS_ERROR.MALFORMED],
     ["SQL nonmember", payload([], { status: "selection_invalid" }), {}, OFFICIAL_FACETS_ERROR.NONMEMBER],
     ["truncation", payload([row], { truncated: true }), {}, OFFICIAL_FACETS_ERROR.MALFORMED],
     ["count mismatch", payload([row], { total: 2 }), {}, OFFICIAL_FACETS_ERROR.MALFORMED],
