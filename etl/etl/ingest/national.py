@@ -107,8 +107,8 @@ class NationalRow:
     jurisdiction_names: JurisdictionNames = JurisdictionNames()
     # NO `natural_key` field. It was `(archive_entry_id, mesa_id, agrupacion_id,
     # cargo_nombre, votos_tipo)` — a SECOND, weaker idea of the key that nothing
-    # read: `mesa_id` is globally unique in 2025 and NOT in 2023, so it collides
-    # across distritos in that file, and the real dedup below groups on the full
+    # read: `mesa_id` is not unique in 2023 nor in 2025, so it collides across
+    # distritos and secciones, and the real dedup below groups on the full
     # `(distrito, seccion, circuito, mesa, category, list_id)` lineage while the
     # database's own constraint is
     # `(archive_entry_id, election_id, jurisdiction_id, category_id, list_id, source_kind)`.
