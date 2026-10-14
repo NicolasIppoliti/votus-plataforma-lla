@@ -2,7 +2,9 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { FacetOption } from "@/lib/results/exploration";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn(), geometry: vi.fn(), replace: vi.fn() }));
+const mocks = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn(), geometry: vi.fn(), replace: vi.fn(), completeness: vi.fn(), circuits: vi.fn() }));
+vi.mock("@/lib/workspace/official-section-completeness", () => ({ loadOfficialSectionCompleteness: mocks.completeness }));
+vi.mock("@/lib/workspace/official-section-circuit-outcomes", () => ({ loadOfficialSectionCircuitOutcomes: mocks.circuits }));
 vi.mock("@/lib/workspace/municipal-section-geometry", () => ({ loadMunicipalSectionGeometry: mocks.geometry }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: mocks.replace }) }));
 vi.mock("@/lib/workspace/official-facets", () => ({ AuthorizedOfficialFacetsError: class AuthorizedOfficialFacetsError extends Error {}, OFFICIAL_FACETS_ERROR: { AUTHORIZATION_DENIED: "authorization_denied" }, createAuthorizedOfficialFacetRepository: () => ({ facets: mocks.facets }) }));
@@ -15,9 +17,9 @@ const district: FacetOption = { code: "02", name: "Buenos Aires", nameStatus: "p
 let leftDistricts = [district], rightDistricts = [district];
 let leftSections = [section], rightSections = [section];
 function facets(selection: Record<string, string | undefined>) { const left = selection.electionId === IDS.leftElection, right = selection.electionId === IDS.rightElection; return { elections, categories: left ? [{ id: IDS.leftCategory, name: "DIPUTADOS 2023" }] : right ? [{ id: IDS.rightCategory, name: "DIPUTADOS 2025" }] : [], distritos: selection.categoryId ? left ? leftDistricts : right ? rightDistricts : [] : [], secciones: selection.distritoCode ? left ? leftSections : right ? rightSections : [] : [], circuitos: [], establecimientos: [], mesas: [], availableLevels: selection.seccionCode ? ["distrito", "seccion"] : [], exclusions: [] }; }
-function side(year: 2023 | 2025, electionId: string, categoryId: string, votes: readonly [number, number]) { const archiveEntryId = `official/archive-${year}`, total = votes[0] + votes[1]; return { result: { status: "ok" as const, sourceKind: "official" as const, level: "seccion" as const, sourceGranularity: "mesa" as const, categoryName: `DIPUTADOS ${year}`, electionYear: year, electionRound: "generales", totalVotes: total, mesaCount: 1, parties: [{ identityStatus: "canonical" as const, canonicalPartyId: "party-a", displayName: year === 2023 ? "PARTIDO A 2023" : "PARTIDO A 2025", listId: null, votes: votes[0], voteShare: String(votes[0] / total) }, { identityStatus: "canonical" as const, canonicalPartyId: "party-b", displayName: year === 2023 ? "PARTIDO B 2023" : "PARTIDO B 2025", listId: null, votes: votes[1], voteShare: String(votes[1] / total) }], archiveEntryIds: [archiveEntryId], sourceAudit: [{ kind: "official", rows: 2, votes: total }], sourceExclusions: [{ kind: "fiscalizacion", rows: 1, votes: 999 }] }, reference: { items: [{ jurisdictionId: `${year}-section`, electionId, year, round: "generales", categoryId, categoryName: `DIPUTADOS ${year}`, distritoCode: "02", distritoName: "Buenos Aires", seccionCode: "027", seccionName: "Coronel Rosales", circuitoCode: null, circuitoName: null, establecimientoCode: null, establecimientoName: null, mesaCode: null }], sourceExclusions: [{ kind: "fiscalizacion", reason: "non_official_source" as const, rows: 1 }] }, provenance: { items: [{ archiveEntryId, capability: "national", mime: "text/csv", bytes: 120, fetchedAt: "2026-01-01T00:00:00Z", status: "ok" as const, sha256: "a".repeat(64) }], sourceExclusions: [{ kind: "fiscalizacion", rows: 1, votes: 999 }] } }; }
+function side(year: 2023 | 2025, electionId: string, categoryId: string, votes: readonly [number, number]) { const archiveEntryId = `official/archive-${year}`, total = votes[0] + votes[1]; return { result: { status: "ok" as const, sourceKind: "official" as const, level: "seccion" as const, sourceGranularity: "mesa" as const, categoryName: "DIPUTADO NACIONAL", electionYear: year, electionRound: "generales", totalVotes: total, mesaCount: 1, parties: [{ identityStatus: "canonical" as const, canonicalPartyId: "party-a", displayName: year === 2023 ? "PARTIDO A 2023" : "PARTIDO A 2025", listId: null, votes: votes[0], voteShare: String(votes[0] / total) }, { identityStatus: "canonical" as const, canonicalPartyId: "party-b", displayName: year === 2023 ? "PARTIDO B 2023" : "PARTIDO B 2025", listId: null, votes: votes[1], voteShare: String(votes[1] / total) }], archiveEntryIds: [archiveEntryId], sourceAudit: [{ kind: "official", rows: 2, votes: total }], sourceExclusions: [{ kind: "fiscalizacion", rows: 1, votes: 999 }] }, reference: { items: [{ jurisdictionId: `${year}-section`, electionId, year, round: "generales", categoryId, categoryName: `DIPUTADOS ${year}`, distritoCode: "02", distritoName: "Buenos Aires", seccionCode: "027", seccionName: "Coronel Rosales", circuitoCode: null, circuitoName: null, establecimientoCode: null, establecimientoName: null, mesaCode: null }], sourceExclusions: [{ kind: "fiscalizacion", reason: "non_official_source" as const, rows: 1 }] }, provenance: { items: [{ archiveEntryId, capability: "national", mime: "text/csv", bytes: 120, fetchedAt: "2026-01-01T00:00:00Z", status: "ok" as const, sha256: "a".repeat(64) }], sourceExclusions: [{ kind: "fiscalizacion", rows: 1, votes: 999 }] } }; }
 function evidence() { return { status: "ok" as const, left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]), right: side(2025, IDS.rightElection, IDS.rightCategory, [55, 45]) }; }
-beforeEach(() => { leftDistricts = [district]; rightDistricts = [district]; leftSections = [section]; rightSections = [section]; mocks.facets.mockReset().mockImplementation(facets); mocks.evidence.mockReset().mockResolvedValue(evidence()); mocks.geometry.mockReset().mockResolvedValue({ status: "ok", name: "Cnel. de Marina L.Rosales", sha256: "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673", fetchedAt: "2026-09-24T03:29:24Z", geometry: { type: "MultiPolygon", coordinates: [[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]] } }); }); afterEach(() => vi.clearAllMocks());
+beforeEach(() => { mocks.completeness.mockReset().mockResolvedValue({ status: "unavailable" }); mocks.circuits.mockReset().mockResolvedValue({ status: "unavailable" }); leftDistricts = [district]; rightDistricts = [district]; leftSections = [section]; rightSections = [section]; mocks.facets.mockReset().mockImplementation(facets); mocks.evidence.mockReset().mockResolvedValue(evidence()); mocks.geometry.mockReset().mockResolvedValue({ status: "ok", name: "Cnel. de Marina L.Rosales", sha256: "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673", fetchedAt: "2026-09-24T03:29:24Z", geometry: { type: "MultiPolygon", coordinates: [[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]] } }); }); afterEach(() => vi.clearAllMocks());
 async function render(params: Record<string, string | string[] | undefined>): Promise<string> { return renderToStaticMarkup((await ComparePage({ searchParams: Promise.resolve(params) })) as ReactElement); }
 function supportedSpatialEvidence() {
   const original = mocks.facets.getMockImplementation()!;
@@ -35,6 +37,77 @@ function supportedSpatialEvidence() {
   mocks.evidence.mockResolvedValue(value);
   return value;
 }
+
+it("renders the approved header and paired selection without changing authorized query keys", async () => {
+  const markup = await render(PARAMS);
+  expect(markup).toContain("<h1>Comparación electoral</h1>");
+  expect(markup).toContain("Dos muestras. El mismo territorio. Una lectura compartida.");
+  expect(markup).toContain('aria-label="Recorrido territorial"');
+  expect(markup).toContain("Una selección territorial para ambas vistas.");
+  expect(markup).toContain("El zoom no modifica las cifras.");
+  for (const text of ["Territorio", "Agrupación", "Todas las agrupaciones", "Elección A (2023)", "Categoría A", "Elección B (2025)", "Categoría B"]) expect(markup).toContain(text);
+  expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="compare-swap-reason"[^>]*>[\s\S]*?Intercambiar<\/button>/);
+  expect(markup).toContain("A está limitada a 2023 y B a 2025");
+  const editor = markup.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
+  // The shared Agrupación is a fixed reading, not a dead control: the form keeps only its six real selectors.
+  expect(editor.match(/<select\b/g)).toHaveLength(6);
+  expect(editor).not.toContain('id="compare-group"');
+  expect(editor).toMatch(/<div[^>]*role="group"[^>]*aria-describedby="compare-group-reason"[^>]*>[\s\S]*?Agrupación[\s\S]*?Todas las agrupaciones/);
+  expect(editor).toMatch(/aria-hidden="true">A<\/span>/);
+  expect(editor).toMatch(/aria-hidden="true">B<\/span>/);
+  expect(editor.indexOf("Elección A (2023)")).toBeLessThan(editor.indexOf("Intercambiar"));
+  expect(editor.indexOf("Intercambiar")).toBeLessThan(editor.indexOf("Elección B (2025)"));
+  for (const name of Object.keys(PARAMS)) expect(markup).toContain(`name="${name}"`);
+  expect(markup).not.toContain("Datos de demostración");
+});
+
+it("places the territorial navigator before paired analytics in the approved comparison workbench", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup).toContain('aria-label="Mesa de comparación territorial"');
+  expect(markup).toContain('aria-label="Detalle de comparación"');
+  expect(markup).toContain('aria-label="Navegador territorial"');
+  expect(markup.indexOf('aria-label="Navegador territorial"')).toBeLessThan(markup.indexOf('aria-label="Participación de la agrupación seleccionada"'));
+  expect(markup).toContain("Cambio por territorio");
+  expect(markup).toContain("Votos izquierda");
+  expect(markup).toContain("Votos derecha");
+  expect(markup).toContain("Votos B − A");
+});
+
+it("reports unavailable child comparison without inventing coverage when membership is absent", async () => {
+  supportedSpatialEvidence();
+  mocks.completeness.mockResolvedValue({ status: "unknown", reason: "no_expected_catalogue" });
+  mocks.circuits.mockResolvedValue({ status: "unavailable" });
+  const markup = await render(PARAMS);
+  expect(markup).toContain("Comparabilidad del siguiente nivel no disponible");
+  expect(markup).toContain("Completitud desconocida");
+  expect(markup).not.toContain("0 de 0 pares comparables");
+});
+
+it("refuses incompatible authorized categories before rendering comparison figures", async () => {
+  const value = evidence();
+  value.right.result.categoryName = "SENADOR NACIONAL";
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  expect(markup).toContain("Las categorías oficiales no son compatibles");
+  expect(markup).not.toMatch(/<table|60,00 %|official\/archive/);
+});
+
+it("retains partial circuit pairs with reasons instead of zero-filling their change", async () => {
+  const circuit = (code: string, status: "complete" | "partial") => ({ circuito_code: code, positive_total: 100, status,
+    parties: [{ identity_status: "canonical", canonical_party_id: "party-a", display_name: "PARTIDO A", list_id: null, votes: 60 }, { identity_status: "canonical", canonical_party_id: "party-b", display_name: "PARTIDO B", list_id: null, votes: 40 }],
+    counts: { expected: 1, counted: status === "complete" ? 1 : 0, not_counted: 0, missing: status === "complete" ? 0 : 1, unexpected: 0, quarantined: 0 } });
+  mocks.circuits.mockResolvedValue({ status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion", truncated: false, circuit_membership: "known", category_applicability: "district_reported_categories",
+    circuits: [circuit("00248", "complete"), circuit("0248A", "partial")], unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0, membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 } });
+  const markup = await render(PARAMS);
+  expect(markup).toContain("1 de 2 pares comparables");
+  expect(markup).toContain("Cobertura parcial: 1");
+  expect(markup).toContain("Circuito 00248");
+  const partial = markup.match(/<tr[^>]*><th scope="row">Circuito 0248A[\s\S]*?<\/tr>/)?.[0];
+  expect(partial).toContain("Cobertura parcial");
+  expect(partial).not.toContain("0,00");
+  expect(markup).toContain('id="compare-child-order"');
+});
 
 it("shows paired current-reference geography for the exact authorized national deputy elections", async () => {
   supportedSpatialEvidence();
@@ -152,7 +225,7 @@ describe("authorized comparison page", () => {
     const ids = [...markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
     expect(new Set(ids).size).toBe(ids.length);
     for (const tag of ["fieldset", "article"]) {
-      const labels = [...markup.matchAll(new RegExp(`<${tag}[^>]*aria-labelledby="([^"]+)"`, "g"))];
+      const labels = [...markup.matchAll(new RegExp(`<${tag}[^>]*aria-labelledby="(compare-(?:edit|side)-[ab]-heading)"`, "g"))];
       expect(labels.length).toBeGreaterThanOrEqual(2);
       for (const [index, side] of ["A", "B"].entries()) {
         expect(markup).toMatch(new RegExp(`id="${labels[index]![1]}"[^>]*>Lado ${side}`));
@@ -168,13 +241,13 @@ describe("authorized comparison page", () => {
     const fieldsets = [...markup.matchAll(/<fieldset\b[^>]*>[\s\S]*?<\/fieldset>/g)].map(([html]) => html);
     expect(fieldsets).toHaveLength(3);
     for (const [index, side] of ["A", "B"].entries()) {
-      expect(fieldsets[index]).toContain('class="official-compare__side"');
-      expect(fieldsets[index]).toContain(`aria-labelledby="compare-edit-${side.toLowerCase()}-heading"`);
-      expect(fieldsets[index]?.match(/<select\b/g)).toHaveLength(2);
+      expect(fieldsets[index + 1]).toContain('class="official-compare__side"');
+      expect(fieldsets[index + 1]).toContain(`aria-labelledby="compare-edit-${side.toLowerCase()}-heading"`);
+      expect(fieldsets[index + 1]?.match(/<select\b/g)).toHaveLength(2);
     }
-    expect(fieldsets[2]).toContain('aria-labelledby="compare-shared-heading"');
-    expect(fieldsets[2]).toContain('value="02" selected=""');
-    expect(fieldsets[2]).toContain('value="027" selected=""');
+    expect(fieldsets[0]).toContain('aria-labelledby="compare-shared-heading"');
+    expect(fieldsets[0]).toContain('value="02" selected=""');
+    expect(fieldsets[0]).toContain('value="027" selected=""');
     const contexts = markup.match(/<section\b[^>]*aria-label="Contexto de comparación autorizada"[^>]*>[\s\S]*?<\/section>/)?.[0];
     expect(contexts).toBeDefined();
     expect(contexts).not.toMatch(/<select|<input|<button/);
@@ -228,7 +301,8 @@ describe("authorized comparison page", () => {
   });
   it("keeps the native GET field contract and exact table without manual submit actions", async () => {
     const markup = await render(PARAMS);
-    expect(markup).not.toMatch(/<button\b/);
+    expect(markup).not.toMatch(/<button\b[^>]*type="submit"/);
+    expect(markup).toMatch(/<button\b[^>]*type="button"[^>]*disabled=""/);
     expect(markup.match(/<select\b[^>]*required=""/g)).toHaveLength(6);
     expect(markup).toContain('<form action="/compare" method="get">');
     expect(markup.match(/class="table-scroll"/g)).toHaveLength(1);
@@ -238,10 +312,10 @@ describe("authorized comparison page", () => {
   it("keeps the selector context while a denied comparison removes both sides of evidence", async () => {
     mocks.evidence.mockResolvedValue({ status: "authorization_denied" });
     const markup = await render(PARAMS);
-    expect(markup).toContain("Elección izquierda (2023)");
+    expect(markup).toContain("Elección A (2023)");
       expect(markup).not.toContain("Opciones no compartidas");
       expect(markup).not.toContain("disponibles solo en ese lado");
-    expect(markup).toContain("Elección derecha (2025)");
+    expect(markup).toContain("Elección B (2025)");
     expect(markup).not.toMatch(/PARTIDO A|official\/archive|puntos porcentuales|100 votos/);
   });
 });
@@ -269,7 +343,9 @@ it("progressively discloses archive detail without hiding source exclusions or r
 
 it("reacts through six native selectors without manual refresh or apply buttons", async () => {
   const markup = await render(PARAMS);
-  expect(markup.match(/<select\b/g)).toHaveLength(6);
+  expect(markup.match(/<select\b[^>]*name="/g)).toHaveLength(6);
+  expect(markup).toContain('id="compare-party"');
+  expect(markup).toContain('id="compare-child-order"');
   expect(markup).not.toContain("Actualizar opciones");
   expect(markup).not.toContain("Comparar resultados");
   expect(markup).not.toContain("Cambios sin aplicar");

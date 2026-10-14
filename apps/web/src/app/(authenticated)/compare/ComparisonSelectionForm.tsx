@@ -119,9 +119,12 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
         </div>
         <form action="/compare" method="get" onSubmit={(event) => event.preventDefault()}>
           <div className="official-compare__selector-grid">
-            {groups.map((group) => (
+            {groups.map((group, index) => (
+              <div key={group.id} className={index === 0 ? styles.sharedRow : styles.sideRow}>
+              {index === 2 && <button className={styles.swap} type="button" disabled aria-describedby="compare-swap-reason"><span aria-hidden="true">⇄</span>Intercambiar</button>}
               <fieldset key={group.id} className={group.className} aria-labelledby={group.id}>
-                <legend id={group.id}>{group.title} <span>{group.description}</span></legend>
+                <legend id={group.id} className={styles.hidden}>{group.title} <span>{group.description}</span></legend>
+                {index > 0 && <span className={styles.badge} aria-hidden="true">{index === 1 ? "A" : "B"}</span>}
                 {group.fields.map((field) => (
                   <div className="field" key={field.key}>
                     <label htmlFor={field.id}>{field.label}</label>
@@ -139,9 +142,16 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                   </div>
                 ))}
               </fieldset>
+              {index === 0 && <>
+                <div className="field" role="group" aria-labelledby="compare-group-label" aria-describedby="compare-group-reason"><span id="compare-group-label" className={styles.fixedLabel}>Agrupación</span><span className={styles.fixedValue}>Todas las agrupaciones</span></div>
+                <p className={styles.sharedNote}>Una selección territorial para ambas vistas.<small>El zoom no modifica las cifras.</small><small>Solo opciones presentes en ambos lados.</small></p>
+              </>}
+              </div>
             ))}
           </div>
         </form>
+        <p id="compare-swap-reason" className={styles.hidden}>Intercambiar no está disponible: A está limitada a 2023 y B a 2025; el intercambio no sería una selección autorizada.</p>
+        <p id="compare-group-reason" className={styles.hidden}>El filtro compartido de agrupación no está disponible. La selección de agrupación del detalle conserva su alcance local.</p>
         <p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
       </section>
       {showResults ? children : (
