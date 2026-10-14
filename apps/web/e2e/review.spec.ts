@@ -158,9 +158,9 @@ async function expectPopulatedReviewLayout(
   await expect(table.getByRole("columnheader")).toHaveText(["Tipo", "Severidad", "Detectado"]);
   await expect(table.getByRole("columnheader", { name: /Asunto|Nota|Subject|Note/i })).toHaveCount(0);
   await expect(row.getByRole("rowheader")).toHaveCount(1);
-  await expect(row.getByRole("rowheader")).toHaveText(REVIEW_ITEM.kind);
+  await expect(row.getByRole("rowheader")).toHaveText("Resultado PBA duplicado en conflicto"); // label of REVIEW_ITEM.kind
   await expect(cells).toHaveCount(2);
-  await expect(cells.nth(0)).toHaveText(REVIEW_ITEM.severity);
+  await expect(cells.nth(0)).toHaveText("Advertencia"); // label of REVIEW_ITEM.severity
   await expect(cells.nth(1)).toContainText("2026-08-13T12:34:56.789");
   await expect(table).not.toContainText("Oculto por alcance");
   await expect(page.locator("body")).not.toContainText(REVIEW_ITEM.subject_ref);
@@ -272,13 +272,13 @@ async function expectReviewWindow(page: Page, count: number, firstDetected: stri
   for (let index = 0; index < count; index += 1) {
     const row = rows.nth(index);
     await expect(row.getByRole("rowheader")).toHaveCount(1);
-    await expect(row.getByRole("rowheader")).toHaveText("content_drift");
+    await expect(row.getByRole("rowheader")).toHaveText("Contenido de la fuente modificado");
     await expect(row.getByRole("cell")).toHaveCount(2);
-    await expect(row.getByRole("cell").nth(0)).toHaveText("warning");
+    await expect(row.getByRole("cell").nth(0)).toHaveText("Advertencia");
   }
   await expect(rows.first().getByRole("cell").nth(1)).toHaveText(firstDetected);
   await expect(rows.getByRole("cell", { name: "Oculto por alcance", exact: true })).toHaveCount(0);
-  await expect(rows.getByRole("cell", { name: "warning", exact: true })).toHaveCount(count);
+  await expect(rows.getByRole("cell", { name: "Advertencia", exact: true })).toHaveCount(count);
   await expect(main).not.toContainText("00000000-0000-4000-8000-");
 }
 

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, Tabl
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import type { AuthorizedReviewItems } from "@/lib/workspace/review-items";
+import { reviewKindLabel, reviewSeverityLabel } from "./review-labels";
 
 const REVIEW_STATE_COPY = {
   authorization_denied: "No se pudo autorizar la cola de revisión.",
@@ -101,8 +102,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
               <TableBody>
                 {items.map((item, index) => (
                   <TableRow key={`${item.kind}:${item.severity}:${item.detectedAt}:${index}`}>
-                    <TableHead scope="row" className="table-cell--short">{item.kind}</TableHead>
-                    <TableCell className="table-cell--short">{item.severity}</TableCell>
+                    <TableHead scope="row" className="table-cell--short">{reviewKindLabel(item.kind)}</TableHead>
+                    <TableCell className="table-cell--short">{reviewSeverityLabel(item.severity)}</TableCell>
                     <TableCell className="table-cell--timestamp">{item.detectedAt}</TableCell>
                   </TableRow>
                 ))}
