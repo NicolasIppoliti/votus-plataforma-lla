@@ -1107,6 +1107,7 @@ def ingest_source(
     party_map_path: Path = DEFAULT_PARTY_MAP_PATH,
     crosswalk_path: Path = DEFAULT_CROSSWALK_PATH,
     metrics: IngestMetrics | None = None,
+    force_rebuild: bool = False,
 ) -> int:
     """Load one already-archived source's parsed rows into `result_row`.
 
@@ -1174,30 +1175,66 @@ def ingest_source(
     try:
         if current() is not None:
             current().database_context(conn, source_id, year, round_)
+        if capability == "national":
+            # Serialize even the first archive insert (no row exists to lock yet).
+            # The broader archive lock also prevents cross-election insert races.
+            with conn.cursor() as cur:
+                cur.execute("show transaction_isolation")
+                if cur.fetchone()[0] != "read committed":
+                    raise ValueError("projection receipts require read committed isolation")
+                cur.execute(
+                    "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    ("national-projection:" + source_id,),
+                )
         project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
-            with national_results_text(raw_bytes) as results_text:
-                completeness = build_national_completeness(
-                    results_text,
-                    establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
-                    source_label=source_id,
+            from . import projection_receipt
+            from .db import lock_archive_entry_source_authority, upsert_election
+
+            lock_archive_entry_source_authority(
+                conn, archive_entry_id=source_id, expected_source_kind="official"
+            )
+            with conn.cursor() as cur:
+                cur.execute("select id from election where year=%s and round=%s", (year, round_))
+                election_row = cur.fetchone()
+            election_id = (
+                election_row[0] if election_row else upsert_election(conn, year=year, round_=round_)
+            )
+            identity = projection_receipt.fingerprint(
+                raw_bytes, year=year, round_=round_, source_kind="official"
+            )
+            receipt = (
+                None
+                if force_rebuild
+                else projection_receipt.reusable(
+                    conn, archive_entry_id=source_id, election_id=election_id, identity=identity
                 )
-                rows = iter_national_rows(
-                    results_text,
-                    archive_entry_id=source_id,
-                    election_year=registered_year,
-                    election_round=registered_round,
-                    establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
-                    metrics=metrics,
-                )
-                inserted = load_national_rows(
+            )
+            if receipt is not None:
+                inserted = receipt["result_row"][0]
+                outcome = "reused"
+            else:
+                inserted = _rebuild_national_projection(
                     conn,
-                    rows,
+                    raw_bytes,
+                    source_id=source_id,
                     year=year,
                     round_=round_,
-                    archive_entry_id=source_id,
-                    completeness=completeness,
+                    registered_year=registered_year,
+                    registered_round=registered_round,
+                    metrics=metrics,
                 )
+                projection_receipt.publish(
+                    conn, archive_entry_id=source_id, election_id=election_id, identity=identity
+                )
+                outcome = "rebuilt"
+            if metrics is not None:
+                metrics.data["projection_outcome"] = outcome
+                metrics.data["projection_rows"] = inserted
+                metrics.data["rows_written"] = inserted if outcome == "rebuilt" else 0
+            if current() is not None:
+                current().data["projection_outcome"] = outcome
+            # Printed only after commit below; never announce a rolled-back rebuild.
         elif capability == "pba":
             parse_result = ingest_pba(raw_bytes, archive_entry_id=source_id)
             # The CALLER's crosswalk, not a hardcoded default: validating
@@ -1378,12 +1415,43 @@ def ingest_source(
             current().data["commit_returned"] = True
         if metrics is not None:
             metrics.data["commit_returned"] = True
+            if capability == "national":
+                metrics.data["rows_committed"] = inserted if outcome == "rebuilt" else 0
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+    if capability == "national":
+        print(f"projection {outcome}: {inserted} rows")
     return inserted
+
+
+def _rebuild_national_projection(
+    conn, raw_bytes, *, source_id, year, round_, registered_year, registered_round, metrics
+):
+    with national_results_text(raw_bytes) as results_text:
+        completeness = build_national_completeness(
+            results_text,
+            establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
+            source_label=source_id,
+        )
+        rows = iter_national_rows(
+            results_text,
+            archive_entry_id=source_id,
+            election_year=registered_year,
+            election_round=registered_round,
+            establecimientos_csv_bytes=results_text.establecimientos_csv_bytes,
+            metrics=metrics,
+        )
+        return load_national_rows(
+            conn,
+            rows,
+            year=year,
+            round_=round_,
+            archive_entry_id=source_id,
+            completeness=completeness,
+        )
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -1451,6 +1519,7 @@ def _cmd_ingest(args: argparse.Namespace, metrics: IngestMetrics | None = None) 
             # breaks the guarantee `validate-curated` gives.
             party_map_path=Path(args.party_map_path),
             metrics=metrics,
+            force_rebuild=getattr(args, "force_rebuild", False),
         )
     except (
         UnknownSourceError,
@@ -1485,7 +1554,12 @@ def _cmd_ingest(args: argparse.Namespace, metrics: IngestMetrics | None = None) 
 
     if metrics is not None:
         metrics.data["status"] = "succeeded"
-    print(f"ingested {inserted} rows from {args.source}")
+    if find_source_entry(sources, args.source)["capability"] == "national":
+        # `inserted` retains the historical API's projection-row count on reuse;
+        # it is not a claim that those rows were written in this invocation.
+        print(f"projection contains {inserted} rows from {args.source}")
+    else:
+        print(f"ingested {inserted} rows from {args.source}")
     return 0
 
 
@@ -3677,6 +3751,11 @@ def build_parser() -> argparse.ArgumentParser:
         "ingest", help="Load one archived source's rows into result_row."
     )
     ingest_parser.add_argument("--source", required=True)
+    ingest_parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Rebuild national official results even when the projection receipt is valid.",
+    )
     ingest_parser.add_argument("--metrics-output", type=Path, default=None)
     ingest_parser.add_argument("--performance-output", type=Path, default=None)
     ingest_parser.add_argument("--database-url", default=None)
