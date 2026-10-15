@@ -429,6 +429,27 @@ html:has(.electoral-context) {
 .electoral-context[data-source="fiscalizacion"] { border-inline-start: 0.35rem solid #a65300; }
 .electoral-context > [role="alert"], .electoral-context > p { flex-basis: 100%; }
 
+/* At narrow widths/native zoom the wrapped rows can consume the viewport.
+   Scroll padding cannot make an oversized sticky stack leave room for targets.
+   Keep every control in flow and reachable; retain pinning on roomy screens. */
+@media (max-width: 980px), (max-height: 600px) {
+  html:has(.electoral-context) {
+    scroll-padding-block-start: 1rem;
+  }
+
+  .app-shell__workspace:has(.electoral-context) > .workspace-topbar {
+    position: static;
+    top: auto;
+    z-index: auto;
+  }
+
+  .electoral-context {
+    position: static;
+    top: auto;
+    z-index: auto;
+  }
+}
+
 .workspace-topbar {
   border-block-end: 1px solid var(--border);
   background: var(--color-surface);
