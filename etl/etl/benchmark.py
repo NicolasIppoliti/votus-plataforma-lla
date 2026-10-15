@@ -4,19 +4,117 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
+from contextlib import ExitStack
 from pathlib import Path
 from statistics import median
 from time import perf_counter_ns
 
 import psycopg
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.conninfo import conninfo_to_dict
 
 from .__main__ import REPO_ROOT, find_source_entry, load_sources, registered_source_election
 from .ingest_metrics import metrics_report
-from .verify import DisposablePostgres
+from .verify import DisposablePostgres, apply_migrations
+
+
+class BenchmarkCluster:
+    """Fresh PostgreSQL 17 service, matching the ordinary release gate's cluster scope."""
+
+    image = (
+        "public.ecr.aws/docker/library/postgres:17@sha256:"
+        "d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f"
+    )
+
+    def __init__(self):
+        self.name = f"votus-etl-benchmark-{uuid.uuid4().hex}"
+        self.created = False
+
+    def command(self, *args):
+        return subprocess.run(
+            ["docker", *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def __enter__(self):
+        if shutil.disk_usage(REPO_ROOT).free <= 2 * 1024**3:
+            raise ValueError("benchmark requires more than 2 GiB free")
+        # Never pull, reuse the gate's pinned local image. Create before starting so
+        # cleanup never targets a pre-existing resource after a failed create.
+        self.command(
+            "create",
+            "--pull=never",
+            "--name",
+            self.name,
+            "--label",
+            f"votus.benchmark.owner={self.name}",
+            "-e",
+            "POSTGRES_HOST_AUTH_METHOD=trust",
+            "-p",
+            "127.0.0.1::5432",
+            self.image,
+        )
+        self.created = True
+        try:
+            self.command("start", self.name)
+            for _ in range(120):
+                ready = subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        self.name,
+                        "pg_isready",
+                        "-h",
+                        "127.0.0.1",
+                        "-U",
+                        "postgres",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if ready.returncode == 0:
+                    break
+                time.sleep(0.5)
+            else:
+                raise ValueError("benchmark cluster did not become ready")
+            self.command(
+                "exec",
+                self.name,
+                "psql",
+                "-U",
+                "postgres",
+                "-d",
+                "template1",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-c",
+                "create role anon nologin; create role authenticated nologin; "
+                "create role etl_writer login bypassrls password null; "
+                "grant etl_writer to postgres;",
+            )
+            port = self.command("port", self.name, "5432/tcp").split(":")[-1]
+            return f"host=127.0.0.1 port={int(port)} dbname=template1 user=postgres"
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def __exit__(self, *args):
+        if self.created:
+            owner = self.command(
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "votus.benchmark.owner"}}',
+                self.name,
+            )
+            if owner != self.name:
+                raise ValueError("benchmark container ownership changed")
+            self.command("rm", "--force", "--volumes", self.name)
+            self.created = False
 
 
 def statistics(samples):
@@ -88,61 +186,6 @@ def local_admin():
     return dsn
 
 
-def clone_schema(admin, database, schema_database):
-    """Clone schema only: migrations creating cluster-wide roles cannot be replayed."""
-    if schema_database in {"template0", "template1"}:
-        raise ValueError("schema source must be an explicitly migrated local database")
-    schema_dsn = make_conninfo(admin, dbname=schema_database)
-    completed = subprocess.run(
-        [
-            "pg_dump",
-            "--dbname",
-            schema_dsn,
-            "--format=custom",
-            "--schema-only",
-            "--no-owner",
-            "--schema=public",
-            "--schema=workspace_api",
-            "--schema=workspace_private",
-        ],
-        capture_output=True,
-        check=True,
-    )
-    # The owned target is fresh, not a previous application installation.
-    # --clean attempts DROP POLICY ... ON absent tables (IF EXISTS only guards
-    # the policy), so restore without drops. Only public already exists in a
-    # fresh PostgreSQL database; retain its ACL/comment entries, not its CREATE.
-    listing = subprocess.run(
-        ["pg_restore", "--list"], input=completed.stdout, capture_output=True, check=True
-    ).stdout
-    entries = listing.decode().splitlines()
-    # Default ACLs govern FUTURE objects owned by the source role, not these
-    # restored objects. The local maintenance role cannot alter Supabase's
-    # global owners' defaults; preserve every existing-object ACL instead.
-    selected = [
-        line for line in entries if " SCHEMA - public " not in line and " DEFAULT ACL " not in line
-    ]
-    with tempfile.TemporaryDirectory(prefix="votus-benchmark-schema-") as directory:
-        toc = Path(directory) / "restore.list"
-        toc.write_text("\n".join(selected) + "\n")
-        database._verify_target()
-        subprocess.run(
-            [
-                "pg_restore",
-                "--use-list",
-                str(toc),
-                "--no-owner",
-                "--exit-on-error",
-                "--dbname",
-                database.migration_dsn,
-            ],
-            input=completed.stdout,
-            capture_output=True,
-            check=True,
-        )
-    return hashlib.sha256(completed.stdout).hexdigest()
-
-
 def run(args, admin, destination):
     entry = find_source_entry(load_sources(Path(args.sources_path)), args.source)
     if (
@@ -172,18 +215,24 @@ def run(args, admin, destination):
         reference_counts = None
         reference_context = None
         # Alternate control/profile order to reduce ordering bias. Every pair gets
-        # a fresh owned DB cloned from the same migrated schema and role configuration.
+        # a fresh owned DB with the ordinary gate's migrations and role configuration.
         for repetition in range(args.repetitions):
             variants = ("control", "counts", "profiled")
             for variant in variants if repetition % 2 == 0 else tuple(reversed(variants)):
                 instrumented = variant == "profiled"
-                database = DisposablePostgres(admin)
-                with database as dsn:
+                with ExitStack() as resources:
+                    isolated_admin = resources.enter_context(BenchmarkCluster())
+                    database = DisposablePostgres(isolated_admin)
+                    dsn = resources.enter_context(database)
                     if database.migration_dsn is None:
                         raise ValueError("owned migration connection unavailable")
-                    schema_sha = clone_schema(admin, database, args.schema_database)
+                    migration_count = apply_migrations(
+                        database.migration_dsn, REPO_ROOT / "supabase" / "migrations"
+                    )
                     database.grant_test_privileges()
                     for state in ("first_load", "reload"):
+                        if shutil.disk_usage(REPO_ROOT).free <= 2 * 1024**3:
+                            raise ValueError("benchmark requires more than 2 GiB free")
                         with tempfile.TemporaryDirectory(prefix="votus-benchmark-") as directory:
                             performance = Path(directory) / "performance.json"
                             counts = Path(directory) / "counts.json"
@@ -275,7 +324,7 @@ def run(args, admin, destination):
                                     "instrumented": instrumented,
                                     "variant": variant,
                                     "state": state,
-                                    "schema_dump_sha256": schema_sha,
+                                    "migration_count": migration_count,
                                     "whole_job_wall_ns": job_wall,
                                     "verification_wall_ns": verification_wall,
                                     "logical": fingerprint,
@@ -307,7 +356,6 @@ def run(args, admin, destination):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
-    parser.add_argument("--schema-database", required=True)
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--round", required=True)
     parser.add_argument("--output", type=Path, required=True)

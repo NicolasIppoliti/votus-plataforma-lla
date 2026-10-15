@@ -466,7 +466,7 @@ async function assertE2eSpecInventory(): Promise<void> {
 		JSON.stringify(specFiles) !== JSON.stringify([...EXPECTED_E2E_SPECS].sort())
 	)
 		throw new Error(
-			"Playwright spec inventory must be exactly the eight release-gate specs",
+			"Playwright spec inventory must be exactly the nine release-gate specs",
 		);
 }
 

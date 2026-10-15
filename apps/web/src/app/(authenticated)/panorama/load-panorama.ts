@@ -1,4 +1,5 @@
 import { profileServerSpan } from "@/lib/workspace/profile-server";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { parseElectoralContext, serializeElectoralContext, type ElectoralContext, type ElectoralContextSearchParams } from "@/lib/context/url";
@@ -28,6 +29,9 @@ async function resolvePanorama(params: ElectoralContextSearchParams): Promise<Pa
   const parsed = parseElectoralContext(params);
   if (parsed.status !== "ok") return { ...unavailable, notice: `Contexto inválido: ${parsed.reason}. No se muestran cifras.` };
   try {
+    // Next renders pages and layouts concurrently. The layout's workspace
+    // bootstrap is not a barrier for this fresh session's authorized reads.
+    await loadWorkspaceSelection();
     const repository = createAuthorizedOfficialFacetRepository();
     const context = params.electionId !== undefined ? parsed.value : { ...await resolveDefaultElectoralContext(repository), sourceKind: parsed.value.sourceKind };
     if (params.electionId !== undefined || context.electionId) unavailable.context = context;
