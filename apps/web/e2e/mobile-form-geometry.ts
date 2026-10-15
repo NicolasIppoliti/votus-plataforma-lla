@@ -23,7 +23,9 @@ export async function expectMobileFormGeometry(page: Page, root: Locator): Promi
         const labels = Array.from(control.labels ?? []);
         const bounded = (node: Element) => {
           const rect = node.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0 && rect.left >= -1 && rect.right <= innerWidth + 1 && node.scrollWidth <= rect.width + 1;
+          // Editable text fields scroll their own value natively; only their box must fit.
+          const editable = node instanceof HTMLTextAreaElement || (node instanceof HTMLInputElement && !["checkbox", "radio", "range", "button", "submit"].includes(node.type));
+          return rect.width > 0 && rect.height > 0 && rect.left >= -1 && rect.right <= innerWidth + 1 && (editable || node.scrollWidth <= rect.width + 1);
         };
         const visibleLabels = labels.length > 0 && labels.every(label => {
           // Inline labels have zero clientWidth; ranges measure their rendered text.
