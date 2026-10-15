@@ -740,7 +740,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
               return { top, bottom, left, right, width };
             })),
           );
-          return {
+          const flags = {
             filtersAbove: filterBox!.bottom <= workBox!.top,
             workbenchAboveResults: workBox!.bottom <= resultBox!.top,
             evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
@@ -750,6 +750,20 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
                 ? mapBox!.width <= 320 && mapBox!.right <= detailBox!.left && detailBox!.width > mapBox!.width
                 : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
           };
+          if (Object.values(flags).some(value => !value)) {
+            // Structural facts only: preserve the failing viewport/branch despite CI output redaction.
+            await writeFile(test.info().outputPath(`e2e-facts-drilldown-geometry-${width}.json`), JSON.stringify({
+              viewport: page.viewportSize(), locator, inspectorWidth, flags,
+              boxes: { filters: filterBox, workbench: workBox, map: mapBox, inspector: detailBox, results: resultBox, evidence: evidenceBox },
+              layout: await workbench.evaluate(element => ({
+                columns: getComputedStyle(element).gridTemplateColumns,
+                fontSize: getComputedStyle(document.documentElement).fontSize,
+                stacked: matchMedia("(max-width: 760px)").matches,
+              })),
+              mapKind: await map.getAttribute("data-map-kind"),
+            }));
+          }
+          return flags;
         }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
         const overflow = await page.evaluate(() => ({
           width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
