@@ -96,6 +96,39 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("resolves the authorized default context on an empty URL", async () => {
+    mocks.facets.mockResolvedValue({ ...FACETS, categories: [{ ...FACETS.categories[0], name: "CONCEJALES" }] });
+    const markup = await render({});
+    expect(mocks.bundle).toHaveBeenCalled();
+    expect(markup).toContain("Mostrar resultados exactos");
+  });
+
+  it("opens the shared Rosales context without a route-local level", async () => {
+    const context = { ...COMPLETE_SECTION, level: undefined };
+    const markup = await render({ ...context, sourceKind: "official" });
+    expect(mocks.bundle).toHaveBeenCalled();
+    expect(markup).toContain("Mostrar resultados exactos");
+    expect(markup).toContain("Coronel Rosales");
+  });
+
+  it.each([
+    ["circuito", { circuitoCode: "00001" }],
+    ["establecimiento", { circuitoCode: "00001", establecimientoCode: "E1" }],
+    ["mesa", { circuitoCode: "00001", establecimientoCode: "E1", mesaCode: "1" }],
+  ])("infers %s from finer context filters without losing lineage", async (requestedLevel, finer) => {
+    await render({ ...COMPLETE_SECTION, level: undefined, ...finer });
+    expect(mocks.bundle).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      requestedLevel, distritoCode: "02", seccionCode: "027", ...finer,
+      ...(requestedLevel === "mesa" ? { mesaCode: 1 } : {}),
+    }));
+  });
+
+  it("does not substitute official results for fiscalización context", async () => {
+    const markup = await render({ ...COMPLETE_SECTION, sourceKind: "fiscalizacion" });
+    expect(mocks.bundle).not.toHaveBeenCalled();
+    expect(markup).toContain("fiscalización");
+  });
+
   it("keeps exact evidence in a collapsed disclosure and bounds territorial and establishment tables", async () => {
     const markup = await render();
     expect(markup).toMatch(/<details[^>]*class="[^"]*exactDisclosure[^"]*"[^>]*>/);

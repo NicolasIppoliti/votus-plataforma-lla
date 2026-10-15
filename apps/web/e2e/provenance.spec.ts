@@ -492,6 +492,22 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
     }
 
     test.describe("no fiscalización leakage into the rendered page", () => {
+  test("Panorama opens Rosales results without another selection", async ({ page }) => {
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+      const query = new URLSearchParams({
+        electionId: SOURCE_SCOPE.electionId, categoryId: SOURCE_SCOPE.categoryId,
+        distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+        sourceKind: "official",
+      });
+      await page.goto(new URL(`/?${query}`, baseURL).toString());
+      await page.getByRole("link", { name: /Explorar resultados/ }).click();
+      await expect(page).toHaveURL((url) => url.pathname === "/drilldown" &&
+        url.searchParams.get("distritoCode") === "02" && url.searchParams.get("seccionCode") === "027");
+      await expect(page.getByRole("main")).toContainText("Rosales");
+      await expect(page.getByText("Mostrar resultados exactos", { exact: true })).toBeVisible();
+      await expect(page.getByRole("main")).not.toContainText("Elija una sección exacta");
+    }));
+  });
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
