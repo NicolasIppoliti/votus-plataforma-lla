@@ -1,5 +1,4 @@
 "use client";
-import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -129,7 +128,8 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                 {group.fields.map((field) => (
                   <div className="field" key={field.key}>
                     <label htmlFor={field.id}>{field.label}</label>
-                    <ResponsiveSelect
+                    <select
+                      aria-describedby="compare-full-values"
                       id={field.id}
                       name={URL_KEYS[field.key]}
                       value={state.draft[field.key] ?? ""}
@@ -139,7 +139,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                     >
                       <option value="">{field.placeholder}</option>
                       {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </ResponsiveSelect>
+                    </select>
                   </div>
                 ))}
               </fieldset>
@@ -150,6 +150,13 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
               </div>
             ))}
           </div>
+          <details className={styles.selectionNotes} id="compare-full-values">
+            <summary>Valores completos de la selección</summary>
+            <dl className={styles.fullValues}>{fields.map(field => <div key={field.key}>
+              <dt>{field.label}</dt>
+              <dd>{field.options.find(option => option.value === state.draft[field.key])?.label ?? field.placeholder}</dd>
+            </div>)}</dl>
+          </details>
         </form>
         <p id="compare-swap-reason" className={styles.hidden}>Intercambiar no está disponible: A está limitada a 2023 y B a 2025; el intercambio no sería una selección autorizada.</p>
         <p id="compare-group-reason" className={styles.hidden}>El filtro compartido de agrupación no está disponible. La selección de agrupación del detalle conserva su alcance local.</p>

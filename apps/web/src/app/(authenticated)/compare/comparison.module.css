@@ -173,15 +173,20 @@
 .exactTable, .selectionNotes { border-block: 1px solid var(--border); margin-block: 0.75rem; min-width: 0; }
 .exactTable > summary, .selectionNotes > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 0.875rem; }
 
-/* Compact mobile comparison: one readable field per row at 320 and 390px. */
+.fullValues { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.fullValues > div { padding-block: 6px; }
+.fullValues dt { color: var(--secondary-ink); }
+.fullValues dd { margin: 4px 0 0; }
+
+/* Compact mobile comparison: paired controls with full values in a disclosure. */
 @media (max-width: 760px) {
   .root :global(.official-compare__layout) { gap: 12px; }
   .root :global(.official-compare__selector-grid) { gap: 12px; }
-  .root :global(.official-compare__selector-grid) fieldset { grid-template-columns: minmax(0,1fr); gap: 8px; }
-  .root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-template-columns: minmax(0,1fr); }
+  .root :global(.official-compare__selector-grid) fieldset { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .root :global(select) { padding-inline: 8px; }
   .sharedRow { gap: 8px; padding-block: 8px; }
-  .badge { justify-self: start; }
+  .badge { justify-self: start; grid-column: 1 / -1; }
   .sharedNote { margin: 0; }
   .spatial { padding: 12px; }
   .mapHeader { gap: 8px; margin-bottom: 8px; }
