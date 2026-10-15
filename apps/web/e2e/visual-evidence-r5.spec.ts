@@ -1,7 +1,15 @@
-import { expect, test, type Page } from "@playwright/test";
-import { writeFile } from "node:fs/promises";
+import { type Page, type Browser } from "@playwright/test";
+import { expect, test } from "./review-test-fixture";
+import { readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { withReviewItem } from "./authorized-review-fixture";
+import { withAuthorizedResultWorkspace } from "./authorized-result-workspace";
+import { comparisonFixture, coverageFixture, sourceIsolationFixture, withResultFixture } from "./result-fixture";
+import { withPanoramaResults } from "./panorama-result-fixture";
+import { scenarioBaseUrl } from "./scenario-ownership";
+import { assertE2eEnvironment } from "./gate-contract";
+
+const environment = assertE2eEnvironment(process.env);
 
 const pairs = [
   { name: "panorama", prototype: "panorama", route: "/" },
@@ -14,31 +22,134 @@ const pairs = [
 type Measurement = { file: string; width: number; viewportHeight: number; documentHeight: number; scrollWidth: number };
 async function capture(page: Page, file: string): Promise<Measurement> {
   await page.evaluate(() => document.fonts.ready);
+  // MapLibre can have a visible canvas before its final electoral fill paints.
+  // Require three matching rendered frames, not an arbitrary sleep.
+  for (const canvas of await page.locator("canvas.maplibregl-canvas").all()) {
+    let previous: Buffer | undefined;
+    let consecutive = 0;
+    await expect.poll(async () => {
+      const frame = await canvas.screenshot({ animations: "disabled", scale: "css" });
+      consecutive = previous?.equals(frame) ? consecutive + 1 : 0;
+      previous = frame;
+      return consecutive;
+    }, { timeout: 15000, message: `${file}: map must settle` }).toBeGreaterThanOrEqual(2);
+  }
+  await expect(page.getByText(/Cargando contexto autorizado|Preparando contorno de referencia/)).toHaveCount(0);
   const size = await page.evaluate(() => ({
     width: innerWidth, viewportHeight: innerHeight,
     documentHeight: document.documentElement.scrollHeight,
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(size.scrollWidth, `${file}: horizontal overflow`).toBeLessThanOrEqual(size.width);
-  await page.screenshot({ path: test.info().outputPath(file), fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: test.info().outputPath(file), fullPage: true, animations: "disabled", scale: "css" });
   return { file, ...size };
 }
 
-async function production(page: Page, route: string) {
+async function selectedOfficial(page: Page, route: string, captureSelected: () => Promise<void>) {
+  const spec = "e2e/comparison.spec.ts";
+  const { identity, seed } = comparisonFixture(spec, "spatial");
+  const baseURL = scenarioBaseUrl(spec, environment);
+  await withResultFixture(spec, seed, () => withAuthorizedResultWorkspace(page, baseURL, identity, async () => {
+    const params = route === "/compare" ? new URLSearchParams({
+      leftElectionId: identity.electionIds[0]!, leftCategoryId: identity.categoryId,
+      rightElectionId: identity.electionIds[1]!, rightCategoryId: identity.categoryId,
+      distritoCode: "02", seccionCode: "027",
+    }) : new URLSearchParams({ electionId: identity.electionIds[1]!, categoryId: identity.categoryId,
+      distritoCode: "02", seccionCode: "027", level: "seccion", sourceKind: "official" });
+    await page.goto(new URL(`${route}?${params}`, baseURL).toString());
+    if (route === "/compare") {
+      const panel = page.getByRole("region", { name: "Comparación territorial de referencia" });
+      await expect(panel).toBeVisible();
+      for (const name of ["Lado A — 2023 generales", "Lado B — 2025 legislativas"]) {
+        const side = panel.getByRole("article", { name });
+        await side.locator("[data-map-controls] > summary").click();
+        await side.getByRole("button", { name: `Activar mapa interactivo de ${name}` }).click();
+        await expect(side.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+        await expect(side.locator("canvas.maplibregl-canvas")).toBeVisible();
+      }
+      await panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).last().click();
+      await expect(page.locator('[data-results-for="compare-results-heading"]')).toHaveAttribute("open", "");
+      await expect(page.getByRole("table").first()).toContainText(identity.comparisonParty!.displayName);
+    } else if (route === "/drilldown") {
+      await page.getByText("Mostrar resultados exactos", { exact: true }).click();
+      await expect(page.getByRole("table").first()).toContainText(identity.comparisonParty!.displayName);
+      await expect(page.getByRole("img", { name: "Contorno de referencia CNE de Coronel Rosales; no geometría de la unidad seleccionada" })).toBeVisible();
+    } else {
+      await expect(page.getByRole("heading", { name: "Qué respalda este dato", exact: true })).toBeVisible();
+      await expect(page.getByRole("img", { name: /Coronel Rosales/ }).first()).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Trazabilidad autorizada", exact: true })).toBeVisible();
+    }
+    await captureSelected();
+  }), "spatial");
+}
+
+async function production(page: Page, route: string, captureSelected: () => Promise<void>) {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   if (route === "/simulate") {
-    await page.goto("/scenarios");
-    await page.getByTestId("scenario-persistencia").getByRole("link", { name: "Editar este escenario" }).click();
-    await expect(page.getByTestId("allocation-result")).toBeVisible();
+    await withReviewItem(page, async () => {
+      await page.goto("/scenarios");
+      await page.getByTestId("scenario-persistencia").getByRole("link", { name: "Editar este escenario" }).click();
+      await expect(page.getByTestId("allocation-result")).toBeVisible();
+      await expect(page.getByRole("img", { name: /Contorno de referencia CNE/ })).toBeVisible();
+      await captureSelected();
+    });
+  } else if (route === "/") {
+    await withPanoramaResults(fixture => withAuthorizedResultWorkspace(page, test.info().project.use.baseURL!,
+      { distritoCode: "02", seccionCode: "027" }, async () => {
+        await page.goto("/");
+        for (const [label, value] of [["Elección", fixture.election.id], ["Categoría", fixture.categories[0]!.id], ["Distrito", "02"], ["Sección", "027"]]) {
+          const control = page.getByRole("combobox", { name: `Contexto electoral: ${label}`, exact: true });
+          await expect(control).toBeEnabled();
+          await control.selectOption(value!);
+        }
+        await expect(page.getByRole("complementary", { name: "Lectura de la selección" })).toContainText("11.111");
+        await expect(page.getByRole("group", { name: "Circuitos de Coronel Rosales: geometría de referencia CNE", exact: true })).toBeVisible();
+        await expect(page.getByRole("group", { name: "Codificación de circuitos", exact: true })).toBeVisible();
+        await expect(page.getByRole("region", { name: "Circuitos disponibles para profundizar", exact: true })).toContainText("00248");
+        await captureSelected();
+      }), test.info());
   } else {
-    await page.goto(route);
+    await selectedOfficial(page, route, captureSelected);
   }
-  await expect(page).not.toHaveURL(/\/login/);
-  await expect(page.locator("#main-content h1").first()).toBeVisible();
+}
+
+async function renderPair(browser: Browser, name: string, width: number) {
+  const context = await browser.newContext({ viewport: { width: width * 2, height: 900 }, deviceScaleFactor: 1, storageState: { cookies: [], origins: [] } });
+  try {
+    const page = await context.newPage();
+    const images = await Promise.all(["prototype", "production"].map(async side => ({ side,
+      data: (await readFile(test.info().outputPath(`${side}-${name}-${width}.png`))).toString("base64") })));
+    await page.setContent(`<!doctype html><html><head><style>
+      *{box-sizing:border-box}body{margin:0;display:flex;background:#ddd;font:16px sans-serif}
+      figure{margin:0;width:${width}px;flex:none;background:repeating-linear-gradient(45deg,#ddd,#ddd 10px,#eee 10px,#eee 20px)}
+      figcaption,footer{height:40px;padding:8px;background:#fff;color:#111}img{display:block;width:${width}px;height:auto}
+      </style></head><body>${images.map(({ side, data }) => `<figure><figcaption>${side} · ${name} · ${width} CSS px · 1:1</figcaption><img src="data:image/png;base64,${data}" alt="${side}"><footer>Fin de captura ${side}</footer></figure>`).join("")}</body></html>`);
+    await page.locator("img").evaluateAll(images => Promise.all(images.map(image => (image as HTMLImageElement).decode())));
+    for (const image of await page.locator("img").all()) {
+      expect(await image.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBe(width);
+    }
+    await page.screenshot({ path: test.info().outputPath(`pair-${name}-${width}.png`), fullPage: true, scale: "css" });
+  } finally { await context.close(); }
 }
 
 for (const pair of pairs) {
   for (const width of [1440, 390, 320]) {
-    test(`R5 ${pair.name} approved pair at ${width}px`, async ({ page, browser }) => {
+    test(`R5 ${pair.name} approved pair at ${width}px`, async ({ page, browser, next }) => {
+      // Controlled circuit RPC follows municipal.spec.ts: real authorized loader,
+      // real checksum-pinned geometry, explicitly synthetic outcomes.
+      if (pair.name === "panorama") next.onFetch(request => {
+        const url = new URL(request.url);
+        if (url.origin !== new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin) return "abort";
+        if (url.pathname !== "/rest/v1/rpc/official_section_circuit_outcomes") return fetch(request, { redirect: "error" });
+        return Response.json({
+          status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion", truncated: false,
+          circuit_membership: "known", category_applicability: "district_reported_categories",
+          unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0, membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 },
+          circuits: [6000, 5111].map((votes, index) => ({ circuito_code: index === 0 ? "00248" : "00249", positive_total: votes,
+            parties: [{ identity_status: "canonical", canonical_party_id: "r5-synthetic-party", display_name: "Agrupación sintética R5", list_id: null, votes }],
+            status: "complete", counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 } })),
+        });
+      });
       await page.setViewportSize({ width, height: 900 });
       const moduleUrl = new URL(`../../../docs/prototypes/${pair.prototype}/serve.mjs`, import.meta.url);
       const { createPreviewServer } = await import(moduleUrl.href);
@@ -60,12 +171,12 @@ for (const pair of pairs) {
         await expect(prototype.locator("h1").first()).toBeVisible();
         expect(failures).toEqual([]);
         measurements.push(await capture(prototype, `prototype-${pair.name}-${width}.png`));
-        await withReviewItem(page, async () => {
-          await production(page, pair.route);
+        await production(page, pair.route, async () => {
           measurements.push(await capture(page, `production-${pair.name}-${width}.png`));
         });
+        await renderPair(browser, pair.name, width);
       } finally {
-        await writeFile(test.info().outputPath("visual-evidence-r5-heights.json"), JSON.stringify({ pair: pair.name, route: pair.route, measurements }, null, 2));
+        await writeFile(test.info().outputPath("visual-evidence-r5-heights.json"), JSON.stringify({ pair: pair.name, route: pair.route, synthetic: true, circuitRpcControlled: pair.name === "panorama", measurements }, null, 2));
         await reference.close();
         await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
       }
@@ -73,17 +184,35 @@ for (const pair of pairs) {
   }
 }
 
-// These operator surfaces have no approved prototype. Keep official mode:
-// never opt into fiscalización implicitly or combine it with official figures.
+// No approved prototypes for these operator surfaces. Fiscalización is a
+// separate, explicitly activated synthetic journey; never mix its figures.
 for (const route of ["/municipal", "/fiscalizacion"]) {
   for (const width of [390, 320]) {
     test(`R5 production-only ${route} at ${width}px (no approved prototype)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
-      await withReviewItem(page, async () => {
-        await production(page, route);
+      const spec = route === "/municipal" ? "e2e/municipal.spec.ts" : "e2e/fiscalizacion.spec.ts";
+      const fixture = route === "/municipal" ? sourceIsolationFixture("e2e/municipal.spec.ts") : coverageFixture("e2e/fiscalizacion.spec.ts");
+      const baseURL = scenarioBaseUrl(spec, environment);
+      const scope = { ...fixture.scope, distritoCode: route === "/municipal" ? "02" : "82", seccionCode: route === "/municipal" ? "027" : "827" };
+      await withResultFixture(spec, fixture.seed, () => withAuthorizedResultWorkspace(page, baseURL, scope, async () => {
+        const params = new URLSearchParams({ electionId: scope.electionId, categoryId: scope.categoryId,
+          distritoCode: scope.distritoCode, seccionCode: scope.seccionCode, sourceKind: "official" });
+        await page.goto(new URL(`${route}?${params}`, baseURL).toString());
+        const main = page.getByRole("main");
+        if (route === "/fiscalizacion") {
+          await page.getByRole("link", { name: "Activar fiscalización (no oficial)", exact: true }).click();
+          await expect(main).toContainText("Estado de cobertura: ok");
+          await expect(main).toContainText("1 unidades observadas de 2 del denominador oficial");
+          await expect(main).toContainText("22.222 votos");
+          await expect(main).not.toContainText(/11\.?111|33\.?333/);
+        } else {
+          await expect(main.getByRole("table").first()).toContainText("11.111");
+          await expect(main).not.toContainText("22.222");
+        }
         const measurement = await capture(page, `production-${route.slice(1)}-${width}.png`);
-        await writeFile(test.info().outputPath("visual-evidence-r5-heights.json"), JSON.stringify({ route, approvedPrototype: null, sourceKind: "official", measurements: [measurement] }, null, 2));
-      });
+        await writeFile(test.info().outputPath("visual-evidence-r5-heights.json"), JSON.stringify({ route, approvedPrototype: null,
+          synthetic: true, sourceKind: route === "/fiscalizacion" ? "fiscalizacion" : "official", measurements: [measurement] }, null, 2));
+      }));
     });
   }
 }
