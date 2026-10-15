@@ -43,6 +43,9 @@ describe("/scenarios", () => {
     expect(html).toContain("22,557");
     expect(html).toContain("24,079");
     expect(html.match(/<table/g)).toHaveLength(2);
+    expect(html.match(/Editar este escenario/g)).toHaveLength(2);
+    expect(html).toContain('scenario=persistencia');
+    expect(html).toContain('scenario=transferencias_ei');
   });
 
   it.each([

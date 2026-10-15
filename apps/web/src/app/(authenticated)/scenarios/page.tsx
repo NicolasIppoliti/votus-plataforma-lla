@@ -35,6 +35,7 @@ function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"]
         {scenario.name}
         {scenario.default ? " (por defecto)" : null}
       </h2>
+      <a href={`/simulate?scenario=${encodeURIComponent(scenario.id)}`}>Editar este escenario</a>
       {scenario.seat_status === "ambiguous_tie" ? (
         <p role="note">Empate ambiguo en la asignación Hare: no se muestran bancas.</p>
       ) : null}
