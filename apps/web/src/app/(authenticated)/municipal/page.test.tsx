@@ -1050,7 +1050,7 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
     expect(html.match(/<circle /g)).toHaveLength(28);
     expect(html.match(/data-circuit=/g)).toHaveLength(10);
     const table = html.slice(html.indexOf("<caption>Locales de votación CNE 2025"));
-    expect(table.slice(0, table.indexOf("</table>")).match(/<tr>/g)).toHaveLength(32);
+    expect(table.slice(0, table.indexOf("</table>")).match(/<tr(?:\s[^>]*)?>/g)).toHaveLength(32);
     expect(html.match(/Sin coordenadas: no se dibuja/g)).toHaveLength(3);
     expect(html).toContain("fbd5deddbcf5abefd170d6841f76888c2bca8cb877f90fb4b9c4d73a287fdd4b");
     expect(html).toContain('<td class="table-cell--number">4.200</td>');
