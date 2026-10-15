@@ -464,6 +464,27 @@ def test_cli_reports_truncated_record_without_a_category(scenario):
     }
 
 
+def test_cli_metrics_account_for_persisted_kinds_and_unknown_exclusions(scenario):
+    kinds = ("EN BLANCO", "NULO", "IMPUGNADO", "RECURRIDO", "COMANDO")
+    argv, _, output = scenario(
+        [
+            row(),
+            *(
+                row(votos_tipo=kind, agrupacion_id="", lista_numero="", votos_cantidad="0")
+                for kind in kinds
+            ),
+            row(votos_tipo="UNKNOWN", votos_cantidad="3"),
+        ]
+    )
+    assert main([*argv, "--metrics-output", str(output)]) == 0
+    report = json.loads(output.read_text())
+    assert (report["records_seen"], report["rows_emitted"]) == (7, 6)
+    assert report["exclusions"] == {
+        "votos_tipo='UNKNOWN'": {"rows": 1, "parseable_votes": 3, "unreadable_vote_rows": 0}
+    }
+    assert report["categories"]["CATEGORY"]["rows_emitted"] == 6
+
+
 def test_cli_preserves_raw_categories_and_reused_mesas_across_districts(scenario):
     argv, _, output = scenario(
         [
@@ -483,7 +504,7 @@ def test_cli_preserves_raw_categories_and_reused_mesas_across_districts(scenario
             "records_seen": 1,
             "rows_emitted": 0,
             "exclusions": {
-                "votos_tipo='NULO'": {
+                "invalid party/list identity for votos_tipo='NULO'": {
                     "rows": 1,
                     "parseable_votes": 6,
                     "unreadable_vote_rows": 0,
@@ -513,7 +534,11 @@ def test_cli_reports_exclusion_subsets_and_ambiguous_categories(scenario, capsys
     report = json.loads(output.read_text())
     assert (report["records_seen"], report["rows_emitted"], report["candidate_keys"]) == (7, 2, 3)
     assert report["exclusions"] == {
-        "votos_tipo='EN BLANCO'": {"rows": 2, "parseable_votes": 5, "unreadable_vote_rows": 1},
+        "invalid party/list identity for votos_tipo='EN BLANCO'": {
+            "rows": 2,
+            "parseable_votes": 5,
+            "unreadable_vote_rows": 1,
+        },
         "unreadable votos_cantidad": {"rows": 1, "parseable_votes": 0, "unreadable_vote_rows": 1},
     }
     assert report["ambiguous_categories"] == {"CATEGORY": {"rows": 2, "votes": 7, "keys": 1}}
@@ -522,7 +547,7 @@ def test_cli_reports_exclusion_subsets_and_ambiguous_categories(scenario, capsys
             "records_seen": 7,
             "rows_emitted": 2,
             "exclusions": {
-                "votos_tipo='EN BLANCO'": {
+                "invalid party/list identity for votos_tipo='EN BLANCO'": {
                     "rows": 2,
                     "parseable_votes": 5,
                     "unreadable_vote_rows": 1,

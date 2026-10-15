@@ -18,6 +18,7 @@ const states: Record<string, string> = {
 export function InternalLists({ evidence }: { evidence: OfficialInternalLists }) {
   if (evidence.status !== "ok") return <section aria-labelledby="internas-heading"><h2 id="internas-heading">Internas</h2>
     <Alert variant={evidence.status === "authorization_denied" || evidence.status === "malformed" ? "denied" : "empty"}>{states[evidence.status]}</Alert></section>;
+  const nonPositiveTotals = evidence.non_positive.status === "available" ? evidence.non_positive.totals : null;
   const groups = new Map<string | null, typeof evidence.lists>();
   for (const list of evidence.lists) {
     const group = groups.get(list.canonical_party_id) ?? [];
@@ -40,6 +41,14 @@ export function InternalLists({ evidence }: { evidence: OfficialInternalLists })
         </TableBody>)}
       </Table>
     </TableRegion>
-    <p role="note">Votos no positivos (blancos, nulos, impugnados, recurridos y comando): No disponible. La ingesta nacional no persiste estos tipos de voto; no equivalen a cero.</p>
+    {nonPositiveTotals !== null ? <section aria-label="Votos no positivos">
+      <h3>Votos no positivos</h3>
+      <p>Fuente oficial. Se mantienen separados de los positivos y de sus porcentajes.</p>
+      <dl>{([
+        ["EN BLANCO", "En blanco"], ["NULO", "Nulos"], ["IMPUGNADO", "Impugnados"],
+        ["RECURRIDO", "Recurridos"], ["COMANDO", "Comando"],
+      ] as const).map(([kind, label]) => <div key={kind}><dt>{label}</dt>
+        <dd>{formatCount(nonPositiveTotals[kind])} votos</dd></div>)}</dl>
+    </section> : <p role="note">Votos no positivos (blancos, nulos, impugnados, recurridos y comando): No disponible. {evidence.non_positive.status === "unavailable" && evidence.non_positive.reason === "not_reloaded" ? "La proyección requiere una recarga de la fuente." : "La evidencia contiene identidades en conflicto."} No equivalen a cero.</p>}
   </section>;
 }
