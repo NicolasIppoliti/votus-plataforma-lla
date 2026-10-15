@@ -66,6 +66,19 @@ it("puts the workbench before selection details and paints static maps on load",
   for (const text of ["La comparación se actualiza al cambiar la selección.", "Opciones no compartidas — Distrito", "Comparación aplicada", 'aria-label="Contexto de comparación autorizada"']) expect(workbench).toBeLessThan(markup.indexOf(text));
 });
 
+it("keeps optional map actions and repeated applied context folded on the rendered page", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup.match(/<details[^>]*data-map-controls=""/g)).toHaveLength(2);
+  expect(markup).not.toMatch(/<details[^>]*data-map-controls=""[^>]*open/);
+  expect(markup).toMatch(/<details[^>]*data-applied-context=""[^>]*><summary>Contexto de comparación aplicada<\/summary>/);
+  expect(markup).toContain("Mostrar mapa interactivo");
+  expect(markup).toContain("Seleccionar sección y consultar resultados");
+  expect(markup).toMatch(/<details[^>]*data-child-controls=""[^>]*><summary>Controles del siguiente nivel<\/summary>/);
+  expect(markup).toContain("Completitud de la sección");
+  expect(markup).toContain("Dos elecciones oficiales");
+});
+
 it("paints two static maps on load", async () => {
   supportedSpatialEvidence();
   const markup = await render(PARAMS);
