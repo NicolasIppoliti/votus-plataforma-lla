@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { alignedOccupiedGeometry, type Raster } from "./map-raster";
@@ -43,6 +44,21 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, cleanupError], "comparison assertions and cleanup failed"); throw outcome.error; }
   if (cleanupError) throw cleanupError; return outcome.value;
 }
+async function writeSignInFailureFacts(page: Page): Promise<string> {
+  const path = test.info().outputPath("e2e-facts-sign-in.json");
+  const facts = await page.evaluate(() => ({
+    pathname: location.pathname,
+    hasReturnTo: new URLSearchParams(location.search).has("returnTo"),
+    fields: Array.from(document.querySelectorAll<HTMLInputElement>("input:not([type=hidden])"), input => ({
+      type: input.type, empty: input.value.length === 0, valid: input.validity.valid,
+    })),
+    alertCount: document.querySelectorAll('[role="alert"]').length,
+    hasGenericError: document.getElementById("login-error")?.textContent === "Las credenciales no son válidas.",
+    pending: document.querySelector("form")?.getAttribute("aria-busy") === "true",
+  }));
+  await writeFile(path, JSON.stringify(facts));
+  return path;
+}
 test.describe("authorized official comparison", () => {
   test("real sign-in resumes exact exploration/comparison and rechecks revoked access", async ({ page, context }) => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
@@ -61,7 +77,16 @@ test.describe("authorized official comparison", () => {
         await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
         await page.getByLabel("Contraseña").fill("synthetic-invalid-password");
         await page.getByRole("button", { name: "Iniciar sesión" }).click();
-        await expect(page.getByRole("alert")).toHaveText("Las credenciales no son válidas.");
+        try {
+          await expect(page.getByRole("alert")).toHaveText("Las credenciales no son válidas.");
+        } catch (error) {
+          await test.info().attach("sign-in-failure", {
+            path: await writeSignInFailureFacts(page), contentType: "application/json",
+          });
+          throw error;
+        }
+        // React actions reset uncontrolled fields after submission, including failed sign-in.
+        await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
         await page.getByLabel("Contraseña").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
         await page.getByRole("button", { name: "Iniciar sesión" }).click();
         await expect(page).toHaveURL(new URL(destination, baseURL).toString());
@@ -86,6 +111,33 @@ test.describe("authorized official comparison", () => {
       await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
     }));
   });
+  for (const width of [1440, 390]) {
+    test(`selection survives Panorama → Exploración → Comparación at ${width}px (#442)`, async ({ page }) => {
+      await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async () => {
+        await page.setViewportSize({ width, height: 1000 });
+        const context = new URLSearchParams({
+          electionId: identity.electionIds[0]!, categoryId: identity.categoryId, sourceKind: "official",
+          distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+          bElectionId: identity.electionIds[1]!, bCategoryId: identity.categoryId,
+        });
+        await page.goto(new URL(`/?${context}`, baseURL).toString());
+        await page.getByRole("main").getByRole("link", { name: "Explorar resultados", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/drilldown" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && url.searchParams.get("level") === "seccion");
+        await expect(page.getByRole("main").getByRole("table").first()).toBeVisible();
+        const navigation = width === 390
+          ? page.getByRole("dialog", { name: "Navegación principal" }).getByRole("navigation", { name: "principal", exact: true })
+          : page.locator(".app-shell > aside.situation-sidebar").getByRole("navigation", { name: "principal", exact: true });
+        if (width === 390) await page.getByRole("button", { name: "Abrir navegación" }).click();
+        await navigation.getByRole("link", { name: "Comparación", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/compare" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && !url.searchParams.has("level"));
+        await expect(page.getByRole("main").getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true })).toHaveValue(identity.electionIds[0]!);
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue(identity.seccionCode);
+      }));
+    });
+  }
+
   // A changed frame alone can be inertia or a WebGL repaint, not a settled camera.
   async function settledMap(map: Locator, phase: string): Promise<{ image: Buffer; width: number; height: number }> {
     let previous: Buffer | undefined;

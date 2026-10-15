@@ -12,3 +12,7 @@
 .controls a { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); }
 
 .root :focus-visible { outline: 2px solid var(--official); outline-offset: 2px; }
+
+.root[data-map-kind="locator"] { max-width: 20rem; }
+.root[data-map-kind="locator"] .canvas { height: 12rem; min-height: 0; }
+.root[data-map-kind="locator"] .staticMap { max-height: 12rem; }
