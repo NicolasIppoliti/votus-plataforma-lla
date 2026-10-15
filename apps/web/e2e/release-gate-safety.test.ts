@@ -4269,6 +4269,26 @@ describe("ReleaseGateReporter", () => {
 			writeReceipt: (target, content) => { if (target === "/receipt.json") capture(content); },
 			writeError,
 		});
+	it("carries bounded mobile-form facts from a failed helper into the redacted CLI diagnostic", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target, content) => { writes.set(target, content); }, writeError: () => undefined });
+		const mobile = testCaseFor("e2e/simulate.spec.ts", "mobile", "SECRET-TITLE");
+		mobile.location.line = 8; mobile.location.column = 3;
+		reporter.onBegin({} as FullConfig, suiteFor([...cases.filter(test => !test.location.file.endsWith("/simulate.spec.ts")), mobile]));
+		const facts = { version: 1, phase: "field-geometry", index: 7, viewportWidth: 320, sample: {
+			kind: "field", tag: "input", width: 268, height: 44, left: 26, right: 294, scrollWidth: 266,
+			labelCount: 1, mirrorPresent: false, mirrorWidth: 0, mirrorScrollWidth: 0,
+			checks: { target: true, bounded: true, visibleLabels: false, fullSelection: true },
+		} };
+		reporter.onTestEnd(mobile, { status: "failed", retry: 0, errors: [{ location: { file: "/SECRET/mobile-form-geometry.ts", line: 40, column: 5 } }], attachments: [{ name: "mobile-form-geometry", contentType: "application/vnd.votus.mobile-form-facts+json", body: Buffer.from(JSON.stringify(facts)) }] } as TestResult);
+		await reporter.onEnd({ status: "failed" } as FullResult);
+		const text = writes.get("/receipt.json.diagnostics.json")!;
+		expect(JSON.parse(text).attempts[0].mobileForm).toEqual(facts);
+		expect(text).not.toContain("SECRET");
+		supplyCompanion(text);
+		const failure = await playwrightFailure(1, false, "/receipt.json");
+		expect(JSON.parse(failure.line().slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length)).companion.attempts[0].mobileForm).toEqual(facts);
+	});
 	it("retains safe attempt history and distinct discovery ordinals at a shared declaration", async () => {
 		const writes = new Map<string, string>();
 		const reporter = new ReleaseGateReporter({

@@ -20,7 +20,11 @@ for (const width of [320, 390]) {
     expect(lastOption).not.toBeNull();
     await donor.selectOption(lastOption!);
     await expect(donor.locator("..").locator("[data-mobile-select-value]")).toHaveText(await donor.locator("option:checked").innerText());
-    await expectMobileFormGeometry(page, page.locator(".app-shell__workspace"));
+    // Box helper assertions at this call site; the reporter otherwise classifies
+    // their source locations as foreign to the spec and cannot identify the step.
+    await test.step("Geometría móvil de los tres formularios", async () => {
+      await expectMobileFormGeometry(page, page.locator(".app-shell__workspace"));
+    }, { box: true });
     // Controlled changes alone must not submit the transfer or hide allocation evidence.
     await expect(page.getByTestId("allocation-result")).toBeVisible();
   });

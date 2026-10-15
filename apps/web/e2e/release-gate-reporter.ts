@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { mobileFormFactsFromAttachments } from "./mobile-form-facts.ts";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type {
@@ -207,10 +208,12 @@ export default class ReleaseGateReporter implements Reporter {
 					foreignErrorLocations++;
 				else errorLocations.push(coordinate.data);
 			}
+			const mobileForm = mobileFormFactsFromAttachments(result.attachments);
 			const attempt = attemptSchema.safeParse({
 				...(typeof identity === "object" && identity !== null ? identity : {}),
 				status: result.status, retry: result.retry,
 				errorLocations: [], missingErrorLocations, foreignErrorLocations,
+				...(mobileForm ? { mobileForm } : {}),
 			});
 			if (attempt.success && this.expectedSpecsByTestId.get(test.id) === spec)
 				// Preserve all coordinates; the bounded consumer explicitly rejects overflow.

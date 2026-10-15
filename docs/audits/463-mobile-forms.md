@@ -6,8 +6,9 @@
 
 > Screenshot evidence for each route at 320px.
 
-No hay capturas aprobadas disponibles. No se ejecutó Playwright ni se habilitaron
-capturas o trazas autenticadas. Las pruebas CSS y de renderizado no sustituyen
+No hay capturas aprobadas disponibles. No se ejecutó Playwright localmente ni se
+habilitaron capturas o trazas autenticadas. La ejecución CI de PR #553 falló en
+los dos casos nuevos de simulación; aún no hay validación de navegador satisfactoria. Las pruebas CSS y de renderizado no sustituyen
 ese AC. Mantener #463 abierto y referenciarlo con `Refs`, no `Closes`.
 
 El epic #474 exige auditar ambos anchos. #462 ya resolvió el apilado de los seis
@@ -67,7 +68,20 @@ siendo necesarias antes de declarar una auditoría completa.
 - `e2e/mobile-form-geometry.ts`: sin capturas ni valores de campos en diagnósticos;
   comprueba desbordamiento de página, campos dentro del ancho, etiquetas visibles,
   objetivos de 44px y coincidencia entre opción seleccionada y texto que envuelve.
-- Playwright queda **escrito pero no ejecutado**. No se afirma RED/GREEN de navegador.
+- Playwright no se ejecutó localmente. El run CI `38751980553` de PR #553 registró
+  dos casos `failed` en `simulate.spec.ts:8`, no `timedOut`; cada uno tenía una
+  ubicación de error externa al spec (`foreignErrorLocations: 1`). Ese diagnóstico
+  no identifica la aserción ni demuestra que el problema sea `ResponsiveSelect`
+  o el apilado. No se afirma una corrección de layout ni GREEN de navegador.
+- Ante un fallo del helper, se adjuntan únicamente hechos acotados: fase, índice
+  del control, medidas numéricas y booleanos de las mismas aserciones. El reporter
+  valida una estructura estricta y los incluye en `companion.attempts[].mobileForm`
+  dentro de `E2E_PLAYWRIGHT_DIAGNOSTIC`. No requiere descargar artifacts ni habilitar
+  capturas: no salen texto, valores, IDs, selectores, URLs, rutas ni credenciales.
+  Si falla la captura diagnóstica se conserva el error original. Las aserciones
+  de tamaño, etiquetas y overflow siguen siendo bloqueantes, sin relajar umbrales.
+  El paso de geometría de simulación usa `box: true` para conservar una ubicación
+  útil dentro del spec cuando falla un helper.
 - No se redujeron fuentes, etiquetas, nombres accesibles ni capacidades móviles para
   hacer caber los controles. No se cambió normalización ni aislamiento de fuentes.
 
