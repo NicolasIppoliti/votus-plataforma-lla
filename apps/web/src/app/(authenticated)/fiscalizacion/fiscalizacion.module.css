@@ -71,3 +71,8 @@
   .filters, .qualification, .result, .coverage, .state { padding: 1rem; }
   .layout, .evidence { gap: 1rem; }
 }
+/* Issue 501 mobile */
+@media (max-width: 480px) {
+  .root :global(.table-scroll) { max-height: 360px; overflow: auto; overscroll-behavior-inline: contain; }
+  .root :global(.data-table) :is(th, td) { padding: .625rem .5rem; }
+}

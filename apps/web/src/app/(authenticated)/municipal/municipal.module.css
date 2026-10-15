@@ -78,6 +78,11 @@
 .mark { fill: var(--official); }
 .value { justify-self: end; font-size: 0.8125rem; font-variant-numeric: tabular-nums; text-align: end; }
 .zeroSeries { margin: 0; padding-inline-start: 1.25rem; font-size: 0.875rem; }
+/* Issue 501 mobile */
+@media (max-width: 480px) {
+  .root :global(.table-scroll) { max-height: 360px; overflow: auto; overscroll-behavior-inline: contain; }
+  .root :global(.data-table) :is(th, td) { padding: .625rem .5rem; }
+}
 
 @media (min-width: 48rem) {
   .scope { grid-template-columns: repeat(5, minmax(0, 1fr)); }

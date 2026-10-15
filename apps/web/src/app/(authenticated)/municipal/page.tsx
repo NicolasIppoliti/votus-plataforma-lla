@@ -335,7 +335,7 @@ export function renderMunicipalView(
           ) : (
             <>
               <MunicipalDistribution parties={partyTotals} />
-              <TableRegion label="Tabla de resultados oficiales exactos por partido">
+              <TableRegion mobileHint label="Tabla de resultados oficiales exactos por partido">
                 <Table className="data-table">
                   <caption>Resultados oficiales exactos por partido y votos</caption>
                   <thead>
