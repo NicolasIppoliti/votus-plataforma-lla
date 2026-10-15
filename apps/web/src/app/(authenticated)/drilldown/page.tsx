@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
@@ -502,7 +503,11 @@ function refusalPage(message: ReactNode): ReactNode {
   );
 }
 
-export default async function DrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
+export default function DrilldownPage(props: DrilldownPageProps): Promise<ReactNode> {
+  return profileServerSpan("page.drilldown", () => renderDrilldownPage(props));
+}
+
+async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
   const params = await searchParams;
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
