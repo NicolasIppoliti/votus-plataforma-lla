@@ -22,8 +22,6 @@ def test_benchmark_cli_rejects_nonlocal_before_database_access(monkeypatch, caps
                 "generales",
                 "--output",
                 "unused.json",
-                "--schema-database",
-                "postgres",
             ]
         )
         == 1
@@ -63,8 +61,6 @@ def test_benchmark_rejects_non_national_before_output_or_setup(monkeypatch, tmp_
                 "2025",
                 "--round",
                 "generales",
-                "--schema-database",
-                "postgres",
                 "--sources-path",
                 str(sources),
                 "--output",
@@ -77,6 +73,30 @@ def test_benchmark_rejects_non_national_before_output_or_setup(monkeypatch, tmp_
     assert not output.exists()
 
 
+def test_cluster_waits_for_tcp_and_removes_only_owned_container(monkeypatch):
+    import etl.benchmark as benchmark
+
+    commands = []
+
+    def execute(argv, **kwargs):
+        commands.append(argv)
+        if "pg_isready" in argv:
+            assert argv[-4:] == ["-h", "127.0.0.1", "-U", "postgres"]
+        output = ""
+        if "port" in argv:
+            output = "127.0.0.1:55555"
+        if "inspect" in argv:
+            output = cluster.name
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(benchmark.subprocess, "run", execute)
+    cluster = benchmark.BenchmarkCluster()
+    with cluster as dsn:
+        assert "port=55555" in dsn
+    assert commands[-1] == ["docker", "rm", "--force", "--volumes", cluster.name]
+    assert "--pull=never" in commands[0]
+
+
 @pytest.mark.parametrize("samples", [[3, 1, 2], [2, 2, 2]])
 def test_benchmark_statistics(samples):
     from etl.benchmark import statistics
@@ -84,7 +104,7 @@ def test_benchmark_statistics(samples):
     assert statistics(samples) == {"median": 2, "min": min(samples), "max": max(samples), "runs": 3}
 
 
-@pytest.mark.parametrize("parity", [True, False])
+@pytest.mark.parametrize("parity", [True, False, "migration_failure"])
 def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp_path, parity):
     import etl.benchmark as benchmark
 
@@ -95,7 +115,7 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
         migration_dsn = "private-migration"
 
         def __init__(self, dsn):
-            pass
+            assert dsn == "isolated-admin"
 
         def __enter__(self):
             return "private-writer"
@@ -120,8 +140,27 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
         return {"synthetic": "hash" if parity else str(len(calls))}
 
     monkeypatch.setattr(benchmark, "local_admin", lambda: "private-admin")
+    clusters = []
+
+    class Cluster:
+        def __enter__(self):
+            clusters.append("start")
+            return "isolated-admin"
+
+        def __exit__(self, *args):
+            clusters.append("stop")
+
+    monkeypatch.setattr(benchmark, "BenchmarkCluster", Cluster, raising=False)
     monkeypatch.setattr(benchmark, "DisposablePostgres", Owned)
-    monkeypatch.setattr(benchmark, "clone_schema", lambda *args: "schema-sha")
+    migrations = []
+
+    def migrate(dsn, path):
+        migrations.append((dsn, path))
+        if parity == "migration_failure":
+            raise RuntimeError("private migration failure")
+        return 74
+
+    monkeypatch.setattr(benchmark, "apply_migrations", migrate)
     monkeypatch.setattr(
         benchmark,
         "load_sources",
@@ -142,12 +181,18 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
             "generales",
             "--output",
             str(output),
-            "--schema-database",
-            "postgres",
         ]
     )
+    assert migrations == [
+        ("private-migration", benchmark.REPO_ROOT / "supabase" / "migrations")
+    ] * len(cleaned)
     report = json.loads(output.read_text())
-    if parity:
+    if parity == "migration_failure":
+        assert result == 1
+        assert report["status"] == "failed"
+        assert not calls
+        assert len(cleaned) == 1
+    elif parity:
         assert result == 0
         assert report["status"] == "succeeded"
         assert len(calls) == 18
@@ -159,4 +204,5 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
         assert report["status"] == "failed"
         assert len(calls) == 2
         assert len(cleaned) == 1
+    assert clusters == [item for _ in cleaned for item in ("start", "stop")]
     assert "private" not in output.read_text()
