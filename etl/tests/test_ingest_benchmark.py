@@ -7,49 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_schema_clone_passes_full_tcp_conninfo_explicitly(monkeypatch):
-    from psycopg.conninfo import conninfo_to_dict
-
-    import etl.benchmark as benchmark
-
-    admin = "host=127.0.0.1 port=54322 dbname=template1 user=fixture password=fixture-only"
-    target = "host=127.0.0.1 port=54322 dbname=owned user=fixture password=fixture-only"
-    calls = []
-    verified = []
-
-    def execute(argv, **kwargs):
-        calls.append((argv, kwargs))
-        if "--list" in argv:
-            return SimpleNamespace(
-                stdout=(
-                    b"1; 2615 2200 SCHEMA - public postgres\n"
-                    b"2; 2615 2201 SCHEMA - workspace_private postgres\n"
-                    b"3; 826 2202 DEFAULT ACL public DEFAULT PRIVILEGES FOR TABLES supabase_admin\n"
-                    b"4; 0 2203 ACL public TABLE jurisdiction postgres\n"
-                )
-            )
-        if argv[0] == "pg_restore":
-            assert "--clean" not in argv, "fresh owned targets must not DROP absent policies"
-            assert "--use-list" in argv
-            toc = Path(argv[argv.index("--use-list") + 1]).read_text()
-            assert "SCHEMA - public " not in toc
-            assert "SCHEMA - workspace_private " in toc
-            assert " DEFAULT ACL " not in toc
-            assert "ACL public TABLE jurisdiction" in toc
-        return SimpleNamespace(stdout=b"synthetic-schema")
-
-    monkeypatch.setattr(benchmark.subprocess, "run", execute)
-    database = SimpleNamespace(migration_dsn=target, _verify_target=lambda: verified.append(True))
-    benchmark.clone_schema(admin, database, "postgres")
-    connected = [(argv, kwargs) for argv, kwargs in calls if "--list" not in argv]
-    for index, dbname in ((0, "postgres"), (1, "owned")):
-        argv, _ = connected[index]
-        assert "--dbname" in argv, "Postgres tools need explicit conninfo, not PGDATABASE"
-        actual = conninfo_to_dict(argv[argv.index("--dbname") + 1])
-        assert actual == {**conninfo_to_dict(admin), "dbname": dbname}
-    assert verified == [True]
-
-
 def test_benchmark_cli_rejects_nonlocal_before_database_access(monkeypatch, capsys):
     from etl.benchmark import main
 
@@ -65,8 +22,6 @@ def test_benchmark_cli_rejects_nonlocal_before_database_access(monkeypatch, caps
                 "generales",
                 "--output",
                 "unused.json",
-                "--schema-database",
-                "postgres",
             ]
         )
         == 1
@@ -106,8 +61,6 @@ def test_benchmark_rejects_non_national_before_output_or_setup(monkeypatch, tmp_
                 "2025",
                 "--round",
                 "generales",
-                "--schema-database",
-                "postgres",
                 "--sources-path",
                 str(sources),
                 "--output",
@@ -120,6 +73,30 @@ def test_benchmark_rejects_non_national_before_output_or_setup(monkeypatch, tmp_
     assert not output.exists()
 
 
+def test_cluster_waits_for_tcp_and_removes_only_owned_container(monkeypatch):
+    import etl.benchmark as benchmark
+
+    commands = []
+
+    def execute(argv, **kwargs):
+        commands.append(argv)
+        if "pg_isready" in argv:
+            assert argv[-4:] == ["-h", "127.0.0.1", "-U", "postgres"]
+        output = ""
+        if "port" in argv:
+            output = "127.0.0.1:55555"
+        if "inspect" in argv:
+            output = cluster.name
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(benchmark.subprocess, "run", execute)
+    cluster = benchmark.BenchmarkCluster()
+    with cluster as dsn:
+        assert "port=55555" in dsn
+    assert commands[-1] == ["docker", "rm", "--force", "--volumes", cluster.name]
+    assert "--pull=never" in commands[0]
+
+
 @pytest.mark.parametrize("samples", [[3, 1, 2], [2, 2, 2]])
 def test_benchmark_statistics(samples):
     from etl.benchmark import statistics
@@ -127,7 +104,7 @@ def test_benchmark_statistics(samples):
     assert statistics(samples) == {"median": 2, "min": min(samples), "max": max(samples), "runs": 3}
 
 
-@pytest.mark.parametrize("parity", [True, False])
+@pytest.mark.parametrize("parity", [True, False, "migration_failure"])
 def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp_path, parity):
     import etl.benchmark as benchmark
 
@@ -138,7 +115,7 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
         migration_dsn = "private-migration"
 
         def __init__(self, dsn):
-            pass
+            assert dsn == "isolated-admin"
 
         def __enter__(self):
             return "private-writer"
@@ -163,8 +140,27 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
         return {"synthetic": "hash" if parity else str(len(calls))}
 
     monkeypatch.setattr(benchmark, "local_admin", lambda: "private-admin")
+    clusters = []
+
+    class Cluster:
+        def __enter__(self):
+            clusters.append("start")
+            return "isolated-admin"
+
+        def __exit__(self, *args):
+            clusters.append("stop")
+
+    monkeypatch.setattr(benchmark, "BenchmarkCluster", Cluster, raising=False)
     monkeypatch.setattr(benchmark, "DisposablePostgres", Owned)
-    monkeypatch.setattr(benchmark, "clone_schema", lambda *args: "schema-sha")
+    migrations = []
+
+    def migrate(dsn, path):
+        migrations.append((dsn, path))
+        if parity == "migration_failure":
+            raise RuntimeError("private migration failure")
+        return 74
+
+    monkeypatch.setattr(benchmark, "apply_migrations", migrate)
     monkeypatch.setattr(
         benchmark,
         "load_sources",
@@ -185,12 +181,18 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
             "generales",
             "--output",
             str(output),
-            "--schema-database",
-            "postgres",
         ]
     )
+    assert migrations == [
+        ("private-migration", benchmark.REPO_ROOT / "supabase" / "migrations")
+    ] * len(cleaned)
     report = json.loads(output.read_text())
-    if parity:
+    if parity == "migration_failure":
+        assert result == 1
+        assert report["status"] == "failed"
+        assert not calls
+        assert len(cleaned) == 1
+    elif parity:
         assert result == 0
         assert report["status"] == "succeeded"
         assert len(calls) == 18
@@ -202,4 +204,5 @@ def test_benchmark_cli_runs_controls_reloads_parity_and_cleanup(monkeypatch, tmp
         assert report["status"] == "failed"
         assert len(calls) == 2
         assert len(cleaned) == 1
+    assert clusters == [item for _ in cleaned for item in ("start", "stop")]
     assert "private" not in output.read_text()

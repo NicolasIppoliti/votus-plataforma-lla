@@ -489,6 +489,25 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
   });
 });
 
+test("Panorama exposes supporting limits once through a keyboard-operated disclosure", async ({ page }) => {
+  await page.goto("/");
+  const main = page.getByRole("main");
+  const disclosure = main.locator("details").filter({ has: page.locator("summary", { hasText: "Fuente y límites" }) });
+  const toggle = disclosure.locator("summary");
+  await expect(toggle).toHaveCount(1);
+  await expect(disclosure).not.toHaveAttribute("open", "");
+  await expect(main.getByText("Resultados oficiales", { exact: true })).toBeVisible();
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(disclosure).toHaveAttribute("open", "");
+  for (const text of ["Fiscalización es una fuente no oficial", "Aplicabilidad electoral desconocida", "No hay participación, comparación histórica ni pronóstico"]) {
+    await expect(main.getByText(text, { exact: false })).toHaveCount(1);
+    await expect(disclosure.getByText(text, { exact: false })).toBeVisible();
+  }
+  await page.keyboard.press("Enter");
+  await expect(disclosure).not.toHaveAttribute("open", "");
+});
+
 test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }, testInfo) => {
   await withReviewItem(page, async () => {
   await page.setViewportSize({ width: 1440, height: 1000 });

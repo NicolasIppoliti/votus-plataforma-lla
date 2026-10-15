@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 import { formatCount } from "../src/lib/format/number";
@@ -44,6 +45,104 @@ async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promis
     if (cleanup.error || cleanup.data?.cleaned !== true) throw new Error(cleanup.error?.message ?? "municipal fixture cleanup failed");
   }
 }
+
+// #467 lives in the existing municipal scenario so the release gate uses its
+// isolated server configuration and owned result fixture. Requires #425 / #518.
+test("first-run: a fresh sole-organization user reaches Rosales results in three clicks", async ({ browser }) => {
+  await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
+    const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+    const nonce = randomUUID();
+    const email = `first-run-${nonce}@example.test`;
+    const password = randomUUID();
+    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+    if (created.error || !created.data.user) throw new Error("first-run user creation failed");
+    const userId = created.data.user.id;
+    let fixture: WorkspaceFixture | undefined;
+    let context: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+    const failures: unknown[] = [];
+    try {
+      context = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
+      const setup = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: userId, p_distrito_code: "02", p_seccion_code: "027" });
+      if (setup.error || typeof setup.data?.organization_id !== "string") throw new Error("first-run organization setup failed");
+      fixture = setup.data as WorkspaceFixture;
+      const page = await context.newPage();
+      const workspaceSwitches: string[] = [];
+      page.on("request", request => {
+        if (new URL(request.url()).pathname === "/api/workspace" && request.method() === "POST") workspaceSwitches.push(request.url());
+      });
+      await page.goto("/login");
+      await page.getByLabel("Correo electrónico").fill(email);
+      await page.getByLabel("Contraseña").fill(password);
+      // Click 1: real login, never seed a session or switch workspace by RPC.
+      await page.getByRole("button", { name: "Iniciar sesión", exact: true }).click();
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
+      const main = page.getByRole("main");
+      await expect(main.getByRole("heading", { level: 1, name: "Panorama", exact: true })).toBeVisible();
+      const organization = page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true });
+      await expect(organization).toHaveValue(fixture.organization_id);
+      await expect(organization.locator('option:not([value=""])')).toHaveCount(1);
+      const summary = main.getByRole("complementary", { name: "Lectura de la selección" });
+      try {
+        await expect(summary).toContainText(formatCount(OFFICIAL_VOTES + 3_333), { timeout: 20_000 });
+      } catch (error) {
+        // Electoral context and render state only: no storage, credentials or rows.
+        try {
+          const facts = await page.evaluate(() => {
+            const keys = ["electionId", "categoryId", "distritoCode", "seccionCode", "sourceKind"];
+            const params = new URL(window.location.href).searchParams;
+            const bar = document.querySelector('[aria-label="Contexto electoral"]');
+            const aside = Array.from(document.querySelectorAll("aside")).find(node => node.getAttribute("aria-label") === "Lectura de la selección" || node.hasAttribute("aria-labelledby"));
+            return {
+              pathname: window.location.pathname,
+              searchParams: Object.fromEntries(keys.map(key => [key, params.getAll(key)])),
+              selectedOptions: Array.from(bar?.querySelectorAll("select") ?? []).map(select => ({
+                label: select.getAttribute("aria-label"), value: select.value, disabled: select.disabled, options: select.options.length,
+              })),
+              summaryPresent: !!aside,
+              summaryTerms: Array.from(aside?.querySelectorAll("dt") ?? []).map(node => node.textContent),
+              summaryStatus: Array.from(aside?.querySelectorAll('[role="alert"], [role="status"]') ?? []).map(node => node.textContent),
+              pageAlerts: Array.from(document.querySelectorAll('main [role="alert"]')).map(node => node.textContent?.slice(0, 160)),
+            };
+          });
+          await writeFile(test.info().outputPath("e2e-facts-first-run-panorama.json"), JSON.stringify(facts));
+        } catch { /* Diagnostics must not replace the original failure. */ }
+        throw error;
+      }
+      await expect(summary).not.toContainText(formatCount(OFFICIAL_VOTES + 3_333 + FISCALIZACION_VOTES));
+      // Click 2: consume Panorama's real scoped URL, not a constructed deep link.
+      await main.getByRole("link", { name: "Explorar resultados", exact: true }).click();
+      await expect(page).toHaveURL(/\/drilldown\?/);
+      const query = new URL(page.url()).searchParams;
+      expect(query.get("distritoCode")).toBe("02");
+      expect(query.get("seccionCode")).toBe("027");
+      expect(query.get("level")).toBe("seccion");
+      expect(query.get("sourceKind")).not.toBe("fiscalizacion");
+      const inspector = main.getByRole("region", { name: "Detalle territorial" });
+      await expect(inspector).toContainText("Rosales");
+      await expect(inspector).toContainText(formatCount(OFFICIAL_VOTES + 3_333));
+      await expect(inspector).not.toContainText(formatCount(OFFICIAL_VOTES + 3_333 + FISCALIZACION_VOTES));
+      // Click 3: visible desktop navigation opens the configured municipal results.
+      await page.getByRole("navigation", { name: "principal", exact: true }).getByRole("link", { name: "Municipal", exact: true }).click();
+      await expect(page).toHaveURL(new URL("/municipal", baseURL).toString());
+      await expect(main.getByRole("heading", { name: "Coronel Rosales", level: 1, exact: true })).toBeVisible();
+      const exact = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" });
+      await expect(exact.getByRole("cell", { name: formatCount(OFFICIAL_VOTES), exact: true })).toBeVisible();
+      await expect(exact).not.toContainText(formatCount(FISCALIZACION_VOTES));
+      expect(workspaceSwitches).toEqual([]);
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      try { await context?.close(); } catch (error) { failures.push(error); }
+      if (fixture) {
+        const cleanup = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture });
+        if (cleanup.error || cleanup.data?.cleaned !== true) failures.push(new Error("first-run organization cleanup failed"));
+      }
+      const deleted = await admin.auth.admin.deleteUser(userId);
+      if (deleted.error) failures.push(new Error("first-run user cleanup failed"));
+    }
+    if (failures.length) throw new AggregateError(failures, "first-run journey or owned cleanup failed");
+  });
+});
 
 // Controlled circuit RPC, real authorized page/loader and checksum-pinned geometry.
 // The existing municipal fixture owns the exact Rosales scope used by Panorama.

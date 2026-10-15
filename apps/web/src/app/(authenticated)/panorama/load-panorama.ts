@@ -1,4 +1,5 @@
 import { profileServerSpan } from "@/lib/workspace/profile-server";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { serializeElectoralContext } from "@/lib/context/url";
@@ -24,6 +25,9 @@ export function loadPanorama(): Promise<PanoramaData> {
 async function resolvePanorama(): Promise<PanoramaData> {
   const unavailable: PanoramaData = { href: "/drilldown", exclusions: [] };
   try {
+    // Next renders pages and layouts concurrently. The layout's workspace
+    // bootstrap is not a barrier for this fresh session's authorized reads.
+    await loadWorkspaceSelection();
     const repository = createAuthorizedOfficialFacetRepository();
     const context = await resolveDefaultElectoralContext(repository);
     const { electionId, categoryId, distritoCode, seccionCode } = context;

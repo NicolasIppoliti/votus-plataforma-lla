@@ -134,7 +134,7 @@ describe("focused e2e release gate", () => {
 		});
 		expect(execute).toHaveBeenCalledOnce();
 		expect(output).toBe(
-		"E2E selection: mode=focused selected=2 [e2e/root.spec.ts, e2e/comparison.spec.ts] excluded=6 [e2e/auth.spec.ts, e2e/fiscalizacion.spec.ts, e2e/provenance.spec.ts, e2e/municipal.spec.ts, e2e/review.spec.ts, e2e/simulate.spec.ts]\n",
+		"E2E selection: mode=focused selected=2 [e2e/root.spec.ts, e2e/comparison.spec.ts] excluded=7 [e2e/auth.spec.ts, e2e/fiscalizacion.spec.ts, e2e/provenance.spec.ts, e2e/municipal.spec.ts, e2e/review.spec.ts, e2e/simulate.spec.ts, e2e/mobile-evidence.spec.ts]\n",
 		);
 	});
 
@@ -160,7 +160,7 @@ describe("focused e2e release gate", () => {
 				mode: "focused",
 				selectedCount: 2,
 				selected: [...SELECTED],
-				excludedCount: 6,
+				excludedCount: 7,
 				excluded: EXPECTED_E2E_SPECS.filter((spec) => !SELECTED.includes(spec)),
 			});
 			spawnSync.mockReturnValueOnce({ error: undefined, status: 0 });
@@ -183,7 +183,7 @@ describe("focused e2e release gate", () => {
 			expect.objectContaining({ cwd: expect.any(String) }),
 		);
 		expect(output).toEqual([
-			"E2E selection: mode=focused selected=2 [e2e/root.spec.ts, e2e/comparison.spec.ts] excluded=6 [e2e/auth.spec.ts, e2e/fiscalizacion.spec.ts, e2e/provenance.spec.ts, e2e/municipal.spec.ts, e2e/review.spec.ts, e2e/simulate.spec.ts]\n",
+			"E2E selection: mode=focused selected=2 [e2e/root.spec.ts, e2e/comparison.spec.ts] excluded=7 [e2e/auth.spec.ts, e2e/fiscalizacion.spec.ts, e2e/provenance.spec.ts, e2e/municipal.spec.ts, e2e/review.spec.ts, e2e/simulate.spec.ts, e2e/mobile-evidence.spec.ts]\n",
 		]);
 	});
 
@@ -192,7 +192,7 @@ describe("focused e2e release gate", () => {
 		mode: "focused",
 		selectedCount: 2,
 		selected: [...SELECTED],
-		excludedCount: 6,
+		excludedCount: 7,
 		excluded: EXPECTED_E2E_SPECS.filter((spec) => !SELECTED.includes(spec)),
 	});
 		expect(() => assertFocusedGateReport(PASSED, "passed", SELECTED)).not.toThrow();
@@ -215,7 +215,7 @@ describe("focused e2e release gate", () => {
 	).toThrow("spec inventory mismatch");
 	});
 
-	it("keeps the full gate bound to all eight canonical specs", () => {
+	it("keeps the full gate bound to all nine canonical specs", () => {
 		const plan = createReleaseGatePlan(RELEASE_GATE_MODE.FULL);
 		expect(plan.selectedSpecs).toEqual(EXPECTED_E2E_SPECS);
 	});

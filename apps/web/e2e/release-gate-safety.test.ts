@@ -1,5 +1,10 @@
 import { chromium } from "@playwright/test";
 
+it("includes mobile screenshot evidence in the mandatory gate inventory", () => {
+  expect(EXPECTED_E2E_SPECS).toContain("e2e/mobile-evidence.spec.ts");
+  expect(EXPECTED_E2E_SPECS).toHaveLength(9);
+});
+
 it("sole-organization login seeds PASO through its matching ownership variant", () => {
   const source = readFileSync(new URL("./provenance.spec.ts", import.meta.url), "utf8");
   const journey = source.slice(source.indexOf('test("sole organization login'));
@@ -3204,7 +3209,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(17);
+		expect(actionReferences).toHaveLength(18);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});
@@ -3308,14 +3313,14 @@ describe("base contracts", () => {
 			["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_"),
 		);
 	});
-	it("accepts only the exact eight-pass inventory", () => {
+	it("accepts only the exact nine-pass inventory", () => {
 		expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
 		expect(() => assertGateReport([], "passed")).toThrow("discovered 0 tests");
 		expect(() =>
 			assertGateReport([{ ...PASSED[0]!, spec: "e2e/other.spec.ts" }], "passed"),
 		).toThrow("spec inventory mismatch");
 		expect(() => assertGateReport(PASSED.slice(0, 4), "passed")).toThrow(
-			"discovered 4 tests; expected 8",
+			"discovered 4 tests; expected 9",
 		);
 	});
 	it.each(["skipped", "interrupted", "failed", "timedOut"] as const)(
@@ -4585,7 +4590,7 @@ describe("ReleaseGateReporter", () => {
 					mode: "focused",
 					selectedCount: 1,
 					selected: [selected],
-					excludedCount: 7,
+					excludedCount: 8,
 					excluded: EXPECTED_E2E_SPECS.filter((spec) => spec !== selected),
 				},
 			});
@@ -4597,7 +4602,7 @@ describe("ReleaseGateReporter", () => {
 			else process.env["VOTUS_E2E_SELECTED_SPECS"] = previousSelected;
 		}
 	});
-	it("aggregates nine passing test cases into the exact eight-spec receipt", async () => {
+	it("aggregates multiple passing test cases into the exact nine-spec receipt", async () => {
 		let receipt = "";
 		const errors: string[] = [];
 		const reporter = makeReporter(
