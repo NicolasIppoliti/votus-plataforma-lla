@@ -39,7 +39,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
       <li>El archivo CNE ubica locales en el circuito 0248 sin sufijo; no se asignan a subcircuitos.</li>
     </ul>
     <p>Seleccione un punto del mapa para ir al local y resaltarlo en la tabla. Con teclado, use Tab y Enter.</p>
-    <ReferenceMap reference={reference} />
+    <div className={styles.locator} data-map-kind="locator"><ReferenceMap reference={reference} /></div>
     <Legend label="Leyenda de referencia geográfica" entries={[
       { label: "Contorno de circuito de referencia CNE; sin resultados electorales", encoding: "outline" },
       { label: "Local de votación con coordenadas", encoding: "dot", color: DOT_COLOR },
@@ -47,7 +47,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
       <p>Locales sin coordenadas: {formatCount(unplotted.length)}. No se dibujan en el mapa; se incluyen en la tabla de locales.</p>
     </Legend>
     {unplotted.length > 0 ? <p>Locales sin coordenadas en el archivo CNE (listados, no dibujados): {unplotted.map((locale) => locale.name).join("; ")}.</p> : null}
-    <TableRegion label="Tabla de locales de votación CNE 2025">
+    <TableRegion mobileHint label="Tabla de locales de votación CNE 2025">
       <Table className="data-table">
         <caption>Locales de votación CNE 2025 por circuito, con mesas y ubicación</caption>
         <thead>

@@ -44,6 +44,51 @@ async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promis
   }
 }
 
+// Controlled circuit RPC, real authorized page/loader and checksum-pinned geometry.
+// The existing municipal fixture owns the exact Rosales scope used by Panorama.
+nextTest("Panorama circuit click and keyboard selection synchronize URL and exact rows (#445)", async ({ page, next }) => {
+  const origin = new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin;
+  next.onFetch(request => {
+    const url = new URL(request.url);
+    if (url.origin !== origin) return "abort";
+    if (url.pathname !== "/rest/v1/rpc/official_section_circuit_outcomes") return fetch(request, { redirect: "error" });
+    return Response.json({
+      status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion", truncated: false,
+      circuit_membership: "known", category_applicability: "district_reported_categories",
+      unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0, membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 },
+      circuits: ["00248", "00249"].map(circuito_code => ({ circuito_code, positive_total: 0, parties: [], status: "complete", counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 } })),
+    });
+  });
+  await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(new URL("/?preserved=yes", baseURL).toString());
+      const map = page.getByRole("group", { name: "Circuitos de Coronel Rosales: geometría de referencia CNE", exact: true });
+      const circuit = map.getByRole("button", { name: /^Circuito 00248:/ });
+      const table = page.getByRole("region", { name: "Circuitos disponibles para profundizar", exact: true });
+      await circuit.click();
+      await expect(page).toHaveURL(url => url.searchParams.get("selectedCircuit") === "00248" && url.searchParams.get("preserved") === "yes");
+      await expect(circuit).toHaveAttribute("aria-pressed", "true");
+      const selected = table.locator('tr[aria-selected="true"]');
+      await expect(selected).toBeVisible();
+      await expect(selected).toContainText("00248");
+      await expect(table.locator("tbody tr:visible")).toHaveCount(1);
+      await page.reload();
+      await expect(circuit).toHaveAttribute("aria-pressed", "true");
+      const other = map.getByRole("button", { name: /^Circuito 00249:/ });
+      await other.focus();
+      await other.press("Enter");
+      await expect(page).toHaveURL(/selectedCircuit=00249/);
+      await expect(selected).toContainText("00249");
+      await page.goBack();
+      await expect(selected).toContainText("00248");
+      await page.getByRole("button", { name: "Quitar selección de circuito", exact: true }).click();
+      await expect(page).toHaveURL(url => !url.searchParams.has("selectedCircuit"));
+      await expect(table.locator("tbody tr:visible")).toHaveCount(2);
+    }
+  }));
+});
+
 nextTest("retries unavailable municipal evidence with the exact configured request", async ({ page, next }) => {
   const bodies: unknown[] = [];
   const origin = new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin;
@@ -177,7 +222,13 @@ test.describe("the municipal route requires workspace-authorized official result
     }));
   });
 
-  test("test_authorized_workspace_cne_reference_circuits_and_locales_on_mobile_and_keyboard", async ({ page }) => {
+  test("test_authorized_workspace_cne_reference_circuits_and_locales_on_mobile_and_keyboard", async ({ page }, testInfo) => {
+    // Record only controlled action labels and geometry, never page/session data.
+    let action = "workspace setup";
+    let viewportWidth = 390;
+    let input = "pointer";
+    let target: string | null = null;
+    try {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(new URL("/municipal", baseURL).toString());
@@ -188,14 +239,20 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(reference.locator("circle")).toHaveCount(28);
       const places = reference.getByRole("link", { name: /^Ver local / });
       await expect(places).toHaveCount(28);
+      action = "local activation";
       for (const width of [390, 1440]) {
+        viewportWidth = width;
         await page.setViewportSize({ width, height: 844 });
         for (const keyboard of [false, true]) {
+          input = keyboard ? "keyboard" : "pointer";
+          action = "activate local";
           const place = keyboard ? places.last() : places.first();
           const href = await place.getAttribute("href");
           expect(href).toMatch(/^#cne-local-\d+$/);
+          target = href?.match(/^#cne-local-\d+$/)?.[0] ?? null;
           if (keyboard) { await place.focus(); await place.press("Enter"); }
           else await place.click();
+          action = "verify selected local";
           const selected = reference.locator(`${href}:target`);
           await expect(selected).toBeInViewport();
           await expect(selected).toBeFocused();
@@ -204,6 +261,7 @@ test.describe("the municipal route requires workspace-authorized official result
           await expect(reference.locator("tbody tr")).toHaveCount(31);
         }
       }
+      action = "verify legend";
       const legend = reference.getByRole("group", { name: "Leyenda de referencia geográfica", exact: true });
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: 900 });
@@ -221,6 +279,7 @@ test.describe("the municipal route requires workspace-authorized official result
             && element.scrollWidth <= element.clientWidth;
         })).toBe(true);
       }
+      action = "verify table keyboard scrolling";
       const tableRegion = reference.getByRole("region", { name: "Tabla de locales de votación CNE 2025" });
       await expect(tableRegion.getByRole("row")).toHaveCount(32);
       await expect(tableRegion.getByRole("cell", { name: "Sin coordenadas: no se dibuja" })).toHaveCount(3);
@@ -232,6 +291,12 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }).getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     }));
+    } catch (error) {
+      await writeFile(testInfo.outputPath("e2e-facts-cne-local-activation.json"), JSON.stringify({
+        schemaVersion: 1, action, viewportWidth, input, target,
+      }, null, 2) + "\n");
+      throw error;
+    }
   });
 
   test("test_authorized_workspace_ssr_readiness_without_javascript", async ({ page, browser }) => {
@@ -373,14 +438,14 @@ test.describe("the municipal route requires workspace-authorized official result
 
       for (const width of [1710, 1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        await expect(heading).toHaveCSS("font-size", "32px");
+        await expect(heading).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
         await expect.poll(() => main.locator(":scope > .shell-container").evaluate((element) => {
-          const workspace = element.closest(".app-shell__workspace");
-          if (!(workspace instanceof HTMLElement)) throw new Error("Municipal requires an application workspace");
-          const style = getComputedStyle(workspace);
-          const availableWidth = workspace.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-          return Math.abs(element.getBoundingClientRect().width - Math.min(1540, availableWidth));
-        }), { message: "Municipal keeps its full workspace width up to1540px" }).toBeLessThanOrEqual(1);
+          const container = element.closest("#main-content");
+          if (!(container instanceof HTMLElement)) throw new Error("Municipal requires the shared page container");
+          const style = getComputedStyle(container);
+          const availableWidth = container.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          return Math.abs(element.getBoundingClientRect().width - availableWidth);
+        }), { message: "Municipal fills the shared page container without a second gutter" }).toBeLessThanOrEqual(1);
         await expect.poll(async () => {
           const boxes = await Promise.all([selection, results, evidence].map((region) => region.evaluate((element) => {
             const { x, y, width, bottom } = element.getBoundingClientRect();

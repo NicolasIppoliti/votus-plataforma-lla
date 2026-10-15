@@ -2325,14 +2325,10 @@ def collect_national_party_keys(
     """
     records = load_manifest(manifest_path)
     local_store = LocalArchiveStore(root=local_root)
-    # NEW keys contributed by each source. This counted rows "carrying no
-    # list_id", a branch that could never fire: `iter_national_rows` excludes
-    # every row whose `agrupacion_id` is empty or `"0"` BEFORE building
-    # `list_id`, so `row.list_id` is never falsy and the counter was always
-    # zero and its report never printed. The comment justifying it was also
-    # wrong about the file -- `lista_numero` is empty throughout the 2023
-    # generales export, but `list_id` is not: it degrades to the bare
-    # `agrupacion_id`, which `iter_national_rows` documents.
+    # Positive party keys contributed by each source. Non-positive evidence
+    # intentionally has no list identity and is not a curated mapping target.
+    # `lista_numero` is empty throughout the 2023 generales export, but positive
+    # `list_id` is not: it degrades to the bare `agrupacion_id`.
     #
     # What the report was reaching for IS real and IS reachable: a source
     # contributing ZERO keys while `sources_read > 0` suppresses the
@@ -2378,6 +2374,9 @@ def collect_national_party_keys(
                 election_year=year,
                 election_round=election_round,
             ):
+                if row.vote_kind != "POSITIVO":
+                    # These are measured evidence, not party-mapping keys.
+                    continue
                 list_id = row.list_id
 
                 if list_id is None:

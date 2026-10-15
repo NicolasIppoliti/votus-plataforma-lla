@@ -2661,20 +2661,14 @@ def test_ingest_2023_generales_municipal_rows_preserves_raw_categories_and_prove
                     # verified-reuse observations are tested separately.
                     force_rebuild=True,
                 )
-                == 5
+                == 6
             )
             assert metrics.data["records_seen"] == 6
-            assert metrics.data["rows_emitted"] == 5
+            assert metrics.data["rows_emitted"] == 6
             assert metrics.data["categories"]["INTENDENTE"]["records_seen"] == 5
-            assert metrics.data["categories"]["INTENDENTE"]["rows_emitted"] == 4
+            assert metrics.data["categories"]["INTENDENTE"]["rows_emitted"] == 5
             assert metrics.data["categories"]["PRESIDENTE Y VICE"]["rows_emitted"] == 1
-            assert metrics.data["exclusions"] == {
-                "votos_tipo='NULO'": {
-                    "rows": 1,
-                    "parseable_votes": 2,
-                    "unreadable_vote_rows": 0,
-                },
-            }
+            assert metrics.data["exclusions"] == {}
             assert (
                 metrics.data["categories"]["INTENDENTE"]["exclusions"] == metrics.data["exclusions"]
             )
@@ -2683,7 +2677,7 @@ def test_ingest_2023_generales_municipal_rows_preserves_raw_categories_and_prove
                     """
                     select c.name, rr.list_id, rr.votes, rr.source_row_index,
                            rr.source_kind, rr.granularity, j.distrito_code, j.seccion_code,
-                           e.year, e.round
+                           e.year, e.round, rr.vote_kind
                     from result_row rr
                     join category c on c.id = rr.category_id
                     join jurisdiction j on j.id = rr.jurisdiction_id
@@ -2705,15 +2699,23 @@ def test_ingest_2023_generales_municipal_rows_preserves_raw_categories_and_prove
                         "027",
                         2023,
                         "generales",
+                        vote_kind,
                     )
-                    for index, category, list_id, votes in [
-                        (0, "INTENDENTE", "20132", 10),
-                        (1, "INTENDENTE", "20134", 12),
-                        (2, "INTENDENTE", "20135", 15),
-                        (3, "INTENDENTE", "20962", 3),
-                        (5, "PRESIDENTE Y VICE", "20135", 7),
+                    for index, category, list_id, votes, vote_kind in [
+                        (0, "INTENDENTE", "20132", 10, "POSITIVO"),
+                        (1, "INTENDENTE", "20134", 12, "POSITIVO"),
+                        (2, "INTENDENTE", "20135", 15, "POSITIVO"),
+                        (3, "INTENDENTE", "20962", 3, "POSITIVO"),
+                        (4, "INTENDENTE", None, 2, "NULO"),
+                        (5, "PRESIDENTE Y VICE", "20135", 7, "POSITIVO"),
                     ]
                 ]
+                cur.execute(
+                    "select vote_kind, count(*), sum(votes) from result_row "
+                    "where archive_entry_id = %s group by vote_kind order by vote_kind",
+                    (source_id,),
+                )
+                assert cur.fetchall() == [("NULO", 1, 2), ("POSITIVO", 5, 47)]
                 cur.execute(
                     "select status, source_kind, sha256, source_url "
                     "from archive_entry where id = %s",
@@ -5367,6 +5369,8 @@ def _archived_national_zip_corpus(
         f"{agrupacion_id},{lista_numero},POSITIVO,120,definitivo\n"
         "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
         "0,,EN BLANCO,4,definitivo\n"
+        "02,BUENOS AIRES,027,CORONEL ROSALES,01,Circuito 01,1,DIPUTADO NACIONAL,"
+        "0,,UNSUPPORTED,9,definitivo\n"
     )
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -6154,6 +6158,7 @@ def test_validate_curated_refuses_a_parser_row_without_list_id(
         result=SimpleNamespace(distrito="02", seccion="027"),
         category="DIPUTADO NACIONAL",
         list_id=None,
+        vote_kind="POSITIVO",
         source_row_index=7,
     )
     monkeypatch.setattr("etl.__main__.iter_national_rows", lambda *_args, **_kwargs: [malformed])
@@ -6408,9 +6413,10 @@ def test_validate_crosswalk_streams_selected_results_member_through_main(
     assert exit_code == 1
     reported = capsys.readouterr().err
     assert "unmapped jurisdiction: 02/027" in reported
+    assert "votos_tipo='EN BLANCO'" not in reported
     assert (
         "excluded 1 row(s) as out of scope for normalized list votes -- "
-        "votos_tipo='EN BLANCO': 1 rows / 4 votes"
+        "votos_tipo='UNSUPPORTED': 1 rows / 9 votes"
     ) in reported
 
 
@@ -6525,9 +6531,11 @@ def test_validate_curated_streams_selected_results_member_through_main(
     reported = capsys.readouterr().err
     assert f"unmapped party: year={election_year}" in reported
     assert f"list_id={list_id}" in reported
+    assert "list_id=None" not in reported
+    assert "votos_tipo='EN BLANCO'" not in reported
     assert (
         "excluded 1 row(s) as out of scope for normalized list votes -- "
-        "votos_tipo='EN BLANCO': 1 rows / 4 votes"
+        "votos_tipo='UNSUPPORTED': 1 rows / 9 votes"
     ) in reported
 
 

@@ -2,6 +2,14 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
+/* Native selects remain accessible; the mobile mirror exposes their full visual value. */
+.selected-value { display: none; overflow-wrap: anywhere; }
+.table-scroll-hint { display: none; }
+@media (max-width: 480px) {
+  .selected-value { display: block; font-size: .8125rem; color: var(--secondary-ink); line-height: 1.4; margin-top: 4px; }
+  .table-scroll-hint { display: block; font-size: .8125rem; color: var(--secondary-ink); margin-block: 6px; }
+}
+
 @theme inline {
   --color-command-shell: var(--shell);
   --color-command-canvas: var(--canvas);
