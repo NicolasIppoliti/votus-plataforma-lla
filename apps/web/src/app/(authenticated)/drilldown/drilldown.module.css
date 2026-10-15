@@ -228,4 +228,15 @@
   .territoryLabel > svg:last-child { display: none; }
   .mapControls { right: 8px; bottom: 48px; }
 }
+/* Issue 501 mobile */
+@media (max-width: 480px) {
+  .root { padding-top: 12px; }
+  .selectionBoundary { gap: 12px; }
+  .header { gap: 4px; margin-bottom: 0; }
+  .filters { padding-block: 8px; }
+  .filterRow { gap: 8px; }
+  .guidance { line-height: 1.35; margin-top: 6px; }
+  .filterSummary { gap: 6px; }
+  .filterSummary small { margin-top: 0; }
+}
 

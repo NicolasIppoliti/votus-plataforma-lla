@@ -1,3 +1,11 @@
+/* Issue 501 mobile */
+@media (max-width: 650px) {
+  .page .heading { margin-bottom: 12px; }
+  .page .context { padding-block: 8px; gap: 8px; }
+  .page .context strong { min-height: 0; padding: 6px 8px; }
+  .page .notice { margin-block: 8px; padding-block: 6px; line-height: 1.35; }
+  .map > section > svg { display: block; width: 100%; height: auto; max-height: none; }
+}
 .page { min-width: 0; color: var(--ink, #edf5f7); }
 .heading { margin-bottom: 26px; }
 .heading h1 { margin: 0; font-size: 34px; font-weight: 500; line-height: 1.18; letter-spacing: -.7px; }

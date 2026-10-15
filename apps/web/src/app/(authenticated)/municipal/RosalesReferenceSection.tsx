@@ -46,7 +46,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
       <p>Locales sin coordenadas: {formatCount(unplotted.length)}. No se dibujan en el mapa; se incluyen en la tabla de locales.</p>
     </Legend>
     {unplotted.length > 0 ? <p>Locales sin coordenadas en el archivo CNE (listados, no dibujados): {unplotted.map((locale) => locale.name).join("; ")}.</p> : null}
-    <TableRegion label="Tabla de locales de votación CNE 2025">
+    <TableRegion mobileHint label="Tabla de locales de votación CNE 2025">
       <Table className="data-table">
         <caption>Locales de votación CNE 2025 por circuito, con mesas y ubicación</caption>
         <thead>
