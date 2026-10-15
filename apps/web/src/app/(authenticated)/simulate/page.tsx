@@ -513,7 +513,7 @@ export default async function SimulatePage({
       <section aria-label="Cargar base oficial">
         <a href="/simulate?officialBase=2025">Cargar base oficial 2025 de Coronel Rosales</a>
         {officialBaseLoaded ? <p>Base oficial 2025 · JEBA definitivo · Concejales · argentinos y extranjeros. Positivos: 32.291; blancos: 2.150; total publicado: 34.441. Base del cociente Hare (sin blancos ni anulados): 32.291. Anulados no publicados: no se infieren como cero. El reparto usa Hare y 9 bancas por elección. Las transferencias posteriores son hipótesis, no resultados oficiales.</p> : null}
-        {officialBaseError ? <p role="alert">{officialBaseError}</p> : null}
+        {officialBaseError ? <Alert variant="unavailable">{officialBaseError}</Alert> : null}
       </section>
       <SimulationForm officialBaseLoaded={officialBaseLoaded} requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
         impact={result ? <RenewalStrip result={result}><SeatDistribution result={result} /></RenewalStrip> : null}
