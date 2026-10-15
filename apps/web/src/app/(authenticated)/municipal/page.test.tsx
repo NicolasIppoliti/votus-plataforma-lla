@@ -328,7 +328,7 @@ describe("municipal page — the real entry point", () => {
     const { default: Page } = await import("./page");
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
     expect(html).toContain("se resolvieron sin un partido curado");
-    expect(html).toContain("Por id de lista:</p><ul><li>99999: 1 filas, 4.200 votos</li>");
+    expect(html).toContain("Por id de lista:</div><ul><li>99999: 1 filas, 4.200 votos</li>");
     expect(html).not.toContain('<th scope="row">99999</th>');
   });
 
@@ -1044,7 +1044,7 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
   it("refuses an unverifiable artifact with an explicit alert and no map or table", () => {
     const html = renderToStaticMarkup(renderMunicipalView(okView, [], 2025, undefined, { ok: false, reason: "hash_mismatch" }));
     expect(html).toContain("Circuitos y locales de votación (referencia CNE 2025)");
-    expect(html).toContain('<p role="alert">No se muestra la referencia CNE: el archivo no coincide con su SHA-256 fijado.</p>');
+    expect(html).toMatch(/data-slot="alert"[^>]*data-variant="unavailable"[^>]*role="alert"[^>]*>No se muestra la referencia CNE: el archivo no coincide con su SHA-256 fijado\.<\/div>/);
     expect(html).not.toContain("<circle ");
     expect(html).not.toContain("Locales de votación CNE 2025");
     expect(html).toContain('<td class="table-cell--number">4.200</td>');

@@ -1,3 +1,4 @@
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ExactShare, OfficialInternalLists } from "@/lib/workspace/official-internal-lists";
@@ -16,7 +17,7 @@ const states: Record<string, string> = {
 
 export function InternalLists({ evidence }: { evidence: OfficialInternalLists }) {
   if (evidence.status !== "ok") return <section aria-labelledby="internas-heading"><h2 id="internas-heading">Internas</h2>
-    <p role={evidence.status === "authorization_denied" || evidence.status === "malformed" ? "alert" : "status"}>{states[evidence.status]}</p></section>;
+    <Alert variant={evidence.status === "authorization_denied" || evidence.status === "malformed" ? "denied" : "empty"}>{states[evidence.status]}</Alert></section>;
   const groups = new Map<string | null, typeof evidence.lists>();
   for (const list of evidence.lists) {
     const group = groups.get(list.canonical_party_id) ?? [];

@@ -2,6 +2,7 @@
 
 import { REFERENCE_FILL, REFERENCE_LINE, REFERENCE_STYLE, Legend } from "@/components/maps/reference-colors";
 import { useEffect, useRef, useState } from "react";
+import { Alert } from "@/components/ui/alert";
 import styles from "./drilldown.module.css";
 import { NATIONAL_REFERENCE_PATH, loadNationalReference, polarReferencePath, type ReferenceFeature } from "./national-reference-geometry";
 
@@ -88,13 +89,13 @@ export function NationalReferenceMap() {
     {!active || !feature ? <button type="button" onClick={() => { setStatus("Cargando y verificando referencia geográfica…"); setContinentalStatus("Cargando vista continental…"); setActive(true); setRetry((value) => value + 1); }}>
       {active ? "Reintentar mapa nacional" : "Mostrar referencia nacional"}
     </button> : null}
-    <p role="status">{status}</p>
+    <Alert variant="caveat">{status}</Alert>
     {active ? <div className={styles.nationalViews}>
       <section aria-labelledby="continental-heading">
         <h3 id="continental-heading">Vista continental americana</h3>
         <p>Encuadre de orientación de América continental; no incluye visualmente toda la extensión IGN.</p>
         <div ref={canvas} className={styles.nationalCanvas} aria-label="Mapa continental de referencia IGN, sin resultados electorales" />
-        <p role="status">{continentalStatus}</p>
+        <Alert variant="caveat">{continentalStatus}</Alert>
         {continentalStatus.includes("no disponible") || continentalStatus.includes("WebGL no disponible")
           ? <button type="button" onClick={() => { setContinentalStatus("Reintentando vista continental…"); setContinentalRetry((value) => value + 1); }}>Reintentar vista continental</button>
           : null}

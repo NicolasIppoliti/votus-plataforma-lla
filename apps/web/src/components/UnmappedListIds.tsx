@@ -1,3 +1,4 @@
+import { Alert } from "@/components/ui/alert";
 import type { ReactNode } from "react";
 import { formatCount } from "@/lib/format/number";
 import {
@@ -78,7 +79,7 @@ export function UnmappedListIds({
           empty list — a count of zero stated as a finding, which is what
           `describeExcluded` refuses by filtering empty tallies out. */}
       {rows === 0 ? null : (
-        <p role="alert">
+        <Alert variant="unavailable">
           {label ? `${label}: ` : ""}
           {formatCount(rows)} de {formatCount(totalRows)} filas
           {unsummable === null ? ` (${formatCount(votes)} votos)` : ""}{" "}
@@ -87,7 +88,7 @@ export function UnmappedListIds({
             : "no se pudieron resolver porque no hay una fuente de mapeo curado configurada para esta lectura"}
           . Se informan por separado, sin un partido asignado; no se descartan
           silenciosamente. Por id de lista:
-        </p>
+        </Alert>
       )}
       {rows === 0 ? null : (
         <ul>
