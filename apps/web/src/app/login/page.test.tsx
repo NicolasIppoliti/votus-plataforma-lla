@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import LoginPage from "./page";
 
-it("renders the login page as the public skip destination", () => {
-  const markup = renderToStaticMarkup(<LoginPage /> as ReactElement);
+it("renders the login page as the public skip destination", async () => {
+  const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({}) }) as ReactElement);
 
   expect(markup).toContain(
     '<main id="main-content" class="login-page" tabindex="-1">',
@@ -13,8 +13,8 @@ it("renders the login page as the public skip destination", () => {
   expect(markup).toContain("Iniciar sesión</h1>");
 });
 
-it("groups the login form with its heading and supporting guidance", () => {
-  const markup = renderToStaticMarkup(<LoginPage /> as ReactElement);
+it("groups the login form with its heading and supporting guidance", async () => {
+  const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({}) }) as ReactElement);
 
   expect(markup).toContain(
     '<section class="panel login-card" aria-labelledby="login-heading">',
@@ -28,8 +28,8 @@ it("groups the login form with its heading and supporting guidance", () => {
   );
 });
 
-it("presents Votus identity and product purpose before the protected sign-in form", () => {
-  const markup = renderToStaticMarkup(<LoginPage /> as ReactElement);
+it("presents Votus identity and product purpose before the protected sign-in form", async () => {
+  const markup = renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({}) }) as ReactElement);
 
   expect(markup).toContain('class="login-brand"');
   expect(markup).toContain('aria-label="votus."');

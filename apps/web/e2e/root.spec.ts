@@ -575,7 +575,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(drawerTrigger).toHaveAttribute("aria-expanded", "true");
     expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     await expect(closeDrawer).toBeFocused();
-    await expect(drawer).toContainText(
+    await expect(drawer).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     for (const groupLabel of [
@@ -709,7 +712,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     expect(
       Math.abs(topbarContainer!.x - contentContainer!.x),
     ).toBeLessThanOrEqual(1);
-    await expect(sidebar).toContainText(
+    await expect(sidebar).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     await expect(

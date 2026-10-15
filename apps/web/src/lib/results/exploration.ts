@@ -111,7 +111,12 @@ function parseTextOptions(value: unknown): FacetOption[] {
     return { code: stringField(option, "code"), name, nameStatus, nameVariantCount };
   });
 }
-export function formatFacetOptionLabel(option: FacetOption): string {
+export function formatFacetOptionLabel(option: FacetOption, includeCode = true): string {
+  if (!includeCode) {
+    if (option.nameStatus === FACET_NAME_STATUS.PRESENT && option.name?.trim() && option.name !== option.code) return option.name;
+    if (option.nameStatus === FACET_NAME_STATUS.CONFLICT) return `Nombres contradictorios (${option.nameVariantCount} variantes)`;
+    return "Nombre no disponible · unidad sin correspondencia nominal";
+  }
   // Some sources name a unit by its own code; repeating it reads as "00248 — 00248".
   if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return option.name === option.code ? option.code : `${option.code} — ${option.name}`;
   if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — nombre no disponible`;

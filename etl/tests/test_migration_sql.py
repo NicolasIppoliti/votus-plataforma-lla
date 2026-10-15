@@ -1262,6 +1262,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
     sequence = (
         "\\ir ../migrations/down/20261015300000_non_positive_vote_kinds.down.sql",
         "\\ir ../migrations/down/20261015200000_projection_receipt.down.sql",
+        "\\ir ../migrations/down/20261015000000_bootstrap_sole_organization.down.sql",
         "\\ir ../migrations/down/20261014000000_upgrade_historical_review_contexts.down.sql",
         "\\ir ../migrations/down/20261013000000_official_section_circuit_outcomes.down.sql",
         "\\ir ../migrations/down/20261012000000_official_section_completeness.down.sql",
@@ -1364,6 +1365,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "\\ir ../migrations/20261012000000_official_section_completeness.sql",
         "\\ir ../migrations/20261013000000_official_section_circuit_outcomes.sql",
         "\\ir ../migrations/20261014000000_upgrade_historical_review_contexts.sql",
+        "\\ir ../migrations/20261015000000_bootstrap_sole_organization.sql",
         "\\ir ../migrations/20261015200000_projection_receipt.sql",
         "\\ir ../migrations/20261015300000_non_positive_vote_kinds.sql",
     )
@@ -1380,7 +1382,7 @@ def test_results_exploration_release_proof_rolls_back_then_reapplies_in_order() 
         "result_row_non_official_scope_idx",
         "result_row_official_district_geography_idx",
         "result_row_official_district_scope_idx",
-        "74 as migration_inventory_count",
+        "75 as migration_inventory_count",
         "20261014000000-down,20261013000000-down,20261012000000-down,20261011000000-down,20260923000001-down",
         "20260923000001-up,20261011000000-up,20261012000000-up,20261013000000-up,20261014000000-up",
         "0037 internal facets base remained directly executable",
