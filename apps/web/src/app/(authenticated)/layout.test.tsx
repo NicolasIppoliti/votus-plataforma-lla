@@ -13,6 +13,7 @@ vi.mock("@/lib/workspace/official-facets", () => ({ createAuthorizedOfficialFace
 vi.mock("@/lib/workspace/official-drilldown-evidence", () => ({ loadAuthorizedOfficialDrilldownEvidence: panorama.evidence }));
 panorama.facets.mockRejectedValue(new Error("unavailable"));
 const navigation = vi.hoisted(() => ({ pathname: "/", query: "" }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-votus-return-to": "/compare?electionId=2025" }) }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 const supabase = vi.hoisted(() => ({
   auth: {
@@ -127,7 +128,7 @@ it.each(["expired", "revoked"])("redirects an ended %s workspace session before 
   vi.mocked(redirect).mockImplementationOnce(() => { throw redirected; });
   try {
     await expect(renderLayout("/")).rejects.toBe(redirected);
-    expect(redirect).toHaveBeenLastCalledWith("/login");
+    expect(redirect).toHaveBeenLastCalledWith("/login?returnTo=%2Fcompare%3FelectionId%3D2025");
   } finally {
     vi.mocked(redirect).mockReset();
   }
