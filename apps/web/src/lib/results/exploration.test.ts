@@ -21,6 +21,23 @@ function rpcClient(results: Record<string, unknown>) {
   } } };
 }
 
+describe("names without administrative codes", () => {
+  it("keeps known names separate from code-bearing selector labels", () => {
+    const option = { code: "027", name: "Coronel Rosales", nameStatus: "present" as const, nameVariantCount: 1 };
+    expect(formatFacetOptionLabel(option, false)).toBe("Coronel Rosales");
+    expect(formatFacetOptionLabel(option)).toBe("027 — Coronel Rosales");
+  });
+  it.each([
+    { code: "999", name: null, nameStatus: "missing" as const, nameVariantCount: 0 },
+    { code: "999", name: "999", nameStatus: "present" as const, nameVariantCount: 1 },
+  ])("does not turn an unmapped or code-only unit into a name", option => {
+    expect(formatFacetOptionLabel(option, false)).toBe("Nombre no disponible · unidad sin correspondencia nominal");
+  });
+  it("surfaces conflicting names without choosing one or exposing a code", () => {
+    expect(formatFacetOptionLabel({ code: "999", name: null, nameStatus: "conflict", nameVariantCount: 2 }, false)).toBe("Nombres contradictorios (2 variantes)");
+  });
+});
+
 describe("official results exploration repository", () => {
   it("loads source-backed selectors from a cold start", async () => {
     const fake = rpcClient({ results_exploration_facets: {
@@ -70,7 +87,7 @@ describe("official results exploration repository", () => {
       { code: "03", name: null, nameStatus: "missing", nameVariantCount: 0 },
       { code: "04", name: null, nameStatus: "conflict", nameVariantCount: 2 },
     ]);
-    expect(result.distritos.map(formatFacetOptionLabel)).toEqual([
+    expect(result.distritos.map(option => formatFacetOptionLabel(option))).toEqual([
       "02 — Buenos Aires", "03 — nombre no disponible", "04 — nombres contradictorios (2 variantes)",
     ]);
   });

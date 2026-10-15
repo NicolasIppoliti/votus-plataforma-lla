@@ -22,6 +22,10 @@ it("renders the root operational briefing with evidence and review routes", asyn
   );
 
   expect(markup).toContain("<h1>Panorama</h1>");
+  const header = markup.match(/<header[^>]*><h2>Coronel Rosales<\/h2>[\s\S]*?<\/header>/)?.[0];
+  expect(header).toContain("Buenos Aires");
+  expect(header).not.toMatch(/027|02/);
+  expect(markup).toMatch(/<details><summary>Códigos administrativos<\/summary>[\s\S]*?Distrito 02 · Sección 027[\s\S]*?<\/details>/);
   expect(markup).toContain("Una lectura del territorio. Un punto de partida para el análisis.");
   expect(markup).toContain("Resultados oficiales");
   expect(markup).toContain("Otros alcances · flujos separados");

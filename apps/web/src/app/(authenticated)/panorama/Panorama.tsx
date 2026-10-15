@@ -1,6 +1,7 @@
 "use client";
 
 import { Alert } from "@/components/ui/alert";
+import { RosalesAdministrativeDetails, RosalesTerritoryName } from "@/components/RosalesAdministrativeContext";
 import { granularityLabel } from "@/lib/results/granularity";
 import { useState } from "react";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
@@ -35,7 +36,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <section className={styles.workbench} aria-label="Panorama territorial">
       <div className={styles.map}>
         <nav className={styles.trail} aria-label="Recorrido territorial">{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <button key={item} type="button" aria-current={item === territory ? "location" : undefined} onClick={() => setTerritory(item)}>{item}</button>)}</nav>
-        <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? "Sección 027 · distrito 02" : "Sin agregado autorizado en Panorama"}</p></header>
+        <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? <RosalesTerritoryName /> : "Sin agregado autorizado en Panorama"}</p></header>
+        {rosales && <RosalesAdministrativeDetails />}
         {rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
