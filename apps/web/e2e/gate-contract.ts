@@ -24,6 +24,7 @@ export const EXPECTED_E2E_SPECS = [
 	"e2e/review.spec.ts",
 	"e2e/root.spec.ts",
 	"e2e/simulate.spec.ts",
+	"e2e/mobile-evidence.spec.ts",
 ] as const;
 const ACCEPTED_TEST_STATUS = {
 	PASSED: "passed",

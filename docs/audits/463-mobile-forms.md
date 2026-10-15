@@ -15,6 +15,29 @@ El epic #474 exige auditar ambos anchos. #462 ya resolvió el apilado de los sei
 selectores de Comparación; este trabajo conserva esa entrega y amplía la revisión
 al resto de los formularios y controles de selección, incluso fuera de `<form>`.
 
+## Obtener evidencia visual desde CI
+
+`apps/web/e2e/mobile-evidence.spec.ts` forma parte del inventario obligatorio del
+release gate (nueve specs). En el job `e2e-release` de **Release gates**, usa el
+mismo fixture autorizado de revisión que `root.spec.ts`, la base descartable con
+datos sintéticos y el recorrido de escenario de `simulate.spec.ts`. No requiere
+credenciales locales ni habilita capturas globales o trazas autenticadas.
+
+Después de ejecutar CI, abrir el run en GitHub Actions y descargar el artifact
+**mobile-evidence-463** desde **Artifacts**. Se conserva durante **14 días**;
+contiene `e2e-evidence-463-*.png` a **320×844**, de página completa: login anónimo,
+las nueve rutas autenticadas de la matriz y, para cada una, drawer con selector de
+organización visible y drawer con Cuenta abierta. Los desplegables de formularios
+se abren; simulación muestra editor, transferencia y muestreo del escenario
+sintético existente. Antes de cada captura se exige ausencia de overflow horizontal
+del documento. El selector nativo se documenta visible, no como popup del sistema.
+
+El upload corre aun si falla el gate, salvo cancelación. Un artifact parcial o
+inexistente no acredita cobertura: comprobar las diez rutas y los estados del
+drawer, revisar visualmente los PNG y el resultado de los tests antes de cerrar
+#463. Esta preparación no afirma que CI haya producido ni aprobado las capturas.
+Sólo se permite ejecutar este spec en la base sintética descartable del gate.
+
 ## Hallazgos y correcciones de código
 
 - Exploración mantenía dos columnas por debajo de 768px. Ahora sus filtros usan
