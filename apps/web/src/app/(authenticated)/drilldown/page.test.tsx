@@ -53,6 +53,15 @@ const COMPLETE_SECTION = {
   seccionCode: "027",
   level: "seccion",
 };
+it.each(["fiscalizacion", "unknown"])("rejects workflow source %s before querying official data", async sourceKind => {
+  mocks.facets.mockResolvedValue(FACETS);
+  mocks.bundle.mockResolvedValue(stateBundle({ status: "empty", source_kind: "official", ...authorized }));
+  const html = renderToStaticMarkup(await DrilldownPage({ searchParams: Promise.resolve({ ...COMPLETE_SECTION, sourceKind }) }) as ReactElement);
+  expect(mocks.facets).not.toHaveBeenCalled();
+  expect(mocks.bundle).not.toHaveBeenCalled();
+  expect(html).toContain("la exploración admite solo fuentes oficiales");
+});
+
 const authorized = { authorization_status: "authorized", truncated: false };
 const audit = [{ kind: "official", rows: 2, votes: 300 }];
 const exclusions = [{ kind: "fiscalizacion", rows: 1, votes: 20, source_url: "private" }];

@@ -520,6 +520,11 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
     return refusalPage(<>Se rechazó la solicitud: los parámetros heredados {legacyKeys.join(", ")} ya no están permitidos.</>);
   }
 
+  const sourceKind = stringParam(params, "sourceKind") ?? "official";
+  if (sourceKind !== "official") {
+    return refusalPage("Se rechazó la solicitud: la exploración admite solo fuentes oficiales.");
+  }
+
   const rawLevel = stringParam(params, "level");
   const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel);
   if (rawLevel && !level) {
