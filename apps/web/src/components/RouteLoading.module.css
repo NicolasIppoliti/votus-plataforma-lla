@@ -1,0 +1,23 @@
+.root {
+  display: grid;
+  gap: 1rem;
+}
+
+.block {
+  border-radius: 0.5rem;
+  background: var(--surface-muted);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.header { height: 4.5rem; }
+.filters { height: 3rem; }
+.map { height: min(28rem, 55vh); }
+.table { height: 14rem; }
+
+@keyframes pulse {
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block { animation: none; }
+}
