@@ -6,6 +6,7 @@ import {
 import { circuitColor } from "@/components/maps/reference-colors";
 import { formatCount } from "@/lib/format/number";
 import "./scenarios.css";
+import { Alert } from "@/components/ui/alert";
 
 const REFUSAL_MESSAGE: Record<ScenarioRefusal, string> = {
   missing: "El archivo de escenarios no está disponible.",
@@ -95,7 +96,7 @@ export default async function ScenariosPage() {
     return (
       <main className="scenarios-page">
         <PageHeader />
-        <p role="alert">{REFUSAL_MESSAGE[result.reason]} No se muestran escenarios.</p>
+        <Alert variant="unavailable">{REFUSAL_MESSAGE[result.reason]} No se muestran escenarios.</Alert>
       </main>
     );
   }
@@ -110,9 +111,9 @@ export default async function ScenariosPage() {
         Concejales de {artifact.territory.name}, renovación de {artifact.seats_per_renewal} bancas,
         a partir de los resultados definitivos {artifact.base_year}.
       </p>
-      <p role="status" className="scenarios-page__status">
+      <Alert variant="caveat" className="scenarios-page__status">
         Transferencias: <strong>{artifact.status.label}</strong>. Son supuestos, no un pronóstico.
-      </p>
+      </Alert>
       <section aria-labelledby="scenarios-backtest">
         <h2 id="scenarios-backtest">Por qué no están validados</h2>
         <p>
