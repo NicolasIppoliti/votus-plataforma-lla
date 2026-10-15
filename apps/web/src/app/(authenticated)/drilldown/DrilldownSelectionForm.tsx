@@ -146,8 +146,11 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
           <div className={styles.filterSummary}><SlidersHorizontal xmlns={undefined} aria-hidden="true" size={18} /><span>Alcance fijo<small>La cámara no cambia los resultados</small></span></div>
         </div>
       </form>
-      <p id="party-highlight-note" className={styles.guidance}>Agrupación sin resaltado: se conservan todas las identidades, incluidas las listas sin mapear. Los resultados se actualizan al cambiar la selección.</p>
-      {showEvidence ? notes : null}
+      <details className={styles.selectionNotes}>
+        <summary>Notas de selección y exclusiones</summary>
+        <p id="party-highlight-note" className={styles.guidance}>Agrupación sin resaltado: se conservan todas las identidades, incluidas las listas sin mapear. Los resultados se actualizan al cambiar la selección.</p>
+        {showEvidence ? notes : null}
+      </details>
     </section>
     {showEvidence ? children : <section className={styles.state}>
       <p role="status" aria-live="polite">Actualizando resultados… La evidencia se mostrará cuando la selección esté verificada.</p>
