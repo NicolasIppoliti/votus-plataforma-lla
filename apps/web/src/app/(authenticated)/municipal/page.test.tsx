@@ -300,6 +300,17 @@ describe("municipal page — the real entry point", () => {
     expect(html).not.toContain("<svg viewBox=\"0 0 300 200\"");
   });
 
+  it("selects 2023 from shared context and keeps the switch on refusal", async () => {
+    process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+    process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+    authorizedEvidenceState = { status: "empty" };
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "e-2023", categoryId: "c-intendente", sourceKind: "official", distritoCode: "02", seccionCode: "027" }) })) as ReactElement);
+    expect(loadMunicipalOfficialEvidence).toHaveBeenCalledWith(2023);
+    expect(html).toContain("INTENDENTE");
+    expect(html).toContain('aria-label="Elección municipal"');
+  });
+
   it("selects the authorized 2023 provisional ballot and displays its raw category", async () => {
     process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
     process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
@@ -359,6 +370,8 @@ describe("municipal page — the real entry point", () => {
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
     expect(html).not.toContain("4200");
     expect(html).not.toContain("153 mesas");
+    expect(html).toContain('aria-label="Elección municipal"');
+    expect(html).toContain("Municipal (Cuerpo municipal (rótulo DINE: INTENDENTE))");
     if (status === "unavailable") expect(html).toContain('href="/municipal?year=2023"');
   });
 
@@ -576,7 +589,9 @@ describe("municipal page — the real entry point", () => {
         for (const params of [
           { electionId: ["2025-municipal", "2025-municipal"] },
           { electionId: "other-election" }, { unexpected: "x" },
-          { jurisdictionId: "j-027" }, { categoryId: "c-concejales" },
+          { sourceKind: "fiscalizacion" }, { distritoCode: "027" },
+          { distritoCode: "02", seccionCode: "028" }, { mesaCode: "1" },
+          { jurisdictionId: "j-027" }, { categoryId: "other-category" },
           { partyJurisdiction: "national" }, { partyCategory: "CONCEJALES" },
         ]) {
           const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve(params) })) as ReactElement);
