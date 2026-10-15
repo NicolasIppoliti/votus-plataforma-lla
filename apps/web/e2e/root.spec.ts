@@ -22,10 +22,13 @@ test("authenticated routes share page gutter and title scale", async ({ page }) 
       await expect(title).toHaveCSS("line-height", width < 768 ? "33.6px" : "38.4px");
       const geometry = await title.evaluate(node => {
         const box = node.getBoundingClientRect();
+        // Simulation reserves desktop header space for its scenario summary.
+        // The title must start at the page gutter, not fill that reserved space.
+        const pageBox = node.closest("main")!.getBoundingClientRect();
         const container = document.getElementById("main-content")!;
         const shell = container.getBoundingClientRect();
         const style = getComputedStyle(container);
-        return { left: box.left, right: box.right, expectedLeft: shell.left + parseFloat(style.paddingLeft), expectedRight: shell.right - parseFloat(style.paddingRight) };
+        return { left: box.left, right: pageBox.right, expectedLeft: shell.left + parseFloat(style.paddingLeft), expectedRight: shell.right - parseFloat(style.paddingRight) };
       });
       expect(Math.abs(geometry.left - geometry.expectedLeft), route).toBeLessThan(1);
       expect(Math.abs(geometry.right - geometry.expectedRight), route).toBeLessThan(1);
