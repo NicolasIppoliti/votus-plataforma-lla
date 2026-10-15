@@ -142,7 +142,7 @@ def _result_record(*, archive_entry_id: str, source_kind: str = "official") -> R
     )
 
 
-def test_load_result_rows_copies_all_eleven_fields_without_committing() -> None:
+def test_load_result_rows_copies_all_twelve_fields_without_committing() -> None:
     conn = _RecordingConnection()
     record = _result_record(archive_entry_id="entry-1")
 
@@ -169,6 +169,7 @@ def test_load_result_rows_copies_all_eleven_fields_without_committing() -> None:
             record.archive_entry_id,
             record.source_row_index,
             record.mesa_tipo,
+            record.vote_kind,
         )
     ]
     assert conn.commit_calls == 0
@@ -336,7 +337,8 @@ def test_load_result_rows_with_rls_and_no_bypass(pg_conn) -> None:
         cur.execute("""create temp table result_row (
             election_id text, jurisdiction_id text, category_id text, granularity text,
             requested_granularity text, list_id text, votes integer check (votes >= 0),
-            source_kind text, archive_entry_id text, source_row_index integer, mesa_tipo text
+            source_kind text, archive_entry_id text, source_row_index integer, mesa_tipo text,
+            vote_kind text not null default 'POSITIVO'
         )""")
         cur.execute("alter table result_row enable row level security")
         cur.execute("alter table result_row force row level security")
@@ -359,8 +361,8 @@ def test_load_result_rows_with_rls_and_no_bypass(pg_conn) -> None:
             == 1
         )
     with pg_conn.cursor() as cur:
-        cur.execute("select votes, mesa_tipo from result_row")
-        assert cur.fetchall() == [(12, None)]
+        cur.execute("select votes, mesa_tipo, vote_kind from result_row")
+        assert cur.fetchall() == [(12, None, "POSITIVO")]
     with pytest.raises(psycopg.errors.InsufficientPrivilege), pg_conn.transaction():
         load_result_rows(
             pg_conn,

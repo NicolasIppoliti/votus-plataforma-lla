@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
 import SessionMonitor from "@/components/SessionMonitor";
 import AuthenticatedLayout from "./layout";
+import { loadContextOptions } from "./context-actions";
 import HomePage from "./(home)/page";
 import { OperationalBriefing as OperationalBriefingPage } from "./OperationalBriefing";
 
@@ -12,7 +13,7 @@ const panorama = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));
 vi.mock("@/lib/workspace/official-facets", () => ({ createAuthorizedOfficialFacetRepository: () => ({ facets: panorama.facets }) }));
 vi.mock("@/lib/workspace/official-drilldown-evidence", () => ({ loadAuthorizedOfficialDrilldownEvidence: panorama.evidence }));
 panorama.facets.mockRejectedValue(new Error("unavailable"));
-const navigation = vi.hoisted(() => ({ pathname: "/" }));
+const navigation = vi.hoisted(() => ({ pathname: "/", query: "" }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 const supabase = vi.hoisted(() => ({
   auth: {
@@ -23,6 +24,7 @@ const supabase = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
   usePathname: () => navigation.pathname,
+  useSearchParams: () => new URLSearchParams(navigation.query),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
@@ -70,6 +72,40 @@ it("stretches the desktop rail with the full document rather than fixing it to t
   expect(css).toMatch(/\.app-shell\s*\{[^}]*display: grid;[^}]*grid-template-columns: 218px minmax\(0, 1fr\);/);
   expect(css).toMatch(/\.app-shell > \.situation-sidebar\s*\{[^}]*align-self: stretch;/);
   expect(css).not.toMatch(/\.situation-sidebar\s*\{[^}]*position: fixed;/);
+});
+
+it.each(["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"])("renders electoral context through the real layout on %s", async (path) => {
+  const markup = await renderLayout(path);
+  expect(markup).toContain('aria-label="Contexto electoral"');
+  for (const label of ["Territorio", "Elección", "Categoría", "Fuente"]) expect(markup).toContain(label);
+  expect(markup).toContain('value="official" selected=""');
+});
+
+it.each(["/scenarios", "/evidencia", "/review", "/simulate-other"])("omits context on non-data route %s", async path => {
+  expect(await renderLayout(path)).not.toContain('aria-label="Contexto electoral"');
+});
+it("only displays fiscalización when explicitly requested in the URL", async () => {
+  navigation.query = "sourceKind=fiscalizacion";
+  try {
+    const markup = await renderLayout("/fiscalizacion");
+    expect(markup).toContain('data-source="fiscalizacion"');
+    expect(markup).toContain('value="fiscalizacion" selected=""');
+    expect(markup).toContain("No se combina con resultados oficiales.");
+  } finally { navigation.query = ""; }
+});
+it("rejects invalid source rather than selecting fiscalización", async () => {
+  navigation.query = "sourceKind=other";
+  try { expect(await renderLayout("/municipal")).toContain("Contexto inválido"); }
+  finally { navigation.query = ""; }
+});
+
+it("loads only authorized facets for URL context and fails closed", async () => {
+  const facets = { elections: [], categories: [], distritos: [], secciones: [], circuitos: [], establecimientos: [], mesas: [], availableLevels: [] };
+  panorama.facets.mockResolvedValueOnce(facets);
+  expect(await loadContextOptions("electionId=authorized-election&sourceKind=fiscalizacion")).toEqual({ context: { electionId: "authorized-election", sourceKind: "fiscalizacion" }, facets });
+  expect(panorama.facets).toHaveBeenLastCalledWith({ electionId: "authorized-election", sourceKind: "fiscalizacion" });
+  expect(await loadContextOptions("electionId=unauthorized-election")).toBeNull();
+  expect(await loadContextOptions("sourceKind=unknown")).toBeNull();
 });
 
 it("mounts exactly one session monitor at the shared authenticated entry point", async () => {

@@ -18,6 +18,7 @@ const exceptions: Record<string, string[]> = {
   // Successful authorized-result scope, not an unavailable-result box.
   "municipal/page.tsx": ['<p role="status">'],
   // Pending/loading announcements suppress stale evidence while requests run.
+  "ElectoralContextBar.tsx": ['<p role="status">'],
   "evidencia/EvidenceContext.tsx": ['<section className={styles.notice} role="status">'],
   "evidencia/loading.tsx": ['<section className={styles.notice} role="status">'],
   // Completeness metadata alongside the authorized evidence, not a refusal box.

@@ -408,6 +408,7 @@ class ResultRowRecord:
     # Phase 16a: `NATIVOS` | `EXTRANJEROS` | `None` (source column absent or
     # row not at mesa granularity) -- see migration 0011.
     mesa_tipo: str | None = None
+    vote_kind: str = "POSITIVO"
 
 
 def upsert_election(conn, *, year: int, round_: str) -> str:
@@ -973,7 +974,7 @@ class ResultRowsReplacement:
         staging = f"pg_temp.{self._staging_table}"
         columns = """election_id, jurisdiction_id, category_id, granularity,
             requested_granularity, list_id, votes, source_kind,
-            archive_entry_id, source_row_index, mesa_tipo"""
+            archive_entry_id, source_row_index, mesa_tipo, vote_kind"""
         with self.conn.cursor() as cur:
             if not self._staging_created:
                 cur.execute(
@@ -988,7 +989,7 @@ class ResultRowsReplacement:
                     election_id, jurisdiction_id, category_id, granularity,
                     requested_granularity,
                     list_id, votes, source_kind,
-                    archive_entry_id, source_row_index, mesa_tipo
+                    archive_entry_id, source_row_index, mesa_tipo, vote_kind
                 ) from stdin
                 """
             ) as copy:
@@ -1006,6 +1007,7 @@ class ResultRowsReplacement:
                             record.archive_entry_id,
                             record.source_row_index,
                             record.mesa_tipo,
+                            record.vote_kind,
                         )
                     )
             # INSERT, not COPY, must cross the target's RLS/constraint boundary.

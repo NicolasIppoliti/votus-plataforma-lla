@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { SourceDisclaimer } from "@/components/SourceDisclaimer";
+import "./page-container.css";
+import { ElectoralContextBar } from "./ElectoralContextBar";
 
 interface ApplicationShellProps {
   sidebar: ReactNode;
@@ -17,6 +19,7 @@ export function ApplicationShell({
       {sidebar}
       <div className="app-shell__workspace">
         {topbar}
+        <Suspense><ElectoralContextBar /></Suspense>
         <div className="shell-container app-content" id="main-content" tabIndex={-1}>
           {children}
         </div>

@@ -44,6 +44,33 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if (cleanupError) throw cleanupError; return outcome.value;
 }
 test.describe("authorized official comparison", () => {
+  for (const width of [1440, 390]) {
+    test(`selection survives Panorama → Exploración → Comparación at ${width}px (#442)`, async ({ page }) => {
+      await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async () => {
+        await page.setViewportSize({ width, height: 1000 });
+        const context = new URLSearchParams({
+          electionId: identity.electionIds[0]!, categoryId: identity.categoryId, sourceKind: "official",
+          distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+          bElectionId: identity.electionIds[1]!, bCategoryId: identity.categoryId,
+        });
+        await page.goto(new URL(`/?${context}`, baseURL).toString());
+        await page.getByRole("main").getByRole("link", { name: "Explorar resultados", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/drilldown" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && url.searchParams.get("level") === "seccion");
+        await expect(page.getByRole("main").getByRole("table").first()).toBeVisible();
+        const navigation = width === 390
+          ? page.getByRole("dialog", { name: "Navegación principal" }).getByRole("navigation", { name: "principal", exact: true })
+          : page.locator(".app-shell > aside.situation-sidebar").getByRole("navigation", { name: "principal", exact: true });
+        if (width === 390) await page.getByRole("button", { name: "Abrir navegación" }).click();
+        await navigation.getByRole("link", { name: "Comparación", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/compare" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && !url.searchParams.has("level"));
+        await expect(page.getByRole("main").getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true })).toHaveValue(identity.electionIds[0]!);
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue(identity.seccionCode);
+      }));
+    });
+  }
+
   // A changed frame alone can be inertia or a WebGL repaint, not a settled camera.
   async function settledMap(map: Locator, phase: string): Promise<{ image: Buffer; width: number; height: number }> {
     let previous: Buffer | undefined;
@@ -114,6 +141,7 @@ test.describe("authorized official comparison", () => {
       await expect(panel).toBeVisible();
       const first = panel.getByRole("article", { name: "Lado A — 2023 generales" });
       const second = panel.getByRole("article", { name: "Lado B — 2025 legislativas" });
+      await first.locator('[data-map-controls] > summary').click();
       await first.getByRole("button", { name: "Activar mapa interactivo de Lado A — 2023 generales" }).click();
       await expect(first.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
       const firstMap = first.locator(".maplibregl-map");
@@ -132,6 +160,7 @@ test.describe("authorized official comparison", () => {
       const panned = await settledMap(firstMap, "first map after user pan");
       expectSameViewport(original, panned, "first pan");
       expect(panned.image.equals(original.image), "user pan did not change the settled map view").toBe(false);
+      await second.locator('[data-map-controls] > summary').click();
       await second.getByRole("button", { name: "Activar mapa interactivo de Lado B — 2025 legislativas" }).click();
       await expect(second.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
       await expect(secondMap.locator("canvas.maplibregl-canvas")).toBeVisible();
@@ -159,6 +188,7 @@ test.describe("authorized official comparison", () => {
       expect(alignedOccupiedGeometry(reverseLeft.raster, reverseLeft.composited, reverseRight.raster, reverseRight.composited), "first map did not inherit the second polygon geometry within one pixel").toBe(true);
       await second.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).click();
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeFocused();
+      await expect(main.locator('[data-results-for="compare-results-heading"]')).toHaveAttribute("open", "");
       await expect(main.getByRole("table")).toContainText(spatial.identity.comparisonParty!.displayName);
     }, spatial.identity), "spatial");
   });
@@ -183,6 +213,24 @@ test.describe("authorized official comparison", () => {
       const articles = [panel.getByRole("article", { name: "Lado A — 2023 generales" }), panel.getByRole("article", { name: "Lado B — 2025 legislativas" })];
       for (const width of [390, 320]) {
         await page.setViewportSize({ width, height: 844 });
+        const selectors = page.locator('form[action="/compare"] select');
+        let previousBottom = 0;
+        for (const selector of await selectors.all()) {
+          const box = await selector.boundingBox();
+          if (!box) throw new Error("comparison selector has no bounds");
+          expect(box.y).toBeGreaterThanOrEqual(previousBottom);
+          previousBottom = box.y + box.height;
+          const textFits = await selector.evaluate((element) => {
+            const select = element as HTMLSelectElement;
+            const style = getComputedStyle(select);
+            const context = document.createElement("canvas").getContext("2d")!;
+            context.font = style.font;
+            const textWidth = context.measureText(select.selectedOptions[0]!.text).width;
+            // Reserve native-arrow space as well as both CSS paddings.
+            return textWidth <= select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 24;
+          });
+          expect(textFits, `selected text must fit at ${width}px`).toBe(true);
+        }
         for (const article of articles) {
           await expect(article).toBeVisible();
           const box = await article.boundingBox();
@@ -195,6 +243,7 @@ test.describe("authorized official comparison", () => {
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       }
       for (const article of articles) {
+        await article.locator('[data-map-controls] > summary').click();
         const activate = article.getByRole("button", { name: /Activar mapa interactivo de Lado/ });
         await tabTo(activate, `map activation in ${await article.getAttribute("aria-label")}`);
         await expect(activate).toBeFocused();
@@ -213,6 +262,7 @@ test.describe("authorized official comparison", () => {
       await expect(select).toBeFocused();
       await page.keyboard.press("Enter");
       await expect(page.getByRole("heading", { name: "Resultados exactos" })).toBeFocused();
+      await expect(page.locator('[data-results-for="compare-results-heading"]')).toHaveAttribute("open", "");
     }, spatial.identity), "spatial");
   });
 
@@ -236,6 +286,7 @@ test.describe("authorized official comparison", () => {
       await expect(main).toContainText(spatial.identity.archiveEntryIds[0]!);
       await expect(main).toContainText(spatial.identity.archiveEntryIds[1]!);
       await expect(main).toContainText("SHA-256");
+      await panel.getByRole("article", { name: "Lado A — 2023 generales" }).locator('[data-map-controls] > summary').click();
       const activate = panel.getByRole("article", { name: "Lado A — 2023 generales" }).getByRole("button", { name: "Activar mapa interactivo de Lado A — 2023 generales" });
       await activate.focus();
       await page.keyboard.press("Enter");
@@ -245,6 +296,39 @@ test.describe("authorized official comparison", () => {
       await expect(page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparación", exact: true })).toBeVisible();
       await expect(main).not.toContainText("999 votos");
     }, spatial.identity), "spatial");
+  });
+
+  test("corrects a figure-free mixed-granularity refusal through the retained scope selector", async ({ page }) => {
+    await withResultFixture(SPEC, seed, async () => {
+      const extra = identity.comparisonLeftOnlySection!;
+      // Extend only this scenario's owned rows, jurisdiction and archive. The
+      // existing archive-scoped fixture cleanup also owns the added row.
+      const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+      const changed = await admin.from("result_row").update({ granularity: "mesa" })
+        .eq("archive_entry_id", extra.archiveEntryId);
+      if (changed.error) throw new Error("failed to prepare refused comparison scope");
+      const added = await admin.from("result_row").insert({
+        ...seed.rows.find(row => row.election_id === identity.electionIds[1])!,
+        jurisdiction_id: extra.jurisdictionId, source_row_index: 2,
+      });
+      if (added.error) throw new Error("failed to prepare paired comparison scope");
+      await withAuthorizedComparisonWorkspace(page, async () => {
+        const params = new URLSearchParams({ electionId: identity.electionIds[0]!, bElectionId: identity.electionIds[1]!, categoryId: identity.categoryId, bCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: extra.seccionCode, sourceKind: "official" });
+        await page.goto(new URL(`/compare?${params}`, baseURL).toString());
+        const main = page.getByRole("main");
+        await expect(main).toContainText("Granularidad mixta");
+        await expect(main.locator('form[action="/compare"] select')).toHaveCount(6);
+        await expect(main.getByRole("table")).toHaveCount(0);
+        await expect(main).not.toContainText(/\d+,\d+ %|SHA-256|Procedencia oficial|Referencia oficial/);
+        const section = main.getByRole("combobox", { name: "Sección compartida", exact: true });
+        await expect(section).toHaveValue(extra.seccionCode);
+        await section.selectOption(identity.seccionCode);
+        await expect(main.getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        await expect(main).not.toContainText("Granularidad mixta");
+        await expect(section).toHaveValue(identity.seccionCode);
+        await expect(main).not.toContainText("999 votos");
+      });
+    });
   });
 
   test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {
@@ -285,6 +369,7 @@ test.describe("authorized official comparison", () => {
       const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ electionId: identity.electionIds[0], categoryId: identity.categoryId, bElectionId: identity.electionIds[1], bCategoryId: identity.categoryId, sourceKind: "official", distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
       const main = page.getByRole("main"); await expect(main).toContainText("sin cambio"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
       await expect(main).toContainText(identity.archiveEntryIds[0]!); await expect(main).toContainText(identity.archiveEntryIds[1]!); await expect(main).toContainText("SHA-256"); await expect(main).not.toContainText("https://"); await expect(main).not.toContainText("example.test");
+      await main.locator('[data-applied-context] > summary').click();
       const leftSide = main.getByRole("article", { name: "Lado A", exact: true });
       const rightSide = main.getByRole("article", { name: "Lado B", exact: true });
       await expect(leftSide).toContainText("Elección: 2023");
@@ -322,6 +407,8 @@ test.describe("authorized official comparison", () => {
       const appliedContexts = main.getByRole("region", { name: "Contexto de comparación autorizada" });
       const applied = { contexts: await appliedContexts.innerText(), heading: await appliedHeading.innerText(), table: await table.innerText(), rails: await rails.allInnerTexts() };
       const expectAppliedUnchanged = async (): Promise<void> => {
+        const contextDisclosure = main.locator('[data-applied-context]');
+        if (await contextDisclosure.getAttribute("open") === null) await contextDisclosure.locator("summary").click();
         await expect.poll(async () => ({
           contexts: await appliedContexts.innerText(),
           heading: await appliedHeading.innerText(),

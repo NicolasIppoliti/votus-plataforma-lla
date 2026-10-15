@@ -12,7 +12,7 @@ export function pasoSectionPayload() {
     level: "seccion", source_granularity: "mesa", category_name: "PRESIDENTE/A",
     positive_total: fixture.section_lists.reduce((total, list) => total + list.votes, 0),
     truncated: false,
-    non_positive: { status: "unavailable", reason: "not_persisted_by_national_ingestion" },
+    non_positive: { status: "unavailable", reason: "not_reloaded" },
     // Archive names are evidence, not a substitute for curated canonical identity.
     lists: fixture.section_lists.map((list) => ({
       list_id: list.list_id, source_name: list.source_name, votes: list.votes,

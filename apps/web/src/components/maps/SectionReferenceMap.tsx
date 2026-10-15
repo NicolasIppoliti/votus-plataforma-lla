@@ -17,6 +17,7 @@ interface Props {
   sharePercent?: number | undefined;
   fillColor?: [number, number, number, number] | undefined;
   staticLabel?: string | undefined;
+  compactControls?: boolean;
 }
 
 interface ResultsDocument {
@@ -30,7 +31,7 @@ export function revealExactResults(doc: ResultsDocument, resultId: string): void
   doc.getElementById(resultId)?.focus();
 }
 
-export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent, fillColor, staticLabel }: Props) {
+export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent, fillColor, staticLabel, compactControls = false }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const cameraCallback = useRef(onCamera);
@@ -134,15 +135,19 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
   const scale = 260 / Math.max(width, height, Number.EPSILON);
   const project = ([longitude, latitude]: number[]) => `${(160 + ((longitude! - west) * longitudeScale - width / 2) * scale).toFixed(3)},${(160 - (latitude! - south - height / 2) * scale).toFixed(3)}`;
   const fill = fillColor ?? (sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent));
-  return <div className={styles.root}>
+  const controls = <>
+    <button type="button" onClick={() => { setStatus("Cargando mapa de la sección…"); setActive(true); }} disabled={active} aria-label={`Activar mapa interactivo de ${label}`}>Mostrar mapa interactivo</button>
+    <button type="button" onClick={focusResults}>Seleccionar sección y consultar resultados</button>
+    <Alert variant="caveat">{status}</Alert>
+  </>;
+  const resultsLink = <a href={`#${resultId}`} onClick={focusResults}>Ir a los resultados exactos de la sección</a>;
+  return <div className={styles.root} data-map-kind={fillColor === undefined && sharePercent === undefined ? "locator" : "data"}>
     {!active && staticLabel && <svg className={styles.staticMap} viewBox="0 0 320 320" role="img" aria-label={`Mapa estático de ${name}; ${label}; ${staticLabel}`}>
       {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth="1" />)}
     </svg>}
     {fillColor === undefined && sharePercent === undefined && <Legend label="Referencia geográfica" entries={[{ label: "Contorno de referencia; sin resultados electorales", encoding: "outline" }]} />}
-    <button type="button" onClick={() => { setStatus("Cargando mapa de la sección…"); setActive(true); }} disabled={active} aria-label={`Activar mapa interactivo de ${label}`}>Mostrar mapa interactivo</button>
-    <button type="button" onClick={focusResults}>Seleccionar sección y consultar resultados</button>
-    <Alert variant="caveat">{status}</Alert>
+    {compactControls ? <details className={styles.controls} data-map-controls=""><summary>Controles del mapa — {label}</summary>{controls}{resultsLink}</details> : controls}
     <div ref={container} className={active ? styles.canvas : styles.inactive} aria-label={municipal ? `Mapa geográfico CNE de ${name}; no muestra votos por partido` : `Mapa geográfico CNE de ${name}; ${label}`} />
-    <a href={`#${resultId}`} onClick={focusResults}>Ir a los resultados exactos de la sección</a>
+    {!compactControls && resultsLink}
   </div>;
 }

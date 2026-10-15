@@ -9,7 +9,8 @@ const subitemIcons = {
   "/review": ClipboardCheck,
   "/fiscalizacion": ShieldCheck,
 };
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { workflowHref } from "@/lib/context/workflow";
 import { isRouteActive, NAVIGATION_GROUPS } from "./navigation";
 
 // The five module glyphs follow the approved prototype, not route-specific icons.
@@ -23,6 +24,10 @@ const moduleGlyphs = [
 
 export function PrimaryNavigation() {
   const pathname = usePathname();
+  const search = useSearchParams();
+  // Only the shared analysis journey; separated/catalog flows retain their entry URLs.
+  const href = (path: string) => ["/", "/drilldown", "/compare", "/simulate"].includes(path)
+    ? workflowHref(path, new URLSearchParams(search.toString())) : path;
   return (
     <nav aria-label="principal" className="main-navigation">
       <ul className="navigation-list">
@@ -30,7 +35,7 @@ export function PrimaryNavigation() {
           const [module, ...subitems] = group.items;
           return (
             <li key={module.href} data-navigation-group={group.label}>
-              <Link className="navigation-module" href={module.href} aria-current={isRouteActive(pathname, module.href) ? "page" : undefined}>
+              <Link className="navigation-module" href={href(module.href)} aria-current={isRouteActive(pathname, module.href) ? "page" : undefined}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{moduleGlyphs[index]}</svg>
                 <span>{module.label}</span>
               </Link>
