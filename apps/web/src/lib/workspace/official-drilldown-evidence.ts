@@ -1,4 +1,5 @@
 import "server-only";
+import { profileServerSpan } from "./profile-server";
 import { loadOfficialSectionCircuitOutcomes, type OfficialSectionCircuitOutcomes } from "./official-section-circuit-outcomes";
 import { loadOfficialInternalLists, type OfficialInternalLists } from "./official-internal-lists";
 import { loadOfficialSectionCompleteness, type OfficialSectionCompleteness } from "./official-section-completeness";
@@ -247,7 +248,11 @@ function parseProvenance(value: Raw): OfficialProvenanceEvidence | null {
   return { items: parsed, sourceExclusions: safeExclusions };
 }
 
-export async function loadAuthorizedOfficialDrilldownEvidence(selection: OfficialSelection): Promise<OfficialDrilldownEvidence> {
+export function loadAuthorizedOfficialDrilldownEvidence(selection: OfficialSelection): Promise<OfficialDrilldownEvidence> {
+  return profileServerSpan("evidence.drilldown", () => resolveOfficialDrilldownEvidence(selection));
+}
+
+async function resolveOfficialDrilldownEvidence(selection: OfficialSelection): Promise<OfficialDrilldownEvidence> {
   if (!selection.seccionCode) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
   try {
     const bundle = raw(await authorizedOfficialBundle(await createSupabaseServerClient(), selection));

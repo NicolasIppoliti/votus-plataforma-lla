@@ -101,6 +101,14 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await draft("Elección", "electionId", COVERAGE_SCOPE.electionId, "Categoría");
       await draft("Categoría", "categoryId", COVERAGE_SCOPE.categoryId, "Distrito");
       await draft("Distrito", "distritoCode", COVERAGE_SCOPE.distritoCode, "Sección");
+      const sectionHelp = page.getByRole("button", { name: "Qué significa sección", exact: true });
+      await sectionHelp.focus();
+      const sectionTooltip = page.locator(`[id="${await sectionHelp.getAttribute("aria-describedby")}"]`);
+      await expect(sectionTooltip).toBeVisible();
+      await expect(sectionHelp).toHaveAccessibleDescription(/En Buenos Aires corresponde a un partido/);
+      await page.keyboard.press("Escape");
+      await expect(sectionTooltip).toBeHidden();
+      await expect(sectionHelp).toBeFocused();
       await page.getByLabel("Sección", { exact: true }).focus();
       await page.getByLabel("Sección", { exact: true }).selectOption(COVERAGE_SCOPE.seccionCode);
       const expectedUrl = new URL(`/fiscalizacion?${serializeElectoralContext({ ...COVERAGE_SCOPE, sourceKind: "official" })}`, baseURL).toString();
@@ -145,15 +153,15 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await archiveSummary.press("Enter");
       for (const width of [1710, 1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        await expect(main.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
+        await expect(main.getByRole("heading", { level: 1 })).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
         await expect(main.getByRole("heading", { name: "Resultado autorizado", exact: true })).toHaveCSS("font-size", "20px");
         await expect(main.getByRole("heading", { name: "Elegir el alcance de la cobertura", exact: true })).toHaveCSS("font-size", "16px");
         await expect.poll(() => main.locator(":scope > .shell-container").evaluate((element) => {
-          const workspace = element.closest(".app-shell__workspace");
-          if (!(workspace instanceof HTMLElement)) throw new Error("Fiscalización requires an application workspace");
-          const style = getComputedStyle(workspace);
-          const available = workspace.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-          return Math.abs(element.getBoundingClientRect().width - Math.min(1540, available));
+          const container = element.closest("#main-content");
+          if (!(container instanceof HTMLElement)) throw new Error("Fiscalización requires the shared page container");
+          const style = getComputedStyle(container);
+          const available = container.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          return Math.abs(element.getBoundingClientRect().width - available);
         })).toBeLessThanOrEqual(1);
         const boxes = await Promise.all([qualification, resultRegion, coverageDetail].map((region) => region.evaluate((element) => {
           const { x, y, width, bottom } = element.getBoundingClientRect(); return { x, y, width, bottom };

@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
@@ -9,7 +10,8 @@ import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
+import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING } from "./map-heading";
 import { TerritorialNavigator } from "./TerritorialNavigator";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
@@ -502,7 +504,11 @@ function refusalPage(message: ReactNode): ReactNode {
   );
 }
 
-export default async function DrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
+export default function DrilldownPage(props: DrilldownPageProps): Promise<ReactNode> {
+  return profileServerSpan("page.drilldown", () => renderDrilldownPage(props));
+}
+
+async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
   const params = await searchParams;
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
@@ -512,6 +518,11 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   const legacyKeys = LEGACY_QUERY_KEYS.filter((key) => Object.hasOwn(params, key));
   if (legacyKeys.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: los parámetros heredados {legacyKeys.join(", ")} ya no están permitidos.</>);
+  }
+
+  const sourceKind = stringParam(params, "sourceKind") ?? "official";
+  if (sourceKind !== "official") {
+    return refusalPage("Se rechazó la solicitud: la exploración admite solo fuentes oficiales.");
   }
 
   const rawLevel = stringParam(params, "level");

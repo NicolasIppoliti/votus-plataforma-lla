@@ -1,0 +1,39 @@
+/* Authenticated page geometry belongs to the shell, not to route modules.
+   The main-content ID intentionally wins over route-local CSS regardless of
+   stylesheet load order (including soft navigation and refusal boundaries). */
+#main-content.app-content {
+  width: 100%;
+  min-width: 0;
+  max-width: var(--max-content-width);
+  margin-inline: auto;
+  padding-inline: var(--content-gutter);
+  padding-block: 2rem 4rem;
+}
+
+#main-content > main {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* Existing route wrappers still organize their grids, but never add a second
+   gutter or width cap inside the single shell container. */
+#main-content > main .shell-container {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding-inline: 0;
+}
+
+#main-content h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+@media (max-width: 47.999rem) {
+  #main-content.app-content { padding-block: 1rem 3rem; }
+  #main-content h1 { font-size: 1.75rem; }
+}

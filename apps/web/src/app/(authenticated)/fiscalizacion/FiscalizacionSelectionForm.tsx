@@ -4,6 +4,7 @@ import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./fiscalizacion.module.css";
+import { ElectoralGlossary } from "@/components/ElectoralGlossary";
 import { serializeElectoralContext, type ElectoralContext } from "@/lib/context/url";
 import {
   SCOPE_FORM_KIND, canonicalScopeSearchParams, scopeControlStates,
@@ -90,7 +91,7 @@ export function FiscalizacionSelectionForm({ selected, sourceKind, fields, child
               <legend>{group.title}</legend>
               <div className={styles.fields}>
                 {fields.filter((field) => group.names.includes(field.name)).map((field) => <div className="field" key={field.name}>
-                  <label htmlFor={field.id}>{field.label}</label>
+                  <div className={styles.fieldLabel}><label htmlFor={field.id}>{field.label}</label><ElectoralGlossary field={field.name} /></div>
                   <ResponsiveSelect id={field.id} name={field.name} value={state.draft[field.name]}
                     required={controlStates[field.name].required}
                     disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}

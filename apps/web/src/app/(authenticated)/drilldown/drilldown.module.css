@@ -15,6 +15,9 @@
 @media (max-width: 760px) { .breakdownHeader { align-items: stretch; flex-direction: column; } .childScroll :global(.table-scroll), .root :global(.boundedEstablishments .table-scroll) { max-height: 280px; } }
 .layout { max-width: 2040px; padding-inline: 34px; }
 .selectionBoundary { display: grid; gap: 23px; min-width: 0; }
+.navigatorHeading, .fieldLabel { position: relative; display: flex; align-items: center; gap: 4px; }
+.fieldLabel { margin-bottom: 5px; }
+.filter .fieldLabel label { margin-bottom: 0; }
 .mapHeading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px 23px 0; }
 .mapHeading h2 { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
 .mapHeading p { color: var(--muted-ink); font-size: 0.8125rem; margin: 0; }
@@ -229,4 +232,28 @@
   .territoryLabel > svg:last-child { display: none; }
   .mapControls { right: 8px; bottom: 48px; }
 }
+/* Issue 501 mobile */
+@media (max-width: 480px) {
+  .root { padding-top: 12px; }
+  .selectionBoundary { gap: 12px; }
+  .header { gap: 4px; margin-bottom: 0; }
+  .filters { padding-block: 8px; }
+  .filterRow { gap: 8px; }
+  .guidance { line-height: 1.35; margin-top: 6px; }
+  .filterSummary { gap: 6px; }
+  .filterSummary small { margin-top: 0; }
+}
 
+
+/* Reference-only geography supports the data instead of occupying its main slot. */
+.workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); align-items: start; }
+.mapPanel[data-map-kind="locator"] { width: 100%; max-width: 20rem; }
+.mapPanel[data-map-kind="locator"] .mapStage { height: 15rem; min-height: 0; }
+.mapPanel[data-map-kind="locator"] .mapCamera { padding: 1rem; }
+.mapPanel[data-map-kind="locator"] .territoryLabel { display: none; }
+.mapPanel[data-map-kind="locator"] .mapStage:has(.nationalMap),
+.mapPanel[data-map-kind="locator"] .mapCamera:has(.nationalMap) { height: auto; min-height: 0; }
+.mapPanel[data-map-kind="locator"] .nationalViews { grid-template-columns: minmax(0, 1fr); }
+.mapPanel[data-map-kind="locator"] .nationalCanvas { height: 12rem; }
+.mapPanel[data-map-kind="locator"] .polarMap { max-height: 12rem; }
+@media (max-width: 760px) { .workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 1fr); } }
