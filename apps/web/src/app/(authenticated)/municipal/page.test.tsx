@@ -57,9 +57,9 @@ describe("municipal page — renderMunicipalView", () => {
       }),
     );
 
-    expect(html).toContain("Por tipo de fuente: 1 fila oficial / 11111 votos.");
+    expect(html).toContain("Por tipo de fuente: 1 fila oficial / 11.111 votos.");
     expect(html).toContain("granularidad: sección");
-    expect(html).toContain("1 fila fiscalización / 22222 votos");
+    expect(html).toContain("1 fila fiscalización / 22.222 votos");
     expect(html).not.toContain("33333");
   });
 
@@ -99,6 +99,21 @@ describe("municipal page — renderMunicipalView", () => {
 
     expect(html).toContain('aria-label="granularidad: sección"');
     expect(html.toLowerCase()).not.toContain("granularidad real:");
+  });
+
+  it("test_the_exact_party_table_groups_thousands_like_the_chart", () => {
+    // #451: the chart read "14.550" while the adjacent table read "14550".
+    const html = renderToStaticMarkup(
+      renderMunicipalView({
+        status: "ok",
+        rows: [{ ...MUNICIPAL_ROWS[0]!, votes: 14550, partyName: "ALIANZA LA LIBERTAD AVANZA", canonicalPartyId: "lla" }],
+        excluded: {}, sourceAudit: { official: { rows: 1, votes: 14550 } },
+        partyMappingConfigured: true,
+      }),
+    );
+
+    expect(html).toMatch(/<td class="table-cell--number">14\.550<\/td>/);
+    expect(html).not.toMatch(/>14550</);
   });
 
   it("test_exact_and_historical_unknown_requests_do_not_invent_degradation", () => {
@@ -242,7 +257,7 @@ describe("municipal page — the real entry point", () => {
     expect(html).toContain('href="#municipal-results-heading"');
     expect(html).toContain('id="municipal-results-heading" tabindex="-1"');
     expect(html).not.toContain("authkey=");
-    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).toContain('<td class="table-cell--number">4.200</td>');
   });
 
   it("keeps exact results visible when section geometry is withheld", async () => {
@@ -251,7 +266,7 @@ describe("municipal page — the real entry point", () => {
       excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } }, partyMappingConfigured: true,
     }, [], 2025, { status: "withheld" }));
     expect(html).toContain("Geometría no disponible o no verificable");
-    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).toContain('<td class="table-cell--number">4.200</td>');
     expect(html).not.toContain("<svg viewBox=\"0 0 300 200\"");
   });
 
@@ -269,7 +284,7 @@ describe("municipal page — the real entry point", () => {
     for (const text of ["2023", "Generales", "INTENDENTE", "provisorio", "LA LIBERTAD AVANZA", "Distrito 02 · Sección 027"])
       expect(html).toContain(text);
     expect(html).toContain('<th scope="row">LA LIBERTAD AVANZA</th>');
-    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).toContain('<td class="table-cell--number">4.200</td>');
     expect(html).not.toContain("20135");
     expect(html).not.toContain("<dd>2025 · Provinciales");
     expect(html).toContain("153 mesas y 10 códigos de circuito");
@@ -284,7 +299,7 @@ describe("municipal page — the real entry point", () => {
     const { default: Page } = await import("./page");
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
     expect(html).toContain("se resolvieron sin un partido curado");
-    expect(html).toContain("Por id de lista:</p><ul><li>99999: 1 filas, 4200 votos</li>");
+    expect(html).toContain("Por id de lista:</p><ul><li>99999: 1 filas, 4.200 votos</li>");
     expect(html).not.toContain('<th scope="row">99999</th>');
   });
 
@@ -436,7 +451,7 @@ describe("municipal page — the real entry point", () => {
         expect(markup).toContain('<th scope="col">Partido</th>');
         expect(markup).toContain('<th scope="col" class="table-cell--number">Votos exactos</th>');
         expect(markup).toContain('<th scope="row">ALIANZA LA LIBERTAD AVANZA</th>');
-        expect(markup).toContain('<td class="table-cell--number">4200</td>');
+        expect(markup).toContain('<td class="table-cell--number">4.200</td>');
         expect(markup).not.toContain("ALIANZA LA LIBERTAD AVANZA: 4200 voto(s)");
         expect(markup).toContain('aria-labelledby="municipal-distribution-heading"');
         expect(markup).toContain('aria-label="ALIANZA LA LIBERTAD AVANZA: 4.200 votos"');
@@ -497,7 +512,7 @@ describe("municipal page — the real entry point", () => {
         const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
 
         expect(loadMunicipalOfficialEvidence).toHaveBeenCalledExactlyOnceWith();
-        for (const fact of ["Coronel Rosales", "Distrito 02 · Sección 027", "Concejales", "ALIANZA LA LIBERTAD AVANZA", '<td class="table-cell--number">4200</td>'])
+        for (const fact of ["Coronel Rosales", "Distrito 02 · Sección 027", "Concejales", "ALIANZA LA LIBERTAD AVANZA", '<td class="table-cell--number">4.200</td>'])
           expect(html).toContain(fact);
         expect(html).not.toContain("<form");
         expect(html).not.toContain("Ver resultados oficiales");
@@ -960,7 +975,7 @@ describe("municipal page — truthful identified-party distribution", () => {
       excluded: {}, sourceAudit: { official: { rows: 1, votes: 4200 } }, partyMappingConfigured: true,
     }));
     expect(html).toContain("No hay partidos identificados para representar");
-    expect(html).toContain("unmapped: 1 filas, 4200 votos");
+    expect(html).toContain("unmapped: 1 filas, 4.200 votos");
     expect(html).not.toContain("Todos los partidos identificados tienen 0 votos");
     expect(html).not.toContain("<svg");
   });
@@ -984,13 +999,17 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
     expect(html).toContain("Los circuitos 0248B y 0248C se superponen en el archivo CNE");
     expect(html).toContain("no se asignan a subcircuitos");
     expect(html).toContain('aria-label="Mapa de referencia CNE de Coronel Rosales: 10 circuitos y 28 locales con coordenadas');
+    expect(html).toContain('aria-label="Leyenda de referencia geográfica"');
+    expect(html).toContain('data-encoding="outline"');
+    expect(html).toContain('data-encoding="dot"');
+    expect(html).toContain("Local de votación con coordenadas");
     expect(html.match(/<circle /g)).toHaveLength(28);
     expect(html.match(/data-circuit=/g)).toHaveLength(10);
     const table = html.slice(html.indexOf("<caption>Locales de votación CNE 2025"));
     expect(table.slice(0, table.indexOf("</table>")).match(/<tr>/g)).toHaveLength(32);
     expect(html.match(/Sin coordenadas: no se dibuja/g)).toHaveLength(3);
     expect(html).toContain("fbd5deddbcf5abefd170d6841f76888c2bca8cb877f90fb4b9c4d73a287fdd4b");
-    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).toContain('<td class="table-cell--number">4.200</td>');
   });
 
   it("refuses an unverifiable artifact with an explicit alert and no map or table", () => {
@@ -999,7 +1018,7 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
     expect(html).toContain('<p role="alert">No se muestra la referencia CNE: el archivo no coincide con su SHA-256 fijado.</p>');
     expect(html).not.toContain("<circle ");
     expect(html).not.toContain("Locales de votación CNE 2025");
-    expect(html).toContain('<td class="table-cell--number">4200</td>');
+    expect(html).toContain('<td class="table-cell--number">4.200</td>');
   });
 
   it("keeps the 2025 reference off the 2023 view", async () => {

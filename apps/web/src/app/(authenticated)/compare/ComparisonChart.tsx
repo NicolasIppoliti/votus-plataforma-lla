@@ -1,5 +1,6 @@
 import type { UnitSwing } from "@/lib/results/compare";
 import styles from "./comparison.module.css";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
 interface Props {
   swing: UnitSwing;
@@ -7,8 +8,6 @@ interface Props {
   rightNames: Record<string, string>;
 }
 
-const percentage = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const count = new Intl.NumberFormat("es-AR");
 const TICKS = [0, 25, 50, 75, 100];
 const VISIBLE_PARTIES = 4;
 
@@ -20,12 +19,12 @@ function ShareBar({ side, name, share }: { side: string; name: string; share: nu
         <span className={styles.unavailable}>{side}: observación no disponible</span>
       ) : (
         <>
-          <svg className={styles.bar} viewBox="0 0 100 12" preserveAspectRatio="none" role="img" aria-label={`${side}: ${name}, ${percentage.format(share)} %`}>
+          <svg className={styles.bar} viewBox="0 0 100 12" preserveAspectRatio="none" role="img" aria-label={`${side}: ${name}, ${formatFixed2(share)} %`}>
             {TICKS.map((tick) => <line key={tick} x1={tick} x2={tick} y1="0" y2="12" className={styles.gridLine} vectorEffect="non-scaling-stroke" />)}
             <rect x="0" y="3" width={share} height="6" className={side === "Lado A" ? styles.barA : styles.barB} />
             <line x1="0" x2="0" y1="0" y2="12" className={styles.baseline} vectorEffect="non-scaling-stroke" />
           </svg>
-          <span className={styles.value} aria-hidden="true">{percentage.format(share)} %</span>
+          <span className={styles.value} aria-hidden="true">{formatFixed2(share)} %</span>
         </>
       )}
     </div>
@@ -53,8 +52,8 @@ export function ComparisonChart({ swing, leftNames, rightNames }: Props) {
         <h2 id="compare-chart-heading">Participación por partido</h2>
         <p id="compare-chart-denominator">Porcentaje sobre la suma de votos de los partidos incluidos en cada selección. No representa el padrón ni todos los votos emitidos.</p>
         <div className={styles.denominators}>
-          <span>Lado A: {count.format(leftTotal)} votos partidarios</span>
-          <span>Lado B: {count.format(rightTotal)} votos partidarios</span>
+          <span>Lado A: {formatCount(leftTotal)} votos partidarios</span>
+          <span>Lado B: {formatCount(rightTotal)} votos partidarios</span>
         </div>
       </header>
       <div className={styles.axis} aria-hidden="true">

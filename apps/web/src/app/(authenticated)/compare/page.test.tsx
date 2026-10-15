@@ -92,14 +92,14 @@ it("renders each controlled metric with its own scale and pressed state", () => 
     expect(markup.match(/aria-label="Mapa estático/g)).toHaveLength(2);
     if (metric === "Participación") {
       expect(markup).toContain("PARTIDO A 2025: 25,00 %");
-      expect(markup).toContain("rgba(41,95,110,");
+      expect(markup).toContain("rgba(103,165,182,");
       expect(markup).not.toContain("Leyenda categórica");
     } else if (metric === "Cambio") {
       expect(markup).toContain("Línea de base A; cambio 0,00 pp");
       expect(markup).toContain("PARTIDO A 2025: B − A -35,00 pp");
       expect(markup).toContain("−100 pp");
       expect(markup).toContain("+100 pp");
-      expect(markup).toContain("rgba(110,112,104,");
+      expect(markup).toContain("rgba(173,170,159,");
     } else {
       expect(markup).toContain("Ganador: PARTIDO A 2023");
       expect(markup).toContain("Ganador: PARTIDO B 2025");
@@ -114,7 +114,7 @@ it("updates selected-party fills and computes positive change without changing t
   expect(metricMarkup("Participación", "party-b")).toContain("PARTIDO B 2025: 75,00 %");
   const change = metricMarkup("Cambio", "party-b");
   expect(change).toContain("B − A +35,00 pp");
-  expect(change).toContain("rgba(61,123,140,");
+  expect(change).toContain("rgba(124,181,195,");
 });
 it("disables absent-observation metrics with accessible reasons rather than zero filling", () => {
   const markup = metricMarkup("Participación", "party-a", true);
@@ -136,11 +136,11 @@ it("pins the spatial fixture side-B selected-party fill to the interactive raste
   const markup = await render(PARAMS);
   const sideB = markup.match(/<article[^>]*aria-label="Lado B — 2025 legislativas"[^>]*>[\s\S]*?<\/article>/)?.[0] ?? "";
   expect(sideB).toContain("PARTIDO A 2025: 75,00 %");
-  expect(sideB).toContain("rgba(81,184,198,");
+  expect(sideB).toContain("rgba(102,208,222,");
   // The e2e screenshot must expect the same selected-party RGB as the route's static map.
   const spec = readFileSync(new URL("../../../../e2e/comparison.spec.ts", import.meta.url), "utf8");
   const expected = spec.match(/const rightFill = \[([^\]]+)\]/)?.[1]?.split(",").map(Number);
-  expect(expected).toEqual([81, 184, 198]);
+  expect(expected).toEqual([102, 208, 222]);
 });
 
 it("renders the approved header and paired selection without changing authorized query keys", async () => {
