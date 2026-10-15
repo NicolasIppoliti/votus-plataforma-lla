@@ -1,4 +1,5 @@
 import { Suspense, type ReactNode } from "react";
+import "./page-container.css";
 import { ElectoralContextBar } from "./ElectoralContextBar";
 
 interface ApplicationShellProps {

@@ -136,15 +136,15 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await archiveSummary.press("Enter");
       for (const width of [1710, 1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        await expect(main.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
+        await expect(main.getByRole("heading", { level: 1 })).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
         await expect(main.getByRole("heading", { name: "Resultado autorizado", exact: true })).toHaveCSS("font-size", "20px");
         await expect(main.getByRole("heading", { name: "Elegir el alcance de la cobertura", exact: true })).toHaveCSS("font-size", "16px");
         await expect.poll(() => main.locator(":scope > .shell-container").evaluate((element) => {
-          const workspace = element.closest(".app-shell__workspace");
-          if (!(workspace instanceof HTMLElement)) throw new Error("Fiscalización requires an application workspace");
-          const style = getComputedStyle(workspace);
-          const available = workspace.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-          return Math.abs(element.getBoundingClientRect().width - Math.min(1540, available));
+          const container = element.closest("#main-content");
+          if (!(container instanceof HTMLElement)) throw new Error("Fiscalización requires the shared page container");
+          const style = getComputedStyle(container);
+          const available = container.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          return Math.abs(element.getBoundingClientRect().width - available);
         })).toBeLessThanOrEqual(1);
         const boxes = await Promise.all([qualification, resultRegion, coverageDetail].map((region) => region.evaluate((element) => {
           const { x, y, width, bottom } = element.getBoundingClientRect(); return { x, y, width, bottom };
