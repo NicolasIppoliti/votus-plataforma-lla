@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ExplorationOk } from "@/lib/results/exploration";
 import type { PanoramaData } from "./load-panorama";
 import { Panorama } from "./Panorama";
+import { circuitBandColor } from "@/components/maps/reference-colors";
+import { circuitPresentation } from "@/lib/geography/circuit-presentation";
 import { PanoramaChildren } from "./PanoramaChildren";
 import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
@@ -117,6 +119,41 @@ it.each([undefined, { status: "unavailable" } as const])("discloses unavailable 
   expect(html).toContain("Resultados oficiales por circuito no disponibles. No se muestran unidades ni cifras inventadas.");
   expect(html).not.toContain("<table>");
   expect(html).not.toContain("00248 — Norte");
+});
+
+it("renders the shared circuit encoding from the table outcomes on the real Panorama", () => {
+  const circuitGeometry = [{ code: "00248", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] as [number, number][][][] }];
+  const evidence = data.evidence!;
+  if (evidence.status !== "ok" || evidence.circuitOutcomes?.status !== "ok") throw new Error("fixture must be ok");
+  const circuits = evidence.circuitOutcomes.circuits.map(circuit => ({ ...circuit, status: "partial" as const, counts: { ...circuit.counts, expected: 2, missing: 1 } }));
+  const mapped = { ...data, circuitGeometry, evidence: { ...evidence, circuitOutcomes: { ...evidence.circuitOutcomes, circuits } } };
+  const html = renderToStaticMarkup(<Panorama data={mapped} />);
+  expect(html).toContain("Circuito 00248: Grupo 6;");
+  expect(html).toContain('data-hatched="true"');
+  expect(html).toContain("Codificación de circuitos");
+  expect(html).toContain("Grupo 6 · provisional");
+  expect(html).toContain("Ganadores por circuito");
+  const presentation = circuitPresentation(circuits[0]!);
+  expect(html).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
+  expect(html).not.toContain('role="button" aria-label="Circuito');
+  const complete = { ...mapped, evidence: { ...evidence, circuitOutcomes: evidence.circuitOutcomes } };
+  expect(renderToStaticMarkup(<Panorama data={complete} />)).not.toContain('data-hatched="true"');
+  for (const votes of [[50, 50], [52, 48], [55, 45], [0, 0]]) {
+    const circuit = { ...circuits[0]!, positive_total: votes[0]! + votes[1]!, parties: circuits[0]!.parties.map((party, i) => ({ ...party, votes: votes[i]! })) };
+    const alternate = { ...mapped, evidence: { ...evidence, circuitOutcomes: { ...evidence.circuitOutcomes, circuits: [circuit] } } };
+    const p = circuitPresentation(circuit);
+    const markup = renderToStaticMarkup(<Panorama data={alternate} />);
+    expect(markup).toContain(`Circuito 00248: ${p.winner};`);
+    expect(markup).toContain(`fill="${circuitBandColor(p.color, p.band)}"`);
+  }
+  const unknown = { ...mapped, evidence: { ...evidence, circuitOutcomes: { status: "unavailable" as const } } };
+  expect(renderToStaticMarkup(<Panorama data={unknown} />)).not.toContain("Ganadores por circuito");
+  for (const status of ["authorization_denied", "unavailable", "empty"] as const) {
+    const refused = { ...mapped, evidence: status === "authorization_denied" ? { status, access: "denied" as const } : { status } };
+    const denied = renderToStaticMarkup(<Panorama data={refused} />);
+    expect(denied).not.toContain("Circuito 00248: Grupo 6;");
+    expect(denied).not.toContain('data-hatched="true"');
+  }
 });
 
 it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {

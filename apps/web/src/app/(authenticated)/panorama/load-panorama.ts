@@ -4,7 +4,11 @@ import { parseElectoralContext, serializeElectoralContext, type ElectoralContext
 import { loadAuthorizedOfficialDrilldownEvidence, type OfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";
 import type { ExplorationFacetExclusion, FacetOption } from "@/lib/results/exploration";
 
+import { loadCircuitGeometry } from "../drilldown/circuit-geometry";
+import type { CircuitMapProps } from "@/components/maps/CircuitReferenceSvg";
+
 export interface PanoramaData {
+  circuitGeometry?: CircuitMapProps["geometry"] | null;
   href: string;
   context?: ElectoralContext;
   notice?: string;
@@ -33,7 +37,10 @@ export async function loadPanorama(params: ElectoralContextSearchParams = {}): P
     const query = serializeElectoralContext(context);
     query.set("level", "seccion");
     // Each facet response carries a scoped exclusion report; do not sum overlapping reads.
-    return { context, href: `/drilldown?${query}`, evidence, circuitOptions: territory.circuitos, exclusions: territory.exclusions ?? [] };
+    // Geometry failure must not suppress authorized electoral evidence.
+    const circuitGeometry = distritoCode === "02" && seccionCode === "027"
+      ? await loadCircuitGeometry().catch(() => null) : null;
+    return { context, href: `/drilldown?${query}`, evidence, circuitGeometry, circuitOptions: territory.circuitos, exclusions: territory.exclusions ?? [] };
   } catch {
     return unavailable;
   }
