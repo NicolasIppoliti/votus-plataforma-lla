@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -7,7 +8,6 @@ const ROUTES = {
   "/": () => import("./(home)/loading"),
   "/drilldown": () => import("./drilldown/loading"),
   "/compare": () => import("./compare/loading"),
-  "/municipal": () => import("./municipal/loading"),
 } as const;
 
 describe("route loading states", () => {
@@ -19,5 +19,12 @@ describe("route loading states", () => {
     expect(html).toContain("Cargando");
     // No invented figures: the skeleton carries no digits at all.
     expect(html.replace(/<[^>]*>/g, "")).not.toMatch(/[0-9]/);
+  });
+
+  // /municipal must stay fully readable without JavaScript (e2e/municipal.spec.ts
+  // SSR readiness). A route Suspense fallback streams the content behind a
+  // client-side swap, so this route deliberately has no loading.tsx.
+  it("/municipal keeps a blocking SSR document instead of a streamed skeleton", () => {
+    expect(existsSync(new URL("./municipal/loading.tsx", import.meta.url))).toBe(false);
   });
 });
