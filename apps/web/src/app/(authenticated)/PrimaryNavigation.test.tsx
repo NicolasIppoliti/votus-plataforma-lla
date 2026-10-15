@@ -26,6 +26,18 @@ it.each([
   expect(renderToStaticMarkup(<PrimaryNavigation />)).toContain(`href="${href}"`);
 });
 
+it("preserves election and category from a refused legacy URL without forwarding legacy keys (#543)", () => {
+  navigation.query = "electionId=e25&jurisdictionId=legacy&categoryId=c25&partyCategory=synthetic&partyJurisdiction=national";
+  const markup = renderToStaticMarkup(<PrimaryNavigation />);
+  const exploration = [...markup.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/g)].find(match => match[2]?.includes("<span>Exploración</span>"))?.[1];
+  expect(exploration).toBe("/drilldown?electionId=e25&amp;categoryId=c25&amp;sourceKind=official");
+  expect(markup).not.toContain("jurisdictionId=");
+  expect(markup).not.toContain("partyCategory=");
+  expect(markup).not.toContain("partyJurisdiction=");
+  navigation.query = "";
+  expect(renderToStaticMarkup(<PrimaryNavigation />)).toContain('href="/drilldown"');
+});
+
 it("keeps fiscalización explicit and leaves unrelated workflows alone", () => {
   navigation.query = "electionId=e25&sourceKind=fiscalizacion&distritoCode=02&seccionCode=027";
   const markup = renderToStaticMarkup(<PrimaryNavigation />);

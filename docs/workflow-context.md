@@ -46,11 +46,28 @@ contexto en la URL no concede acceso ni garantiza que haya resultados.
 
 ## Verificación
 
+La navegación no es una acción de reinicio: incluso desde una solicitud rechazada
+por parámetros heredados conserva `electionId` y `categoryId`, mientras descarta
+`jurisdictionId`, `partyCategory` y `partyJurisdiction`. Para probar el formulario
+vacío se abre explícitamente `/drilldown` sin parámetros.
+
+La regresión de aislamiento de fuentes en `apps/web/e2e/provenance.spec.ts`
+usa `sourceIsolationFixture` junto con `withAuthorizedOfficialWorkspace`: sí
+siembra filas oficiales y de fiscalización separadas y autoriza el territorio
+sintético del spec. No usa `withReviewItem` ni presupone que ese territorio o su
+categoría sintética resuelvan el contexto predeterminado de Rosales/Concejales.
+El recorrido desde la URL heredada comprueba la conservación del contexto antes
+de abrir la ruta vacía para probar la jerarquía de selectores.
+
 Los tests de Vitest renderizan la página raíz real y la navegación principal:
 selección explícita, selección predeterminada autorizada, datos no disponibles,
 fuentes separadas, códigos normalizados, filtros finos y contexto inválido.
 
 `apps/web/e2e/comparison.spec.ts` añade el recorrido completo con resultados
 oficiales autorizados a 1440 y 390 px, comprobando la URL y los resultados
-renderizados en ambos destinos. Los specs de Playwright se escribieron pero no
-se ejecutaron en esta tarea, por instrucción expresa.
+renderizados en ambos destinos. En la implementación inicial los specs de
+Playwright no se ejecutaron, por instrucción expresa. En el seguimiento de #543
+se intentó ejecutar el caso de aislamiento de fuentes de forma enfocada; la
+configuración local lo rechazó antes de abrir el navegador porque faltaba
+`VOTUS_E2E_BASE_URL`, que debe proporcionar el release gate. La verificación
+real del recorrido corregido queda pendiente del gate.

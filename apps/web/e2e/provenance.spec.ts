@@ -509,11 +509,21 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
       await expect(legacy).not.toContainText(`${formatCount(OFFICIAL_VOTES)} votos`);
 
-      await page
-        .getByRole("navigation", { name: "principal" })
-        .getByRole("link", { name: "Exploración", exact: true })
-        .click();
+      // #442 keeps shared context even when the current route refused legacy
+      // keys. Following navigation is not a reset of election/category.
+      const carried = new URLSearchParams({ electionId: SOURCE_SCOPE.electionId, categoryId: SOURCE_SCOPE.categoryId, sourceKind: "official" });
+      const explorationLink = page.getByRole("navigation", { name: "principal" })
+        .getByRole("link", { name: "Exploración", exact: true });
+      await expect(explorationLink).toHaveAttribute("href", `/drilldown?${carried}`);
+      await explorationLink.click();
+      await expect(page).toHaveURL(new URL(`/drilldown?${carried}`, baseURL).toString());
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue(SOURCE_SCOPE.electionId);
+      await expect(page.getByRole("combobox", { name: "Categoría", exact: true })).toHaveValue(SOURCE_SCOPE.categoryId);
+      // Test the empty-form hierarchy separately, without relying on a workflow
+      // link to erase context. Keep the existing disabled/focus assertions below.
+      await page.goto(new URL("/drilldown", baseURL).toString());
       await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
       await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
       await page.locator("details").filter({ has: page.locator("#explorer-distrito") }).locator("summary").click();
       for (const label of ["Categoría", "Distrito", "Sección"]) {
