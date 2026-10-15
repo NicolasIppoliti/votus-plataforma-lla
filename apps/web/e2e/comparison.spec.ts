@@ -313,6 +313,39 @@ test.describe("authorized official comparison", () => {
     }, spatial.identity), "spatial");
   });
 
+  test("corrects a figure-free mixed-granularity refusal through the retained scope selector", async ({ page }) => {
+    await withResultFixture(SPEC, seed, async () => {
+      const extra = identity.comparisonLeftOnlySection!;
+      // Extend only this scenario's owned rows, jurisdiction and archive. The
+      // existing archive-scoped fixture cleanup also owns the added row.
+      const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+      const changed = await admin.from("result_row").update({ granularity: "mesa" })
+        .eq("archive_entry_id", extra.archiveEntryId);
+      if (changed.error) throw new Error("failed to prepare refused comparison scope");
+      const added = await admin.from("result_row").insert({
+        ...seed.rows.find(row => row.election_id === identity.electionIds[1])!,
+        jurisdiction_id: extra.jurisdictionId, source_row_index: 2,
+      });
+      if (added.error) throw new Error("failed to prepare paired comparison scope");
+      await withAuthorizedComparisonWorkspace(page, async () => {
+        const params = new URLSearchParams({ electionId: identity.electionIds[0]!, bElectionId: identity.electionIds[1]!, categoryId: identity.categoryId, bCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: extra.seccionCode, sourceKind: "official" });
+        await page.goto(new URL(`/compare?${params}`, baseURL).toString());
+        const main = page.getByRole("main");
+        await expect(main).toContainText("Granularidad mixta");
+        await expect(main.locator('form[action="/compare"] select')).toHaveCount(6);
+        await expect(main.getByRole("table")).toHaveCount(0);
+        await expect(main).not.toContainText(/\d+,\d+ %|SHA-256|Procedencia oficial|Referencia oficial/);
+        const section = main.getByRole("combobox", { name: "Sección compartida", exact: true });
+        await expect(section).toHaveValue(extra.seccionCode);
+        await section.selectOption(identity.seccionCode);
+        await expect(main.getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        await expect(main).not.toContainText("Granularidad mixta");
+        await expect(section).toHaveValue(identity.seccionCode);
+        await expect(main).not.toContainText("999 votos");
+      });
+    });
+  });
+
   test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {
     await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
       const leftOnlySection = identity.comparisonLeftOnlySection;

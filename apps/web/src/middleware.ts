@@ -1,3 +1,4 @@
+import { profileSpan, profileRoute, PROFILE_REQUEST_HEADER, PROFILE_ROUTE_HEADER, type ProfileContext } from "@/lib/workspace/profile-span";
 import { createServerClient } from "@supabase/ssr";
 import { isAuthApiError, isAuthSessionMissingError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
@@ -41,6 +42,15 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
   if (PUBLIC_ROUTES.has(pathname)) {
     return NextResponse.next();
+  }
+
+  let profileContext: ProfileContext | undefined;
+  request.headers.delete(PROFILE_REQUEST_HEADER);
+  request.headers.delete(PROFILE_ROUTE_HEADER);
+  if (process.env.VOTUS_PROFILE_SPANS === "1") {
+    profileContext = { requestId: crypto.randomUUID(), route: profileRoute(pathname), parentSpanId: null };
+    request.headers.set(PROFILE_REQUEST_HEADER, profileContext.requestId);
+    request.headers.set(PROFILE_ROUTE_HEADER, profileContext.route);
   }
 
   const supabaseUrl = process.env["NEXT_PUBLIC_SUPABASE_URL"];
@@ -89,7 +99,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // cookie — required for a hard authentication gate at the edge.
   let verified;
   try {
-    verified = await supabase.auth.getUser();
+    verified = await profileSpan("auth.middleware.getUser", () => supabase.auth.getUser(), profileContext);
   } catch (error) {
     if (pathname === "/api/session") return sessionProbeResponse(response, false);
     throw error;
@@ -114,6 +124,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return redirected;
   }
 
+  if (profileContext) response.headers.set(PROFILE_REQUEST_HEADER, profileContext.requestId);
   return response;
 }
 

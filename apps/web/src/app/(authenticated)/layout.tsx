@@ -1,3 +1,4 @@
+import { profileServerSpan as profileSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
@@ -48,7 +49,7 @@ export default async function AuthenticatedLayout({
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await profileSpan("auth.layout.getUser", () => supabase.auth.getUser());
 
   if (!user) {
     redirect(loginDestination((await headers()).get("x-votus-return-to")));
