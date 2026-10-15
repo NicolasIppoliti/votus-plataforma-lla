@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
+import { writeWorkspaceStateFacts } from "./workspace-state-facts";
 import { alignedOccupiedGeometry, type Raster } from "./map-raster";
 import { comparisonFixture, withResultFixture } from "./result-fixture";
 import type { ResultScenarioIdentity } from "./scenario-ownership";
@@ -110,7 +111,13 @@ test.describe("authorized official comparison", () => {
       await revokeAuthorization();
       await resume(comparison);
       const main = page.getByRole("main");
-      await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await writeWorkspaceStateFacts(page, test.info(), "comparison-revoked-before-denial");
+      try {
+        await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      } catch (error) {
+        await writeWorkspaceStateFacts(page, test.info(), "comparison-revoked-denial-failed").catch(() => {});
+        throw error;
+      }
       await expect(main.getByRole("table")).toHaveCount(0);
       for (const archive of identity.archiveEntryIds) await expect(main).not.toContainText(archive);
       await expect(workspaceControls(page).getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
