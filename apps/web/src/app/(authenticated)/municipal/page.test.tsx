@@ -1047,6 +1047,8 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
     expect(html).toContain('data-encoding="outline"');
     expect(html).toContain('data-encoding="dot"');
     expect(html).toContain("Local de votación con coordenadas");
+    const legend = html.slice(html.indexOf('aria-label="Leyenda de referencia geográfica"'));
+    expect(legend.slice(0, legend.indexOf("</div>"))).toContain("Locales sin coordenadas: 3. No se dibujan en el mapa; se incluyen en la tabla de locales.");
     expect(html.match(/<circle /g)).toHaveLength(28);
     expect(html.match(/data-circuit=/g)).toHaveLength(10);
     const table = html.slice(html.indexOf("<caption>Locales de votación CNE 2025"));
