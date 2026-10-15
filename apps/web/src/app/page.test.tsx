@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import { loadAuthorizedOfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";
-import OperationalBriefingPage from "./(authenticated)/page";
+import OperationalBriefingPage from "./(authenticated)/(home)/page";
 
 const { facets } = vi.hoisted(() => ({ facets: vi.fn().mockResolvedValue({ elections: [] }) }));
 

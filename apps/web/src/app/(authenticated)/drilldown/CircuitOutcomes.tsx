@@ -6,6 +6,7 @@ import { circuitPresentation, circuitColor } from "@/lib/geography/circuit-prese
 import type { CircuitMapProps } from "@/components/maps/CircuitReferenceSvg";
 import { loadCircuitGeometry } from "./circuit-geometry";
 import styles from "./circuits.module.css";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
 const CircuitSelection = createContext<{ selected: string | null; onSelect: (code: string) => void }>({ selected: null, onSelect: () => {} });
 export function CircuitSelectionProvider({ children }: { children: ReactNode }) {
@@ -73,7 +74,7 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
           const p = circuitPresentation(c);
           return <tr key={c.circuito_code} data-hatched={c.status === "partial"} aria-selected={selected === c.circuito_code}>
             <th scope="row"><button type="button" className={styles.select} aria-pressed={selected === c.circuito_code} onClick={() => setSelected(c.circuito_code)}>{c.circuito_code}</button>{circuitNames[c.circuito_code] && circuitNames[c.circuito_code] !== c.circuito_code && <span> — {circuitNames[c.circuito_code]}</span>}</th>
-            <td>{p.winner}</td><td>{p.margin === null ? "—" : p.margin.toFixed(2)}</td><td>{c.positive_total}</td>
+            <td>{p.winner}</td><td>{p.margin === null ? "—" : formatFixed2(p.margin)}</td><td>{formatCount(c.positive_total)}</td>
             <td>{c.counts.counted}/{c.counts.expected}</td><td>{p.coverage}
               <div>no escrutadas: {c.counts.not_counted}; sin estado: {c.counts.missing}; inesperadas: {c.counts.unexpected}; cuarentena: {c.counts.quarantined}</div>
             </td></tr>;

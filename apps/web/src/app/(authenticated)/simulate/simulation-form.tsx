@@ -34,6 +34,7 @@ import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { simulationDisplayLabel } from "./display-label";
 import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
 import type { RosalesReference } from "@/lib/geography/cne-rosales-reference";
+import { formatCount } from "@/lib/format/number";
 
 const INITIAL_VALUES: SimulationFormValues = {
   level: ALLOCATION_LEVEL.PBA_MUNICIPAL,
@@ -138,7 +139,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
             aria-describedby="transfer-help transfer-errors">
             <option value="">Seleccione una lista</option>
             {baseline.lists.map((list) => (
-              <option key={list.listId} value={list.listId}>{list.listName} — {list.votes} votos</option>
+              <option key={list.listId} value={list.listId}>{list.listName} — {formatCount(list.votes)} votos</option>
             ))}
           </select>
         </div>
@@ -189,7 +190,7 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
             aria-describedby="sweep-help sweep-errors"
             onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))}>
             <option value="">Seleccione para muestrear</option>
-            {baseline.lists.map((list) => <option key={list.listId} value={list.listId}>{list.listName} — {list.votes} votos</option>)}
+            {baseline.lists.map((list) => <option key={list.listId} value={list.listId}>{list.listName} — {formatCount(list.votes)} votos</option>)}
           </select>
         </div>
       ))}

@@ -5,6 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { test as nextTest } from "./review-test-fixture";
 import { zoomTest } from "./review-zoom-test-fixture";
 
+import { formatCount } from "../src/lib/format/number";
 import { assertE2eEnvironment } from "./gate-contract";
 import {
   FISCALIZACION_VOTES,
@@ -52,9 +53,9 @@ test("PASO internas preserve exact lists on mobile and keyboard", async ({ page 
     await expect(region).toBeVisible();
     await expect(page.getByText("Completitud desconocida: la fuente oficial de esta elección no publica un catálogo de mesas esperadas.", { exact: true })).toBeVisible();
     for (const [name, votes, within, positive] of [
-      ["LA FUERZA DEL CAMBIO", "8698 votos", "68.52%", "26.16%"],
-      ["EL CAMBIO DE NUESTRAS VIDAS", "3997 votos", "31.48%", "12.02%"],
-      ["LIBERTAD POR SIEMPRE", "13206 votos", "100.00%", "39.72%"],
+      ["LA FUERZA DEL CAMBIO", "8.698 votos", "68,52%", "26,16%"],
+      ["EL CAMBIO DE NUESTRAS VIDAS", "3.997 votos", "31,48%", "12,02%"],
+      ["LIBERTAD POR SIEMPRE", "13.206 votos", "100,00%", "39,72%"],
     ]) {
       const row = region.getByRole("row").filter({ hasText: name! });
       for (const value of [votes!, within!, positive!]) await expect(row).toContainText(value);
@@ -424,7 +425,7 @@ nextTest("retries unavailable official evidence with the served canonical select
     await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
     await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
     await page.getByText("Mostrar resultados exactos", { exact: true }).click();
-    await expect(page.getByRole("main")).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa`);
+    await expect(page.getByRole("main")).toContainText(`${formatCount(OFFICIAL_VOTES)} votos a nivel mesa`);
     await expect(page.getByText("Archivo y procedencia", { exact: true })).toBeVisible();
     await page.getByText("Archivo y procedencia", { exact: true }).click();
     await expect(page.getByRole("list", { name: "procedencia" })).toContainText("SHA-256");
@@ -506,7 +507,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       const legacy = page.getByRole("main");
       await expect(legacy.getByRole("alert")).toContainText("parámetros heredados");
       await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
-      await expect(legacy).not.toContainText(`${OFFICIAL_VOTES} votos`);
+      await expect(legacy).not.toContainText(`${formatCount(OFFICIAL_VOTES)} votos`);
 
       await page
         .getByRole("navigation", { name: "principal" })
@@ -577,10 +578,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       const explorer = page.getByRole("main");
       await page.getByText("Mostrar resultados exactos", { exact: true }).click();
-      await expect(explorer).toContainText(`${OFFICIAL_VOTES} votos a nivel mesa, obtenidos de filas de fuente mesa`);
+      await expect(explorer).toContainText(`${formatCount(OFFICIAL_VOTES)} votos a nivel mesa, obtenidos de filas de fuente mesa`);
       await expect(explorer).toContainText(
-        `Se excluyeron 1 fila de fuente fiscalización / ${FISCALIZACION_VOTES} votos del agregado oficial`);
-      await expect(explorer).not.toContainText(`${OFFICIAL_VOTES + FISCALIZACION_VOTES} votos a nivel mesa`);
+        `Se excluyeron 1 fila de fuente fiscalización / ${formatCount(FISCALIZACION_VOTES)} votos del agregado oficial`);
+      await expect(explorer).not.toContainText(`${formatCount(OFFICIAL_VOTES + FISCALIZACION_VOTES)} votos a nivel mesa`);
       await expect(explorer).not.toContainText(FISCALIZACION_MARKER);
       await page.setViewportSize({ width: 1440, height: 900 });
       await expect(explorer.getByRole("heading", { name: "Exploración territorial" })).toBeVisible();

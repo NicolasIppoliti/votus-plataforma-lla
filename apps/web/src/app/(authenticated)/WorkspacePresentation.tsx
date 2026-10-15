@@ -44,7 +44,7 @@ export function WorkspaceIdentity() {
   const snapshot = useContext(WorkspaceContext)?.snapshot;
   return <p className="workspace-identity">{snapshot?.organizationName
     ? <>Organización activa: <strong>{snapshot.organizationName}</strong></>
-    : "Organización sin verificar"}</p>;
+    : snapshot?.status === "selection_required" ? "Sin organización" : "Organización sin verificar"}</p>;
 }
 
 export function WorkspaceReviewStatus() {

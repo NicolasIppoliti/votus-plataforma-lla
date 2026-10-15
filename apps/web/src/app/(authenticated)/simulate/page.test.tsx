@@ -206,13 +206,20 @@ describe("simulate page — reference geography and editor disclosure", () => {
 });
 
 describe("simulate page — approved workbench composition", () => {
-  it("states the precise real-input allocation refusal without changing statutory rules", async () => {
-    expect(() => allocateSeats(projectionToAllocationInput(projectionInputSchema.parse(ROSALES_NATIONAL_POSITIVES))))
-      .toThrow("cannot allocate all 9 seats from the supplied lists; only 8 seat awards were produced");
+  it("completes the official national vote base as a hypothetical municipal Hare projection", async () => {
+    // Official CNE 2025 DIPUTADO NACIONAL, Rosales; archived comparison:
+    // docs/research/cne-rosales-2025-archive/result-aggregate-deltas.csv
+    // provisional_votes column (official DINE provisional, not CNE definitive).
+    // This is a
+    // hypothetical 9-seat PBA projection, NOT the actual national allocation.
+    const result = allocateSeats(projectionToAllocationInput(projectionInputSchema.parse(ROSALES_NATIONAL_POSITIVES)));
+    if (result.level === "national") throw new Error("Expected hypothetical PBA allocation");
+    expect(result.results.map((list) => list.totalSeats)).toEqual([7, 2, ...Array(13).fill(0)]);
+    expect(result.seatAwards).toHaveLength(9);
+    expect(result.seatAwards.at(-1)).toMatchObject({ listId: "L1", awardedBy: "most_votes_completion" });
     const markup = await renderSimulation(ROSALES_NATIONAL_POSITIVES);
-    expect(markup).toContain("solo se produjeron 8 adjudicaciones");
-    expect(markup).not.toContain("No se pudo completar la asignación porque");
-    expect(markup).toContain("councilTotal=18");
+    expect(markup).toContain("Mayor número de sufragios (Art. 109 c)");
+    expect(markup).not.toContain("solo se produjeron 8 adjudicaciones");
   });
 
   it("uses the approved title, truthful scope row and collapsed secondary disclosures", async () => {
@@ -388,6 +395,12 @@ describe("simulate page — sweep evidence and refusal boundaries", () => {
     return [...markup.matchAll(/href="([^"]+)"[^>]*>Ver escenario exacto/g)]
       .map((match) => new URL(match[1]!.replaceAll("&amp;", "&"), "https://example.invalid"));
   }
+
+  it("labels each sampled point with its es-AR grouped vote amount (#451)", async () => {
+    const markup = await renderSimulation(national, { ...sweep, sweepDonor: national.lists[0]!.listId, sweepTarget: national.lists[1]!.listId });
+    expect(markup).toContain('<th scope="row">1.000</th>');
+    expect(markup).not.toContain('<th scope="row">1000</th>');
+  });
 
   it.each([OFFICIAL_PBA_2025_INPUT, national])("retains rich input and every point's own complete exact link", async (input) => {
     const params = { ...sweep, sweepDonor: input.lists[0]!.listId, sweepTarget: input.lists[1]!.listId };
@@ -794,17 +807,16 @@ describe("simulate page — complete statutory evidence", () => {
     expect(chart).toContain("Dibujo de una banca por bloque no disponible");
   });
 
-  it("refuses insufficient renewal votes rather than fabricating partial awards", async () => {
+  it("completes renewal after halving while preserving the coverage warning", async () => {
     const markup = await renderSimulation({
       ...ALLOCATION_INPUT,
       totalVotes: 100,
       lists: [{ listId: "A", listName: "Lista A", votes: 1 }],
     });
 
-    expect(markup).toContain('role="alert"');
-    expect(markup).not.toContain('aria-label="Distribución de bancas"');
-    expect(markup).not.toContain("data-seat-state");
-    expect(markup).not.toContain("Huella de los datos proporcionados");
+    expect(markup).toContain('aria-label="Lista A: 9 de 9 bancas"');
+    expect(markup).toContain("Mayor número de sufragios (Art. 109 c)");
+    expect(markup).toContain("Cobertura de votos incompleta: 99");
   });
 
   it("shows actual renewal-seat proportions beside the canonical evidence", async () => {
