@@ -25,14 +25,24 @@ function find(node: unknown, predicate: (node: Node) => boolean): Node {
 }
 const selected = { electionId: "e1", categoryId: "c1", distritoCode: "02", seccionCode: "027", level: "seccion" };
 const child = { ...selected, circuitoCode: "00001", level: "circuito" };
-function render() {
-  const form = DrilldownSelectionForm({ selected, fields: [{ name: "categoryId", id: "category", label: "Categoría", placeholder: "Elegir", options: [{ value: "c1", label: "Una" }, { value: "c2", label: "Otra" }] }], notes: null, children: null });
+function render(notes: import("react").ReactNode = null) {
+  const form = DrilldownSelectionForm({ selected, fields: [{ name: "categoryId", id: "category", label: "Categoría", placeholder: "Elegir", options: [{ value: "c1", label: "Una" }, { value: "c2", label: "Otra" }] }], notes, children: null });
   harness.navigation = form.props.value;
   const navigator = TerritorialNavigator({ items: [{ name: "Sección", values: selected }, { name: "Circuito", values: child }], options: [{ name: "Otro circuito", values: child }], title: "Circuito", terminal: false });
   return { form, navigator };
 }
 const url = (values: typeof selected) => `/drilldown?${canonicalScopeSearchParams(values)}`;
 beforeEach(() => vi.clearAllMocks());
+it("keeps secondary guidance and per-reason exclusions in a closed disclosure", () => {
+  const notes = <p role="note">Se excluyeron 2 filas: linaje incompleto.</p>;
+  const { form } = render(notes);
+  const disclosure = find(form, node => node.type === "details" &&
+    Boolean((() => { try { return find(node, child => child.props.id === "party-highlight-note"); } catch { return false; } })()));
+  expect(disclosure.props.open).toBeUndefined();
+  expect(find(disclosure, node => node.type === "summary").props.children).toBe("Notas de selección y exclusiones");
+  expect(find(disclosure, node => node.props.role === "note")).toBe(notes);
+  expect(find(disclosure, node => node.props.id === "party-highlight-note").props.children).toContain("incluidas las listas sin mapear");
+});
 it("pushes child opening through the real navigator and form", () => {
   const { navigator } = render();
   (find(navigator, node => node.props["aria-label"] === "Abrir Otro circuito").props.onClick as () => void)();
