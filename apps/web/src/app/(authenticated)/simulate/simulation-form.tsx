@@ -439,7 +439,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
     </section>
     <section className="simulation-territorial-workbench" aria-label="Laboratorio territorial">
       <section className="simulation-geography" aria-labelledby="simulation-geography-heading">
-        <header><div><h2 id="simulation-geography-heading">Referencia territorial</h2><p>Geografía examinada ≠ distrito que asigna bancas</p></div>
+        <header className="simulation-geography-header"><div><h2 id="simulation-geography-heading">Referencia territorial</h2><p>Geografía examinada ≠ distrito que asigna bancas</p></div>
           {showResult && impact && baseImpact ? <div className="simulation-view-switch" role="group" aria-label="Vista de la distribución">
             <Button type="button" variant="outline" aria-pressed={distributionView === "base"} onClick={() => setDistributionView("base")}>Base</Button>
             <Button type="button" variant="outline" aria-pressed={distributionView === "scenario"} onClick={() => setDistributionView("scenario")}>Escenario</Button>

@@ -80,6 +80,14 @@ it("surfaces authorized refusal exclusions by reason without exposing unsafe fie
   expect(html).toContain("missing_lineage"); expect(html).toContain("2 fila(s) / 40 voto(s)");
   expect(html).not.toContain("UNSAFE_NOTES"); expect(html).not.toContain("archive-1");
 });
+it("translates non-official row reasons in rendered refusal evidence without losing counts", async () => {
+  const part = { ...authorized, status: "source_unavailable", reason: "non_official_source_rows", counts: { non_official_source_rows: 3 }, exclusions: [{ reason: "non_official_source_rows", rows: 3, votes: 40 }] };
+  mocks.bundle.mockResolvedValue({ result: part, schools: part, reference: part, provenance: part });
+  const html = await render();
+  expect(html).toContain("filas de fuente no oficial");
+  expect(html).not.toContain("non_official_source_rows");
+  expect(html).toContain("3 fila(s) / 40 voto(s)");
+});
 it("does not mistake partial or unknown completeness for complete coverage", async () => {
   mocks.completeness.mockResolvedValue(completeness("partial"));
   expect(await render()).toContain("Escrutinio parcial: 1 de 2");
