@@ -1,6 +1,7 @@
 import { open } from "node:fs/promises";
 import { z } from "zod";
 import { EXPECTED_E2E_SPECS } from "./gate-contract.ts";
+import { mobileFormFactsSchema } from "./mobile-form-facts.ts";
 
 export const PLAYWRIGHT_DIAGNOSTIC_LIMIT = 256 * 1024;
 export const diagnosticPath = (receiptPath: string) => `${receiptPath}.diagnostics.json`;
@@ -16,6 +17,7 @@ export const attemptSchema = z.strictObject({
 	errorLocations: z.array(z.strictObject({ line: count.positive(), column: count.positive() })).max(1024),
 	missingErrorLocations: count,
 	foreignErrorLocations: count,
+	mobileForm: mobileFormFactsSchema.optional(),
 });
 export const companionSchema = z.strictObject({
 	schemaVersion: z.literal(2),

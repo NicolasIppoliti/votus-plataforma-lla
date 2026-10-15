@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSelection } from "@/lib/workspace/selection";
+import type { ComponentProps } from "react";
 
 const hooks = vi.hoisted(() => {
   const state: unknown[] = [], effectDeps: Array<readonly unknown[] | undefined> = [], effects: Array<() => void> = [];
@@ -30,6 +31,7 @@ const router = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("react", async (importOriginal) => ({ ...(await importOriginal<typeof import("react")>()), useId: () => "workspace-selector-test", useState: hooks.useState, useEffect: hooks.useEffect, useTransition: hooks.useTransition }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 const { WorkspaceSelector } = await import("./WorkspaceSelector");
+const { ResponsiveSelect } = await import("./ResponsiveSelect");
 
 const A = "10000000-0000-4000-8000-000000000001", B = "10000000-0000-4000-8000-000000000002";
 const organizations = [{ id: A, name: "Organization A" }, { id: B, name: "Organization B" }];
@@ -45,6 +47,8 @@ function element(node: unknown, type: string): { props: Record<string, unknown> 
   if (typeof node === "object" && node !== null) {
     const value = node as { type?: unknown; props?: Record<string, unknown> };
     if (value.type === type && value.props) return { props: value.props };
+    // Expand the production wrapper, still asserting against its real native select.
+    if (value.type === ResponsiveSelect && value.props) return element(ResponsiveSelect(value.props as ComponentProps<typeof ResponsiveSelect>), type);
     if (value.props && "children" in value.props) return element(value.props["children"], type);
   }
   throw new Error(`missing ${type}`);

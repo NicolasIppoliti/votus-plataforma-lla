@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 import { useId, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
@@ -54,10 +55,10 @@ export function WorkspaceSelector({ initialSelection, onSwitchStart }: Workspace
   if (initialSelection.organizations.length === 0) return <Alert presentation="inline" variant="caveat">No se pudo cargar la lista parcial de organizaciones.</Alert>;
   return <form onSubmit={submit}>
     <label htmlFor={organizationId}>Organización</label>{" "}
-    <select id={organizationId} value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
+    <ResponsiveSelect id={organizationId} value={selected} onChange={(event) => setSelected(event.target.value)} disabled={pending}>
       <option value="" disabled>Seleccionar organización</option>
       {initialSelection.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
-    </select>{" "}
+    </ResponsiveSelect>{" "}
     <Button variant="outline" type="submit" disabled={pending || !selected}>{pending ? "Cambiando…" : "Cambiar organización"}</Button>
     {message ? <Alert presentation="inline" variant="needs-selection">{message}</Alert> : null}
     {initialSelection.truncated && initialSelection.total !== null ? <p role="note">La lista está limitada a las primeras 100 de {initialSelection.total} organizaciones autorizadas; la organización activa puede aparecer adicionalmente.</p> : null}

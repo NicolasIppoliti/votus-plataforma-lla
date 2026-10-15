@@ -78,3 +78,7 @@
 @media (max-width: 760px) { .root { padding-top: 23px; } .layout { padding-inline: 18px; } .workbench { grid-template-columns: minmax(0, 1fr); } .inspector { border-left: 0; border-top: 1px solid var(--border); } .boundaries > div { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 650px) { .header h1 { font-size: 1.6875rem; } .context { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; } .context > :first-child { grid-column: 1 / -1; } .mapHeader, .mapCaption { padding-inline: 15px; } .trail, .legend { padding-inline: 15px; } .geometryNote, .mapFooter { margin-inline: 15px; } .mapStage { height: 290px; min-height: 290px; } .mapDrawing { padding: 35px 32px; } .mapFooter, .sectionHeading { flex-direction: column; align-items: flex-start; gap: 6px; } .inspector { padding: 20px 17px 16px; } .tableFilters { flex-direction: column; gap: 12px; } .tableFilters .field, .tableFilters .field:first-child { width: 100%; } }
 @media (max-width: 360px) { .layout { padding-inline: 12px; } }
+/* Keep the full label and native selector together on narrow phones. */
+@media (max-width: 30rem) {
+  .context { grid-template-columns: minmax(0, 1fr); }
+}
