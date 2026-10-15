@@ -549,10 +549,22 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await expect(page.locator("#navigator-title")).toBeFocused();
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
-      await openChild("00001", "circuito");
-      await openChild("E1 — Synthetic school", "establecimiento");
-      await openChild("Mesa 1", "mesa");
+      const traversalUrls = [page.url()];
+      await openChild("00001", "circuito"); traversalUrls.push(page.url());
+      await openChild("E1 — Synthetic school", "establecimiento"); traversalUrls.push(page.url());
+      await openChild("Mesa 1", "mesa"); traversalUrls.push(page.url());
       await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
+      // Real browser history must restore both exact lineage and served evidence.
+      const traversalLevels = ["seccion", "circuito", "establecimiento", "mesa"];
+      const assertRestored = async (index: number) => {
+        await expect(page).toHaveURL(traversalUrls[index]!);
+        await expect(form).not.toHaveAttribute("aria-busy", "true");
+        await expect(page.getByRole("main")).toContainText(`votos a nivel ${traversalLevels[index]}`);
+        await expect(page.getByRole("combobox", { name: "Sección", exact: true })).toHaveValue(identity.seccionCode);
+        await expect(page.getByText("Actualizando resultados… La evidencia se mostrará cuando la selección esté verificada.", { exact: true })).toHaveCount(0);
+      };
+      for (const index of [2, 1, 0]) { await page.goBack(); await assertRestored(index); }
+      for (const index of [1, 2, 3]) { await page.goForward(); await assertRestored(index); }
       const section = page.getByRole("combobox", { name: "Sección", exact: true });
       await section.focus(); await section.selectOption("");
       await expect(section).toBeFocused();

@@ -88,16 +88,17 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
     request(draft);
   }
 
-  function request(draft: ScopeControlValues) {
+  function request(draft: ScopeControlValues, history: "push" | "replace" = "replace") {
     latestDraft.current = draft;
     const requestedKey = selectionKey(draft);
     setState((previous) => ({ ...previous, draft, requestedKey }));
     // Always supersede an outstanding request, including a return to the served selection.
-    startTransition(() => router.replace(requestedKey ? `/drilldown?${requestedKey}` : "/drilldown", { scroll: false }));
+    startTransition(() => router[history](requestedKey ? `/drilldown?${requestedKey}` : "/drilldown", { scroll: false }));
   }
   function navigate(values: ScopeControlValues) {
     focusNavigator.current = true;
-    request(values);
+    // Deliberate territorial traversal is a Back/Forward waypoint; filter edits are not.
+    request(values, "push");
   }
 
   const controlStates = scopeControlStates(SCOPE_FORM_KIND.DRILLDOWN, state.draft);
