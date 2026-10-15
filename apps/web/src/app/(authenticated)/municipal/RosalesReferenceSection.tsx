@@ -38,6 +38,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
       <li>Los circuitos 0248B y 0248C se superponen en el archivo CNE; no se corrige la superposición.</li>
       <li>El archivo CNE ubica locales en el circuito 0248 sin sufijo; no se asignan a subcircuitos.</li>
     </ul>
+    <p>Seleccione un punto del mapa para ir al local y resaltarlo en la tabla. Con teclado, use Tab y Enter.</p>
     <div className={styles.locator} data-map-kind="locator"><ReferenceMap reference={reference} /></div>
     <Legend label="Leyenda de referencia geográfica" entries={[
       { label: "Contorno de circuito de referencia CNE; sin resultados electorales", encoding: "outline" },
@@ -61,7 +62,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
           </tr>
         </thead>
         <tbody>
-          {reference.locales.map((locale) => <tr key={locale.mesa_from}>
+          {reference.locales.map((locale) => <tr key={locale.mesa_from} id={`cne-local-${locale.mesa_from}`} tabIndex={-1} className={styles.localeRow}>
             <td>{locale.circuit}</td>
             <th scope="row">{locale.name}</th>
             <td>{locale.address}</td>
@@ -90,10 +91,13 @@ function ReferenceMap({ reference }: { reference: RosalesReference }): ReactNode
   const x = (longitude: number) => ((longitude - west) / (east - west) * width).toFixed(1);
   const y = (latitude: number) => ((north - latitude) / (north - south) * height).toFixed(1);
   const plotted = reference.locales.filter((locale) => locale.coordinates !== null);
-  return <svg viewBox={`-8 -8 ${width + 16} ${height + 16}`} role="img" style={{ maxWidth: "100%", height: "auto" }}
+  return <svg viewBox={`-8 -8 ${width + 16} ${height + 16}`} role="group" style={{ maxWidth: "100%", height: "auto" }}
     aria-label={`Mapa de referencia CNE de Coronel Rosales: ${reference.circuits.length} circuitos y ${plotted.length} locales con coordenadas; el detalle completo está en la tabla`}>
     {reference.circuits.map((circuit) => <path key={circuit.code} data-circuit={circuit.code} {...REFERENCE_STYLE} strokeWidth="1" fillRule="evenodd"
       d={circuit.coordinates.flat().map((ring) => ring.map(([longitude, latitude], index) => `${index === 0 ? "M" : "L"}${x(longitude)} ${y(latitude)}`).join(" ") + " Z").join(" ")} />)}
-    {plotted.map((locale) => <circle key={locale.mesa_from} cx={x(locale.coordinates![0])} cy={y(locale.coordinates![1])} r="4" fill={DOT_COLOR} />)}
+    {plotted.map((locale) => <a key={locale.mesa_from} href={`#cne-local-${locale.mesa_from}`} className={styles.localeLink}
+      aria-label={`Ver local ${locale.name}, mesas ${locale.mesa_from}–${locale.mesa_to}`}>
+      <circle cx={x(locale.coordinates![0])} cy={y(locale.coordinates![1])} r="4" fill={DOT_COLOR} />
+    </a>)}
   </svg>;
 }
