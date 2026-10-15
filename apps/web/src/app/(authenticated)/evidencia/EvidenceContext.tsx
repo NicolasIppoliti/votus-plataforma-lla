@@ -40,6 +40,7 @@ export function EvidenceContext({ fields, children }: { fields: EvidenceField[];
           <option value="">Seleccionar</option>
           {field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </ResponsiveSelect>
+        <details className={styles.fullValue}><summary>Ver selección completa: {field.label}</summary><p>{field.options.find(option => option.value === (draft?.[field.name] ?? field.value))?.label ?? "Seleccionar"}</p></details>
       </div>)}
       <div className={styles.field}><span>Origen</span><strong>Oficial · autorizado</strong></div>
       <noscript><button type="submit">Consultar evidencia</button></noscript>

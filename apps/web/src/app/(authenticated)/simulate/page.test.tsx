@@ -31,6 +31,12 @@ describe("scenario handoff", () => {
       const params = Object.fromEntries(new URL(href!, "https://example.test").searchParams);
       const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve(params) }) as ReactElement);
       expect(html).toContain("Resultado (municipal de PBA)");
+      expect(html).toContain('class="seat-distribution__comparison"');
+      expect(html).toContain("Base → escenario");
+      expect(html).toContain('class="simulation-geography-header"');
+      expect(html).toContain('<abbr title="Votos escenario">V. esc.</abbr>');
+      expect(html).toContain('class="data-table simulation-exact-table"');
+      expect(outsideDisclosures(html)).not.toContain('class="seat-distribution__blocks"');
       expect(html).toContain("no es un resultado oficial");
       expect(html).not.toContain("Territorio no vinculado");
     }
@@ -91,7 +97,7 @@ describe("official 2025 base", () => {
 });
 
 describe("default-visible impact contracts", () => {
-  it("keeps seated and zero-seat images outside disclosures on each served render", async () => {
+  it("keeps seated images visible and every zero-seat image in a disclosure on each served render", async () => {
     const input = { ...ALLOCATION_INPUT, lists: [...ALLOCATION_INPUT.lists,
       { listId: "zero", listName: "Lista sin banca", votes: 0 },
     ] };
@@ -100,7 +106,8 @@ describe("default-visible impact contracts", () => {
       const panel = html.slice(html.indexOf('<aside class="simulation-scenario-panel"'), html.indexOf("</aside>"));
       const visible = outsideDisclosures(panel);
       expect(visible.includes('aria-label="LA LIBERTAD AVANZA: 5 de 9 bancas"')).toBe(true);
-      expect(visible.includes('aria-label="Lista sin banca: 0 de 9 bancas"')).toBe(true);
+      expect(visible.includes('aria-label="Lista sin banca: 0 de 9 bancas"')).toBe(false);
+      expect(panel).toMatch(/<details[^>]*><summary>Listas sin bancas \(1\)<\/summary>[\s\S]*aria-label="Lista sin banca: 0 de 9 bancas"/);
     }
   });
 

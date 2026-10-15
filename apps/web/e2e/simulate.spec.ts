@@ -419,8 +419,9 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(seatChart).toContainText("Lista A");
     await expect(seatChart).toContainText("Lista B");
     await expect(seatChart).toContainText(/9/);
-    const listASeats = seatChart.getByRole("img", { name: "Lista A: 5 de 9 bancas", exact: true });
-    const listBSeats = seatChart.getByRole("img", { name: "Lista B: 4 de 9 bancas", exact: true });
+    await seatChart.getByText("Cómo leer la distribución", { exact: true }).click();
+    const listASeats = seatChart.getByRole("img", { name: "Detalle de Lista A: 5 de 9 bancas", exact: true });
+    const listBSeats = seatChart.getByRole("img", { name: "Detalle de Lista B: 4 de 9 bancas", exact: true });
     await expect(listASeats.locator('[data-seat-state="awarded"]')).toHaveCount(5);
     await expect(listASeats.locator('[data-seat-state="empty"]')).toHaveCount(4);
     await expect(listBSeats.locator('[data-seat-state="awarded"]')).toHaveCount(4);
@@ -1121,6 +1122,8 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
   const trace = result.getByText(/Huella de los datos proporcionados/);
   await expect(chart).toBeVisible();
   const servedTrace = await trace.innerText();
+  await chart.getByText("Listas sin bancas (2)", { exact: true }).click();
+  await chart.getByText("Cómo leer la distribución", { exact: true }).click();
   const transfer = page.getByRole("form", { name: "Transferencia de votos a total fijo" });
   for (const width of [1280, 320]) {
     await page.setViewportSize({ width, height: 800 });
