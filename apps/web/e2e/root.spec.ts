@@ -19,6 +19,10 @@ test("electoral context stays labelled and readable at 320px with explicit sourc
   await page.goto("/municipal");
   const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
   await expect(bar).toBeVisible();
+  for (const label of ["Elección", "Categoría", "Distrito", "Sección", "Fuente"]) {
+    await expect(bar.getByRole("combobox", { name: `Contexto electoral: ${label}`, exact: true })).toHaveCount(1);
+  }
+  await expect(page).toHaveURL(/\/municipal$/);
   const source = bar.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true });
   await expect(source).toHaveValue("official");
   await source.selectOption("fiscalizacion");
