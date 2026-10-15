@@ -9,10 +9,11 @@ export interface CircuitMapProps {
   geometry: { code: string; coordinates: [number, number][][][] }[];
   circuits: CircuitOutcome[];
   selected: string | null;
+  highlighted?: string | null;
   onSelect?: (code: string) => void;
 }
 /** SVG clipping draws the exact B∩C shared area without changing either source polygon. */
-export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: CircuitMapProps) {
+export function CircuitReferenceSvg({ geometry, circuits, selected, highlighted = null, onSelect }: CircuitMapProps) {
   const id = useId().replaceAll(":", ""), hatch = `${id}-hatch`, overlap = `${id}-overlap`;
   const points = geometry.flatMap(c => c.coordinates.flat(2));
   const west = Math.min(...points.map(p => p[0])), east = Math.max(...points.map(p => p[0]));
@@ -34,7 +35,7 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: 
         : { role: "img" as const };
       return <g key={g.code}>
         <path d={path(g)} fill={p ? circuitBandColor(p.color, p.band) : NEUTRAL_COLOR} fillOpacity={1}
-          fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth={selected === g.code ? 3 : 1} vectorEffect="non-scaling-stroke"
+          fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth={selected === g.code || highlighted === g.code ? 3 : 1} vectorEffect="non-scaling-stroke"
           {...accessibility} aria-label={name} className={styles.unit}
           onClick={onSelect ? () => onSelect(g.code) : undefined} onKeyDown={onSelect ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(g.code); } } : undefined}><title>{name}</title></path>
         {outcome?.status === "partial" && <path d={path(g)} fill={`url(#${hatch})`} fillRule="evenodd" pointerEvents="none" data-hatched="true" />}
