@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext, type ElectoralContext } from "@/lib/context/url";
 import { formatFacetOptionLabel } from "@/lib/results/exploration";
@@ -22,6 +22,26 @@ function WorkspaceControls() {
   return <ContextControls key={`${snapshot?.organizationId}/${snapshot?.revision}/${snapshot?.status}`} />;
 }
 function ContextControls() {
+  const barRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const bar = barRef.current;
+    const topbar = bar?.parentElement?.querySelector<HTMLElement>(".workspace-topbar");
+    if (!bar || !topbar || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    function measure() {
+      root.style.setProperty("--electoral-context-height", `${bar!.getBoundingClientRect().height}px`);
+      root.style.setProperty("--electoral-topbar-height", `${topbar!.getBoundingClientRect().height}px`);
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    observer.observe(topbar);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--electoral-context-height");
+      root.style.removeProperty("--electoral-topbar-height");
+    };
+  }, []);
   const search = useSearchParams();
   const query = search.toString();
   const pathname = usePathname();
@@ -49,7 +69,7 @@ function ContextControls() {
   function selector(label: string, key: keyof ElectoralContext, options: { value: string; label: string }[]) {
     return <label className="electoral-context__field">{label}<select aria-label={`Contexto electoral: ${label}`} value={String(context[key] ?? "")} disabled={!facets || parsed.status !== "ok"} onChange={event => change(key, event.target.value)}><option value="">Seleccionar</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
   }
-  return <section aria-label="Contexto electoral" className="electoral-context shell-container" data-source={context.sourceKind}>
+  return <section ref={barRef} aria-label="Contexto electoral" className="electoral-context shell-container" data-source={context.sourceKind}>
     {selector("Elección", "electionId", facets?.elections.map(item => ({ value: item.id, label: item.label })) ?? [])}
     {selector("Categoría", "categoryId", facets?.categories.map(item => ({ value: item.id, label: item.name })) ?? [])}
     <fieldset><legend>Territorio</legend>

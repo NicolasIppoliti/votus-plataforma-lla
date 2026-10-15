@@ -400,9 +400,21 @@ select option {
   line-height: 1.5;
 }
 
-.electoral-context {
+/* ResizeObserver tracks both sticky rows as controls wrap or zoom changes.
+   Reserve their combined height for browser focus/scrollIntoView and screenshots. */
+html:has(.electoral-context) {
+  scroll-padding-block-start: calc(var(--electoral-topbar-height, 4rem) + var(--electoral-context-height, 0px) + 1rem);
+}
+
+.app-shell__workspace:has(.electoral-context) > .workspace-topbar {
   position: sticky;
   top: 0;
+  z-index: 11;
+}
+
+.electoral-context {
+  position: sticky;
+  top: var(--electoral-topbar-height, 4rem);
   z-index: 10;
   display: flex;
   flex-wrap: wrap;
