@@ -44,6 +44,48 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if (cleanupError) throw cleanupError; return outcome.value;
 }
 test.describe("authorized official comparison", () => {
+  test("real sign-in resumes exact exploration/comparison and rechecks revoked access", async ({ page, context }) => {
+    await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      const organization = await page.getByRole("combobox", { name: "Organización", exact: true }).inputValue();
+      const common = { electionId: identity.electionIds[0]!, categoryId: identity.categoryId,
+        distritoCode: identity.distritoCode, seccionCode: identity.seccionCode, sourceKind: "official" };
+      const exploration = `/drilldown?${new URLSearchParams({ ...common, level: "seccion" })}`;
+      const comparison = `/compare?${new URLSearchParams({ ...common, bElectionId: identity.electionIds[1]!, bCategoryId: identity.categoryId })}`;
+      const resume = async (destination: string): Promise<void> => {
+        await context.clearCookies();
+        await page.goto(new URL(destination, baseURL).toString());
+        await expect.poll(() => new URL(page.url()).searchParams.get("returnTo")).toBe(destination);
+        await expect(page.getByRole("main")).not.toContainText(identity.archiveEntryIds[0]!);
+        // A failed attempt must not discard the hidden destination.
+        await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
+        await page.getByLabel("Contraseña").fill("synthetic-invalid-password");
+        await page.getByRole("button", { name: "Iniciar sesión" }).click();
+        await expect(page.getByRole("alert")).toHaveText("Las credenciales no son válidas.");
+        await page.getByLabel("Contraseña").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
+        await page.getByRole("button", { name: "Iniciar sesión" }).click();
+        await expect(page).toHaveURL(new URL(destination, baseURL).toString());
+        // Fresh sessions may require the existing authorized workspace prerequisite.
+        const selector = page.getByRole("combobox", { name: "Organización", exact: true });
+        await selector.selectOption(organization);
+        const switched = page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspace" && response.request().method() === "POST");
+        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        expect((await switched).ok()).toBe(true);
+        await expect(page).toHaveURL(new URL(destination, baseURL).toString());
+      };
+      for (const destination of [exploration, comparison]) {
+        await resume(destination);
+        await expect(page.getByRole("main").locator("table").filter({ hasText: identity.comparisonParty!.displayName }).first()).toContainText(identity.comparisonParty!.displayName);
+      }
+      await revokeAuthorization();
+      await resume(comparison);
+      const main = page.getByRole("main");
+      await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await expect(main.getByRole("table")).toHaveCount(0);
+      for (const archive of identity.archiveEntryIds) await expect(main).not.toContainText(archive);
+      await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
+    }));
+  });
   // A changed frame alone can be inertia or a WebGL repaint, not a settled camera.
   async function settledMap(map: Locator, phase: string): Promise<{ image: Buffer; width: number; height: number }> {
     let previous: Buffer | undefined;

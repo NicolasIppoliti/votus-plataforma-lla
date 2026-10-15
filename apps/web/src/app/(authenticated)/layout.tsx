@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { loginDestination } from "@/lib/auth/return-destination";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { authorizedReviewItems } from "@/lib/workspace/context";
 import { loadWorkspaceSelection } from "@/lib/workspace/selection";
@@ -49,12 +51,12 @@ export default async function AuthenticatedLayout({
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect(loginDestination((await headers()).get("x-votus-return-to")));
   }
 
   const selection = await loadWorkspaceSelection();
   if (selection.status === "expired" || selection.status === "revoked") {
-    redirect("/login");
+    redirect(loginDestination((await headers()).get("x-votus-return-to")));
   }
 
   // A denied or failed workspace check is "unknown", never a false clean queue.

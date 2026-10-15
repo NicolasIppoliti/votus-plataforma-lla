@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
  * supports (specs/access-control/spec.md). Authentication is owned by the
  * server action so the browser never receives a Supabase auth client.
  */
-export function LoginForm(): ReactNode {
+export function LoginForm({ returnTo = "/" }: { returnTo?: string }): ReactNode {
   const [state, formAction, isPending] = useActionState(
     signIn,
     INITIAL_SIGN_IN_STATE,
@@ -24,6 +24,7 @@ export function LoginForm(): ReactNode {
       className="login-form"
       aria-busy={isPending || undefined}
     >
+      <input type="hidden" name="returnTo" value={returnTo} />
       <div className="field">
         <Label htmlFor="email">Correo electrónico</Label>
         <Input

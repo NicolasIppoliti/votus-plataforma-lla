@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { isAuthApiError, isAuthSessionMissingError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
+import { loginDestination, returnDestination } from "@/lib/auth/return-destination";
 import { resolveSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
 
 /**
@@ -56,7 +57,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // `response` carries any refreshed session cookies Supabase writes during
   // `getUser()`; it becomes the pass-through response on the authenticated
   // path so the browser keeps a fresh session.
-  let response = NextResponse.next({ request });
+  const requestHeaders = new Headers(request.headers);
+  // Overwrite any caller-supplied value before the render-time auth guard reads it.
+  requestHeaders.set("x-votus-return-to", returnDestination(pathname + request.nextUrl.search));
+  let response = NextResponse.next({ request: { headers: requestHeaders } });
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: resolveSupabaseCookieOptions({
@@ -71,7 +75,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         for (const { name, value } of cookiesToSet) {
           request.cookies.set(name, value);
         }
-        response = NextResponse.next({ request });
+        requestHeaders.set("cookie", request.headers.get("cookie") ?? "");
+        response = NextResponse.next({ request: { headers: requestHeaders } });
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }
@@ -103,8 +108,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (pathname === "/api/session") {
       return sessionProbeResponse(response, true);
     }
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    const loginUrl = new URL(loginDestination(pathname + request.nextUrl.search), request.url);
+    const redirected = NextResponse.redirect(loginUrl);
+    for (const cookie of response.cookies.getAll()) redirected.cookies.set(cookie);
+    return redirected;
   }
 
   return response;
