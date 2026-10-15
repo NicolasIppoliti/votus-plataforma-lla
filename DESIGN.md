@@ -283,6 +283,7 @@ scope; the [slice plan](docs/plans/territorial-intelligence-slices.md) gates del
 ## Copy and Language
 
 - Neutral, direct, operational Spanish.
+- Facet-exclusion reasons use one directive-free display boundary (`lib/results/facet-exclusion-labels.ts`) shared by Evidencia and Exploración. Known reasons render in Spanish without changing transport keys, per-reason counts or official-source isolation; unknown reasons remain visible, never silently dropped.
 - Use correct electoral terminology rather than friendlier but inaccurate substitutes.
 - Prefer concrete verbs: “Comparar”, “Revisar”, “Cambiar workspace”.
 - Explain irreversible actions, degraded evidence, and source meaning at the point of use.
