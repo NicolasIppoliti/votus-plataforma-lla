@@ -463,7 +463,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
   }
 }
 
-    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>): Promise<T> {
+    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>, freshLogin = false): Promise<T> {
       const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
       const { data: auth, error: authError } = await admin.auth.admin.listUsers();
       const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
@@ -472,6 +472,16 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       if (fixtureError || typeof fixture?.organization_id !== "string") throw new Error(`failed to set up authorized official fixture: ${fixtureError?.message ?? "invalid response"}`);
       let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
       try {
+        if (freshLogin) {
+          await page.context().clearCookies();
+          await page.goto(new URL("/login", baseURL).toString());
+          await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
+          await page.getByLabel("Contraseña").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
+          await page.getByRole("button", { name: "Iniciar sesión" }).click();
+          await expect(page).toHaveURL(new URL("/", baseURL).toString());
+          const session = await page.request.get(new URL("/api/session", baseURL).toString());
+          expect(await session.json()).toEqual({ status: "active" });
+        } else {
         await page.goto(new URL("/dashboard", baseURL).toString());
         const trigger = page.getByRole("button", { name: "Abrir navegación" });
         const mobile = await trigger.isVisible();
@@ -484,6 +494,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         const response = await switched;
         expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
         if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+        }
         outcome = { value: await run() };
       } catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
       if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "official assertion and fixture cleanup failed"); throw outcome.error; }
@@ -764,4 +775,18 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page.getByRole("main").getByRole("alert")).toContainText("Se rechazó");
     }));
   });
+});
+
+// A new login creates a new workspace context; this branch never uses the selector.
+test("sole organization login reaches drilldown data without selecting a workspace", async ({ page }) => {
+  const { identity: paso, seed } = pasoFixture(SPEC);
+  await withResultFixture(SPEC, seed, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    const query = new URLSearchParams({ electionId: paso.electionIds[0]!, categoryId: paso.categoryId,
+      distritoCode: paso.distritoCode, seccionCode: paso.seccionCode, level: "seccion" });
+    await page.goto(`${baseURL}/drilldown?${query}`);
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
+    const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
+    await expect(region).toBeVisible();
+    await expect(region).toContainText("13206 votos");
+  }, true));
 });
