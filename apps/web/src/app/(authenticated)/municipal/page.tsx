@@ -1,4 +1,3 @@
-import { Alert } from "@/components/ui/alert";
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
@@ -295,7 +294,7 @@ export function renderMunicipalView(
             <SectionOutline coordinates={section.geometry.coordinates} />
             <MunicipalSectionMap coordinates={section.geometry.coordinates} name={section.name} />
             <details><summary>Archivo geográfico CNE</summary><p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p></details>
-          </> : <Alert role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</Alert>}
+          </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
         </section> : null}
         </div>
         <section className={styles.results} aria-labelledby="municipal-results-heading">
