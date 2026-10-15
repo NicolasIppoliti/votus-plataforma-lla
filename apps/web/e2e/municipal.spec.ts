@@ -246,7 +246,8 @@ test.describe("the municipal route requires workspace-authorized official result
         for (const keyboard of [false, true]) {
           input = keyboard ? "keyboard" : "pointer";
           action = "activate local";
-          const place = keyboard ? places.last() : places.first();
+          // The locator draws dots in table order; later dots paint over earlier ones, so pointer uses the topmost.
+          const place = keyboard ? places.first() : places.last();
           const href = await place.getAttribute("href");
           expect(href).toMatch(/^#cne-local-\d+$/);
           target = href?.match(/^#cne-local-\d+$/)?.[0] ?? null;
