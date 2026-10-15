@@ -18,7 +18,7 @@ APPROVED_NODE24_ACTION_REFS = {
     "pnpm/action-setup": ("fc06bc1257f339d1d5d8b3a19a8cae5388b55320", 3),
     "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", 1),
     "supabase/setup-cli": ("3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf", 3),
-    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 1),
+    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2),
 }
 _LINE = object()
 
@@ -127,7 +127,17 @@ test "$E2E_SQL_RESULT" = "$e2e"
         for index, step in enumerate(job["steps"])
         if step.get("uses", "").startswith("actions/upload-artifact@")
     ]
-    assert len(uploads) == 1
+    assert len(uploads) == 2
+    evidence_job, _, evidence = uploads[1]
+    assert evidence_job == "e2e-release"
+    assert evidence["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert evidence["if"] == "${{ !cancelled() }}"
+    assert evidence["with"] == {
+        "name": "mobile-evidence-463",
+        "path": "apps/web/test-results/**/e2e-evidence-463-*.png",
+        "retention-days": 14,
+        "if-no-files-found": "ignore",
+    }
     job_name, index, upload = uploads[0]
     assert job_name == "e2e-release"
     gate = workflow["jobs"][job_name]["steps"][index - 1]
