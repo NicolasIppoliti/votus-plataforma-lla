@@ -505,9 +505,38 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await explore.click();
       const hasRosalesScope = (url: URL) => url.pathname === "/drilldown" &&
         url.searchParams.get("distritoCode") === "02" && url.searchParams.get("seccionCode") === "027";
-      // Wait for navigation before recording a mismatch, not a transient pre-navigation URL.
-      await page.waitForURL(hasRosalesScope).catch(() => {});
-      if (!hasRosalesScope(new URL(page.url()))) {
+      // Always leave an artifact before any assertions or DOM collection. CI only
+      // uploads facts on failure; a collection error must not erase the baseline.
+      const factsPath = test.info().outputPath("e2e-facts-panorama-exact-results.json");
+      await writeFile(factsPath, JSON.stringify({
+        phase: "after-exploration-click",
+        fixtureMatchesPanoramaTerritory: identity.distritoCode === "02" && identity.seccionCode === "027",
+        fixtureMatchesPanoramaCategory: identity.categoryName === "CONCEJALES",
+      }));
+      const pageFacts = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        const text = main?.textContent ?? "";
+        return {
+          mainCount: document.querySelectorAll("main").length,
+          containsRosales: text.includes("Rosales"),
+          needsSelection: text.includes("Elija una sección exacta"),
+          empty: text.includes("No se encontraron resultados oficiales"),
+          denied: text.includes("no pertenece al alcance autorizado") || text.includes("No tiene autorización"),
+          malformed: text.includes("validación de integridad"),
+          exactResultsCount: [...(main?.querySelectorAll("summary") ?? [])].filter(element => element.textContent === "Mostrar resultados exactos").length,
+          controls: [...(main?.querySelectorAll("select") ?? [])].map(select => ({
+            id: select.id, disabled: select.disabled, optionCount: select.options.length,
+            hasSelection: Boolean(select.value),
+          })),
+        };
+      }).catch(() => ({ collectionFailed: true }));
+      await writeFile(factsPath, JSON.stringify({
+        phase: "before-destination-and-evidence-assertions",
+        fixtureMatchesPanoramaTerritory: identity.distritoCode === "02" && identity.seccionCode === "027",
+        fixtureMatchesPanoramaCategory: identity.categoryName === "CONCEJALES",
+        ...pageFacts,
+      }));
+      {
         const destination = new URL(page.url());
         await writeFile(test.info().outputPath("e2e-facts-panorama-exploration.json"), JSON.stringify({
           destinationPath: destination.pathname,
@@ -518,45 +547,12 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
           },
           linkHasDistrict: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("distritoCode"),
           linkHasSection: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("seccionCode"),
-          controls: await page.getByRole("main").getByRole("combobox").evaluateAll(elements => elements.map(element => ({
-            id: element.id,
-            disabled: (element as HTMLSelectElement).disabled,
-            optionCount: (element as HTMLSelectElement).options.length,
-            hasSelection: Boolean((element as HTMLSelectElement).value),
-          }))),
+          ...pageFacts,
         }));
       }
       await expect(page).toHaveURL(hasRosalesScope);
       await expect(page.getByRole("main")).toContainText("Rosales");
       const exactResults = page.getByText("Mostrar resultados exactos", { exact: true });
-      await exactResults.waitFor({ state: "visible" }).catch(() => {});
-      if (!await exactResults.isVisible()) {
-        await writeFile(test.info().outputPath("e2e-facts-panorama-exact-results.json"), JSON.stringify({
-          exactResultsCount: await exactResults.count(),
-          needsSelection: await page.getByRole("main").getByText("Elija una sección exacta y los selectores requeridos para el nivel del informe.", { exact: true }).count(),
-          alertCount: await page.getByRole("main").getByRole("alert").count(),
-          refusalSignals: await page.getByRole("main").getByRole("alert").evaluateAll(elements => elements.map(element => {
-            const text = element.textContent ?? "";
-            return {
-              empty: text.includes("No se encontraron resultados oficiales"),
-              denied: text.includes("no pertenece al alcance autorizado") || text.includes("No tiene autorización"),
-              truncated: text.includes("límite seguro"),
-              malformed: text.includes("validación de integridad"),
-              retryOffered: Boolean(element.querySelector('a[href^="/drilldown?"]')),
-            };
-          })),
-          controls: await page.getByRole("main").getByRole("combobox").evaluateAll(elements => elements.map(element => {
-            const select = element as HTMLSelectElement;
-            return { id: select.id, disabled: select.disabled, optionCount: select.options.length,
-              hasSelection: Boolean(select.value), selectedOptionExists: [...select.options].some(option => option.value === select.value && Boolean(option.value)) };
-          })),
-          details: await page.getByRole("main").locator("details").evaluateAll(elements => elements.map(element => ({
-            open: (element as HTMLDetailsElement).open,
-            containsExactResults: [...element.querySelectorAll("summary")].some(summary => summary.textContent === "Mostrar resultados exactos"),
-          }))),
-          evidenceRegions: await page.getByRole("main").getByRole("region").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label"))),
-        }));
-      }
       await expect(exactResults).toBeVisible();
       await expect(page.getByRole("main")).not.toContainText("Elija una sección exacta");
     }));
