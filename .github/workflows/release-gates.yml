@@ -229,6 +229,7 @@ jobs:
           path: |
             apps/web/test-results/**/prototype-*-*.png
             apps/web/test-results/**/production-*-*.png
+            apps/web/test-results/**/pair-*-*.png
             apps/web/test-results/**/visual-evidence-r5-heights.json
           retention-days: 14
           if-no-files-found: error

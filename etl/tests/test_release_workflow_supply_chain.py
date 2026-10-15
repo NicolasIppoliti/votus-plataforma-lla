@@ -137,6 +137,7 @@ test "$E2E_SQL_RESULT" = "$e2e"
         "path": (
             "apps/web/test-results/**/prototype-*-*.png\n"
             "apps/web/test-results/**/production-*-*.png\n"
+            "apps/web/test-results/**/pair-*-*.png\n"
             "apps/web/test-results/**/visual-evidence-r5-heights.json\n"
         ),
         "retention-days": 14,
