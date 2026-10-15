@@ -109,8 +109,14 @@ async function selectedOfficial(page: Page, route: string, captureSelected: () =
     await page.setViewportSize({ width: 1440, height: 900 });
     await withResultFixture(spec, seed, () => withAuthorizedMunicipalWorkspace(page, async () => {
       await page.setViewportSize(viewport);
+      // Evidencia accepts only these four context keys and fixes official /
+      // section scope internally; drilldown also accepts explicit scope keys.
       const params = new URLSearchParams({ electionId: scope.electionId, categoryId: scope.categoryId,
-        distritoCode: "02", seccionCode: "027", level: "seccion", sourceKind: "official" });
+        distritoCode: "02", seccionCode: "027" });
+      if (route === "/drilldown") {
+        params.set("level", "seccion");
+        params.set("sourceKind", "official");
+      }
       await page.goto(new URL(`${route}?${params}`, baseURL).toString());
       if (route === "/drilldown") {
         await signal(page, "open-exact-results", page.getByText("Mostrar resultados exactos", { exact: true })).click();
