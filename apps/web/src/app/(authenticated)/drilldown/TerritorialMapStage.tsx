@@ -6,6 +6,7 @@ import { REFERENCE_STYLE, Legend } from "@/components/maps/reference-colors";
 import { loadSectionReferenceGeometry } from "./circuit-geometry";
 import { Alert } from "@/components/ui/alert";
 import styles from "./drilldown.module.css";
+import { MAP_HEADING } from "./map-heading";
 
 function SectionReferenceOutline() {
   const [reference, setReference] = useState<Awaited<ReturnType<typeof loadSectionReferenceGeometry>> | undefined>(undefined);
@@ -27,14 +28,12 @@ function SectionReferenceOutline() {
   </svg>;
 }
 
-/** Neutral outline or source-backed results: the heading must say which (#487). */
-export const MAP_HEADING = { REFERENCE: "Referencia territorial", CIRCUIT_LEADERS: "Primer lugar observado por circuito" } as const;
 
 export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, consolidatedLimits = false, children, footer }: {
   heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; consolidatedLimits?: boolean; children?: ReactNode; footer?: ReactNode;
 }) {
   const [zoom, setZoom] = useState(100);
-  return <section className={styles.mapPanel} aria-label="Mapa territorial de referencia">
+  return <section className={styles.mapPanel} data-map-kind={heading === MAP_HEADING.REFERENCE ? "locator" : "data"} aria-label="Mapa territorial de referencia">
     <header className={styles.mapHeading}><div><h2>{heading}</h2><p>{subtitle}</p></div><span className={styles.mapMode}><MapIcon aria-hidden="true" size={14} /> Vista territorial</span></header>
     <div className={styles.mapStage}>
       <span className={styles.coordinate}>Referencia geográfica</span>
@@ -48,7 +47,7 @@ export function TerritorialMapStage({ heading, title, subtitle, referenceRosales
       </div>
       <div className={styles.mapScale}><span aria-hidden="true" /><small>Vista de referencia · {zoom} %</small></div>
     </div>
-    <footer className={styles.mapFooter}><div><span aria-hidden="true">■</span> Territorio seleccionado{!consolidatedLimits && <small>Referencia geográfica, no cobertura electoral</small>}</div><a href="#official-evidence-heading"><Info aria-hidden="true" size={14} /> Ver evidencia</a></footer>
+    <footer className={styles.mapFooter}><div><span aria-hidden="true">■</span> Territorio seleccionado{!consolidatedLimits && <small>Referencia geográfica, no cobertura electoral</small>}</div>{(consolidatedLimits || heading !== MAP_HEADING.REFERENCE) && <a href="#official-evidence-heading"><Info aria-hidden="true" size={14} /> Ver evidencia</a>}</footer>
     {footer}
     {referenceRosales && !consolidatedLimits && <Legend label="Referencia de sección" entries={[{ label: "Contorno de referencia CNE; sin resultados electorales", encoding: "outline" }]} />}
     {referenceRosales && !consolidatedLimits && <div className={styles.referenceNote}><p>Geometría de referencia CNE; no certificada como límite electoral 2025. Aplicabilidad electoral desconocida.</p><p>Fuente: CNE · recuperada el 24/09/2026. Contorno ancestro; sin geometría propia para la unidad seleccionada.</p></div>}

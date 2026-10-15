@@ -11,9 +11,9 @@ import styles from "./circuits.module.css";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
 
 const CircuitSelection = createContext<{ selected: string | null; onSelect: (code: string) => void }>({ selected: null, onSelect: () => {} });
-export function CircuitSelectionProvider({ children }: { children: ReactNode }) {
+export function CircuitSelectionProvider({ children, selection }: { children: ReactNode; selection?: { selected: string | null; onSelect: (code: string) => void } }) {
   const [selected, onSelect] = useState<string | null>(null);
-  return <CircuitSelection.Provider value={{ selected, onSelect }}>{children}</CircuitSelection.Provider>;
+  return <CircuitSelection.Provider value={selection ?? { selected, onSelect }}>{children}</CircuitSelection.Provider>;
 }
 
 export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "table" }: { outcomes: OfficialSectionCircuitOutcomes; rosales: boolean; circuitNames?: Record<string, string>; view?: "map" | "table" | "geometry" | "legend" }) {
