@@ -2,7 +2,8 @@
 import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { TableRegion } from "@/components/TableRegion";
 import type { OfficialSectionCircuitOutcomes, CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
-import { circuitPresentation, circuitColor } from "@/lib/geography/circuit-presentation";
+import { circuitPresentation } from "@/lib/geography/circuit-presentation";
+import { circuitColor, circuitBandColor, Legend, PARTY_COLORS, NEUTRAL_COLOR } from "@/components/maps/reference-colors";
 import type { CircuitMapProps } from "@/components/maps/CircuitReferenceSvg";
 import { loadCircuitGeometry } from "./circuit-geometry";
 import styles from "./circuits.module.css";
@@ -48,14 +49,17 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
     </> : <p>Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</p>)}
     </>}
     {(view === "map" || view === "legend") && <>
-    <div className={styles.compactLegend}><span className={styles.swatch} style={{ background: "#dccab7" }} aria-hidden="true" /><span className={styles.swatch} style={{ background: "#c1a281" }} aria-hidden="true" /><span className={styles.swatch} style={{ background: "#a77a4b" }} aria-hidden="true" /><span>Intensidad del margen</span></div>
+    <Legend label="Intensidad del margen" entries={(["light", "medium", "intense"] as const).map((band, index) => ({ label: ["<5 pp · claro", "5–15 pp · medio", ">15 pp · intenso"][index]!, encoding: "fill", color: circuitBandColor(PARTY_COLORS[1], band) }))} />
     <details><summary>Notas de la leyenda</summary>
     <p>Fuente: oficial · Todas las agrupaciones. Margen: (1.º − 2.º) / votos positivos.</p>
     <p>Supone que todas las mesas esperadas votan las categorías informadas por el distrito.</p>
     <p>Sin asignar a circuito: {u.catalogue_mesas_without_membership} mesas del catálogo; {u.membership_quarantined_mesas} mesas con pertenencia en cuarentena; {u.completeness_quarantines} cuarentenas de completitud; {u.unexpected_status_mesas} estados inesperados.</p>
     {Object.entries(u.membership_quarantine_reasons).map(([reason, n]) => <p key={`m-${reason}`}>Cuarentena de pertenencia · {reason}: {n}</p>)}
     {Object.entries(u.completeness_quarantine_reasons).map(([reason, n]) => <p key={`c-${reason}`}>Cuarentena de completitud · {reason}: {n}</p>)}
-    <div aria-label="Leyenda de circuitos">
+    <Legend label="Leyenda de circuitos" entries={[
+      { label: "Empate, sin votos positivos o lista sin mapear", encoding: "fill", color: NEUTRAL_COLOR },
+      { label: "Rayado: escrutinio provisorio o superposición en la fuente", encoding: "hatch" },
+    ]}>
       <p>Intensidad del margen: &lt;5 pp · claro; 5–15 pp · medio; &gt;15 pp · intenso.</p>
       <p>Empate y Sin votos positivos: neutro. Rayado: escrutinio provisorio.</p>
       <p>Paleta categórica neutral por identidad canónica; no representa colores partidarios oficiales. Listas sin mapear: neutro.</p>
@@ -63,7 +67,7 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
       {rosales && !membershipUnknown && <><p>Geometría de referencia CNE; no certificada como límite electoral 2025</p>
         <p>Fuente: CNE · GeoJSON adjunto a correspondencia del 2026-10-09 (no es fecha de publicación). reference_only · Aplicabilidad electoral desconocida.</p>
         <p>0248B/0248C: superposición en la fuente · área compartida neutra y rayada; sin reparación.</p></>}
-    </div>
+    </Legend>
     </details>
     </>}
     {view !== "geometry" && <p role="status">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</p>}

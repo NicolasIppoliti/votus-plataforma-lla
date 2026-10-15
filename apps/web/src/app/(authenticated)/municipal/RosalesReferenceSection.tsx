@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Legend, REFERENCE_STYLE, DOT_COLOR } from "@/components/maps/reference-colors";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import styles from "./municipal.module.css";
@@ -37,6 +38,10 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
       <li>El archivo CNE ubica locales en el circuito 0248 sin sufijo; no se asignan a subcircuitos.</li>
     </ul>
     <ReferenceMap reference={reference} />
+    <Legend label="Leyenda de referencia geográfica" entries={[
+      { label: "Contorno de circuito de referencia CNE; sin resultados electorales", encoding: "outline" },
+      { label: "Local de votación con coordenadas", encoding: "dot", color: DOT_COLOR },
+    ]} />
     {unplotted.length > 0 ? <p>Locales sin coordenadas en el archivo CNE (listados, no dibujados): {unplotted.map((locale) => locale.name).join("; ")}.</p> : null}
     <TableRegion label="Tabla de locales de votación CNE 2025">
       <Table className="data-table">
@@ -84,8 +89,8 @@ function ReferenceMap({ reference }: { reference: RosalesReference }): ReactNode
   const plotted = reference.locales.filter((locale) => locale.coordinates !== null);
   return <svg viewBox={`-8 -8 ${width + 16} ${height + 16}`} role="img" style={{ maxWidth: "100%", height: "auto" }}
     aria-label={`Mapa de referencia CNE de Coronel Rosales: ${reference.circuits.length} circuitos y ${plotted.length} locales con coordenadas; el detalle completo está en la tabla`}>
-    {reference.circuits.map((circuit) => <path key={circuit.code} data-circuit={circuit.code} fill="none" stroke="currentColor" strokeWidth="1" fillRule="evenodd"
+    {reference.circuits.map((circuit) => <path key={circuit.code} data-circuit={circuit.code} {...REFERENCE_STYLE} strokeWidth="1" fillRule="evenodd"
       d={circuit.coordinates.flat().map((ring) => ring.map(([longitude, latitude], index) => `${index === 0 ? "M" : "L"}${x(longitude)} ${y(latitude)}`).join(" ") + " Z").join(" ")} />)}
-    {plotted.map((locale) => <circle key={locale.mesa_from} cx={x(locale.coordinates![0])} cy={y(locale.coordinates![1])} r="4" fill="var(--official, currentColor)" />)}
+    {plotted.map((locale) => <circle key={locale.mesa_from} cx={x(locale.coordinates![0])} cy={y(locale.coordinates![1])} r="4" fill={DOT_COLOR} />)}
   </svg>;
 }

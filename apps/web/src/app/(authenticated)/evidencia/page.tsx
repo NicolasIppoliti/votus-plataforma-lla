@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AVAILABILITY_COLORS, Legend } from "@/components/maps/reference-colors";
 import { normalizeExplorationParams, formatFacetOptionLabel, type ExplorationFacets } from "@/lib/results/exploration";
 import { repeatedParams } from "@/lib/results/query-params";
 import { createAuthorizedOfficialFacetRepository, AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR } from "@/lib/workspace/official-facets";
@@ -67,7 +68,11 @@ function Result({ evidence, title, distrito, rosales }: { evidence: EvidenceOk; 
         <header className={styles.mapHeader}><div><h2>{title}</h2><p>Referencia geográfica; no acredita equivalencia electoral histórica.</p></div><span>Disponibilidad oficial</span></header>
         <EvidenceMap rosales={rosales} title={title} availability={availability} />
         <div className={styles.mapCaption}><strong>{availabilityLabel} · {title}</strong><p>Color = completitud de la sección, no ganador ni intensidad de votos.</p></div>
-        <div className={styles.legend} role="group" aria-label="Estados de disponibilidad"><span><i className={styles.completeKey} />Completa</span><span><i className={styles.partialKey} />Parcial</span><span><i className={styles.unknownKey} />Desconocida</span></div>
+        <Legend label="Estados de disponibilidad" entries={[
+          { label: "Completa", encoding: "fill", color: AVAILABILITY_COLORS.complete },
+          { label: "Parcial", encoding: "fill", color: AVAILABILITY_COLORS.partial },
+          { label: "Desconocida", encoding: "fill", color: AVAILABILITY_COLORS.unknown },
+        ]} />
         <p className={styles.geometryNote}>{rosales ? "Geometría de referencia CNE; no certificada como límite electoral 2025. Aplicabilidad electoral desconocida. Fuente: CNE · recuperada el 24/09/2026." : "Referencia geográfica no disponible para esta selección."}</p>
         <footer className={styles.mapFooter}><span>El mapa no certifica cobertura territorial.</span><a href="#evidence-method">Cómo interpretar la evidencia</a></footer>
       </div>

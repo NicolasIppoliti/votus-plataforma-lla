@@ -1,6 +1,6 @@
 import type { ExplorationOk } from "@/lib/results/exploration";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
-import { circuitColor } from "@/lib/geography/circuit-presentation";
+import { circuitColor } from "@/components/maps/reference-colors";
 import styles from "./drilldown.module.css";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
 
