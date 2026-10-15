@@ -500,9 +500,33 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         sourceKind: "official",
       });
       await page.goto(new URL(`/?${query}`, baseURL).toString());
-      await page.getByRole("link", { name: /Explorar resultados/ }).click();
-      await expect(page).toHaveURL((url) => url.pathname === "/drilldown" &&
-        url.searchParams.get("distritoCode") === "02" && url.searchParams.get("seccionCode") === "027");
+      const explore = page.getByRole("link", { name: /Explorar resultados/ });
+      const explorationHref = await explore.getAttribute("href");
+      await explore.click();
+      const hasRosalesScope = (url: URL) => url.pathname === "/drilldown" &&
+        url.searchParams.get("distritoCode") === "02" && url.searchParams.get("seccionCode") === "027";
+      // Wait for navigation before recording a mismatch, not a transient pre-navigation URL.
+      await page.waitForURL(hasRosalesScope).catch(() => {});
+      if (!hasRosalesScope(new URL(page.url()))) {
+        const destination = new URL(page.url());
+        await writeFile(test.info().outputPath("e2e-facts-panorama-exploration.json"), JSON.stringify({
+          destinationPath: destination.pathname,
+          destinationScope: {
+            distritoCode: destination.searchParams.get("distritoCode"),
+            seccionCode: destination.searchParams.get("seccionCode"),
+            level: destination.searchParams.get("level"),
+          },
+          linkHasDistrict: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("distritoCode"),
+          linkHasSection: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("seccionCode"),
+          controls: await page.getByRole("main").getByRole("combobox").evaluateAll(elements => elements.map(element => ({
+            id: element.id,
+            disabled: (element as HTMLSelectElement).disabled,
+            optionCount: (element as HTMLSelectElement).options.length,
+            hasSelection: Boolean((element as HTMLSelectElement).value),
+          }))),
+        }));
+      }
+      await expect(page).toHaveURL(hasRosalesScope);
       await expect(page.getByRole("main")).toContainText("Rosales");
       await expect(page.getByText("Mostrar resultados exactos", { exact: true })).toBeVisible();
       await expect(page.getByRole("main")).not.toContainText("Elija una sección exacta");
