@@ -96,6 +96,16 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("renders the national reference as a locator with disclosed provenance and one action", async () => {
+    const markup = await render({});
+    expect(markup).toContain('data-map-kind="locator"');
+    const card = markup.slice(markup.indexOf('data-map-kind="locator"'), markup.indexOf('aria-label="Detalle territorial"'));
+    expect(markup).toMatch(/<details[^>]*><summary>Procedencia de la referencia nacional<\/summary>[\s\S]*?sha256[\s\S]*?<\/details>/);
+    expect(card).not.toContain('>Volver a Argentina</a>');
+    expect(card).not.toContain('>Ir a Buenos Aires</a>');
+    expect(markup).toContain('>Ir a la selección electoral exacta</a>');
+  });
+
   it("keeps exact evidence in a collapsed disclosure and bounds territorial and establishment tables", async () => {
     const markup = await render();
     expect(markup).toMatch(/<details[^>]*class="[^"]*exactDisclosure[^"]*"[^>]*>/);

@@ -257,6 +257,7 @@ describe("municipal page — the real entry point", () => {
     expect(paths.some((path) => /cne-rosales-section\.[a-f0-9]{64}\.json$/.test(path))).toBe(true);
     expect(paths.some((path) => path.includes("archive/") || path.endsWith("archive-manifest.json"))).toBe(false);
     expect(html).toContain("Referencia geográfica de sección");
+    expect(html).toContain('data-map-kind="locator"');
     expect(html).toContain("vigencia electoral no verificada");
     expect(html).toContain("2026-09-24T03:29:24Z");
     expect(html).toContain("Fecha de descarga, no vigencia");
@@ -321,6 +322,9 @@ describe("municipal page — the real entry point", () => {
     const { default: Page } = await import("./page");
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
     expect(loadMunicipalOfficialEvidence).toHaveBeenCalledWith(2023);
+    expect(html).toContain('data-map-kind="locator"');
+    expect(html).toContain("<summary>Archivo geográfico CNE</summary>");
+    expect(html).toContain("vigencia electoral no verificada para 2023");
     for (const text of ["2023", "Generales", "INTENDENTE", "provisorio", "LA LIBERTAD AVANZA", "Distrito 02 · Sección 027"])
       expect(html).toContain(text);
     expect(html).toContain('<th scope="row">LA LIBERTAD AVANZA</th>');
@@ -499,7 +503,7 @@ describe("municipal page — the real entry point", () => {
         expect(markup).toContain('aria-label="ALIANZA LA LIBERTAD AVANZA: 4.200 votos"');
         expect(markup).toContain("2025 · Provinciales");
         expect(markup).toContain("<summary>Archivo y procedencia</summary>");
-        const positions = ["Contexto de la consulta", "Votos por partido identificado", "<caption>", "<summary>"].map((label) => markup.indexOf(label));
+        const positions = ["Contexto de la consulta", "Votos por partido identificado", "<caption>", "<summary>Archivo y procedencia</summary>"].map((label) => markup.indexOf(label));
         expect(positions).toEqual([...positions].sort((a, b) => a - b));
         expect(markup).toContain('aria-label="Detalle municipal"');
         expect(markup).toContain('aria-label="Mesa de trabajo municipal"');
