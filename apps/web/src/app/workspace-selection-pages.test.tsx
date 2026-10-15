@@ -30,6 +30,17 @@ for (const [route, Page] of [["/", Home], ["/drilldown", Drilldown], ["/compare"
       expect(markup).toContain('data-variant="needs-selection"');
       expect(mocks.client).not.toHaveBeenCalled();
     });
+    it("replaces data with actionable reselection when entitlement changes make the workspace stale", async () => {
+      mocks.selection.mockResolvedValue({ status: "stale", revision: 4, activeOrganizationId: null, organizations: [{ id: "00000000-0000-4000-8000-000000000001", name: "Organización de prueba" }], total: 1, truncated: false });
+      const markup = renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) }) as ReactElement);
+      expect(markup).toContain('aria-label="Selección de organización"');
+      expect(markup).toContain("Tu acceso a la organización activa cambió. Seleccioná una organización autorizada nuevamente.");
+      expect(markup).toContain("Cambiar organización");
+      expect(markup).toContain('data-variant="needs-selection"');
+      expect(markup).not.toContain('role="alert"');
+      expect(markup).not.toContain("<table");
+      expect(mocks.client).not.toHaveBeenCalled();
+    });
     it("reports no available organizations without inventing a selection", async () => {
       mocks.selection.mockResolvedValue({ status: "selection_required", revision: 3, activeOrganizationId: null, organizations: [], total: 0, truncated: false });
       const markup = renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) }) as ReactElement);

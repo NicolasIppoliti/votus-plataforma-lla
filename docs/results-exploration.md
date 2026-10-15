@@ -10,6 +10,11 @@ la página vuelve a consultar los datos sin perder su URL ni sus filtros.
 Se reutiliza el mismo selector y la misma acción de cambio del espacio de trabajo;
 el selector de navegación no se mueve.
 
+Si cambian los permisos de la organización activa, el contexto queda desactualizado:
+los datos se retiran y aparece el mismo selector dentro de la página, con el aviso
+**Tu acceso a la organización activa cambió**. Elegir nuevamente una organización
+no restaura permisos revocados; las consultas siguen sujetas al alcance autorizado.
+
 La falta de selección no significa falta de autorización. El acceso denegado,
 el contexto vencido o revocado y la imposibilidad temporal de verificar la
 organización muestran mensajes distintos. Si el contexto venció, volvé a iniciar

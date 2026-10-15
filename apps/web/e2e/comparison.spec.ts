@@ -505,7 +505,17 @@ test.describe("authorized official comparison", () => {
       await expect(page).toHaveURL(servedUrl.toString());
       await expect(sharedSection).toHaveValue(identity.seccionCode);
       await expect(chart).toBeVisible();
-      await revokeAuthorization(); await page.reload(); await expect(page).toHaveURL(servedUrl.toString()); await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await revokeAuthorization();
+      await page.reload();
+      await expect(page).toHaveURL(servedUrl.toString());
+      // Revoking entitlements increments the organization revision: the workspace
+      // becomes stale, so #427's preflight replaces data with inline reselection.
+      const recovery = main.getByRole("region", { name: "Selección de organización", exact: true });
+      await expect(recovery).toBeVisible();
+      await expect(main.getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
+      await expect(recovery.getByRole("status").filter({ hasText: /^Tu acceso a la organización activa cambió\./ })).toBeVisible();
+      await expect(recovery.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
+      await expect(recovery.getByRole("button", { name: "Cambiar organización", exact: true })).toBeVisible();
       await expect(chart).toHaveCount(0); await expect(main).not.toContainText("100,00 %"); await expect(main).not.toContainText("puntos porcentuales"); await expect(main).not.toContainText(identity.archiveEntryIds[0]!); await expect(main).not.toContainText(identity.archiveEntryIds[1]!);
         await expect(main).not.toContainText("Opciones no compartidas"); await expect(main).not.toContainText("disponibles solo en ese lado");
     }));
