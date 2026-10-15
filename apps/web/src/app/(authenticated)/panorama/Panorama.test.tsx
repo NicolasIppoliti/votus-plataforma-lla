@@ -37,6 +37,17 @@ const data: PanoramaData = {
   },
 };
 
+it("keeps the official denominator in the reduced headline when circuit outcomes are unavailable (#467)", () => {
+  if (data.evidence?.status !== "ok") throw new Error("fixture must be ok");
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, evidence: { ...data.evidence, circuitOutcomes: { status: "unavailable" } } }} />);
+  const summary = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'));
+  expect(summary).toContain("220 votos positivos oficiales");
+  expect(summary).toContain("Grupo 6");
+  expect(summary).toContain("27,27 %");
+  expect(summary).toContain("4,55 pp");
+  expect(summary).not.toContain("Distribución de votos positivos oficiales");
+});
+
 it("renders transient circuit emphasis without changing persistent selection (#446)", () => {
   states.push("Coronel Rosales", "00248", "00249", null, "");
   const geometry = [...data.circuitGeometry!, { ...data.circuitGeometry![0]!, code: "00249" }];
