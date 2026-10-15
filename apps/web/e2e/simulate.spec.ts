@@ -12,6 +12,7 @@ test("Escenarios opens editable projections with scenario provenance", async ({ 
     await expect(provenance).toContainText(name!);
     await expect(provenance).toContainText("no es un resultado oficial");
     if (id === "transferencias_ei") await expect(provenance).toContainText("mayores restos");
+    await openSimulationDisclosure(page, "Editar los datos del escenario");
     const votes = page.getByLabel("Votos de la lista", { exact: true });
     await expect(votes).toHaveCount(8);
     const values = await votes.evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
@@ -1243,6 +1244,11 @@ test("reaches unvalidated 2027 scenarios from shared navigation at mobile width"
   await expect(regions).toHaveCount(2);
   await regions.first().focus();
   await expect(regions.first()).toBeFocused();
+  await page.keyboard.press("Tab");
+  const editTransfers = page.getByTestId("scenario-transferencias_ei")
+    .getByRole("link", { name: "Editar este escenario" });
+  await expect(editTransfers).toBeFocused();
+  await expect(editTransfers).toHaveAttribute("href", "/simulate?scenario=transferencias_ei");
   await page.keyboard.press("Tab");
   await expect(regions.nth(1)).toBeFocused();
 
