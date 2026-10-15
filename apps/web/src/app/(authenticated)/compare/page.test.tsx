@@ -192,6 +192,13 @@ it("pins the spatial fixture side-B selected-party fill to the interactive raste
   expect(expected).toEqual([102, 208, 222]);
 });
 
+it("keeps all six selected native values readable outside the single-line controls on phones", async () => {
+  const markup = await render(PARAMS);
+  const editor = markup.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
+  expect(editor.match(/class="responsive-select__value"/g)).toHaveLength(6);
+  expect(editor.match(/data-mobile-select-value=""/g)).toHaveLength(6);
+});
+
 it("renders the approved header and paired selection without changing authorized query keys", async () => {
   const markup = await render(PARAMS);
   expect(markup).toContain("<h1>Comparación electoral</h1>");
