@@ -592,7 +592,9 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
           <p id={totalsHelpId}>
             {isNational
               ? "El total de votos no puede superar el padrón."
-              : "Informe el total de votos y, por separado, los votos en blanco y anulados."}
+              : values.validVotesOnly
+                ? "Solo se conocen los votos válidos. Los votos en blanco y anulados no están informados; no se suponen cero."
+                : "Informe el total de votos y, por separado, los votos en blanco y anulados."}
           </p>
           {isNational ? (
             <NumberField
@@ -608,13 +610,13 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
           <NumberField
             describedBy={`${totalsHelpId} simulation-form-errors`}
             id="simulation-total-votes"
-            label="Total de votos"
+            label={values.validVotesOnly && !isNational ? "Votos válidos" : "Total de votos"}
             onChange={(totalVotes) =>
               setValues((current) => ({ ...current, totalVotes }))
             }
             value={values.totalVotes}
           />
-          {!isNational ? (
+          {!isNational && !values.validVotesOnly ? (
             <>
               <NumberField
                 describedBy={`${totalsHelpId} simulation-form-errors`}
