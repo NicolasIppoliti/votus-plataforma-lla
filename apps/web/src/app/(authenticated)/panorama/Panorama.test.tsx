@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ExplorationOk } from "@/lib/results/exploration";
 import type { PanoramaData } from "./load-panorama";
 import { Panorama } from "./Panorama";
+import { circuitBandColor } from "@/components/maps/reference-colors";
+import { circuitPresentation } from "@/lib/geography/circuit-presentation";
 import { PanoramaChildren } from "./PanoramaChildren";
 import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
@@ -18,6 +20,7 @@ const result: ExplorationOk = {
 };
 const data: PanoramaData = {
   href: "/drilldown?electionId=election&categoryId=category&distritoCode=02&seccionCode=027&level=seccion", exclusions: [],
+  circuitGeometry: [{ code: "00248", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] }],
   circuitOptions: [{ code: "00248", name: "Norte", nameStatus: "present", nameVariantCount: 1 }, { code: "00249", name: "Sur", nameStatus: "present", nameVariantCount: 1 }],
   evidence: {
     status: "ok", result, provenance: { items: [], sourceExclusions: [] },
@@ -151,9 +154,52 @@ it("circuit selection takes precedence over an earlier text search (#445)", () =
 
 it("reaches the shared circuit map from Panorama with official membership (#445)", () => {
   const html = renderToStaticMarkup(<Panorama data={data} />);
-  expect(html).toContain("Primer lugar observado por circuito");
-  expect(html).toContain("Preparando mapa de circuitos");
-  expect(html).toContain("Geometría de referencia CNE; no certificada");
+  expect(html).toContain("Ganadores por circuito");
+  expect(html).toContain("Circuito 00248: Grupo 6;");
+  expect(html).toContain("Circuitos de referencia CNE; no certificados");
+});
+
+it("renders the shared circuit encoding from the table outcomes on the real Panorama", () => {
+  const circuitGeometry = [{ code: "00248", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] as [number, number][][][] }];
+  const evidence = data.evidence!;
+  if (evidence.status !== "ok" || evidence.circuitOutcomes?.status !== "ok") throw new Error("fixture must be ok");
+  const circuits = evidence.circuitOutcomes.circuits.map(circuit => ({ ...circuit, status: "partial" as const, counts: { ...circuit.counts, expected: 2, missing: 1 } }));
+  const mapped = { ...data, circuitGeometry, evidence: { ...evidence, circuitOutcomes: { ...evidence.circuitOutcomes, circuits } } };
+  const html = renderToStaticMarkup(<Panorama data={mapped} />);
+  expect(html).toContain("Circuito 00248: Grupo 6;");
+  expect(html).toContain('data-hatched="true"');
+  expect(html).toContain("Codificación de circuitos");
+  expect(html).toContain("Grupo 6 · provisional");
+  expect(html).toContain("Ganadores por circuito");
+  const presentation = circuitPresentation(circuits[0]!);
+  expect(html).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
+  states.push("Coronel Rosales", "00248");
+  const selected = renderToStaticMarkup(<Panorama data={mapped} />);
+  expect(selected).toContain(`fill="${circuitBandColor(presentation.color, presentation.band)}"`);
+  expect(selected).toContain('data-hatched="true"');
+  expect(selected).toContain('aria-pressed="true" aria-label="Circuito 00248:');
+  expect(selected).toContain('aria-selected="true"');
+  expect(selected).toContain("1 visibles · 2 circuitos disponibles");
+  expect(html).toContain('role="button"');
+  expect(html).toContain('aria-pressed="false" aria-label="Circuito 00248:');
+  const complete = { ...mapped, evidence: { ...evidence, circuitOutcomes: evidence.circuitOutcomes } };
+  expect(renderToStaticMarkup(<Panorama data={complete} />)).not.toContain('data-hatched="true"');
+  for (const votes of [[50, 50], [52, 48], [55, 45], [0, 0]]) {
+    const circuit = { ...circuits[0]!, positive_total: votes[0]! + votes[1]!, parties: circuits[0]!.parties.map((party, i) => ({ ...party, votes: votes[i]! })) };
+    const alternate = { ...mapped, evidence: { ...evidence, circuitOutcomes: { ...evidence.circuitOutcomes, circuits: [circuit] } } };
+    const p = circuitPresentation(circuit);
+    const markup = renderToStaticMarkup(<Panorama data={alternate} />);
+    expect(markup).toContain(`Circuito 00248: ${p.winner};`);
+    expect(markup).toContain(`fill="${circuitBandColor(p.color, p.band)}"`);
+  }
+  const unknown = { ...mapped, evidence: { ...evidence, circuitOutcomes: { status: "unavailable" as const } } };
+  expect(renderToStaticMarkup(<Panorama data={unknown} />)).not.toContain("Ganadores por circuito");
+  for (const status of ["authorization_denied", "unavailable", "empty"] as const) {
+    const refused = { ...mapped, evidence: status === "authorization_denied" ? { status, access: "denied" as const } : { status } };
+    const denied = renderToStaticMarkup(<Panorama data={refused} />);
+    expect(denied).not.toContain("Circuito 00248: Grupo 6;");
+    expect(denied).not.toContain('data-hatched="true"');
+  }
 });
 
 it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {

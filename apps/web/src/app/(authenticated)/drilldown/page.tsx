@@ -67,15 +67,10 @@ interface ExplorerFormProps {
   };
 }
 
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
+
 const LEGACY_QUERY_KEYS = ["jurisdictionId", "partyCategory", "partyJurisdiction"] as const;
-const FACET_EXCLUSION_LABELS = {
-  non_official_source_rows: "filas de fuente no oficial",
-  official_rows_with_incomplete_lineage: "filas oficiales con linaje incompleto",
-  coarse_facets_overflow: "opciones generales",
-  circuitos_overflow: "circuitos",
-  establecimientos_overflow: "establecimientos",
-  mesas_overflow: "mesas",
-} as const;
+
 
 type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
@@ -131,7 +126,8 @@ function facetExclusionNotes(
   overflow = false,
 ): ReactNode {
   return exclusions.map((exclusion) => {
-    const label = FACET_EXCLUSION_LABELS[exclusion.reason as keyof typeof FACET_EXCLUSION_LABELS] ?? `razón no reconocida (${exclusion.reason})`;
+    const displayLabel = facetExclusionLabel(exclusion.reason);
+    const label = displayLabel === exclusion.reason ? `razón no reconocida (${exclusion.reason})` : displayLabel;
     return (
       <p role="note" key={exclusion.reason}>
         {overflow
