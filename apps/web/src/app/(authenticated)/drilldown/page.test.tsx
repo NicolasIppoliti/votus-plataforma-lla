@@ -284,7 +284,7 @@ describe("DrilldownPage authorized official evidence", () => {
     mocks.bundle.mockResolvedValue(bundle);
     mocks.internas.mockResolvedValue({ ...authorized, status: "ok", source_kind: "official", level: "seccion",
       source_granularity: "mesa", category_name: "PRESIDENTE/A", positive_total: 100,
-      non_positive: { status: "unavailable", reason: "not_persisted_by_national_ingestion" },
+      non_positive: { status: "available", totals: { "EN BLANCO": 2121, NULO: 319, IMPUGNADO: 12, RECURRIDO: 4, COMANDO: 12 } },
       lists: [
         { canonical_party_id: "jxc", display_name: "Juntos por el Cambio", list_id: "3008", source_name: "La Fuerza del Cambio", identity_status: "canonical", votes: 60 },
         { canonical_party_id: "jxc", display_name: "Juntos por el Cambio", list_id: "3007", source_name: "El Cambio de Nuestras Vidas", identity_status: "canonical", votes: 20 },
@@ -294,7 +294,7 @@ describe("DrilldownPage authorized official evidence", () => {
     const markup = await render();
     expect(markup).toContain("Internas");
     expect(mocks.internas).toHaveBeenCalled();
-    for (const text of ["La Fuerza del Cambio", "75,00%", "60,00%", "Lista única", "Lista sin mapear", "0 votos", "No disponible", "ingesta nacional", "Fuente: oficial", "Granularidad: mesa"])
+    for (const text of ["La Fuerza del Cambio", "75,00%", "60,00%", "Lista única", "Lista sin mapear", "0 votos", "En blanco", "2.121 votos", "Nulos", "319 votos", "Impugnados", "Recurridos", "Comando", "Fuente: oficial", "Granularidad: mesa"])
       expect(markup).toContain(text);
     expect(markup).not.toContain("9999");
     expect(markup).toContain('aria-label="Internas: votos y porcentajes por agrupación"');
