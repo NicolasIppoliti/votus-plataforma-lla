@@ -23,7 +23,7 @@
 .mapCamera { height: 100%; padding: 75px 70px 85px; transform-origin: center; }
 .mapCamera > * { height: 100%; width: 100%; }
 .referenceOutline { display: block; width: 100%; height: 100%; overflow: visible; }
-.referenceOutline path { fill: rgba(101,229,242,.16); stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 5px var(--accent)); }
+.referenceOutline path { stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .coordinate { position: absolute; left: 23px; top: 28px; color: var(--muted-ink); font: 0.75rem var(--font-mono); z-index: 1; }
 .northMark { position: absolute; right: 24px; top: 27px; display: flex; flex-direction: column; gap: 5px; align-items: center; color: var(--secondary-ink); font: 0.75rem var(--font-mono); z-index: 1; }
 .northMark svg { width: 16px; height: 25px; stroke: var(--secondary-ink); fill: var(--surface-muted); }
@@ -122,7 +122,7 @@
 .nationalViews h3 { margin: 0; font-size: 1rem; }
 .nationalCanvas { width: 100%; height: clamp(16rem, 35vw, 26rem); background: var(--surface-muted); }
 .polarMap { display: block; width: 100%; max-width: 25rem; height: auto; background: var(--surface-muted); }
-.polarMap path { fill: rgba(101, 229, 242, 0.16); stroke: #65e5f2; stroke-width: 0.5; }
+.polarMap path { stroke-width: 0.5; }
 @media (min-width: 48rem) { .nationalViews { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
 .header { display: grid; gap: 0.5rem; margin-block: 0 0.5rem; }

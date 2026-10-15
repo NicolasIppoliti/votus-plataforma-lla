@@ -84,7 +84,7 @@ test.describe("authorized official comparison", () => {
     if (background[3] !== 255 || corners.some(([x, y]) => sample(x!, y!).some((channel, index) => Math.abs(channel - background[index]!) > 2))) {
       throw new Error(`${phase}: cannot establish a uniform opaque map screenshot background`);
     }
-    const expected = fill.map((channel, index) => Math.round((channel * 220 + background[index]! * 35) / 255));
+    const expected = [...fill]; // Shared electoral fills are opaque to preserve contrast against navy.
     let interior = 0;
     // Skip edges, labels and controls; the polygon must cover a substantial interior area.
     for (let y = 16; y < pixels.height - 16; y += 2) {
@@ -120,8 +120,8 @@ test.describe("authorized official comparison", () => {
       const secondMap = second.locator(".maplibregl-map");
       await expect(firstMap.locator("canvas.maplibregl-canvas")).toBeVisible();
       const original = await settledMap(firstMap, "initial first map");
-      const leftFill = [69, 157, 172]; // 60% of fixed [21,50,66] → [101,229,242], rounded per channel.
-      const rightFill = [81, 184, 198]; // Same selected party as A: 9,000 / (9,000 + 3,000) = 75%, using the fixed endpoints.
+      const leftFill = [102, 195, 210]; // 60% of fixed [103,143,162] → [101,229,242], rounded per channel.
+      const rightFill = [102, 208, 222]; // Same selected party as A: 9,000 / (9,000 + 3,000) = 75%, using the fixed endpoints.
       await expectElectoralFill(page, firstMap, original.image, leftFill, "initial first map");
       const bounds = await firstMap.boundingBox();
       if (!bounds) throw new Error("first map has no bounds");

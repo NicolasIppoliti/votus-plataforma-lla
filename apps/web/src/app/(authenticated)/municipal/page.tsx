@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
+import { REFERENCE_STYLE } from "@/components/maps/reference-colors";
 import { MunicipalSectionMap } from "./MunicipalSectionMap";
 import { RosalesReferenceSection } from "./RosalesReferenceSection";
 import { loadRosalesReference, type RosalesReferenceResult } from "@/lib/geography/cne-rosales-reference";
@@ -383,7 +384,7 @@ function SectionOutline({ coordinates }: { coordinates: number[][][][] }): React
     `${index === 0 ? "M" : "L"}${(((longitude ?? west) - west) / (east - west) * 280 + 10).toFixed(1)} ${(((north - (latitude ?? north)) / (north - south)) * 180 + 10).toFixed(1)}`,
   ).join(" ") + " Z").join(" ");
   return <svg viewBox="0 0 300 200" role="img" aria-label="Contorno geográfico CNE de la sección Coronel Rosales, sin vigencia electoral confirmada" style={{ maxWidth: "100%", width: "300px", height: "200px" }}>
-    <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" fillRule="evenodd" />
+    <path d={path} {...REFERENCE_STYLE} strokeWidth="1.5" fillRule="evenodd" />
   </svg>;
 }
 

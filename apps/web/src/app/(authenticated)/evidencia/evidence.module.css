@@ -24,19 +24,15 @@
 .mapDrawing { height: 100%; padding: 45px 70px 35px; display: flex; align-items: center; justify-content: center; }
 .mapDrawing svg { height: 100%; width: 100%; }
 .mapDrawing p { max-width: 45ch; color: var(--secondary-ink); }
-.mapDrawing path { stroke: #91d9e1; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.complete { fill: #1f7580; }
-.partial { fill: #785e39; }
-.unknown { fill: #152b38; stroke-dasharray: 4 3; }
+.mapDrawing path { stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.unknown { stroke-dasharray: 4 3; }
 .mapCaption { padding: 0 20px 16px; border-bottom: 1px solid var(--border); }
 .mapCaption strong { font-size: 1rem; font-weight: 500; }
 .mapCaption p { color: var(--muted-ink); font-size: .8125rem; margin: 3px 0 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 16px 20px 4px; font-size: .8125rem; color: var(--secondary-ink); }
 .legend span { display: flex; align-items: center; gap: 7px; }
 .legend i { display: inline-block; width: 11px; height: 11px; border: 1px solid #8fa5b4; }
-.completeKey { background: #1f7580; }
-.partialKey { background: #785e39; }
-.unknownKey { background: #152b38; border-style: dashed !important; }
+
 .geometryNote { color: var(--muted-ink); font-size: .8125rem; margin: 11px 20px 14px; }
 .mapFooter { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 20px; padding: 10px 0; border-top: 1px solid var(--border); font-size: .8125rem; color: var(--muted-ink); }
 .mapFooter a { color: var(--accent); display: inline-flex; align-items: center; min-height: 44px; }

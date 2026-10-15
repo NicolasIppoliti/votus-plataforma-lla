@@ -999,6 +999,10 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
     expect(html).toContain("Los circuitos 0248B y 0248C se superponen en el archivo CNE");
     expect(html).toContain("no se asignan a subcircuitos");
     expect(html).toContain('aria-label="Mapa de referencia CNE de Coronel Rosales: 10 circuitos y 28 locales con coordenadas');
+    expect(html).toContain('aria-label="Leyenda de referencia geográfica"');
+    expect(html).toContain('data-encoding="outline"');
+    expect(html).toContain('data-encoding="dot"');
+    expect(html).toContain("Local de votación con coordenadas");
     expect(html.match(/<circle /g)).toHaveLength(28);
     expect(html.match(/data-circuit=/g)).toHaveLength(10);
     const table = html.slice(html.indexOf("<caption>Locales de votación CNE 2025"));

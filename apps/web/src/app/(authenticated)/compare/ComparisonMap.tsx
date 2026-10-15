@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useContext, useMemo, useState } from "react";
-import { SectionReferenceMap, SHARE_COLORS, shareFill } from "@/components/maps/SectionReferenceMap";
+import { SectionReferenceMap } from "@/components/maps/SectionReferenceMap";
+import { Legend, shareFill, WINNER_COLORS, NEUTRAL_FILL, CHANGE_NEGATIVE, SHARE_COLORS, SHARE_GRADIENT, CHANGE_GRADIENT } from "@/components/maps/reference-colors";
 import type { UnitSwing, PartyShare } from "@/lib/results/compare";
 import styles from "./comparison.module.css";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
@@ -19,8 +20,8 @@ interface Props {
 }
 // Specimen categories, not real-party branding. Sorted winner IDs share colors across sides.
 // At section granularity there are at most two displayed winner categories.
-const palette = [[101, 229, 242, 220], [170, 192, 241, 220], [239, 197, 140, 220], [118, 149, 152, 220]] as const;
-const neutral: [number, number, number, number] = [40, 66, 85, 220];
+const palette = WINNER_COLORS;
+const neutral = NEUTRAL_FILL;
 function leader(shares: PartyShare[]): PartyShare | undefined {
   const maximum = Math.max(...shares.map(entry => entry.sharePercent));
   const leaders = shares.filter(entry => entry.sharePercent === maximum);
@@ -55,9 +56,9 @@ export function ComparisonMapView({ coordinates, name, fetchedAt, sha256, swing,
     if (metric === "Participación") return [a, b].map(entry => entry ? shareFill(entry.sharePercent) : neutral);
     if (metric === "Cambio") {
       if (change === undefined) return [neutral, neutral];
-      const endpoint = change < 0 ? [239, 197, 140] : [101, 229, 242];
+      const endpoint = change < 0 ? CHANGE_NEGATIVE : SHARE_COLORS.high;
       const fraction = Math.abs(change) / 100;
-      return [neutral, [...endpoint.map((channel, index) => Math.round(neutral[index]! + (channel - neutral[index]!) * fraction)), 220] as [number, number, number, number]];
+      return [neutral, [...endpoint.map((channel, index) => Math.round(neutral[index]! + (channel - neutral[index]!) * fraction)), 255] as [number, number, number, number]];
     }
     return [swing.shares2023, swing.shares2025].map(shares => {
       const winner = leader(shares);
@@ -77,9 +78,9 @@ export function ComparisonMapView({ coordinates, name, fetchedAt, sha256, swing,
       <SectionReferenceMap coordinates={coordinates} name={name} label={label} resultId="compare-results-heading" camera={camera} onCamera={updateCamera} fillColor={fills[index]} staticLabel={labels[index]} />
       <details className={styles.sideFigures}><summary>Cifras — Lado {id.toUpperCase()}</summary><p>Denominador: {formatCount(shares.reduce((sum, entry) => sum + entry.votes, 0))} votos partidarios.</p><Leader shares={shares} names={names} /></details>
     </article>)}</div>
-    <div className={styles.spatialLegend} aria-label={metric === "Participación" ? "Escala de color común: 0 % a 100 %" : metric === "Cambio" ? "Escala de cambio: −100 pp a +100 pp" : "Leyenda categórica de ganadores"}>
-      {metric === "Participación" ? <><p>Escala común 0–100 % de votos partidarios incluidos en cada selección; no representa el padrón ni todos los votos emitidos. Participación de la agrupación seleccionada.</p><div className={styles.spatialGradient} style={{ background: `linear-gradient(to right, rgb(${SHARE_COLORS.low.join(",")}), rgb(${SHARE_COLORS.high.join(",")}))` }} aria-hidden="true" /><div className={styles.spatialTicks}><span>0 %</span><span>50 %</span><span>100 %</span></div></> : metric === "Cambio" ? <><p>Cambio B − A de la agrupación seleccionada, en puntos porcentuales. A muestra la línea de base, no su participación.</p><div className={styles.spatialGradient} style={{ background: "linear-gradient(to right, rgb(239,197,140), rgb(40,66,85), rgb(101,229,242))" }} aria-hidden="true" /><div className={styles.spatialTicks}><span>−100 pp</span><span>0 pp</span><span>+100 pp</span></div></> : <><p>Mayor participación del partido canónico por elección. Paleta categórica, no colores partidarios ni escala de magnitud.</p>{winners.map((winner, index) => winner && <p key={index}><span className={styles.swatch} style={{ background: `rgb(${fills[index]!.slice(0, 3).join(",")})` }} aria-hidden="true" />{index === 0 ? "A" : "B"}: {index === 0 ? leftNames[winner.party] : rightNames[winner.party]}</p>)}</>}
-    </div>
+    <div className={styles.spatialLegend}><Legend label={metric === "Participación" ? "Escala de color común: 0 % a 100 %" : metric === "Cambio" ? "Escala de cambio: −100 pp a +100 pp" : "Leyenda categórica de ganadores"}>
+      {metric === "Participación" ? <><p>Escala común 0–100 % de votos partidarios incluidos en cada selección; no representa el padrón ni todos los votos emitidos. Participación de la agrupación seleccionada.</p><div className={styles.spatialGradient} style={{ background: SHARE_GRADIENT }} aria-hidden="true" /><div className={styles.spatialTicks}><span>0 %</span><span>50 %</span><span>100 %</span></div></> : metric === "Cambio" ? <><p>Cambio B − A de la agrupación seleccionada, en puntos porcentuales. A muestra la línea de base, no su participación.</p><div className={styles.spatialGradient} style={{ background: CHANGE_GRADIENT }} aria-hidden="true" /><div className={styles.spatialTicks}><span>−100 pp</span><span>0 pp</span><span>+100 pp</span></div></> : <><p>Mayor participación del partido canónico por elección. Paleta categórica, no colores partidarios ni escala de magnitud.</p>{winners.map((winner, index) => winner && <p key={index}><span className={styles.swatch} style={{ background: `rgb(${fills[index]!.slice(0, 3).join(",")})` }} aria-hidden="true" />{index === 0 ? "A" : "B"}: {index === 0 ? leftNames[winner.party] : rightNames[winner.party]}</p>)}</>}
+    </Legend></div>
     <p className={styles.provenance}>Referencia geográfica oficial CNE actual, archivada el <time dateTime={fetchedAt}>{fetchedAt.slice(0, 10)}</time>; no certifica límites históricos. SHA-256 {sha256}.</p>
   </section>;
 }

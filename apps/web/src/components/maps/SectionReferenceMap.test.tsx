@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { shareFill, revealExactResults } from "./SectionReferenceMap";
+import { revealExactResults } from "./SectionReferenceMap";
+import { shareFill } from "./reference-colors";
 import { REFERENCE_FILL, REFERENCE_LINE } from "./reference-colors";
 
 describe("fixed electoral fill domain", () => {
   it("interpolates the same endpoints and midpoint independently of the election", () => {
-    expect(shareFill(0)).toEqual([21, 50, 66, 220]);
-    expect(shareFill(50)).toEqual([61, 140, 154, 220]);
-    expect(shareFill(100)).toEqual([101, 229, 242, 220]);
+    expect(shareFill(0)).toEqual([103, 143, 162, 255]);
+    expect(shareFill(50)).toEqual([102, 186, 202, 255]);
+    expect(shareFill(100)).toEqual([101, 229, 242, 255]);
     expect(shareFill(50)).toEqual(shareFill(50));
   });
 
