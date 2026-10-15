@@ -530,8 +530,9 @@ test.describe("the review route reflects the disposable database", () => {
           await tabTo(page, drawer.getByRole("link", { name: "Panel de Votus" }));
           for (const name of NAVIGATION_NAMES) await tabTo(page, drawer.getByRole("link", { name, exact: true }));
         }
-        const organization = page.getByRole("combobox", { name: "Organización" });
-        const submit = page.getByRole("button", { name: "Cambiar organización" });
+        const workspaceControls = width === 1440 ? page.getByRole("banner") : page.getByRole("dialog", { name: "Navegación principal" });
+        const organization = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
+        const submit = workspaceControls.getByRole("button", { name: "Cambiar organización" });
         await expect(organization).toBeEnabled();
         await expect(submit).toBeEnabled();
         await tabTo(page, organization, false, false, "org-select");

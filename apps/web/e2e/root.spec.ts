@@ -88,7 +88,7 @@ test("a real same-workspace POST hides both counts until an equal-valued RSC sna
     const attention = page.getByRole("complementary", { name: "Atención operativa" });
     const count = "1 elemento(s) de revisión pendiente(s)";
     for (const reader of [topbar, attention]) await expect(reader).toContainText(count);
-    const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+    const organization = topbar.getByRole("combobox", { name: "Organización", exact: true });
     const activeId = await organization.inputValue();
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
@@ -103,7 +103,7 @@ test("a real same-workspace POST hides both counts until an equal-valued RSC sna
     });
     const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
     try {
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await topbar.getByRole("button", { name: "Cambiar organización" }).click();
       await expect(organization).toBeDisabled();
       for (const reader of [topbar, attention]) {
         await expect(reader).toContainText("No se pudo verificar el estado de revisión.");
@@ -142,14 +142,14 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       const topbar = page.locator("header.workspace-topbar");
       const sidebar = topbar.locator(".workspace-topbar__controls");
       const attention = page.getByRole("complementary", { name: "Atención operativa" });
-      const organization = page.getByRole("combobox", { name: "Organización", exact: true });
+      const organization = topbar.getByRole("combobox", { name: "Organización", exact: true });
       const firstId = await organization.inputValue();
       expect(firstId).not.toBe(fixture.organization_id);
       await expect(sidebar).toContainText("Organización activa: E2E Authorized Review Browser");
       for (const reader of [topbar, attention]) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
       await organization.selectOption(fixture.organization_id);
       const switched = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await topbar.getByRole("button", { name: "Cambiar organización" }).click();
       const response = await switched;
       expect(response.request().postDataJSON().organizationId).toBe(fixture.organization_id);
       expect(response.ok()).toBe(true);
@@ -168,7 +168,7 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       await draft.fill("12345");
       await organization.selectOption(firstId);
       const returned = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await topbar.getByRole("button", { name: "Cambiar organización" }).click();
       const returnResponse = await returned;
       expect(returnResponse.request().postDataJSON().organizationId).toBe(firstId);
       expect(returnResponse.ok()).toBe(true);
@@ -271,7 +271,7 @@ test("resizing an open drawer to desktop focuses the visible topbar account", as
     await expect.poll(activeIsVisible).toBe(true);
     await expect(page.getByRole("group", { name: "Organización y cuenta" })).toHaveCount(1);
     await expect(page.locator(".workspace-topbar__controls").locator("summary", { hasText: "Cuenta" })).toBeFocused();
-    await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
     await page.keyboard.press("Tab");
     await expect.poll(activeIsVisible).toBe(true);
   });
@@ -351,9 +351,9 @@ for (const [status, httpStatus, message] of [
       for (const reader of readers) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
       await page.route("**/api/workspace", route => route.fulfill({ status: httpStatus, json: { status } }));
       try {
-        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
         await expect(page.getByRole("group", { name: "Organización y cuenta" })).toContainText(message);
-        await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeEnabled();
+        await expect(page.getByRole("banner").getByRole("combobox", { name: "Organización", exact: true })).toBeEnabled();
         for (const reader of readers) {
           await expect(reader).toContainText("No se pudo verificar el estado de revisión.");
           await expect(reader).not.toContainText("elemento(s) de revisión pendiente(s)");
@@ -361,7 +361,7 @@ for (const [status, httpStatus, message] of [
         }
       } finally { await page.unrouteAll({ behavior: "wait" }); }
       const response = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-      await page.getByRole("button", { name: "Cambiar organización" }).click();
+      await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
       expect((await response).ok()).toBe(true);
       for (const reader of readers) await expect(reader).toContainText("1 elemento(s) de revisión pendiente(s)");
     });
@@ -374,7 +374,7 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
     const draft = page.getByLabel("Total de votos", { exact: true });
     await draft.fill("12345");
     const response = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await page.getByRole("button", { name: "Cambiar organización" }).click();
+    await page.getByRole("banner").getByRole("button", { name: "Cambiar organización" }).click();
     expect((await response).ok()).toBe(true);
     await expect(page.locator("header.workspace-topbar")).toContainText("1 elemento(s) de revisión pendiente(s)");
     await expect(draft).toHaveValue("12345");
