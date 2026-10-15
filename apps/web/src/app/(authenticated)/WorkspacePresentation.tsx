@@ -34,6 +34,10 @@ export function WorkspacePresentation({ snapshot, children }: {
   </WorkspaceContext>;
 }
 
+export function useWorkspaceSnapshot() {
+  return useContext(WorkspaceContext)?.snapshot;
+}
+
 export function useWorkspaceSwitchStart() {
   const context = useContext(WorkspaceContext);
   if (!context) throw new Error("Workspace footer requires the authenticated presentation boundary");

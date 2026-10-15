@@ -10,6 +10,7 @@ import { formatCount, formatFixed2 } from "@/lib/format/number";
 export const ComparisonPartyContext = createContext<string | undefined>(undefined);
 export type MapMetric = "Participación" | "Cambio" | "Ganadores";
 interface Props {
+  electionLabels: [string, string];
   coordinates: number[][][][];
   name: string;
   fetchedAt: string;
@@ -39,7 +40,7 @@ export function ComparisonMap(props: Props) {
 }
 
 // Controlled view keeps metric state separate from geometry and synchronized interactive cameras.
-export function ComparisonMapView({ coordinates, name, fetchedAt, sha256, swing, leftNames, rightNames, party, metric, onMetric }: Props & { party: string; metric: MapMetric; onMetric: (metric: MapMetric) => void }) {
+export function ComparisonMapView({ electionLabels, coordinates, name, fetchedAt, sha256, swing, leftNames, rightNames, party, metric, onMetric }: Props & { party: string; metric: MapMetric; onMetric: (metric: MapMetric) => void }) {
   const [camera, setCamera] = useState<{ center: [number, number]; zoom: number }>();
   const updateCamera = (center: [number, number], zoom: number) => setCamera(previous => previous && Math.abs(previous.center[0] - center[0]) < 0.000001 && Math.abs(previous.center[1] - center[1]) < 0.000001 && Math.abs(previous.zoom - zoom) < 0.000001 ? previous : { center, zoom });
   const a = swing.shares2023.find(entry => entry.party === party);
@@ -73,9 +74,9 @@ export function ComparisonMapView({ coordinates, name, fetchedAt, sha256, swing,
     </header>
     {Object.entries(reasons).filter(([, reason]) => reason).map(([view, reason]) => <p key={view} id={`metric-reason-${view}`} role="note">{reason}</p>)}
     <p>Un único contorno para toda la sección 02/027; no representa variaciones dentro de la sección.</p>
-    <div className={styles.spatialPair}>{[{ id: "a", label: "Lado A — 2023 generales", shares: swing.shares2023, names: leftNames }, { id: "b", label: "Lado B — 2025 legislativas", shares: swing.shares2025, names: rightNames }].map(({ id, label, shares, names }, index) => <article key={id} aria-label={label}>
+    <div className={styles.spatialPair}>{[{ id: "a", label: `Lado A — ${electionLabels[0]}`, shares: swing.shares2023, names: leftNames }, { id: "b", label: `Lado B — ${electionLabels[1]}`, shares: swing.shares2025, names: rightNames }].map(({ id, label, shares, names }, index) => <article key={id} aria-label={label}>
       <h3>{label}</h3><p>{labels[index]}</p>
-      <SectionReferenceMap coordinates={coordinates} name={name} label={label} resultId="compare-results-heading" camera={camera} onCamera={updateCamera} fillColor={fills[index]} staticLabel={labels[index]} />
+      <SectionReferenceMap compactControls coordinates={coordinates} name={name} label={label} resultId="compare-results-heading" camera={camera} onCamera={updateCamera} fillColor={fills[index]} staticLabel={labels[index]} />
       <details className={styles.sideFigures}><summary>Cifras — Lado {id.toUpperCase()}</summary><p>Denominador: {formatCount(shares.reduce((sum, entry) => sum + entry.votes, 0))} votos partidarios.</p><Leader shares={shares} names={names} /></details>
     </article>)}</div>
     <div className={styles.spatialLegend}><Legend label={metric === "Participación" ? "Escala de color común: 0 % a 100 %" : metric === "Cambio" ? "Escala de cambio: −100 pp a +100 pp" : "Leyenda categórica de ganadores"}>
