@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
+import { writeWorkspaceStateFacts } from "./workspace-state-facts";
 import { expectMobileFormGeometry } from "./mobile-form-geometry";
 
 const environment = assertE2eEnvironment(process.env);
@@ -488,12 +489,17 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
   });
 });
 
-test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }) => {
+test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }, testInfo) => {
   await withReviewItem(page, async () => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
-  await expect(heading).toBeVisible();
+  try {
+    await expect(heading).toBeVisible();
+  } catch (error) {
+    await writeWorkspaceStateFacts(page, testInfo, "panorama-heading-failure");
+    throw error;
+  }
   await expect(heading).toHaveCSS("font-size", "32px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();

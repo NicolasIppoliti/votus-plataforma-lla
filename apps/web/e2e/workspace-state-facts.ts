@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import type { Page, TestInfo } from "@playwright/test";
+import type { ElementHandle, Locator, Page, TestInfo } from "@playwright/test";
 
 interface WorkspaceStateFacts {
   pathname: string;
@@ -49,6 +49,28 @@ export function sanitizeWorkspaceStateFacts(facts: WorkspaceStateFacts): Workspa
   };
 }
 
+interface FocusFacts {
+  focusedId: string; focusedTag: string; focusedName: string; controlId: string;
+  controlReplaced: boolean; searchKeys: string[];
+}
+export function sanitizeFocusFacts(facts: FocusFacts): FocusFacts {
+  const allow = (value: string, known: string[]) => known.includes(value) ? value : "[unrecognized]";
+  const ids = ["", "coverage-election", "coverage-category", "coverage-distrito", "coverage-seccion"];
+  const names = ["", "electionId", "categoryId", "distritoCode", "seccionCode", "sourceKind"];
+  return { focusedId: allow(facts.focusedId, ids), focusedTag: allow(facts.focusedTag, ["SELECT", "BUTTON", "BODY", "INPUT", "A", "HTML"]),
+    focusedName: allow(facts.focusedName, names), controlId: allow(facts.controlId, ids), controlReplaced: facts.controlReplaced,
+    searchKeys: facts.searchKeys.slice(0, 20).map(key => allow(key, names)) };
+}
+
+export async function writeFocusFacts(testInfo: TestInfo, name: string, control: Locator, original: ElementHandle): Promise<void> {
+  const facts = await control.evaluate((element, previous) => ({
+    focusedId: document.activeElement?.id ?? "", focusedTag: document.activeElement?.tagName ?? "",
+    focusedName: document.activeElement?.getAttribute("name") ?? "", controlId: element.id,
+    controlReplaced: element !== previous, searchKeys: Array.from(new URL(location.href).searchParams.keys()),
+  }), original);
+  await writeFile(testInfo.outputPath(`e2e-facts-${name}.json`), JSON.stringify(sanitizeFocusFacts(facts)));
+}
+
 export async function writeWorkspaceStateFacts(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const facts = await page.evaluate(() => {
     const texts = (selector: string) => Array.from(document.querySelectorAll<HTMLElement>(selector))
@@ -62,5 +84,6 @@ export async function writeWorkspaceStateFacts(page: Page, testInfo: TestInfo, n
     return { pathname: location.pathname, headings: texts("main h1, main h2, main [role=heading]"),
       alerts: texts("main [role=alert]"), statuses: texts("main [role=status]") };
   });
-  await writeFile(testInfo.outputPath(`e2e-facts-${name}.json`), JSON.stringify(sanitizeWorkspaceStateFacts(facts)));
+  const selectionRequiredPresent = await page.getByRole("region", { name: "Selección de organización", exact: true }).isVisible();
+  await writeFile(testInfo.outputPath(`e2e-facts-${name}.json`), JSON.stringify({ ...sanitizeWorkspaceStateFacts(facts), selectionRequiredPresent }));
 }

@@ -9,6 +9,7 @@ import { createFiscalStateHandler, fiscalWirePair, fiscalWireStates } from "./fi
 import { assertE2eEnvironment } from "./gate-contract";
 import { coverageFixture, withResultFixture } from "./result-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
+import { writeFocusFacts } from "./workspace-state-facts";
 
 /**
  * fiscalizacion-analysis spec, "An operator route reaches fiscalización
@@ -59,7 +60,7 @@ async function withAuthorizedFiscalWorkspace<T>(page: Page, run: () => Promise<T
 }
 
 test.describe("the fiscalizacion route explores coverage", () => {
-  test("test_route_reaches_only_authorized_fiscalizacion_evidence", async ({ page, next }) => {
+  test("test_route_reaches_only_authorized_fiscalizacion_evidence", async ({ page, next }, testInfo) => {
     const matched: string[] = [];
     next.onFetch(createFiscalStateHandler(environment.NEXT_PUBLIC_SUPABASE_URL, COVERAGE_SCOPE, (side, request) => {
       matched.push(side);
@@ -90,12 +91,21 @@ test.describe("the fiscalizacion route explores coverage", () => {
       const selection = new URLSearchParams();
       const draft = async (label: string, name: string, value: string, dependent: string): Promise<void> => {
         const control = page.getByLabel(label, { exact: true }), child = page.getByLabel(dependent, { exact: true });
+        const original = await control.elementHandle();
+        if (!original) throw new Error("Coverage control missing before selection");
         await control.focus(); await control.selectOption(value);
         selection.set(name, value);
         await expect(child).toHaveValue("");
         await expect(page).toHaveURL(new URL(`/fiscalizacion?${serializeElectoralContext({ ...Object.fromEntries(selection), sourceKind: "official" })}`, baseURL).toString());
         await expect(child).toBeEnabled(); await expect(form).not.toHaveAttribute("aria-busy", "true");
-        await expect(control).toBeFocused();
+        try {
+          await expect(control).toBeFocused();
+        } catch (error) {
+          await writeFocusFacts(testInfo, `fiscal-focus-${name}`, control, original);
+          throw error;
+        } finally {
+          await original.dispose();
+        }
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
         expect(matched).toEqual([]);
       };
