@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
 import styles from "./drilldown.module.css";
 import { TerritorialBreakdown } from "./TerritorialBreakdown";
@@ -102,7 +103,7 @@ function ExplorerForm({ facets, selected, children, header }: ExplorerFormProps)
     { name: "circuitoCode", id: "explorer-circuito", label: "Circuito", placeholder: "Cualquier circuito", options: namedOptions(facets.circuitos) },
     { name: "establecimientoCode", id: "explorer-establecimiento", label: "Establecimiento", placeholder: "Cualquier establecimiento", options: namedOptions(facets.establecimientos) },
     { name: "mesaCode", id: "explorer-mesa", label: "Mesa", placeholder: "Cualquier mesa", options: facets.mesas.map((option) => ({ value: String(option.code), label: String(option.code) })) },
-    { name: "level", id: "explorer-level", label: "Nivel del informe", placeholder: "Elegir un nivel", options: facets.availableLevels.map((level) => ({ value: level, label: granularityLabel(level) })) },
+    { name: "level", id: "explorer-level", label: ELECTORAL_CONTEXT_LABELS.level, placeholder: "Elegir un nivel", options: facets.availableLevels.map((level) => ({ value: level, label: granularityLabel(level) })) },
   ];
   return <DrilldownSelectionForm selected={values} fields={fields} header={header} notes={facetExclusionNotes(facets.exclusions ?? [])}>
     {children}
@@ -266,7 +267,7 @@ function ResultEvidence({ evidence, selection, facets, selected }: { evidence: E
             <div><dt>Circuito</dt><dd>{selection.circuitoCode ?? "Cualquier circuito"}</dd></div>
             <div><dt>Establecimiento</dt><dd>{selection.establecimientoCode ?? "Cualquier establecimiento"}</dd></div>
             <div><dt>Mesa</dt><dd>{selection.mesaCode ?? "Cualquier mesa"}</dd></div>
-            <div><dt>Nivel del informe</dt><dd>{granularityLabel(selection.requestedLevel)}</dd></div>
+            <div><dt>{ELECTORAL_CONTEXT_LABELS.level}</dt><dd>{granularityLabel(selection.requestedLevel)}</dd></div>
           </dl>
         </section>
       <section className={styles.results} aria-labelledby="official-results-heading">

@@ -253,7 +253,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(form).not.toContainText(/heldOver|JSON/);
     await expectNoHorizontalOverflow(page);
 
-    await form.getByLabel("Granularidad").selectOption("seccion");
+    await form.getByLabel("Nivel", { exact: true }).selectOption("seccion");
     await form.getByRole("button", { name: "Agregar lista" }).click();
     await expect(form.getByLabel("Nombre de la lista").nth(1)).toBeFocused();
     await form.getByRole("button", { name: "Agregar lista" }).click();
