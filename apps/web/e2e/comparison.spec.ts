@@ -172,9 +172,10 @@ test.describe("authorized official comparison", () => {
       await expect(panel).toBeVisible();
       const first = panel.getByRole("article", { name: "Lado A — 2023 generales" });
       const second = panel.getByRole("article", { name: "Lado B — 2025 legislativas" });
-      await first.locator('[data-map-controls] > summary').click();
-      await first.getByRole("button", { name: "Activar mapa interactivo de Lado A — 2023 generales" }).click();
-      await expect(first.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+      await panel.locator('[data-map-controls] > summary').click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
+      await panel.getByRole("button", { name: "Mostrar mapa interactivo" }).click();
+      await expect(panel.getByRole("status").nth(0)).toContainText("Mapa de", { timeout: 15000 });
       const firstMap = first.locator(".maplibregl-map");
       const secondMap = second.locator(".maplibregl-map");
       await expect(firstMap.locator("canvas.maplibregl-canvas")).toBeVisible();
@@ -191,9 +192,7 @@ test.describe("authorized official comparison", () => {
       const panned = await settledMap(firstMap, "first map after user pan");
       expectSameViewport(original, panned, "first pan");
       expect(panned.image.equals(original.image), "user pan did not change the settled map view").toBe(false);
-      await second.locator('[data-map-controls] > summary').click();
-      await second.getByRole("button", { name: "Activar mapa interactivo de Lado B — 2025 legislativas" }).click();
-      await expect(second.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+      await expect(panel.getByRole("status").nth(1)).toContainText("Mapa de", { timeout: 15000 });
       await expect(secondMap.locator("canvas.maplibregl-canvas")).toBeVisible();
       const synchronized = await settledMap(secondMap, "second map after activation");
       const inheritedFill = await expectElectoralFill(page, secondMap, synchronized.image, rightFill, "second map after activation");
@@ -217,7 +216,7 @@ test.describe("authorized official comparison", () => {
       const reverseLeft = await expectElectoralFill(page, firstMap, firstSynchronized.image, leftFill, "first map after second pan");
       const reverseRight = await expectElectoralFill(page, secondMap, secondPanned.image, rightFill, "second map after user pan");
       expect(alignedOccupiedGeometry(reverseLeft.raster, reverseLeft.composited, reverseRight.raster, reverseRight.composited), "first map did not inherit the second polygon geometry within one pixel").toBe(true);
-      await second.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).click();
+      await panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).click();
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeFocused();
       await expect(main.locator('[data-results-for="compare-results-heading"]')).toHaveAttribute("open", "");
       await expect(main.getByRole("table")).toContainText(spatial.identity.comparisonParty!.displayName);
@@ -273,13 +272,14 @@ test.describe("authorized official comparison", () => {
         expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 2);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       }
-      for (const article of articles) {
-        await article.locator('[data-map-controls] > summary').click();
-        const activate = article.getByRole("button", { name: /Activar mapa interactivo de Lado/ });
-        await tabTo(activate, `map activation in ${await article.getAttribute("aria-label")}`);
-        await expect(activate).toBeFocused();
-        await page.keyboard.press("Enter");
-        await expect(article.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
+      await panel.locator('[data-map-controls] > summary').click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
+      const activate = panel.getByRole("button", { name: "Mostrar mapa interactivo" });
+      await tabTo(activate, "shared map activation");
+      await expect(activate).toBeFocused();
+      await page.keyboard.press("Enter");
+      for (const [index, article] of articles.entries()) {
+        await expect(panel.getByRole("status").nth(index)).toContainText("Mapa de", { timeout: 15000 });
         const canvas = article.locator("canvas.maplibregl-canvas");
         await expect(canvas).toBeVisible();
         const box = await canvas.boundingBox();
@@ -288,7 +288,7 @@ test.describe("authorized official comparison", () => {
         expect(box.x).toBeGreaterThanOrEqual(0);
         expect(box.x + box.width).toBeLessThanOrEqual(321);
       }
-      const select = articles[1]!.getByRole("button", { name: "Seleccionar sección y consultar resultados" });
+      const select = panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" });
       await tabTo(select, "second map section selection");
       await expect(select).toBeFocused();
       await page.keyboard.press("Enter");
@@ -317,8 +317,9 @@ test.describe("authorized official comparison", () => {
       await expect(main).toContainText(spatial.identity.archiveEntryIds[0]!);
       await expect(main).toContainText(spatial.identity.archiveEntryIds[1]!);
       await expect(main).toContainText("SHA-256");
-      await panel.getByRole("article", { name: "Lado A — 2023 generales" }).locator('[data-map-controls] > summary').click();
-      const activate = panel.getByRole("article", { name: "Lado A — 2023 generales" }).getByRole("button", { name: "Activar mapa interactivo de Lado A — 2023 generales" });
+      await panel.locator('[data-map-controls] > summary').click();
+      await panel.getByText("Estado de los mapas", { exact: true }).click();
+      const activate = panel.getByRole("button", { name: "Mostrar mapa interactivo" });
       await activate.focus();
       await page.keyboard.press("Enter");
       await expect(panel.getByRole("status").first()).toContainText("Mapa no disponible; los resultados exactos siguen disponibles.");

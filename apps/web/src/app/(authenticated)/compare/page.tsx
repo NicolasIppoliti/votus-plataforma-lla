@@ -164,6 +164,7 @@ interface CompareSelectorProps {
   evidenceNotice?: ComparisonEvidenceNotice | undefined;
   children?: ReactNode;
   workbench?: ReactNode;
+  exactResults?: ReactNode;
   context?: ReactNode;
 }
 
@@ -180,6 +181,7 @@ function CompareSelector({
   evidenceNotice,
   children,
   workbench,
+  exactResults,
   context,
 }: CompareSelectorProps): ReactNode {
   const groups: SelectionGroup[] = [
@@ -206,6 +208,16 @@ function CompareSelector({
     },
   ];
 
+  const selectionNotes = <>
+    <p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
+    {!alert && unique && (
+      <aside className="official-compare__state" aria-label="Opciones no compartidas">
+        {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
+        {unique.seccion && <p>Opciones no compartidas — Sección: {unique.seccion.leftOnly} Lado A / {unique.seccion.rightOnly} Lado B (disponibles solo en ese lado).</p>}
+      </aside>
+    )}
+  </>;
+
   return (
     <main className={`page-shell official-compare ${styles.root}`}>
       <div className="shell-container official-compare__layout">
@@ -219,24 +231,23 @@ function CompareSelector({
         </header>
         <ComparisonSelectionForm selected={selected} groups={[groups[2]!, groups[0]!, groups[1]!]}>
           {workbench}
-          <section className={styles.selectionDetails} aria-label="Detalles de la selección">
-          <h2>Detalles de la selección</h2>
-          <details className={styles.selectionNotes}><summary>Notas de la selección</summary><p className={styles.guidance}>La comparación se actualiza al cambiar la selección.</p>
-          {!alert && unique && (
-            <aside className="official-compare__state" aria-label="Opciones no compartidas">
-              {unique.distrito && <p>Opciones no compartidas — Distrito: {unique.distrito.leftOnly} Lado A / {unique.distrito.rightOnly} Lado B (disponibles solo en ese lado).</p>}
-              {unique.seccion && <p>Opciones no compartidas — Sección: {unique.seccion.leftOnly} Lado A / {unique.seccion.rightOnly} Lado B (disponibles solo en ese lado).</p>}
-            </aside>
-          )}</details>
-          {evidenceNotice ? (
-            <EvidenceState {...evidenceNotice} titleId="compare-evidence-state-heading">
-              <p>{message}</p>
-            </EvidenceState>
+          {context ? (
+            <details className={styles.selectionNotes} data-applied-context="">
+              <summary><span>{message}</span><span> · Contexto y límites</span></summary>
+              {selectionNotes}
+              {context}
+            </details>
           ) : (
-            <Alert variant={alert ? "unavailable" : "needs-selection"}>{message}</Alert>
+            <section className={styles.selectionDetails} aria-label="Detalles de la selección">
+              <details className={styles.selectionNotes}><summary>Notas de la selección</summary>{selectionNotes}</details>
+              {evidenceNotice ? (
+                <EvidenceState {...evidenceNotice} titleId="compare-evidence-state-heading"><p>{message}</p></EvidenceState>
+              ) : (
+                <Alert variant={alert ? "unavailable" : "needs-selection"}>{message}</Alert>
+              )}
+            </section>
           )}
-          <details className={styles.selectionNotes} data-applied-context=""><summary>Contexto de comparación aplicada</summary>{context}</details>
-          </section>
+          {exactResults}
           {children}
         </ComparisonSelectionForm>
       </div>
@@ -596,9 +607,7 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
           maps={section?.status === "ok" ? <ComparisonMap electionLabels={[selectedLeftElection.label, selectedRightElection.label]} coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><Alert variant="caveat">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</Alert><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
         />}
-    >
-        <div className="official-compare__analysis">
-        <section className="official-compare__results" aria-labelledby="compare-results-heading">
+      exactResults={<section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading" tabIndex={-1}>Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
         <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "sin cambio"}.</p>
@@ -633,7 +642,9 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
           </Table>
         </TableRegion>
         </details>
-        </section>
+        </section>}
+    >
+        <div className="official-compare__analysis">
         <aside className="official-compare__evidence" aria-labelledby="compare-evidence-heading">
           <h2 id="compare-evidence-heading">Evidencia oficial por lado</h2>
           <article className="official-compare__evidence-side" aria-labelledby="compare-evidence-a-heading">

@@ -1,7 +1,7 @@
 "use client";
-import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 import { useRouter } from "next/navigation";
 import styles from "./comparison.module.css";
 import { serializeElectoralContext } from "@/lib/context/url";
