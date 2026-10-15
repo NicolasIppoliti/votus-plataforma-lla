@@ -15,6 +15,8 @@
 .scenarios-page .data-table tbody th { background: var(--surface); font-weight: 500; }
 .scenarios-page .data-table tbody tr:hover :is(th, td) { background: var(--surface-muted); }
 .scenarios-page .table-scroll { max-width: 100%; }
+.scenario-seat-bar { display: flex; gap: 3px; height: 44px; overflow: hidden; border-radius: 6px; }
+.scenario-seat-bar span { display: grid; place-items: center; min-width: 0; color: #14212b; font-weight: 700; font-variant-numeric: tabular-nums; }
 .scenarios-page caption { text-align: left; padding-block: 12px; color: var(--muted-ink); font-size: 0.8125rem; }
 @media (max-width: 760px) { .scenarios-page { gap: 18px; } .scenarios-page > section { padding: 16px; } }
 @media (max-width: 360px) { .scenarios-page__header h1 { font-size: 24px; } }
