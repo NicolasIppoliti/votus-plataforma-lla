@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./fiscalizacion.module.css";
+import { ElectoralGlossary } from "@/components/ElectoralGlossary";
+import { serializeElectoralContext, type ElectoralContext } from "@/lib/context/url";
 import {
   SCOPE_FORM_KIND, canonicalScopeSearchParams, scopeControlStates,
   scopeDependentNames, synchronizeScopeControls, type ScopeControl,
@@ -20,6 +22,7 @@ export interface CoverageField {
 }
 interface Props {
   selected: CoverageSelection;
+  sourceKind: ElectoralContext["sourceKind"];
   fields: CoverageField[] | null;
   children: ReactNode;
 }
@@ -30,7 +33,7 @@ interface SelectionState {
 }
 const selectionKey = (values: CoverageSelection) => canonicalScopeSearchParams(values).toString();
 
-export function FiscalizacionSelectionForm({ selected, fields, children }: Props) {
+export function FiscalizacionSelectionForm({ selected, sourceKind, fields, children }: Props) {
   const router = useRouter();
   const servedKey = selectionKey(selected);
   const [state, setState] = useState<SelectionState>({ servedKey, requestedKey: null, draft: selected });
@@ -64,7 +67,8 @@ export function FiscalizacionSelectionForm({ selected, fields, children }: Props
     const requestedKey = selectionKey(draft);
     setState((previous) => ({ ...previous, draft, requestedKey }));
     // Returning to the served selection must also supersede any outstanding response.
-    router.replace(requestedKey ? `/fiscalizacion?${requestedKey}` : "/fiscalizacion", { scroll: false });
+    const params = serializeElectoralContext({ ...draft, sourceKind });
+    router.replace(`/fiscalizacion?${params}`, { scroll: false });
   }
 
   const controlStates = scopeControlStates(SCOPE_FORM_KIND.COVERAGE, state.draft);
@@ -78,6 +82,7 @@ export function FiscalizacionSelectionForm({ selected, fields, children }: Props
     {fields ? <section className={styles.filters} aria-labelledby="coverage-form-heading">
       <div className="panel__heading"><h2 id="coverage-form-heading">Elegir el alcance de la cobertura</h2></div>
       <form action="/fiscalizacion" method="get" aria-busy={!showEvidence || undefined} onSubmit={(event) => event.preventDefault()}>
+        <input type="hidden" name="sourceKind" value={sourceKind} />
         <div className={styles.selectorGroups}>
           {[{ title: "Elección", names: ["electionId", "categoryId"] },
             { title: "Territorio", names: ["distritoCode", "seccionCode"] }].map((group) => (
@@ -85,7 +90,7 @@ export function FiscalizacionSelectionForm({ selected, fields, children }: Props
               <legend>{group.title}</legend>
               <div className={styles.fields}>
                 {fields.filter((field) => group.names.includes(field.name)).map((field) => <div className="field" key={field.name}>
-                  <label htmlFor={field.id}>{field.label}</label>
+                  <div className={styles.fieldLabel}><label htmlFor={field.id}>{field.label}</label><ElectoralGlossary field={field.name} /></div>
                   <select id={field.id} name={field.name} value={state.draft[field.name]}
                     required={controlStates[field.name].required}
                     disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}

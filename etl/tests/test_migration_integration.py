@@ -52,6 +52,7 @@ AUTHORIZED_OFFICIAL_INTERNAL_LISTS_MIGRATION_VERSION = "20261011000000"
 OFFICIAL_SECTION_COMPLETENESS_MIGRATION_VERSION = "20261012000000"
 OFFICIAL_SECTION_CIRCUIT_OUTCOMES_MIGRATION_VERSION = "20261013000000"
 HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION = "20261014000000"
+SOLE_ORGANIZATION_BOOTSTRAP_MIGRATION_VERSION = "20261015000000"
 LATEST_REVIEW_CONTEXT_MIGRATION_VERSIONS = (
     REVIEW_ITEM_CONTEXT_MIGRATION_VERSION,
     REVIEW_CONTEXT_CLASSIFICATION_MIGRATION_VERSION,
@@ -96,7 +97,9 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         OFFICIAL_SECTION_COMPLETENESS_MIGRATION_VERSION,
         OFFICIAL_SECTION_CIRCUIT_OUTCOMES_MIGRATION_VERSION,
         HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION,
+        SOLE_ORGANIZATION_BOOTSTRAP_MIGRATION_VERSION,
         "20261015200000",
+        "20261015300000",
     }
 )
 EXPECTED_MIGRATION_VERSIONS = tuple(
@@ -265,7 +268,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 72
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 74
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (
@@ -1590,6 +1593,9 @@ def test_workspace_context_selection_switching_and_session_isolation(owned_datab
 
     try:
         assert rpc("current_workspace", session_id) == {"status": "selection_required", "context_revision": 0}  # noqa: E501
+        # An existing unselected session must not be auto-selected on a later bootstrap.
+        unselected = {"status": "selection_required", "context_revision": 1}
+        assert rpc("bootstrap_workspace_context", other_session) == unselected
         with owned_database.owner_connection("workspace_admin_owner") as connection:
             connection.cursor().executemany(
                 "insert into workspace_private.organization(id,slug,display_name,disabled_at) values(%s,%s,%s,%s)",  # noqa: E501
@@ -1608,10 +1614,11 @@ def test_workspace_context_selection_switching_and_session_isolation(owned_datab
             "total": 1, "truncated": False,
         }
         first = rpc("bootstrap_workspace_context", session_id)
-        assert first == {"status": "selection_required", "context_revision": 1}
+        assert first == {"status": "active", "context_revision": 2,
+            "organization": {"id": str(organizations[0]), "display_name": "Active"}}
         assert rpc("bootstrap_workspace_context", session_id) == first
-        assert rpc("bootstrap_workspace_context", other_session) == first
-        assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "active", "context_revision": 2}  # noqa: E501
+        assert rpc("bootstrap_workspace_context", other_session) == unselected
+        assert rpc("switch_workspace_context", session_id, organizations[0], 1) == {"status": "conflict", "context_revision": 2}  # noqa: E501
         assert rpc("current_workspace", session_id) == {"status": "active", "context_revision": 2,
             "organization": {"id": str(organizations[0]), "display_name": "Active"}}
         assert rpc("switch_workspace_context", session_id, organizations[0], 2) == {"status": "same_state", "context_revision": 2}  # noqa: E501

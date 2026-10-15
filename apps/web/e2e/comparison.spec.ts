@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 import { alignedOccupiedGeometry, type Raster } from "./map-raster";
@@ -43,7 +44,100 @@ async function withAuthorizedComparisonWorkspace<T>(page: Page, run: (revokeAuth
   if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, cleanupError], "comparison assertions and cleanup failed"); throw outcome.error; }
   if (cleanupError) throw cleanupError; return outcome.value;
 }
+async function writeSignInFailureFacts(page: Page): Promise<string> {
+  const path = test.info().outputPath("e2e-facts-sign-in.json");
+  const facts = await page.evaluate(() => ({
+    pathname: location.pathname,
+    hasReturnTo: new URLSearchParams(location.search).has("returnTo"),
+    fields: Array.from(document.querySelectorAll<HTMLInputElement>("input:not([type=hidden])"), input => ({
+      type: input.type, empty: input.value.length === 0, valid: input.validity.valid,
+    })),
+    alertCount: document.querySelectorAll('[role="alert"]').length,
+    hasGenericError: document.getElementById("login-error")?.textContent === "Las credenciales no son válidas.",
+    pending: document.querySelector("form")?.getAttribute("aria-busy") === "true",
+  }));
+  await writeFile(path, JSON.stringify(facts));
+  return path;
+}
 test.describe("authorized official comparison", () => {
+  test("real sign-in resumes exact exploration/comparison and rechecks revoked access", async ({ page, context }) => {
+    await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async (revokeAuthorization) => {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      const organization = await page.getByRole("combobox", { name: "Organización", exact: true }).inputValue();
+      const common = { electionId: identity.electionIds[0]!, categoryId: identity.categoryId,
+        distritoCode: identity.distritoCode, seccionCode: identity.seccionCode, sourceKind: "official" };
+      const exploration = `/drilldown?${new URLSearchParams({ ...common, level: "seccion" })}`;
+      const comparison = `/compare?${new URLSearchParams({ ...common, bElectionId: identity.electionIds[1]!, bCategoryId: identity.categoryId })}`;
+      const resume = async (destination: string): Promise<void> => {
+        await context.clearCookies();
+        await page.goto(new URL(destination, baseURL).toString());
+        await expect.poll(() => new URL(page.url()).searchParams.get("returnTo")).toBe(destination);
+        await expect(page.getByRole("main")).not.toContainText(identity.archiveEntryIds[0]!);
+        // A failed attempt must not discard the hidden destination.
+        await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
+        await page.getByLabel("Contraseña").fill("synthetic-invalid-password");
+        await page.getByRole("button", { name: "Iniciar sesión" }).click();
+        try {
+          await expect(page.locator("#login-error")).toHaveText("Las credenciales no son válidas.");
+        } catch (error) {
+          await test.info().attach("sign-in-failure", {
+            path: await writeSignInFailureFacts(page), contentType: "application/json",
+          });
+          throw error;
+        }
+        // React actions reset uncontrolled fields after submission, including failed sign-in.
+        await page.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
+        await page.getByLabel("Contraseña").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
+        await page.getByRole("button", { name: "Iniciar sesión" }).click();
+        await expect(page).toHaveURL(new URL(destination, baseURL).toString());
+        // Fresh sessions may require the existing authorized workspace prerequisite.
+        const selector = page.getByRole("combobox", { name: "Organización", exact: true });
+        await selector.selectOption(organization);
+        const switched = page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspace" && response.request().method() === "POST");
+        await page.getByRole("button", { name: "Cambiar organización" }).click();
+        expect((await switched).ok()).toBe(true);
+        await expect(page).toHaveURL(new URL(destination, baseURL).toString());
+      };
+      for (const destination of [exploration, comparison]) {
+        await resume(destination);
+        await expect(page.getByRole("main").locator("table").filter({ hasText: identity.comparisonParty!.displayName }).first()).toContainText(identity.comparisonParty!.displayName);
+      }
+      await revokeAuthorization();
+      await resume(comparison);
+      const main = page.getByRole("main");
+      await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+      await expect(main.getByRole("table")).toHaveCount(0);
+      for (const archive of identity.archiveEntryIds) await expect(main).not.toContainText(archive);
+      await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toBeVisible();
+    }));
+  });
+  for (const width of [1440, 390]) {
+    test(`selection survives Panorama → Exploración → Comparación at ${width}px (#442)`, async ({ page }) => {
+      await withResultFixture(SPEC, seed, async () => withAuthorizedComparisonWorkspace(page, async () => {
+        await page.setViewportSize({ width, height: 1000 });
+        const context = new URLSearchParams({
+          electionId: identity.electionIds[0]!, categoryId: identity.categoryId, sourceKind: "official",
+          distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+          bElectionId: identity.electionIds[1]!, bCategoryId: identity.categoryId,
+        });
+        await page.goto(new URL(`/?${context}`, baseURL).toString());
+        await page.getByRole("main").getByRole("link", { name: "Explorar resultados", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/drilldown" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && url.searchParams.get("level") === "seccion");
+        await expect(page.getByRole("main").getByRole("table").first()).toBeVisible();
+        const navigation = width === 390
+          ? page.getByRole("dialog", { name: "Navegación principal" }).getByRole("navigation", { name: "principal", exact: true })
+          : page.locator(".app-shell > aside.situation-sidebar").getByRole("navigation", { name: "principal", exact: true });
+        if (width === 390) await page.getByRole("button", { name: "Abrir navegación" }).click();
+        await navigation.getByRole("link", { name: "Comparación", exact: true }).click();
+        await expect(page).toHaveURL(url => url.pathname === "/compare" && [...context].every(([key, value]) => url.searchParams.get(key) === value) && !url.searchParams.has("level"));
+        await expect(page.getByRole("main").getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true })).toHaveValue(identity.electionIds[0]!);
+        await expect(bar.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue(identity.seccionCode);
+      }));
+    });
+  }
+
   // A changed frame alone can be inertia or a WebGL repaint, not a settled camera.
   async function settledMap(map: Locator, phase: string): Promise<{ image: Buffer; width: number; height: number }> {
     let previous: Buffer | undefined;
@@ -269,6 +363,39 @@ test.describe("authorized official comparison", () => {
       await expect(page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Comparación", exact: true })).toBeVisible();
       await expect(main).not.toContainText("999 votos");
     }, spatial.identity), "spatial");
+  });
+
+  test("corrects a figure-free mixed-granularity refusal through the retained scope selector", async ({ page }) => {
+    await withResultFixture(SPEC, seed, async () => {
+      const extra = identity.comparisonLeftOnlySection!;
+      // Extend only this scenario's owned rows, jurisdiction and archive. The
+      // existing archive-scoped fixture cleanup also owns the added row.
+      const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+      const changed = await admin.from("result_row").update({ granularity: "mesa" })
+        .eq("archive_entry_id", extra.archiveEntryId);
+      if (changed.error) throw new Error("failed to prepare refused comparison scope");
+      const added = await admin.from("result_row").insert({
+        ...seed.rows.find(row => row.election_id === identity.electionIds[1])!,
+        jurisdiction_id: extra.jurisdictionId, source_row_index: 2,
+      });
+      if (added.error) throw new Error("failed to prepare paired comparison scope");
+      await withAuthorizedComparisonWorkspace(page, async () => {
+        const params = new URLSearchParams({ electionId: identity.electionIds[0]!, bElectionId: identity.electionIds[1]!, categoryId: identity.categoryId, bCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: extra.seccionCode, sourceKind: "official" });
+        await page.goto(new URL(`/compare?${params}`, baseURL).toString());
+        const main = page.getByRole("main");
+        await expect(main).toContainText("Granularidad mixta");
+        await expect(main.locator('form[action="/compare"] select')).toHaveCount(6);
+        await expect(main.getByRole("table")).toHaveCount(0);
+        await expect(main).not.toContainText(/\d+,\d+ %|SHA-256|Procedencia oficial|Referencia oficial/);
+        const section = main.getByRole("combobox", { name: "Sección compartida", exact: true });
+        await expect(section).toHaveValue(extra.seccionCode);
+        await section.selectOption(identity.seccionCode);
+        await expect(main.getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
+        await expect(main).not.toContainText("Granularidad mixta");
+        await expect(section).toHaveValue(identity.seccionCode);
+        await expect(main).not.toContainText("999 votos");
+      });
+    });
   });
 
   test("serves complete evidence, then removes every figure after authorization loss and reload", async ({ page }) => {

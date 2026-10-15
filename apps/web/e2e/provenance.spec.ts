@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
@@ -90,7 +91,7 @@ test("official section completeness is disclosed through the real RPC", async ({
   }));
 });
 
-test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }) => {
+test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }, testInfo) => {
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
     await page.addInitScript(() => {
       const original = HTMLCanvasElement.prototype.getContext;
@@ -104,9 +105,20 @@ test("national reference links and no-WebGL polar view preserve exact selection"
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
     await expect(national).toContainText("WebGL no disponible");
-    await expect(national.getByRole("link", { name: "Ir a Buenos Aires" })).toHaveCount(1);
-    await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    // Failure-only facts (link text/href only): the release gate redacts Playwright output.
+    await writeFile(testInfo.outputPath("e2e-facts-national-links.json"), JSON.stringify(await national.locator("a, [role=link]").evaluateAll((elements) =>
+      elements.map((element) => ({ tag: element.tagName, text: element.textContent?.trim().slice(0, 80), href: element.getAttribute("href"),
+        hidden: element.closest("[aria-hidden=true], [hidden], [inert]") !== null, display: getComputedStyle(element).display,
+        visibility: getComputedStyle(element).visibility })))));
+    await expect(national.getByRole("link")).toHaveCount(1);
+    await expect(national).toHaveAttribute("data-map-kind", "locator");
+    expect((await national.boundingBox())!.width).toBeLessThanOrEqual(320);
+    const provenance = national.locator("details");
+    await expect(provenance.locator("code")).toBeHidden();
+    await provenance.locator("summary").click();
+    await expect(provenance.locator("code")).toContainText(/^[a-f0-9]{64}$/);
+    await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+    await expect(page).toHaveURL(/#explorer-election$/);
     await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
     await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
     await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
@@ -241,10 +253,10 @@ test("national reference renders both views on desktop and mobile without changi
     expect(rendererErrors, "browser renderer errors").toEqual([]);
     const election = page.getByRole("combobox", { name: "Elección", exact: true });
     await expect(election).toHaveValue("");
-    const provinceLink = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    const provinceLink = national.getByRole("link", { name: "Ir a la selección electoral exacta" });
     await provinceLink.focus();
     await provinceLink.press("Enter");
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page).toHaveURL(/#explorer-election$/);
     await expect(election).toHaveValue("");
     await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
     await expect(election).toBeFocused();
@@ -294,7 +306,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
     expect.soft(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
       "320px document must not overflow horizontally").toBe(true);
     const targetBoxes = [];
-    for (const label of ["Ir a Buenos Aires", "Volver a Argentina", "Ir a la selección electoral exacta"]) {
+    for (const label of ["Ir a la selección electoral exacta"]) {
       const link = national.getByRole("link", { name: label });
       const box = await link.boundingBox();
       targetBoxes.push({ label, width: box?.width ?? 0, height: box?.height ?? 0 });
@@ -305,7 +317,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
       viewport: await page.evaluate(() => ({ inner: innerWidth, client: document.documentElement.clientWidth,
         scroll: document.documentElement.scrollWidth })), targets: targetBoxes,
     }));
-    const province = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    const province = national.getByRole("link", { name: "Ir a la selección electoral exacta" });
     await province.focus();
     await expect(province).toBeFocused();
     const focus = await province.evaluate((element) => {
@@ -315,7 +327,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
     });
     expect(focus.outline || focus.shadow, "focused navigation has visible outline or ring").toBe(true);
     await province.press("Enter");
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page).toHaveURL(/#explorer-election$/);
   }));
 });
 
@@ -330,8 +342,8 @@ test.describe("national reference touch", () => {
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
         .toContainText("Vista continental disponible");
-      await national.getByRole("link", { name: "Ir a Buenos Aires" }).tap();
-      await expect(page).toHaveURL(/#province-reference-heading$/);
+      await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).tap();
+      await expect(page).toHaveURL(/#explorer-election$/);
     }));
   });
 });
@@ -368,8 +380,8 @@ zoomTest.describe("national reference at native 200% zoom", () => {
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
         .toContainText("Vista continental disponible");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
-      await expect(page).toHaveURL(/#province-reference-heading$/);
+      await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+      await expect(page).toHaveURL(/#explorer-election$/);
       }));
     } catch (error) {
       try {
@@ -464,15 +476,51 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
   }
 }
 
-    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>): Promise<T> {
+    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>, freshLogin = false): Promise<T> {
       const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+      // A dedicated identity prevents unrelated configured-account memberships from
+      // changing this journey's sole-organization precondition.
+      if (freshLogin) {
+        const email = `sole-org-${randomUUID()}@example.test`;
+        const password = randomUUID();
+        const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+        if (error || !data.user) throw new Error(`failed to create sole-organization user: ${error?.message ?? "user missing"}`);
+        try {
+          return await withOfficialFixture(data.user.id, email, password);
+        } finally {
+          const { error: cleanupError } = await admin.auth.admin.deleteUser(data.user.id);
+          if (cleanupError) throw new Error(`failed to clean sole-organization user: ${cleanupError.message}`);
+        }
+      }
       const { data: auth, error: authError } = await admin.auth.admin.listUsers();
       const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
       if (authError || !user) throw new Error(`failed to resolve official fixture user: ${authError?.message ?? "user missing"}`);
-      const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode });
+      return withOfficialFixture(user.id, environment.VOTUS_E2E_TEST_USER_EMAIL, environment.VOTUS_E2E_TEST_USER_PASSWORD);
+
+      async function withOfficialFixture(userId: string, email: string, password: string): Promise<T> {
+      const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: userId, p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode });
       if (fixtureError || typeof fixture?.organization_id !== "string") throw new Error(`failed to set up authorized official fixture: ${fixtureError?.message ?? "invalid response"}`);
       let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
       try {
+        if (freshLogin) {
+          expect(fixture.active_membership_count, "fresh journey must have exactly one active membership").toBe(1);
+          await page.context().clearCookies();
+          await page.goto(new URL("/login", baseURL).toString());
+          await page.getByLabel("Correo electrónico").fill(email);
+          await page.getByLabel("Contraseña").fill(password);
+          await page.getByRole("button", { name: "Iniciar sesión" }).click();
+          await expect(page).toHaveURL(new URL("/", baseURL).toString());
+          const session = await page.request.get(new URL("/api/session", baseURL).toString());
+          const sessionBody: unknown = await session.json();
+          // Failure-only facts (HTTP status and session status only): the release gate redacts Playwright output.
+          if (JSON.stringify(sessionBody) !== JSON.stringify({ status: "active" })) {
+            const landing = { url: new URL(page.url()).pathname, alerts: await page.getByRole("alert").allTextContents(), statuses: await page.getByRole("status").allTextContents() };
+            await page.reload();
+            const afterReload = await (await page.request.get(new URL("/api/session", baseURL).toString())).json();
+            await writeFile(test.info().outputPath("e2e-facts-sole-org-session.json"), JSON.stringify({ http: session.status(), body: sessionBody, landing, afterReload }));
+          }
+          expect(sessionBody).toEqual({ status: "active" });
+        } else {
         await page.goto(new URL("/dashboard", baseURL).toString());
         const trigger = page.getByRole("button", { name: "Abrir navegación" });
         const mobile = await trigger.isVisible();
@@ -485,13 +533,81 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         const response = await switched;
         expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
         if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+        }
         outcome = { value: await run() };
       } catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
       if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "official assertion and fixture cleanup failed"); throw outcome.error; }
       if (cleanupError) throw new Error(`failed to clean official fixture: ${cleanupError.message}`); return outcome.value;
+      }
     }
 
     test.describe("no fiscalización leakage into the rendered page", () => {
+  test("Exploration opens shared official context without another selection", async ({ page }) => {
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+      const query = new URLSearchParams({
+        electionId: SOURCE_SCOPE.electionId, categoryId: SOURCE_SCOPE.categoryId,
+        distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+        sourceKind: "official",
+      });
+      // Panorama's local territory selector is not shared context until #436.
+      // Exercise #437 directly with the complete authorized shared context.
+      const explorationHref = `/drilldown?${query}`;
+      await page.goto(new URL(explorationHref, baseURL).toString());
+      const hasRosalesScope = (url: URL) => url.pathname === "/drilldown" &&
+        url.searchParams.get("distritoCode") === identity.distritoCode && url.searchParams.get("seccionCode") === identity.seccionCode;
+      await expect(page).toHaveURL(hasRosalesScope);
+      // Always leave an artifact before any assertions or DOM collection. CI only
+      // uploads facts on failure; a collection error must not erase the baseline.
+      const factsPath = test.info().outputPath("e2e-facts-panorama-exact-results.json");
+      await writeFile(factsPath, JSON.stringify({
+        phase: "after-exploration-click",
+        fixtureMatchesPanoramaTerritory: identity.distritoCode === "02" && identity.seccionCode === "027",
+        fixtureMatchesPanoramaCategory: identity.categoryName === "CONCEJALES",
+      }));
+      const pageFacts = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        const text = main?.textContent ?? "";
+        return {
+          mainCount: document.querySelectorAll("main").length,
+          containsRosales: text.includes("Rosales"),
+          needsSelection: text.includes("Elija una sección exacta"),
+          empty: text.includes("No se encontraron resultados oficiales"),
+          denied: text.includes("no pertenece al alcance autorizado") || text.includes("No tiene autorización"),
+          malformed: text.includes("validación de integridad"),
+          exactResultsCount: [...(main?.querySelectorAll("summary") ?? [])].filter(element => element.textContent === "Mostrar resultados exactos").length,
+          controls: [...(main?.querySelectorAll("select") ?? [])].map(select => ({
+            id: select.id, disabled: select.disabled, optionCount: select.options.length,
+            hasSelection: Boolean(select.value),
+          })),
+        };
+      }).catch(() => ({ collectionFailed: true }));
+      await writeFile(factsPath, JSON.stringify({
+        phase: "before-destination-and-evidence-assertions",
+        fixtureMatchesPanoramaTerritory: identity.distritoCode === "02" && identity.seccionCode === "027",
+        fixtureMatchesPanoramaCategory: identity.categoryName === "CONCEJALES",
+        ...pageFacts,
+      }));
+      {
+        const destination = new URL(page.url());
+        await writeFile(test.info().outputPath("e2e-facts-panorama-exploration.json"), JSON.stringify({
+          destinationPath: destination.pathname,
+          destinationScope: {
+            distritoCode: destination.searchParams.get("distritoCode"),
+            seccionCode: destination.searchParams.get("seccionCode"),
+            level: destination.searchParams.get("level"),
+          },
+          linkHasDistrict: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("distritoCode"),
+          linkHasSection: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("seccionCode"),
+          ...pageFacts,
+        }));
+      }
+      await expect(page).toHaveURL(hasRosalesScope);
+      await expect(page.getByRole("main")).toContainText("Rosales");
+      const exactResults = page.getByText("Mostrar resultados exactos", { exact: true });
+      await expect(exactResults).toBeVisible();
+      await expect(page.getByRole("main")).not.toContainText("Elija una sección exacta");
+    }));
+  });
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
@@ -509,11 +625,21 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(legacy.getByRole("alert")).toContainText("jurisdictionId");
       await expect(legacy).not.toContainText(`${formatCount(OFFICIAL_VOTES)} votos`);
 
-      await page
-        .getByRole("navigation", { name: "principal" })
-        .getByRole("link", { name: "Exploración", exact: true })
-        .click();
-      await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
+      // #442 keeps shared context even when the current route refused legacy
+      // keys. Following navigation is not a reset of election/category.
+      const carried = new URLSearchParams({ electionId: SOURCE_SCOPE.electionId, categoryId: SOURCE_SCOPE.categoryId, sourceKind: "official" });
+      const explorationLink = page.getByRole("navigation", { name: "principal" })
+        .getByRole("link", { name: "Exploración", exact: true });
+      await expect(explorationLink).toHaveAttribute("href", `/drilldown?${carried}`);
+      await explorationLink.click();
+      await expect(page).toHaveURL(new URL(`/drilldown?${carried}`, baseURL).toString());
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue(SOURCE_SCOPE.electionId);
+      await expect(page.getByRole("combobox", { name: "Categoría", exact: true })).toHaveValue(SOURCE_SCOPE.categoryId);
+      // An explicit incomplete context opens the empty-form hierarchy; a bare
+      // exploration URL now resolves the authorized default context (#437).
+      await page.goto(new URL("/drilldown?sourceKind=official", baseURL).toString());
+      await expect(page).toHaveURL(new URL("/drilldown?sourceKind=official", baseURL).toString());
+      await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
       await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
       await page.locator("details").filter({ has: page.locator("#explorer-distrito") }).locator("summary").click();
       for (const label of ["Categoría", "Distrito", "Sección"]) {
@@ -549,9 +675,23 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         await expect(page.locator("#navigator-title")).toBeFocused();
         await expect(page.locator("html")).toHaveAttribute("data-scope-sentinel", "alive");
       };
+      const checkGlossary = async (term: string) => {
+        const help = page.getByRole("button", { name: `Qué significa ${term}`, exact: true });
+        await help.focus();
+        const tooltip = page.locator(`[id="${await help.getAttribute("aria-describedby")}"]`);
+        await expect(tooltip).toBeVisible();
+        await expect(help).toHaveAccessibleDescription(/.+/);
+        await page.keyboard.press("Escape");
+        await expect(tooltip).toBeHidden();
+        await expect(help).toBeFocused();
+      };
+      await checkGlossary("sección");
+      await checkGlossary("circuito");
       const traversalUrls = [page.url()];
       await openChild("00001", "circuito"); traversalUrls.push(page.url());
+      await checkGlossary("establecimiento");
       await openChild("E1 — Synthetic school", "establecimiento"); traversalUrls.push(page.url());
+      await checkGlossary("mesa");
       await openChild("Mesa 1", "mesa"); traversalUrls.push(page.url());
       await expect(page.getByText("Fin del recorrido", { exact: true })).toBeVisible();
       // Real browser history must restore both exact lineage and served evidence.
@@ -717,7 +857,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(map).toContainText("Vista de referencia · 100 %");
       await expect(page).toHaveURL(explorerUrl);
       expect(await voteTable.textContent()).toBe(exactBeforeCamera);
-      for (const [width, inspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+      // A reference-only stage is a small locator next to the inspector (#449); data maps keep the wide stage.
+      const locator = (await map.getAttribute("data-map-kind")) === "locator";
+      for (const [width, dataInspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+        const inspectorWidth = locator && dataInspectorWidth !== null ? "locator" : dataInspectorWidth;
         await page.setViewportSize({ width, height: 900 });
         await expect.poll(async () => {
           const [filterBox, workBox, mapBox, detailBox, resultBox, evidenceBox] = await Promise.all(
@@ -726,16 +869,41 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
               return { top, bottom, left, right, width };
             })),
           );
-          return {
+          const flags = {
             filtersAbove: filterBox!.bottom <= workBox!.top,
             workbenchAboveResults: workBox!.bottom <= resultBox!.top,
             evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
             inspectorGeometry: inspectorWidth === null
-              ? mapBox!.bottom <= detailBox!.top && Math.abs(mapBox!.width - detailBox!.width) <= 2
-              : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
+              ? mapBox!.bottom <= detailBox!.top && (locator ? mapBox!.width <= 320 : Math.abs(mapBox!.width - detailBox!.width) <= 2)
+              : inspectorWidth === "locator"
+                ? mapBox!.width <= 320 && mapBox!.right <= detailBox!.left && detailBox!.width > mapBox!.width
+                : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
           };
+          if (Object.values(flags).some(value => !value)) {
+            // Structural facts only: preserve the failing viewport/branch despite CI output redaction.
+            await writeFile(test.info().outputPath(`e2e-facts-drilldown-geometry-${width}.json`), JSON.stringify({
+              viewport: page.viewportSize(), locator, inspectorWidth, flags,
+              boxes: { filters: filterBox, workbench: workBox, map: mapBox, inspector: detailBox, results: resultBox, evidence: evidenceBox },
+              layout: await workbench.evaluate(element => ({
+                columns: getComputedStyle(element).gridTemplateColumns,
+                fontSize: getComputedStyle(document.documentElement).fontSize,
+                stacked: matchMedia("(max-width: 760px)").matches,
+              })),
+              mapKind: await map.getAttribute("data-map-kind"),
+            }));
+          }
+          return flags;
         }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const overflow = await page.evaluate(() => ({
+          width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+          // Failure-only facts (tag/class/role/geometry only): the release gate redacts Playwright output.
+          widest: [...document.querySelectorAll("body *")].map((element) => ({ element, right: element.getBoundingClientRect().right }))
+            .filter(({ right }) => right > innerWidth + 1).sort((a, b) => b.right - a.right).slice(0, 8)
+            .map(({ element, right }) => ({ tag: element.tagName, className: String(element.getAttribute("class") ?? "").slice(0, 80),
+              role: element.getAttribute("role"), label: element.getAttribute("aria-label"), right: Math.round(right) })),
+        }));
+        if (overflow.scrollWidth > overflow.width) await writeFile(test.info().outputPath(`e2e-facts-drilldown-overflow-${width}.json`), JSON.stringify(overflow));
+        expect(overflow.scrollWidth <= overflow.width).toBe(true);
         for (const control of await map.getByRole("group", { name: "Controles de vista", exact: true }).getByRole("button").all()) {
           const box = await control.boundingBox();
           expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -777,4 +945,19 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page.getByRole("main").getByRole("alert")).toContainText("Se rechazó");
     }));
   });
+});
+
+// A new login creates a new workspace context; this branch never uses the selector.
+test("sole organization login reaches drilldown data without selecting a workspace", async ({ page }) => {
+  const { identity: paso, seed } = pasoFixture(SPEC);
+  await withResultFixture(SPEC, seed, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    const query = new URLSearchParams({ electionId: paso.electionIds[0]!, categoryId: paso.categoryId,
+      distritoCode: paso.distritoCode, seccionCode: paso.seccionCode, level: "seccion" });
+    await page.goto(`${baseURL}/drilldown?${query}`);
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
+    const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
+    await expect(region).toBeVisible();
+    await expect(region.getByRole("row").filter({ hasText: "LIBERTAD POR SIEMPRE" }))
+      .toContainText("13.206 votos");
+  }, true), "paso");
 });

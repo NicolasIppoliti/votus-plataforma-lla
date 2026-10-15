@@ -8,6 +8,39 @@ import { withReviewItem } from "./authorized-review-fixture";
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
 
+test("authenticated routes share page gutter and title scale", async ({ page }) => {
+  const routes = ["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/evidencia", "/review", "/fiscalizacion"];
+  for (const width of [320, 390, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    let sharedLeft: number | undefined;
+    let sharedRight: number | undefined;
+    for (const route of routes) {
+      await page.goto(route);
+      const title = page.locator("#main-content h1");
+      await expect(title).toBeVisible();
+      await expect(title).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
+      await expect(title).toHaveCSS("line-height", width < 768 ? "33.6px" : "38.4px");
+      const geometry = await title.evaluate(node => {
+        const box = node.getBoundingClientRect();
+        // Simulation reserves desktop header space for its scenario summary.
+        // The title must start at the page gutter, not fill that reserved space.
+        const pageBox = node.closest("main")!.getBoundingClientRect();
+        const container = document.getElementById("main-content")!;
+        const shell = container.getBoundingClientRect();
+        const style = getComputedStyle(container);
+        return { left: box.left, right: pageBox.right, expectedLeft: shell.left + parseFloat(style.paddingLeft), expectedRight: shell.right - parseFloat(style.paddingRight) };
+      });
+      expect(Math.abs(geometry.left - geometry.expectedLeft), route).toBeLessThan(1);
+      expect(Math.abs(geometry.right - geometry.expectedRight), route).toBeLessThan(1);
+      sharedLeft ??= geometry.left;
+      sharedRight ??= geometry.right;
+      expect(Math.abs(geometry.left - sharedLeft), route).toBeLessThan(1);
+      expect(Math.abs(geometry.right - sharedRight), route).toBeLessThan(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), route).toBe(true);
+    }
+  }
+});
+
 async function expectNoSevereAccessibilityIssues(page: Page) {
   const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
   expect(result.violations.filter(issue => issue.impact === "critical" || issue.impact === "serious")
@@ -413,7 +446,7 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   await expect(heading).toBeVisible();
-  await expect(heading).toHaveCSS("font-size", "34px");
+  await expect(heading).toHaveCSS("font-size", "32px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();
   const attention = main.getByRole("complementary", { name: "Atención operativa" });
@@ -523,7 +556,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(drawerTrigger).toHaveAttribute("aria-expanded", "true");
     expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     await expect(closeDrawer).toBeFocused();
-    await expect(drawer).toContainText(
+    await expect(drawer).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     for (const groupLabel of [
@@ -657,7 +693,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     expect(
       Math.abs(topbarContainer!.x - contentContainer!.x),
     ).toBeLessThanOrEqual(1);
-    await expect(sidebar).toContainText(
+    await expect(sidebar).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     await expect(
@@ -696,7 +735,11 @@ test.describe("the production root preserves its authentication boundary", () =>
 
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
-    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
+    const explorationHref = await officialRoutes.getByRole("link", { name: "Explorar resultados", exact: true }).getAttribute("href");
+    expect(explorationHref).not.toBeNull();
+    const carried = new URL(explorationHref!, page.url()).searchParams;
+    carried.delete("level");
+    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", `/compare${carried.size ? `?${carried}` : ""}`);
     // Municipal is a separated flow in the approved Panorama, outside the official routes.
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");

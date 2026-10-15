@@ -81,7 +81,7 @@ def consume(stream, *, companion=None, year=2025, round_="legislativas"):
 @pytest.mark.parametrize("tail", ["duplicate", "positive", "blank", "not_counted"])
 def test_eof_classification_preserves_ordered_rows_completeness_and_accounting(tail, capsys):
     # Mesa 3 survives; a final row invalidates ALL earlier candidates for mesa 1.
-    # Mesa 2 is non-positive-only and must still appear in completeness.
+    # Mesa 2 is non-positive-only: persist its evidence AND retain completeness.
     last = {"votos_cantidad": "11"}
     companion = None if tail == "duplicate" else COMPANION
     if tail != "duplicate":
@@ -101,9 +101,17 @@ def test_eof_classification_preserves_ordered_rows_completeness_and_accounting(t
         ),
         companion=companion,
     )
-    assert [(row.mesa, row.list_id, row.source_row_index) for row in rows] == (
-        [(3, "110", 1), (1, "111", 2)] if tail == "duplicate" else [(3, "110", 1)]
+    assert [(row.mesa, row.list_id, row.vote_kind, row.source_row_index) for row in rows] == (
+        [(3, "110", "POSITIVO", 1), (1, "111", "POSITIVO", 2), (2, None, "EN BLANCO", 3)]
+        if tail == "duplicate"
+        else [(3, "110", "POSITIVO", 1), (2, None, "EN BLANCO", 3)]
     )
+    assert metrics["records_seen"] == 5
+    assert metrics["rows_emitted"] == len(rows)
+    assert "votos_tipo='EN BLANCO'" not in metrics["exclusions"]
+    assert [(row.result.votes, row.vote_kind) for row in rows if row.mesa == 2] == [
+        (7, "EN BLANCO")
+    ]
     document = {
         "rows": [asdict(row) for row in rows],
         "completeness": asdict(completeness),
@@ -111,11 +119,14 @@ def test_eof_classification_preserves_ordered_rows_completeness_and_accounting(t
         "stderr": capsys.readouterr().err,
     }
     fingerprint = hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
+    # Updated #408 goldens retain the complete fingerprint, including zero
+    # unexplained loss. Positive and blank circuit conflicts now have identical
+    # accounting because supported blanks are candidates rather than exclusions.
     expected = {
-        "duplicate": "0091301bd77cb49811ea5c52a7d552865f4006ffb7317efa3cc899c7aa9cbcf7",
-        "positive": "a270d1611e963c3c08b8a1e843968ec2e19f7e009ba13fcb5083df5959c133f8",
-        "blank": "6c66a12827959d9223d844962d215cf0279271d8a7f3c9edd2facfab5e480ded",
-        "not_counted": "4e0b900cc984001410adaab1ae6af517049357fe7b4a01bfaeec7c7d404c189b",
+        "duplicate": "c431b0ad7308acaa9c2ddb4bd711eb824a5c13532ceaf4c513cb106b098398fd",
+        "positive": "b1d8f343cbb4830d48542cb886c16e34b51c22af8bb4d845c96c330f00f5cf80",
+        "blank": "b1d8f343cbb4830d48542cb886c16e34b51c22af8bb4d845c96c330f00f5cf80",
+        "not_counted": "dc00eb42ed9140672f0e5e1b1710bb56fd925f8efaff48fc021ce743101d3aec",
     }
     assert fingerprint == expected[tail]
 
@@ -146,6 +157,7 @@ def test_paso_internal_lists_and_all_fields_survive_without_companion():
             "mesa_tipo": None,
             "archive_entry_id": "national/preflight-test",
             "source_row_index": index,
+            "vote_kind": "POSITIVO",
             "jurisdiction_names": {
                 "distrito": "Buenos Aires",
                 "seccion": "Coronel Rosales",

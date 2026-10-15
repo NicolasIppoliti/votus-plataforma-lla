@@ -26,7 +26,8 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
           (select array[rr.archive_entry_id,rr.granularity,j.seccion_code]::text[] shape_key,
             rr.*,j.seccion_code from scoped_geography j cross join lateral (select fact.archive_entry_id,fact.granularity
             from result_row fact where fact.jurisdiction_id=j.id and fact.election_id='30000000-0000-0000-0000-000000000001'
-              and fact.category_id='30000000-0000-0000-0000-000000000002' and fact.source_kind='official' offset 0) rr),
+              and fact.category_id='30000000-0000-0000-0000-000000000002' and fact.source_kind='official'
+              and fact.vote_kind='POSITIVO' offset 0) rr),
           source_shapes as materialized (select distinct shape_key,archive_entry_id,granularity,seccion_code from raw_rows),
           normalized_shapes as materialized
           (select s.*,results_exploration_reporting_level(archive_entry_id,granularity,'02',seccion_code) effective_level from source_shapes s)
@@ -40,6 +41,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
     join jurisdiction j on j.id = rr.jurisdiction_id
     where rr.election_id = '30000000-0000-0000-0000-000000000001'::uuid
       and rr.category_id = '30000000-0000-0000-0000-000000000002'::uuid
+      and rr.vote_kind = 'POSITIVO'
       and rr.source_kind is distinct from 'official'
       and j.distrito_code = '02' and j.seccion_code = '001'$plan$
     into evidence;
@@ -48,7 +50,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
         (select id from jurisdiction where distrito_code='04') select count(*),sum(rr.votes) from target_jurisdictions j
         cross join lateral (select fact.votes from result_row fact where fact.jurisdiction_id=j.id
           and fact.election_id='30000000-0000-0000-0000-000000000001' and fact.category_id='30000000-0000-0000-0000-000000000002'
-          and fact.source_kind='official' offset 0) rr$plan$ into evidence;
+          and fact.source_kind='official' and fact.vote_kind='POSITIVO' offset 0) rr$plan$ into evidence;
       insert into scale_plan_evidence values ('district_scope_access',151754,evidence);
       execute $plan$explain (analyze,buffers,format json) select results_exploration_official_0035(
         '30000000-0000-0000-0000-000000000001'::uuid,
@@ -71,6 +73,7 @@ do $$ declare evidence jsonb; representative_result_rows constant bigint := 1222
     join jurisdiction j on j.id = rr.jurisdiction_id
     where rr.election_id = '30000000-0000-0000-0000-000000000001'::uuid
       and rr.category_id = '30000000-0000-0000-0000-000000000002'::uuid
+      and rr.vote_kind = 'POSITIVO'
       and rr.source_kind is distinct from 'official'
       and rr.source_kind is distinct from 'fiscalizacion'
       and j.distrito_code = '02' and j.seccion_code = '027'$plan$
