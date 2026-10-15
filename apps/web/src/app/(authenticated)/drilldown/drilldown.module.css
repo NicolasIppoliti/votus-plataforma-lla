@@ -257,3 +257,6 @@
 .mapPanel[data-map-kind="locator"] .nationalCanvas { height: 12rem; }
 .mapPanel[data-map-kind="locator"] .polarMap { max-height: 12rem; }
 @media (max-width: 760px) { .workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 1fr); } }
+.selectionNotes { margin-top: 8px; font-size: .8125rem; color: var(--secondary-ink); }
+.selectionNotes > summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
+.selectionNotes p { overflow-wrap: anywhere; }
