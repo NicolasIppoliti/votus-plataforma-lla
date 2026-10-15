@@ -13,6 +13,8 @@ import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { EvidenceState } from "@/components/EvidenceState";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
@@ -360,6 +362,8 @@ function comparisonContext(
 }
 
 export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Comparación electoral" />;
   const params = { ...await searchParams };
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {

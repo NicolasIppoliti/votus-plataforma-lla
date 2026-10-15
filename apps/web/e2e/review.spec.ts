@@ -1,3 +1,4 @@
+import "./workspace-selection";
 import { REVIEW_ITEM, withReviewItem } from "./authorized-review-fixture";
 import { writeFile } from "node:fs/promises";
 import { type Locator, type Page } from "@playwright/test";

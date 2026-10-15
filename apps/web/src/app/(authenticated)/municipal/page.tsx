@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
 import { REFERENCE_STYLE } from "@/components/maps/reference-colors";
@@ -427,6 +429,8 @@ interface MunicipalPageProps {
 export default async function MunicipalPage({
   searchParams,
 }: MunicipalPageProps): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Municipal (Concejales)" />;
   const params = await searchParams;
 
   // Refused BEFORE anything is read: `stringParam` yields `undefined` for a

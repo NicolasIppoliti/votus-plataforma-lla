@@ -33,11 +33,12 @@ export async function withReviewItem<T>(page: Page, run: () => Promise<T>): Prom
     const trigger = page.getByRole("button", { name: "Abrir navegación" });
     const mobile = await trigger.isVisible();
     if (mobile) await trigger.click();
-    const organizationSelector = page.getByRole("combobox", { name: "Organización", exact: true });
+    const workspaceControls = mobile ? page.getByRole("dialog", { name: "Navegación principal" }) : page.getByRole("banner");
+    const organizationSelector = workspaceControls.getByRole("combobox", { name: "Organización", exact: true });
     await expect(organizationSelector).toBeVisible();
     await organizationSelector.selectOption(fixture.organization_id);
     const switchResponse = page.waitForResponse((response) => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-    await page.getByRole("button", { name: "Cambiar organización" }).click();
+    await workspaceControls.getByRole("button", { name: "Cambiar organización" }).click();
     const response = await switchResponse;
     expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
     if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();

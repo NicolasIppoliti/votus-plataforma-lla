@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
+import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
+import { loadWorkspaceSelection } from "@/lib/workspace/selection";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
 import styles from "./drilldown.module.css";
@@ -507,6 +509,8 @@ function refusalPage(message: ReactNode): ReactNode {
 }
 
 export default async function DrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
+  const workspace = await loadWorkspaceSelection();
+  if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Exploración territorial" />;
   const params = await searchParams;
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
