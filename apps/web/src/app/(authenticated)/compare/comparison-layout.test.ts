@@ -3,10 +3,10 @@ import { expect, it } from "vitest";
 
 const css = readFileSync(new URL("./comparison.module.css", import.meta.url), "utf8");
 
-it("keeps full selected labels reachable in a disclosure rather than repeated below selects", () => {
+it("keeps full selected labels readable through the shared responsive helper without a duplicate disclosure", () => {
   const form = readFileSync(new URL("./ComparisonSelectionForm.tsx", import.meta.url), "utf8");
-  expect(form).toContain("Valores completos de la selección");
-  expect(form).not.toContain("<ResponsiveSelect");
+  expect(form).toContain("<ResponsiveSelect");
+  expect(form).not.toContain("Valores completos de la selección");
 });
 
 it("pairs narrow selectors while preserving readable metric controls", () => {

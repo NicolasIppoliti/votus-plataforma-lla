@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import styles from "./SectionReferenceMap.module.css";
 import { REFERENCE_FILL, REFERENCE_LINE, REFERENCE_COLOR, Legend, shareFill } from "./reference-colors";
@@ -18,6 +18,10 @@ interface Props {
   fillColor?: [number, number, number, number] | undefined;
   staticLabel?: string | undefined;
   compactControls?: boolean;
+  active?: boolean;
+  onActiveChange?: (active: boolean) => void;
+  hideControls?: boolean;
+  onStatusChange?: (status: string) => void;
 }
 
 interface ResultsDocument {
@@ -31,15 +35,18 @@ export function revealExactResults(doc: ResultsDocument, resultId: string): void
   doc.getElementById(resultId)?.focus();
 }
 
-export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent, fillColor, staticLabel, compactControls = false }: Props) {
+export function SectionReferenceMap({ coordinates, name, label, resultId, onCamera, camera, onSelect, municipal = false, sharePercent, fillColor, staticLabel, compactControls = false, active: controlledActive, onActiveChange, hideControls = false, onStatusChange }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const cameraCallback = useRef(onCamera);
   const latestCamera = useRef(camera);
   const selectCallback = useRef(onSelect);
   useEffect(() => { cameraCallback.current = onCamera; latestCamera.current = camera; selectCallback.current = onSelect; }, [onCamera, camera, onSelect]);
-  const [active, setActive] = useState(false);
+  const [localActive, setLocalActive] = useState(false);
+  const active = controlledActive ?? localActive;
+  const setActive = useCallback((value: boolean) => { setLocalActive(value); onActiveChange?.(value); }, [onActiveChange]);
   const [status, setStatus] = useState(municipal ? "Mapa opcional: el contorno y la tabla están disponibles sin interacción." : "Mapa opcional: los resultados exactos están disponibles sin interacción.");
+  useEffect(() => { onStatusChange?.(status); }, [status, onStatusChange]);
   const focusResults = () => {
     if (selectCallback.current) selectCallback.current();
     else revealExactResults(document as unknown as ResultsDocument, resultId);
@@ -112,7 +119,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
     }
     void initialize();
     return () => { disposed = true; cleanup?.(); };
-  }, [active, coordinates, name, resultId, municipal, sharePercent, fillColor]);
+  }, [active, coordinates, name, resultId, municipal, sharePercent, fillColor, setActive]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -146,8 +153,8 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
       {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth="1" />)}
     </svg>}
     {fillColor === undefined && sharePercent === undefined && <Legend label="Referencia geográfica" entries={[{ label: "Contorno de referencia; sin resultados electorales", encoding: "outline" }]} />}
-    {compactControls ? <details className={styles.controls} data-map-controls=""><summary>Controles del mapa — {label}</summary>{controls}{resultsLink}</details> : controls}
+    {!hideControls && (compactControls ? <details className={styles.controls} data-map-controls=""><summary>Controles del mapa — {label}</summary>{controls}{resultsLink}</details> : controls)}
     <div ref={container} className={active ? styles.canvas : styles.inactive} aria-label={municipal ? `Mapa geográfico CNE de ${name}; no muestra votos por partido` : `Mapa geográfico CNE de ${name}; ${label}`} />
-    {!compactControls && resultsLink}
+    {!hideControls && !compactControls && resultsLink}
   </div>;
 }

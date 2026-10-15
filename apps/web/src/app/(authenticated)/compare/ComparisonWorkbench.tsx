@@ -22,9 +22,9 @@ function Completeness({ value, side }: { value: OfficialSectionCompleteness; sid
   return <p>{side}: {value.status === "complete" ? "Completa" : "Parcial"} · {n.counted} de {n.expected} mesas escrutadas; {n.not_counted} no escrutadas, {n.missing} faltantes, {n.unexpected} inesperadas, {n.quarantined} en cuarentena y {n.unattributed_quarantined} cuarentenas sin atribución. Catálogo esperado para las categorías que la fuente informa en el distrito.</p>;
 }
 
-export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, maps, completeness, outcomes }: {
+export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, maps, completeness, outcomes, exactResults }: {
   territory: string; swing: UnitSwing; leftNames: Record<string, string>; rightNames: Record<string, string>;
-  maps: ReactNode; completeness: [OfficialSectionCompleteness, OfficialSectionCompleteness];
+  maps: ReactNode; exactResults: ReactNode; completeness: [OfficialSectionCompleteness, OfficialSectionCompleteness];
   outcomes: [OfficialSectionCircuitOutcomes, OfficialSectionCircuitOutcomes];
 }) {
   const [party, setParty] = useState(swing.swings[0]?.party ?? "");
@@ -54,5 +54,5 @@ export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, m
       <p className={house.navigatorEmpty}>Las referencias actuales no certifican límites históricos ni transferencia de votos. Participación y Cambio describen la agrupación seleccionada; Ganadores considera todos los partidos canónicos.</p>
       <a className={styles.evidenceLink} href="#compare-evidence-heading">Ver evidencia oficial</a>
     </aside>
-  </section><ComparisonChildren outcomes={outcomes} party={party} /></>;
+  </section>{exactResults}<ComparisonChildren outcomes={outcomes} party={party} /></>;
 }
