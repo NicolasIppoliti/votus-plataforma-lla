@@ -247,14 +247,15 @@ def test_curated_collection_reaches_only_positive_party_keys(tmp_path) -> None:
     assert all(key[-1] is not None for key in keys)
 
 
-def test_vote_kind_migration_down_and_reapply_preserve_positive_evidence() -> None:
-    from test_ingest_national import _require_ephemeral_postgres
-
+@pytest.mark.owned_database
+def test_vote_kind_migration_down_and_reapply_preserve_positive_evidence(owned_database) -> None:
+    # Restoring function definitions requires their original owners, including
+    # postgres in the CI bootstrap. Keep this in the administrative test phase,
+    # never grant a superuser role to the ordinary verification login.
     root = Path(__file__).parents[2] / "supabase/migrations"
     forward = (root / "20261015300000_non_positive_vote_kinds.sql").read_text()
     down = (root / "down/20261015300000_non_positive_vote_kinds.down.sql").read_text()
-    conn = _require_ephemeral_postgres()
-    try:
+    with owned_database.connect() as conn:
         before = conn.execute("select count(*),sum(votes) from result_row").fetchone()
         if (
             conn.execute(
@@ -274,9 +275,7 @@ def test_vote_kind_migration_down_and_reapply_preserve_positive_evidence() -> No
         )
         conn.execute(forward.removeprefix("begin;\n").removesuffix("commit;\n"))
         assert conn.execute("select count(*),sum(votes) from result_row").fetchone() == before
-    finally:
         conn.rollback()
-        conn.close()
 
 
 def test_unknown_vote_kind_is_reported_as_a_reason_not_persisted(capsys) -> None:

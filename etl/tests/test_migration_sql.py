@@ -125,6 +125,17 @@ def _assert_jurisdiction_fixture_ids_are_unique(sql: str) -> None:
     assert saw_fixture_row, "jurisdiction fixture inserts are required"
 
 
+def test_coverage_refusal_fixture_has_distinct_null_safe_observation_keys() -> None:
+    sql = (SQL_TESTS / "results_exploration.sql").read_text(encoding="utf-8")
+    # Both rows share election/jurisdiction/category/NULL list/source/kind.
+    # They represent separate observations (mesa vs coarser), not a duplicate
+    # natural key that used to evade uniqueness because list_id was NULL.
+    original = re.search(r"'([^']+)',\s*23\)", sql)
+    coarser = re.search(r"'([^']+)',\s*29\)", sql)
+    assert original is not None and coarser is not None
+    assert original[1] != coarser[1]
+
+
 def test_results_exploration_jurisdiction_fixture_ids_are_unique() -> None:
     sql = (SQL_TESTS / "results_exploration.sql").read_text(encoding="utf-8")
 
