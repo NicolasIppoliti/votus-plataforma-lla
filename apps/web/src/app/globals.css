@@ -1425,7 +1425,7 @@ select option {
   background: var(--surface-muted);
 }
 
-.evidence-state {
+.workspace-alert {
   display: grid;
   gap: 0.75rem;
   min-width: 0;
@@ -1437,13 +1437,33 @@ select option {
   overflow-wrap: anywhere;
 }
 
-.evidence-state[data-treatment="warning"] {
+.workspace-alert[data-variant="denied"],
+.workspace-alert[data-variant="unavailable"],
+.workspace-alert[data-variant="caveat"] {
   border-block-start-color: var(--warning-ink);
   background: var(--warning-surface);
 }
 
-.evidence-state[data-treatment="danger"] {
-  border-block-start-color: var(--danger);
+/* Load failures retain the operational danger top rule, not warning amber. */
+.workspace-alert[data-variant="error"] {
+  border-block-start: 3px solid var(--danger);
+}
+
+/* Header announcements share semantics without introducing a padded page box. */
+.workspace-alert.workspace-alert--inline {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-ink);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
+.workspace-alert__action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .evidence-state h2 {

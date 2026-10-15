@@ -56,6 +56,11 @@ beforeEach(() => {
 });
 
 describe("WorkspaceSelector", () => {
+  it.each(["unavailable", "revoked", "expired", "mismatch", "selection_required"] as const)("keeps %s announcements inline in the topbar", (status) => {
+    const tree = render({ ...selection(A, 3, status), organizations: [], total: 0 });
+    const json = JSON.stringify(tree);
+    expect(json).toContain('"presentation":"inline"');
+  });
   it("synchronizes selected organization, revision, and message after refreshed props rerender", async () => {
     render(selection(A, 3, "conflict")); hooks.flushEffects();
     render(selection(B, 9, "active")); hooks.flushEffects();

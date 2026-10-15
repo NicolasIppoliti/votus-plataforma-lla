@@ -1,3 +1,4 @@
+import { Alert } from "@/components/ui/alert";
 import type { ReactNode } from "react";
 import type { Coverage, SourceKind, SourceRef } from "@/lib/results/types";
 
@@ -120,17 +121,17 @@ export function JuxtapositionBadge({
           {official.partyName}: {official.sharePercent}%
         </span>
         {officialMissingProvenance.length > 0 ? (
-          <p role="alert">
+          <Alert variant="unavailable">
             {officialMissingProvenance.length} entrada(s) de archivo que respaldan
             esta cifra no se resolvieron a un registro de fuente (
             {officialMissingProvenance.join(", ")}); su trazabilidad es parcial.
-          </p>
+          </Alert>
         ) : null}
         {officialSources.length === 0 ? (
-          <p role="alert">
+          <Alert variant="unavailable">
             No hay una fuente archivada para esta cifra: no se puede rastrear ni
             debe citarse.
-          </p>
+          </Alert>
         ) : (
           <ul aria-label="fuentes de la cifra oficial">
             {officialSources.map((source) => (
@@ -142,11 +143,11 @@ export function JuxtapositionBadge({
           </ul>
         )}
       </section>
-      <p role="alert">
+      <Alert variant="unavailable">
         Son elecciones diferentes y no son directamente comparables: la cifra de
         fiscalización cubre un conjunto parcial, autoseleccionado y no aleatorio
         de mesas.
-      </p>
+      </Alert>
     </div>
   );
 }

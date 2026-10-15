@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AVAILABILITY_COLORS, REFERENCE_COLOR } from "@/components/maps/reference-colors";
 import { loadSectionReferenceGeometry } from "../drilldown/circuit-geometry";
 import house from "../drilldown/drilldown.module.css";
+import { Alert } from "@/components/ui/alert";
 import styles from "./evidence.module.css";
 
 /** Availability qualifies a selected section, never the electoral validity of its reference outline. */
@@ -16,8 +17,8 @@ export function EvidenceMap({ rosales, title, availability }: { rosales: boolean
     return () => { active = false; };
   }, [rosales]);
   let drawing;
-  if (!rosales) drawing = <p>Referencia geográfica no disponible para esta selección. Consulte las unidades y la evidencia exacta.</p>;
-  else if (!reference) drawing = <p role="status">{reference === undefined ? "Preparando contorno de referencia…" : "Contorno de referencia no disponible; consulte la evidencia exacta."}</p>;
+  if (!rosales) drawing = <Alert variant="caveat">Referencia geográfica no disponible para esta selección. Consulte las unidades y la evidencia exacta.</Alert>;
+  else if (!reference) drawing = <Alert variant="caveat">{reference === undefined ? "Preparando contorno de referencia…" : "Contorno de referencia no disponible; consulte la evidencia exacta."}</Alert>;
   else {
     const points = reference.geometry.coordinates.flat(2);
     const west = Math.min(...points.map(p => p[0]!)), east = Math.max(...points.map(p => p[0]!));

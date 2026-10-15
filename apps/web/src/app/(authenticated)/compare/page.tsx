@@ -12,6 +12,7 @@ import { loadMunicipalSectionGeometry } from "@/lib/workspace/municipal-section-
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { EvidenceState } from "@/components/EvidenceState";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
@@ -78,7 +79,7 @@ function refusalPage(message: ReactNode): ReactNode {
         <header className="official-compare__header">
           <h1>Comparación electoral</h1>
         </header>
-        <p className="official-compare__state" role="alert">{message}</p>
+        <Alert variant="denied">{message}</Alert>
       </div>
     </main>
   );
@@ -232,7 +233,7 @@ function CompareSelector({
               <p>{message}</p>
             </EvidenceState>
           ) : (
-            <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+            <Alert variant={alert ? "unavailable" : "needs-selection"}>{message}</Alert>
           )}
           {context}
           </section>
@@ -579,7 +580,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
-          maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
+          maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><Alert variant="caveat">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</Alert><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
         />}
     >
         <div className="official-compare__analysis">

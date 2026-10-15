@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from "react";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import type { OfficialSectionCircuitOutcomes, CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
 import { circuitPresentation } from "@/lib/geography/circuit-presentation";
@@ -33,7 +34,7 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
       }).catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, [eligible, attempt]);
-  if (outcomes.status !== "ok") return <p>Resultados por circuito no disponibles.</p>;
+  if (outcomes.status !== "ok") return <Alert variant="empty">Resultados por circuito no disponibles.</Alert>;
   const membershipUnknown = outcomes.circuit_membership === "unknown";
   const parties = new MapConstructor(outcomes.circuits.flatMap(c => c.parties).map(p => p.identity_status === "canonical"
     ? [p.canonical_party_id!, p.display_name!] as const : [`unmapped:${p.list_id}`, `Lista sin mapear ${p.list_id ?? "no identificada"}`] as const));
@@ -41,12 +42,12 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
   return <section className={view === "geometry" ? styles.geometry : styles.root} aria-labelledby={view === "map" || view === "geometry" ? "circuit-map-heading" : view === "table" ? "circuit-outcomes-heading" : "circuit-legend-heading"}>
     <h3 className={view === "geometry" ? "sr-only" : undefined} id={view === "map" || view === "geometry" ? "circuit-map-heading" : view === "table" ? "circuit-outcomes-heading" : "circuit-legend-heading"}>{view === "table" ? "Resultados por circuito" : view === "legend" ? "Leyenda de circuitos" : "Mapa de circuitos"}</h3>
     {(view === "map" || view === "geometry") && <>
-    {membershipUnknown && <p>Pertenencia de mesas a circuitos desconocida: no se muestra un mapa de circuitos.</p>}
+    {membershipUnknown && <Alert variant="caveat">Pertenencia de mesas a circuitos desconocida: no se muestra un mapa de circuitos.</Alert>}
     {!membershipUnknown && (rosales ? <>
-      {!Map && !failed && <p role="status">Preparando mapa de circuitos…</p>}
-      {failed && <><p role="alert">Geometría no disponible; consulte la tabla exacta.</p><button type="button" className={styles.select} onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>Reintentar mapa de circuitos</button></>}
+      {!Map && !failed && <Alert variant="caveat">Preparando mapa de circuitos…</Alert>}
+      {failed && <><Alert variant="unavailable">Geometría no disponible; consulte la tabla exacta.</Alert><button type="button" className={styles.select} onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>Reintentar mapa de circuitos</button></>}
       {Map && geometry && <Map geometry={geometry} circuits={outcomes.circuits} selected={selected} onSelect={setSelected} />}
-    </> : <p>Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</p>)}
+    </> : <Alert variant="caveat">Geometría de referencia no disponible para esta sección; consulte la tabla exacta.</Alert>)}
     </>}
     {(view === "map" || view === "legend") && <>
     <Legend label="Intensidad del margen" entries={(["light", "medium", "intense"] as const).map((band, index) => ({ label: ["<5 pp · claro", "5–15 pp · medio", ">15 pp · intenso"][index]!, encoding: "fill", color: circuitBandColor(PARTY_COLORS[1], band) }))} />
@@ -70,7 +71,7 @@ export function CircuitOutcomes({ outcomes, rosales, circuitNames = {}, view = "
     </Legend>
     </details>
     </>}
-    {view !== "geometry" && <p role="status">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</p>}
+    {view !== "geometry" && <Alert variant="needs-selection">{selected ? `Circuito seleccionado: ${selected}` : "Elegí un circuito en la tabla o en el mapa."}</Alert>}
     {view === "table" && <TableRegion label="Resultados exactos por circuito">
       <table className="data-table"><caption>Resultados exactos por circuito</caption>
         <thead><tr>{["Circuito", "Ganador", "Margen pp", "Votos positivos", "Mesas escrutadas/esperadas", "Estado"].map(h => <th scope="col" key={h}>{h}</th>)}</tr></thead>

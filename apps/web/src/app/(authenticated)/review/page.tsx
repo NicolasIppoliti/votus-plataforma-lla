@@ -2,6 +2,7 @@ import Link from "next/link";
 import "./review.css";
 import type { ReactNode } from "react";
 import { EvidenceState } from "@/components/EvidenceState";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -68,21 +69,21 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         <h1>Cola de revisión</h1>
         <p className="review-queue__lede">Atención operativa sobre señales pendientes.</p>
       </header>
-      <aside className="review-queue__attention" role="status" aria-label="Detalle de la cola autorizada">
+      <Alert variant="caveat" aria-label="Detalle de la cola autorizada">
         <p className="eyebrow">Atención operativa</p>
         <p>{total} elementos requieren revisión.</p>
         <p>
           Esta pantalla es solo de consulta. Puede inspeccionar los elementos
           pendientes, pero no modificarlos ni resolverlos aquí.
         </p>
-      </aside>
+      </Alert>
       <section className="review-queue__results" aria-labelledby="review-results-heading">
         <div className="review-queue__results-heading">
           <h2 id="review-results-heading">Elementos pendientes</h2>
           <p>Mostrando {items.length} de {total}.</p>
         </div>
         {items.length === 0 ? (
-          <p>{total > 0 ? "No hay elementos de revisión en esta página." : "No hay elementos de revisión pendientes."}</p>
+          <Alert variant="empty">{total > 0 ? "No hay elementos de revisión en esta página." : "No hay elementos de revisión pendientes."}</Alert>
         ) : (
           <TableRegion label="Elementos de revisión pendientes">
             <Table className="data-table data-table--review">
