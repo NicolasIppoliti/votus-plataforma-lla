@@ -72,6 +72,9 @@ nextTest("retries unavailable municipal evidence with the exact configured reque
         p_requested_level: "seccion",
       };
 
+      // Panorama (reached by the workspace helper) resolves its own default
+      // context and calls official_result too; only this page's request counts.
+      bodies.length = 0;
       await page.goto(submittedUrl);
       const main = page.getByRole("main");
       await expect(main.getByRole("alert")).toContainText("no está disponible");
