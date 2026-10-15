@@ -1,4 +1,5 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
@@ -50,6 +51,29 @@ async function renderLayout(pathname: string): Promise<string> {
     })) as ReactElement,
   );
 }
+
+it.each(["/", "/scenarios", "/drilldown", "/municipal", "/compare", "/simulate", "/evidencia", "/review", "/fiscalizacion"])("keeps the legal disclaimer in the shared footer on %s", async (pathname) => {
+  const markup = await renderLayout(pathname);
+  const footer = markup.match(/<footer\b[^>]*>[\s\S]*?<\/footer>/)?.[0] ?? "";
+  expect(footer).toContain("Esta herramienta no es una fuente electoral oficial.");
+  expect(markup.match(/Esta herramienta no es una fuente electoral oficial\./g)).toHaveLength(1);
+  expect(markup.match(/<aside\b[^>]*>[\s\S]*?<\/aside>/)?.[0]).not.toContain("Esta herramienta no es una fuente electoral oficial.");
+});
+
+it("renders decorative icons for every navigation subitem", async () => {
+  const markup = primaryNavigation(await renderLayout("/scenarios"));
+  const subitems = [...markup.matchAll(/<a class="navigation-subitem"[^>]*>[\s\S]*?<\/a>/g)];
+  expect(subitems).toHaveLength(4);
+  for (const [item] of subitems) expect(item).toMatch(/<svg[^>]*aria-hidden="true"/);
+});
+
+it("stretches the desktop rail with the full document rather than fixing it to the viewport", async () => {
+  expect(await renderLayout("/")).toContain('class="app-shell"');
+  const css = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
+  expect(css).toMatch(/\.app-shell\s*\{[^}]*display: grid;[^}]*grid-template-columns: 218px minmax\(0, 1fr\);/);
+  expect(css).toMatch(/\.app-shell > \.situation-sidebar\s*\{[^}]*align-self: stretch;/);
+  expect(css).not.toMatch(/\.situation-sidebar\s*\{[^}]*position: fixed;/);
+});
 
 it.each(["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"])("renders electoral context through the real layout on %s", async (path) => {
   const markup = await renderLayout(path);
@@ -163,7 +187,7 @@ it("renders the real desktop organization and account controls in the topbar whi
   const markup = await renderLayout("/");
   const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
   const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
-  expect(markup).not.toContain("<footer");
+  expect(markup).toContain('<footer class="shell-container app-footer">');
   expect(topbar).toContain('aria-label="Organización y cuenta"');
   expect(sidebar).not.toContain('aria-label="Organización y cuenta"');
   const account = topbar.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
@@ -369,10 +393,10 @@ it("keeps organization and existing account controls in the header alongside rev
   expect(markup).not.toContain("Tema");
   expect(markup).not.toContain('class="theme-selector"');
   expect(topbar).toContain('class="workspace-identity"');
-  expect(sidebar).toContain("Esta herramienta no es una fuente electoral oficial.");
+  expect(sidebar).not.toContain("Esta herramienta no es una fuente electoral oficial.");
   expect(topbar).toContain("Sin elementos pendientes");
   expect(topbar).toContain("Abrir navegación");
-  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(5);
+  expect(primaryNavigation(markup).match(/aria-hidden="true"/g)).toHaveLength(9);
   expect(currentPrimaryHrefs(markup)).toEqual(["/compare"]);
 });
 
