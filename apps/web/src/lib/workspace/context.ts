@@ -9,6 +9,8 @@ const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 export const WORKSPACE_CONTEXT_ERROR_CATEGORY = {
   MISMATCH: "mismatch",
+  DENIED: "denied",
+  UNAVAILABLE: "unavailable",
 } as const;
 
 type WorkspaceContextErrorCategory =
@@ -80,7 +82,7 @@ function hasStrictSessionClaims(value: unknown): boolean {
 async function verifiedWorkspaceApi(client: SupabaseClient) {
   const verified = await client.auth.getClaims();
   if (verified.error || !hasStrictSessionClaims(verified.data?.claims)) {
-    throw new Error("Workspace authentication failed");
+    throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.DENIED);
   }
   return client.schema("workspace_api");
 }
@@ -90,13 +92,20 @@ async function rpcData(
   name: string,
   parameters?: Record<string, boolean | number | string | null>,
 ) {
-  const { data, error } = parameters
-    ? await api.rpc(name, parameters)
-    : await api.rpc(name);
+  let response;
+  try {
+    response = parameters ? await api.rpc(name, parameters) : await api.rpc(name);
+  } catch {
+    throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.UNAVAILABLE);
+  }
+  const { data, error } = response;
   if (error?.code === "VOT03") {
     throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.MISMATCH);
   }
-  if (error) throw new Error("Workspace operation failed");
+  if (error) {
+    const denied = ["42501", "28000", "28P01", "PGRST301", "PGRST302", "PGRST303"].includes(error.code);
+    throw new WorkspaceContextError(denied ? WORKSPACE_CONTEXT_ERROR_CATEGORY.DENIED : WORKSPACE_CONTEXT_ERROR_CATEGORY.UNAVAILABLE);
+  }
   return data;
 }
 
