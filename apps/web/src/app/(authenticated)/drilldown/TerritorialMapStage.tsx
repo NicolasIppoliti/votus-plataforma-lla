@@ -6,6 +6,7 @@ import { REFERENCE_STYLE, Legend } from "@/components/maps/reference-colors";
 import { loadSectionReferenceGeometry } from "./circuit-geometry";
 import { Alert } from "@/components/ui/alert";
 import styles from "./drilldown.module.css";
+import { MAP_HEADING } from "./map-heading";
 
 function SectionReferenceOutline() {
   const [reference, setReference] = useState<Awaited<ReturnType<typeof loadSectionReferenceGeometry>> | undefined>(undefined);
@@ -26,9 +27,6 @@ function SectionReferenceOutline() {
     <path d={path} style={REFERENCE_STYLE} fillRule="evenodd" />
   </svg>;
 }
-
-/** Neutral outline or source-backed results: the heading must say which (#487). */
-export const MAP_HEADING = { REFERENCE: "Referencia territorial", CIRCUIT_LEADERS: "Primer lugar observado por circuito" } as const;
 
 export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, children, footer }: {
   heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; children?: ReactNode; footer?: ReactNode;

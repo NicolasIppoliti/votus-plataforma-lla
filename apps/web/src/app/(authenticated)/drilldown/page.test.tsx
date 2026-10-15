@@ -96,6 +96,32 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
+  it("follows the real Panorama exploration link to Rosales evidence without extra selections (#467)", async () => {
+    const { default: HomePage } = await import("../(home)/page");
+    mocks.facets.mockResolvedValue({ ...FACETS, categories: [{ ...FACETS.categories[0]!, name: "CONCEJALES" }] });
+    const home = renderToStaticMarkup((await HomePage()) as ReactElement);
+    expect(home).toContain("<h1>Panorama</h1>");
+    expect(home).toContain("300");
+    const explore = home.match(/<a(?=[^>]*aria-label="Explorar resultados")[^>]*href="([^"]*)"/);
+    expect(explore).not.toBeNull();
+    const target = new URL(explore![1]!.replaceAll("&amp;", "&"), "https://example.test");
+    expect(target.pathname).toBe("/drilldown");
+    expect(target.searchParams.get("distritoCode")).toBe("02");
+    expect(target.searchParams.get("seccionCode")).toBe("027");
+    expect(target.searchParams.get("level")).toBe("seccion");
+    expect(target.searchParams.get("sourceKind")).not.toBe("fiscalizacion");
+    const html = await render(Object.fromEntries(target.searchParams));
+    expect(html).toContain("Coronel Rosales");
+    expect(html).toContain("300 votos");
+    expect(html).toContain("Resultados oficiales");
+    expect(html).not.toContain("Elija una sección exacta");
+    expect(home).toMatch(/<a(?=[^>]*aria-label="Resultados municipales")[^>]*href="\/municipal"/);
+    expect(mocks.bundle).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+      electionId: COMPLETE_SECTION.electionId, categoryId: COMPLETE_SECTION.categoryId,
+      distritoCode: "02", seccionCode: "027", requestedLevel: "seccion", circuitoCode: null, establecimientoCode: null, mesaCode: null,
+    }));
+  });
+
   it("keeps exact evidence in a collapsed disclosure and bounds territorial and establishment tables", async () => {
     const markup = await render();
     expect(markup).toMatch(/<details[^>]*class="[^"]*exactDisclosure[^"]*"[^>]*>/);
