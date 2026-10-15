@@ -751,7 +751,16 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
                 : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
           };
         }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const overflow = await page.evaluate(() => ({
+          width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+          // Failure-only facts (tag/class/role/geometry only): the release gate redacts Playwright output.
+          widest: [...document.querySelectorAll("body *")].map((element) => ({ element, right: element.getBoundingClientRect().right }))
+            .filter(({ right }) => right > innerWidth + 1).sort((a, b) => b.right - a.right).slice(0, 8)
+            .map(({ element, right }) => ({ tag: element.tagName, className: String(element.getAttribute("class") ?? "").slice(0, 80),
+              role: element.getAttribute("role"), label: element.getAttribute("aria-label"), right: Math.round(right) })),
+        }));
+        if (overflow.scrollWidth > overflow.width) await writeFile(test.info().outputPath(`e2e-facts-drilldown-overflow-${width}.json`), JSON.stringify(overflow));
+        expect(overflow.scrollWidth <= overflow.width).toBe(true);
         for (const control of await map.getByRole("group", { name: "Controles de vista", exact: true }).getByRole("button").all()) {
           const box = await control.boundingBox();
           expect(box!.height).toBeGreaterThanOrEqual(44);
