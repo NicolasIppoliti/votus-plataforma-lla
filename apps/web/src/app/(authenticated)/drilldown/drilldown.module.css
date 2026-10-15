@@ -245,10 +245,18 @@
 }
 
 
-/* Reference-only geography retains its explicit limitations, not a narrower workbench.
-   Cap the locator's border box without changing the broad data-map grid track. */
-.mapPanel[data-map-kind="locator"] { box-sizing: border-box; width: 100%; max-width: 320px; }
+/* Reference-only geography supports the data instead of occupying its main slot. */
+.workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); align-items: start; }
+.mapPanel[data-map-kind="locator"] { width: 100%; max-width: 20rem; }
+.mapPanel[data-map-kind="locator"] .mapStage { height: 15rem; min-height: 0; }
+.mapPanel[data-map-kind="locator"] .mapCamera { padding: 1rem; }
 .mapPanel[data-map-kind="locator"] .territoryLabel { display: none; }
+.mapPanel[data-map-kind="locator"] .mapStage:has(.nationalMap),
+.mapPanel[data-map-kind="locator"] .mapCamera:has(.nationalMap) { height: auto; min-height: 0; }
+.mapPanel[data-map-kind="locator"] .nationalViews { grid-template-columns: minmax(0, 1fr); }
+.mapPanel[data-map-kind="locator"] .nationalCanvas { height: 12rem; }
+.mapPanel[data-map-kind="locator"] .polarMap { max-height: 12rem; }
+@media (max-width: 760px) { .workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 1fr); } }
 .selectionNotes { margin-top: 8px; font-size: .8125rem; color: var(--secondary-ink); }
 .selectionNotes > summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
 .selectionNotes p { overflow-wrap: anywhere; }
