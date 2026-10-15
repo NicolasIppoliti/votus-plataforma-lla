@@ -3,6 +3,8 @@ import {
   type ScenarioRefusal,
   loadScenarioArtifact,
 } from "@/lib/scenarios/scenario-artifact";
+import { circuitColor } from "@/components/maps/reference-colors";
+import { formatCount } from "@/lib/format/number";
 import "./scenarios.css";
 
 const REFUSAL_MESSAGE: Record<ScenarioRefusal, string> = {
@@ -28,7 +30,18 @@ function PageHeader() {
   </header>;
 }
 
-function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"][number] }) {
+type Scenario = ScenarioArtifact["scenarios"][number];
+
+function seatDelta(scenario: Scenario, baseline: Scenario, listId: string) {
+  if (scenario.seat_status !== "allocated" || baseline.seat_status !== "allocated") return "No disponible";
+  const current = scenario.lists.find((row) => row.list_id === listId);
+  const reference = baseline.lists.find((row) => row.list_id === listId);
+  if (!current || !reference) return "Sin correspondencia";
+  const delta = current.seats - reference.seats;
+  return `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${formatCount(Math.abs(delta))}`;
+}
+
+function ScenarioSection({ scenario, baseline }: { scenario: Scenario; baseline: Scenario }) {
   return (
     <section aria-labelledby={`scenario-${scenario.id}`} data-testid={`scenario-${scenario.id}`}>
       <h2 id={`scenario-${scenario.id}`}>
@@ -39,6 +52,16 @@ function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"]
       {scenario.seat_status === "ambiguous_tie" ? (
         <p role="note">Empate ambiguo en la asignación Hare: no se muestran bancas.</p>
       ) : null}
+      {scenario.seat_status === "allocated" ? (
+        <div className="scenario-seat-bar" role="img" aria-label={`Bancas de ${scenario.name}: ${scenario.lists.map((row) => `${row.label}: ${formatCount(row.seats)}`).join("; ")}`}>
+          {scenario.lists.filter((row) => row.seats > 0).map((row) => (
+            <span key={row.list_id} aria-hidden="true" style={{ flex: row.seats, backgroundColor: circuitColor(row.list_id) }}>
+              {formatCount(row.seats)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <p>Diferencia de bancas respecto de {baseline.name}. Sin correspondencia indica una lista ausente en el otro escenario, no cero bancas.</p>
       <div className="table-scroll" role="region" aria-label={`Listas del escenario ${scenario.name}`} tabIndex={0}>
         <table className="data-table">
           <caption>Listas del escenario {scenario.name}</caption>
@@ -47,6 +70,7 @@ function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"]
               <th scope="col">Lista</th>
               <th scope="col">Votos positivos (%)</th>
               <th scope="col">Bancas</th>
+              <th scope="col">Diferencia vs. {baseline.name}</th>
             </tr>
           </thead>
           <tbody>
@@ -54,7 +78,8 @@ function ScenarioSection({ scenario }: { scenario: ScenarioArtifact["scenarios"]
               <tr key={row.list_id}>
                 <th scope="row">{row.label}</th>
                 <td>{decimal(row.share_percent)}</td>
-                <td>{scenario.seat_status === "allocated" ? row.seats : "—"}</td>
+                <td>{scenario.seat_status === "allocated" ? formatCount(row.seats) : "—"}</td>
+                <td>{seatDelta(scenario, baseline, row.list_id)}</td>
               </tr>
             ))}
           </tbody>
@@ -101,7 +126,7 @@ export default async function ScenariosPage() {
       </section>
       </div>
       {scenarios.map((scenario) => (
-        <ScenarioSection key={scenario.id} scenario={scenario} />
+        <ScenarioSection key={scenario.id} scenario={scenario} baseline={scenarios.find((item) => item.default)!} />
       ))}
     </main>
   );

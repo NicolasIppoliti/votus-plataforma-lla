@@ -1236,7 +1236,7 @@ test("reaches unvalidated 2027 scenarios from shared navigation at mobile width"
   const persistenceRow = page
     .getByRole("region", { name: "Listas del escenario Persistencia", exact: true })
     .getByRole("row", { name: /ALIANZA LA LIBERTAD AVANZA/ });
-  await expect(persistenceRow.getByRole("cell")).toHaveText(["45,06", "5"]);
+  await expect(persistenceRow.getByRole("cell")).toHaveText(["45,06", "5", "0"]);
   await expect(main.getByText(/21,074 pp frente a 17,245 pp/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
