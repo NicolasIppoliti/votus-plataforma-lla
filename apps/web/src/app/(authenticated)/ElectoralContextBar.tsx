@@ -77,8 +77,8 @@ function ContextControls() {
       {selector("Sección", "seccionCode", facets?.secciones.map(item => ({ value: item.code, label: formatFacetOptionLabel(item) })) ?? [])}
     </fieldset>
     <label className="electoral-context__field">Fuente<select aria-label="Contexto electoral: Fuente" value={context.sourceKind} disabled={parsed.status !== "ok"} onChange={event => change("sourceKind", event.target.value)}><option value="official">Oficial</option><option value="fiscalizacion">Fiscalización — no oficial (opt-in)</option></select></label>
-    {context.sourceKind === "fiscalizacion" && <Alert>Fiscalización: fuente no oficial. No se combina con resultados oficiales.</Alert>}
-    {parsed.status !== "ok" ? <Alert>Contexto inválido: {parsed.reason}</Alert> : loaded?.query === query && !result ? <Alert>No se pudo verificar el contexto autorizado.</Alert> : !facets ? <p role="status">Cargando contexto autorizado…</p> : null}
+    {context.sourceKind === "fiscalizacion" && <Alert variant="caveat" presentation="inline">Fiscalización: fuente no oficial. No se combina con resultados oficiales.</Alert>}
+    {parsed.status !== "ok" ? <Alert variant="error" presentation="inline">Contexto inválido: {parsed.reason}</Alert> : loaded?.query === query && !result ? <Alert variant="unavailable" presentation="inline">No se pudo verificar el contexto autorizado.</Alert> : !facets ? <p role="status">Cargando contexto autorizado…</p> : null}
     <noscript>Los formularios de cada página siguen disponibles sin JavaScript.</noscript>
   </section>;
 }
