@@ -576,7 +576,10 @@ test("Panorama exposes supporting limits once through a keyboard-operated disclo
   const toggle = disclosure.locator("summary");
   await expect(toggle).toHaveCount(1);
   await expect(disclosure).not.toHaveAttribute("open", "");
-  await expect(main.getByText("Resultados oficiales", { exact: true })).toBeVisible();
+  const source = page.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true });
+  await expect(source).toBeVisible();
+  await expect(source).toHaveValue("official");
+  await expect(source.locator("option:checked")).toHaveText("Oficial");
   await toggle.focus();
   await page.keyboard.press("Enter");
   await expect(disclosure).toHaveAttribute("open", "");
