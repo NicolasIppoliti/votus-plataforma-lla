@@ -409,7 +409,7 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
 });
 
 test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   await expect(heading).toBeVisible();
@@ -427,6 +427,20 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
   const mapBox = await map.boundingBox();
   const summaryBox = await summary.boundingBox();
   expect(summaryBox!.x).toBeGreaterThanOrEqual(mapBox!.x + mapBox!.width);
+  expect(mapBox!.y).toBeGreaterThanOrEqual(0);
+  expect(mapBox!.y + mapBox!.height).toBeLessThanOrEqual(900);
+  expect(summaryBox!.y + summaryBox!.height).toBeLessThanOrEqual(900);
+  // Every supplied headline figure must fit without scrolling, not merely its container.
+  for (const metric of await summary.locator("strong, b").all()) {
+    const box = await metric.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+  }
+  const limits = main.locator("details").filter({ has: page.locator("summary", { hasText: /^Fuente y límites$/ }) });
+  await expect(limits).not.toHaveAttribute("open", "");
+  await limits.locator("summary").click();
+  await expect(main.getByRole("heading", { name: "Límites y evidencia", exact: true })).toBeVisible();
+  await limits.locator("summary").click();
   await expectNoSevereAccessibilityIssues(page);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });

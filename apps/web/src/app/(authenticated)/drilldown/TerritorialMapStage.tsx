@@ -30,13 +30,13 @@ function SectionReferenceOutline() {
 /** Neutral outline or source-backed results: the heading must say which (#487). */
 export const MAP_HEADING = { REFERENCE: "Referencia territorial", CIRCUIT_LEADERS: "Primer lugar observado por circuito" } as const;
 
-export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, children, footer }: {
-  heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; children?: ReactNode; footer?: ReactNode;
+export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, compact = false, children, footer }: {
+  heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; compact?: boolean; children?: ReactNode; footer?: ReactNode;
 }) {
   const [zoom, setZoom] = useState(100);
   return <section className={styles.mapPanel} aria-label="Mapa territorial de referencia">
     <header className={styles.mapHeading}><div><h2>{heading}</h2><p>{subtitle}</p></div><span className={styles.mapMode}><MapIcon aria-hidden="true" size={14} /> Vista territorial</span></header>
-    <div className={styles.mapStage}>
+    <div className={styles.mapStage} style={compact ? { height: 280, minHeight: 280 } : undefined}>
       <span className={styles.coordinate}>Referencia geográfica</span>
       <div className={styles.northMark} role="img" aria-label="Norte"><span>N</span><svg viewBox="0 0 18 30" aria-hidden="true"><path d="m9 2 6 18-6-4-6 4zM9 16v12" /></svg></div>
       <div className={styles.mapCamera} style={{ transform: `scale(${zoom / 100})` }}>{referenceRosales ? <SectionReferenceOutline /> : children}</div>

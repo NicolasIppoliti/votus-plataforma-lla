@@ -1,5 +1,5 @@
 .page { min-width: 0; color: var(--ink, #edf5f7); }
-.heading { margin-bottom: 26px; }
+.heading { margin-bottom: 16px; }
 .heading h1 { margin: 0; font-size: 34px; font-weight: 500; line-height: 1.18; letter-spacing: -.7px; }
 .heading p { color: #b9c8d2; font-size: 14px; margin: 8px 0; }
 .heading p:first-child { font-size: 13px; margin-bottom: 9px; }
@@ -55,6 +55,9 @@
 .childTable a { display: inline-flex; align-items: center; min-height: 44px; color: #65e5f2; }
 .childTable tr[hidden] { display: none; }
 .childQualifications { font-size: 13px; }
+.supporting { border-top: 1px solid #284255; padding: 12px 0; }
+.supporting > summary { min-height: 44px; padding-block: 10px; cursor: pointer; color: #65e5f2; }
+.supporting p { font-size: 14px; color: #b9c8d2; overflow-wrap: anywhere; }
 .evidence { padding: 22px 0; }
 .evidence p { color: #b9c8d2; font-size: 14px; overflow-wrap: anywhere; }
 .evidence summary { min-height: 44px; padding-block: 10px; cursor: pointer; }

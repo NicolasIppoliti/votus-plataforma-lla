@@ -120,6 +120,23 @@ it.each([undefined, { status: "unavailable" } as const])("discloses unavailable 
   expect(html).not.toContain("00248 — Norte");
 });
 
+it("keeps the headline beside the map and folds supporting evidence after the circuit table (#458)", () => {
+  const html = renderToStaticMarkup(<Panorama data={data} />);
+  const summary = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'));
+  expect(summary).toContain("Grupo 6");
+  expect(summary).toContain("27,27 %");
+  expect(summary).toContain("4,55 pp");
+  expect(summary).not.toContain("Distribución de votos positivos oficiales");
+  expect(summary).not.toContain("Votos positivos oficiales</dt>");
+  const disclosure = html.indexOf('<summary>Fuente y límites</summary>');
+  expect(disclosure).toBeGreaterThan(html.indexOf('id="panorama-children-heading"'));
+  const detailsStart = html.lastIndexOf('<details', disclosure);
+  expect(html.slice(detailsStart, disclosure)).not.toContain('open');
+  expect(html.slice(disclosure)).toContain('Distribución de votos positivos oficiales');
+  expect(html.slice(disclosure)).toContain('Límites y evidencia');
+  expect(summary).toContain('Completitud no confirmada');
+});
+
 it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {
   const html = renderToStaticMarkup(<Panorama data={data} />);
   expect(html).toContain("Mapa de referencia · Referencia territorial");
