@@ -1,4 +1,5 @@
 import "server-only";
+import { profileServerSpan } from "./profile-server";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -30,7 +31,11 @@ function validCoordinates(value: unknown): value is number[][][][] {
   return true;
 }
 
-export async function loadProvinceReferenceGeometry() {
+export function loadProvinceReferenceGeometry() {
+  return profileServerSpan("geometry.province", readProvinceReferenceGeometry);
+}
+
+async function readProvinceReferenceGeometry() {
   try {
     const root = resolve(process.cwd(), "../..");
     const manifest = JSON.parse(await readFile(resolve(root, "archive-manifest.json"), "utf8")) as unknown;

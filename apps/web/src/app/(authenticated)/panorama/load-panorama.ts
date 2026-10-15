@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { serializeElectoralContext } from "@/lib/context/url";
@@ -16,7 +17,11 @@ export interface PanoramaData {
 }
 
 /** Resolve the workspace default from authorized official facets. */
-export async function loadPanorama(): Promise<PanoramaData> {
+export function loadPanorama(): Promise<PanoramaData> {
+  return profileServerSpan("panorama.load", resolvePanorama);
+}
+
+async function resolvePanorama(): Promise<PanoramaData> {
   const unavailable: PanoramaData = { href: "/drilldown", exclusions: [] };
   try {
     const repository = createAuthorizedOfficialFacetRepository();
