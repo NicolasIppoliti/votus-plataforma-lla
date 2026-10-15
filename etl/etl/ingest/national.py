@@ -909,7 +909,7 @@ def iter_national_rows(
     ambiguous_companion_keys = {
         key for key, circuits in circuits_by_companion_key.items() if len(circuits) > 1
     }
-    for key, stats in stats_by_key.items():
+    for key, stats in stats_by_key.items() if ambiguous_companion_keys else ():
         if _companion_key_from_natural_key(key) in ambiguous_companion_keys:
             if metrics is not None:
                 metrics.record_exclusion(
@@ -929,7 +929,11 @@ def iter_national_rows(
     ambiguous_natural_keys = {
         key
         for key, stats in stats_by_key.items()
-        if stats.count > 1 and _companion_key_from_natural_key(key) not in ambiguous_companion_keys
+        if stats.count > 1
+        and (
+            not ambiguous_companion_keys
+            or _companion_key_from_natural_key(key) not in ambiguous_companion_keys
+        )
     }
     if metrics is not None:
         categories = metrics.data["ambiguous_categories"] = {}

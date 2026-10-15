@@ -115,6 +115,9 @@ class Connection:
         else:
             assert text.startswith(
                 (
+                    "create temp table result_rows_",
+                    "truncate table pg_temp.result_rows_",
+                    "insert into result_row",
                     "insert into archive_entry",
                     "delete from result_row",
                     "LOCK TABLE jurisdiction",
@@ -140,6 +143,24 @@ class Connection:
             assert list(params) == []
         else:
             assert "update jurisdiction" in query
+
+    def copy(self, query):
+        connection = self
+
+        class Copy:
+            def __enter__(self):
+                connection.batches += 1
+                if connection.batches == connection.fail_batch:
+                    raise psycopg.OperationalError("synthetic private exception detail")
+                return self
+
+            def write_row(self, row):
+                pass
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+        return Copy()
 
     def commit(self):
         self.commits += 1
