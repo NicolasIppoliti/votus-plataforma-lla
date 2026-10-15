@@ -5,6 +5,14 @@ import { UnmappedListIds } from "./UnmappedListIds";
 const entries = [{ listId: "4321", rows: 2, votes: 700 }];
 
 describe("UnmappedListIds", () => {
+  it("groups summary counts and votes while keeping list identifiers raw", () => {
+    const markup = renderToStaticMarkup(
+      <UnmappedListIds entries={[{ listId: "4321", rows: 1234, votes: 3333 }]} totalRows={2345} unsummable={null} />,
+    );
+    expect(markup).toContain("1.234 de 2.345 filas (3.333 votos)");
+    expect(markup).toContain("4321: 1.234 filas, 3.333 votos");
+    expect(markup).not.toContain("4.321:");
+  });
   it("withholds vote totals and renders the exact source-kind reason", () => {
     const reason =
       "las filas mezclan tipos de fuente (fiscalizacion, official); las cifras oficiales y de fiscalización nunca se combinan en un mismo número";

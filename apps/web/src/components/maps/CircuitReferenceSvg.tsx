@@ -3,6 +3,7 @@ import { useId } from "react";
 import type { CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
 import { circuitPresentation, circuitBandColor } from "@/lib/geography/circuit-presentation";
 import styles from "./circuit-reference.module.css";
+import { formatFixed2 } from "@/lib/format/number";
 export interface CircuitMapProps {
   geometry: { code: string; coordinates: [number, number][][][] }[];
   circuits: CircuitOutcome[];
@@ -26,7 +27,7 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: 
     {geometry.map(g => {
       const outcome = circuits.find(c => c.circuito_code === g.code);
       const p = outcome ? circuitPresentation(outcome) : null;
-      const name = `Circuito ${g.code}: ${p ? `${p.winner}; ${p.coverage}; margen ${p.margin === null ? "no disponible" : p.margin.toFixed(2) + " pp"}` : "sin resultados"}`;
+      const name = `Circuito ${g.code}: ${p ? `${p.winner}; ${p.coverage}; margen ${p.margin === null ? "no disponible" : formatFixed2(p.margin) + " pp"}` : "sin resultados"}`;
       return <g key={g.code}>
         <path d={path(g)} fill={p ? circuitBandColor(p.color, p.band) : "var(--surface-muted)"} fillOpacity={1}
           fillRule="evenodd" stroke="currentColor" strokeWidth={selected === g.code ? 3 : 1} vectorEffect="non-scaling-stroke"
