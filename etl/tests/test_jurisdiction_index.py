@@ -111,6 +111,23 @@ def test_real_resolver_plans_on_populated_dimension():
             "create temp table jurisdiction "
             "(like public.jurisdiction including defaults including indexes)"
         )
+        # The gate has already applied #481 to public.jurisdiction. INCLUDING
+        # INDEXES copies its expression index under a generated name too; remove
+        # that copy so the baseline is genuinely pre-#481, retaining other indexes.
+        from psycopg import sql
+
+        candidate_indexes = conn.execute(
+            """select c.relname
+            from pg_index clone join pg_class c on c.oid = clone.indexrelid
+            join pg_index candidate
+              on pg_get_expr(clone.indexprs, clone.indrelid)
+               = pg_get_expr(candidate.indexprs, candidate.indrelid)
+            where clone.indrelid = 'pg_temp.jurisdiction'::regclass
+              and candidate.indexrelid = 'public.jurisdiction_merge_key_idx'::regclass"""
+        ).fetchall()
+        assert len(candidate_indexes) == 1
+        for (index_name,) in candidate_indexes:
+            conn.execute(sql.SQL("drop index {}").format(sql.Identifier("pg_temp", index_name)))
         # Exercise a migrated empty dimension first, including repeated hits.
         conn.execute("savepoint empty_candidate")
         migration = (ROOT / "supabase/migrations" / f"{MIGRATION}.sql").read_text()
@@ -208,8 +225,6 @@ def test_real_resolver_plans_on_populated_dimension():
             assert prepared[0][1 if mode == "force_custom_plan" else 2] >= 2
             # EXPLAIN EXECUTE is needed: explaining a new parameterized EXPLAIN
             # statement would not prove the prepared production query's plan.
-            from psycopg import sql
-
             plan = conn.execute(
                 sql.SQL("explain (analyze, buffers, format json) execute {} ({})").format(
                     sql.Identifier(prepared[0][0]),
