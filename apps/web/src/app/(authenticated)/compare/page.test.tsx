@@ -57,6 +57,36 @@ function supportedSpatialEvidence() {
   return value;
 }
 
+it("reads shared context for a selected 2023 PASO without asserting unsupported geography", async () => {
+  const original = mocks.facets.getMockImplementation()!;
+  mocks.facets.mockImplementation(async (selection) => {
+    const value = await original(selection);
+    return { ...value, elections: value.elections.map((item: typeof elections[number]) => item.year === 2023 ? { ...item, round: "paso", label: "2023 PASO" } : item) };
+  });
+  const value = evidence();
+  value.left.result.electionRound = "paso";
+  mocks.evidence.mockResolvedValue(value);
+  const markup = await render(PARAMS);
+  expect(markup).toContain("Elección: 2023 PASO");
+  expect(markup).not.toContain("Lado A — 2023 generales");
+  expect(mocks.geometry).not.toHaveBeenCalled();
+});
+
+it("uses A/B vocabulary throughout the real rendered page", async () => {
+  expect(await render(PARAMS)).not.toMatch(/izquierd|derech/i);
+});
+
+it.each(["unmapped", "granularity", "canonical"])("keeps safe editors without any figures for a %s refusal", async (reason) => {
+  const value = evidence();
+  if (reason === "unmapped") mocks.evidence.mockResolvedValue({ status: "unmapped_parties", sides: [{ side: "left", partyCount: 1, totalVotes: 40 }] });
+  if (reason === "granularity") { Object.assign(value.right.result, { sourceGranularity: "distrito" }); mocks.evidence.mockResolvedValue(value); }
+  if (reason === "canonical") { value.left.result.parties[1]!.votes = -1; mocks.evidence.mockResolvedValue(value); }
+  const markup = await render(PARAMS);
+  expect(markup.match(/<select\b/g)).toHaveLength(6);
+  for (const selected of Object.values(PARAMS)) expect(markup).toContain(`value="${selected}" selected=""`);
+  expect(markup).not.toMatch(/<table|\d+ votos|\d+,\d+ %|official\/archive|Referencia oficial|Procedencia oficial|Comparación aplicada/);
+});
+
 it("puts the workbench before selection details and paints static maps on load", async () => {
   supportedSpatialEvidence();
   const markup = await render(PARAMS);
@@ -95,8 +125,14 @@ function metricMarkup(metric: MapMetric, party = "party-a", missing = false) {
     shares2023: [{ party: "party-a", votes: 60, sharePercent: 60 }, { party: "party-b", votes: 40, sharePercent: 40 }],
     shares2025: [{ party: "party-a", votes: 25, sharePercent: 25 }, { party: "party-b", votes: 75, sharePercent: 75 }], swings: [] };
   if (missing) swing.shares2025 = swing.shares2025.filter(entry => entry.party !== party);
-  return renderToStaticMarkup(<ComparisonMapView coordinates={[[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]]} name="Rosales" fetchedAt="2026-09-24" sha256="verified" swing={swing} leftNames={{ "party-a": "PARTIDO A 2023", "party-b": "PARTIDO B 2023" }} rightNames={{ "party-a": "PARTIDO A 2025", "party-b": "PARTIDO B 2025" }} party={party} metric={metric} onMetric={() => {}} />);
+  return renderToStaticMarkup(<ComparisonMapView {...{ electionLabels: ["2023 PASO", "2025 generales"] as [string, string] }} coordinates={[[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]]} name="Rosales" fetchedAt="2026-09-24" sha256="verified" swing={swing} leftNames={{ "party-a": "PARTIDO A 2023", "party-b": "PARTIDO B 2023" }} rightNames={{ "party-a": "PARTIDO A 2025", "party-b": "PARTIDO B 2025" }} party={party} metric={metric} onMetric={() => {}} />);
 }
+it("derives map headings from selected election labels including 2023 PASO", () => {
+  const markup = metricMarkup("Participación");
+  expect(markup).toContain("Lado A — 2023 PASO");
+  expect(markup).toContain("Lado B — 2025 generales");
+  expect(markup).not.toContain("2023 generales");
+});
 it("renders each controlled metric with its own scale and pressed state", () => {
   for (const metric of ["Participación", "Cambio", "Ganadores"] as const) {
     const markup = metricMarkup(metric);
@@ -194,8 +230,8 @@ it("places the territorial navigator before paired analytics in the approved com
   expect(markup).toContain('aria-label="Navegador territorial"');
   expect(markup.indexOf('aria-label="Navegador territorial"')).toBeLessThan(markup.indexOf('aria-label="Participación de la agrupación seleccionada"'));
   expect(markup).toContain("Cambio por territorio");
-  expect(markup).toContain("Votos izquierda");
-  expect(markup).toContain("Votos derecha");
+  expect(markup).toContain("Votos A");
+  expect(markup).toContain("Votos B");
   expect(markup).toContain("Votos B − A");
 });
 
@@ -215,6 +251,8 @@ it("refuses incompatible authorized categories before rendering comparison figur
   mocks.evidence.mockResolvedValue(value);
   const markup = await render(PARAMS);
   expect(markup).toContain("Las categorías oficiales no son compatibles");
+  expect(markup.match(/<select\b/g)).toHaveLength(6);
+  for (const value of Object.values(PARAMS)) expect(markup).toContain(`value="${value}" selected=""`);
   expect(markup).not.toMatch(/<table|60,00 %|official\/archive/);
 });
 
@@ -325,13 +363,13 @@ describe("authorized comparison page", () => {
   it("excludes one-sided section codes and discloses counts separately after a shared district", async () => { leftSections = [...leftSections, { code: "999", name: "Sección unilateral izquierda", nameStatus: "present", nameVariantCount: 1 }]; rightSections = [...rightSections, { code: "998", name: "Sección unilateral derecha", nameStatus: "present", nameVariantCount: 1 }]; const markup = await render({ ...PARAMS, seccionCode: undefined }); expect(markup).not.toContain('value="999"'); expect(markup).not.toContain('value="998"'); expect(markup).not.toContain("Sección unilateral izquierda"); expect(markup).not.toContain("Sección unilateral derecha"); expect(markup).toContain("Opciones no compartidas — Distrito: 0 Lado A / 0 Lado B (disponibles solo en ese lado)."); expect(markup).toContain("Opciones no compartidas — Sección: 1 Lado A / 1 Lado B (disponibles solo en ese lado)."); });
   it("keeps a same-code metadata conflict selectable without counting it as one-sided", async () => { rightDistricts = [{ ...district, name: "Provincia de Buenos Aires" }]; const markup = await render({ ...PARAMS, distritoCode: undefined, seccionCode: undefined }); expect(markup).toContain('<option value="02">02 — nombres contradictorios</option>'); expect(markup).toContain("Opciones no compartidas — Distrito: 0 Lado A / 0 Lado B (disponibles solo en ese lado)."); });
   it("does not represent an unqueried section level as zero exclusions", async () => { const markup = await render({ ...PARAMS, distritoCode: undefined, seccionCode: undefined }); expect(markup).toContain("Opciones no compartidas — Distrito: 0 Lado A / 0 Lado B (disponibles solo en ese lado)."); expect(markup).not.toContain("Opciones no compartidas — Sección:"); });
-  it("renders canonical swing figures and URL-free provenance from the all-or-nothing evidence", async () => { const markup = await render(PARAMS); expect(mocks.evidence).toHaveBeenCalledWith(expect.objectContaining({ electionId: IDS.leftElection, categoryId: IDS.leftCategory, distritoCode: "02", seccionCode: "027", requestedLevel: "seccion" }), expect.objectContaining({ electionId: IDS.rightElection, categoryId: IDS.rightCategory, distritoCode: "02", seccionCode: "027", requestedLevel: "seccion" })); for (const text of ["PARTIDO A 2023", "PARTIDO A 2025", "60,00 %", "55,00 %", "-5,00 puntos porcentuales", "Referencia oficial — Lado A", "Izquierda: 1 referencia(s)", "official/archive-2023", "official/archive-2025", "Procedencia oficial — Lado B", "SHA-256"]) expect(markup).toContain(text); expect(markup).not.toMatch(/https?:\/\//); expect(markup).not.toContain("/private/"); expect(markup).not.toContain("999 votos"); });
+  it("renders canonical swing figures and URL-free provenance from the all-or-nothing evidence", async () => { const markup = await render(PARAMS); expect(mocks.evidence).toHaveBeenCalledWith(expect.objectContaining({ electionId: IDS.leftElection, categoryId: IDS.leftCategory, distritoCode: "02", seccionCode: "027", requestedLevel: "seccion" }), expect.objectContaining({ electionId: IDS.rightElection, categoryId: IDS.rightCategory, distritoCode: "02", seccionCode: "027", requestedLevel: "seccion" })); for (const text of ["PARTIDO A 2023", "PARTIDO A 2025", "60,00 %", "55,00 %", "-5,00 puntos porcentuales", "Referencia oficial — Lado A", "A: 1 referencia(s)", "official/archive-2023", "official/archive-2025", "Procedencia oficial — Lado B", "SHA-256"]) expect(markup).toContain(text); expect(markup).not.toMatch(/https?:\/\//); expect(markup).not.toContain("/private/"); expect(markup).not.toContain("999 votos"); });
   it("refuses all rendered output when a successful side is not official-only", async () => { const value = evidence(); Object.assign(value.left.result as { sourceKind: string; totalVotes: number; parties: Array<{ displayName: string; votes: number; voteShare: string }>; archiveEntryIds: string[]; sourceAudit: Array<{ kind: string; rows: number; votes: number }> }, { sourceKind: "fiscalizacion", totalVotes: 1000, parties: [{ ...value.left.result.parties[0]!, displayName: "SENTINEL_LEFT_FIGURE", votes: 777, voteShare: "0.777" }, { ...value.left.result.parties[1]!, displayName: "SENTINEL_LEFT_FIGURE_B", votes: 223, voteShare: "0.223" }], archiveEntryIds: ["SENTINEL_LEFT_ARCHIVE_PROVENANCE"], sourceAudit: [{ kind: "official", rows: 2, votes: 1000 }] }); value.left.reference.items = Array.from({ length: 73 }, (_, index) => ({ ...value.left.reference.items[0]!, jurisdictionId: `SENTINEL_LEFT_REFERENCE_${index}` })); value.left.provenance.items[0]!.archiveEntryId = "SENTINEL_LEFT_ARCHIVE_PROVENANCE"; mocks.evidence.mockResolvedValue(value); const markup = await render(PARAMS); expect(markup).toContain("La evidencia oficial autorizada no superó la validación integral y no se muestran cifras."); for (const sentinel of ["SENTINEL_LEFT_FIGURE", "77,70 %", "73 referencia(s)", "SENTINEL_LEFT_ARCHIVE", "SENTINEL_LEFT_ARCHIVE_PROVENANCE"]) expect(markup).not.toContain(sentinel); });
   it.each([{ sourceAudit: [{ kind: "fiscalizacion", rows: 2, votes: 100 }] }, { sourceAudit: [{ kind: "unknown", rows: 2, votes: 100 }] }, { sourceAudit: [{ kind: "official" }] }, { sourceAudit: { kind: "official", rows: 2, votes: 100 } }, { sourceAudit: undefined }] as const)("refuses all output without identifying a side when included source audit is non-official or malformed", async ({ sourceAudit }) => { const value = evidence(); (value.right.result as { sourceAudit: unknown }).sourceAudit = sourceAudit; mocks.evidence.mockResolvedValue(value); const markup = await render(PARAMS); expect(markup).toContain("La evidencia oficial autorizada no superó la validación integral y no se muestran cifras."); for (const hidden of ["Lado A", "Lado B", "PARTIDO A 2023", "PARTIDO A 2025", "official/archive-2023", "official/archive-2025", "puntos porcentuales"]) expect(markup).not.toContain(hidden); });
   it.each(["left", "right"] as const)("refuses all rendered output when the %s official audit is empty", async (sideName) => { const value = evidence(); (value[sideName].result as { sourceAudit: unknown }).sourceAudit = []; mocks.evidence.mockResolvedValue(value); const markup = await render(PARAMS); expect(markup).toContain("La evidencia oficial autorizada no superó la validación integral y no se muestran cifras."); for (const hidden of ["Lado A", "Lado B", "PARTIDO A 2023", "PARTIDO A 2025", "60,00 %", "55,00 %", "puntos porcentuales", "Referencia oficial", "official/archive", "Procedencia oficial", "Opciones no compartidas", "disponibles solo en ese lado"]) expect(markup).not.toContain(hidden); });
-  it("renders each result-owned source exclusion exactly once when all evidence matches", async () => { const markup = await render(PARAMS); expect(markup.match(/Izquierda: 1 fila\(s\) de fuente fiscalizacion excluidas de todas las cifras\./g)).toHaveLength(1); expect(markup.match(/Derecha: 1 fila\(s\) de fuente fiscalizacion excluidas de todas las cifras\./g)).toHaveLength(1); });
+  it("renders each result-owned source exclusion exactly once when all evidence matches", async () => { const markup = await render(PARAMS); expect(markup.match(/A: 1 fila\(s\) de fuente fiscalizacion excluidas de todas las cifras\./g)).toHaveLength(1); expect(markup.match(/B: 1 fila\(s\) de fuente fiscalizacion excluidas de todas las cifras\./g)).toHaveLength(1); });
   it("refuses a D6 source-granularity mismatch without any figures", async () => { const value = evidence(); Object.assign(value.right.result, { sourceGranularity: "distrito" as const }); mocks.evidence.mockResolvedValue(value); const markup = await render(PARAMS); for (const text of ["Granularidad mixta", "mesa", "distrito"]) expect(markup).toContain(text); expect(markup).not.toContain("puntos porcentuales"); expect(markup).not.toContain("official/archive-2023"); });
-  it("renders only safe side-owned counts for an unmapped refusal", async () => { mocks.evidence.mockResolvedValue({ status: "unmapped_parties", sides: [{ side: "left", partyCount: 1, totalVotes: 40 }], raw_list_id: "raw-list", display_name: "unsafe name", provider_side: "secret", left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]) }); const markup = await render(PARAMS); for (const text of ["lado izquierdo", "1 partido", "40 votos"]) expect(markup).toContain(text); for (const hidden of ["raw-list", "unsafe name", "secret", "PARTIDO A 2023", "puntos porcentuales", "official/archive"]) expect(markup).not.toContain(hidden); });
+  it("keeps an unmapped refusal figure-free even when its payload contains side-owned counts", async () => { mocks.evidence.mockResolvedValue({ status: "unmapped_parties", sides: [{ side: "left", partyCount: 1, totalVotes: 40 }], raw_list_id: "raw-list", display_name: "unsafe name", provider_side: "secret", left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]) }); const markup = await render(PARAMS); expect(markup).toContain("identidades partidarias sin mapear"); for (const hidden of ["1 partido", "40 votos", "<table"]) expect(markup).not.toContain(hidden); for (const hidden of ["raw-list", "unsafe name", "secret", "PARTIDO A 2023", "puntos porcentuales", "official/archive"]) expect(markup).not.toContain(hidden); });
   it.each([["authorization_denied", "No tiene autorización"], ["payload_too_large", "excede el límite seguro"], ["malformed", "no superó la validación"], ["unavailable", "no está disponible"]] as const)("renders no figures for %s evidence", async (status, message) => { mocks.evidence.mockResolvedValue({ status }); const markup = await render(PARAMS); expect(markup).toContain(message); expect(markup).not.toContain("puntos porcentuales"); expect(markup).not.toContain("official/archive"); });
   it.each([["repeated", { ...PARAMS, electionId: [IDS.leftElection, IDS.rightElection] }], ["legacy", { ...PARAMS, election2023: IDS.leftElection }], ["unknown", { ...PARAMS, debug: "true" }]])("rejects %s query keys before authorized reads", async (_case, params) => { const markup = await render(params); expect(markup).toContain("Se rechazó la solicitud"); expect(mocks.facets).not.toHaveBeenCalled(); expect(mocks.evidence).not.toHaveBeenCalled(); });
   it("hides authorized facet provider failures", async () => { mocks.facets.mockRejectedValue(new Error("private provider detail")); const markup = await render({}); expect(markup).toContain("temporalmente no disponibles"); expect(markup).toContain('data-variant="unavailable"'); expect(markup).toContain('href="/compare"'); expect(markup).not.toContain("private provider detail"); });
@@ -470,8 +508,8 @@ it("progressively discloses archive detail without hiding source exclusions or r
     expect(disclosure).not.toContain("excluidas de todas las cifras");
   }
   const visibleMarkup = markup.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, "");
-  expect(visibleMarkup).toContain("Izquierda: 1 fila(s) de fuente fiscalizacion excluidas de todas las cifras.");
-  expect(visibleMarkup).toContain("Derecha: 1 fila(s) de fuente fiscalizacion excluidas de todas las cifras.");
+  expect(visibleMarkup).toContain("A: 1 fila(s) de fuente fiscalizacion excluidas de todas las cifras.");
+  expect(visibleMarkup).toContain("B: 1 fila(s) de fuente fiscalizacion excluidas de todas las cifras.");
   expect(visibleMarkup).toContain("Resultados exactos");
   expect(visibleMarkup).toContain("60,00 %");
   expect(visibleMarkup).toContain("sumado a partir de filas de nivel mesa");
