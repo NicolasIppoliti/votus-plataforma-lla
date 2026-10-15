@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { expect, request, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
@@ -46,6 +47,18 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
     const election = page.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true });
     await expect(election).toBeEnabled();
     const election2023 = await election.locator("option").evaluateAll(options => options.filter(option => option.textContent?.includes("2023") && !option.textContent?.toLowerCase().includes("paso")).map(option => (option as HTMLOptionElement).value));
+    if (election2023.length === 0) {
+      const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+      await writeFile(test.info().outputPath("e2e-facts-panorama-election-options.json"), JSON.stringify({
+        electionControlCount: await election.count(),
+        electionEnabled: await election.isEnabled(),
+        electionOptions: await election.locator("option").allTextContents(),
+        categoryOptions: await bar.getByRole("combobox", { name: "Contexto electoral: Categoría", exact: true }).locator("option").allTextContents(),
+        source: await bar.getAttribute("data-source"),
+        loadingStatusCount: await bar.getByRole("status").count(),
+        unavailableContextCount: await bar.getByText("No se pudo verificar el contexto autorizado.", { exact: true }).count(),
+      }));
+    }
     expect(election2023.length).toBeGreaterThan(0);
     await election.selectOption(election2023[0]!);
     const category = page.getByRole("combobox", { name: "Contexto electoral: Categoría", exact: true });
