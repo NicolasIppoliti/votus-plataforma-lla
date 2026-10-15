@@ -1,15 +1,20 @@
-import { type Page, type Browser } from "@playwright/test";
+import { type Page, type Browser, type Locator } from "@playwright/test";
 import { expect, test } from "./review-test-fixture";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { withReviewItem } from "./authorized-review-fixture";
 import { withAuthorizedResultWorkspace } from "./authorized-result-workspace";
+import { withAuthorizedComparisonWorkspace } from "./authorized-comparison-fixture";
+import { withAuthorizedMunicipalWorkspace } from "./authorized-municipal-fixture";
 import { comparisonFixture, coverageFixture, sourceIsolationFixture, withResultFixture } from "./result-fixture";
 import { withPanoramaResults } from "./panorama-result-fixture";
 import { scenarioBaseUrl } from "./scenario-ownership";
 import { assertE2eEnvironment } from "./gate-contract";
 
 const environment = assertE2eEnvironment(process.env);
+// Each test includes fixture ownership, two full-page captures and pair rendering.
+// Keep a bounded budget for the two cold interactive comparison maps as well.
+test.setTimeout(120_000);
 
 const pairs = [
   { name: "panorama", prototype: "panorama", route: "/" },
@@ -18,6 +23,53 @@ const pairs = [
   { name: "evidencia", prototype: "evidence-quality", route: "/evidencia" },
   { name: "simulacion", prototype: "seat-simulation", route: "/simulate" },
 ] as const;
+
+const readiness = new WeakMap<Page, { phase: string; locators: Record<string, Locator> }>();
+function signal(page: Page, name: string, locator: Locator) {
+  const state = readiness.get(page) ?? { phase: "setup", locators: {} as Record<string, Locator> };
+  readiness.set(page, state);
+  state.phase = name;
+  state.locators[name] = locator;
+  return locator;
+}
+
+test.beforeEach(async ({ page }) => {
+  readiness.set(page, { phase: "setup", locators: {
+    organization: page.getByRole("combobox", { name: "Organización", exact: true }),
+    main: page.getByRole("main"),
+    exactDisclosure: page.getByText("Mostrar resultados exactos", { exact: true }),
+    comparison: page.getByRole("region", { name: "Comparación territorial de referencia" }),
+    comparisonOpenResults: page.locator('[data-results-for="compare-results-heading"][open]'),
+    evidenceContext: page.getByRole("form", { name: "Contexto de la evidencia" }),
+    evidenceReading: page.getByRole("heading", { name: "Qué respalda este dato", exact: true }),
+    allocation: page.getByTestId("allocation-result"),
+    municipalTable: page.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }),
+    mapCanvases: page.locator("canvas.maplibregl-canvas"),
+    loading: page.getByText(/Cargando contexto autorizado|Preparando contorno de referencia/),
+  } });
+});
+
+test.afterEach(async ({ page }, info) => {
+  if (info.status === info.expectedStatus) return;
+  const match = info.title.match(/^R5 (?:production-only \/)?(\w+).*?at (\d+)px/);
+  if (!match) return;
+  const state = readiness.get(page)!;
+  const path = info.outputPath(`e2e-facts-r5-${match[1]}-${match[2]}.json`);
+  // Write a baseline first, even if the browser was lost during the timeout.
+  const baseline = { phase: state.phase, status: info.status, pathname: new URL(page.url()).pathname };
+  await writeFile(path, JSON.stringify(baseline, null, 2));
+  try {
+    const content = await page.evaluate(() => {
+      const visible = (node: Element) => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== "hidden";
+      const texts = (selector: string) => Array.from(document.querySelectorAll(selector)).filter(visible)
+        .slice(0, 40).map(node => (node.textContent ?? "").trim().slice(0, 1000));
+      return { pathname: location.pathname, headings: texts("h1,h2,h3,h4,h5,h6"), alerts: texts('[role="alert"]'), statuses: texts('[role="status"]') };
+    });
+    const matched = Object.fromEntries(await Promise.all(Object.entries(state.locators).map(async ([name, locator]) => [name,
+      await locator.evaluateAll(nodes => ({ count: nodes.length, visible: nodes.filter(node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== "hidden").length }))])));
+    await writeFile(path, JSON.stringify({ ...baseline, ...content, readiness: matched }, null, 2));
+  } catch { await writeFile(path, JSON.stringify({ ...baseline, collectionFailed: true }, null, 2)); }
+});
 
 type Measurement = { file: string; width: number; viewportHeight: number; documentHeight: number; scrollWidth: number };
 async function capture(page: Page, file: string): Promise<Measurement> {
@@ -34,7 +86,7 @@ async function capture(page: Page, file: string): Promise<Measurement> {
       return consecutive;
     }, { timeout: 15000, message: `${file}: map must settle` }).toBeGreaterThanOrEqual(2);
   }
-  await expect(page.getByText(/Cargando contexto autorizado|Preparando contorno de referencia/)).toHaveCount(0);
+  await expect(signal(page, "capture-loading-cleared", page.getByText(/Cargando contexto autorizado|Preparando contorno de referencia/))).toHaveCount(0);
   const size = await page.evaluate(() => ({
     width: innerWidth, viewportHeight: innerHeight,
     documentHeight: document.documentElement.scrollHeight,
@@ -46,41 +98,65 @@ async function capture(page: Page, file: string): Promise<Measurement> {
 }
 
 async function selectedOfficial(page: Page, route: string, captureSelected: () => Promise<void>) {
+  // The municipal scenario owns real Rosales data (02/027). Follow the
+  // provenance exact-selection URL/disclosure journey against that owned seed,
+  // rather than borrowing a comparison-only category and its facet exclusions.
+  if (route !== "/compare") {
+    const spec = "e2e/municipal.spec.ts";
+    const { scope, seed } = sourceIsolationFixture(spec);
+    const baseURL = scenarioBaseUrl(spec, environment);
+    const viewport = page.viewportSize()!;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await withResultFixture(spec, seed, () => withAuthorizedMunicipalWorkspace(page, async () => {
+      await page.setViewportSize(viewport);
+      const params = new URLSearchParams({ electionId: scope.electionId, categoryId: scope.categoryId,
+        distritoCode: "02", seccionCode: "027", level: "seccion", sourceKind: "official" });
+      await page.goto(new URL(`${route}?${params}`, baseURL).toString());
+      if (route === "/drilldown") {
+        await signal(page, "open-exact-results", page.getByText("Mostrar resultados exactos", { exact: true })).click();
+        await expect(signal(page, "exact-votes", page.getByRole("main"))).toContainText("14.444 votos a nivel seccion");
+        await expect(page.locator("details[open]").filter({ has: page.getByText("Mostrar resultados exactos", { exact: true }) })).toBeVisible();
+      } else {
+        // root.spec.ts asserts this form; the selected result adds the inspector
+        // and traceability. Do not depend on a geographic title's exact spelling.
+        await expect(signal(page, "evidence-context", page.getByRole("form", { name: "Contexto de la evidencia" }))).toBeVisible();
+        await expect(signal(page, "evidence-reading", page.getByRole("heading", { name: "Qué respalda este dato", exact: true }))).toBeVisible();
+        await expect(signal(page, "evidence-traceability", page.getByRole("heading", { name: "Trazabilidad autorizada", exact: true }))).toBeVisible();
+        await expect(signal(page, "evidence-outline", page.locator('svg[aria-label^="Referencia CNE de"]'))).toBeVisible();
+      }
+      await captureSelected();
+    }));
+    return;
+  }
   const spec = "e2e/comparison.spec.ts";
   const { identity, seed } = comparisonFixture(spec, "spatial");
   const baseURL = scenarioBaseUrl(spec, environment);
-  await withResultFixture(spec, seed, () => withAuthorizedResultWorkspace(page, baseURL, identity, async () => {
-    const params = route === "/compare" ? new URLSearchParams({
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await withResultFixture(spec, seed, () => withAuthorizedComparisonWorkspace(page, async () => {
+    await page.setViewportSize(viewport);
+    const params = new URLSearchParams({
       leftElectionId: identity.electionIds[0]!, leftCategoryId: identity.categoryId,
       rightElectionId: identity.electionIds[1]!, rightCategoryId: identity.categoryId,
       distritoCode: "02", seccionCode: "027",
-    }) : new URLSearchParams({ electionId: identity.electionIds[1]!, categoryId: identity.categoryId,
-      distritoCode: "02", seccionCode: "027", level: "seccion", sourceKind: "official" });
+    });
     await page.goto(new URL(`${route}?${params}`, baseURL).toString());
     if (route === "/compare") {
-      const panel = page.getByRole("region", { name: "Comparación territorial de referencia" });
+      const panel = signal(page, "comparison-panel", page.getByRole("region", { name: "Comparación territorial de referencia" }));
       await expect(panel).toBeVisible();
       for (const name of ["Lado A — 2023 generales", "Lado B — 2025 legislativas"]) {
         const side = panel.getByRole("article", { name });
         await side.locator("[data-map-controls] > summary").click();
         await side.getByRole("button", { name: `Activar mapa interactivo de ${name}` }).click();
-        await expect(side.getByRole("status")).toContainText("Mapa de", { timeout: 15000 });
-        await expect(side.locator("canvas.maplibregl-canvas")).toBeVisible();
+        await expect(signal(page, `${name}-ready`, side.getByRole("status"))).toContainText("Mapa de", { timeout: 15000 });
+        await expect(signal(page, `${name}-canvas`, side.locator("canvas.maplibregl-canvas"))).toBeVisible();
       }
       await panel.getByRole("button", { name: "Seleccionar sección y consultar resultados" }).last().click();
       await expect(page.locator('[data-results-for="compare-results-heading"]')).toHaveAttribute("open", "");
       await expect(page.getByRole("table").first()).toContainText(identity.comparisonParty!.displayName);
-    } else if (route === "/drilldown") {
-      await page.getByText("Mostrar resultados exactos", { exact: true }).click();
-      await expect(page.getByRole("table").first()).toContainText(identity.comparisonParty!.displayName);
-      await expect(page.getByRole("img", { name: "Contorno de referencia CNE de Coronel Rosales; no geometría de la unidad seleccionada" })).toBeVisible();
-    } else {
-      await expect(page.getByRole("heading", { name: "Qué respalda este dato", exact: true })).toBeVisible();
-      await expect(page.getByRole("img", { name: /Coronel Rosales/ }).first()).toBeVisible();
-      await expect(page.getByRole("heading", { name: "Trazabilidad autorizada", exact: true })).toBeVisible();
     }
     await captureSelected();
-  }), "spatial");
+  }, identity), "spatial");
 }
 
 async function production(page: Page, route: string, captureSelected: () => Promise<void>) {
@@ -89,8 +165,9 @@ async function production(page: Page, route: string, captureSelected: () => Prom
     await withReviewItem(page, async () => {
       await page.goto("/scenarios");
       await page.getByTestId("scenario-persistencia").getByRole("link", { name: "Editar este escenario" }).click();
-      await expect(page.getByTestId("allocation-result")).toBeVisible();
-      await expect(page.getByRole("img", { name: /Contorno de referencia CNE/ })).toBeVisible();
+      await expect(page).toHaveURL(/\/simulate\?scenario=/);
+      await expect(signal(page, "scenario-provenance", page.getByRole("region", { name: "Procedencia del escenario" }))).toContainText("Persistencia");
+      await expect(signal(page, "scenario-allocation", page.getByTestId("allocation-result"))).toBeVisible();
       await captureSelected();
     });
   } else if (route === "/") {
@@ -150,6 +227,12 @@ for (const pair of pairs) {
             status: "complete", counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 } })),
         });
       });
+      else next.onFetch(request => {
+        // Unlike Panorama these are ordinary DB-backed journeys. The Next
+        // fixture aborts unhandled fetches; explicitly pass through Supabase.
+        if (new URL(request.url).origin !== new URL(environment.NEXT_PUBLIC_SUPABASE_URL).origin) return "abort";
+        return fetch(request, { redirect: "error" });
+      });
       await page.setViewportSize({ width, height: 900 });
       const moduleUrl = new URL(`../../../docs/prototypes/${pair.prototype}/serve.mjs`, import.meta.url);
       const { createPreviewServer } = await import(moduleUrl.href);
@@ -194,10 +277,22 @@ for (const route of ["/municipal", "/fiscalizacion"]) {
       const fixture = route === "/municipal" ? sourceIsolationFixture("e2e/municipal.spec.ts") : coverageFixture("e2e/fiscalizacion.spec.ts");
       const baseURL = scenarioBaseUrl(spec, environment);
       const scope = { ...fixture.scope, distritoCode: route === "/municipal" ? "02" : "82", seccionCode: route === "/municipal" ? "027" : "827" };
-      await withResultFixture(spec, fixture.seed, () => withAuthorizedResultWorkspace(page, baseURL, scope, async () => {
+      // The shared municipal helper switches the workspace on desktop, just as
+      // municipal.spec.ts does; only the final production page uses mobile size.
+      if (route === "/municipal") await page.setViewportSize({ width: 1440, height: 900 });
+      const authorize = (run: () => Promise<void>) => route === "/municipal"
+        ? withAuthorizedMunicipalWorkspace(page, run)
+        : withAuthorizedResultWorkspace(page, baseURL, scope, run);
+      await withResultFixture(spec, fixture.seed, () => authorize(async () => {
+        if (route !== "/municipal") await page.setViewportSize({ width, height: 900 });
         const params = new URLSearchParams({ electionId: scope.electionId, categoryId: scope.categoryId,
           distritoCode: scope.distritoCode, seccionCode: scope.seccionCode, sourceKind: "official" });
-        await page.goto(new URL(`${route}?${params}`, baseURL).toString());
+        if (route === "/municipal") {
+          await page.goto(new URL("/", baseURL).toString());
+          // Same cold, configured-election navigation as municipal.spec.ts;
+          // resize only after loading the exact official result.
+          await page.getByRole("navigation", { name: "principal" }).getByRole("link", { name: "Municipal", exact: true }).click();
+        } else await page.goto(new URL(`${route}?${params}`, baseURL).toString());
         const main = page.getByRole("main");
         if (route === "/fiscalizacion") {
           await page.getByRole("link", { name: "Activar fiscalización (no oficial)", exact: true }).click();
@@ -206,9 +301,14 @@ for (const route of ["/municipal", "/fiscalizacion"]) {
           await expect(main).toContainText("22.222 votos");
           await expect(main).not.toContainText(/11\.?111|33\.?333/);
         } else {
-          await expect(main.getByRole("table").first()).toContainText("11.111");
-          await expect(main).not.toContainText("22.222");
+          await expect(signal(page, "municipal-heading", main.getByRole("heading", { name: "Coronel Rosales", level: 1 }))).toBeVisible();
+          const table = signal(page, "municipal-exact-table", main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }));
+          await expect(table.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
+          await expect(table.getByRole("cell", { name: "11.111", exact: true })).toBeVisible();
+          // This excluded-source count is required adjacent evidence, not leakage.
+          await expect(main).toContainText("1 fila fiscalización / 22.222 votos");
         }
+        await page.setViewportSize({ width, height: 900 });
         const measurement = await capture(page, `production-${route.slice(1)}-${width}.png`);
         await writeFile(test.info().outputPath("visual-evidence-r5-heights.json"), JSON.stringify({ route, approvedPrototype: null,
           synthetic: true, sourceKind: route === "/fiscalizacion" ? "fiscalizacion" : "official", measurements: [measurement] }, null, 2));
