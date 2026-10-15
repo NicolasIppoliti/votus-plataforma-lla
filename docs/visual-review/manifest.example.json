@@ -1,0 +1,7 @@
+[
+  { "name": "panorama", "production": { "path": "raw/r4-panorama-1440-full.png", "fullPage": true }, "prototype": { "path": "prototype/panorama.png", "fullPage": true } },
+  { "name": "exploracion", "production": { "path": "raw/r4-exploracion-1440-full.png", "fullPage": true }, "prototype": { "path": "prototype/exploracion.png", "fullPage": true } },
+  { "name": "comparacion", "production": { "path": "raw/r4-comparacion-1440-full.png", "fullPage": true }, "prototype": { "path": "prototype/comparacion.png", "fullPage": true } },
+  { "name": "evidencia", "production": { "path": "raw/r4-evidencia-1440-full.png", "fullPage": true }, "prototype": { "path": "prototype/evidencia.png", "fullPage": true } },
+  { "name": "simulacion", "production": { "path": "raw/r4-simulacion-1440-full.png", "fullPage": true }, "prototype": { "path": "prototype/simulacion.png", "fullPage": true } }
+]

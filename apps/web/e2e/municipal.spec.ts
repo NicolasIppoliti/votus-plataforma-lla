@@ -189,6 +189,23 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(reference.getByRole("note")).toHaveText("Geografía de referencia CNE; no son resultados oficiales. No válida para elecciones históricas.");
       await expect(reference.getByRole("img", { name: /10 circuitos y 28 locales con coordenadas/ })).toBeVisible();
       await expect(reference.locator("circle")).toHaveCount(28);
+      const legend = reference.getByRole("group", { name: "Leyenda de referencia geográfica", exact: true });
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await legend.scrollIntoViewIfNeeded();
+        await expect(legend).toBeVisible();
+        await expect(legend.getByText("Contorno de circuito de referencia CNE; sin resultados electorales", { exact: true })).toBeVisible();
+        await expect(legend.getByText("Local de votación con coordenadas", { exact: true })).toBeVisible();
+        await expect(legend.getByText("Locales sin coordenadas: 3. No se dibujan en el mapa; se incluyen en la tabla de locales.", { exact: true })).toBeVisible();
+        await expect(legend.locator('[data-encoding="outline"]')).toBeVisible();
+        await expect(legend.locator('[data-encoding="dot"]')).toBeVisible();
+        expect(await legend.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          return box.left >= 0 && box.right <= document.documentElement.clientWidth
+            && box.top >= 0 && box.bottom <= window.innerHeight
+            && element.scrollWidth <= element.clientWidth;
+        })).toBe(true);
+      }
       const tableRegion = reference.getByRole("region", { name: "Tabla de locales de votación CNE 2025" });
       await expect(tableRegion.getByRole("row")).toHaveCount(32);
       await expect(tableRegion.getByRole("cell", { name: "Sin coordenadas: no se dibuja" })).toHaveCount(3);

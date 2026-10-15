@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { WorkspaceRequiredState } from "@/components/WorkspaceRequiredState";
@@ -504,9 +505,13 @@ function refusalPage(message: ReactNode): ReactNode {
   );
 }
 
-export default async function DrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
+export default async function DrilldownPage(props: DrilldownPageProps): Promise<ReactNode> {
   const workspace = await loadWorkspaceSelection();
   if (workspace.status !== "active") return <WorkspaceRequiredState selection={workspace} title="Exploración territorial" />;
+  return profileServerSpan("page.drilldown", () => renderDrilldownPage(props));
+}
+
+async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
   const params = await searchParams;
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
