@@ -349,13 +349,14 @@ it("renders the real Panorama page with an explicit unavailable default and map-
 
 it("resolves only the uniquely authorized Rosales scope and links its real explorer", async () => {
   panorama.facets.mockResolvedValueOnce({ elections: [{ id: "election-2025", year: 2025, round: "legislativas" }] });
-  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "DIPUTADO NACIONAL" }] });
+  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "CONCEJALES" }] });
   panorama.facets.mockResolvedValueOnce({ distritos: [{ code: "02" }], secciones: [{ code: "027" }], availableLevels: ["seccion"], exclusions: [] });
+  panorama.facets.mockResolvedValueOnce({ circuitos: [], exclusions: [] });
   panorama.evidence.mockResolvedValueOnce({ status: "authorization_denied" });
   const markup = renderToStaticMarkup(await HomePage() as ReactElement);
   expect(panorama.evidence).toHaveBeenLastCalledWith({ electionId: "election-2025", categoryId: "deputies", distritoCode: "02", seccionCode: "027", requestedLevel: "seccion", circuitoCode: null, establecimientoCode: null, mesaCode: null });
   expect(markup).toContain("Acceso a resultados oficiales denegado");
-  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
+  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;sourceKind=official&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
   expect(markup).not.toContain("Votos positivos oficiales</dt>");
 });
 

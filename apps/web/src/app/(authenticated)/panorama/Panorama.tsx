@@ -28,8 +28,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <section className={styles.context} aria-label="Contexto del panorama">
       <div><span>Vista de datos</span><strong>Resultados oficiales</strong></div>
       <div><label htmlFor="panorama-territory">Territorio</label><select id="panorama-territory" value={territory} onChange={event => setTerritory(event.target.value)}>{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <option key={item}>{item}</option>)}</select></div>
-      <div><span>Elección</span><strong>2025 · legislativas</strong></div>
-      <div><span>Categoría</span><strong>DIPUTADO NACIONAL</strong></div>
+      <div><span>Elección</span><strong>{result ? `${result.electionYear} · ${result.electionRound}` : "Sin selección disponible"}</strong></div>
+      <div><span>Categoría</span><strong>{result?.categoryName ?? "Sin selección disponible"}</strong></div>
     </section>
     <p className={styles.notice}>Fuente oficial exclusivamente. La geometría de referencia no acredita cobertura ni equivalencia electoral histórica.</p>
     <section className={styles.workbench} aria-label="Panorama territorial">
