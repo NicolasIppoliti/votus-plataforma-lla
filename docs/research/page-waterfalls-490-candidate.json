@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "variant": "candidate",
+  "status": "blocked",
+  "blocker": "local_fixture_helpers_missing",
+  "baselineSha": "0dcd6a945b5ad74478c71c7250025fca51573d4e",
+  "workingTree": "uncommitted",
+  "environment": "local_only",
+  "runtime": "v24.21.0",
+  "productionBuild": "passed",
+  "optimization": {
+    "status": "not_attempted",
+    "reason": "No measured baseline or real-route revocation evidence; do not promote request memoization."
+  },
+  "requestedSamplesPerRouteAndTemperature": 10,
+  "corpus": {
+    "electionA": "2023 generales",
+    "electionB": "2025 legislativas",
+    "category": "DIPUTADO NACIONAL",
+    "distrito": "02",
+    "seccion": "027",
+    "sourceKind": "official",
+    "workspace": "not_created",
+    "corpusStatus": "planned_not_sampled"
+  },
+  "protocol": {
+    "cold": "fresh Next process, login readiness probe only; database caches not flushed",
+    "warm": "repeat document visit in same process",
+    "navigation": "real primary Next Link; selector state may differ from full corpus URL",
+    "sqlTiming": "not available",
+    "criticalPath": "observed instrumented envelope and parent/interval waterfall; not an inferred SQL dependency graph",
+    "completion": "HTTP response finished and main visible; not proof of hydrated evidence completion"
+  },
+  "sessionMonitor": {
+    "spanCount": 0,
+    "byOperation": {}
+  },
+  "summaries": [
+    {
+      "route": "/",
+      "kind": "cold_first_visit",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/",
+      "kind": "warm_repeat",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/",
+      "kind": "navigation",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/drilldown",
+      "kind": "cold_first_visit",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/drilldown",
+      "kind": "warm_repeat",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/drilldown",
+      "kind": "navigation",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/compare",
+      "kind": "cold_first_visit",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/compare",
+      "kind": "warm_repeat",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    },
+    {
+      "route": "/compare",
+      "kind": "navigation",
+      "errors": 0,
+      "ttfb": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "filterToResult": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "criticalEnvelope": {
+        "n": 0,
+        "medianMs": null,
+        "p95Ms": null
+      },
+      "operations": {}
+    }
+  ],
+  "samples": []
+}

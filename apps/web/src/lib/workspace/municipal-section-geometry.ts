@@ -1,4 +1,5 @@
 import "server-only";
+import { profileServerSpan } from "./profile-server";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { SECTION_SOURCE, sectionArtifactSchema, sha256 } from "../geography/rosales-section-artifact";
@@ -10,7 +11,11 @@ interface VerifiedSection { status: "ok"; name: string; sha256: string; fetchedA
 export type MunicipalSectionResult = VerifiedSection | { status: "withheld" };
 
 /** Only the small, pinned offline derivative is read during a page invocation. */
-export async function loadMunicipalSectionGeometry(): Promise<MunicipalSectionResult> {
+export function loadMunicipalSectionGeometry(): Promise<MunicipalSectionResult> {
+  return profileServerSpan("geometry.section", readMunicipalSectionGeometry);
+}
+
+async function readMunicipalSectionGeometry(): Promise<MunicipalSectionResult> {
   try {
     const bytes = await readFile(resolve(process.cwd(), SECTION_PATH));
     if (sha256(bytes) !== SECTION_SHA256) return { status: "withheld" };
