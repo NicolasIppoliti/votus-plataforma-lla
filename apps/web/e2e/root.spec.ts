@@ -86,7 +86,7 @@ test("Panorama updates its figures when the shared category changes, keeping Ros
     await page.reload();
     await expect(total).toBeVisible();
     await expect(total).not.toHaveText(before!);
-  }));
+  }), test.info());
 });
 
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {

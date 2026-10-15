@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import type { TestInfo } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertE2eEnvironment } from "./gate-contract";
 
@@ -22,43 +24,67 @@ export function panoramaResultPlan() {
 
 /** Review authorization alone does not seed results. Categories are global catalog
  * entries: reuse existing names, and delete only catalog entries we inserted. */
-export async function withPanoramaResults<T>(run: () => Promise<T>): Promise<T> {
+export async function withPanoramaResults<T>(run: () => Promise<T>, info?: Pick<TestInfo, "outputPath">): Promise<T> {
   const environment = assertE2eEnvironment(process.env);
   const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
   const plan = panoramaResultPlan();
   const ownedCategories: string[] = [];
   const owned: { election?: boolean; jurisdiction?: boolean; archive?: boolean } = {};
-  function check(error: { message: string } | null) {
-    if (error) throw new Error(`Panorama results fixture: ${error.message}`);
+  let step = "start";
+  const failures: { step: string; errorClass: string; sqlState?: string }[] = [];
+  async function recordFailure(error: unknown) {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    failures.push({ step, errorClass: error instanceof Error ? error.name : "DatabaseError",
+      ...(typeof code === "string" && /^[A-Z0-9]{5}$/.test(code) ? { sqlState: code } : {}) });
+    if (info) await writeFile(info.outputPath("e2e-facts-panorama-fixture.json"), JSON.stringify({
+      failures, owned: { ...owned, categoryCount: ownedCategories.length },
+    }));
+  }
+  function check(error: { message: string; code?: string } | null) {
+    if (error) throw Object.assign(new Error(`Panorama results fixture: ${error.message}`), { code: error.code });
   }
   let outcome: { value: T } | { error: unknown };
   try {
     for (const [index, category] of plan.categories.entries()) {
+      step = `category-${index}-lookup`;
       const { data, error } = await admin.from("category").select("id").eq("name", category.name).maybeSingle();
       check(error);
       if (data) {
         category.id = data.id;
         plan.rows[index]!.category_id = data.id;
       } else {
+        step = `category-${index}-insert`;
         check((await admin.from("category").insert(category)).error);
         ownedCategories.push(category.id);
       }
     }
+    step = "election-insert";
     check((await admin.from("election").insert(plan.election)).error); owned.election = true;
+    step = "jurisdiction-insert";
     check((await admin.from("jurisdiction").insert(plan.jurisdiction)).error); owned.jurisdiction = true;
+    step = "archive-insert";
     check((await admin.from("archive_entry").insert(plan.archive)).error); owned.archive = true;
+    step = "results-insert";
     check((await admin.from("result_row").insert(plan.rows)).error);
+    step = "review-workspace-and-browser-journey";
     outcome = { value: await run() };
-  } catch (error) { outcome = { error }; }
-  const errors: unknown[] = [];
-  async function cleanup(operation: PromiseLike<{ error: { message: string } | null }>) {
-    try { check((await operation).error); } catch (error) { errors.push(error); }
+  } catch (error) {
+    outcome = { error };
+    try { await recordFailure(error); } catch { /* Diagnostics must not prevent owned cleanup. */ }
   }
-  if (owned.archive) await cleanup(admin.from("result_row").delete().eq("archive_entry_id", plan.archive.id));
-  if (owned.election) await cleanup(admin.from("election").delete().eq("id", plan.election.id));
-  if (owned.archive) await cleanup(admin.from("archive_entry").delete().eq("id", plan.archive.id));
-  if (owned.jurisdiction) await cleanup(admin.from("jurisdiction").delete().eq("id", plan.jurisdiction.id));
-  if (ownedCategories.length) await cleanup(admin.from("category").delete().in("id", ownedCategories));
+  const errors: unknown[] = [];
+  async function cleanup(name: string, operation: PromiseLike<{ error: { message: string; code?: string } | null }>) {
+    step = `cleanup-${name}`;
+    try { check((await operation).error); } catch (error) {
+      errors.push(error);
+      try { await recordFailure(error); } catch { /* Preserve the original failure. */ }
+    }
+  }
+  if (owned.archive) await cleanup("results", admin.from("result_row").delete().eq("archive_entry_id", plan.archive.id));
+  if (owned.election) await cleanup("election", admin.from("election").delete().eq("id", plan.election.id));
+  if (owned.archive) await cleanup("archive", admin.from("archive_entry").delete().eq("id", plan.archive.id));
+  if (owned.jurisdiction) await cleanup("jurisdiction", admin.from("jurisdiction").delete().eq("id", plan.jurisdiction.id));
+  if (ownedCategories.length) await cleanup("categories", admin.from("category").delete().in("id", ownedCategories));
   if ("error" in outcome) errors.unshift(outcome.error);
   if (errors.length) throw new AggregateError(errors, "Panorama fixture or cleanup failed");
   return (outcome as { value: T }).value;
