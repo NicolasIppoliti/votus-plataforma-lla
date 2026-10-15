@@ -1,4 +1,8 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
+import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext } from "@/lib/context/url";
+import { resolveDefaultElectoralContext } from "@/lib/context/default";
+import { Alert } from "@/components/ui/alert";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
 import styles from "./drilldown.module.css";
@@ -8,7 +12,8 @@ import { CircuitOutcomes, CircuitSelectionProvider } from "./CircuitOutcomes";
 import { DrilldownDistribution, InspectorDistribution } from "./DrilldownDistribution";
 import { ProvinceReferenceMap } from "./ProvinceReferenceMap";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
+import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING } from "./map-heading";
 import { TerritorialNavigator } from "./TerritorialNavigator";
 
 import { DrilldownSelectionForm, type SelectionField } from "./DrilldownSelectionForm";
@@ -22,7 +27,7 @@ import {
 import {
   EXPLORATION_LEVEL,
   formatFacetOptionLabel,
-  normalizeExplorationParams,
+
   type ExplorationFacetExclusion,
   type ExplorationFacets,
   type ExplorationLevel,
@@ -66,15 +71,10 @@ interface ExplorerFormProps {
   };
 }
 
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
+
 const LEGACY_QUERY_KEYS = ["jurisdictionId", "partyCategory", "partyJurisdiction"] as const;
-const FACET_EXCLUSION_LABELS = {
-  non_official_source_rows: "filas de fuente no oficial",
-  official_rows_with_incomplete_lineage: "filas oficiales con linaje incompleto",
-  coarse_facets_overflow: "opciones generales",
-  circuitos_overflow: "circuitos",
-  establecimientos_overflow: "establecimientos",
-  mesas_overflow: "mesas",
-} as const;
+
 
 type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type EvidenceRefusal = Exclude<OfficialDrilldownEvidence, { status: "ok" }>;
@@ -130,7 +130,8 @@ function facetExclusionNotes(
   overflow = false,
 ): ReactNode {
   return exclusions.map((exclusion) => {
-    const label = FACET_EXCLUSION_LABELS[exclusion.reason as keyof typeof FACET_EXCLUSION_LABELS] ?? `razón no reconocida (${exclusion.reason})`;
+    const displayLabel = facetExclusionLabel(exclusion.reason);
+    const label = displayLabel === exclusion.reason ? `razón no reconocida (${exclusion.reason})` : displayLabel;
     return (
       <p role="note" key={exclusion.reason}>
         {overflow
@@ -219,7 +220,7 @@ function SectionCompleteness({ completeness, selection }: { completeness: Eviden
 
 function ResultEvidence({ evidence, selection, facets, selected }: { evidence: EvidenceOk; selection: OfficialSelection; facets: ExplorationFacets; selected: ExplorerFormProps["selected"] }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
-  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className={styles.state} role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
+  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <Alert variant="denied">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</Alert>;
   const circuitLeadersMap = selection.requestedLevel === "seccion" && selection.circuitoCode === null && selection.establecimientoCode === null && selection.mesaCode === null
     && evidence.circuitOutcomes?.status === "ok" && evidence.circuitOutcomes.circuit_membership === "known" && selection.distritoCode === "02" && selection.seccionCode === "027";
   return (
@@ -499,13 +500,17 @@ function refusalPage(message: ReactNode): ReactNode {
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
         <ExplorerHeader />
-        <section className={styles.state} role="alert">{message}</section>
+        <Alert variant="denied">{message}</Alert>
       </div>
     </main>
   );
 }
 
-export default async function DrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
+export default function DrilldownPage(props: DrilldownPageProps): Promise<ReactNode> {
+  return profileServerSpan("page.drilldown", () => renderDrilldownPage(props));
+}
+
+async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promise<ReactNode> {
   const params = await searchParams;
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
@@ -517,8 +522,22 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     return refusalPage(<>Se rechazó la solicitud: los parámetros heredados {legacyKeys.join(", ")} ya no están permitidos.</>);
   }
 
+  const parsed = parseElectoralContext(params);
+  if (parsed.status === "invalid") {
+    return refusalPage(<>Se rechazó la solicitud: {parsed.reason}. {formatCounts(parsed.counts)}.</>);
+  }
+  const context = ELECTORAL_CONTEXT_KEYS.some((key) => Object.hasOwn(params, key)) || Object.hasOwn(params, "level")
+    ? parsed.value
+    : await resolveDefaultElectoralContext(createAuthorizedOfficialFacetRepository());
+  if (context.sourceKind !== "official") {
+    return refusalPage(<>Esta exploración muestra resultados oficiales. Para consultar fiscalización, abra el módulo de fiscalización.</>);
+  }
   const rawLevel = stringParam(params, "level");
-  const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel);
+  const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel)
+    ?? (!rawLevel ? context.mesaCode !== undefined ? EXPLORATION_LEVEL.MESA
+      : context.establecimientoCode ? EXPLORATION_LEVEL.ESTABLECIMIENTO
+      : context.circuitoCode ? EXPLORATION_LEVEL.CIRCUITO
+      : context.seccionCode ? EXPLORATION_LEVEL.SECCION : undefined : undefined);
   if (rawLevel && !level) {
     return refusalPage(<>Se rechazó la solicitud: nivel de informe no compatible {rawLevel}.</>);
   }
@@ -526,17 +545,8 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     return refusalPage("Se rechazó la solicitud: el nivel distrito no está disponible hasta que exista autorización distrital completa.");
   }
 
-  const normalized = normalizeExplorationParams(Object.fromEntries(
-    ["distritoCode", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode"]
-      .map((key) => [key, stringParam(params, key)] as const)
-      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
-  ));
-  if (normalized.status === "invalid") {
-    return refusalPage(<>Se rechazó la solicitud: {normalized.reason}. {formatCounts(normalized.counts)}.</>);
-  }
-
-  const electionId = stringParam(params, "electionId");
-  const categoryId = stringParam(params, "categoryId");
+  const normalized = { value: context };
+  const { electionId, categoryId } = context;
   let facets: ExplorationFacets;
   try {
     facets = await createAuthorizedOfficialFacetRepository().facets({
@@ -593,7 +603,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
     level === EXPLORATION_LEVEL.ESTABLECIMIENTO && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode) ||
     level === EXPLORATION_LEVEL.MESA && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode && typeof effectiveCodes.mesaCode === "number");
   if (!hierarchyMatches || !baseReady || !levelReady || !electionId || !categoryId || !effectiveCodes.distritoCode || !effectiveCodes.seccionCode || !level) {
-    return <PageShell facets={facets} selected={selected}><section className={styles.state} role="status">Elija una sección exacta y los selectores requeridos para el nivel del informe.</section></PageShell>;
+    return <PageShell facets={facets} selected={selected}><Alert variant="needs-selection">Elija una sección exacta y los selectores requeridos para el nivel del informe.</Alert></PageShell>;
   }
 
   const selection: OfficialSelection = {
@@ -610,7 +620,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
   if (evidence.status !== OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK) {
     return (
       <PageShell facets={facets} selected={selected} workbench={false} showTrail={false}>
-        <section className={styles.state} role="alert">
+        <Alert variant={evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED ? "denied" : evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.EMPTY ? "empty" : "unavailable"}>
           <p>{refusalMessage(evidence.status)}</p>
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE
             ? <a href={`/drilldown?${canonicalScopeSearchParams({
@@ -627,7 +637,7 @@ export default async function DrilldownPage({ searchParams }: DrilldownPageProps
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED
             ? null
             : <RefusalEvidence evidence={evidence.evidence} />}
-        </section>
+        </Alert>
       </PageShell>
     );
   }

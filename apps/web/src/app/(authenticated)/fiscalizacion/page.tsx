@@ -4,15 +4,17 @@ import { CoverageChart } from "./CoverageChart";
 
 import { FiscalizacionSelectionForm, type CoverageField } from "./FiscalizacionSelectionForm";
 import { EvidenceState } from "@/components/EvidenceState";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   formatFacetOptionLabel,
-  normalizeExplorationParams,
   type ExplorationFacets,
 } from "@/lib/results/exploration";
-import { repeatedParams, stringParam } from "@/lib/results/query-params";
+import { repeatedParams } from "@/lib/results/query-params";
+import { resolveDefaultElectoralContext } from "@/lib/context/default";
+import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext, type ElectoralContext } from "@/lib/context/url";
 import { AuthorizedOfficialFacetsError, OFFICIAL_FACETS_ERROR, createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { formatCount } from "@/lib/format/number";
 import type {
@@ -25,12 +27,7 @@ import {
   type FiscalizacionEvidenceSelection,
 } from "@/lib/workspace/fiscalizacion-evidence";
 
-const ALLOWED_QUERY_KEYS = new Set([
-  "electionId",
-  "categoryId",
-  "distritoCode",
-  "seccionCode",
-]);
+const ALLOWED_QUERY_KEYS = new Set<string>(ELECTORAL_CONTEXT_KEYS);
 
 interface FiscalizacionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -61,9 +58,10 @@ interface EvidenceExclusion {
   rows: number;
 }
 
-function FiscalizacionWorkspace({ facets, selected, children }: {
+function FiscalizacionWorkspace({ facets, selected, sourceKind, children }: {
   facets: ExplorationFacets | null;
   selected: CoverageFormSelection;
+  sourceKind: ElectoralContext["sourceKind"];
   children: ReactNode;
 }): ReactNode {
   const fields: CoverageField[] | null = facets ? [
@@ -79,7 +77,7 @@ function FiscalizacionWorkspace({ facets, selected, children }: {
   return <main className={`page-shell ${styles.root}`}>
     <div className={`shell-container ${styles.layout}`}>
       <PageHeader />
-      <FiscalizacionSelectionForm selected={{ electionId: selected.electionId ?? "", categoryId: selected.categoryId ?? "",
+      <FiscalizacionSelectionForm sourceKind={sourceKind} selected={{ electionId: selected.electionId ?? "", categoryId: selected.categoryId ?? "",
         distritoCode: selected.distritoCode ?? "", seccionCode: selected.seccionCode ?? "" }} fields={fields}>
         {children}
       </FiscalizacionSelectionForm>
@@ -123,10 +121,9 @@ function collectionNotice(
   collection: EvidenceCollection<unknown>,
 ): ReactNode {
   return (
-    <p role={collection.truncated ? "alert" : "note"}>
-      {label}: se muestran {collection.items.length} de {collection.total}
-      {collection.truncated ? "; respuesta truncada" : ""}.
-    </p>
+    collection.truncated ? <Alert variant="unavailable">
+      {label}: se muestran {collection.items.length} de {collection.total}; respuesta truncada.
+    </Alert> : <p role="note">{label}: se muestran {collection.items.length} de {collection.total}.</p>
   );
 }
 
@@ -385,9 +382,9 @@ function CoverageEvidence({
   return (
     <section className={styles.coverage} aria-labelledby="workspace-coverage">
       <h2 id="workspace-coverage">Cobertura autorizada</h2>
-      <p role={value ? "status" : "alert"}>
+      <Alert variant={value ? "caveat" : "unavailable"}>
         Estado de cobertura: {settledStatus(result)}.
-      </p>
+      </Alert>
       {value && "observed_units" in value ? (
         <>
           <p>
@@ -414,13 +411,13 @@ function CoverageEvidence({
             value.exclusions as EvidenceCollection<EvidenceExclusion>,
           )}
           {value.truncated ? (
-            <p role="alert">La evidencia de cobertura está truncada.</p>
+            <Alert variant="unavailable">La evidencia de cobertura está truncada.</Alert>
           ) : null}
         </>
       ) : value && "exclusions" in value ? (
         renderExclusions("Exclusiones de cobertura", value.exclusions)
       ) : value && "truncated" in value && value.truncated ? (
-        <p role="alert">La evidencia de cobertura está truncada.</p>
+        <Alert variant="unavailable">La evidencia de cobertura está truncada.</Alert>
       ) : null}
     </section>
   );
@@ -435,9 +432,9 @@ function ResultEvidence({
   return (
     <section className={styles.result} aria-labelledby="workspace-result">
       <h2 id="workspace-result">Resultado autorizado</h2>
-      <p role={value ? "status" : "alert"}>
+      <Alert variant={value ? "caveat" : "unavailable"}>
         Estado del resultado: {settledStatus(result)}.
-      </p>
+      </Alert>
       {value && "reference" in value ? (
         <>
           <p>
@@ -449,7 +446,7 @@ function ResultEvidence({
             denominador {value.reference.denominator_units}.
           </p>
           <p>Denominador oficial: {value.reference.denominator_units}.</p>
-          <TableRegion label="Resultados de fiscalización">
+          <TableRegion mobileHint label="Resultados de fiscalización">
             <Table className="data-table">
               <TableCaption>Resultados de fiscalización</TableCaption>
               <TableHeader>
@@ -486,9 +483,9 @@ function ResultEvidence({
           {collectionNotice("Listas no mapeadas", value.unmapped)}
           {renderExclusions("Exclusiones del resultado", value.exclusions)}
           {value.provenance.items.filter((item) => !item.sha256 || item.status !== "ok").map((item) => (
-            <p role="alert" key={item.id}>
+            <Alert variant="unavailable" key={item.id}>
               {item.id}: estado {item.status}; SHA-256 {item.sha256 ? "disponible" : "no disponible"}.
-            </p>
+            </Alert>
           ))}
           <details className={styles.provenance}>
             <summary>Archivo de respaldo</summary>
@@ -503,13 +500,13 @@ function ResultEvidence({
           </details>
           {collectionNotice("Procedencia", value.provenance)}
           {value.truncated ? (
-            <p role="alert">La evidencia del resultado está truncada.</p>
+            <Alert variant="unavailable">La evidencia del resultado está truncada.</Alert>
           ) : null}
         </>
       ) : value && "exclusions" in value ? (
         renderExclusions("Exclusiones del resultado", value.exclusions)
       ) : value && "truncated" in value && value.truncated ? (
-        <p role="alert">La evidencia del resultado está truncada.</p>
+        <Alert variant="unavailable">La evidencia del resultado está truncada.</Alert>
       ) : null}
     </section>
   );
@@ -535,11 +532,12 @@ function AuthorizedEvidence({
       <EvidenceState state="error" title="Error técnico de evidencia" titleId="workspace-evidence-error">
         <p>No se pudo cargar la pareja de evidencia. Reintente la consulta.</p>
         {/* Native navigation deliberately reloads the document and its evidence requests. */}
-        <Button variant="solid" asChild><a href={`/fiscalizacion?${new URLSearchParams({
+        <Button variant="solid" asChild><a href={`/fiscalizacion?${serializeElectoralContext({
           electionId: selection.electionId,
           categoryId: selection.categoryId,
           distritoCode: selection.distritoCode,
           seccionCode: selection.seccionCode,
+          sourceKind: "fiscalizacion",
         })}`}>Reintentar carga</a></Button>
       </EvidenceState>
     ) : presentation.kind === PRESENTATION_KIND.REFUSED ? (
@@ -570,40 +568,41 @@ async function renderFiscalizacionPage(
     );
   }
 
-  const electionId = stringParam(params, "electionId");
-  const categoryId = stringParam(params, "categoryId");
-  const rawDistritoCode = stringParam(params, "distritoCode");
-  const rawSeccionCode = stringParam(params, "seccionCode");
-  const normalized = normalizeExplorationParams({
-    ...(rawDistritoCode ? { distritoCode: rawDistritoCode } : {}),
-    ...(rawSeccionCode ? { seccionCode: rawSeccionCode } : {}),
-  });
-  if (normalized.status === "invalid") {
-    return refusal(`${normalized.reason}. ${formatCounts(normalized.counts)}`);
+  const parsed = parseElectoralContext(params);
+  if (parsed.status === "invalid") {
+    return refusal(`${parsed.reason}. ${formatCounts(parsed.counts)}`);
   }
-
+  const repository = createAuthorizedOfficialFacetRepository();
+  const context = Object.hasOwn(params, "electionId") ? parsed.value : {
+    ...await resolveDefaultElectoralContext(repository), sourceKind: parsed.value.sourceKind,
+  };
+  if (parsed.value.circuitoCode || parsed.value.establecimientoCode || parsed.value.mesaCode !== undefined) {
+    return refusal("Fiscalización solo admite alcance de sección; seleccione una sección en el contexto electoral");
+  }
+  const { electionId, categoryId, distritoCode, seccionCode, sourceKind } = context;
   const selected: CoverageFormSelection = {
     ...(electionId ? { electionId } : {}),
     ...(categoryId ? { categoryId } : {}),
-    ...(normalized.value.distritoCode
-      ? { distritoCode: normalized.value.distritoCode }
-      : {}),
-    ...(normalized.value.seccionCode
-      ? { seccionCode: normalized.value.seccionCode }
-      : {}),
+    ...(distritoCode ? { distritoCode } : {}),
+    ...(seccionCode ? { seccionCode } : {}),
   };
 
-   const distritoCode = normalized.value.distritoCode;
-   const seccionCode = normalized.value.seccionCode;
-   if (electionId && categoryId && distritoCode && seccionCode) {
+   if (sourceKind === "fiscalizacion" && electionId && categoryId && distritoCode && seccionCode) {
      const selection: FiscalizacionEvidenceSelection = { electionId, categoryId, distritoCode, seccionCode };
-     const [coverage, result, facets] = await Promise.all([Promise.allSettled([loadSafeFiscalizacionCoverage(selection, true), loadSafeFiscalizacionResult(selection, true)]), createAuthorizedOfficialFacetRepository().facets(selected).catch(() => null)]).then(([evidence, loadedFacets]) => [evidence[0], evidence[1], loadedFacets] as const);
-     return <FiscalizacionWorkspace facets={facets} selected={selected}><AuthorizedEvidence selection={selection} coverage={coverage} result={result} /></FiscalizacionWorkspace>;
+     const [coverage, result, facets] = await Promise.all([Promise.allSettled([loadSafeFiscalizacionCoverage(selection, true), loadSafeFiscalizacionResult(selection, true)]), repository.facets(selected).catch(() => null)]).then(([evidence, loadedFacets]) => [evidence[0], evidence[1], loadedFacets] as const);
+     return <FiscalizacionWorkspace facets={facets} selected={selected} sourceKind={sourceKind}><AuthorizedEvidence selection={selection} coverage={coverage} result={result} /></FiscalizacionWorkspace>;
    }
    let facets: ExplorationFacets;
-   try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }
+   try { facets = await repository.facets(selected); }
    catch (error) { return refusal(error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones" : "No se pudieron cargar las opciones"); }
-   return <FiscalizacionWorkspace facets={facets} selected={selected}><section className={styles.state} aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></FiscalizacionWorkspace>;
+   if (sourceKind === "official") {
+     return <FiscalizacionWorkspace facets={facets} selected={selected} sourceKind={sourceKind}>
+       <Alert variant="caveat"><p>La fiscalización es una fuente no oficial y requiere activación explícita. No se combina con resultados oficiales.</p>
+         <Button asChild><a href={`/fiscalizacion?${serializeElectoralContext({ ...context, sourceKind: "fiscalizacion" })}`}>Activar fiscalización (no oficial)</a></Button>
+       </Alert>
+     </FiscalizacionWorkspace>;
+   }
+   return <FiscalizacionWorkspace facets={facets} selected={selected} sourceKind={sourceKind}><Alert variant="needs-selection" aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></Alert></FiscalizacionWorkspace>;
 }
 
 export default async function FiscalizacionPage({

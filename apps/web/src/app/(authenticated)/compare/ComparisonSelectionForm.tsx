@@ -139,6 +139,7 @@ export function ComparisonSelectionForm({ selected, groups, children }: Props) {
                       <option value="">{field.placeholder}</option>
                       {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
+                    {state.draft[field.key] && <span className="selected-value" aria-hidden="true">{field.options.find(option => option.value === state.draft[field.key])?.label}</span>}
                   </div>
                 ))}
               </fieldset>

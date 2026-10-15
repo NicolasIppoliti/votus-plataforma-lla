@@ -21,6 +21,41 @@ function outsideDisclosures(html: string): string {
   }).join("");
 }
 
+describe("scenario handoff", () => {
+  it("follows both real scenario links into prefilled projections", async () => {
+    const { default: ScenariosPage } = await import("../scenarios/page");
+    const source = renderToStaticMarkup(await ScenariosPage());
+    const links = [...source.matchAll(/href="(\/simulate\?scenario=[^"]+)"/g)];
+    expect(links).toHaveLength(2);
+    for (const [, href] of links) {
+      const params = Object.fromEntries(new URL(href!, "https://example.test").searchParams);
+      const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve(params) }) as ReactElement);
+      expect(html).toContain("Resultado (municipal de PBA)");
+      expect(html).toContain("no es un resultado oficial");
+      expect(html).not.toContain("Territorio no vinculado");
+    }
+  });
+  it("rejects mixed scenario and official requests before either loads", async () => {
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ scenario: "persistencia", officialBase: "2025" }) }) as ReactElement);
+    expect(html).toContain("no se puede combinar");
+    expect(html).not.toContain('data-testid="allocation-result"');
+    expect(html).not.toContain("Base oficial 2025 · JEBA definitivo");
+  });
+  it("refuses unknown scenarios without loading votes", async () => {
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ scenario: "unknown" }) }) as ReactElement);
+    expect(html).toContain("Escenario no disponible");
+    expect(html).not.toContain('data-testid="allocation-result"');
+  });
+  it("loads the named projection through the rendered page", async () => {
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ scenario: "transferencias_ei" }) }) as ReactElement);
+    expect(html).toContain("Transferencias estimadas por inferencia ecológica");
+    expect(html).toContain("mayores restos");
+    expect(html).toContain("Diferencia máxima por lista");
+    expect(html).toContain("Resultado (municipal de PBA)");
+    expect(html).toContain("no es un resultado oficial");
+  });
+});
+
 describe("official 2025 base", () => {
   it("offers an official base through the rendered entry point and loads exact published votes", async () => {
     const initial = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({}) }) as ReactElement);

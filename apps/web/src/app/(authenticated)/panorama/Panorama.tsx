@@ -1,10 +1,14 @@
 "use client";
 
+import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
+import { Alert } from "@/components/ui/alert";
+import { RosalesAdministrativeDetails, RosalesTerritoryName } from "@/components/RosalesAdministrativeContext";
 import { granularityLabel } from "@/lib/results/granularity";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
 import { PanoramaChildren } from "./PanoramaChildren";
-import { MAP_HEADING, TerritorialMapStage } from "../drilldown/TerritorialMapStage";
+import { TerritorialMapStage } from "../drilldown/TerritorialMapStage";
+import { MAP_HEADING } from "../drilldown/map-heading";
 import type { PanoramaData } from "./load-panorama";
 import styles from "./panorama.module.css";
 import { formatCount, formatDecimal } from "@/lib/format/number";
@@ -17,6 +21,26 @@ export function Panorama({ data }: { data: PanoramaData }) {
   const evidence = rosales ? data.evidence : undefined;
   const ok = evidence?.status === "ok" ? evidence : undefined;
   const result = ok?.result;
+  const [requestedCircuit, setRequestedCircuit] = useState<string | null>(null);
+  const circuits = ok?.circuitOutcomes;
+  const selectable = rosales && circuits?.status === "ok" && circuits.circuit_membership === "known";
+  const mapped = selectable && !!data.circuitGeometry?.length;
+  const selectedCircuit = selectable && circuits.circuits.some(c => c.circuito_code === requestedCircuit) ? requestedCircuit : null;
+  useEffect(() => {
+    const restore = () => setRequestedCircuit(new URL(window.location.href).searchParams.get("selectedCircuit"));
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+  const selectCircuit = (code: string | null) => {
+    if (code && (!selectable || !circuits.circuits.some(c => c.circuito_code === code))) return;
+    const url = new URL(window.location.href);
+    if (code) url.searchParams.set("selectedCircuit", code);
+    else url.searchParams.delete("selectedCircuit");
+    if (url.href !== window.location.href) window.history.pushState(null, "", url);
+    setRequestedCircuit(code);
+  };
+  const selectTerritory = (value: string) => { selectCircuit(null); setTerritory(value); };
   const ranked = result ? [...result.parties].sort((a, b) => b.votes - a.votes) : [];
   const tied = ranked.length > 1 && ranked[0]!.votes === ranked[1]!.votes;
   const leader = result && result.totalVotes > 0 && !tied ? ranked[0] : undefined;
@@ -26,19 +50,20 @@ export function Panorama({ data }: { data: PanoramaData }) {
   return <>
     <section className={styles.context} aria-label="Contexto del panorama">
       <div><span>Vista de datos</span><strong>Resultados oficiales</strong></div>
-      <div><label htmlFor="panorama-territory">Territorio</label><select id="panorama-territory" value={territory} onChange={event => setTerritory(event.target.value)}>{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <option key={item}>{item}</option>)}</select></div>
+      <div><label htmlFor="panorama-territory">Territorio</label><select id="panorama-territory" value={territory} onChange={event => selectTerritory(event.target.value)}>{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <option key={item}>{item}</option>)}</select></div>
       <div><span>Elección</span><strong>{result ? `${result.electionYear} · ${result.electionRound}` : "Sin selección disponible"}</strong></div>
       <div><span>Categoría</span><strong>{result?.categoryName ?? "Sin selección disponible"}</strong></div>
     </section>
-    <p className={styles.notice}>Fuente oficial exclusivamente. La geometría de referencia no acredita cobertura ni equivalencia electoral histórica.</p>
+    <p className={styles.notice}>Fuente oficial exclusivamente. La geometría CNE es de referencia: no acredita cobertura ni equivalencia electoral histórica; 0248B y 0248C se superponen en la fuente y su área compartida se muestra neutra y rayada.</p>
     <section className={styles.workbench} aria-label="Panorama territorial">
       <div className={styles.map}>
-        <nav className={styles.trail} aria-label="Recorrido territorial">{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <button key={item} type="button" aria-current={item === territory ? "location" : undefined} onClick={() => setTerritory(item)}>{item}</button>)}</nav>
-        <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? "Sección 027 · distrito 02" : "Sin agregado autorizado en Panorama"}</p></header>
-        {rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
+        <nav className={styles.trail} aria-label="Recorrido territorial">{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <button key={item} type="button" aria-current={item === territory ? "location" : undefined} onClick={() => selectTerritory(item)}>{item}</button>)}</nav>
+        <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? <RosalesTerritoryName /> : "Sin agregado autorizado en Panorama"}</p></header>
+        {rosales && <RosalesAdministrativeDetails />}
+        {mapped ? <section aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
-        <h2 id="panorama-result-heading">Lectura de la selección</h2><p role="status">{state}</p>
+        <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
         {result && <>
           <div className={styles.leader}><span>{complete ? "Primer lugar observado" : "En cabeza · provisional"}</span><strong>{result.totalVotes === 0 ? "Cero votos" : tied ? "Empate en primer lugar" : leader ? name(leader) : "Sin agrupaciones disponibles"}</strong>
             <div className={styles.metrics}><p><span>Sobre votos positivos</span><b>{leader?.voteShare == null ? "No disponible" : `${formatDecimal(Number(leader.voteShare) * 100)} %`}</b></p><p><span>Margen sobre el segundo</span><b>{leader && ranked.length > 1 && result.totalVotes > 0 ? `${formatDecimal((leader.votes - ranked[1]!.votes) / result.totalVotes * 100)} pp` : "No disponible"}</b></p></div>
@@ -53,12 +78,12 @@ export function Panorama({ data }: { data: PanoramaData }) {
         </>}
       </aside>
     </section>
-    <section className={styles.observations} aria-labelledby="panorama-observations"><h2 id="panorama-observations">Lo que se puede leer aquí</h2><ul><li>{state}</li><li>Panorama termina en el partido. Circuitos, establecimientos, mesas e internas se consultan en Exploración.</li><li>No hay participación, comparación histórica ni pronóstico disponibles en esta lectura.</li></ul></section>
-    <PanoramaChildren key={territory} data={rosales ? data : { href: "/drilldown", exclusions: [] }} />
+    <section className={styles.observations} aria-labelledby="panorama-observations"><h2 id="panorama-observations">Lo que se puede leer aquí</h2><ul><li>{state}</li><li>Panorama muestra el primer lugar observado y margen por circuito. Seleccioná un circuito para filtrar su fila; el agregado de la sección no cambia. Establecimientos, mesas e internas se consultan en Exploración.</li><li>No hay participación, comparación histórica ni pronóstico disponibles en esta lectura.</li></ul></section>
+    <PanoramaChildren key={territory} data={rosales ? data : { href: "/drilldown", exclusions: [] }} selectedCircuit={selectedCircuit} onClearSelection={() => selectCircuit(null)} />
     <section className={styles.evidence} aria-labelledby="official-evidence-heading"><h2 id="official-evidence-heading">Límites y evidencia</h2>
       {data.exclusions.map(item => <p key={item.reason}>Opciones excluidas · {item.reason}: {formatCount(item.rows)} filas.</p>)}
       {result?.sourceExclusions.map(item => <p key={item.kind}>Excluidas del resultado · fuente {item.kind}: {formatCount(item.rows)} filas / {formatCount(item.votes)} votos.</p>)}
-      {ok && <><p>El contorno es neutral: no se dispone de un mapa de resultados por partido en Panorama.</p><details><summary>Procedencia del resultado oficial</summary>{ok.provenance.items.map(item => <p key={item.archiveEntryId}>Archivo {item.archiveEntryId} · {item.capability} · {item.fetchedAt} · sha256 {item.sha256 ?? "no disponible"}</p>)}</details>{ok.provenance.items.filter(item => item.status !== "ok" || !item.sha256).map(item => <p key={item.archiveEntryId}>Verificación de archivo no confirmada: {item.archiveEntryId} · estado {item.status} · {item.sha256 ? "hash suministrado" : "sin hash"}.</p>)}</>}
+      {ok && <><p>{mapped ? "Circuitos de referencia CNE; no certificados como límites electorales vigentes. La selección no modifica los totales de la sección." : "Mapa de ganadores no disponible para esta selección; el contorno permanece neutral."}</p><details><summary>Procedencia del resultado oficial</summary>{ok.provenance.items.map(item => <p key={item.archiveEntryId}>Archivo {item.archiveEntryId} · {item.capability} · {item.fetchedAt} · sha256 {item.sha256 ?? "no disponible"}</p>)}</details>{ok.provenance.items.filter(item => item.status !== "ok" || !item.sha256).map(item => <p key={item.archiveEntryId}>Verificación de archivo no confirmada: {item.archiveEntryId} · estado {item.status} · {item.sha256 ? "hash suministrado" : "sin hash"}.</p>)}</>}
       {!ok && <p>No hay evidencia interpretable disponible para la selección actual.</p>}
     </section>
   </>;

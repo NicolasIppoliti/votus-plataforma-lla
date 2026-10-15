@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { loadScenarioSimulation } from "@/lib/scenarios/scenario-simulation";
+import { Alert } from "@/components/ui/alert";
 import { loadOfficialSimulationBase } from "@/lib/scenarios/official-simulation-base";
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import type { ReactNode } from "react";
@@ -249,7 +251,7 @@ function SweepResult({ query, baselineError }: SweepResultProps) {
   } catch (error) {
     requestError = error instanceof SimulationFormError ? error.messages.join(" ") : "Revise el escenario de base.";
   }
-  if (!sweep) return <p role="alert">Muestreo rechazado; la base se conserva. {requestError}</p>;
+  if (!sweep) return <Alert variant="unavailable">Muestreo rechazado; la base se conserva. {requestError}</Alert>;
   const amounts = sweep.amounts;
   const points = sweep.queries.map((pointQuery, index) => {
     let result: AllocationResult | undefined;
@@ -326,7 +328,7 @@ function SweepResult({ query, baselineError }: SweepResultProps) {
             </tbody>
           </table>
         </div>
-      ) : <p role="alert">No hay muestras válidas: no se calculan extremos de bancas.</p>}
+      ) : <Alert variant="unavailable">No hay muestras válidas: no se calculan extremos de bancas.</Alert>}
     </section>
   );
 }
@@ -351,14 +353,32 @@ export default async function SimulatePage({
     return (
       <main>
         <h1>Simulación de bancas</h1>
-        <p role="alert">
+        <Alert variant="denied">
           Se rechazó la solicitud: estos parámetros de consulta se proporcionaron más de una vez y
           no se pueden resolver a un único valor: {repeated.join(", ")}.
-        </p>
+        </Alert>
       </main>
     );
   }
 
+  let scenarioProvenance: Awaited<ReturnType<typeof loadScenarioSimulation>>;
+  let scenarioError: string | undefined;
+  const scenarioId = stringParam(params, "scenario");
+  if (scenarioId) {
+    if (requestQuery.has("input") || requestQuery.has("baseInput") || requestQuery.has("officialBase")) {
+      return <main><h1>Simulación de escenarios</h1><Alert variant="denied">El escenario no se puede combinar con otros datos aportados.</Alert></main>;
+    } else {
+      scenarioProvenance = await loadScenarioSimulation(scenarioId);
+      if (scenarioProvenance) {
+        params.input = JSON.stringify(scenarioProvenance.input);
+        params.council = SIMULATION_COUNCIL.JURISDICTION;
+        requestQuery.delete("scenario");
+        requestQuery.set("input", params.input);
+        requestQuery.set("council", params.council);
+        requestQuery.sort();
+      } else scenarioError = "Escenario no disponible: no se cargaron cifras.";
+    }
+  }
   let officialBaseLoaded = false;
   let officialBaseError: string | undefined;
   if (stringParam(params, "officialBase") === "2025") {
@@ -509,24 +529,29 @@ export default async function SimulatePage({
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
+      {scenarioProvenance ? <section aria-label="Procedencia del escenario">
+        <p>Escenario: {scenarioProvenance.name}. Proyección 2027 · supuestos sin validar; no es un resultado oficial. Las bancas se calculan desde estos votos con el asignador de Simulación.</p>
+        {scenarioProvenance.apportioned ? <p>Votos enteros obtenidos por redondeo de las proporciones del escenario mediante mayores restos sobre 32.291 votos. Diferencia máxima por lista: {scenarioProvenance.maxDifference.toFixed(6)} votos.</p> : <p>Votos enteros exactos recuperados de las proporciones del archivo sobre 32.291 votos.</p>}
+      </section> : null}
+      {scenarioError ? <Alert variant="unavailable">{scenarioError}</Alert> : null}
       <section aria-label="Cargar base oficial">
         <a href="/simulate?officialBase=2025">Cargar base oficial 2025 de Coronel Rosales</a>
         {officialBaseLoaded ? <p>Base oficial 2025 · JEBA definitivo · Concejales · argentinos y extranjeros. Positivos: 32.291; blancos: 2.150; total publicado: 34.441. Base del cociente Hare (sin blancos ni anulados): 32.291. Anulados no publicados: no se infieren como cero. El reparto usa Hare y 9 bancas por elección. Las transferencias posteriores son hipótesis, no resultados oficiales.</p> : null}
-        {officialBaseError ? <p role="alert">{officialBaseError}</p> : null}
+        {officialBaseError ? <Alert variant="unavailable">{officialBaseError}</Alert> : null}
       </section>
       <SimulationForm officialBaseLoaded={officialBaseLoaded} requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
         impact={result ? <RenewalStrip result={result}><SeatDistribution result={result} /></RenewalStrip> : null}
         baseImpact={result && baseResult ? <RenewalStrip result={baseResult}><SeatDistribution result={baseResult} /></RenewalStrip> : null}
         comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
       <SweepResult query={requestQuery.toString()} baselineError={baseError ?? councilError ?? parseError} />
-      {baseError ? <p role="alert">{baseError}</p> : null}
-      {parseError ? <p role="alert">{parseError}</p> : null}
-      {allocationError ? <p role="alert">{allocationError}</p> : null}
-      {councilError ? <p role="alert">{councilError}</p> : null}
+      {baseError ? <Alert variant="unavailable">{baseError}</Alert> : null}
+      {parseError ? <Alert variant="unavailable">{parseError}</Alert> : null}
+      {allocationError ? <Alert variant="unavailable">{allocationError}</Alert> : null}
+      {councilError ? <Alert variant="unavailable">{councilError}</Alert> : null}
       {!input && !parseError ? (
-        <p role="status">
+        <Alert variant="needs-selection">
           No se ejecutó ninguna simulación: proporcione un escenario válido para calcular las bancas.
-        </p>
+        </Alert>
       ) : null}
       {result &&
       input?.level === "pba_municipal" &&

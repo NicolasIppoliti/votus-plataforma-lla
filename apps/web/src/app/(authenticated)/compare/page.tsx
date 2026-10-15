@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ComponentProps, ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { ELECTORAL_CONTEXT_KEYS, COMPARISON_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
@@ -12,6 +13,7 @@ import { loadMunicipalSectionGeometry } from "@/lib/workspace/municipal-section-
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { EvidenceState } from "@/components/EvidenceState";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
@@ -22,7 +24,6 @@ import {
   OFFICIAL_COMPARISON_EVIDENCE_STATUS,
   loadAuthorizedOfficialComparisonEvidence,
   type AuthorizedOfficialComparisonSideEvidence,
-  type OfficialComparisonUnmappedSide,
 } from "@/lib/workspace/official-comparison-evidence";
 import {
   AuthorizedOfficialFacetsError,
@@ -71,14 +72,14 @@ function formatSwing(value: number): string {
   return `${normalized > 0 ? "+" : ""}${formatFixed2(normalized)} puntos porcentuales`;
 }
 
-function refusalPage(message: ReactNode): ReactNode {
+function refusalPage(message: ReactNode, variant: "denied" | "unavailable" = "denied", action?: ReactNode): ReactNode {
   return (
     <main className="page-shell official-compare">
       <div className="shell-container official-compare__layout">
         <header className="official-compare__header">
           <h1>Comparación electoral</h1>
         </header>
-        <p className="official-compare__state" role="alert">{message}</p>
+        <Alert variant={variant} action={action}>{message}</Alert>
       </div>
     </main>
   );
@@ -186,14 +187,14 @@ function CompareSelector({
       id: "compare-edit-a-heading", title: "Lado A", description: "Selección oficial de 2023", className: "official-compare__side",
       fields: [
         { key: "leftElectionId", id: "compare-left-election", label: "Elección A (2023)", placeholder: "Elegir elección de 2023", options: elections.filter((option) => option.year === 2023).map((option) => ({ value: option.id, label: option.label })) },
-        { key: "leftCategoryId", id: "compare-left-category", label: "Categoría A", placeholder: "Elegir categoría izquierda", options: leftCategories.map((option) => ({ value: option.id, label: option.name })) },
+        { key: "leftCategoryId", id: "compare-left-category", label: "Categoría A", placeholder: "Elegir categoría A", options: leftCategories.map((option) => ({ value: option.id, label: option.name })) },
       ],
     },
     {
       id: "compare-edit-b-heading", title: "Lado B", description: "Selección oficial de 2025", className: "official-compare__side",
       fields: [
         { key: "rightElectionId", id: "compare-right-election", label: "Elección B (2025)", placeholder: "Elegir elección de 2025", options: elections.filter((option) => option.year === 2025).map((option) => ({ value: option.id, label: option.label })) },
-        { key: "rightCategoryId", id: "compare-right-category", label: "Categoría B", placeholder: "Elegir categoría derecha", options: rightCategories.map((option) => ({ value: option.id, label: option.name })) },
+        { key: "rightCategoryId", id: "compare-right-category", label: "Categoría B", placeholder: "Elegir categoría B", options: rightCategories.map((option) => ({ value: option.id, label: option.name })) },
       ],
     },
     {
@@ -232,21 +233,15 @@ function CompareSelector({
               <p>{message}</p>
             </EvidenceState>
           ) : (
-            <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+            <Alert variant={alert ? "unavailable" : "needs-selection"}>{message}</Alert>
           )}
-          {context}
+          <details className={styles.selectionNotes} data-applied-context=""><summary>Contexto de comparación aplicada</summary>{context}</details>
           </section>
           {children}
         </ComparisonSelectionForm>
       </div>
     </main>
   );
-}
-
-function unmappedPartiesRefusal(sides: OfficialComparisonUnmappedSide[]): string {
-  const labels = { left: "lado izquierdo", right: "lado derecho" } as const;
-  const details = sides.map(({ side, partyCount, totalVotes }) => `${labels[side]}: ${formatCount(partyCount)} ${partyCount === 1 ? "partido" : "partidos"} sin mapear, ${formatCount(totalVotes)} votos`);
-  return `La comparación se rechazó porque contiene identidades partidarias sin mapear. ${details.join(". ")}. No se muestran cifras parciales.`;
 }
 
 function hasOnlyOfficialRenderedEvidence(side: unknown): boolean {
@@ -358,8 +353,26 @@ function comparisonContext(
   );
 }
 
-export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
-  const params = { ...await searchParams };
+export default function ComparePage(props: ComparePageProps): Promise<ReactNode> {
+  return profileServerSpan("page.compare", () => renderComparePage(props));
+}
+
+async function renderComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
+  const originalParams = await searchParams;
+  const retryQuery = new URLSearchParams();
+  for (const [key, value] of Object.entries(originalParams)) {
+    if (typeof value === "string") retryQuery.set(key, value);
+  }
+  const retryUrl = `/compare${retryQuery.size ? `?${retryQuery}` : ""}`;
+  const loaderFailure = (error: unknown) => {
+    const denied = error instanceof AuthorizedOfficialFacetsError &&
+      [OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED, OFFICIAL_FACETS_ERROR.CONTEXT_ENDED, OFFICIAL_FACETS_ERROR.SELECTION_REQUIRED].some((code) => code === error.code);
+    return refusalPage(denied
+      ? "No tiene autorización para cargar las opciones de comparación. Verifique su sesión y espacio de trabajo."
+      : "Las opciones de comparación están temporalmente no disponibles. La solicitud pudo superar el tiempo de espera. Intente nuevamente.",
+    denied ? "denied" : "unavailable", <a href={retryUrl}>Reintentar</a>);
+  };
+  const params = { ...originalParams };
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: estos parámetros se proporcionaron más de una vez: {repeated.join(", ")}.</>);
@@ -411,10 +424,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   try {
     cold = await repository.facets({});
   } catch (error) {
-    const message = error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED
-      ? "No tiene autorización para cargar las opciones de comparación."
-      : "No se pudieron cargar las opciones autorizadas.";
-    return refusalPage(message);
+    return loaderFailure(error);
   }
 
   const selectedLeftElection = cold.elections.find((option) => option.id === leftElectionId && option.year === 2023);
@@ -432,8 +442,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     ]);
     leftCategories = leftFacets?.categories ?? [];
     rightCategories = rightFacets?.categories ?? [];
-  } catch {
-    return <CompareSelector elections={cold.elections} leftCategories={[]} rightCategories={[]} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar las categorías autorizadas." alert />;
+  } catch (error) {
+    return loaderFailure(error);
   }
 
   const leftCategory = leftCategories.find((option) => option.id === leftCategoryId);
@@ -453,8 +463,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       const common = commonFacets(leftScope.distritos, rightScope.distritos);
       distritos = common.options;
       unique.distrito = common.unique;
-    } catch {
-      return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar los distritos compartidos autorizados." alert />;
+    } catch (error) {
+      return loaderFailure(error);
     }
   }
   const selectedDistrito = distritos.find((option) => option.code === distritoCode);
@@ -472,8 +482,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       const common = commonFacets(leftScope.secciones, rightScope.secciones);
       secciones = common.options;
       unique.seccion = common.unique;
-    } catch {
-      return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={[]} selected={selected} message="No se pudieron cargar las secciones compartidas autorizadas." alert />;
+    } catch (error) {
+      return loaderFailure(error);
     }
   }
   const selectedSeccion = secciones.find((option) => option.code === seccionCode);
@@ -504,9 +514,14 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     electionId: selectedRightElection.id,
     categoryId: rightCategory.id,
   };
+  // These options have all passed the authorized facet chain. Reuse only this
+  // safe selection, never a partial result or provider-owned refusal payload.
+  const correctableRefusal = (message: string): ReactNode => (
+    <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} message={message} alert />
+  );
   const evidence = await loadAuthorizedOfficialComparisonEvidence(leftSelection, rightSelection);
   if (evidence.status === OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES) {
-    return refusalPage(unmappedPartiesRefusal(evidence.sides));
+    return correctableRefusal("La comparación se rechazó porque contiene identidades partidarias sin mapear. Cambie la selección. No se muestran cifras parciales.");
   }
   if (evidence.status !== OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK) {
     return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={secciones} selected={selected} message={evidenceRefusal(evidence.status)} evidenceNotice={EVIDENCE_NOTICES[evidence.status]} alert />;
@@ -516,7 +531,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   }
 
   if (evidence.left.result.categoryName !== evidence.right.result.categoryName) {
-    return refusalPage("Las categorías oficiales no son compatibles; seleccione la misma categoría en ambos lados. No se muestran cifras comparadas.");
+    return correctableRefusal("Las categorías oficiales no son compatibles; seleccione la misma categoría en ambos lados. No se muestran cifras comparadas.");
   }
 
   const unitId = `${selectedDistrito.code}/${selectedSeccion.code}`;
@@ -527,15 +542,15 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     units2025: [unit(evidence.right, unitId)],
   });
   if (comparison.status === "requires_explicit_aggregation") {
-    return refusalPage(<>Granularidad mixta: la selección izquierda usa {comparison.granularity2023} y la derecha usa {comparison.granularity2025}. Esta comparación no hace suposiciones ni muestra cifras con niveles incompatibles (D6).</>);
+    return correctableRefusal(`Granularidad mixta: la selección A usa ${comparison.granularity2023} y la B usa ${comparison.granularity2025}. Cambie el alcance. Esta comparación no hace suposiciones ni muestra cifras con niveles incompatibles (D6).`);
   }
   if (comparison.status !== "ok") {
-    return refusalPage("La comparación canónica no superó sus controles y no se muestran cifras.");
+    return correctableRefusal("La comparación canónica no superó sus controles y no se muestran cifras.");
   }
 
   const swing = comparison.swings[0];
   if (!swing || comparison.swings.length !== 1 || comparison.discontinuities.length > 0) {
-    return refusalPage("La comparación no produjo una única sección canónica compartida y no se muestran cifras.");
+    return correctableRefusal("La comparación no produjo una única sección canónica compartida y no se muestran cifras.");
   }
   const leftName = (id: string | null | undefined) => displayName(evidence.left, evidence.right, id);
   const rightName = (id: string | null | undefined) => displayName(evidence.right, evidence.left, id);
@@ -579,7 +594,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
-          maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
+          maps={section?.status === "ok" ? <ComparisonMap electionLabels={[selectedLeftElection.label, selectedRightElection.label]} coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><Alert variant="caveat">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</Alert><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
         />}
     >
         <div className="official-compare__analysis">
@@ -596,7 +611,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
         <TableRegion label={`Tabla exacta de participación y variación por partido en ${unitId}`}>
           <Table className="data-table">
             <caption>Participación oficial y variación en puntos porcentuales</caption>
-            <thead><tr><th scope="col">Partido izquierdo</th><th scope="col">Votos izquierda</th><th scope="col">Participación izquierda</th><th scope="col">Partido derecho</th><th scope="col">Votos derecha</th><th scope="col">Participación derecha</th><th scope="col">Variación</th><th scope="col">Votos B − A</th></tr></thead>
+            <thead><tr><th scope="col">Partido A</th><th scope="col">Votos A</th><th scope="col">Participación A</th><th scope="col">Partido B</th><th scope="col">Votos B</th><th scope="col">Participación B</th><th scope="col">Variación</th><th scope="col">Votos B − A</th></tr></thead>
             <tbody>
               {[...swing.swings].sort((left, right) => left.party.localeCompare(right.party)).map((partySwing) => {
                 const share2023 = swing.shares2023.find((share) => share.party === partySwing.party)?.sharePercent;
@@ -623,19 +638,19 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
           <h2 id="compare-evidence-heading">Evidencia oficial por lado</h2>
           <article className="official-compare__evidence-side" aria-labelledby="compare-evidence-a-heading">
             <h3 id="compare-evidence-a-heading">Evidencia oficial — Lado A</h3>
-            {sourceNotes(evidence.left, "Izquierda", "Lado A")}
+            {sourceNotes(evidence.left, "A", "Lado A")}
             <section className="official-compare__side-evidence" aria-labelledby="reference-left">
               <h3 id="reference-left">Referencia oficial — Lado A</h3>
-              <p>Izquierda: {evidence.left.reference.items.length} referencia(s), elección {selectedLeftElection.label}, categoría {leftCategory.name}, sección {unitId}.</p>
+              <p>A: {evidence.left.reference.items.length} referencia(s), elección {selectedLeftElection.label}, categoría {leftCategory.name}, sección {unitId}.</p>
             </section>
             {provenance(evidence.left, "left", "Lado A")}
           </article>
           <article className="official-compare__evidence-side" aria-labelledby="compare-evidence-b-heading">
             <h3 id="compare-evidence-b-heading">Evidencia oficial — Lado B</h3>
-            {sourceNotes(evidence.right, "Derecha", "Lado B")}
+            {sourceNotes(evidence.right, "B", "Lado B")}
             <section className="official-compare__side-evidence" aria-labelledby="reference-right">
               <h3 id="reference-right">Referencia oficial — Lado B</h3>
-              <p>Derecha: {evidence.right.reference.items.length} referencia(s), elección {selectedRightElection.label}, categoría {rightCategory.name}, sección {unitId}.</p>
+              <p>B: {evidence.right.reference.items.length} referencia(s), elección {selectedRightElection.label}, categoría {rightCategory.name}, sección {unitId}.</p>
             </section>
             {provenance(evidence.right, "right", "Lado B")}
           </article>

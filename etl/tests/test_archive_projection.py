@@ -267,7 +267,33 @@ def test_identical_fetch_history_keeps_one_canonical_archive_projection(tmp_path
     assert projected.id == source["id"]
 
 
+class _Cursor:
+    """Model transaction setup, rejecting SQL outside this test's contract."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params=None):
+        responses = {
+            "show transaction_isolation": ("read committed",),
+            "select pg_advisory_xact_lock(hashtextextended(%s, 0))": None,
+            "select source_kind from archive_entry where id = %s for share": ("official",),
+            "select id from election where year=%s and round=%s": ("election-id",),
+        }
+        assert query in responses, f"Unexpected SQL: {query}"
+        self.row = responses[query]
+
+    def fetchone(self):
+        return self.row
+
+
 class _Connection:
+    def cursor(self):
+        return _Cursor()
+
     def __init__(self) -> None:
         self.commits = 0
         self.rollbacks = 0
@@ -313,6 +339,12 @@ def test_ingest_source_projects_archive_before_any_result_loader(
         projected_notes.append(record.notes)
 
     monkeypatch.setattr("etl.__main__.project_archive_entry", project_archive, raising=False)
+    # Keep the real rebuild/loader reachable while isolating receipt persistence.
+    monkeypatch.setattr("etl.projection_receipt.reusable", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "etl.projection_receipt.publish",
+        lambda *_args, **_kwargs: calls.append("receipt"),
+    )
     monkeypatch.setattr(
         "etl.__main__.load_national_rows",
         lambda *_args, **_kwargs: calls.append("results") or 0,
@@ -328,7 +360,7 @@ def test_ingest_source_projects_archive_before_any_result_loader(
         manifest_path=manifest_path,
     )
 
-    assert calls == ["archive", "results"]
+    assert calls == ["archive", "results", "receipt"]
     assert projected_notes == ["fetch-time archive capture note"]
     assert connection.commits == 1
 

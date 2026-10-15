@@ -22,6 +22,10 @@ it("renders the root operational briefing with evidence and review routes", asyn
   );
 
   expect(markup).toContain("<h1>Panorama</h1>");
+  const header = markup.match(/<header[^>]*><h2>Coronel Rosales<\/h2>[\s\S]*?<\/header>/)?.[0];
+  expect(header).toContain("Buenos Aires");
+  expect(header).not.toMatch(/027|02/);
+  expect(markup).toMatch(/<details><summary>Códigos administrativos<\/summary>[\s\S]*?Distrito 02 · Sección 027[\s\S]*?<\/details>/);
   expect(markup).toContain("Una lectura del territorio. Un punto de partida para el análisis.");
   expect(markup).toContain("Resultados oficiales");
   expect(markup).toContain("Otros alcances · flujos separados");
@@ -61,6 +65,7 @@ it("renders compact official groups and real child circuit outcomes through the 
     }], unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0, membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 } },
   });
   const markup = renderToStaticMarkup(await OperationalBriefingPage() as ReactElement);
+  expect(markup).toContain('href="/compare?electionId=election&amp;categoryId=category&amp;sourceKind=official&amp;distritoCode=02&amp;seccionCode=027"');
   expect(markup).toContain("CONCEJALES");
   expect(markup).toContain("2025 · provinciales");
   expect.soft(markup).toContain("Otras agrupaciones (2)");

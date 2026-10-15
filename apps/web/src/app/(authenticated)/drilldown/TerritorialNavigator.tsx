@@ -5,6 +5,7 @@ import { Map as MapIcon, ChevronRight } from "lucide-react";
 import { canonicalScopeSearchParams, type ScopeControlValues } from "@/components/scope-selector-behavior";
 import { useSelectionNavigation } from "./DrilldownSelectionForm";
 import styles from "./drilldown.module.css";
+import { ElectoralGlossary } from "@/components/ElectoralGlossary";
 
 export interface TerritorialItem { name: string; values: ScopeControlValues }
 export function TerritorialNavigator({ items, options, title, terminal }: {
@@ -13,10 +14,12 @@ export function TerritorialNavigator({ items, options, title, terminal }: {
   const { navigate } = useSelectionNavigation();
   const [search, setSearch] = useState("");
   const parent = items.at(-2);
+  const currentLevel = items.at(-1)?.values.level;
+  const helpField = terminal ? "mesaCode" : ({ distrito: "seccionCode", seccion: "circuitoCode", circuito: "establecimientoCode", establecimiento: "mesaCode" } as Record<string, string>)[currentLevel ?? ""];
   const visible = options.filter(child => child.name.toLocaleLowerCase("es").includes(search.trim().toLocaleLowerCase("es")));
   return <section className={styles.navigator} aria-label="Navegador territorial">
     <div className={styles.navigatorLabel}><MapIcon aria-hidden="true" size={16} /> Navegador territorial</div>
-    <h3 id="navigator-title" tabIndex={-1}>{title}</h3>
+    <div className={styles.navigatorHeading}><h3 id="navigator-title" tabIndex={-1}>{title}</h3>{helpField && <ElectoralGlossary field={helpField} />}</div>
     <nav className={styles.navigatorRoute} aria-label="Ancestros territoriales">
       {items.map((item, index) => index === items.length - 1 ? <span key={index} aria-current="location">{item.name}</span>
         : <a key={index} data-territorial-navigation href={`/drilldown?${canonicalScopeSearchParams(item.values)}`}>{item.name}</a>)}

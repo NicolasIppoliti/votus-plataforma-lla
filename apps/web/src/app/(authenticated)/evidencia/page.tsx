@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Alert, type AlertVariant } from "@/components/ui/alert";
 import { AVAILABILITY_COLORS, Legend } from "@/components/maps/reference-colors";
 import { normalizeExplorationParams, formatFacetOptionLabel, type ExplorationFacets } from "@/lib/results/exploration";
 import { repeatedParams } from "@/lib/results/query-params";
@@ -10,6 +11,7 @@ import { EvidenceMap } from "./EvidenceMap";
 import { EvidenceUnits } from "./EvidenceUnits";
 import styles from "./evidence.module.css";
 import { formatCount } from "@/lib/format/number";
+import { facetExclusionLabel } from "@/lib/results/facet-exclusion-labels";
 
 type EvidenceOk = Extract<OfficialDrilldownEvidence, { status: "ok" }>;
 type Params = Record<string, string | string[] | undefined>;
@@ -29,8 +31,8 @@ function Shell({ children }: { children: ReactNode }) {
     {children}
   </div></main>;
 }
-function Refusal({ title, children }: { title: string; children: ReactNode }) {
-  return <section className={styles.notice} role="alert"><h2>{title}</h2>{children}</section>;
+function Refusal({ title, children, variant = "unavailable" }: { title: string; children: ReactNode; variant?: AlertVariant }) {
+  return <Alert variant={variant}><h2>{title}</h2>{children}</Alert>;
 }
 function completenessText(value: OfficialSectionCompleteness): string {
   if (value.status === "unavailable") return "Completitud no disponible.";
@@ -143,12 +145,12 @@ export default async function EvidencePage({ searchParams }: { searchParams: Pro
   if (fields.some(field => field.value && !field.options.some(option => option.value === field.value))) return <Shell><Refusal title="Consulta no autorizada"><p>La selección no pertenece a las opciones autorizadas.</p></Refusal></Shell>;
   let content: ReactNode;
   let showFacetExclusions = true;
-  if (keys.some(key => !values[key])) content = <><p className={styles.notice} role="status">Seleccione una elección, categoría, distrito y sección para consultar evidencia oficial. Disponibilidad y completitud: no disponible hasta tener una selección exacta autorizada.</p><Boundaries /></>;
+  if (keys.some(key => !values[key])) content = <><Alert variant="needs-selection">Seleccione una elección, categoría, distrito y sección para consultar evidencia oficial. Disponibilidad y completitud: no disponible hasta tener una selección exacta autorizada.</Alert><Boundaries /></>;
   else {
     const evidence = await loadAuthorizedOfficialDrilldownEvidence({ ...values, circuitoCode: null, establecimientoCode: null, mesaCode: null, requestedLevel: "seccion" });
     if (evidence.status !== "ok") {
       showFacetExclusions = evidence.status !== "authorization_denied";
-      content = <Refusal title={stateLabels[evidence.status]}>
+      content = <Refusal variant={evidence.status === "empty" ? "empty" : evidence.status === "authorization_denied" ? "denied" : "unavailable"} title={stateLabels[evidence.status]}>
         <p>{stateCopy[evidence.status]}</p>
         {evidence.status === "unavailable" && <a href={`/evidencia?${new URLSearchParams(values)}`}>Reintentar carga</a>}
         {evidence.status !== "authorization_denied" && evidence.evidence?.map(part => <section key={part.part} aria-label={`Evidencia de rechazo: ${part.part}`}>
@@ -163,7 +165,7 @@ export default async function EvidencePage({ searchParams }: { searchParams: Pro
     else content = <Result evidence={evidence} title={facets.secciones.find(item => item.code === values.seccionCode)?.name ?? fields[3]!.options.find(item => item.value === values.seccionCode)!.label} distrito={facets.distritos.find(item => item.code === values.distritoCode)?.name ?? fields[2]!.options.find(item => item.value === values.distritoCode)!.label} rosales={values.distritoCode === "02" && values.seccionCode === "027"} />;
   }
   return <Shell><EvidenceContext key={new URLSearchParams(values).toString()} fields={fields}>
-    {showFacetExclusions && (facets.exclusions ?? []).map(entry => <p className={styles.notice} role="note" key={entry.reason}>Opciones excluidas: {entry.reason}; {formatCount(entry.rows)} fila(s).</p>)}
+    {showFacetExclusions && (facets.exclusions ?? []).map(entry => <p className={styles.notice} role="note" key={entry.reason}>Opciones excluidas: {facetExclusionLabel(entry.reason)}; {formatCount(entry.rows)} fila(s).</p>)}
     {content}
   </EvidenceContext></Shell>;
 }

@@ -9,6 +9,7 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from "react";
+import { Alert } from "@/components/ui/alert";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -153,7 +154,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
           required aria-describedby="transfer-help transfer-errors" />
       </div>
       <div id="transfer-errors" aria-live="polite" aria-atomic="true">
-        {errors.length ? <ul role="alert">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : null}
+        {errors.length ? <Alert variant="denied"><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></Alert> : null}
       </div>
       <Button type="submit" disabled={pending}>Transferir votos</Button>
       <details className="simulation-help"><summary>Cómo funciona la transferencia</summary><p id="transfer-help">Operación hipotética a total fijo: resta votos de una lista y suma
@@ -205,7 +206,7 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
         </div>
       ))}
       <div id="sweep-errors" aria-live="polite" aria-atomic="true">
-        {errors.length ? <ul role="alert">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : null}
+        {errors.length ? <Alert variant="denied"><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></Alert> : null}
       </div>
       <Button type="submit" disabled={pending}>Evaluar muestras</Button>
     </form>
@@ -516,14 +517,14 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
           id="simulation-form-errors"
         >
           {errors.length > 0 ? (
-            <div role="alert">
+            <Alert variant="denied">
               <p>Revise los siguientes datos:</p>
               <ul>
                 {errors.map((error) => (
                   <li key={error}>{error}</li>
                 ))}
               </ul>
-            </div>
+            </Alert>
           ) : null}
         </div>
 
@@ -592,7 +593,9 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
           <p id={totalsHelpId}>
             {isNational
               ? "El total de votos no puede superar el padrón."
-              : "Informe el total de votos y, por separado, los votos en blanco y anulados."}
+              : values.validVotesOnly
+                ? "Solo se conocen los votos válidos. Los votos en blanco y anulados no están informados; no se suponen cero."
+                : "Informe el total de votos y, por separado, los votos en blanco y anulados."}
           </p>
           {isNational ? (
             <NumberField
@@ -608,13 +611,13 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
           <NumberField
             describedBy={`${totalsHelpId} simulation-form-errors`}
             id="simulation-total-votes"
-            label="Total de votos"
+            label={values.validVotesOnly && !isNational ? "Votos válidos" : "Total de votos"}
             onChange={(totalVotes) =>
               setValues((current) => ({ ...current, totalVotes }))
             }
             value={values.totalVotes}
           />
-          {!isNational ? (
+          {!isNational && !values.validVotesOnly ? (
             <>
               <NumberField
                 describedBy={`${totalsHelpId} simulation-form-errors`}

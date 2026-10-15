@@ -1,6 +1,8 @@
+import { profileSpan, profileRoute, PROFILE_REQUEST_HEADER, PROFILE_ROUTE_HEADER, type ProfileContext } from "@/lib/workspace/profile-span";
 import { createServerClient } from "@supabase/ssr";
 import { isAuthApiError, isAuthSessionMissingError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
+import { loginDestination, returnDestination } from "@/lib/auth/return-destination";
 import { resolveSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
 
 /**
@@ -42,6 +44,15 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
+  let profileContext: ProfileContext | undefined;
+  request.headers.delete(PROFILE_REQUEST_HEADER);
+  request.headers.delete(PROFILE_ROUTE_HEADER);
+  if (process.env.VOTUS_PROFILE_SPANS === "1") {
+    profileContext = { requestId: crypto.randomUUID(), route: profileRoute(pathname), parentSpanId: null };
+    request.headers.set(PROFILE_REQUEST_HEADER, profileContext.requestId);
+    request.headers.set(PROFILE_ROUTE_HEADER, profileContext.route);
+  }
+
   const supabaseUrl = process.env["NEXT_PUBLIC_SUPABASE_URL"];
   const supabaseAnonKey = process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"];
 
@@ -56,7 +67,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // `response` carries any refreshed session cookies Supabase writes during
   // `getUser()`; it becomes the pass-through response on the authenticated
   // path so the browser keeps a fresh session.
-  let response = NextResponse.next({ request });
+  const requestHeaders = new Headers(request.headers);
+  // Overwrite any caller-supplied value before the render-time auth guard reads it.
+  requestHeaders.set("x-votus-return-to", returnDestination(pathname + request.nextUrl.search));
+  let response = NextResponse.next({ request: { headers: requestHeaders } });
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: resolveSupabaseCookieOptions({
@@ -71,7 +85,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         for (const { name, value } of cookiesToSet) {
           request.cookies.set(name, value);
         }
-        response = NextResponse.next({ request });
+        requestHeaders.set("cookie", request.headers.get("cookie") ?? "");
+        response = NextResponse.next({ request: { headers: requestHeaders } });
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }
@@ -84,7 +99,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // cookie — required for a hard authentication gate at the edge.
   let verified;
   try {
-    verified = await supabase.auth.getUser();
+    verified = await profileSpan("auth.middleware.getUser", () => supabase.auth.getUser(), profileContext);
   } catch (error) {
     if (pathname === "/api/session") return sessionProbeResponse(response, false);
     throw error;
@@ -103,10 +118,13 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (pathname === "/api/session") {
       return sessionProbeResponse(response, true);
     }
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    const loginUrl = new URL(loginDestination(pathname + request.nextUrl.search), request.url);
+    const redirected = NextResponse.redirect(loginUrl);
+    for (const cookie of response.cookies.getAll()) redirected.cookies.set(cookie);
+    return redirected;
   }
 
+  if (profileContext) response.headers.set(PROFILE_REQUEST_HEADER, profileContext.requestId);
   return response;
 }
 

@@ -270,7 +270,10 @@ const MIGRATION_VERSIONS = [
 	"20261012000000",
 	"20261013000000",
 	HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION,
+	"20261015000000",
 	"20261015100000",
+	"20261015200000",
+	"20261015300000",
 ];
 
 const SYNTHETIC_MIGRATION: ReleaseGateSyntheticMigration = {
@@ -336,6 +339,11 @@ const SETUP_PROOFS: readonly ReleaseGateSetupProof[] = [
 
 const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
+		path: "tests/non_positive_vote_kinds.sql",
+		label: "disposable non-positive-vote-kinds pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
 		path: "tests/results_exploration.sql",
 		label: "disposable results-exploration pgTAP",
 		timeoutMs: 120_000,
@@ -368,6 +376,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 	{
 		path: "tests/workspace_context_invalidation.sql",
 		label: "disposable workspace-context invalidation pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
+		path: "tests/workspace_bootstrap_autoselect.sql",
+		label: "disposable workspace-bootstrap-autoselect pgTAP",
 		timeoutMs: 120_000,
 	},
 	{
