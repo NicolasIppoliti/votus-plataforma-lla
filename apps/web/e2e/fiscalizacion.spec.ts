@@ -74,7 +74,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await expect(page.getByRole("button", { name: "Mostrar cobertura" })).toHaveCount(0);
       await expect(page.getByText("La cobertura y los resultados se actualizan al cambiar la selección.")).toBeVisible();
       for (const label of ["Categoría", "Distrito", "Sección"]) {
-        const descendant = page.getByLabel(label);
+        const descendant = page.getByLabel(label, { exact: true });
         await expect(descendant).toBeDisabled();
         expect(await descendant.evaluate((element) => {
           (element as HTMLSelectElement).focus();
@@ -85,7 +85,7 @@ test.describe("the fiscalizacion route explores coverage", () => {
       const form = page.locator('form[action="/fiscalizacion"]'); await page.locator("html").evaluate((element) => { element.dataset.scopeSentinel = "alive"; });
       const selection = new URLSearchParams();
       const draft = async (label: string, name: string, value: string, dependent: string): Promise<void> => {
-        const control = page.getByLabel(label), child = page.getByLabel(dependent);
+        const control = page.getByLabel(label, { exact: true }), child = page.getByLabel(dependent, { exact: true });
         await control.focus(); await control.selectOption(value);
         selection.set(name, value);
         await expect(child).toHaveValue("");
@@ -98,12 +98,12 @@ test.describe("the fiscalizacion route explores coverage", () => {
       await draft("Elección", "electionId", COVERAGE_SCOPE.electionId, "Categoría");
       await draft("Categoría", "categoryId", COVERAGE_SCOPE.categoryId, "Distrito");
       await draft("Distrito", "distritoCode", COVERAGE_SCOPE.distritoCode, "Sección");
-      await page.getByLabel("Sección").focus();
-      await page.getByLabel("Sección").selectOption(COVERAGE_SCOPE.seccionCode);
+      await page.getByLabel("Sección", { exact: true }).focus();
+      await page.getByLabel("Sección", { exact: true }).selectOption(COVERAGE_SCOPE.seccionCode);
       const expectedUrl = new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}&categoryId=${COVERAGE_SCOPE.categoryId}&distritoCode=${COVERAGE_SCOPE.distritoCode}&seccionCode=${COVERAGE_SCOPE.seccionCode}`, baseURL).toString();
       await expect(page).toHaveURL(expectedUrl); await expectNoBlankSearchParams(page);
       await expect(form).not.toHaveAttribute("aria-busy", "true");
-      await expect(page.getByLabel("Sección")).toBeFocused();
+      await expect(page.getByLabel("Sección", { exact: true })).toBeFocused();
 
       const primaryNavigation = page.getByRole("navigation", { name: "principal" });
       await expect(primaryNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
@@ -238,7 +238,7 @@ for (const state of fiscalWireStates(COVERAGE_SCOPE)) {
       await expect(page.getByRole("main").getByRole(role).filter({ hasText: state.text })).toBeVisible();
       await expectSuppressed(page);
       expect(matched).toEqual(expect.arrayContaining(["coverage", "result"]));
-      await expect(page.getByLabel("Sección")).toHaveValue(COVERAGE_SCOPE.seccionCode);
+      await expect(page.getByLabel("Sección", { exact: true })).toHaveValue(COVERAGE_SCOPE.seccionCode);
     }));
   });
 }
@@ -317,8 +317,8 @@ for (const width of [640, 1280]) {
         await expect.poll(() => page.evaluate(() => innerWidth)).toBeCloseTo(baseline.inner / 2, 0);
         expect(await page.evaluate(() => outerWidth)).toBe(baseline.outer);
         expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-        await tabTo(page, page.getByLabel("Elección"));
-        await tabTo(page, page.getByLabel("Sección"));
+        await tabTo(page, page.getByLabel("Elección", { exact: true }));
+        await tabTo(page, page.getByLabel("Sección", { exact: true }));
         await tabTo(page, page.getByRole("region", { name: "Resultados de fiscalización" }));
         await tabTo(page, page.locator("summary").filter({ hasText: "Archivo de respaldo" }));
         await page.keyboard.press("Enter");
@@ -353,7 +353,7 @@ for (const action of ["revert", "independent edit"] as const) {
     await withResultFixture(SPEC, COVERAGE_FIXTURE, () => withAuthorizedFiscalWorkspace(page, async () => {
       await page.goto(fiscalUrl);
       await expectReady(page);
-      const section = page.getByLabel("Sección");
+      const section = page.getByLabel("Sección", { exact: true });
       await section.focus();
       delayEnabled = true;
       try {
@@ -361,7 +361,7 @@ for (const action of ["revert", "independent edit"] as const) {
         await expectSuppressed(page);
         await expect.poll(() => responseReady).toBe(true);
         await expect(section).toBeFocused();
-        const control = action === "revert" ? section : page.getByLabel("Categoría");
+        const control = action === "revert" ? section : page.getByLabel("Categoría", { exact: true });
         await control.focus();
         await control.selectOption(action === "revert" ? COVERAGE_SCOPE.seccionCode : "");
         // Restoring the exact served scope may show its already verified cached pair immediately.
@@ -378,9 +378,9 @@ for (const action of ["revert", "independent edit"] as const) {
         } else {
           await expect(page).toHaveURL(new URL(`/fiscalizacion?electionId=${COVERAGE_SCOPE.electionId}`, baseURL).toString());
           await expect(control).toHaveValue("");
-          await expect(page.getByLabel("Distrito")).toHaveValue("");
+          await expect(page.getByLabel("Distrito", { exact: true })).toHaveValue("");
           await expect(section).toHaveValue("");
-          await expect(page.getByLabel("Distrito")).toBeDisabled();
+          await expect(page.getByLabel("Distrito", { exact: true })).toBeDisabled();
           await expect(section).toBeDisabled();
           await expectSuppressed(page);
         }

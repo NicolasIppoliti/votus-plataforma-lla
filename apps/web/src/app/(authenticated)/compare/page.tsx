@@ -72,14 +72,14 @@ function formatSwing(value: number): string {
   return `${normalized > 0 ? "+" : ""}${formatFixed2(normalized)} puntos porcentuales`;
 }
 
-function refusalPage(message: ReactNode): ReactNode {
+function refusalPage(message: ReactNode, variant: "denied" | "unavailable" = "denied", action?: ReactNode): ReactNode {
   return (
     <main className="page-shell official-compare">
       <div className="shell-container official-compare__layout">
         <header className="official-compare__header">
           <h1>Comparación electoral</h1>
         </header>
-        <Alert variant="denied">{message}</Alert>
+        <Alert variant={variant} action={action}>{message}</Alert>
       </div>
     </main>
   );
@@ -360,7 +360,21 @@ function comparisonContext(
 }
 
 export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
-  const params = { ...await searchParams };
+  const originalParams = await searchParams;
+  const retryQuery = new URLSearchParams();
+  for (const [key, value] of Object.entries(originalParams)) {
+    if (typeof value === "string") retryQuery.set(key, value);
+  }
+  const retryUrl = `/compare${retryQuery.size ? `?${retryQuery}` : ""}`;
+  const loaderFailure = (error: unknown) => {
+    const denied = error instanceof AuthorizedOfficialFacetsError &&
+      [OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED, OFFICIAL_FACETS_ERROR.CONTEXT_ENDED, OFFICIAL_FACETS_ERROR.SELECTION_REQUIRED].some((code) => code === error.code);
+    return refusalPage(denied
+      ? "No tiene autorización para cargar las opciones de comparación. Verifique su sesión y espacio de trabajo."
+      : "Las opciones de comparación están temporalmente no disponibles. La solicitud pudo superar el tiempo de espera. Intente nuevamente.",
+    denied ? "denied" : "unavailable", <a href={retryUrl}>Reintentar</a>);
+  };
+  const params = { ...originalParams };
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: estos parámetros se proporcionaron más de una vez: {repeated.join(", ")}.</>);
@@ -412,10 +426,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
   try {
     cold = await repository.facets({});
   } catch (error) {
-    const message = error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED
-      ? "No tiene autorización para cargar las opciones de comparación."
-      : "No se pudieron cargar las opciones autorizadas.";
-    return refusalPage(message);
+    return loaderFailure(error);
   }
 
   const selectedLeftElection = cold.elections.find((option) => option.id === leftElectionId && option.year === 2023);
@@ -433,8 +444,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
     ]);
     leftCategories = leftFacets?.categories ?? [];
     rightCategories = rightFacets?.categories ?? [];
-  } catch {
-    return <CompareSelector elections={cold.elections} leftCategories={[]} rightCategories={[]} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar las categorías autorizadas." alert />;
+  } catch (error) {
+    return loaderFailure(error);
   }
 
   const leftCategory = leftCategories.find((option) => option.id === leftCategoryId);
@@ -454,8 +465,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       const common = commonFacets(leftScope.distritos, rightScope.distritos);
       distritos = common.options;
       unique.distrito = common.unique;
-    } catch {
-      return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar los distritos compartidos autorizados." alert />;
+    } catch (error) {
+      return loaderFailure(error);
     }
   }
   const selectedDistrito = distritos.find((option) => option.code === distritoCode);
@@ -473,8 +484,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps): P
       const common = commonFacets(leftScope.secciones, rightScope.secciones);
       secciones = common.options;
       unique.seccion = common.unique;
-    } catch {
-      return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={[]} selected={selected} message="No se pudieron cargar las secciones compartidas autorizadas." alert />;
+    } catch (error) {
+      return loaderFailure(error);
     }
   }
   const selectedSeccion = secciones.find((option) => option.code === seccionCode);

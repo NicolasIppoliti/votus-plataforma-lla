@@ -1,7 +1,7 @@
 import "server-only";
 import { EXPLORATION_LEVEL, type ExplorationFacetExclusion, type ExplorationFacetSelection, type ExplorationFacets, type FacetOption } from "@/lib/results/exploration";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import { authorizedOfficialFacets } from "@/lib/workspace/context";
+import { authorizedOfficialFacets, workspaceContextErrorCategory, WORKSPACE_CONTEXT_ERROR_CATEGORY } from "@/lib/workspace/context";
 import { ACCESS_REFUSAL, type AccessRefusal, classifyAccessRefusal } from "@/lib/workspace/access-refusal";
 
 export const OFFICIAL_FACETS_ERROR = { AUTHORIZATION_DENIED: "authorization_denied", SELECTION_REQUIRED: "selection_required", CONTEXT_ENDED: "context_ended", UNAVAILABLE: "unavailable", PAYLOAD_TOO_LARGE: "payload_too_large", MALFORMED: "malformed", NONMEMBER: "nonmember" } as const;
@@ -115,8 +115,10 @@ export class AuthorizedOfficialFacetRepository {
         }
         throw error;
       }
-      console.error("[workspace:official_facets]", { code: OFFICIAL_FACETS_ERROR.UNAVAILABLE });
-      throw new AuthorizedOfficialFacetsError(OFFICIAL_FACETS_ERROR.UNAVAILABLE);
+      const code = workspaceContextErrorCategory(error) === WORKSPACE_CONTEXT_ERROR_CATEGORY.DENIED
+        ? OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED : OFFICIAL_FACETS_ERROR.UNAVAILABLE;
+      console.error("[workspace:official_facets]", { code });
+      throw new AuthorizedOfficialFacetsError(code);
     }
     const elections=options(parsed.rows,(r)=>r.electionId,(r)=>({id:r.electionId,year:r.year,round:r.round,label:`${r.year} ${r.round}`}));
     const categoryRows=selection.electionId?parsed.rows.filter((r)=>r.electionId===selection.electionId):[], categories=options(categoryRows,(r)=>r.categoryId,(r)=>({id:r.categoryId,name:r.categoryName}));
