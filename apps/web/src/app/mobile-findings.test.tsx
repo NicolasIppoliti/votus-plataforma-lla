@@ -38,7 +38,9 @@ it("brings Panorama content forward without clipping the circuit map", () => {
 });
 
 it("reduces Exploration pre-map spacing without hiding context or shrinking touch targets", () => {
-  const mobile = css("./(authenticated)/drilldown/drilldown.module.css").split("/* Issue 501 mobile */")[1] ?? "";
+  // Check the mobile spacing block, not unrelated locator rules appended below it.
+  const mobile = css("./(authenticated)/drilldown/drilldown.module.css")
+    .split("/* Issue 501 mobile */")[1]?.match(/@media \(max-width: 480px\)\s*\{(?:[^{}]|\{[^{}]*\})*\}/)?.[0] ?? "";
   expect(mobile).toMatch(/\.selectionBoundary\s*\{[^}]*gap: 12px/);
   expect(mobile).toMatch(/\.filterRow\s*\{[^}]*gap: 8px/);
   expect(mobile).toMatch(/\.guidance\s*\{[^}]*line-height: 1.35/);
