@@ -190,6 +190,12 @@ jobs:
         working-directory: apps/web
       - run: pnpm evaluate:territorial-renderer -- --verify
         working-directory: apps/web
+      - name: Generate portable prototype prerequisites
+        run: |
+          python3 -m pip install shapely==2.1.2
+          node docs/prototypes/territorial-exploration/generate-reference-assets.mjs
+          node docs/prototypes/territorial-exploration/generate-winner-reference-assets.mjs
+          node docs/prototypes/seat-simulation/build.mjs
       - run: pnpm test:e2e:gate --lane browser
         working-directory: apps/web
       # v7.0.1
@@ -214,6 +220,19 @@ jobs:
           path: apps/web/test-results/**/e2e-evidence-463-*.png
           retention-days: 14
           if-no-files-found: ignore
+
+      # v7.0.1 — opt-in synthetic R5 captures, not global screenshots
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ !cancelled() }}
+        with:
+          name: visual-evidence-r5
+          path: |
+            apps/web/test-results/**/prototype-*-*.png
+            apps/web/test-results/**/production-*-*.png
+            apps/web/test-results/**/visual-evidence-r5-heights.json
+          retention-days: 14
+          if-no-files-found: error
+          include-hidden-files: false
 
   e2e-sql:
     needs: scope
