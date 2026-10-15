@@ -693,7 +693,10 @@ test.describe("the production root preserves its authentication boundary", () =>
     expect(
       Math.abs(topbarContainer!.x - contentContainer!.x),
     ).toBeLessThanOrEqual(1);
-    await expect(sidebar).toContainText(
+    await expect(sidebar).not.toContainText(
+      "Esta herramienta no es una fuente electoral oficial.",
+    );
+    await expect(page.locator("footer.app-footer")).toContainText(
       "Esta herramienta no es una fuente electoral oficial.",
     );
     await expect(
