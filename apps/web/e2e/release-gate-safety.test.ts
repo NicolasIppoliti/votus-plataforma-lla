@@ -1,5 +1,12 @@
 import { chromium } from "@playwright/test";
 
+it("sole-organization login seeds PASO through its matching ownership variant", () => {
+  const source = readFileSync(new URL("./provenance.spec.ts", import.meta.url), "utf8");
+  const journey = source.slice(source.indexOf('test("sole organization login'));
+  expect(journey).toContain('pasoFixture(SPEC)');
+  expect(journey).toContain('}, true), "paso");');
+});
+
 it("grants completeness fixture tables only select, insert and delete in the test lane", () => {
   const sql = readFileSync(new URL("./service-role-grants.sql", import.meta.url), "utf8");
   for (const table of ["official_expected_mesa", "official_mesa_count_status"]) {

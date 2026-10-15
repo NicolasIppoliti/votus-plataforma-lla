@@ -821,5 +821,5 @@ test("sole organization login reaches drilldown data without selecting a workspa
     const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
     await expect(region).toBeVisible();
     await expect(region).toContainText("13206 votos");
-  }, true));
+  }, true), "paso");
 });
