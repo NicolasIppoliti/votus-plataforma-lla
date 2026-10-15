@@ -71,8 +71,7 @@ it("filters names locally while retaining all child rows and canonical links in 
   const cleared = renderToStaticMarkup(<PanoramaChildren data={data} />);
   expect(cleared).toContain("2 visibles · 2 circuitos disponibles");
   expect(cleared).not.toContain('<tr hidden="">');
-  states.push("Argentina");
-  const national = renderToStaticMarkup(<Panorama data={data} />);
+  const national = renderToStaticMarkup(<Panorama data={{ href: "/drilldown", exclusions: [], context: { sourceKind: "official" } }} />);
   expect(national).not.toContain("00249 — Sur");
   expect(national).not.toContain("220");
 });

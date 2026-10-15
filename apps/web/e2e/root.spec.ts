@@ -40,6 +40,41 @@ test("electoral context stays labelled and readable at 320px with explicit sourc
   await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "static");
 });
 
+test("Panorama updates its figures when the shared category changes, keeping Rosales", async ({ page }) => {
+  await withReviewItem(page, async () => {
+    await page.goto("/");
+    const election = page.getByRole("combobox", { name: "Contexto electoral: Elección", exact: true });
+    await expect(election).toBeEnabled();
+    const election2023 = await election.locator("option").evaluateAll(options => options.filter(option => option.textContent?.includes("2023") && !option.textContent?.toLowerCase().includes("paso")).map(option => (option as HTMLOptionElement).value));
+    expect(election2023.length).toBeGreaterThan(0);
+    await election.selectOption(election2023[0]!);
+    const category = page.getByRole("combobox", { name: "Contexto electoral: Categoría", exact: true });
+    await expect(category).toBeEnabled();
+    await expect.poll(async () => category.locator("option[value]:not([value=''])").count()).toBeGreaterThan(1);
+    const categories = await category.locator("option[value]:not([value=''])").evaluateAll(options => ["PRESIDENTE Y VICE", "DIPUTADO NACIONAL"].map(name => (options.find(option => option.textContent === name) as HTMLOptionElement | undefined)?.value));
+    expect(categories.every(Boolean)).toBe(true);
+    await category.selectOption(categories[0]!);
+    await page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true }).selectOption("02");
+    await page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true }).selectOption("027");
+    const summary = page.getByRole("complementary", { name: "Lectura de la selección" });
+    const total = summary.locator("dt", { hasText: "Votos positivos oficiales" }).locator("+ dd");
+    await expect(total).toBeVisible();
+    const before = await total.textContent();
+    await category.selectOption(categories[1]!);
+    await expect(category).toHaveValue(categories[1]!);
+    await expect(page.getByRole("combobox", { name: "Contexto electoral: Distrito", exact: true })).toHaveValue("02");
+    await expect(page.getByRole("combobox", { name: "Contexto electoral: Sección", exact: true })).toHaveValue("027");
+    await expect(total).toBeVisible();
+    await expect(total).not.toHaveText(before!);
+    const exact = page.getByRole("link", { name: "Ver resultados exactos en Exploración" });
+    await expect(exact).toHaveAttribute("href", new RegExp(`categoryId=${categories[1]}`));
+    await expect(page.locator("#panorama-territory")).toHaveCount(0);
+    await page.reload();
+    await expect(total).toBeVisible();
+    await expect(total).not.toHaveText(before!);
+  });
+});
+
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
