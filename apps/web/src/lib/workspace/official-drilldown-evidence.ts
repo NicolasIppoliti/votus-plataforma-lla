@@ -11,6 +11,7 @@ import { hierarchyInvalid, type ExplorationSelection } from "../results/explorat
 import { createSupabaseServerClient } from "../supabase/server-client";
 import { authorizedOfficialBundle } from "./context";
 import type { OfficialSelection } from "../../app/api/workspace/official/input";
+import { type AccessRefusal, classifyAccessRefusal } from "@/lib/workspace/access-refusal";
 
 const ITEM_LIMIT = 100;
 const REFERENCE_LIMIT = 200;
@@ -58,6 +59,7 @@ interface OfficialDrilldownEvidenceOk {
 interface OfficialRefusalItem { reason?: string; kind?: string; rows: number; votes?: number } interface OfficialRefusalPartEvidence { part: string; reason?: string; counts?: Record<string, number>; exclusions?: OfficialRefusalItem[]; sourceExclusions?: OfficialRefusalItem[] }
 interface OfficialDrilldownEvidenceAuthorizationDenied {
   status: typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED;
+  access: AccessRefusal;
 }
 interface OfficialDrilldownEvidenceState {
   status: Exclude<OfficialDrilldownEvidenceStatus, typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK | typeof OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED>;
@@ -134,7 +136,7 @@ function coherentState(parts: Raw[]): OfficialDrilldownEvidenceState | OfficialD
   if (status === "authorization_denied") {
     const authorization = parts[0]?.["authorization_status"];
     return parts.every((part) => text(part["authorization_status"]) && part["authorization_status"] === authorization && authorization !== "authorized" && part["truncated"] === false)
-      ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED }
+      ? { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED, access: classifyAccessRefusal(String(authorization)) }
       : { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };
   }
   const evidence = parts.map((part, index) => refusalEvidence(part, ["result", "schools", "reference", "provenance"][index]!)); if (evidence.some((item) => item === null)) return { status: OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.MALFORMED };

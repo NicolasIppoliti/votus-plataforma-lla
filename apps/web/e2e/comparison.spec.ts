@@ -282,7 +282,7 @@ test.describe("authorized official comparison", () => {
       await expect(page).toHaveURL(new RegExp(`seccionCode=${identity.seccionCode}`));
       await expect(page.getByRole("heading", { name: "Resultados exactos", exact: true })).toBeVisible();
       await expect(sharedSection).toBeFocused();
-      const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ leftElectionId: identity.electionIds[0], leftCategoryId: identity.categoryId, rightElectionId: identity.electionIds[1], rightCategoryId: identity.categoryId, distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
+      const servedUrl = new URL(page.url()); expect(Object.fromEntries(servedUrl.searchParams)).toEqual({ electionId: identity.electionIds[0], categoryId: identity.categoryId, bElectionId: identity.electionIds[1], bCategoryId: identity.categoryId, sourceKind: "official", distritoCode: identity.distritoCode, seccionCode: identity.seccionCode });
       const main = page.getByRole("main"); await expect(main).toContainText("sin cambio"); await expect(main).toContainText("100,00 %"); await expect(main).toContainText("0,00 puntos porcentuales");
       await expect(main).toContainText(identity.archiveEntryIds[0]!); await expect(main).toContainText(identity.archiveEntryIds[1]!); await expect(main).toContainText("SHA-256"); await expect(main).not.toContainText("https://"); await expect(main).not.toContainText("example.test");
       const leftSide = main.getByRole("article", { name: "Lado A", exact: true });
@@ -354,7 +354,7 @@ test.describe("authorized official comparison", () => {
       } finally {
         releaseSelection();
       }
-      await expect(page).not.toHaveURL(/leftCategoryId=/);
+      await expect(page).not.toHaveURL(/categoryId=/);
       await page.unroute("**/compare?**");
       await leftCategory.selectOption(identity.categoryId);
       await expect(sharedDistrict).toBeEnabled();

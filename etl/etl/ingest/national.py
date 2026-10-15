@@ -30,6 +30,7 @@ from typing import TextIO
 
 from etl import db
 from etl.ingest_metrics import IngestMetrics
+from etl.ingest_performance import active_emission, current, emission_started, timed
 from etl.jurisdiction import (
     JurisdictionNames,
     ResultRow,
@@ -664,6 +665,7 @@ def _unavailable_completeness(reason: str, *, report: bool = True) -> NationalCo
     )
 
 
+@timed("completeness")
 def build_national_completeness(
     csv_text: TextIO,
     *,
@@ -794,6 +796,7 @@ def build_national_completeness(
     )
 
 
+@active_emission
 def iter_national_rows(
     csv_text: TextIO,
     *,
@@ -946,6 +949,7 @@ def iter_national_rows(
         metrics.data.update(first_pass="complete", iteration="partial", rows_emitted=0)
         for category in metrics.data["categories"].values():
             category["rows_emitted"] = 0
+    emission_started()
     csv_text.seek(0)
     for index, raw in enumerate(_national_reader(csv_text)):
         row = _candidate_from_raw(
@@ -1014,6 +1018,8 @@ def load_national_rows(
     clears any rows a previous run of this source stored. `None` leaves the
     completeness tables untouched (callers that never read the catalogue).
     """
+    if current() is not None:
+        current().data["batch_size"] = batch_size
     transaction = conn.transaction() if hasattr(conn, "transaction") else nullcontext()
     with transaction:
         inserted = _load_national_rows(
