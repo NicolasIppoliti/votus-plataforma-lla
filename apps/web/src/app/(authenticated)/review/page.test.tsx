@@ -108,7 +108,7 @@ describe("review page — responsive review evidence", () => {
     expect(markup).toContain('<main class="review-queue page-shell">');
     expect(markup).toContain("Operaciones · revisión");
     expect(markup).toContain("Atención operativa sobre señales pendientes.");
-    expect(markup).toMatch(/<aside[^>]+role="status"[^>]*>/);
+    expect(markup).toMatch(/<div[^>]+data-variant="caveat"[^>]+role="status"[^>]*>/);
     expect(markup).toContain("Atención operativa");
     expect(markup).toContain("51 elementos requieren revisión.");
     expect(markup).toMatch(/<section[^>]+aria-labelledby="review-results-heading"/);

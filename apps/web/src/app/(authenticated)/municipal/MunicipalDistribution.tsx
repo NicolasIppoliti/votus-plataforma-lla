@@ -1,5 +1,6 @@
 import type { votesByParty } from "@/lib/results/result-rows";
 import styles from "./municipal.module.css";
+import { Alert } from "@/components/ui/alert";
 import { formatCount } from "@/lib/format/number";
 
 
@@ -20,10 +21,10 @@ export function MunicipalDistribution({ parties }: MunicipalDistributionProps) {
         </p>
       </header>
       {parties.length === 0 ? (
-        <p role="status">No hay partidos identificados para representar. Consulte el desglose de filas sin partido asignado.</p>
+        <Alert variant="empty">No hay partidos identificados para representar. Consulte el desglose de filas sin partido asignado.</Alert>
       ) : maximum === 0 ? (
         <>
-          <p role="status">Todos los partidos identificados tienen 0 votos; no hay un rango positivo que representar.</p>
+          <Alert variant="empty">Todos los partidos identificados tienen 0 votos; no hay un rango positivo que representar.</Alert>
           <ul className={styles.zeroSeries}>
             {parties.map((party, index) => <li key={`${party.label}-${index}`}>{party.label}: 0 votos</li>)}
           </ul>
