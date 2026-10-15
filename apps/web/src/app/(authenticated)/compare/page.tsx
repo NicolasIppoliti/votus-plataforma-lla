@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ComponentProps, ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { ELECTORAL_CONTEXT_KEYS, COMPARISON_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
@@ -352,7 +353,11 @@ function comparisonContext(
   );
 }
 
-export default async function ComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
+export default function ComparePage(props: ComparePageProps): Promise<ReactNode> {
+  return profileServerSpan("page.compare", () => renderComparePage(props));
+}
+
+async function renderComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
   const originalParams = await searchParams;
   const retryQuery = new URLSearchParams();
   for (const [key, value] of Object.entries(originalParams)) {
