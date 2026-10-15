@@ -78,7 +78,8 @@ nextTest("Panorama circuit click and keyboard selection synchronize URL and exac
       await expect(circuit).toHaveAttribute("stroke-width", "1");
       await row.getByRole("link").focus();
       await expect(circuit).toHaveAttribute("stroke-width", "3");
-      expect(await circuit.evaluate(element => getComputedStyle(element).transitionDuration)).toBe("0s");
+      // Reduced motion collapses every transition to 0.01ms (globals.css), i.e. no visible animation.
+      expect(Number.parseFloat(await circuit.evaluate(element => getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(0.00001);
       expect(await circuit.evaluate(element => getComputedStyle(element).animationName)).toBe("none");
       await page.getByRole("searchbox", { name: "Buscar territorio" }).focus();
       await expect(circuit).toHaveAttribute("stroke-width", "1");
