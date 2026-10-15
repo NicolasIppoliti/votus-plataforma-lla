@@ -93,3 +93,13 @@
   .party { grid-column: 1 / -1; }
   .barRow { row-gap: 0.125rem; }
 }
+
+.workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 1fr) minmax(0, 20rem); align-items: start; }
+.workbench > .reference[data-map-kind="locator"] { grid-column: 2; grid-row: 1; }
+.workbench:has(> [data-map-kind="locator"]) > .context { grid-column: 1; grid-row: 1; }
+.locator { max-width: 20rem; }
+.locator > svg { width: 100%; max-height: 13rem; }
+@media (max-width: 760px) {
+  .workbench:has(> [data-map-kind="locator"]) { grid-template-columns: minmax(0, 1fr); }
+  .workbench > .reference[data-map-kind="locator"], .workbench:has(> [data-map-kind="locator"]) > .context { grid-column: 1; grid-row: auto; }
+}

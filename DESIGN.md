@@ -201,6 +201,8 @@ A shared presentation layer may unify spacing and hierarchy, but copy, iconograp
 
 ## Data Visualization
 
+- **Map prominence follows data:** data maps are large; reference-only maps render as small locators (at most 20rem wide) next to the data/context, stacking on narrow screens. Title them “Referencia territorial”, retain the no-results and applicability qualifiers and shared neutral legend. Supporting provenance, including hashes, belongs in a labelled native evidence disclosure, reachable without JavaScript; never discard it. Keep one clear navigation action in the locator rather than overlapping destination links.
+
 - Exact-value tables are the canonical representation.
 - Comparison pairs Side A/Side B on one 0–100% scale, retaining each side's party name. Its denominator is the supplied party-vote total, not turnout or all ballots. Include every compared party.
 - Official exploration uses one 0–100% scale and the supplied party-vote shares with the explicit result total denominator. Include every party, including zero and unmapped identities. A null share at a zero denominator is unavailable, not zero percent; no mark implies a fabricated share. Exact tables stay canonical.

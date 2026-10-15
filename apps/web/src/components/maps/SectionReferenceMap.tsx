@@ -133,7 +133,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
   const scale = 260 / Math.max(width, height, Number.EPSILON);
   const project = ([longitude, latitude]: number[]) => `${(160 + ((longitude! - west) * longitudeScale - width / 2) * scale).toFixed(3)},${(160 - (latitude! - south - height / 2) * scale).toFixed(3)}`;
   const fill = fillColor ?? (sharePercent === undefined ? [...REFERENCE_FILL] : shareFill(sharePercent));
-  return <div className={styles.root}>
+  return <div className={styles.root} data-map-kind={fillColor === undefined && sharePercent === undefined ? "locator" : "data"}>
     {!active && staticLabel && <svg className={styles.staticMap} viewBox="0 0 320 320" role="img" aria-label={`Mapa estático de ${name}; ${label}; ${staticLabel}`}>
       {coordinates.map((polygon, index) => <path key={index} d={polygon.map(ring => `M${ring.map(project).join("L")}Z`).join(" ")} fill={`rgba(${fill[0]},${fill[1]},${fill[2]},${fill[3]! / 255})`} fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth="1" />)}
     </svg>}

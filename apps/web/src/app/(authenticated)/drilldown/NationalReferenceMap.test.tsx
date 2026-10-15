@@ -22,10 +22,13 @@ describe("national reference before activation", () => {
       vi.resetModules();
     }
   });
-  it("offers actual orientation links and exact selectors without requiring WebGL or an applied selection", () => {
+  it("offers one exact selection action and disclosed provenance without requiring WebGL or an applied selection", () => {
     const html = renderToStaticMarkup(<NationalReferenceMap />);
     expect(html).toContain("Mostrar referencia nacional");
-    expect(html).toContain('href="#province-reference-heading"');
+    expect(html).not.toContain('href="#province-reference-heading"');
+    expect(html.match(/<a /g)).toHaveLength(1);
+    expect(html).toMatch(/<details><summary>Procedencia de la referencia nacional<\/summary>[\s\S]*?sha256/);
+    expect(html.replace(/<details>[\s\S]*?<\/details>/g, "")).not.toMatch(/[a-f0-9]{64}/);
     expect(html).toContain('href="#explorer-election"');
     expect(html).not.toContain('name="distritoCode"');
     expect(html).not.toContain("resultados nacionales disponibles");

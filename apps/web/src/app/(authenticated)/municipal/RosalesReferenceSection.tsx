@@ -37,7 +37,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
       <li>Los circuitos 0248B y 0248C se superponen en el archivo CNE; no se corrige la superposición.</li>
       <li>El archivo CNE ubica locales en el circuito 0248 sin sufijo; no se asignan a subcircuitos.</li>
     </ul>
-    <ReferenceMap reference={reference} />
+    <div className={styles.locator} data-map-kind="locator"><ReferenceMap reference={reference} /></div>
     <Legend label="Leyenda de referencia geográfica" entries={[
       { label: "Contorno de circuito de referencia CNE; sin resultados electorales", encoding: "outline" },
       { label: "Local de votación con coordenadas", encoding: "dot", color: DOT_COLOR },

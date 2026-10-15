@@ -104,9 +104,15 @@ test("national reference links and no-WebGL polar view preserve exact selection"
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
     await expect(national).toContainText("WebGL no disponible");
-    await expect(national.getByRole("link", { name: "Ir a Buenos Aires" })).toHaveCount(1);
-    await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(national.getByRole("link")).toHaveCount(1);
+    await expect(national).toHaveAttribute("data-map-kind", "locator");
+    expect((await national.boundingBox())!.width).toBeLessThanOrEqual(320);
+    const provenance = national.locator("details");
+    await expect(provenance.locator("code")).toBeHidden();
+    await provenance.locator("summary").click();
+    await expect(provenance.locator("code")).toContainText(/^[a-f0-9]{64}$/);
+    await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+    await expect(page).toHaveURL(/#explorer-election$/);
     await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
     await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
     await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toBeFocused();
@@ -241,10 +247,10 @@ test("national reference renders both views on desktop and mobile without changi
     expect(rendererErrors, "browser renderer errors").toEqual([]);
     const election = page.getByRole("combobox", { name: "Elección", exact: true });
     await expect(election).toHaveValue("");
-    const provinceLink = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    const provinceLink = national.getByRole("link", { name: "Ir a la selección electoral exacta" });
     await provinceLink.focus();
     await provinceLink.press("Enter");
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page).toHaveURL(/#explorer-election$/);
     await expect(election).toHaveValue("");
     await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
     await expect(election).toBeFocused();
@@ -294,7 +300,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
     expect.soft(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
       "320px document must not overflow horizontally").toBe(true);
     const targetBoxes = [];
-    for (const label of ["Ir a Buenos Aires", "Volver a Argentina", "Ir a la selección electoral exacta"]) {
+    for (const label of ["Ir a la selección electoral exacta"]) {
       const link = national.getByRole("link", { name: label });
       const box = await link.boundingBox();
       targetBoxes.push({ label, width: box?.width ?? 0, height: box?.height ?? 0 });
@@ -305,7 +311,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
       viewport: await page.evaluate(() => ({ inner: innerWidth, client: document.documentElement.clientWidth,
         scroll: document.documentElement.scrollWidth })), targets: targetBoxes,
     }));
-    const province = national.getByRole("link", { name: "Ir a Buenos Aires" });
+    const province = national.getByRole("link", { name: "Ir a la selección electoral exacta" });
     await province.focus();
     await expect(province).toBeFocused();
     const focus = await province.evaluate((element) => {
@@ -315,7 +321,7 @@ test("activated national reference remains accessible and navigable at 320 CSS p
     });
     expect(focus.outline || focus.shadow, "focused navigation has visible outline or ring").toBe(true);
     await province.press("Enter");
-    await expect(page).toHaveURL(/#province-reference-heading$/);
+    await expect(page).toHaveURL(/#explorer-election$/);
   }));
 });
 
@@ -330,8 +336,8 @@ test.describe("national reference touch", () => {
       await expect(national).toContainText("Referencia IGN verificada");
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
         .toContainText("Vista continental disponible");
-      await national.getByRole("link", { name: "Ir a Buenos Aires" }).tap();
-      await expect(page).toHaveURL(/#province-reference-heading$/);
+      await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).tap();
+      await expect(page).toHaveURL(/#explorer-election$/);
     }));
   });
 });
@@ -368,8 +374,8 @@ zoomTest.describe("national reference at native 200% zoom", () => {
       await expect(national.getByRole("region", { name: "Vista continental americana" }).getByRole("status"))
         .toContainText("Vista continental disponible");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await national.getByRole("link", { name: "Ir a Buenos Aires" }).click();
-      await expect(page).toHaveURL(/#province-reference-heading$/);
+      await national.getByRole("link", { name: "Ir a la selección electoral exacta" }).click();
+      await expect(page).toHaveURL(/#explorer-election$/);
       }));
     } catch (error) {
       try {

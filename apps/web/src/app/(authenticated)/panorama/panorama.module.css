@@ -21,7 +21,7 @@
 /* The shared stage supplies verified geometry and accessible camera controls.
    Its Exploration-only winner heading is redundant with this overview heading. */
 .map > section { border: 0; border-radius: 0; }
-.map > section > header { display: none; }
+.map > section > header { display: flex; }
 .noMap { min-height: 420px; display: flex; flex-direction: column; justify-content: center; padding: 24px; background: #091724; color: #b9c8d2; }
 .summary { border-left: 1px solid #284255; padding: 24px 22px 18px; min-width: 0; }
 .summary p { font-size: 13px; color: #b9c8d2; line-height: 1.7; }
@@ -73,3 +73,6 @@
 @media (max-width: 1100px) { .context { grid-template-columns: repeat(2,minmax(0,1fr)); } .workbench { grid-template-columns: minmax(0,1fr) 285px; } .observations ul { grid-template-columns: 1fr; gap: 12px; } }
 @media (max-width: 900px) { .workbench { grid-template-columns: minmax(0,1fr); } .summary { border-left: 0; border-top: 1px solid #284255; } }
 @media (max-width: 650px) { .children header, .lookup { flex-direction: column; align-items: stretch; gap: 5px; } .lookup label { width: auto; } .distribution { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 16px; } .distribution li { min-width: 0; overflow-wrap: anywhere; } .heading h1 { font-size: 30px; } .context { gap: 14px 12px; } .trail { padding-inline: 15px; } .mapTitle { padding-inline: 15px; } .summary { padding: 20px 17px 16px; } .routes > ul, .secondary ul { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; } .noMap { min-height: 290px; } }
+
+.workbench:has([data-map-kind="locator"]) { grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); align-items: start; }
+@media (max-width: 760px) { .workbench:has([data-map-kind="locator"]) { grid-template-columns: minmax(0, 1fr); } }
