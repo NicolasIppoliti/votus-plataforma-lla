@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
@@ -476,15 +477,51 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
   }
 }
 
-    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>): Promise<T> {
+    async function withAuthorizedOfficialWorkspace<T>(page: Page, run: () => Promise<T>, freshLogin = false): Promise<T> {
       const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
+      // A dedicated identity prevents unrelated configured-account memberships from
+      // changing this journey's sole-organization precondition.
+      if (freshLogin) {
+        const email = `sole-org-${randomUUID()}@example.test`;
+        const password = randomUUID();
+        const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+        if (error || !data.user) throw new Error(`failed to create sole-organization user: ${error?.message ?? "user missing"}`);
+        try {
+          return await withOfficialFixture(data.user.id, email, password);
+        } finally {
+          const { error: cleanupError } = await admin.auth.admin.deleteUser(data.user.id);
+          if (cleanupError) throw new Error(`failed to clean sole-organization user: ${cleanupError.message}`);
+        }
+      }
       const { data: auth, error: authError } = await admin.auth.admin.listUsers();
       const user = auth?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
       if (authError || !user) throw new Error(`failed to resolve official fixture user: ${authError?.message ?? "user missing"}`);
-      const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode });
+      return withOfficialFixture(user.id, environment.VOTUS_E2E_TEST_USER_EMAIL, environment.VOTUS_E2E_TEST_USER_PASSWORD);
+
+      async function withOfficialFixture(userId: string, email: string, password: string): Promise<T> {
+      const { data: fixture, error: fixtureError } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: userId, p_distrito_code: identity.distritoCode, p_seccion_code: identity.seccionCode });
       if (fixtureError || typeof fixture?.organization_id !== "string") throw new Error(`failed to set up authorized official fixture: ${fixtureError?.message ?? "invalid response"}`);
       let outcome: { value: T } | { error: unknown }; let cleanupError: { message: string } | null;
       try {
+        if (freshLogin) {
+          expect(fixture.active_membership_count, "fresh journey must have exactly one active membership").toBe(1);
+          await page.context().clearCookies();
+          await page.goto(new URL("/login", baseURL).toString());
+          await page.getByLabel("Correo electrónico").fill(email);
+          await page.getByLabel("Contraseña").fill(password);
+          await page.getByRole("button", { name: "Iniciar sesión" }).click();
+          await expect(page).toHaveURL(new URL("/", baseURL).toString());
+          const session = await page.request.get(new URL("/api/session", baseURL).toString());
+          const sessionBody: unknown = await session.json();
+          // Failure-only facts (HTTP status and session status only): the release gate redacts Playwright output.
+          if (JSON.stringify(sessionBody) !== JSON.stringify({ status: "active" })) {
+            const landing = { url: new URL(page.url()).pathname, alerts: await page.getByRole("alert").allTextContents(), statuses: await page.getByRole("status").allTextContents() };
+            await page.reload();
+            const afterReload = await (await page.request.get(new URL("/api/session", baseURL).toString())).json();
+            await writeFile(test.info().outputPath("e2e-facts-sole-org-session.json"), JSON.stringify({ http: session.status(), body: sessionBody, landing, afterReload }));
+          }
+          expect(sessionBody).toEqual({ status: "active" });
+        } else {
         await page.goto(new URL("/dashboard", baseURL).toString());
         const trigger = page.getByRole("button", { name: "Abrir navegación" });
         const mobile = await trigger.isVisible();
@@ -498,10 +535,12 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
         const response = await switched;
         expect({ ok: response.ok(), body: await response.json() }).toMatchObject({ ok: true, body: { status: "active" } });
         if (mobile) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+        }
         outcome = { value: await run() };
       } catch (error) { outcome = { error }; } finally { ({ error: cleanupError } = await admin.rpc("e2e_cleanup_authorized_fiscal_fixture", { p_fixture: fixture })); }
       if ("error" in outcome) { if (cleanupError) throw new AggregateError([outcome.error, new Error(cleanupError.message)], "official assertion and fixture cleanup failed"); throw outcome.error; }
       if (cleanupError) throw new Error(`failed to clean official fixture: ${cleanupError.message}`); return outcome.value;
+      }
     }
 
     test.describe("no fiscalización leakage into the rendered page", () => {
@@ -908,4 +947,19 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page.getByRole("main").getByRole("alert")).toContainText("Se rechazó");
     }));
   });
+});
+
+// A new login creates a new workspace context; this branch never uses the selector.
+test("sole organization login reaches drilldown data without selecting a workspace", async ({ page }) => {
+  const { identity: paso, seed } = pasoFixture(SPEC);
+  await withResultFixture(SPEC, seed, async () => withAuthorizedOfficialWorkspace(page, async () => {
+    const query = new URLSearchParams({ electionId: paso.electionIds[0]!, categoryId: paso.categoryId,
+      distritoCode: paso.distritoCode, seccionCode: paso.seccionCode, level: "seccion" });
+    await page.goto(`${baseURL}/drilldown?${query}`);
+    await page.getByText("Mostrar resultados exactos", { exact: true }).click();
+    const region = page.getByRole("region", { name: "Internas: votos y porcentajes por agrupación" });
+    await expect(region).toBeVisible();
+    await expect(region.getByRole("row").filter({ hasText: "LIBERTAD POR SIEMPRE" }))
+      .toContainText("13.206 votos");
+  }, true), "paso");
 });

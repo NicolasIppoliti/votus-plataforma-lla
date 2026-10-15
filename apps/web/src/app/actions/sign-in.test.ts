@@ -78,6 +78,41 @@ describe("signIn server action module", () => {
       expect(mocks.redirect).not.toHaveBeenCalled();
     });
 
+    it.each(["/drilldown?electionId=2025&distrito=02", "/compare?leftElectionId=2023&rightElectionId=2025", "/simulate?scenario=%7B%22seats%22%3A9%7D"])("resumes %s after successful authentication", async (destination) => {
+      mocks.signInWithPassword.mockResolvedValue({ error: null });
+      const form = validCredentials();
+      form.set("returnTo", destination);
+      await signIn(INITIAL_SIGN_IN_STATE, form);
+      expect(mocks.redirect).toHaveBeenCalledWith(destination);
+    });
+
+    it.each(["https://evil.test/", "//evil.test/", "/\\evil.test", "/login", "/api/session", "/drilldown/../login", "/drilldown?x=%ZZ", "/compare#fragment"])("rejects unsafe destination %s", async (destination) => {
+      mocks.signInWithPassword.mockResolvedValue({ error: null });
+      const form = validCredentials();
+      form.set("returnTo", destination);
+      await signIn(INITIAL_SIGN_IN_STATE, form);
+      expect(mocks.redirect).toHaveBeenCalledWith("/");
+    });
+
+    it.each(["/compare?x=%5C", "/compare?x=%2F%2Fevil.test"])("keeps the actual sign-in redirect same-origin for encoded query data %s", async (destination) => {
+      mocks.signInWithPassword.mockResolvedValue({ error: null });
+      const form = validCredentials();
+      form.set("returnTo", destination);
+      await signIn(INITIAL_SIGN_IN_STATE, form);
+      const redirected = new URL(mocks.redirect.mock.calls[0]![0] as string, "https://votus.test");
+      expect(redirected.origin).toBe("https://votus.test");
+      expect(redirected.pathname).toBe("/compare");
+      expect(mocks.redirect).toHaveBeenCalledWith(destination);
+    });
+
+    it("defaults an oversized destination after real action authentication without truncating it", async () => {
+      mocks.signInWithPassword.mockResolvedValue({ error: null });
+      const form = validCredentials();
+      form.set("returnTo", "/simulate?input=" + "a".repeat(8192));
+      await signIn(INITIAL_SIGN_IN_STATE, form);
+      expect(mocks.redirect).toHaveBeenCalledWith("/");
+    });
+
     it("redirects to the root operational briefing only after one successful password sign-in", async () => {
       mocks.signInWithPassword.mockResolvedValue({ error: null });
 

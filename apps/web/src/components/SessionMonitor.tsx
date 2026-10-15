@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { loginDestination } from "@/lib/auth/return-destination";
 
 const CHECK_INTERVAL_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -34,7 +35,7 @@ export default function SessionMonitor() {
         }
         if (ended && !disposed && !controller.signal.aborted && inFlight === controller) {
           redirecting = true;
-          window.location.replace("/login");
+          window.location.replace(loginDestination(window.location.pathname + window.location.search));
         }
       } catch {
         // Offline, timeout, malformed response and temporary service failure do
