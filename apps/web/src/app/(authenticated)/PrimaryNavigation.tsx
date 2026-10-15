@@ -1,6 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { Building2, Layers, ClipboardCheck, ShieldCheck } from "lucide-react";
+
+const subitemIcons = {
+  "/municipal": Building2,
+  "/scenarios": Layers,
+  "/review": ClipboardCheck,
+  "/fiscalizacion": ShieldCheck,
+};
 import { usePathname } from "next/navigation";
 import { isRouteActive, NAVIGATION_GROUPS } from "./navigation";
 
@@ -27,11 +35,15 @@ export function PrimaryNavigation() {
                 <span>{module.label}</span>
               </Link>
               {subitems.length ? <ul>
-                {subitems.map((item) => (
-                  <li key={item.href}>
-                    <Link className="navigation-subitem" href={item.href} aria-current={isRouteActive(pathname, item.href) ? "page" : undefined} aria-describedby={item.href === "/fiscalizacion" ? "navigation-unofficial-source" : undefined}>{item.label}</Link>
-                  </li>
-                ))}
+                {subitems.map((item) => {
+                  const Icon = subitemIcons[item.href as keyof typeof subitemIcons];
+                  return <li key={item.href}>
+                    <Link className="navigation-subitem" href={item.href} aria-current={isRouteActive(pathname, item.href) ? "page" : undefined} aria-describedby={item.href === "/fiscalizacion" ? "navigation-unofficial-source" : undefined}>
+                      <Icon size={20} strokeWidth={1.6} aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </Link>
+                  </li>;
+                })}
               </ul> : null}
               {"description" in group ? <p id="navigation-unofficial-source">{group.description}</p> : null}
             </li>

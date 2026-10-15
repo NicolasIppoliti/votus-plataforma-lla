@@ -224,7 +224,14 @@ select option {
 }
 
 .app-shell__workspace {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+
+.app-footer {
+  margin-block-start: auto;
+  padding-block-end: 1.5rem;
 }
 
 .app-shell > .situation-sidebar {
@@ -378,7 +385,7 @@ select option {
   font-weight: 600;
 }
 .situation-sidebar .navigation-list a[aria-current="page"]::before { content: ""; position: absolute; left: -19px; top: 15px; bottom: 15px; width: 2px; background: var(--accent); }
-.situation-sidebar .navigation-list .navigation-subitem { padding: 8px 12px 8px 46px; font-size: 13px; line-height: 1.45; }
+.situation-sidebar .navigation-list .navigation-subitem { padding: 8px 12px 8px 24px; font-size: 13px; line-height: 1.45; }
 
 .situation-sidebar > * { flex-shrink: 0; }
 
@@ -389,7 +396,7 @@ select option {
   margin-block-start: auto;
 }
 
-.situation-sidebar .source-disclaimer {
+.app-footer .source-disclaimer {
   margin: 0;
   padding: 1rem 0.65rem 0;
   border: 0;
@@ -1035,29 +1042,20 @@ select option {
     overflow-wrap: anywhere;
   }
 
+  .app-shell {
+    display: grid;
+    grid-template-columns: 218px minmax(0, 1fr);
+  }
+
   .app-shell > .situation-sidebar {
     display: flex;
+    align-self: stretch;
   }
 
   .mobile-navigation__trigger,
   .mobile-navigation__overlay,
   .mobile-navigation__sheet {
     display: none;
-  }
-
-  .situation-sidebar {
-    position: fixed;
-    z-index: 1;
-    inset-block: 0;
-    inset-inline-start: 0;
-    width: 218px;
-    align-content: start;
-    overflow-y: auto;
-    padding: 32px 18px 24px;
-  }
-
-  .app-shell__workspace {
-    margin-inline-start: 218px;
   }
 
   .workspace-topbar__inner {
@@ -1086,8 +1084,7 @@ select option {
 }
 
 @media (min-width: 981px) and (max-width: 1250px) {
-  .situation-sidebar { width: 190px; }
-  .app-shell__workspace { margin-inline-start: 190px; }
+  .app-shell { grid-template-columns: 190px minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {
