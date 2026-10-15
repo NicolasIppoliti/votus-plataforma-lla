@@ -93,6 +93,7 @@ function NumberField({
 interface SimulationFormProps {
   reference?: RosalesReference | undefined;
   hasScenarioInput?: boolean;
+  officialBaseLoaded?: boolean;
   requestKey: string;
   children: ReactNode;
   impact: ReactNode;
@@ -232,7 +233,7 @@ function restoredEditor(requestKey: string): EditorState {
   };
 }
 
-export function SimulationForm({ requestKey, children, impact, baseImpact, comparison, reference, hasScenarioInput = false }: SimulationFormProps) {
+export function SimulationForm({ requestKey, children, impact, baseImpact, comparison, reference, hasScenarioInput = false, officialBaseLoaded = false }: SimulationFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editor, setEditor] = useState(() => restoredEditor(requestKey));
@@ -432,7 +433,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
     <div className={`simulation-workspace${editor.values === null ? " simulation-workspace--supplied" : ""}`}>
     <section className="simulation-context" aria-label="Contexto del escenario">
       <div><span>Territorio</span><strong>{reference ? "Coronel Rosales" : "Territorio no vinculado"}</strong><small>{reference ? "Referencia geográfica del partido; no verifica la vinculación electoral de los votos aportados" : "Sin identificación territorial verificada"}</small></div>
-      <div><span>Muestra base</span><strong>Datos aportados por quien consulta</strong><small>Base histórica no conectada</small></div>
+      <div><span>Muestra base</span><strong>{officialBaseLoaded ? "Base oficial 2025" : "Datos aportados por quien consulta"}</strong><small>{officialBaseLoaded ? "JEBA definitivo · votos válidos" : "Base histórica no conectada"}</small></div>
       <div><span>Categoría del escenario</span><strong>{simulationDisplayLabel(transferBaselineFromQuery(requestKey)?.level ?? "Sin escenario")}</strong><small>{transferBaselineFromQuery(requestKey)?.seatsToFill ?? "—"} bancas · proyección hipotética · granularidad: {simulationDisplayLabel(transferBaselineFromQuery(requestKey)?.granularity ?? "no disponible")}. No es una convocatoria real.</small></div>
     </section>
     <section className="simulation-territorial-workbench" aria-label="Laboratorio territorial">
@@ -759,7 +760,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
     <section className="simulation-capabilities" aria-label="Disponibilidad de datos">
       <h2>Qué está disponible en Votus</h2>
       <div className="simulation-capability-grid">
-        <article><span>No conectado</span><div><h3>Base histórica</h3><p>Base histórica no conectada. Esta ruta calcula escenarios aportados por quien consulta; no carga resultados históricos oficiales ni verifica una convocatoria futura.</p></div></article>
+        <article><span>{officialBaseLoaded ? "Disponible" : "Carga opcional"}</span><div><h3>Base histórica</h3><p>{officialBaseLoaded ? "Base oficial 2025 cargada. Las modificaciones son hipótesis, no resultados históricos." : "Puede cargar la base oficial 2025 o aportar un escenario manual. No se verifica una convocatoria futura."}</p></div></article>
         <article><span>Disponible</span><div><h3>Cálculo estatutario</h3><p>El método estatutario y su evidencia se muestran junto al resultado autorizado. El distrito de reparto debe corresponder al conjunto completo de votos ingresado; una unidad de inspección no recibe una legislatura.</p></div></article>
       </div>
     </section>

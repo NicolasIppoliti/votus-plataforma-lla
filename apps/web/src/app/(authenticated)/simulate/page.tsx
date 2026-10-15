@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Alert } from "@/components/ui/alert";
+import { loadOfficialSimulationBase } from "@/lib/scenarios/official-simulation-base";
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -359,6 +360,26 @@ export default async function SimulatePage({
     );
   }
 
+  let officialBaseLoaded = false;
+  let officialBaseError: string | undefined;
+  if (stringParam(params, "officialBase") === "2025") {
+    if (requestQuery.has("input") || requestQuery.has("baseInput")) {
+      officialBaseError = "La carga oficial no se puede combinar con datos aportados. Abra la base oficial sin otros escenarios.";
+    } else {
+      const base = await loadOfficialSimulationBase();
+      if (base.ok) {
+        officialBaseLoaded = true;
+        params.input = JSON.stringify(base.input);
+        params.council = SIMULATION_COUNCIL.JURISDICTION;
+        requestQuery.delete("officialBase");
+        requestQuery.set("input", params.input);
+        requestQuery.set("council", params.council);
+        requestQuery.sort();
+      } else {
+        officialBaseError = `Base oficial no disponible (${base.reason}). No se cargaron cifras.`;
+      }
+    }
+  }
   const { input, projectionInput, granularity, parseError } = parseInputParam(
     stringParam(params, "input"),
   );
@@ -489,7 +510,12 @@ export default async function SimulatePage({
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
-      <SimulationForm requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
+      <section aria-label="Cargar base oficial">
+        <a href="/simulate?officialBase=2025">Cargar base oficial 2025 de Coronel Rosales</a>
+        {officialBaseLoaded ? <p>Base oficial 2025 · JEBA definitivo · Concejales · argentinos y extranjeros. Positivos: 32.291; blancos: 2.150; total publicado: 34.441. Base del cociente Hare (sin blancos ni anulados): 32.291. Anulados no publicados: no se infieren como cero. El reparto usa Hare y 9 bancas por elección. Las transferencias posteriores son hipótesis, no resultados oficiales.</p> : null}
+        {officialBaseError ? <p role="alert">{officialBaseError}</p> : null}
+      </section>
+      <SimulationForm officialBaseLoaded={officialBaseLoaded} requestKey={requestQuery.toString()} reference={reference} hasScenarioInput={projectionInput !== undefined}
         impact={result ? <RenewalStrip result={result}><SeatDistribution result={result} /></RenewalStrip> : null}
         baseImpact={result && baseResult ? <RenewalStrip result={baseResult}><SeatDistribution result={baseResult} /></RenewalStrip> : null}
         comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
