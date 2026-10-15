@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ExplorationOk } from "@/lib/results/exploration";
 import type { PanoramaData } from "./load-panorama";
 import { Panorama } from "./Panorama";
+import { OperationalBriefing } from "../OperationalBriefing";
 import { PanoramaChildren } from "./PanoramaChildren";
 import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
@@ -118,6 +119,38 @@ it.each([undefined, { status: "unavailable" } as const])("discloses unavailable 
   expect(html).toContain("Resultados oficiales por circuito no disponibles. No se muestran unidades ni cifras inventadas.");
   expect(html).not.toContain("<table>");
   expect(html).not.toContain("00248 — Norte");
+});
+
+it("collects supporting caveats once in a collapsed source disclosure", () => {
+  const html = renderToStaticMarkup(<OperationalBriefing data={data} />);
+  expect(html).toContain('<summary id="official-evidence-heading">Fuente y límites</summary>');
+  expect(html).not.toContain('<details open');
+  const panel = html.slice(html.indexOf('<summary id="official-evidence-heading">'));
+  for (const caveat of ["No hay participación", "Granularidad real", "Sin membresía:", "Aplicabilidad electoral desconocida", "Fiscalización es una fuente no oficial"]) {
+    expect(panel).toContain(caveat);
+    expect(html.split(caveat)).toHaveLength(2);
+  }
+  expect(html.split("Completitud no confirmada; el primer lugar observado es provisional.")).toHaveLength(2);
+  expect(html).not.toContain("Lo que se puede leer aquí");
+});
+
+it.each(["authorization_denied", "unavailable", "empty"] as const)("keeps source disclosure free of stale evidence on %s", status => {
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, evidence: status === "authorization_denied" ? { status, access: "denied" } : { status } }} />);
+  expect(html).toContain("Fuente y límites");
+  expect(html).not.toContain("220");
+  expect(html).not.toContain("Archivo ");
+});
+
+it("keeps the real Panorama map controls but delegates its repeated qualifications to the disclosure", async () => {
+  const { TerritorialMapStage, MAP_HEADING } = await vi.importActual<typeof import("../drilldown/TerritorialMapStage")>("../drilldown/TerritorialMapStage");
+  const html = renderToStaticMarkup(<TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno" referenceRosales consolidatedLimits />);
+  expect(html).toContain('aria-label="Acercar mapa"');
+  expect(html).toContain('href="#official-evidence-heading"');
+  expect(html).not.toContain("no cobertura electoral");
+  expect(html).not.toContain("Aplicabilidad electoral desconocida");
+  const explorer = renderToStaticMarkup(<TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno" referenceRosales />);
+  expect(explorer).toContain("Referencia geográfica, no cobertura electoral");
+  expect(explorer).toContain("Aplicabilidad electoral desconocida");
 });
 
 it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {

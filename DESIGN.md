@@ -30,6 +30,22 @@
 6. **Official and fiscalización remain unmistakably separate.** They can be juxtaposed but never visually or numerically collapsed into one source.
 7. **No decorative dashboard language.** Avoid generic KPI grids, pie charts, gauges, gradients, blobs, oversized radii, and motion without explanatory value.
 
+### Panorama source disclosure (#457)
+
+Panorama keeps one visible **Resultados oficiales** source badge and one native,
+initially collapsed **Fuente y límites** disclosure. That panel owns supporting
+geographic applicability, scope, denominator, granularity, completeness breakdowns,
+quarantine reasons, exclusions and archive provenance. Fiscalización is explicitly
+identified there as an unofficial, separately queried source whose figures never mix
+with Panorama. The neutral map retains its controls and evidence link, without
+repeating those qualifications in its overlay, legend and footer.
+
+Refusal/empty/unavailable states and provisional leadership remain beside the result;
+they appear only once and never become hidden supporting evidence. Selecting an
+unsupported territory suppresses the previous selection's figures and provenance.
+The shared explorer map and global legal disclaimer are unchanged (the latter belongs
+to #459); #458's broader Panorama layout reduction remains separate.
+
 ## Information Architecture
 
 ### Global shell

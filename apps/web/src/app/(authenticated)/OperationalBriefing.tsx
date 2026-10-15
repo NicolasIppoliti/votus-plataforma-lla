@@ -25,6 +25,5 @@ export function OperationalBriefing({ data = { href: "/drilldown", exclusions: [
       <Workflow href="/municipal" id="municipal" title="Resultados municipales">Coronel Rosales · Concejales 2025. Elección configurada.</Workflow>
       <Workflow href="/fiscalizacion" id="fiscalizacion" title="Cobertura y resultados">Fiscalización no oficial, por acceso explícito. La cobertura no es una muestra aleatoria.</Workflow>
     </ul></section>
-    <p className={styles.footer}>Las consultas conservan el alcance de cada fuente. La disponibilidad depende del territorio y del acceso autorizado.</p>
   </main>;
 }

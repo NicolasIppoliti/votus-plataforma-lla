@@ -32,12 +32,6 @@ export function PanoramaChildren({ data }: { data: PanoramaData }) {
         </tr>)}</tbody></table>
       </div>
       {visible === 0 && <Alert variant="empty">No hay circuitos que coincidan con la búsqueda.</Alert>}
-      <p>La completitud se refiere al catálogo esperado para las categorías informadas en el distrito; no es participación ni padrón.</p>
-      {outcomes.status === "ok" && <div className={styles.childQualifications}>
-        <p>Sin membresía: {outcomes.unassigned.catalogue_mesas_without_membership}; membresías en cuarentena: {outcomes.unassigned.membership_quarantined_mesas}; cuarentenas de completitud: {outcomes.unassigned.completeness_quarantines}; estados inesperados: {outcomes.unassigned.unexpected_status_mesas}.</p>
-        {Object.entries(outcomes.unassigned.membership_quarantine_reasons).map(([reason, count]) => <p key={`membership-${reason}`}>Cuarentena de membresía · {reason}: {count}.</p>)}
-        {Object.entries(outcomes.unassigned.completeness_quarantine_reasons).map(([reason, count]) => <p key={`completeness-${reason}`}>Cuarentena de completitud · {reason}: {count}.</p>)}
-      </div>}
     </>}
   </section>;
 }
