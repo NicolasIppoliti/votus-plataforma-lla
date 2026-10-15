@@ -1,4 +1,6 @@
 import "server-only";
+import type { WorkspaceRpcName } from "./profile-span";
+import { profileServerSpan as profileSpan } from "./profile-server";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExplorationFacetSelection } from "@/lib/results/exploration";
@@ -78,7 +80,7 @@ function hasStrictSessionClaims(value: unknown): boolean {
 }
 
 async function verifiedWorkspaceApi(client: SupabaseClient) {
-  const verified = await client.auth.getClaims();
+  const verified = await profileSpan("auth.getClaims", () => client.auth.getClaims());
   if (verified.error || !hasStrictSessionClaims(verified.data?.claims)) {
     throw new Error("Workspace authentication failed");
   }
@@ -87,12 +89,12 @@ async function verifiedWorkspaceApi(client: SupabaseClient) {
 
 async function rpcData(
   api: ReturnType<SupabaseClient["schema"]>,
-  name: string,
+  name: WorkspaceRpcName,
   parameters?: Record<string, boolean | number | string | null>,
 ) {
-  const { data, error } = parameters
-    ? await api.rpc(name, parameters)
-    : await api.rpc(name);
+  const { data, error } = await profileSpan(`workspace.rpc.${name}`, () => parameters
+    ? api.rpc(name, parameters)
+    : api.rpc(name));
   if (error?.code === "VOT03") {
     throw new WorkspaceContextError(WORKSPACE_CONTEXT_ERROR_CATEGORY.MISMATCH);
   }

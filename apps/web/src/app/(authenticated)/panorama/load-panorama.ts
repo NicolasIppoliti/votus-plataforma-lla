@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { loadAuthorizedOfficialDrilldownEvidence, type OfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";
 import type { ExplorationFacetExclusion, FacetOption } from "@/lib/results/exploration";
@@ -10,7 +11,11 @@ export interface PanoramaData {
 }
 
 /** Resolve the approved scope, never the first available election or category. */
-export async function loadPanorama(): Promise<PanoramaData> {
+export function loadPanorama(): Promise<PanoramaData> {
+  return profileServerSpan("panorama.load", resolvePanorama);
+}
+
+async function resolvePanorama(): Promise<PanoramaData> {
   const unavailable: PanoramaData = { href: "/drilldown", exclusions: [] };
   try {
     const repository = createAuthorizedOfficialFacetRepository();

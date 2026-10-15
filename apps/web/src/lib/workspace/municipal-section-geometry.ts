@@ -1,4 +1,5 @@
 import "server-only";
+import { profileServerSpan } from "./profile-server";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -14,7 +15,11 @@ interface VerifiedSection { status: "ok"; name: string; sha256: string; fetchedA
 export type MunicipalSectionResult = VerifiedSection | { status: "withheld" };
 
 /** Reads the complete immutable archive before parsing; no remote WFS or client-side archive transfer. */
-export async function loadMunicipalSectionGeometry(): Promise<MunicipalSectionResult> {
+export function loadMunicipalSectionGeometry(): Promise<MunicipalSectionResult> {
+  return profileServerSpan("geometry.section", readMunicipalSectionGeometry);
+}
+
+async function readMunicipalSectionGeometry(): Promise<MunicipalSectionResult> {
   try {
     const root = resolve(process.cwd(), "../..");
     const manifest = JSON.parse(await readFile(resolve(root, "archive-manifest.json"), "utf8")) as unknown;
