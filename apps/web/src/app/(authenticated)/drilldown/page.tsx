@@ -1,5 +1,7 @@
 import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
+import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext } from "@/lib/context/url";
+import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { Alert } from "@/components/ui/alert";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
@@ -25,7 +27,7 @@ import {
 import {
   EXPLORATION_LEVEL,
   formatFacetOptionLabel,
-  normalizeExplorationParams,
+
   type ExplorationFacetExclusion,
   type ExplorationFacets,
   type ExplorationLevel,
@@ -520,13 +522,22 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
     return refusalPage(<>Se rechazó la solicitud: los parámetros heredados {legacyKeys.join(", ")} ya no están permitidos.</>);
   }
 
-  const sourceKind = stringParam(params, "sourceKind") ?? "official";
-  if (sourceKind !== "official") {
-    return refusalPage("Se rechazó la solicitud: la exploración admite solo fuentes oficiales.");
+  const parsed = parseElectoralContext(params);
+  if (parsed.status === "invalid") {
+    return refusalPage(<>Se rechazó la solicitud: {parsed.reason}. {formatCounts(parsed.counts)}.</>);
   }
-
+  const context = ELECTORAL_CONTEXT_KEYS.some((key) => Object.hasOwn(params, key)) || Object.hasOwn(params, "level")
+    ? parsed.value
+    : await resolveDefaultElectoralContext(createAuthorizedOfficialFacetRepository());
+  if (context.sourceKind !== "official") {
+    return refusalPage(<>Esta exploración muestra resultados oficiales. Para consultar fiscalización, abra el módulo de fiscalización.</>);
+  }
   const rawLevel = stringParam(params, "level");
-  const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel);
+  const level = Object.values(EXPLORATION_LEVEL).find((candidate) => candidate === rawLevel)
+    ?? (!rawLevel ? context.mesaCode !== undefined ? EXPLORATION_LEVEL.MESA
+      : context.establecimientoCode ? EXPLORATION_LEVEL.ESTABLECIMIENTO
+      : context.circuitoCode ? EXPLORATION_LEVEL.CIRCUITO
+      : context.seccionCode ? EXPLORATION_LEVEL.SECCION : undefined : undefined);
   if (rawLevel && !level) {
     return refusalPage(<>Se rechazó la solicitud: nivel de informe no compatible {rawLevel}.</>);
   }
@@ -534,17 +545,8 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
     return refusalPage("Se rechazó la solicitud: el nivel distrito no está disponible hasta que exista autorización distrital completa.");
   }
 
-  const normalized = normalizeExplorationParams(Object.fromEntries(
-    ["distritoCode", "seccionCode", "circuitoCode", "establecimientoCode", "mesaCode"]
-      .map((key) => [key, stringParam(params, key)] as const)
-      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
-  ));
-  if (normalized.status === "invalid") {
-    return refusalPage(<>Se rechazó la solicitud: {normalized.reason}. {formatCounts(normalized.counts)}.</>);
-  }
-
-  const electionId = stringParam(params, "electionId");
-  const categoryId = stringParam(params, "categoryId");
+  const normalized = { value: context };
+  const { electionId, categoryId } = context;
   let facets: ExplorationFacets;
   try {
     facets = await createAuthorizedOfficialFacetRepository().facets({
