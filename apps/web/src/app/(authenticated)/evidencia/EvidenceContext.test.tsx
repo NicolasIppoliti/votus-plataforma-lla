@@ -28,6 +28,12 @@ function render() {
 beforeEach(() => hooks.reset());
 afterEach(() => vi.unstubAllGlobals());
 
+it("offers the complete selected value in a keyboard-accessible disclosure", () => {
+  const html = renderToStaticMarkup(render());
+  expect(html).toContain('<summary>Ver selección completa: Elección</summary>');
+  expect(html).toContain('<p>Elección anterior</p>');
+});
+
 it("clears descendants and their full-value text together before native GET submission", () => {
   class Select { constructor(public name: string, public value: string) {} }
   vi.stubGlobal("HTMLSelectElement", Select);
