@@ -90,7 +90,7 @@ test("official section completeness is disclosed through the real RPC", async ({
   }));
 });
 
-test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }) => {
+test("national reference links and no-WebGL polar view preserve exact selection", async ({ page }, testInfo) => {
   await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
     await page.addInitScript(() => {
       const original = HTMLCanvasElement.prototype.getContext;
@@ -104,6 +104,11 @@ test("national reference links and no-WebGL polar view preserve exact selection"
     await national.getByRole("button", { name: "Mostrar referencia nacional" }).click();
     await expect(national.getByRole("img", { name: /Extensión completa de la referencia IGN/ })).toBeVisible();
     await expect(national).toContainText("WebGL no disponible");
+    // Failure-only facts (link text/href only): the release gate redacts Playwright output.
+    await writeFile(testInfo.outputPath("e2e-facts-national-links.json"), JSON.stringify(await national.locator("a, [role=link]").evaluateAll((elements) =>
+      elements.map((element) => ({ tag: element.tagName, text: element.textContent?.trim().slice(0, 80), href: element.getAttribute("href"),
+        hidden: element.closest("[aria-hidden=true], [hidden], [inert]") !== null, display: getComputedStyle(element).display,
+        visibility: getComputedStyle(element).visibility })))));
     await expect(national.getByRole("link")).toHaveCount(1);
     await expect(national).toHaveAttribute("data-map-kind", "locator");
     expect((await national.boundingBox())!.width).toBeLessThanOrEqual(320);
