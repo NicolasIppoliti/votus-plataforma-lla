@@ -38,8 +38,7 @@ it("brings Panorama content forward without clipping the circuit map", () => {
 });
 
 it("reduces Exploration pre-map spacing without hiding context or shrinking touch targets", () => {
-  const mobile = css("./(authenticated)/drilldown/drilldown.module.css")
-    .split("/* Issue 501 mobile */")[1]?.match(/@media \(max-width: 480px\)\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+  const mobile = css("./(authenticated)/drilldown/drilldown.module.css").split("/* Issue 501 mobile */")[1]?.split("/* Reference-only geography")[0] ?? "";
   expect(mobile).toMatch(/\.selectionBoundary\s*\{[^}]*gap: 12px/);
   expect(mobile).toMatch(/\.filterRow\s*\{[^}]*gap: 8px/);
   expect(mobile).toMatch(/\.guidance\s*\{[^}]*line-height: 1.35/);
