@@ -452,6 +452,8 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await page.reload();
     await openSimulationDisclosure(page, "Editar los datos del escenario");
     await openSimulationDisclosure(page, "Cómo se asignaron las bancas");
+    // Reload restores native disclosures to closed; role locators exclude their contents.
+    await seatChart.getByText("Cómo leer la distribución", { exact: true }).click();
     await expect(listNames.nth(0)).toHaveValue("Lista A");
     await expect(listVotes.nth(0)).toHaveValue("6000");
     await expect(seatChart).toBeVisible();

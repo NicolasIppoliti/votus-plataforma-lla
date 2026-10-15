@@ -825,6 +825,21 @@ describe("simulate page — normal-user entry", () => {
 });
 
 describe("simulate page — complete statutory evidence", () => {
+  it("retains detailed seat strips on fresh served renders and reopens them after the e2e reload", async () => {
+    for (let render = 0; render < 2; render += 1) {
+      const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 });
+      const detail = markup.match(/<div[^>]*role="img" aria-label="Detalle de LA LIBERTAD AVANZA: 5 de 9 bancas"[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
+      expect(detail.match(/data-seat-state="awarded"/g)).toHaveLength(5);
+      expect(detail.match(/data-seat-state="empty"/g)).toHaveLength(4);
+    }
+    // Static rendering proves DOM retention, not Playwright role visibility:
+    // a fresh document closes native details, so the journey must reopen it.
+    const { readFileSync } = await import("node:fs");
+    const journey = readFileSync("e2e/simulate.spec.ts", "utf8");
+    const afterReload = journey.slice(journey.indexOf("    await page.reload();", journey.indexOf("const listASeats =")));
+    const beforeCounts = afterReload.slice(0, afterReload.indexOf("await expect(listASeats.locator"));
+    expect(beforeCounts).toContain('await seatChart.getByText("Cómo leer la distribución", { exact: true }).click();');
+  });
   it("draws nine individual renewal awards through the actual route", async () => {
     const markup = await renderSimulation({ ...ALLOCATION_INPUT, councilTotal: 18 });
 
