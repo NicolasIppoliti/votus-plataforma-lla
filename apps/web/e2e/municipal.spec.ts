@@ -239,15 +239,47 @@ test.describe("the municipal route requires workspace-authorized official result
     }));
   });
 
-  test("test_authorized_workspace_cne_reference_circuits_and_locales_on_mobile_and_keyboard", async ({ page }) => {
+  test("test_authorized_workspace_cne_reference_circuits_and_locales_on_mobile_and_keyboard", async ({ page }, testInfo) => {
+    // Record only controlled action labels and geometry, never page/session data.
+    let action = "workspace setup";
+    let viewportWidth = 390;
+    let input = "pointer";
+    let target: string | null = null;
+    try {
     await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(new URL("/municipal", baseURL).toString());
       const main = page.getByRole("main");
       const reference = main.getByRole("region", { name: "Circuitos y locales de votación (referencia CNE 2025)" });
       await expect(reference.getByRole("note")).toHaveText("Geografía de referencia CNE; no son resultados oficiales. No válida para elecciones históricas.");
-      await expect(reference.getByRole("img", { name: /10 circuitos y 28 locales con coordenadas/ })).toBeVisible();
+      await expect(reference.getByRole("group", { name: /10 circuitos y 28 locales con coordenadas/ })).toBeVisible();
       await expect(reference.locator("circle")).toHaveCount(28);
+      const places = reference.getByRole("link", { name: /^Ver local / });
+      await expect(places).toHaveCount(28);
+      action = "local activation";
+      for (const width of [390, 1440]) {
+        viewportWidth = width;
+        await page.setViewportSize({ width, height: 844 });
+        for (const keyboard of [false, true]) {
+          input = keyboard ? "keyboard" : "pointer";
+          action = "activate local";
+          // The locator draws dots in table order; later dots paint over earlier ones, so pointer uses the topmost.
+          const place = keyboard ? places.first() : places.last();
+          const href = await place.getAttribute("href");
+          expect(href).toMatch(/^#cne-local-\d+$/);
+          target = href?.match(/^#cne-local-\d+$/)?.[0] ?? null;
+          if (keyboard) { await place.focus(); await place.press("Enter"); }
+          else await place.click();
+          action = "verify selected local";
+          const selected = reference.locator(`${href}:target`);
+          await expect(selected).toBeInViewport();
+          await expect(selected).toBeFocused();
+          await expect(selected).toHaveCSS("outline-style", "solid");
+          await expect(selected).toHaveCSS("outline-width", "3px");
+          await expect(reference.locator("tbody tr")).toHaveCount(31);
+        }
+      }
+      action = "verify legend";
       const legend = reference.getByRole("group", { name: "Leyenda de referencia geográfica", exact: true });
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: 900 });
@@ -265,6 +297,7 @@ test.describe("the municipal route requires workspace-authorized official result
             && element.scrollWidth <= element.clientWidth;
         })).toBe(true);
       }
+      action = "verify table keyboard scrolling";
       const tableRegion = reference.getByRole("region", { name: "Tabla de locales de votación CNE 2025" });
       await expect(tableRegion.getByRole("row")).toHaveCount(32);
       await expect(tableRegion.getByRole("cell", { name: "Sin coordenadas: no se dibuja" })).toHaveCount(3);
@@ -276,6 +309,12 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }).getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     }));
+    } catch (error) {
+      await writeFile(testInfo.outputPath("e2e-facts-cne-local-activation.json"), JSON.stringify({
+        schemaVersion: 1, action, viewportWidth, input, target,
+      }, null, 2) + "\n");
+      throw error;
+    }
   });
 
   test("test_authorized_workspace_ssr_readiness_without_javascript", async ({ page, browser }) => {

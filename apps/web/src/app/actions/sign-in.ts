@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { returnDestination } from "@/lib/auth/return-destination";
 import {
   GENERIC_SIGN_IN_ERROR,
   type SignInState,
@@ -35,5 +36,5 @@ export async function signIn(
     return GENERIC_SIGN_IN_ERROR;
   }
 
-  redirect("/");
+  redirect(returnDestination(formData.get("returnTo")));
 }

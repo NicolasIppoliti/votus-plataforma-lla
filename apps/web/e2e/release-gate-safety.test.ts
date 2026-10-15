@@ -1,5 +1,12 @@
 import { chromium } from "@playwright/test";
 
+it("sole-organization login seeds PASO through its matching ownership variant", () => {
+  const source = readFileSync(new URL("./provenance.spec.ts", import.meta.url), "utf8");
+  const journey = source.slice(source.indexOf('test("sole organization login'));
+  expect(journey).toContain('pasoFixture(SPEC)');
+  expect(journey).toContain('}, true), "paso");');
+});
+
 it("grants completeness fixture tables only select, insert and delete in the test lane", () => {
   const sql = readFileSync(new URL("./service-role-grants.sql", import.meta.url), "utf8");
   for (const table of ["official_expected_mesa", "official_mesa_count_status"]) {
@@ -578,7 +585,7 @@ describe("explicit release-gate lanes", () => {
 		expect(analyzed).toEqual({ ...normal, analyzeProductionBuild: true });
 		expect(analyzed.mode).toBe(RELEASE_GATE_MODE.FOCUSED);
 		expect(analyzed.selectedSpecs).toEqual([selected]);
-		expect(analyzed.pgTapProofs).toHaveLength(17);
+		expect(analyzed.pgTapProofs).toHaveLength(18);
 		expect(analyzed.rollbackReapplyProofs).toHaveLength(2);
 		expect(analyzed.runBrowser).toBe(true);
 	});
@@ -622,7 +629,7 @@ describe("explicit release-gate lanes", () => {
 		expect(plan.pgTapProofs).toEqual(lane === "sql" ? full.pgTapProofs : []);
 		expect(plan.setupProofs).toEqual(lane === "sql" ? full.setupProofs : []);
 		expect(plan.postPgTapCleanupProofs).toEqual(lane === "sql" ? full.postPgTapCleanupProofs : []);
-		if (lane === "sql") expect(plan.pgTapProofs).toHaveLength(17);
+		if (lane === "sql") expect(plan.pgTapProofs).toHaveLength(18);
 	});
 
 	it.each([
@@ -1403,7 +1410,7 @@ describe("explicit release-gate lanes", () => {
 		const build = result.commands.find(({ command, args }) => command === "pnpm" && args[0] === "build:next");
 		if (build) expect(build.env).not.toHaveProperty("VOTUS_E2E_ANALYZE_PRODUCTION_BUILD");
 		const pgTap = result.trace.filter((phase) => phase.startsWith("pgtap:"));
-		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 17);
+		expect(pgTap).toHaveLength(lane === "browser" ? 0 : 18);
 		if (lane !== "browser") {
 			expect(result.trace.slice(9, 16)).toEqual([
 				"pgtap:non_positive_vote_kinds.sql",
@@ -2168,6 +2175,7 @@ describe("migration release-gate integration", () => {
 		"20261012000000",
 		"20261013000000",
 		"20261014000000",
+		"20261015000000",
 		"20261015200000",
 		"20261015300000",
 	];
@@ -2182,7 +2190,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(74);
+		).toBe(75);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -2230,6 +2238,11 @@ describe("migration release-gate integration", () => {
 			{
 				path: "tests/workspace_context_invalidation.sql",
 				label: "disposable workspace-context invalidation pgTAP",
+				timeoutMs: 120_000,
+			},
+			{
+				path: "tests/workspace_bootstrap_autoselect.sql",
+				label: "disposable workspace-bootstrap-autoselect pgTAP",
 				timeoutMs: 120_000,
 			},
 			{
@@ -2388,6 +2401,7 @@ describe("migration release-gate integration", () => {
 			"pgTAP:disposable workspace-foundation pgTAP",
 			"pgTAP:disposable workspace-administration pgTAP",
 			"pgTAP:disposable workspace-context invalidation pgTAP",
+			"pgTAP:disposable workspace-bootstrap-autoselect pgTAP",
 			"pgTAP:disposable workspace-review-scope pgTAP",
 			"pgTAP:disposable workspace-authorized-facets pgTAP",
 			"pgTAP:disposable workspace-official-internal-lists pgTAP",
@@ -2564,7 +2578,7 @@ describe("migration release-gate integration", () => {
 	it("inspects release proofs without planning browser execution", async () => {
 		const plan = await inspectReleaseGatePlan(["--release-proof-only"]);
 		expect(plan.mode).toBe(RELEASE_GATE_MODE.RELEASE_PROOF_ONLY);
-		expect(plan.pgTapProofs).toHaveLength(17);
+		expect(plan.pgTapProofs).toHaveLength(18);
 		expect(plan.rollbackReapplyProofs).toHaveLength(2);
 		expect(plan.requireBrowserCapability).toBe(true);
 		expect(plan.runBrowser).toBe(false);
@@ -2677,13 +2691,14 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("74 as migration_inventory_count");
+		expect(proof).toContain("75 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
 			"20261015300000-down",
 			"20261015200000-down",
+			"20261015000000-down",
 			"20261014000000-down",
 			"20261013000000-down",
 			"20261012000000-down",
@@ -2786,6 +2801,7 @@ describe("migration release-gate integration", () => {
 			"20261012000000-up",
 			"20261013000000-up",
 			"20261014000000-up",
+			"20261015000000-up",
 			"20261015200000-up",
 			"20261015300000-up",
 		]);

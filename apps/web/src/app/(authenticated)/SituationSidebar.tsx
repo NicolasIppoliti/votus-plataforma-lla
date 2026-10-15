@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { SourceDisclaimer } from "@/components/SourceDisclaimer";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 
 export function SituationSidebar({ children }: { children?: ReactNode }): ReactNode {
@@ -12,10 +11,7 @@ export function SituationSidebar({ children }: { children?: ReactNode }): ReactN
       </Link>
       <p className="workspace-label">Espacio de análisis</p>
       <PrimaryNavigation />
-      <div className="situation-sidebar__footer">
-        <div className="source-disclaimer"><SourceDisclaimer /></div>
-        {children}
-      </div>
+      {children ? <div className="situation-sidebar__footer">{children}</div> : null}
     </aside>
   );
 }
