@@ -266,7 +266,7 @@ it.each([
   }
 });
 
-it.each(["stale", "mismatch", "selection_required", "denied", "conflict", "unavailable"])(
+it.each(["stale", "mismatch", "denied", "conflict", "unavailable"])(
   "suppresses a returned count when workspace selection is %s", async (status) => {
     workspace.selection.mockResolvedValueOnce({ status, revision: 2, activeOrganizationId: null, organizations: [], total: 0, truncated: false });
     workspace.reviewItems.mockClear();
@@ -279,6 +279,17 @@ it.each(["stale", "mismatch", "selection_required", "denied", "conflict", "unava
     expect(markup).not.toContain("Organización activa:");
   },
 );
+
+it("says no organization is selected instead of a review failure (#429)", async () => {
+  workspace.selection.mockResolvedValueOnce({ status: "selection_required", revision: 2, activeOrganizationId: null, organizations: [], total: 0, truncated: false });
+  workspace.reviewItems.mockClear();
+  workspace.reviewItems.mockResolvedValueOnce({ status: "ok", total: 7 });
+  const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
+  expect(markup.match(/Seleccioná una organización para ver el estado de revisión\./g)).toHaveLength(2);
+  expect(markup).not.toContain("No se pudo verificar el estado de revisión.");
+  expect(markup).not.toContain("elemento(s) de revisión pendiente(s)");
+  expect(markup).not.toContain("Sin elementos pendientes");
+});
 
 it("keeps real root attention unknown after the review request throws", async () => {
   workspace.reviewItems.mockClear();

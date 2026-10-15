@@ -555,9 +555,12 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(topbar).not.toContainText("Organización sin verificar");
     await expect(
       topbar.getByRole("status").filter({
-        hasText: "No se pudo verificar el estado de revisión.",
+        hasText: /^Seleccioná una organización para ver el estado de revisión\.$/,
       }),
     ).toBeVisible();
+    await expect(topbar).not.toContainText("No se pudo verificar el estado de revisión.");
+    await expect(topbar).not.toContainText("Sin elementos pendientes");
+    await expect(topbar).not.toContainText("elemento(s) de revisión pendiente(s)");
     await drawerTrigger.click();
     const footer = drawer.getByRole("group", { name: "Organización y cuenta" });
     await expect(footer).toContainText("Organización sin verificar");

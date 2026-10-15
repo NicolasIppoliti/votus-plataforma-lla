@@ -25,6 +25,7 @@ from uuid import UUID
 from psycopg import sql
 
 from etl.crosswalk import CrosswalkTable, MesaStability
+from etl.ingest_performance import phase, timed
 from etl.jurisdiction import (
     JurisdictionNames,
     normalize_circuito_code,
@@ -699,6 +700,7 @@ def merge_key(
     )
 
 
+@timed("jurisdiction_resolution")
 def batch_upsert_jurisdictions(
     conn,
     keys: Sequence[JurisdictionKey],
@@ -951,6 +953,7 @@ class ResultRowsReplacement:
     source_kind: str | None
     inserted: int = 0
 
+    @timed("result_writes")
     def insert(self, records: Sequence[ResultRowRecord]) -> int:
         """Insert one bounded batch without repeating the replacement delete."""
         _validate_result_row_records(
@@ -1047,7 +1050,7 @@ def begin_result_rows_replacement(
         archive_entry_id=archive_entry_id,
         expected_source_kind=source_kind,
     )
-    with conn.cursor() as cur:
+    with phase("scoped_delete"), conn.cursor() as cur:
         cur.execute(
             "delete from result_row where archive_entry_id = %s and election_id = %s",
             (archive_entry_id, election_id),
@@ -1060,6 +1063,7 @@ def begin_result_rows_replacement(
     )
 
 
+@timed("completeness")
 def replace_official_mesa_completeness(
     conn,
     *,

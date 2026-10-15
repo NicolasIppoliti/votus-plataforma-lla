@@ -515,6 +515,34 @@ def test_overlapping_companion_conflicts_quarantine_each_result_once_in_stable_o
     )
 
 
+def test_2025_equal_mesa_numbers_in_different_lineages_stay_distinct() -> None:
+    """#484: `mesa_id` is NOT globally unique in the 2025 file.
+
+    The registered archive repeats mesa numbers across distritos and even
+    across secciones of one distrito (docs/research/mesa-identity-2025.md).
+    The same number under three valid lineages must stay three mesas.
+    """
+    rows = list(
+        iter_national_rows(
+            _text_of(_read("national_2025_repeated_mesa_sample.csv")),
+            archive_entry_id="national/2025-legislativas",
+            election_year=2025,
+            election_round="fixture-legacy",
+        )
+    )
+
+    assert {row.mesa for row in rows} == {1}
+    lineages = {
+        (row.result.distrito, row.result.seccion, row.result.circuito, row.mesa) for row in rows
+    }
+    assert lineages == {
+        ("02", "027", "00248", 1),
+        ("02", "001", "00001", 1),
+        ("03", "001", "00001", 1),
+    }
+    assert sorted(row.result.votes for row in rows) == [55, 70, 90]
+
+
 def test_2025_companion_enriches_mesas_across_source_zero_padding() -> None:
     rows = iter_national_rows(
         _text_of(_read("national_2025_sample.csv")),

@@ -114,7 +114,8 @@ describe("loadAuthorizedOfficialDrilldownEvidence", () => {
   ])("maps a coherent %s bundle to %s", async (rawStatus, expected, fields) => {
     const part = { status: rawStatus, counts: {}, exclusions: [], source_exclusions: [], items: [], archive_entry_ids: [], sources: [], schools: [], parties: [], total: 0, source_kind: "official", ...fields };
     mocks.bundle.mockResolvedValue({ result: part, schools: part, reference: part, provenance: part });
-    await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({ status: expected });
+    await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual(
+      expected === "authorization_denied" ? { status: expected, access: "denied" } : { status: expected });
   });
 
   it("preserves row-only reference exclusions from the real refusal contract", async () => {
@@ -165,7 +166,16 @@ describe("loadAuthorizedOfficialDrilldownEvidence", () => {
     });
 
     await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({
-      status: "authorization_denied",
+      status: "authorization_denied", access: "denied",
+    });
+  });
+
+  it("tells a missing organization apart from a denial (#426)", async () => {
+    const denial = { status: "authorization_denied", authorization_status: "selection_required", truncated: false };
+    mocks.bundle.mockResolvedValue({ result: denial, schools: denial, reference: denial, provenance: { ...denial, reason: null } });
+
+    await expect(loadAuthorizedOfficialDrilldownEvidence(selection)).resolves.toEqual({
+      status: "authorization_denied", access: "selection_required",
     });
   });
 

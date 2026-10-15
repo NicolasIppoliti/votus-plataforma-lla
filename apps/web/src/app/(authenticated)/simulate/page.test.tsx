@@ -389,6 +389,12 @@ describe("simulate page — sweep evidence and refusal boundaries", () => {
       .map((match) => new URL(match[1]!.replaceAll("&amp;", "&"), "https://example.invalid"));
   }
 
+  it("labels each sampled point with its es-AR grouped vote amount (#451)", async () => {
+    const markup = await renderSimulation(national, { ...sweep, sweepDonor: national.lists[0]!.listId, sweepTarget: national.lists[1]!.listId });
+    expect(markup).toContain('<th scope="row">1.000</th>');
+    expect(markup).not.toContain('<th scope="row">1000</th>');
+  });
+
   it.each([OFFICIAL_PBA_2025_INPUT, national])("retains rich input and every point's own complete exact link", async (input) => {
     const params = { ...sweep, sweepDonor: input.lists[0]!.listId, sweepTarget: input.lists[1]!.listId };
     const roster = input.level === "pba_municipal"

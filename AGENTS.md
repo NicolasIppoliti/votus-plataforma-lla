@@ -48,7 +48,10 @@ that drives the real entry point — the CLI parser, the rendered page, the inge
 Code correct against one file's shape and wrong against another's has caused the most
 damage here. Real examples:
 
-- `mesa_id` is globally unique in the 2025 national file and NOT in the 2023 one.
+- `mesa_id` is NOT globally unique in either the 2023 or the 2025 national file. In the
+  2025 file even `(distrito, mesa)` repeats across secciones; only the full
+  `(distrito, seccion, circuito, establecimiento, mesa)` lineage identifies a mesa
+  (`docs/research/mesa-identity-2025.md`).
 - `lista_numero` is empty throughout the 2023 generales file, populated throughout the
   PASO, and never populated on a POSITIVO row in 2025.
 - The 2023 national file bundles ten categories, from PRESIDENTE Y VICE down to

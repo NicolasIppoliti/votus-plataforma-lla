@@ -1,21 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { formatFacetOptionLabel } from "@/lib/results/exploration";
+import { formatCircuitLabel } from "@/lib/results/exploration";
 import { circuitPresentation } from "@/lib/geography/circuit-presentation";
 import type { PanoramaData } from "./load-panorama";
 import styles from "./panorama.module.css";
+import { formatCount, formatDecimal } from "@/lib/format/number";
 
-const integer = new Intl.NumberFormat("es-AR");
-const decimal = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 });
 
 export function PanoramaChildren({ data }: { data: PanoramaData }) {
   const [search, setSearch] = useState("");
   const outcomes = data.evidence?.status === "ok" ? data.evidence.circuitOutcomes : undefined;
   const available = outcomes?.status === "ok" && outcomes.circuit_membership === "known";
   const rows = available ? outcomes.circuits.map(circuit => {
-    const option = data.circuitOptions?.find(item => item.code === circuit.circuito_code);
-    const label = option ? formatFacetOptionLabel(option) : `${circuit.circuito_code} — nombre no disponible`;
+    const label = formatCircuitLabel(circuit.circuito_code, data.circuitOptions?.find(item => item.code === circuit.circuito_code));
     const query = new URLSearchParams(data.href.split("?")[1]);
     query.set("level", "circuito");
     query.set("circuitoCode", circuit.circuito_code);
@@ -29,7 +27,7 @@ export function PanoramaChildren({ data }: { data: PanoramaData }) {
       <div className={styles.lookup}><label htmlFor="panorama-search">Buscar territorio<input id="panorama-search" type="search" placeholder="Nombre o código de circuito" value={search} onChange={event => setSearch(event.target.value)} /></label><p>Todas las filas permanecen disponibles al limpiar la búsqueda.</p></div>
       <div className={styles.childTable} role="region" aria-label="Circuitos disponibles para profundizar" tabIndex={0}>
         <table><caption>Resultados oficiales por circuito · margen sobre votos positivos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Primer lugar observado</th><th scope="col">Margen (pp)</th><th scope="col">Votos positivos</th><th scope="col">Completitud</th></tr></thead><tbody>{rows.map(({ circuit, label, href, presentation }) => <tr key={circuit.circuito_code} hidden={!matches(label)}>
-          <th scope="row"><a href={href}>{label}</a></th><td>{presentation.winner}{circuit.status === "partial" && " · provisional"}</td><td>{presentation.margin === null ? "No disponible" : `${decimal.format(presentation.margin)} pp`}</td><td>{integer.format(circuit.positive_total)}</td><td>{circuit.status === "complete" ? "Completa" : `Parcial · ${presentation.coverage}`} · {circuit.counts.counted}/{circuit.counts.expected} mesas</td>
+          <th scope="row"><a href={href}>{label}</a></th><td>{presentation.winner}{circuit.status === "partial" && " · provisional"}</td><td>{presentation.margin === null ? "No disponible" : `${formatDecimal(presentation.margin)} pp`}</td><td>{formatCount(circuit.positive_total)}</td><td>{circuit.status === "complete" ? "Completa" : `Parcial · ${presentation.coverage}`} · {circuit.counts.counted}/{circuit.counts.expected} mesas</td>
         </tr>)}</tbody></table>
       </div>
       {visible === 0 && <p role="status">No hay circuitos que coincidan con la búsqueda.</p>}

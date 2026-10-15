@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCircuitLabel,
   formatFacetOptionLabel,
   normalizeExplorationParams,
   ResultsExplorationContractError,
@@ -72,6 +73,14 @@ describe("official results exploration repository", () => {
     expect(result.distritos.map(formatFacetOptionLabel)).toEqual([
       "02 — Buenos Aires", "03 — nombre no disponible", "04 — nombres contradictorios (2 variantes)",
     ]);
+  });
+
+  it("labels a circuit by its name when known and by its code exactly once otherwise (#452)", () => {
+    expect(formatFacetOptionLabel({ code: "00248", name: "00248", nameStatus: "present", nameVariantCount: 1 })).toBe("00248");
+    expect(formatCircuitLabel("00248", { code: "00248", name: "Norte", nameStatus: "present", nameVariantCount: 1 })).toBe("00248 — Norte");
+    expect(formatCircuitLabel("00248", { code: "00248", name: "00248", nameStatus: "present", nameVariantCount: 1 })).toBe("00248");
+    expect(formatCircuitLabel("00248", { code: "00248", name: null, nameStatus: "missing", nameVariantCount: 0 })).toBe("00248");
+    expect(formatCircuitLabel("00248", undefined)).toBe("00248");
   });
 
   it.each([

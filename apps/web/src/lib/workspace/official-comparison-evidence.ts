@@ -3,6 +3,7 @@ import type { OfficialSelection } from "../../app/api/workspace/official/input";
 import { parseOfficialExploration, type ExplorationOk, type ExplorationParty, type ExplorationSourceAudit } from "../results/exploration-contract";
 import { createSupabaseServerClient } from "../supabase/server-client";
 import { authorizedOfficialComparisonBundle } from "./context";
+import { type AccessRefusal, classifyAccessRefusal } from "@/lib/workspace/access-refusal";
 
 const ITEM_LIMIT = 100, REFERENCE_LIMIT = 200, EXCLUSION_LIMIT = 20, SHA256 = /^[0-9a-f]{64}$/;
 const FORBIDDEN_PROVENANCE_KEYS = ["source", "source_url", "sourceUrl", "archived_path", "archivedPath", "notes", "url", "path"] as const;
@@ -20,7 +21,7 @@ export interface AuthorizedOfficialComparisonSideEvidence { result: ExplorationO
 interface AuthorizedOfficialComparisonEvidenceOk { status: typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK; left: AuthorizedOfficialComparisonSideEvidence; right: AuthorizedOfficialComparisonSideEvidence; }
 export interface OfficialComparisonUnmappedSide { side: OfficialComparisonSide; partyCount: number; totalVotes: number; }
 interface AuthorizedOfficialComparisonUnmapped { status: typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES; sides: OfficialComparisonUnmappedSide[]; }
-interface AuthorizedOfficialComparisonEvidenceState { status: Exclude<OfficialComparisonEvidenceStatus, typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK | typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES>; }
+interface AuthorizedOfficialComparisonEvidenceState { status: Exclude<OfficialComparisonEvidenceStatus, typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.OK | typeof OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNMAPPED_PARTIES>; access?: AccessRefusal; }
 export type AuthorizedOfficialComparisonEvidence = AuthorizedOfficialComparisonEvidenceOk | AuthorizedOfficialComparisonUnmapped | AuthorizedOfficialComparisonEvidenceState;
 type Raw = Record<string, unknown>;
 const record = (value: unknown): Raw | null => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Raw : null;
@@ -107,7 +108,8 @@ function failureStatus(bundle: Raw): AuthorizedOfficialComparisonEvidenceState |
   const parts = [record(bundle["comparison"]), record(bundle["leftReference"]), record(bundle["rightReference"]), record(bundle["leftProvenance"]), record(bundle["rightProvenance"])];
   if (parts.some((part) => part === null)) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.MALFORMED };
   const statuses = parts.map((part) => part!["status"]); if (statuses.every((status) => status === "ok")) return null;
-  if (statuses.some((status) => status === "authorization_denied")) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.AUTHORIZATION_DENIED };
+  const denied = parts.find((part) => part!["status"] === "authorization_denied");
+  if (denied) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.AUTHORIZATION_DENIED, access: classifyAccessRefusal(typeof denied["authorization_status"] === "string" ? denied["authorization_status"] : "") };
   if (statuses.some((status) => status === "payload_too_large")) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.PAYLOAD_TOO_LARGE };
   if (statuses.every((status) => status === "no_rows")) return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.EMPTY };
   return { status: OFFICIAL_COMPARISON_EVIDENCE_STATUS.UNAVAILABLE };

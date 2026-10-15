@@ -4,6 +4,7 @@ import {
   Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { UNMODELED_VOTE_REASON } from "@/domain/seat-allocation/source-coverage";
+import { formatExactNumber } from "@/lib/format/number";
 import {
   THRESHOLD_POLICY,
   type AllocationResult,
@@ -49,13 +50,6 @@ interface EvidenceTableProps {
   columnKinds: readonly TableColumnKind[];
 }
 
-    function formatNumber(value: number): string {
-      if (Number.isInteger(value)) return value.toLocaleString("es-AR");
-      return value.toLocaleString("es-AR", {
-        maximumFractionDigits: 20,
-        useGrouping: false,
-      });
-    }
 
     const AWARDED_BY_LABEL: Record<SeatAward["awardedBy"], string> = {
       cuociente_division: "división por cociente", largest_remainder: "mayor residuo", halving: "reducción sucesiva a la mitad", dhondt_quotient: "cociente D’Hondt", tie_break: "desempate",
@@ -184,7 +178,7 @@ function AwardTable({ awards, caption, names }: AwardTableProps) {
         names.get(award.listId) ?? `sin mapear (lista ${award.listId})`,
         awardedByLabel(award.awardedBy),
         Object.entries(award.values)
-          .map(([name, value]) => `${evidenceValueLabel(name)}: ${formatNumber(value)}`)
+          .map(([name, value]) => `${evidenceValueLabel(name)}: ${formatExactNumber(value)}`)
           .join("; "),
         award.tieBreak
           ? `${tieBreakRuleLabel(award.tieBreak.rule)}; ${tieBreakBasisLabel(award.tieBreak.basis)}; ${tieBreakCitationLabel(award.tieBreak.citation)}`
@@ -211,32 +205,32 @@ function HareEvidence({ result }: { result: HareAllocationResult }) {
         <dd>
           {voteTotals.kind === "reported_breakdown" ? (
             <>
-              {formatNumber(result.validVotes)} ={" "}
-              {formatNumber(voteTotals.totalVotes)} total −{" "}
-              {formatNumber(voteTotals.blankVotes)} en blanco −{" "}
-              {formatNumber(voteTotals.annulledVotes)} anulados
+              {formatExactNumber(result.validVotes)} ={" "}
+              {formatExactNumber(voteTotals.totalVotes)} total −{" "}
+              {formatExactNumber(voteTotals.blankVotes)} en blanco −{" "}
+              {formatExactNumber(voteTotals.annulledVotes)} anulados
             </>
           ) : voteTotals.kind === "combined_blank_and_annulled" ? (
             <>
-              {formatNumber(result.validVotes)} ={" "}
-              {formatNumber(voteTotals.totalVotes)} total −{" "}
-              {formatNumber(voteTotals.combinedBlankAndAnnulledVotes)} en blanco
+              {formatExactNumber(result.validVotes)} ={" "}
+              {formatExactNumber(voteTotals.totalVotes)} total −{" "}
+              {formatExactNumber(voteTotals.combinedBlankAndAnnulledVotes)} en blanco
               y anulados combinados
             </>
           ) : (
             <>
-              {formatNumber(voteTotals.validVotes)} votos válidos; no se informaron
+              {formatExactNumber(voteTotals.validVotes)} votos válidos; no se informaron
               los valores totales, en blanco y anulados
             </>
           )}
         </dd>
         <dt>Bancas por asignar</dt>
-        <dd>{formatNumber(result.seatsToFill)}</dd>
+        <dd>{formatExactNumber(result.seatsToFill)}</dd>
         <dt>Cociente inicial</dt>
-        <dd>{formatNumber(result.initialCuociente)}</dd>
+        <dd>{formatExactNumber(result.initialCuociente)}</dd>
         <dt>Cociente Hare</dt>
         <dd>
-          {formatNumber(result.cuociente)} después de {result.halvingIterations}{" "}
+          {formatExactNumber(result.cuociente)} después de {result.halvingIterations}{" "}
           {result.halvingIterations === 1 ? "reducción a la mitad" : "reducciones a la mitad"}
         </dd>
       </dl>
@@ -258,11 +252,11 @@ function HareEvidence({ result }: { result: HareAllocationResult }) {
         rows={result.results.map((entry) => [
           entry.listId,
           entry.listName,
-          formatNumber(entry.votes),
-          formatNumber(entry.quotient),
+          formatExactNumber(entry.votes),
+          formatExactNumber(entry.quotient),
           entry.initialSeatsByCuociente,
           entry.seatsByCuociente,
-          formatNumber(entry.remainder),
+          formatExactNumber(entry.remainder),
           entry.seatsByResidue,
           entry.totalSeats,
         ])}
@@ -281,7 +275,7 @@ function HareEvidence({ result }: { result: HareAllocationResult }) {
           rows={result.halvingSteps.map((step) => [
             String(step.iteration),
             `Iteración ${step.iteration}`,
-            formatNumber(step.cuociente),
+            formatExactNumber(step.cuociente),
             step.qualifyingListIds.length > 0
               ? step.qualifyingListIds
                   .map(
@@ -309,7 +303,7 @@ function HareEvidence({ result }: { result: HareAllocationResult }) {
               {capLosers.map((listId) => (
                 <li key={listId}>
                   {names.get(listId) ?? `sin mapear (lista ${listId})`}:{" "}
-                  {formatNumber(
+                  {formatExactNumber(
                     result.results.find((entry) => entry.listId === listId)
                       ?.votes ?? 0,
                   )}
@@ -352,8 +346,8 @@ function DhondtEvidence({ result }: { result: DhondtAllocationResult }) {
             ? "Base legal del umbral:"
             : "Base del umbral definida por el escenario:"}
         </strong>{" "}
-        {formatNumber(result.thresholdPercent)}% del padrón{" "}
-        {formatNumber(result.padron)} = {formatNumber(result.thresholdVotes)}{" "}
+        {formatExactNumber(result.thresholdPercent)}% del padrón{" "}
+        {formatExactNumber(result.padron)} = {formatExactNumber(result.thresholdVotes)}{" "}
         votos.
       </p>
       {result.thresholdPolicy === THRESHOLD_POLICY.SCENARIO ? (
@@ -376,10 +370,10 @@ function DhondtEvidence({ result }: { result: DhondtAllocationResult }) {
         rows={result.results.map((entry) => [
           entry.listId,
           entry.listName,
-          formatNumber(entry.votes),
-          `${formatNumber(entry.votingSharePercent)}%`,
+          formatExactNumber(entry.votes),
+          `${formatExactNumber(entry.votingSharePercent)}%`,
           entry.excludedByThreshold
-            ? `excluida: ${formatNumber(entry.votes)} votos están por debajo de ${formatNumber(result.thresholdVotes)}`
+            ? `excluida: ${formatExactNumber(entry.votes)} votos están por debajo de ${formatExactNumber(result.thresholdVotes)}`
             : "incluida en D’Hondt",
           entry.seats,
         ])}
@@ -398,9 +392,9 @@ function DhondtEvidence({ result }: { result: DhondtAllocationResult }) {
         rows={result.quotientTable.map((entry) => [
           `${entry.listId}-${entry.divisor}`,
           names.get(entry.listId) ?? `sin mapear (lista ${entry.listId})`,
-          formatNumber(votes.get(entry.listId) ?? 0),
+          formatExactNumber(votes.get(entry.listId) ?? 0),
           `Divisor ${entry.divisor}`,
-          formatNumber(entry.quotient),
+          formatExactNumber(entry.quotient),
         ])}
       />
 
@@ -416,7 +410,7 @@ function DhondtEvidence({ result }: { result: DhondtAllocationResult }) {
 export function AllocationEvidence({ result }: { result: AllocationResult }) {
   const coverage = result.coverage;
   const coverageNote = !coverage.complete
-    ? `Cobertura de votos incompleta: ${formatNumber(coverage.uncoveredVotes)} votos no están en las listas ni se declararon explícitamente fuera del modelo; son datos de un escenario, no evidencia histórica oficial.`
+    ? `Cobertura de votos incompleta: ${formatExactNumber(coverage.uncoveredVotes)} votos no están en las listas ni se declararon explícitamente fuera del modelo; son datos de un escenario, no evidencia histórica oficial.`
     : result.isProjection
       ? "Datos de un escenario proyectado, no evidencia histórica oficial."
       : undefined;
@@ -425,16 +419,16 @@ export function AllocationEvidence({ result }: { result: AllocationResult }) {
       <section aria-labelledby="vote-coverage-heading">
         <h3 id="vote-coverage-heading">Cobertura de votos</h3>
         <p>
-          {formatNumber(coverage.basisVotes)} votos de base ={" "}
-          {formatNumber(coverage.listedVotes)} incluidos en listas +{" "}
-          {formatNumber(coverage.unmodeledVotes)} explícitamente fuera del modelo.
+          {formatExactNumber(coverage.basisVotes)} votos de base ={" "}
+          {formatExactNumber(coverage.listedVotes)} incluidos en listas +{" "}
+          {formatExactNumber(coverage.unmodeledVotes)} explícitamente fuera del modelo.
         </p>
         {coverage.unmodeledVoteBreakdown.length > 0 ? (
           <ul aria-label="Desglose de votos fuera del modelo">
             {coverage.unmodeledVoteBreakdown.map((entry) => (
               <li key={entry.reason}>
                 {UNMODELED_VOTE_REASON_LABEL[entry.reason]}:{" "}
-                {formatNumber(entry.votes)} votos
+                {formatExactNumber(entry.votes)} votos
               </li>
             ))}
           </ul>

@@ -112,9 +112,14 @@ function parseTextOptions(value: unknown): FacetOption[] {
   });
 }
 export function formatFacetOptionLabel(option: FacetOption): string {
-  if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return `${option.code} — ${option.name}`;
+  // Some sources name a unit by its own code; repeating it reads as "00248 — 00248".
+  if (option.nameStatus === FACET_NAME_STATUS.PRESENT) return option.name === option.code ? option.code : `${option.code} — ${option.name}`;
   if (option.nameStatus === FACET_NAME_STATUS.MISSING) return `${option.code} — nombre no disponible`;
   return `${option.code} — nombres contradictorios (${option.nameVariantCount} variantes)`;
+}
+/** A circuit row label: its name when known, otherwise its code exactly once (#452). */
+export function formatCircuitLabel(code: string, option: FacetOption | undefined): string {
+  return option && option.nameStatus !== FACET_NAME_STATUS.MISSING ? formatFacetOptionLabel(option) : code;
 }
 function parseFacetExclusions(value: unknown): ExplorationFacetExclusion[] {
   if (!Array.isArray(value)||value.length>2) throw new Error("invalid facet exclusions"); const reasons=new Set<string>();
@@ -172,7 +177,7 @@ function numericCode(raw: string | undefined, width: number): string | null | un
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return undefined;
-  if (!/^[0-9]+$/.test(trimmed)) return null;
+  if (!/^[0-9]+$/.test(trimmed) || trimmed.length > width) return null;
   return trimmed.padStart(width, "0");
 }
 export function normalizeExplorationParams(raw: RawAdministrativeParams): NormalizedExplorationParams {
@@ -191,7 +196,7 @@ export function normalizeExplorationParams(raw: RawAdministrativeParams): Normal
   const establecimientoCode = raw.establecimientoCode?.trim() || undefined;
   const rawMesaCode = raw.mesaCode?.trim();
   const mesaCode = !rawMesaCode ? undefined
-    : /^[0-9]+$/.test(rawMesaCode) ? Number(rawMesaCode) : null;
+    : /^[0-9]+$/.test(rawMesaCode) && Number.isSafeInteger(Number(rawMesaCode)) ? Number(rawMesaCode) : null;
   const invalid = Object.fromEntries(Object.entries({ distritoCode, seccionCode, circuitoCode, mesaCode })
     .filter(([, value]) => value === null)
     .map(([key]) => [key, 1]));

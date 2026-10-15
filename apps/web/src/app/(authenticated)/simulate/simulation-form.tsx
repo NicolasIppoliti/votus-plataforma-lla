@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ALLOCATION_LEVEL } from "@/domain/seat-allocation/types";
+import { GRANULARITY_ORDER, granularityLabel } from "@/lib/results/granularity";
 import { GRANULARITY } from "@/lib/results/types";
 import { projectionGranularitySchema } from "./projection-input";
 import {
@@ -33,6 +34,7 @@ import { SIMULATION_COUNCIL } from "./simulation-configuration";
 import { simulationDisplayLabel } from "./display-label";
 import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
 import type { RosalesReference } from "@/lib/geography/cne-rosales-reference";
+import { formatCount } from "@/lib/format/number";
 
 const INITIAL_VALUES: SimulationFormValues = {
   level: ALLOCATION_LEVEL.PBA_MUNICIPAL,
@@ -52,14 +54,6 @@ const LIST_FIELD = {
 } as const;
 
 type ListField = (typeof LIST_FIELD)[keyof typeof LIST_FIELD];
-
-const GRANULARITY_LABELS = {
-  [GRANULARITY.MESA]: "Mesa",
-  [GRANULARITY.ESTABLECIMIENTO]: "Establecimiento",
-  [GRANULARITY.CIRCUITO]: "Circuito",
-  [GRANULARITY.SECCION]: "Sección",
-  [GRANULARITY.DISTRITO]: "Distrito",
-} as const;
 
 interface NumberFieldProps {
   describedBy: string;
@@ -145,7 +139,7 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
             aria-describedby="transfer-help transfer-errors">
             <option value="">Seleccione una lista</option>
             {baseline.lists.map((list) => (
-              <option key={list.listId} value={list.listId}>{list.listName} — {list.votes} votos</option>
+              <option key={list.listId} value={list.listId}>{list.listName} — {formatCount(list.votes)} votos</option>
             ))}
           </select>
         </div>
@@ -196,7 +190,7 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
             aria-describedby="sweep-help sweep-errors"
             onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))}>
             <option value="">Seleccione para muestrear</option>
-            {baseline.lists.map((list) => <option key={list.listId} value={list.listId}>{list.listName} — {list.votes} votos</option>)}
+            {baseline.lists.map((list) => <option key={list.listId} value={list.listId}>{list.listName} — {formatCount(list.votes)} votos</option>)}
           </select>
         </div>
       ))}
@@ -558,9 +552,9 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
               onChange={handleGranularityChange}
               value={values.granularity}
             >
-              {Object.entries(GRANULARITY_LABELS).map(([value, label]) => (
+              {GRANULARITY_ORDER.toReversed().map((value) => (
                 <option key={value} value={value}>
-                  {label}
+                  {granularityLabel(value)}
                 </option>
               ))}
             </select>

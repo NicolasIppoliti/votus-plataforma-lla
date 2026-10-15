@@ -1,9 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { AllocationResult } from "@/domain/seat-allocation/types";
 import type { ProjectionInput } from "./projection-input";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
 const COLORS = ["#65e5f2", "#aac0f1", "#efc58c", "#769598"];
-const format = (value: number) => new Intl.NumberFormat("es-AR").format(value);
 const seats = (result: AllocationResult, id: string) => result.seatAwards.filter((award) => award.listId === id).length;
 
 export function RenewalStrip({ result, children }: { result: AllocationResult; children?: ReactNode }) {
@@ -36,19 +36,19 @@ export function SimulationComparison({ base, scenario, baseResult, result }: {
 }) {
   const baseTotal = base.lists.reduce((sum, list) => sum + list.votes, 0);
   const scenarioTotal = scenario.lists.reduce((sum, list) => sum + list.votes, 0);
-  const share = (votes: number, total: number) => total === 0 ? "No disponible" : `${new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(votes / total * 100)} %`;
-  const delta = (value: number) => `${value < 0 ? "−" : value > 0 ? "+" : ""}${format(Math.abs(value))}`;
+  const share = (votes: number, total: number) => total === 0 ? "No disponible" : `${formatFixed2(votes / total * 100)} %`;
+  const delta = (value: number) => `${value < 0 ? "−" : value > 0 ? "+" : ""}${formatCount(Math.abs(value))}`;
   return (
     <section className="simulation-comparison" aria-labelledby="simulation-comparison-heading">
       <header><div><h2 id="simulation-comparison-heading">Base y escenario, lado a lado</h2><p>Base aportada y supuesto aplicado. Porcentajes sobre votos positivos incluidos en listas; excluyen votos fuera del modelo, blancos y anulados. No son participación ni pronóstico.</p></div>
-        <dl><div><dt>Total base modelado</dt><dd>{format(baseTotal)}</dd></div><div><dt>Total escenario modelado</dt><dd>{format(scenarioTotal)}</dd></div></dl>
+        <dl><div><dt>Total base modelado</dt><dd>{formatCount(baseTotal)}</dd></div><div><dt>Total escenario modelado</dt><dd>{formatCount(scenarioTotal)}</dd></div></dl>
       </header>
       <div className="table-scroll" role="region" aria-label="Comparación exacta de base y escenario" tabIndex={0}>
         <table className="data-table"><caption>Comparación exacta de votos, proporciones y bancas</caption><thead><tr>
           {["Lista", "Votos base", "Votos escenario", "Cambio de votos", "% positivos modelados base", "% positivos modelados escenario", "Bancas base", "Bancas escenario"].map((heading) => <th key={heading} scope="col">{heading}</th>)}
         </tr></thead><tbody>{base.lists.map((list) => {
           const current = scenario.lists.find((row) => row.listId === list.listId)!;
-          return <tr key={list.listId}><th scope="row">{list.listName}</th><td>{format(list.votes)}</td><td>{format(current.votes)}</td><td>{delta(current.votes - list.votes)}</td><td>{share(list.votes, baseTotal)}</td><td>{share(current.votes, scenarioTotal)}</td><td>{seats(baseResult, list.listId)}</td><td>{seats(result, list.listId)}</td></tr>;
+          return <tr key={list.listId}><th scope="row">{list.listName}</th><td>{formatCount(list.votes)}</td><td>{formatCount(current.votes)}</td><td>{delta(current.votes - list.votes)}</td><td>{share(list.votes, baseTotal)}</td><td>{share(current.votes, scenarioTotal)}</td><td>{seats(baseResult, list.listId)}</td><td>{seats(result, list.listId)}</td></tr>;
         })}</tbody></table>
       </div>
     </section>

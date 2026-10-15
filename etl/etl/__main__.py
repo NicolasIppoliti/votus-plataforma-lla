@@ -101,6 +101,7 @@ from .ingest.pba import (
     pba_parser_quarantine_review_kind,
 )
 from .ingest_metrics import IngestMetrics, MetricsReportError, metrics_report
+from .ingest_performance import current, performance_report, phase, profile_ingest, timed
 from .jurisdiction import (
     is_canonicalizable_circuito_code,
     is_canonicalizable_code,
@@ -933,6 +934,7 @@ def resolve_national_archive_csvs(raw_bytes: bytes, *, extract_dir: Path) -> Nat
     )
 
 
+@timed("extraction")
 def resolve_national_archive_paths(raw_bytes: bytes, *, extract_dir: Path) -> NationalArchivePaths:
     """Select the results and optional establecimiento CSV members, without reading them.
 
@@ -1066,6 +1068,7 @@ def archived_filename(record: dict, *, source_id: str) -> str:
     return archived_path.rsplit("/", 1)[-1]
 
 
+@timed("archive_read_hash")
 def read_archived_source(
     entry: dict,
     *,
@@ -1091,6 +1094,7 @@ def read_archived_source(
     )
 
 
+@profile_ingest
 def ingest_source(
     source_id: str,
     *,
@@ -1113,6 +1117,9 @@ def ingest_source(
     if entry is None:
         raise UnknownSourceError(f"no registered source with id {source_id!r}")
     capability = entry["capability"]
+    if current() is not None:
+        if capability != "national" or entry.get("source_kind", "official") != "official":
+            raise ValueError("performance reports require national official ingestion")
     if metrics is not None:
         if capability != "national" or entry.get("source_kind", "official") != "official":
             raise ValueError("metrics require national official ingestion")
@@ -1161,8 +1168,12 @@ def ingest_source(
 
     if resolved_url is None:
         raise MissingDatabaseUrlError("database URL resolution produced no value")
+    if current() is not None:
+        current().data["source_sha256"] = archived["sha256"]
     conn = psycopg.connect(resolved_url)
     try:
+        if current() is not None:
+            current().database_context(conn, source_id, year, round_)
         project_archive_entry(conn, archive_entry_from_evidence(archived, entry))
         if capability == "national":
             with national_results_text(raw_bytes) as results_text:
@@ -1361,7 +1372,10 @@ def ingest_source(
             )
         else:
             raise UnknownSourceError(f"unsupported capability {capability!r} for ingest")
-        conn.commit()
+        with phase("commit"):
+            conn.commit()
+        if current() is not None:
+            current().data["commit_returned"] = True
         if metrics is not None:
             metrics.data["commit_returned"] = True
     except Exception:
@@ -1373,6 +1387,31 @@ def ingest_source(
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
+    if getattr(args, "performance_output", None) is not None:
+        try:
+            with performance_report(
+                Path(args.performance_output),
+                archive_root=Path(args.local_root),
+                protected=tuple(
+                    Path(path)
+                    for path in (
+                        args.sources_path,
+                        args.manifest_path,
+                        args.crosswalk_path,
+                        args.party_map_path,
+                    )
+                )
+                + ((Path(args.metrics_output),) if args.metrics_output else ()),
+                root=REPO_ROOT,
+            ):
+                return _cmd_ingest_with_metrics(args)
+        except MetricsReportError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    return _cmd_ingest_with_metrics(args)
+
+
+def _cmd_ingest_with_metrics(args: argparse.Namespace) -> int:
     if getattr(args, "metrics_output", None) is None:
         return _cmd_ingest(args)
     try:
@@ -2804,9 +2843,9 @@ def official_mesa_votes_from_national(
     """Project an archived national CSV onto per-mesa official tallies WITHIN
     ONE `(distrito, seccion, category)` scope.
 
-    The scope is not optional. `mesa_id` is globally unique in the 2025
-    national file and NOT in the 2023 one, so keying on it alone collapses two
-    physically different mesas in two distritos into one entry. And the 2023
+    The scope is not optional. `mesa_id` is not unique in the 2023 nor the 2025
+    national file, so keying on it alone collapses physically different mesas
+    in different distritos or secciones into one entry. And the 2023
     file bundles ten categories from PRESIDENTE Y VICE down to MIEMBROS DE
     JUNTA COMUNAL, so without a category filter one mesa's ten tallies for the
     same agrupación overwrite each other and an arbitrary survivor is compared
@@ -3639,6 +3678,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument("--source", required=True)
     ingest_parser.add_argument("--metrics-output", type=Path, default=None)
+    ingest_parser.add_argument("--performance-output", type=Path, default=None)
     ingest_parser.add_argument("--database-url", default=None)
     ingest_parser.add_argument("--year", type=int, required=True)
     ingest_parser.add_argument("--round", dest="round", required=True)

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { formatCount } from "@/lib/format/number";
 
 export interface UnorderableLevelsProps {
   entries: { granularity: string; rows: number; votes: number }[];
@@ -32,7 +33,7 @@ export function UnorderableLevels({ entries, label }: UnorderableLevelsProps): R
       <ul>
         {entries.map((entry) => (
           <li key={entry.granularity}>
-            {entry.granularity}: {entry.rows} filas
+            {entry.granularity}: {formatCount(entry.rows)} filas
           </li>
         ))}
       </ul>

@@ -218,15 +218,15 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup.indexOf('aria-label="Resultados exactos por circuito"')).toBeLessThan(markup.indexOf('<summary>Mostrar resultados exactos</summary>'));
     expect(markup.indexOf('aria-label="Resultados exactos por circuito"')).toBeLessThan(markup.indexOf('aria-labelledby="school-breakdown-heading"'));
     expect(markup).toContain('data-hatched="true"');
-    expect(markup).toContain("20.00");
+    expect(markup).toContain("20,00");
     expect(mocks.circuits).toHaveBeenCalled();
   });
 
   it.each([
-    [60, 40, "canonical", "Mayoría", "20.00 pp"],
-    [50, 50, "canonical", "Empate", "0.00 pp"],
+    [60, 40, "canonical", "Mayoría", "20,00 pp"],
+    [50, 50, "canonical", "Empate", "0,00 pp"],
     [0, 0, "canonical", "Sin votos positivos", "no disponible"],
-    [60, 40, "unmapped", "Lista sin mapear 110", "20.00 pp"],
+    [60, 40, "unmapped", "Lista sin mapear 110", "20,00 pp"],
   ])("inspects every official group truthfully (%s/%s, %s)", async (first, second, status, leader, margin) => {
     const bundle = authorizedBundle();
     mocks.bundle.mockResolvedValue({ ...bundle, result: { ...bundle.result, total_votes: first + second,
@@ -294,7 +294,7 @@ describe("DrilldownPage authorized official evidence", () => {
     const markup = await render();
     expect(markup).toContain("Internas");
     expect(mocks.internas).toHaveBeenCalled();
-    for (const text of ["La Fuerza del Cambio", "75.00%", "60.00%", "Lista única", "Lista sin mapear", "0 votos", "No disponible", "ingesta nacional", "Fuente: oficial", "Granularidad: mesa"])
+    for (const text of ["La Fuerza del Cambio", "75,00%", "60,00%", "Lista única", "Lista sin mapear", "0 votos", "No disponible", "ingesta nacional", "Fuente: oficial", "Granularidad: mesa"])
       expect(markup).toContain(text);
     expect(markup).not.toContain("9999");
     expect(markup).toContain('aria-label="Internas: votos y porcentajes por agrupación"');
@@ -419,12 +419,12 @@ describe("DrilldownPage authorized official evidence", () => {
       `Elección</dt><dd>${COMPLETE_SECTION.electionId}`,
       `Categoría</dt><dd>${COMPLETE_SECTION.categoryId}`,
       "Distrito</dt><dd>02", "Sección</dt><dd>027", "Circuito</dt><dd>00001",
-      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel del informe</dt><dd>mesa",
+      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel del informe</dt><dd>Mesa",
     ]) expect(evidence).toContain(entry);
     expect(evidence).toContain("Referencia electoral autorizada");
     expect(evidence).toContain(`SHA-256 ${"a".repeat(64)}`);
     expect(markup).toContain("300 votos a nivel mesa");
-    expect(markup).toMatch(/<td\b[^>]*>300 votos<\/td><td\b[^>]*>100\.00%<\/td>/);
+    expect(markup).toMatch(/<td\b[^>]*>300 votos<\/td><td\b[^>]*>100,00%<\/td>/);
     expect(mocks.bundle).toHaveBeenCalledWith(expect.anything(), {
       electionId: COMPLETE_SECTION.electionId, categoryId: COMPLETE_SECTION.categoryId,
       distritoCode: "02", seccionCode: "027", circuitoCode: "00001",
@@ -687,8 +687,8 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(chart.match(/role="img"/g)).toHaveLength(3);
     for (const width of [75, 25, 0]) expect(chart).toContain(`width="${width}"`);
     expect(chart).toContain("100 %");
-    expect(markup).toContain("75.00%");
-    expect(markup).toContain("25.00%");
+    expect(markup).toContain("75,00%");
+    expect(markup).toContain("25,00%");
     const disclosure = markup.slice(markup.indexOf("<summary>Archivo y procedencia</summary>"), markup.indexOf("</details>", markup.indexOf("<summary>Archivo y procedencia</summary>")));
     expect(disclosure).toContain("SHA-256");
     expect(disclosure).not.toContain("Se excluyeron");

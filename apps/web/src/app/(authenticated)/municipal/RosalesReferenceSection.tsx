@@ -3,6 +3,7 @@ import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import styles from "./municipal.module.css";
 import type { RosalesReference, RosalesReferenceRefusal, RosalesReferenceResult } from "@/lib/geography/cne-rosales-reference";
+import { formatCount } from "@/lib/format/number";
 
 const HEADING_ID = "rosales-reference-heading";
 
@@ -57,7 +58,7 @@ function RosalesReference({ reference }: { reference: RosalesReference }): React
             <th scope="row">{locale.name}</th>
             <td>{locale.address}</td>
             <td>{locale.locality}</td>
-            <td className="table-cell--number">{locale.mesa_count}</td>
+            <td className="table-cell--number">{formatCount(locale.mesa_count)}</td>
             <td>{locale.mesa_from}–{locale.mesa_to}</td>
             <td>{locale.coordinates ? "En el mapa" : "Sin coordenadas: no se dibuja"}</td>
           </tr>)}
