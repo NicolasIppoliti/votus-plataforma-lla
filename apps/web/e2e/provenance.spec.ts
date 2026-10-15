@@ -505,6 +505,72 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
     }
 
     test.describe("no fiscalización leakage into the rendered page", () => {
+  test("Exploration opens shared official context without another selection", async ({ page }) => {
+    await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
+      const query = new URLSearchParams({
+        electionId: SOURCE_SCOPE.electionId, categoryId: SOURCE_SCOPE.categoryId,
+        distritoCode: identity.distritoCode, seccionCode: identity.seccionCode,
+        sourceKind: "official",
+      });
+      // Panorama's local territory selector is not shared context until #436.
+      // Exercise #437 directly with the complete authorized shared context.
+      const explorationHref = `/drilldown?${query}`;
+      await page.goto(new URL(explorationHref, baseURL).toString());
+      const hasRosalesScope = (url: URL) => url.pathname === "/drilldown" &&
+        url.searchParams.get("distritoCode") === identity.distritoCode && url.searchParams.get("seccionCode") === identity.seccionCode;
+      await expect(page).toHaveURL(hasRosalesScope);
+      // Always leave an artifact before any assertions or DOM collection. CI only
+      // uploads facts on failure; a collection error must not erase the baseline.
+      const factsPath = test.info().outputPath("e2e-facts-panorama-exact-results.json");
+      await writeFile(factsPath, JSON.stringify({
+        phase: "after-exploration-click",
+        fixtureMatchesPanoramaTerritory: identity.distritoCode === "02" && identity.seccionCode === "027",
+        fixtureMatchesPanoramaCategory: identity.categoryName === "CONCEJALES",
+      }));
+      const pageFacts = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        const text = main?.textContent ?? "";
+        return {
+          mainCount: document.querySelectorAll("main").length,
+          containsRosales: text.includes("Rosales"),
+          needsSelection: text.includes("Elija una sección exacta"),
+          empty: text.includes("No se encontraron resultados oficiales"),
+          denied: text.includes("no pertenece al alcance autorizado") || text.includes("No tiene autorización"),
+          malformed: text.includes("validación de integridad"),
+          exactResultsCount: [...(main?.querySelectorAll("summary") ?? [])].filter(element => element.textContent === "Mostrar resultados exactos").length,
+          controls: [...(main?.querySelectorAll("select") ?? [])].map(select => ({
+            id: select.id, disabled: select.disabled, optionCount: select.options.length,
+            hasSelection: Boolean(select.value),
+          })),
+        };
+      }).catch(() => ({ collectionFailed: true }));
+      await writeFile(factsPath, JSON.stringify({
+        phase: "before-destination-and-evidence-assertions",
+        fixtureMatchesPanoramaTerritory: identity.distritoCode === "02" && identity.seccionCode === "027",
+        fixtureMatchesPanoramaCategory: identity.categoryName === "CONCEJALES",
+        ...pageFacts,
+      }));
+      {
+        const destination = new URL(page.url());
+        await writeFile(test.info().outputPath("e2e-facts-panorama-exploration.json"), JSON.stringify({
+          destinationPath: destination.pathname,
+          destinationScope: {
+            distritoCode: destination.searchParams.get("distritoCode"),
+            seccionCode: destination.searchParams.get("seccionCode"),
+            level: destination.searchParams.get("level"),
+          },
+          linkHasDistrict: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("distritoCode"),
+          linkHasSection: explorationHref !== null && new URL(explorationHref, baseURL).searchParams.has("seccionCode"),
+          ...pageFacts,
+        }));
+      }
+      await expect(page).toHaveURL(hasRosalesScope);
+      await expect(page.getByRole("main")).toContainText("Rosales");
+      const exactResults = page.getByText("Mostrar resultados exactos", { exact: true });
+      await expect(exactResults).toBeVisible();
+      await expect(page.getByRole("main")).not.toContainText("Elija una sección exacta");
+    }));
+  });
   test("test_rendered_page_excludes_fiscalizacion_without_opt_in", async ({ page }) => {
     await withResultFixture(SPEC, SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedOfficialWorkspace(page, async () => {
       await page.goto(new URL("/dashboard", baseURL).toString());
@@ -532,10 +598,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(page).toHaveURL(new URL(`/drilldown?${carried}`, baseURL).toString());
       await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue(SOURCE_SCOPE.electionId);
       await expect(page.getByRole("combobox", { name: "Categoría", exact: true })).toHaveValue(SOURCE_SCOPE.categoryId);
-      // Test the empty-form hierarchy separately, without relying on a workflow
-      // link to erase context. Keep the existing disabled/focus assertions below.
-      await page.goto(new URL("/drilldown", baseURL).toString());
-      await expect(page).toHaveURL(new URL("/drilldown", baseURL).toString());
+      // An explicit incomplete context opens the empty-form hierarchy; a bare
+      // exploration URL now resolves the authorized default context (#437).
+      await page.goto(new URL("/drilldown?sourceKind=official", baseURL).toString());
+      await expect(page).toHaveURL(new URL("/drilldown?sourceKind=official", baseURL).toString());
       await expect(page.getByRole("combobox", { name: "Elección", exact: true })).toHaveValue("");
       await expect(page.getByRole("button", { name: "Aplicar selección" })).toHaveCount(0);
       await page.locator("details").filter({ has: page.locator("#explorer-distrito") }).locator("summary").click();

@@ -61,7 +61,7 @@ it.each(["fiscalizacion", "unknown"])("rejects workflow source %s before queryin
   const html = renderToStaticMarkup(await DrilldownPage({ searchParams: Promise.resolve({ ...COMPLETE_SECTION, sourceKind }) }) as ReactElement);
   expect(mocks.facets).not.toHaveBeenCalled();
   expect(mocks.bundle).not.toHaveBeenCalled();
-  expect(html).toContain("la exploración admite solo fuentes oficiales");
+  expect(html).toContain(sourceKind === "fiscalizacion" ? "Para consultar fiscalización" : "fuente no admitida");
 });
 
 const authorized = { authorization_status: "authorized", truncated: false };
@@ -107,8 +107,41 @@ describe("DrilldownPage authorized official evidence", () => {
     return renderToStaticMarkup((await DrilldownPage({ searchParams: Promise.resolve(params) })) as ReactElement);
   }
 
-  it("renders the national reference as a locator with disclosed provenance and one action", async () => {
+  it("resolves the authorized default context on an empty URL", async () => {
+    mocks.facets.mockResolvedValue({ ...FACETS, categories: [{ ...FACETS.categories[0], name: "CONCEJALES" }] });
     const markup = await render({});
+    expect(mocks.bundle).toHaveBeenCalled();
+    expect(markup).toContain("Mostrar resultados exactos");
+  });
+
+  it("opens the shared Rosales context without a route-local level", async () => {
+    const context = { ...COMPLETE_SECTION, level: undefined };
+    const markup = await render({ ...context, sourceKind: "official" });
+    expect(mocks.bundle).toHaveBeenCalled();
+    expect(markup).toContain("Mostrar resultados exactos");
+    expect(markup).toContain("Coronel Rosales");
+  });
+
+  it.each([
+    ["circuito", { circuitoCode: "00001" }],
+    ["establecimiento", { circuitoCode: "00001", establecimientoCode: "E1" }],
+    ["mesa", { circuitoCode: "00001", establecimientoCode: "E1", mesaCode: "1" }],
+  ])("infers %s from finer context filters without losing lineage", async (requestedLevel, finer) => {
+    await render({ ...COMPLETE_SECTION, level: undefined, ...finer });
+    expect(mocks.bundle).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      requestedLevel, distritoCode: "02", seccionCode: "027", ...finer,
+      ...(requestedLevel === "mesa" ? { mesaCode: 1 } : {}),
+    }));
+  });
+
+  it("does not substitute official results for fiscalización context", async () => {
+    const markup = await render({ ...COMPLETE_SECTION, sourceKind: "fiscalizacion" });
+    expect(mocks.bundle).not.toHaveBeenCalled();
+    expect(markup).toContain("fiscalización");
+  });
+
+  it("renders the national reference as a locator with disclosed provenance and one action", async () => {
+    const markup = await render({ electionId: COMPLETE_SECTION.electionId });
     expect(markup).toContain('data-map-kind="locator"');
     const card = markup.slice(markup.indexOf('data-map-kind="locator"'), markup.indexOf('aria-label="Detalle territorial"'));
     expect(markup).toMatch(/<details[^>]*><summary>Procedencia de la referencia nacional<\/summary>[\s\S]*?sha256[\s\S]*?<\/details>/);
