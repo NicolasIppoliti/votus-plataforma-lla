@@ -370,6 +370,11 @@ const PG_TAP_PROOFS: readonly ReleaseGatePgTapProof[] = [
 		timeoutMs: 120_000,
 	},
 	{
+		path: "tests/workspace_bootstrap_autoselect.sql",
+		label: "disposable workspace-bootstrap-autoselect pgTAP",
+		timeoutMs: 120_000,
+	},
+	{
 		path: "tests/workspace_review_scope.sql",
 		label: "disposable workspace-review-scope pgTAP",
 		timeoutMs: 120_000,
