@@ -1,5 +1,10 @@
 import { chromium } from "@playwright/test";
 
+it("includes mobile screenshot evidence in the mandatory gate inventory", () => {
+  expect(EXPECTED_E2E_SPECS).toContain("e2e/mobile-evidence.spec.ts");
+  expect(EXPECTED_E2E_SPECS).toHaveLength(9);
+});
+
 it("sole-organization login seeds PASO through its matching ownership variant", () => {
   const source = readFileSync(new URL("./provenance.spec.ts", import.meta.url), "utf8");
   const journey = source.slice(source.indexOf('test("sole organization login'));
@@ -2176,6 +2181,7 @@ describe("migration release-gate integration", () => {
 		"20261013000000",
 		"20261014000000",
 		"20261015000000",
+		"20261015100000",
 		"20261015200000",
 		"20261015300000",
 	];
@@ -2190,7 +2196,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(75);
+		).toBe(76);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -2691,13 +2697,14 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("75 as migration_inventory_count");
+		expect(proof).toContain("76 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
 			"20261015300000-down",
 			"20261015200000-down",
+			"20261015100000-down",
 			"20261015000000-down",
 			"20261014000000-down",
 			"20261013000000-down",
@@ -2802,6 +2809,7 @@ describe("migration release-gate integration", () => {
 			"20261013000000-up",
 			"20261014000000-up",
 			"20261015000000-up",
+			"20261015100000-up",
 			"20261015200000-up",
 			"20261015300000-up",
 		]);
@@ -3201,7 +3209,7 @@ describe("base contracts", () => {
 			workflow.matchAll(/^\s*- uses: [^@\s]+@([^\s]+)$/gm),
 			([, revision]) => revision,
 		);
-		expect(actionReferences).toHaveLength(17);
+		expect(actionReferences).toHaveLength(18);
 		for (const revision of actionReferences)
 			expect(revision).toMatch(/^[a-f0-9]{40}$/);
 	});
@@ -3305,14 +3313,14 @@ describe("base contracts", () => {
 			["VOTUS_E2E_TEST_USER", "PASSWORD"].join("_"),
 		);
 	});
-	it("accepts only the exact eight-pass inventory", () => {
+	it("accepts only the exact nine-pass inventory", () => {
 		expect(() => assertGateReport(PASSED, "passed")).not.toThrow();
 		expect(() => assertGateReport([], "passed")).toThrow("discovered 0 tests");
 		expect(() =>
 			assertGateReport([{ ...PASSED[0]!, spec: "e2e/other.spec.ts" }], "passed"),
 		).toThrow("spec inventory mismatch");
 		expect(() => assertGateReport(PASSED.slice(0, 4), "passed")).toThrow(
-			"discovered 4 tests; expected 8",
+			"discovered 4 tests; expected 9",
 		);
 	});
 	it.each(["skipped", "interrupted", "failed", "timedOut"] as const)(
@@ -4296,6 +4304,26 @@ describe("ReleaseGateReporter", () => {
 			writeReceipt: (target, content) => { if (target === "/receipt.json") capture(content); },
 			writeError,
 		});
+	it("carries bounded mobile-form facts from a failed helper into the redacted CLI diagnostic", async () => {
+		const writes = new Map<string, string>();
+		const reporter = new ReleaseGateReporter({ receiptPath: "/receipt.json", writeReceipt: (target, content) => { writes.set(target, content); }, writeError: () => undefined });
+		const mobile = testCaseFor("e2e/simulate.spec.ts", "mobile", "SECRET-TITLE");
+		mobile.location.line = 8; mobile.location.column = 3;
+		reporter.onBegin({} as FullConfig, suiteFor([...cases.filter(test => !test.location.file.endsWith("/simulate.spec.ts")), mobile]));
+		const facts = { version: 1, phase: "field-geometry", index: 7, viewportWidth: 320, sample: {
+			kind: "field", tag: "input", width: 268, height: 44, left: 26, right: 294, scrollWidth: 266,
+			labelCount: 1, mirrorPresent: false, mirrorWidth: 0, mirrorScrollWidth: 0,
+			checks: { target: true, bounded: true, visibleLabels: false, fullSelection: true },
+		} };
+		reporter.onTestEnd(mobile, { status: "failed", retry: 0, errors: [{ location: { file: "/SECRET/mobile-form-geometry.ts", line: 40, column: 5 } }], attachments: [{ name: "mobile-form-geometry", contentType: "application/vnd.votus.mobile-form-facts+json", body: Buffer.from(JSON.stringify(facts)) }] } as TestResult);
+		await reporter.onEnd({ status: "failed" } as FullResult);
+		const text = writes.get("/receipt.json.diagnostics.json")!;
+		expect(JSON.parse(text).attempts[0].mobileForm).toEqual(facts);
+		expect(text).not.toContain("SECRET");
+		supplyCompanion(text);
+		const failure = await playwrightFailure(1, false, "/receipt.json");
+		expect(JSON.parse(failure.line().slice("E2E_PLAYWRIGHT_DIAGNOSTIC ".length)).companion.attempts[0].mobileForm).toEqual(facts);
+	});
 	it("retains safe attempt history and distinct discovery ordinals at a shared declaration", async () => {
 		const writes = new Map<string, string>();
 		const reporter = new ReleaseGateReporter({
@@ -4562,7 +4590,7 @@ describe("ReleaseGateReporter", () => {
 					mode: "focused",
 					selectedCount: 1,
 					selected: [selected],
-					excludedCount: 7,
+					excludedCount: 8,
 					excluded: EXPECTED_E2E_SPECS.filter((spec) => spec !== selected),
 				},
 			});
@@ -4574,7 +4602,7 @@ describe("ReleaseGateReporter", () => {
 			else process.env["VOTUS_E2E_SELECTED_SPECS"] = previousSelected;
 		}
 	});
-	it("aggregates nine passing test cases into the exact eight-spec receipt", async () => {
+	it("aggregates multiple passing test cases into the exact nine-spec receipt", async () => {
 		let receipt = "";
 		const errors: string[] = [];
 		const reporter = makeReporter(

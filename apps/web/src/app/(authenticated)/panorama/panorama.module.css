@@ -15,7 +15,8 @@
 .context > div { min-width: 0; }
 .context span, .context label { display: block; color: #b9c8d2; font-size: 13px; margin-bottom: 5px; }
 .context strong, .context select { display: block; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #355367; border-radius: 5px; background: #0d2130; font-size: 14px; font-weight: 400; overflow-wrap: anywhere; }
-.notice { color: #efc58c; border-left: 2px solid #efc58c; padding: 8px 12px; font-size: 13px; margin: 17px 0 19px; background: #171c20; }
+.context .sourceBadge { display: inline-flex; align-items: center; width: auto; border-color: #65e5f2; border-radius: 9999px; color: #edf5f7; }
+.workbench { margin-top: 18px; }
 .workbench { display: grid; grid-template-columns: minmax(0, 1fr) 310px; border: 1px solid #2b4658; border-radius: 9px; background: #0d1d2b; overflow: hidden; }
 .map { min-width: 0; background: #091724; }
 .trail { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 20px 0; }
@@ -45,9 +46,6 @@
 .distribution { list-style: none; padding: 14px 0 0; border-top: 1px solid #284255; }
 .distribution li { display: grid; gap: 5px; margin-top: 12px; font-size: 13px; }
 .distribution meter { width: 100%; height: 8px; accent-color: #65e5f2; }
-.observations { padding: 22px 0 18px; border-bottom: 1px solid #284255; }
-.observations ul { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px; }
-.observations li { border-left: 2px solid #284255; padding-left: 12px; font-size: 14px; line-height: 1.8; color: #b9c8d2; }
 .exactLink { display: inline-flex; align-items: center; min-height: 44px; color: #65e5f2; font-size: 13px; }
 .children { min-width: 0; padding: 23px 0; border-bottom: 1px solid #284255; }
 .children header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
@@ -78,9 +76,8 @@
 .attention { margin: 20px 0; }
 .attention > p { font-size: 13px; color: #b9c8d2; }
 .secondary ul { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px; }
-.footer { border-top: 1px solid #284255; margin-top: 25px; padding: 22px 0; color: #b9c8d2; font-size: 13px; }
 .page :focus-visible { outline: 2px solid #65e5f2; outline-offset: 3px; }
-@media (max-width: 1100px) { .context { grid-template-columns: repeat(2,minmax(0,1fr)); } .workbench { grid-template-columns: minmax(0,1fr) 285px; } .observations ul { grid-template-columns: 1fr; gap: 12px; } }
+@media (max-width: 1100px) { .context { grid-template-columns: repeat(2,minmax(0,1fr)); } .workbench { grid-template-columns: minmax(0,1fr) 285px; } }
 @media (max-width: 900px) { .workbench { grid-template-columns: minmax(0,1fr); } .summary { border-left: 0; border-top: 1px solid #284255; } }
 @media (max-width: 650px) { .children header, .lookup { flex-direction: column; align-items: stretch; gap: 5px; } .lookup label { width: auto; } .distribution { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 16px; } .distribution li { min-width: 0; overflow-wrap: anywhere; } .heading h1 { font-size: 30px; } .context { gap: 14px 12px; } .trail { padding-inline: 15px; } .mapTitle { padding-inline: 15px; } .summary { padding: 20px 17px 16px; } .routes > ul, .secondary ul { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; } .noMap { min-height: 290px; } }
 

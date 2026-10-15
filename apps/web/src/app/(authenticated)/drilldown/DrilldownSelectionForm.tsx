@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { createContext, useContext, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -110,13 +111,13 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
 
   const renderField = (field: SelectionField) => <div className={styles.filter} key={field.name}>
     <div className={styles.fieldLabel}><label htmlFor={field.id}>{field.label}</label><ElectoralGlossary field={field.name} /></div>
-    <select id={field.id} name={field.name} value={state.draft[field.name] ?? ""}
+    <ResponsiveSelect id={field.id} name={field.name} value={state.draft[field.name] ?? ""}
       required={controlStates[field.name].required}
       disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}
       onChange={(event) => change(field.name, event.target.value)}>
       <option value="">{field.placeholder}</option>
       {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-    </select>
+    </ResponsiveSelect>
   </div>;
   const territoryOption = fields.find(field => field.name === "seccionCode")?.options.find(option => option.value === state.draft.seccionCode)
     ?? fields.find(field => field.name === "distritoCode")?.options.find(option => option.value === state.draft.distritoCode);
@@ -140,7 +141,7 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
           </div>
           {fields.filter(field => ["electionId", "categoryId"].includes(field.name)).map(renderField)}
           <div className={styles.filter}><label htmlFor="explorer-party">Agrupación</label>
-            <select id="explorer-party" disabled aria-describedby="party-highlight-note"><option>Todas las agrupaciones</option></select>
+            <ResponsiveSelect id="explorer-party" disabled aria-describedby="party-highlight-note"><option>Todas las agrupaciones</option></ResponsiveSelect>
           </div>
           <div className={styles.filterSummary}><SlidersHorizontal xmlns={undefined} aria-hidden="true" size={18} /><span>Alcance fijo<small>La cámara no cambia los resultados</small></span></div>
         </div>
