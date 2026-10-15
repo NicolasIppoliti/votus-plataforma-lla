@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -71,7 +72,7 @@ function ContextControls() {
     router.push(`${pathname}?${params}`, { scroll: false });
   }
   function selector(label: string, key: keyof ElectoralContext, options: { value: string; label: string }[]) {
-    return <label className="electoral-context__field">{label}<select aria-label={`Contexto electoral: ${label}`} value={String(context[key] ?? "")} disabled={!facets || parsed.status !== "ok"} onChange={event => change(key, event.target.value)}><option value="">Seleccionar</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+    return <label className="electoral-context__field">{label}<ResponsiveSelect aria-label={`Contexto electoral: ${label}`} value={String(context[key] ?? "")} disabled={!facets || parsed.status !== "ok"} onChange={event => change(key, event.target.value)}><option value="">Seleccionar</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</ResponsiveSelect></label>;
   }
   return <section ref={barRef} aria-label="Contexto electoral" className="electoral-context shell-container" data-source={context.sourceKind}>
     {selector("Elección", "electionId", facets?.elections.map(item => ({ value: item.id, label: item.label })) ?? [])}
@@ -80,7 +81,7 @@ function ContextControls() {
       {selector("Distrito", "distritoCode", facets?.distritos.map(item => ({ value: item.code, label: formatFacetOptionLabel(item) })) ?? [])}
       {selector("Sección", "seccionCode", facets?.secciones.map(item => ({ value: item.code, label: formatFacetOptionLabel(item) })) ?? [])}
     </fieldset>
-    <label className="electoral-context__field">Fuente<select aria-label="Contexto electoral: Fuente" value={context.sourceKind} disabled={parsed.status !== "ok"} onChange={event => change("sourceKind", event.target.value)}><option value="official">Oficial</option><option value="fiscalizacion">Fiscalización — no oficial (opt-in)</option></select></label>
+    <label className="electoral-context__field">Fuente<ResponsiveSelect aria-label="Contexto electoral: Fuente" value={context.sourceKind} disabled={parsed.status !== "ok"} onChange={event => change("sourceKind", event.target.value)}><option value="official">Oficial</option><option value="fiscalizacion">Fiscalización — no oficial (opt-in)</option></ResponsiveSelect></label>
     {context.sourceKind === "fiscalizacion" && <Alert variant="caveat" presentation="inline">Fiscalización: fuente no oficial. No se combina con resultados oficiales.</Alert>}
     {parsed.status !== "ok" ? <Alert variant="error" presentation="inline">Contexto inválido: {parsed.reason}</Alert> : loaded?.query === query && !result ? <Alert variant="unavailable" presentation="inline">No se pudo verificar el contexto autorizado.</Alert> : !facets ? <p role="status">Cargando contexto autorizado…</p> : null}
     <noscript>Los formularios de cada página siguen disponibles sin JavaScript.</noscript>

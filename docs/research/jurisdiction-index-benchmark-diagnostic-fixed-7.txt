@@ -1,0 +1,66 @@
+OWNED DIAGNOSTIC CLEANUP: database and role absence confirmed by harness
+F
+=================================== FAILURES ===================================
+______________________ test_local_benchmark_prerequisites ______________________
+
+    @pytest.mark.skipif(
+        os.environ.get("JURISDICTION_BENCH_DIAGNOSTIC") != "1",
+        reason="explicit local benchmark diagnostic only",
+    )
+    def test_local_benchmark_prerequisites():
+        import subprocess
+    
+        from etl.benchmark import clone_schema, local_admin
+        from etl.verify import DisposablePostgres, UnsafeDatabaseError
+    
+        stage = "owned database setup"
+        database = None
+        try:
+            admin = local_admin()
+            database = DisposablePostgres(admin)
+            with database:
+                stage = "schema clone"
+                clone_schema(admin, database, "postgres")
+                stage = "test grants"
+>               database.grant_test_privileges()
+
+../docs/research/test_jurisdiction_benchmark_environment.py:28: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+etl/verify.py:735: in grant_test_privileges
+    connection.execute(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <psycopg.Connection [BAD] at 0x109b1f890>
+query = "insert into workspace_private.section_scope(distrito_code,seccion_code) values('02','027') on conflict do nothing"
+params = None, prepare = None, binary = False
+
+    def execute(
+        self,
+        query: Query,
+        params: Params | None = None,
+        *,
+        prepare: bool | None = None,
+        binary: bool = False,
+    ) -> Cursor[Row]:
+        """Execute a query and return a cursor to read its results."""
+        try:
+            cur = self.cursor()
+            if binary:
+                cur.format = BINARY
+    
+            if isinstance(query, Template):
+                if params is not None:
+                    raise TypeError(
+                        "'execute()' with string template query doesn't support parameters"
+                    )
+                return cur.execute(query, prepare=prepare)
+            else:
+                return cur.execute(query, params, prepare=prepare)
+        except e._NO_TRACEBACK as ex:
+>           raise ex.with_traceback(None)
+E           psycopg.errors.InsufficientPrivilege: permission denied for table section_scope
+
+../../../votus-plataforma-lla/etl/.venv/lib/python3.13/site-packages/psycopg/connection.py:304: InsufficientPrivilege
+=========================== short test summary info ============================
+FAILED ../docs/research/test_jurisdiction_benchmark_environment.py::test_local_benchmark_prerequisites
+1 failed in 0.48s

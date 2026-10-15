@@ -96,6 +96,8 @@ def clone_schema(admin, database, schema_database):
     completed = subprocess.run(
         [
             "pg_dump",
+            "--dbname",
+            schema_dsn,
             "--format=custom",
             "--schema-only",
             "--no-owner",
@@ -103,25 +105,41 @@ def clone_schema(admin, database, schema_database):
             "--schema=workspace_api",
             "--schema=workspace_private",
         ],
-        env={**os.environ, "PGDATABASE": schema_dsn},
         capture_output=True,
         check=True,
     )
-    database._verify_target()
-    subprocess.run(
-        [
-            "pg_restore",
-            "--clean",
-            "--if-exists",
-            "--no-owner",
-            "--exit-on-error",
-            "--dbname",
-            database.migration_dsn,
-        ],
-        input=completed.stdout,
-        capture_output=True,
-        check=True,
-    )
+    # The owned target is fresh, not a previous application installation.
+    # --clean attempts DROP POLICY ... ON absent tables (IF EXISTS only guards
+    # the policy), so restore without drops. Only public already exists in a
+    # fresh PostgreSQL database; retain its ACL/comment entries, not its CREATE.
+    listing = subprocess.run(
+        ["pg_restore", "--list"], input=completed.stdout, capture_output=True, check=True
+    ).stdout
+    entries = listing.decode().splitlines()
+    # Default ACLs govern FUTURE objects owned by the source role, not these
+    # restored objects. The local maintenance role cannot alter Supabase's
+    # global owners' defaults; preserve every existing-object ACL instead.
+    selected = [
+        line for line in entries if " SCHEMA - public " not in line and " DEFAULT ACL " not in line
+    ]
+    with tempfile.TemporaryDirectory(prefix="votus-benchmark-schema-") as directory:
+        toc = Path(directory) / "restore.list"
+        toc.write_text("\n".join(selected) + "\n")
+        database._verify_target()
+        subprocess.run(
+            [
+                "pg_restore",
+                "--use-list",
+                str(toc),
+                "--no-owner",
+                "--exit-on-error",
+                "--dbname",
+                database.migration_dsn,
+            ],
+            input=completed.stdout,
+            capture_output=True,
+            check=True,
+        )
     return hashlib.sha256(completed.stdout).hexdigest()
 
 

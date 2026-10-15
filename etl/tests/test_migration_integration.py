@@ -98,6 +98,7 @@ SUPPORTED_TIMESTAMP_MIGRATION_VERSIONS = frozenset(
         OFFICIAL_SECTION_CIRCUIT_OUTCOMES_MIGRATION_VERSION,
         HISTORICAL_REVIEW_CONTEXT_UPGRADE_MIGRATION_VERSION,
         SOLE_ORGANIZATION_BOOTSTRAP_MIGRATION_VERSION,
+        "20261015100000",
         "20261015200000",
         "20261015300000",
     }
@@ -268,7 +269,7 @@ def _available_migration_numbers(*, maximum: int | None = None) -> list[int]:
 
 def test_migration_inventory_accepts_exact_mixed_version_history() -> None:
     assert SUPPORTED_MIGRATION_NUMBERS == frozenset(range(1, 39))
-    assert len(EXPECTED_MIGRATION_VERSIONS) == 74
+    assert len(EXPECTED_MIGRATION_VERSIONS) == 75
     assert _available_migration_versions() == list(EXPECTED_MIGRATION_VERSIONS)
     assert _available_migration_numbers() == list(range(1, 39))
     assert _validated_migration_path(PBA_113_MIGRATION_VERSION).name == (

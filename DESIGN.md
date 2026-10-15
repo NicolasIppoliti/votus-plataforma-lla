@@ -30,6 +30,23 @@
 6. **Official and fiscalización remain unmistakably separate.** They can be juxtaposed but never visually or numerically collapsed into one source.
 7. **No decorative dashboard language.** Avoid generic KPI grids, pie charts, gauges, gradients, blobs, oversized radii, and motion without explanatory value.
 
+### Panorama source disclosure (#457)
+
+Panorama keeps one visible **Resultados oficiales** source badge and one native,
+initially collapsed **Fuente y límites** disclosure. That panel owns supporting
+geographic applicability, scope, denominator, granularity, completeness breakdowns,
+quarantine reasons, exclusions and archive provenance. Fiscalización is explicitly
+identified there as an unofficial, separately queried source whose figures never mix
+with Panorama. The circuit winner/margin map retains its encoding legend; when it
+is unavailable, the neutral fallback retains its controls and evidence link without
+repeating supporting qualifications in its overlay, legend and footer.
+
+Refusal/empty/unavailable states and provisional leadership remain beside the result;
+they appear only once and never become hidden supporting evidence. Selecting an
+unsupported territory suppresses the previous selection's figures and provenance.
+The shared explorer map and global legal disclaimer are unchanged (the latter belongs
+to #459); #458's broader Panorama layout reduction remains separate.
+
 ## Information Architecture
 
 ### Global shell
@@ -142,10 +159,13 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Tables:** Exact tables remain available inside labelled, focusable horizontal-scroll regions.
 - **Comparison:** Desktop aligns Side A, Side B, and shared territory in three columns. Applied context precedes a full-width exact table; two evidence sections follow beneath. On mobile, editors, territory, context, chart, exact table, and evidence stack in reading order. Selector changes automatically update the authorized comparison; there is no Apply step. Only supporting archive provenance starts collapsed; source and interpretation-changing notes remain visible.
 - **Official explorer:** Served-selection header/trail → election/category followed by the existing territorial/report controls → map/inspector workbench → applied scope and full-width exact evidence. The inspector is 322px, 295px at ≤1250px, 275px at ≤980px and stacks below the map at ≤760px. Exact-section Rosales circuits load automatically through client-side lazy imports; other unsupported scopes disclose unavailable geography rather than inventing a map. The inspector names the authorized territory, keeps the unchanged section-completeness sentence, and reports all-group observed leadership, positive votes and supplied total votes. Party evidence, eligible PASO internas, circuit evidence, schools and reference/provenance follow in that order. Supporting archive details start collapsed; source exclusions, granularity and unavailable school qualifiers stay inline. Territorial selectors remain until T3b; URL keys and the served/draft suppression boundary are unchanged.
+- **Panorama circuit map (#444):** The Rosales map and circuit table use the same authorized official `circuitOutcomes` response; no second electoral query or fiscalización input is used. The map reuses Exploration’s `CircuitReferenceSvg`, C1 colors, margin bands and legend. Partial circuits are hatched and retain provisional coverage labels. Ties, zero votes and units without attributable outcomes remain neutral. CNE geometry is reference-only, with its B/C overlap disclosed once in Fuente y límites and the shared area neutral/hatched. Geometry failure leaves the neutral reference fallback and never suppresses the table. National/provincial selections never reuse Rosales results. This slice is read-only: URL selection and map/table hover synchronization belong to #445/#446.
 - **Municipal CNE 2025 reference legend:** The circuit/local reference SVG keeps its shared HTML legend visible below the map at desktop and mobile widths (1440px and 390px). It identifies circuit outlines as reference-only, dots as voting locations with coordinates, and explicitly counts locations without coordinates: those are not plotted but remain in the complete locations table. No electoral result or inferred location is encoded.
 - **Panorama circuit map (#444):** The Rosales map and circuit table use the same authorized official `circuitOutcomes` response; no second electoral query or fiscalización input is used. The map reuses Exploration’s `CircuitReferenceSvg`, C1 colors, margin bands and legend. Partial circuits are hatched and retain provisional coverage labels. Ties, zero votes and units without attributable outcomes remain neutral. CNE geometry is reference-only, with its B/C overlap disclosed once next to the map and the shared area neutral/hatched. Geometry failure leaves the neutral reference fallback and never suppresses the table. National/provincial selections never reuse Rosales results. This slice is read-only: URL selection and map/table hover synchronization belong to #445/#446.
 - **Municipal:** The single configured official election loads automatically on route entry, after existing query and authorization guards. Compact fixed context precedes full-width raw identified-party votes and the exact table. Source audits, exclusions, unresolved identities and granularity remain inline; supporting archive references follow in native disclosures, with missing-hash/non-OK status qualifications outside.
 - **Fiscalización:** Group election and territory selectors above full-width evidence. Preserve the explicit unofficial source, nonrandom-sample and official-denominator qualifications. Unit coverage precedes exact list/granularity rows and uncovered-unit detail; only supporting archive references collapse, never verification warnings or truncation/exclusion counts.
+- **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links. At ≤480px, Exploration filters and Evidence context use one field per row. Native selectors retain their keyboard/GET behavior and show their full selected text again in a wrapping visual-only line beneath the control, rather than relying on the browser's clipped single-line value. Mobile form controls/actions retain at least 44px targets; labels and action copy wrap. The [#463 audit](docs/audits/463-mobile-forms.md) distinguishes code/test coverage from still-pending browser execution and screenshot acceptance.
+- **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
 - **Simulation:** The desktop page header reserves right-side space for the scenario summary; its `h1` starts at the shared page gutter but need not span the full page width. Cross-route geometry checks compare the page's right edge, not the title's right edge. Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
 - **Touch targets:** At least `44×44px`.

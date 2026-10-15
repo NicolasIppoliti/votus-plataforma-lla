@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -91,13 +92,13 @@ export function FiscalizacionSelectionForm({ selected, sourceKind, fields, child
               <div className={styles.fields}>
                 {fields.filter((field) => group.names.includes(field.name)).map((field) => <div className="field" key={field.name}>
                   <div className={styles.fieldLabel}><label htmlFor={field.id}>{field.label}</label><ElectoralGlossary field={field.name} /></div>
-                  <select id={field.id} name={field.name} value={state.draft[field.name]}
+                  <ResponsiveSelect id={field.id} name={field.name} value={state.draft[field.name]}
                     required={controlStates[field.name].required}
                     disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}
                     onChange={(event) => change(field.name, event.target.value)}>
                     <option value="">{field.placeholder}</option>
                     {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
+                  </ResponsiveSelect>
                 </div>)}
               </div>
             </fieldset>
