@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Alert } from "@/components/ui/alert";
 import styles from "./SectionReferenceMap.module.css";
 import { REFERENCE_FILL, REFERENCE_LINE } from "./reference-colors";
 
@@ -146,7 +147,7 @@ export function SectionReferenceMap({ coordinates, name, label, resultId, onCame
     </svg>}
     <button type="button" onClick={() => { setStatus("Cargando mapa de la sección…"); setActive(true); }} disabled={active} aria-label={`Activar mapa interactivo de ${label}`}>Mostrar mapa interactivo</button>
     <button type="button" onClick={focusResults}>Seleccionar sección y consultar resultados</button>
-    <p role="status">{status}</p>
+    <Alert variant="caveat">{status}</Alert>
     <div ref={container} className={active ? styles.canvas : styles.inactive} aria-label={municipal ? `Mapa geográfico CNE de ${name}; no muestra votos por partido` : `Mapa geográfico CNE de ${name}; ${label}`} />
     <a href={`#${resultId}`} onClick={focusResults}>Ir a los resultados exactos de la sección</a>
   </div>;

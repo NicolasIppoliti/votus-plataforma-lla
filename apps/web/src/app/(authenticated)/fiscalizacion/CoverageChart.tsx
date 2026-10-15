@@ -1,3 +1,4 @@
+import { Alert } from "@/components/ui/alert";
 import styles from "./fiscalizacion.module.css";
 
 const count = new Intl.NumberFormat("es-AR");
@@ -10,7 +11,7 @@ export function CoverageChart({ observedUnits, denominatorUnits }: {
     <h3 id="fiscal-unit-coverage-heading">Cobertura de unidades</h3>
     <p id="fiscal-unit-coverage-scope">La longitud representa unidades observadas, no votos ni una muestra aleatoria.</p>
     {denominatorUnits === 0 ? (
-      <p role="status">El denominador oficial es 0; no hay una escala proporcional que representar.</p>
+      <Alert variant="empty">El denominador oficial es 0; no hay una escala proporcional que representar.</Alert>
     ) : <>
       <p className={styles.scaleDescription}>Escala: de 0 a {count.format(denominatorUnits)} unidades</p>
       <div className={styles.plot}>

@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
-import { Alert } from "@/components/ui/alert";
+import { Alert, type AlertVariant } from "@/components/ui/alert";
 
 const STATES = {
-  empty: { role: "status", treatment: "neutral" },
-  denied: { role: "alert", treatment: "warning" },
-  unavailable: { role: "alert", treatment: "warning" },
-  truncated: { role: "alert", treatment: "warning" },
-  error: { role: "alert", treatment: "danger" },
-  loading: { role: "status", treatment: "neutral" },
+  empty: { treatment: "neutral" },
+  denied: { treatment: "warning" },
+  unavailable: { treatment: "warning" },
+  truncated: { treatment: "warning" },
+  error: { treatment: "danger" },
+  loading: { treatment: "neutral" },
 } as const;
 
 interface EvidenceStateProps {
@@ -20,19 +20,20 @@ interface EvidenceStateProps {
 }
 
 export function EvidenceState({ state, title, titleId, eyebrow, children, action }: EvidenceStateProps) {
-  const { role, treatment } = STATES[state];
+  const { treatment } = STATES[state];
+  const variant: AlertVariant = state === "denied" || state === "empty" ? state : state === "loading" ? "needs-selection" : "unavailable";
   return (
     <Alert
       className="evidence-state"
       data-state={state}
       data-treatment={treatment}
-      role={role}
+      variant={variant}
+      action={action}
       aria-labelledby={titleId}
     >
       {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
       <h2 id={titleId}>{title}</h2>
       {children}
-      {action}
     </Alert>
   );
 }

@@ -1,3 +1,4 @@
+import { Alert } from "@/components/ui/alert";
 import type { ReactNode } from "react";
 
 export interface UnorderableLevelsProps {
@@ -22,13 +23,13 @@ export function UnorderableLevels({ entries, label }: UnorderableLevelsProps): R
   if (entries.length === 0) return null;
   return (
     <>
-      <p role="alert">
+      <Alert variant="unavailable">
         {label ? `${label}: ` : ""}
         {entries.reduce((sum, entry) => sum + entry.rows, 0)} fila(s) tienen un
         nivel de granularidad que esta página no puede ordenar, por lo que se
         desconoce su relación de contención y no se muestra ningún nivel para
         ellas. Por nivel:
-      </p>
+      </Alert>
       <ul>
         {entries.map((entry) => (
           <li key={entry.granularity}>

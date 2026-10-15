@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Alert } from "@/components/ui/alert";
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -247,7 +248,7 @@ function SweepResult({ query, baselineError }: SweepResultProps) {
   } catch (error) {
     requestError = error instanceof SimulationFormError ? error.messages.join(" ") : "Revise el escenario de base.";
   }
-  if (!sweep) return <p role="alert">Muestreo rechazado; la base se conserva. {requestError}</p>;
+  if (!sweep) return <Alert variant="unavailable">Muestreo rechazado; la base se conserva. {requestError}</Alert>;
   const amounts = sweep.amounts;
   const points = sweep.queries.map((pointQuery, index) => {
     let result: AllocationResult | undefined;
@@ -324,7 +325,7 @@ function SweepResult({ query, baselineError }: SweepResultProps) {
             </tbody>
           </table>
         </div>
-      ) : <p role="alert">No hay muestras válidas: no se calculan extremos de bancas.</p>}
+      ) : <Alert variant="unavailable">No hay muestras válidas: no se calculan extremos de bancas.</Alert>}
     </section>
   );
 }
@@ -349,10 +350,10 @@ export default async function SimulatePage({
     return (
       <main>
         <h1>Simulación de bancas</h1>
-        <p role="alert">
+        <Alert variant="denied">
           Se rechazó la solicitud: estos parámetros de consulta se proporcionaron más de una vez y
           no se pueden resolver a un único valor: {repeated.join(", ")}.
-        </p>
+        </Alert>
       </main>
     );
   }
@@ -492,14 +493,14 @@ export default async function SimulatePage({
         baseImpact={result && baseResult ? <RenewalStrip result={baseResult}><SeatDistribution result={baseResult} /></RenewalStrip> : null}
         comparison={result && baseResult && projectionInput && baseProjection ? <SimulationComparison base={baseProjection} scenario={projectionInput} baseResult={baseResult} result={result} /> : null}>
       <SweepResult query={requestQuery.toString()} baselineError={baseError ?? councilError ?? parseError} />
-      {baseError ? <p role="alert">{baseError}</p> : null}
-      {parseError ? <p role="alert">{parseError}</p> : null}
-      {allocationError ? <p role="alert">{allocationError}</p> : null}
-      {councilError ? <p role="alert">{councilError}</p> : null}
+      {baseError ? <Alert variant="unavailable">{baseError}</Alert> : null}
+      {parseError ? <Alert variant="unavailable">{parseError}</Alert> : null}
+      {allocationError ? <Alert variant="unavailable">{allocationError}</Alert> : null}
+      {councilError ? <Alert variant="unavailable">{councilError}</Alert> : null}
       {!input && !parseError ? (
-        <p role="status">
+        <Alert variant="needs-selection">
           No se ejecutó ninguna simulación: proporcione un escenario válido para calcular las bancas.
-        </p>
+        </Alert>
       ) : null}
       {result &&
       input?.level === "pba_municipal" &&

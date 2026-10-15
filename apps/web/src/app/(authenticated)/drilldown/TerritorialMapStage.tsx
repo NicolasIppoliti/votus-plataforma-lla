@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Map as MapIcon, Target, Check, Plus, Minus, RotateCcw, Info } from "lucide-react";
 import { loadSectionReferenceGeometry } from "./circuit-geometry";
+import { Alert } from "@/components/ui/alert";
 import styles from "./drilldown.module.css";
 
 function SectionReferenceOutline() {
@@ -12,7 +13,7 @@ function SectionReferenceOutline() {
     loadSectionReferenceGeometry().then(value => { if (active) setReference(value); }).catch(() => { if (active) setReference(null); });
     return () => { active = false; };
   }, []);
-  if (!reference) return <p role="status">{reference === undefined ? "Preparando contorno de referencia…" : "Contorno de referencia no disponible; consulte la evidencia exacta."}</p>;
+  if (!reference) return <Alert variant="caveat">{reference === undefined ? "Preparando contorno de referencia…" : "Contorno de referencia no disponible; consulte la evidencia exacta."}</Alert>;
   let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
   for (const polygon of reference.geometry.coordinates) for (const ring of polygon) for (const point of ring) {
     west = Math.min(west, point[0]!); east = Math.max(east, point[0]!); south = Math.min(south, point[1]!); north = Math.max(north, point[1]!);

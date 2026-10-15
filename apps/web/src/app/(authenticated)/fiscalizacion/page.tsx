@@ -4,6 +4,7 @@ import { CoverageChart } from "./CoverageChart";
 
 import { FiscalizacionSelectionForm, type CoverageField } from "./FiscalizacionSelectionForm";
 import { EvidenceState } from "@/components/EvidenceState";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -122,10 +123,9 @@ function collectionNotice(
   collection: EvidenceCollection<unknown>,
 ): ReactNode {
   return (
-    <p role={collection.truncated ? "alert" : "note"}>
-      {label}: se muestran {collection.items.length} de {collection.total}
-      {collection.truncated ? "; respuesta truncada" : ""}.
-    </p>
+    collection.truncated ? <Alert variant="unavailable">
+      {label}: se muestran {collection.items.length} de {collection.total}; respuesta truncada.
+    </Alert> : <p role="note">{label}: se muestran {collection.items.length} de {collection.total}.</p>
   );
 }
 
@@ -384,9 +384,9 @@ function CoverageEvidence({
   return (
     <section className={styles.coverage} aria-labelledby="workspace-coverage">
       <h2 id="workspace-coverage">Cobertura autorizada</h2>
-      <p role={value ? "status" : "alert"}>
+      <Alert variant={value ? "caveat" : "unavailable"}>
         Estado de cobertura: {settledStatus(result)}.
-      </p>
+      </Alert>
       {value && "observed_units" in value ? (
         <>
           <p>
@@ -413,13 +413,13 @@ function CoverageEvidence({
             value.exclusions as EvidenceCollection<EvidenceExclusion>,
           )}
           {value.truncated ? (
-            <p role="alert">La evidencia de cobertura está truncada.</p>
+            <Alert variant="unavailable">La evidencia de cobertura está truncada.</Alert>
           ) : null}
         </>
       ) : value && "exclusions" in value ? (
         renderExclusions("Exclusiones de cobertura", value.exclusions)
       ) : value && "truncated" in value && value.truncated ? (
-        <p role="alert">La evidencia de cobertura está truncada.</p>
+        <Alert variant="unavailable">La evidencia de cobertura está truncada.</Alert>
       ) : null}
     </section>
   );
@@ -434,9 +434,9 @@ function ResultEvidence({
   return (
     <section className={styles.result} aria-labelledby="workspace-result">
       <h2 id="workspace-result">Resultado autorizado</h2>
-      <p role={value ? "status" : "alert"}>
+      <Alert variant={value ? "caveat" : "unavailable"}>
         Estado del resultado: {settledStatus(result)}.
-      </p>
+      </Alert>
       {value && "reference" in value ? (
         <>
           <p>
@@ -485,9 +485,9 @@ function ResultEvidence({
           {collectionNotice("Listas no mapeadas", value.unmapped)}
           {renderExclusions("Exclusiones del resultado", value.exclusions)}
           {value.provenance.items.filter((item) => !item.sha256 || item.status !== "ok").map((item) => (
-            <p role="alert" key={item.id}>
+            <Alert variant="unavailable" key={item.id}>
               {item.id}: estado {item.status}; SHA-256 {item.sha256 ? "disponible" : "no disponible"}.
-            </p>
+            </Alert>
           ))}
           <details className={styles.provenance}>
             <summary>Archivo de respaldo</summary>
@@ -502,13 +502,13 @@ function ResultEvidence({
           </details>
           {collectionNotice("Procedencia", value.provenance)}
           {value.truncated ? (
-            <p role="alert">La evidencia del resultado está truncada.</p>
+            <Alert variant="unavailable">La evidencia del resultado está truncada.</Alert>
           ) : null}
         </>
       ) : value && "exclusions" in value ? (
         renderExclusions("Exclusiones del resultado", value.exclusions)
       ) : value && "truncated" in value && value.truncated ? (
-        <p role="alert">La evidencia del resultado está truncada.</p>
+        <Alert variant="unavailable">La evidencia del resultado está truncada.</Alert>
       ) : null}
     </section>
   );
@@ -602,7 +602,7 @@ async function renderFiscalizacionPage(
    let facets: ExplorationFacets;
    try { facets = await createAuthorizedOfficialFacetRepository().facets(selected); }
    catch (error) { return refusal(error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED ? "No tiene autorización para consultar estas opciones" : "No se pudieron cargar las opciones"); }
-   return <FiscalizacionWorkspace facets={facets} selected={selected}><section className={styles.state} aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></section></FiscalizacionWorkspace>;
+   return <FiscalizacionWorkspace facets={facets} selected={selected}><Alert variant="needs-selection" aria-label="Elegir alcance"><p>Elija la elección, la categoría, el distrito y la sección disponibles. La URL resultante se puede reutilizar.</p></Alert></FiscalizacionWorkspace>;
 }
 
 export default async function FiscalizacionPage({

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Alert } from "@/components/ui/alert";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
 import { MunicipalDistribution } from "./MunicipalDistribution";
 import { MunicipalSectionMap } from "./MunicipalSectionMap";
@@ -107,7 +108,7 @@ export function municipalViewFromOfficialEvidence(evidence: Extract<MunicipalOff
 type MunicipalProvenance = Omit<OfficialProvenanceMetadata, "status"> & { status?: string; url?: string };
 function OfficialProvenance({ sources }: { sources: MunicipalProvenance[] }): ReactNode {
   return <ul aria-label="procedencia">{sources.map((source) => <li key={source.archiveEntryId}><span>{source.archiveEntryId}</span>{" — sha256: "}
-    {source.sha256 ? <code>{source.sha256}</code> : <strong role="alert">sin hash — esta entrada no puede verificarse</strong>}{" — descargada el "}<time dateTime={source.fetchedAt}>{source.fetchedAt}</time>{source.status ? <> — estado: {source.status}</> : null}</li>)}</ul>;
+    {source.sha256 ? <code>{source.sha256}</code> : <Alert variant="unavailable">sin hash — esta entrada no puede verificarse</Alert>}{" — descargada el "}<time dateTime={source.fetchedAt}>{source.fetchedAt}</time>{source.status ? <> — estado: {source.status}</> : null}</li>)}</ul>;
 }
 
 /**
@@ -144,7 +145,7 @@ export function renderMunicipalView(
     return (
       <main className={`page-shell ${styles.root}`}>
         <MunicipalStateHeading />
-        <p role="alert">Se rechazó la lectura: {view.reason}</p>
+        <Alert variant="unavailable">Se rechazó la lectura: {view.reason}</Alert>
         {view.status === "read_failed" && (view.unmapped || view.withoutListId) ? (
           <UnmappedListIds
             entries={view.unmapped ?? []}
@@ -217,11 +218,11 @@ export function renderMunicipalView(
     return (
       <main className={`page-shell ${styles.root}`}>
         <MunicipalStateHeading />
-        <p role="alert">
+        <Alert variant="denied">
           Se rechazó la solicitud: {describeExcluded(tallyByKind(foreignRows))} de{" "}
           {rows.length} filas no son oficiales. Las cifras oficiales y de
           fiscalización nunca se combinan en un mismo número.
-        </p>
+        </Alert>
         {excludedNote}
         {/* Both counted before this refusal and about facts it does not touch:
             which list ids failed to map, and which levels cannot be ordered,
@@ -245,8 +246,8 @@ export function renderMunicipalView(
   } catch {
     return <main className={`page-shell ${styles.root}`}>
       <MunicipalStateHeading />
-      <p role="alert">Se rechazó la solicitud: un mismo partido canónico tiene nombres
-        incompatibles. No se muestran cifras hasta resolver el conflicto.</p>
+      <Alert variant="unavailable">Se rechazó la solicitud: un mismo partido canónico tiene nombres
+        incompatibles. No se muestran cifras hasta resolver el conflicto.</Alert>
       {excludedNote}
       <UnmappedListIds entries={unmapped.entries} withoutListId={unmapped.withoutListId}
         totalRows={rows.length} unsummable={unsummable} mappingConfigured={view.partyMappingConfigured} />
@@ -321,10 +322,10 @@ export function renderMunicipalView(
             ) : null}
           </section>
           {unsummable !== null ? (
-            <p role="alert">
+            <Alert variant="unavailable">
               No hay cifras por partido: {unsummable}. Un total que duplica el
               conteo es peor que no tener total.
-            </p>
+            </Alert>
           ) : (
             <>
               <MunicipalDistribution parties={partyTotals} />
@@ -355,7 +356,7 @@ export function renderMunicipalView(
         <section className={styles.evidence} aria-labelledby="municipal-evidence-heading">
           <h2 id="municipal-evidence-heading">Referencias de la consulta</h2>
           {sources.some((source) => !source.sha256) ? (
-            <p role="alert">Hay entradas sin hash; su procedencia no puede verificarse.</p>
+            <Alert variant="unavailable">Hay entradas sin hash; su procedencia no puede verificarse.</Alert>
           ) : null}
           {sources.filter((source) => source.status && source.status !== "ok").map((source) => (
             <p role="note" key={source.archiveEntryId}>{source.archiveEntryId} — estado: {source.status}</p>
@@ -399,10 +400,10 @@ function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
         <MunicipalStateHeading />
-        <section className={styles.state} role={role} aria-labelledby="municipal-state-heading">
+        <Alert variant={role === "alert" ? "unavailable" : "empty"} aria-labelledby="municipal-state-heading">
           <h2 id="municipal-state-heading">Estado de la evidencia</h2>
           <p>{message}</p>
-        </section>
+        </Alert>
       </div>
     </main>
   );
@@ -433,10 +434,10 @@ export default async function MunicipalPage({
     return (
       <main className={`page-shell ${styles.root}`}>
         <MunicipalStateHeading />
-        <p role="alert">
+        <Alert variant="denied">
           Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
           más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.
-        </p>
+        </Alert>
       </main>
     );
   }

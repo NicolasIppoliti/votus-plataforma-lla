@@ -1387,7 +1387,7 @@ select option {
   background: var(--surface-muted);
 }
 
-.evidence-state {
+.workspace-alert {
   display: grid;
   gap: 0.75rem;
   min-width: 0;
@@ -1399,13 +1399,17 @@ select option {
   overflow-wrap: anywhere;
 }
 
-.evidence-state[data-treatment="warning"] {
+.workspace-alert[data-variant="denied"],
+.workspace-alert[data-variant="unavailable"],
+.workspace-alert[data-variant="caveat"] {
   border-block-start-color: var(--warning-ink);
   background: var(--warning-surface);
 }
 
-.evidence-state[data-treatment="danger"] {
-  border-block-start-color: var(--danger);
+.workspace-alert__action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .evidence-state h2 {
