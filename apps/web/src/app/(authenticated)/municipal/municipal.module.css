@@ -1,6 +1,10 @@
 .root, .layout, .context, .results, .reference, .evidence, .state { min-width: 0; }
 .mapEnhancement { margin-block: 1rem; display: grid; gap: 0.75rem; justify-items: start; }
 .mapEnhancement button { cursor: pointer; }
+.localeRow { scroll-margin-block: 8rem; }
+.localeRow:target { outline: 3px solid var(--accent); outline-offset: -3px; }
+.localeLink { cursor: pointer; }
+.localeLink:focus-visible circle, .localeLink:hover circle { stroke: white; stroke-width: 2; }
 .mapEnhancement button:focus-visible, .mapEnhancement a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .mapCanvas { width: min(100%, 720px); height: clamp(240px, 45vw, 420px); border: 1px solid var(--border); }
 .mapInactive { display: none; }

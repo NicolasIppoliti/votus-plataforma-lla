@@ -2,6 +2,7 @@
 
 import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
 import { Alert } from "@/components/ui/alert";
+import { RosalesAdministrativeDetails, RosalesTerritoryName } from "@/components/RosalesAdministrativeContext";
 import { granularityLabel } from "@/lib/results/granularity";
 import { useEffect, useState } from "react";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
@@ -51,7 +52,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <section className={styles.workbench} aria-label="Panorama territorial">
       <div className={styles.map}>
         <p className={styles.trail}>Territorio del contexto electoral</p>
-        <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? "Sección 027 · distrito 02" : context?.seccionCode ? `Sección ${context.seccionCode} · distrito ${context.distritoCode}` : "Seleccione una sección en la barra de contexto"}</p></header>
+        <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? <RosalesTerritoryName /> : context?.seccionCode ? `Sección ${context.seccionCode} · distrito ${context.distritoCode}` : "Seleccione una sección en la barra de contexto"}</p></header>
+        {rosales && <RosalesAdministrativeDetails />}
         {rosales && mapped ? <section aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Mapa de referencia no disponible para esta selección.</p><p>No se reutilizan cifras de Coronel Rosales para representar otro territorio.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">

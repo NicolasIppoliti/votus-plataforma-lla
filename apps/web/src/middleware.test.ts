@@ -49,6 +49,14 @@ afterEach(() => {
 });
 
 describe("middleware", () => {
+  it.each(["/drilldown?electionId=2025&distrito=02", "/compare?leftElectionId=2023&rightElectionId=2025", "/simulate?scenario=%7B%22seats%22%3A9%7D"])("preserves the requested analysis at %s", async (destination) => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const response = await middleware(new NextRequest(`http://localhost:3000${destination}`));
+    const login = new URL(response.headers.get("location")!);
+    expect(login.pathname).toBe("/login");
+    expect(login.searchParams.get("returnTo")).toBe(destination);
+  });
+
   it("overwrites untrusted profiling metadata and groups by a generated request id", async () => {
     vi.stubEnv("VOTUS_PROFILE_SPANS", "1");
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
@@ -128,6 +136,14 @@ describe("middleware", () => {
     expect(await response.text()).toBe("");
   });
 
+  it("overwrites spoofed return headers with the actual requested URL", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "authenticated-operator" } } });
+    const response = await middleware(new NextRequest("http://localhost:3000/compare?electionId=2025", {
+      headers: { "x-votus-return-to": "//evil.test" },
+    }));
+    expect(response.headers.get("x-middleware-request-x-votus-return-to")).toBe("/compare?electionId=2025");
+  });
+
   it("test_authenticated_request_succeeds", async () => {
     mocks.getUser.mockResolvedValue({
       data: { user: { id: "11111111-1111-1111-1111-111111111111" } },
@@ -138,6 +154,7 @@ describe("middleware", () => {
 
     expect(response.headers.get("location")).toBeNull();
     expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-request-x-votus-return-to")).toBe("/dashboard");
   });
 
   it("test_two_authenticated_users_get_identical_access", async () => {
@@ -206,6 +223,7 @@ describe("middleware", () => {
 
     expect(request.cookies.get(tuples[0]!.name)?.value).toBe(tuples[0]!.value);
     expect(request.cookies.get(tuples[1]!.name)?.value).toBe(tuples[1]!.value);
+    expect(response.headers.get("x-middleware-request-cookie")).toContain("sb-test-auth-token.0=opaque-chunk-a");
     const setCookieHeader = response.headers.get("set-cookie");
     expect(setCookieHeader).toContain("sb-test-auth-token.0=opaque-chunk-a");
     expect(setCookieHeader).toContain("Max-Age=3600");
