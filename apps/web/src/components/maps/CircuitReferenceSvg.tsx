@@ -2,14 +2,14 @@
 import { useId } from "react";
 import type { CircuitOutcome } from "@/lib/workspace/official-section-circuit-outcomes";
 import { circuitPresentation } from "@/lib/geography/circuit-presentation";
-import { circuitBandColor, NEUTRAL_COLOR, REFERENCE_COLOR, Legend } from "./reference-colors";
+import { circuitBandColor, MARGIN_BANDS, NEUTRAL_COLOR, REFERENCE_COLOR, Legend } from "./reference-colors";
 import styles from "./circuit-reference.module.css";
 import { formatFixed2 } from "@/lib/format/number";
 export interface CircuitMapProps {
   geometry: { code: string; coordinates: [number, number][][][] }[];
   circuits: CircuitOutcome[];
   selected: string | null;
-  onSelect: (code: string) => void;
+  onSelect?: (code: string) => void;
 }
 /** SVG clipping draws the exact B∩C shared area without changing either source polygon. */
 export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: CircuitMapProps) {
@@ -29,11 +29,14 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: 
       const outcome = circuits.find(c => c.circuito_code === g.code);
       const p = outcome ? circuitPresentation(outcome) : null;
       const name = `Circuito ${g.code}: ${p ? `${p.winner}; ${p.coverage}; margen ${p.margin === null ? "no disponible" : formatFixed2(p.margin) + " pp"}` : "sin resultados"}`;
+      const accessibility = onSelect
+        ? { role: "button" as const, tabIndex: 0, "aria-pressed": selected === g.code }
+        : { role: "img" as const };
       return <g key={g.code}>
         <path d={path(g)} fill={p ? circuitBandColor(p.color, p.band) : NEUTRAL_COLOR} fillOpacity={1}
           fillRule="evenodd" stroke={REFERENCE_COLOR} strokeWidth={selected === g.code ? 3 : 1} vectorEffect="non-scaling-stroke"
-          tabIndex={0} role="button" aria-label={name} aria-pressed={selected === g.code} className={styles.unit}
-          onClick={() => onSelect(g.code)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(g.code); } }}><title>{name}</title></path>
+          {...accessibility} aria-label={name} className={styles.unit}
+          onClick={onSelect ? () => onSelect(g.code) : undefined} onKeyDown={onSelect ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(g.code); } } : undefined}><title>{name}</title></path>
         {outcome?.status === "partial" && <path d={path(g)} fill={`url(#${hatch})`} fillRule="evenodd" pointerEvents="none" data-hatched="true" />}
       </g>;
     })}
@@ -43,6 +46,7 @@ export function CircuitReferenceSvg({ geometry, circuits, selected, onSelect }: 
     </g>}
   </svg><Legend label="Codificación de circuitos" entries={[
     { label: "Relleno: ganador y margen; neutro sin resultado atribuible", encoding: "fill", color: NEUTRAL_COLOR },
+    { label: `Margen sobre votos positivos: claro < ${MARGIN_BANDS.light.below} pp; medio ${MARGIN_BANDS.light.below}–${MARGIN_BANDS.medium.through} pp; intenso > ${MARGIN_BANDS.medium.through} pp`, encoding: "fill", color: REFERENCE_COLOR },
     { label: "Rayado: escrutinio provisorio o superposición en la fuente", encoding: "hatch" },
     { label: "Contorno de referencia CNE", encoding: "outline" },
   ]} /></>;
