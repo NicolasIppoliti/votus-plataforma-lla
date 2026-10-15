@@ -29,8 +29,8 @@ function SectionReferenceOutline() {
 }
 
 
-export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, children, footer }: {
-  heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; children?: ReactNode; footer?: ReactNode;
+export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, consolidatedLimits = false, children, footer }: {
+  heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; consolidatedLimits?: boolean; children?: ReactNode; footer?: ReactNode;
 }) {
   const [zoom, setZoom] = useState(100);
   return <section className={styles.mapPanel} data-map-kind={heading === MAP_HEADING.REFERENCE ? "locator" : "data"} aria-label="Mapa territorial de referencia">
@@ -39,7 +39,7 @@ export function TerritorialMapStage({ heading, title, subtitle, referenceRosales
       <span className={styles.coordinate}>Referencia geográfica</span>
       <div className={styles.northMark} role="img" aria-label="Norte"><span>N</span><svg viewBox="0 0 18 30" aria-hidden="true"><path d="m9 2 6 18-6-4-6 4zM9 16v12" /></svg></div>
       <div className={styles.mapCamera} style={{ transform: `scale(${zoom / 100})` }}>{referenceRosales ? <SectionReferenceOutline /> : children}</div>
-      <div className={styles.territoryLabel}><Target aria-hidden="true" size={20} /><div><strong>{title}</strong><small>Seleccionado · no cobertura electoral</small></div><Check aria-hidden="true" size={15} /></div>
+      <div className={styles.territoryLabel}><Target aria-hidden="true" size={20} /><div><strong>{title}</strong><small>{consolidatedLimits ? "Seleccionado" : "Seleccionado · no cobertura electoral"}</small></div><Check aria-hidden="true" size={15} /></div>
       <div className={styles.mapControls} role="group" aria-label="Controles de vista">
         <button type="button" aria-label="Acercar mapa" disabled={zoom === 180} onClick={() => setZoom(value => Math.min(180, value + 20))}><Plus aria-hidden="true" size={17} /></button>
         <button type="button" aria-label="Alejar mapa" disabled={zoom === 80} onClick={() => setZoom(value => Math.max(80, value - 20))}><Minus aria-hidden="true" size={17} /></button>
@@ -47,9 +47,9 @@ export function TerritorialMapStage({ heading, title, subtitle, referenceRosales
       </div>
       <div className={styles.mapScale}><span aria-hidden="true" /><small>Vista de referencia · {zoom} %</small></div>
     </div>
-    <footer className={styles.mapFooter}><div><span aria-hidden="true">■</span> Territorio seleccionado<small>Referencia geográfica, no cobertura electoral</small></div>{heading !== MAP_HEADING.REFERENCE && <a href="#official-evidence-heading"><Info aria-hidden="true" size={14} /> Ver evidencia</a>}</footer>
+    <footer className={styles.mapFooter}><div><span aria-hidden="true">■</span> Territorio seleccionado{!consolidatedLimits && <small>Referencia geográfica, no cobertura electoral</small>}</div>{(consolidatedLimits || heading !== MAP_HEADING.REFERENCE) && <a href="#official-evidence-heading"><Info aria-hidden="true" size={14} /> Ver evidencia</a>}</footer>
     {footer}
-    {referenceRosales && <Legend label="Referencia de sección" entries={[{ label: "Contorno de referencia CNE; sin resultados electorales", encoding: "outline" }]} />}
-    {referenceRosales && <div className={styles.referenceNote}><p>Geometría de referencia CNE; no certificada como límite electoral 2025. Aplicabilidad electoral desconocida.</p><p>Fuente: CNE · recuperada el 24/09/2026. Contorno ancestro; sin geometría propia para la unidad seleccionada.</p></div>}
+    {referenceRosales && !consolidatedLimits && <Legend label="Referencia de sección" entries={[{ label: "Contorno de referencia CNE; sin resultados electorales", encoding: "outline" }]} />}
+    {referenceRosales && !consolidatedLimits && <div className={styles.referenceNote}><p>Geometría de referencia CNE; no certificada como límite electoral 2025. Aplicabilidad electoral desconocida.</p><p>Fuente: CNE · recuperada el 24/09/2026. Contorno ancestro; sin geometría propia para la unidad seleccionada.</p></div>}
   </section>;
 }
