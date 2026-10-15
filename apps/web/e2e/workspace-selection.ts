@@ -1,10 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Browser, type Page } from "@playwright/test";
 import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
 
 const environment = assertE2eEnvironment(process.env);
 
-test("selecting an organization inline on review refreshes the real page with authorized data", async ({ page, browser }) => {
+export async function selectOrganizationInlineOnReview({ page, browser }: { page: Page; browser: Browser }) {
   await withReviewItem(page, async () => {
     // A fresh sign-in has its own server-side workspace context, with no selection.
     // The fixture's original context remains untouched for cleanup.
@@ -35,4 +35,4 @@ test("selecting an organization inline on review refreshes the real page with au
       await context.close();
     }
   });
-});
+}

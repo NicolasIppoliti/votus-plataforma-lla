@@ -1,15 +1,18 @@
-import "./workspace-selection";
+import { selectOrganizationInlineOnReview } from "./workspace-selection";
 import { REVIEW_ITEM, withReviewItem } from "./authorized-review-fixture";
 import { writeFile } from "node:fs/promises";
-import { type Locator, type Page } from "@playwright/test";
+import { test as browserTest, type Locator, type Page } from "@playwright/test";
 
 import { assertE2eEnvironment } from "./gate-contract";
 import { durationInMilliseconds } from "./css-duration";
 import { createReviewStateHandler, reviewPagePayload, REVIEW_SAFE_STATE_PAYLOADS } from "./review-state-control";
 import { expect, test } from "./review-test-fixture";
+
 import { zoomTest } from "./review-zoom-test-fixture";
 import { writeReviewFocusGeometry, type ReviewFocusControl } from "./review-focus-geometry";
 import { createReviewScrollObserver, withReviewScrollDiagnostics, type ReviewScrollPhase } from "./review-scroll-completion";
+
+browserTest("selecting an organization inline on review refreshes the real page with authorized data", selectOrganizationInlineOnReview);
 
 const READ_ONLY_NOTICE =
   "Esta pantalla es solo de consulta. Puede inspeccionar los elementos pendientes, pero no modificarlos ni resolverlos aquí.";
