@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, useTransition, 
 import { useRouter } from "next/navigation";
 import { SlidersHorizontal } from "lucide-react";
 import styles from "./drilldown.module.css";
+import { ElectoralGlossary } from "@/components/ElectoralGlossary";
 import {
   SCOPE_CONTROL_NAMES, SCOPE_FORM_KIND, canonicalScopeSearchParams,
   scopeControlStates, scopeDependentNames, synchronizeScopeControls,
@@ -108,7 +109,7 @@ export function DrilldownSelectionForm({ selected, fields, notes, children, head
   const showEvidence = !isPending && selectionKey(state.draft) === servedKey;
 
   const renderField = (field: SelectionField) => <div className={styles.filter} key={field.name}>
-    <label htmlFor={field.id}>{field.label}</label>
+    <div className={styles.fieldLabel}><label htmlFor={field.id}>{field.label}</label><ElectoralGlossary field={field.name} /></div>
     <select id={field.id} name={field.name} value={state.draft[field.name] ?? ""}
       required={controlStates[field.name].required}
       disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}
