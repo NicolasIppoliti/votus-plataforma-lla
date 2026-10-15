@@ -31,6 +31,16 @@ def test_non_positive_vote_kinds_migration_and_reverse() -> None:
     assert "delete from public.result_row" not in down
 
 
+def test_positive_read_scope_index_remains_covering() -> None:
+    sql = _sql("20261015300000_non_positive_vote_kinds.sql")
+    assert "drop index public.result_row_official_district_scope_idx" in sql
+    assert "include (archive_entry_id, granularity, list_id, votes, vote_kind)" in sql
+    assert "where source_kind = 'official'" in sql
+    down = _sql("down/20261015300000_non_positive_vote_kinds.down.sql")
+    assert "create index result_row_official_district_scope_idx" in down
+    assert "include (archive_entry_id, granularity, list_id, votes)" in down
+
+
 def test_projection_receipt_scope_rls_grants_and_reverse() -> None:
     sql = _sql("20261015200000_projection_receipt.sql")
     assert "primary key (archive_entry_id, election_id, source_kind)" in sql

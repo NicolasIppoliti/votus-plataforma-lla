@@ -52,7 +52,12 @@ begin
 end $migration$;
 alter table public.result_row drop constraint result_row_natural_key;
 alter table public.result_row drop constraint result_row_non_positive_identity;
+drop index public.result_row_official_district_scope_idx;
 alter table public.result_row drop column vote_kind;
+create index result_row_official_district_scope_idx
+ on public.result_row (election_id, category_id, jurisdiction_id)
+ include (archive_entry_id, granularity, list_id, votes)
+ where source_kind = 'official';
 alter table public.result_row add constraint result_row_natural_key
  unique (archive_entry_id,election_id,jurisdiction_id,category_id,list_id,source_kind);
 commit;

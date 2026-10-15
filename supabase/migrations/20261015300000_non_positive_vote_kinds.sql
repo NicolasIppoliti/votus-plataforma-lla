@@ -9,6 +9,17 @@ alter table public.result_row drop constraint result_row_natural_key;
 alter table public.result_row add constraint result_row_natural_key
  unique nulls not distinct (archive_entry_id,election_id,jurisdiction_id,category_id,list_id,source_kind,vote_kind);
 
+-- The positive-only readers must evaluate vote_kind without fetching each fact
+-- from the heap. Keep the scope-first key and source predicate (also used by
+-- source-audit replicas), adding the discriminator to the covering payload.
+-- A positive-only partial predicate would make unfiltered scope reads lose this
+-- access path, so do not replace the existing source-kind predicate.
+drop index public.result_row_official_district_scope_idx;
+create index result_row_official_district_scope_idx
+ on public.result_row (election_id, category_id, jurisdiction_id)
+ include (archive_entry_id, granularity, list_id, votes, vote_kind)
+ where source_kind = 'official';
+
 -- Amend the deployed read functions, including the historical implementations
 -- reached by the exploration wrappers. Inline subqueries preserve each caller's
 -- existing RLS/security-definer boundary and all existing source-kind predicates.
