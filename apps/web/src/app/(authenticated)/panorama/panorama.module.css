@@ -54,6 +54,8 @@
 .childTable thead { background: #0e202d; color: #b9c8d2; }
 .childTable a { display: inline-flex; align-items: center; min-height: 44px; color: #65e5f2; }
 .childTable tr[hidden] { display: none; }
+.childTable tr[aria-selected="true"] { background: #122f3c; box-shadow: inset 3px 0 #65e5f2; }
+.children button { min-height: 44px; padding: 8px 12px; color: #65e5f2; background: #0d2130; border: 1px solid #355367; border-radius: 3px; cursor: pointer; }
 .childQualifications { font-size: 13px; }
 .evidence { padding: 22px 0; }
 .evidence p { color: #b9c8d2; font-size: 14px; overflow-wrap: anywhere; }

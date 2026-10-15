@@ -8,7 +8,7 @@ import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
 const { states } = vi.hoisted(() => ({ states: [] as string[] }));
 vi.mock("react", async importOriginal => ({ ...await importOriginal<typeof import("react")>(), useState: (initial: unknown) => [states.length ? states.shift() : initial, vi.fn()] }));
-vi.mock("../drilldown/TerritorialMapStage", async importOriginal => ({ ...await importOriginal<typeof import("../drilldown/TerritorialMapStage")>(), TerritorialMapStage: ({ heading }: { heading: string }) => <div>Mapa de referencia · {heading}</div> }));
+vi.mock("../drilldown/TerritorialMapStage", async importOriginal => ({ ...await importOriginal<typeof import("../drilldown/TerritorialMapStage")>(), TerritorialMapStage: ({ heading, children, footer }: { heading: string; children?: import("react").ReactNode; footer?: import("react").ReactNode }) => <div>Mapa de referencia · {heading}{children}{footer}</div> }));
 afterEach(() => { states.length = 0; });
 const result: ExplorationOk = {
   status: "ok", sourceKind: "official", level: "seccion", sourceGranularity: "mesa",
@@ -120,8 +120,46 @@ it.each([undefined, { status: "unavailable" } as const])("discloses unavailable 
   expect(html).not.toContain("00248 — Norte");
 });
 
-it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {
+it("filters and marks the selected circuit without changing its exact drilldown link (#445)", () => {
+  const selection = { selectedCircuit: "00248", onClearSelection: () => {} };
+  const html = renderToStaticMarkup(<PanoramaChildren data={data} {...selection} />);
+  expect(html).toContain('aria-selected="true"');
+  expect(html).toContain('1 visibles · 2 circuitos disponibles');
+  expect(html).toContain('Quitar selección de circuito');
+  expect(html).toContain('level=circuito&amp;circuitoCode=00248');
+  expect(html).toContain('<tr hidden="" aria-selected="false"');
+});
+
+it("restores only a circuit present in the official Panorama outcomes (#445)", () => {
+  states.push("Coronel Rosales", "00248");
+  const selected = renderToStaticMarkup(<Panorama data={data} />);
+  expect(selected).toContain('aria-selected="true"');
+  expect(selected).toContain("Circuito seleccionado: 00248");
+  states.push("Coronel Rosales", "unknown");
+  const invalid = renderToStaticMarkup(<Panorama data={data} />);
+  expect(invalid).not.toContain('aria-selected="true"');
+  expect(invalid).toContain("2 visibles · 2 circuitos disponibles");
+});
+
+it("circuit selection takes precedence over an earlier text search (#445)", () => {
+  states.push("sur");
+  const html = renderToStaticMarkup(<PanoramaChildren data={data} selectedCircuit="00248" onClearSelection={() => {}} />);
+  expect(html).toContain("1 visibles · 2 circuitos disponibles");
+  expect(html).not.toContain("No hay circuitos que coincidan");
+  expect(html).toContain('aria-selected="true"');
+});
+
+it("reaches the shared circuit map from Panorama with official membership (#445)", () => {
   const html = renderToStaticMarkup(<Panorama data={data} />);
+  expect(html).toContain("Primer lugar observado por circuito");
+  expect(html).toContain("Preparando mapa de circuitos");
+  expect(html).toContain("Geometría de referencia CNE; no certificada");
+});
+
+it("titles the neutral Rosales outline as a reference, never as winners (#487)", () => {
+  const evidence = data.evidence!;
+  if (evidence.status !== "ok") throw new Error("fixture must be ok");
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, evidence: { ...evidence, circuitOutcomes: { status: "unavailable" } } }} />);
   expect(html).toContain("Mapa de referencia · Referencia territorial");
   expect(html).not.toContain("Ganadores en el territorio");
 });
