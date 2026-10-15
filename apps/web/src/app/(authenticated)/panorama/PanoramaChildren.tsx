@@ -9,7 +9,7 @@ import styles from "./panorama.module.css";
 import { formatCount, formatDecimal } from "@/lib/format/number";
 
 
-export function PanoramaChildren({ data, selectedCircuit = null, onClearSelection }: { data: PanoramaData; selectedCircuit?: string | null; onClearSelection?: () => void }) {
+export function PanoramaChildren({ data, selectedCircuit = null, onClearSelection, onHoverCircuit, onFocusCircuit }: { data: PanoramaData; selectedCircuit?: string | null; onClearSelection?: () => void; onHoverCircuit?: (code: string | null) => void; onFocusCircuit?: (code: string | null) => void }) {
   const [search, setSearch] = useState("");
   const outcomes = data.evidence?.status === "ok" ? data.evidence.circuitOutcomes : undefined;
   const available = outcomes?.status === "ok" && outcomes.circuit_membership === "known";
@@ -29,7 +29,10 @@ export function PanoramaChildren({ data, selectedCircuit = null, onClearSelectio
       {selectedCircuit && <Alert variant="needs-selection">Circuito seleccionado: {selectedCircuit}. <button type="button" onClick={onClearSelection}>Quitar selección de circuito</button></Alert>}
       <div className={styles.lookup}><label htmlFor="panorama-search">Buscar territorio<input id="panorama-search" type="search" placeholder="Nombre o código de circuito" value={search} onChange={event => { onClearSelection?.(); setSearch(event.target.value); }} /></label><p>Todas las filas permanecen disponibles al limpiar la búsqueda.</p></div>
       <div className={styles.childTable} role="region" aria-label="Circuitos disponibles para profundizar" tabIndex={0}>
-        <table><caption>Resultados oficiales por circuito · margen sobre votos positivos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Primer lugar observado</th><th scope="col">Margen (pp)</th><th scope="col">Votos positivos</th><th scope="col">Completitud</th></tr></thead><tbody>{rows.map(({ circuit, label, href, presentation }) => <tr key={circuit.circuito_code} hidden={!isVisible({ circuit, label, href, presentation })} aria-selected={selectedCircuit ? selectedCircuit === circuit.circuito_code : undefined}>
+        <table><caption>Resultados oficiales por circuito · margen sobre votos positivos</caption><thead><tr><th scope="col">Territorio</th><th scope="col">Primer lugar observado</th><th scope="col">Margen (pp)</th><th scope="col">Votos positivos</th><th scope="col">Completitud</th></tr></thead><tbody>{rows.map(({ circuit, label, href, presentation }) => <tr key={circuit.circuito_code}
+          onMouseEnter={() => onHoverCircuit?.(circuit.circuito_code)} onMouseLeave={() => onHoverCircuit?.(null)}
+          onFocus={() => onFocusCircuit?.(circuit.circuito_code)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) onFocusCircuit?.(null); }}
+          hidden={!isVisible({ circuit, label, href, presentation })} aria-selected={selectedCircuit ? selectedCircuit === circuit.circuito_code : undefined}>
           <th scope="row"><a href={href}>{label}</a></th><td>{presentation.winner}{circuit.status === "partial" && " · provisional"}</td><td>{presentation.margin === null ? "No disponible" : `${formatDecimal(presentation.margin)} pp`}</td><td>{formatCount(circuit.positive_total)}</td><td>{circuit.status === "complete" ? "Completa" : `Parcial · ${presentation.coverage}`} · {circuit.counts.counted}/{circuit.counts.expected} mesas</td>
         </tr>)}</tbody></table>
       </div>

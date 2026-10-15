@@ -66,6 +66,22 @@ nextTest("Panorama circuit click and keyboard selection synchronize URL and exac
       const map = page.getByRole("group", { name: "Circuitos de Coronel Rosales: geometría de referencia CNE", exact: true });
       const circuit = map.getByRole("button", { name: /^Circuito 00248:/ });
       const table = page.getByRole("region", { name: "Circuitos disponibles para profundizar", exact: true });
+      // Transient row emphasis must not select, filter, navigate or animate (#446).
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const row = table.locator("tbody tr").filter({ hasText: "00248" });
+      await row.hover();
+      await expect(circuit).toHaveAttribute("stroke-width", "3");
+      await expect(circuit).toHaveAttribute("aria-pressed", "false");
+      await expect(page).toHaveURL(url => !url.searchParams.has("selectedCircuit"));
+      await expect(table.locator("tbody tr:visible")).toHaveCount(2);
+      await page.getByRole("heading", { name: "Elegir dónde profundizar" }).hover();
+      await expect(circuit).toHaveAttribute("stroke-width", "1");
+      await row.getByRole("link").focus();
+      await expect(circuit).toHaveAttribute("stroke-width", "3");
+      expect(await circuit.evaluate(element => getComputedStyle(element).transitionDuration)).toBe("0s");
+      expect(await circuit.evaluate(element => getComputedStyle(element).animationName)).toBe("none");
+      await page.getByRole("searchbox", { name: "Buscar territorio" }).focus();
+      await expect(circuit).toHaveAttribute("stroke-width", "1");
       await circuit.click();
       await expect(page).toHaveURL(url => url.searchParams.get("selectedCircuit") === "00248" && url.searchParams.get("preserved") === "yes");
       await expect(circuit).toHaveAttribute("aria-pressed", "true");

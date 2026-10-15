@@ -8,7 +8,7 @@ import { circuitPresentation } from "@/lib/geography/circuit-presentation";
 import { PanoramaChildren } from "./PanoramaChildren";
 import { InspectorDistribution } from "../drilldown/DrilldownDistribution";
 
-const { states } = vi.hoisted(() => ({ states: [] as string[] }));
+const { states } = vi.hoisted(() => ({ states: [] as (string | null)[] }));
 vi.mock("react", async importOriginal => ({ ...await importOriginal<typeof import("react")>(), useState: (initial: unknown) => [states.length ? states.shift() : initial, vi.fn()] }));
 vi.mock("../drilldown/TerritorialMapStage", async importOriginal => ({ ...await importOriginal<typeof import("../drilldown/TerritorialMapStage")>(), TerritorialMapStage: ({ heading, children, footer }: { heading: string; children?: import("react").ReactNode; footer?: import("react").ReactNode }) => <div>Mapa de referencia · {heading}{children}{footer}</div> }));
 afterEach(() => { states.length = 0; });
@@ -35,6 +35,15 @@ const data: PanoramaData = {
     },
   },
 };
+
+it("renders transient circuit emphasis without changing persistent selection (#446)", () => {
+  states.push("Coronel Rosales", "00248", "00249", null, "");
+  const geometry = [...data.circuitGeometry!, { ...data.circuitGeometry![0]!, code: "00249" }];
+  const html = renderToStaticMarkup(<Panorama data={{ ...data, circuitGeometry: geometry }} />);
+  expect(html).toMatch(/stroke-width="3"[^>]*aria-pressed="false"[^>]*aria-label="Circuito 00249:/);
+  expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="Circuito 00248:/);
+  expect(html).toContain("Circuito seleccionado: 00248");
+});
 
 it("shares the compact rule with Exploration, keeps every unmapped ID separate and never invents null shares", () => {
   const parties: ExplorationOk["parties"] = [...result.parties,

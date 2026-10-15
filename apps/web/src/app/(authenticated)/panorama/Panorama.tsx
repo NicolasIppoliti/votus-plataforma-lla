@@ -21,6 +21,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
   const ok = evidence?.status === "ok" ? evidence : undefined;
   const result = ok?.result;
   const [requestedCircuit, setRequestedCircuit] = useState<string | null>(null);
+  const [hoveredCircuit, setHoveredCircuit] = useState<string | null>(null);
+  const [focusedCircuit, setFocusedCircuit] = useState<string | null>(null);
   const circuits = ok?.circuitOutcomes;
   const selectable = rosales && circuits?.status === "ok" && circuits.circuit_membership === "known";
   const mapped = selectable && !!data.circuitGeometry?.length;
@@ -39,7 +41,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
     if (url.href !== window.location.href) window.history.pushState(null, "", url);
     setRequestedCircuit(code);
   };
-  const selectTerritory = (value: string) => { selectCircuit(null); setTerritory(value); };
+  const clearHighlight = () => { setHoveredCircuit(null); setFocusedCircuit(null); };
+  const selectTerritory = (value: string) => { clearHighlight(); selectCircuit(null); setTerritory(value); };
   const ranked = result ? [...result.parties].sort((a, b) => b.votes - a.votes) : [];
   const tied = ranked.length > 1 && ranked[0]!.votes === ranked[1]!.votes;
   const leader = result && result.totalVotes > 0 && !tied ? ranked[0] : undefined;
@@ -58,7 +61,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
       <div className={styles.map}>
         <nav className={styles.trail} aria-label="Recorrido territorial">{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <button key={item} type="button" aria-current={item === territory ? "location" : undefined} onClick={() => selectTerritory(item)}>{item}</button>)}</nav>
         <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? "Sección 027 · distrito 02" : "Sin agregado autorizado en Panorama"}</p></header>
-        {mapped ? <section aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
+        {mapped ? <section aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={circuits.circuits} selected={selectedCircuit} highlighted={selectable ? focusedCircuit ?? hoveredCircuit : null} onSelect={selectCircuit} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
         <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
@@ -77,7 +80,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
       </aside>
     </section>
     <section className={styles.observations} aria-labelledby="panorama-observations"><h2 id="panorama-observations">Lo que se puede leer aquí</h2><ul><li>{state}</li><li>Panorama muestra el primer lugar observado y margen por circuito. Seleccioná un circuito para filtrar su fila; el agregado de la sección no cambia. Establecimientos, mesas e internas se consultan en Exploración.</li><li>No hay participación, comparación histórica ni pronóstico disponibles en esta lectura.</li></ul></section>
-    <PanoramaChildren key={territory} data={rosales ? data : { href: "/drilldown", exclusions: [] }} selectedCircuit={selectedCircuit} onClearSelection={() => selectCircuit(null)} />
+    <PanoramaChildren key={territory} data={rosales ? data : { href: "/drilldown", exclusions: [] }} selectedCircuit={selectedCircuit} onClearSelection={() => { clearHighlight(); selectCircuit(null); }} onHoverCircuit={setHoveredCircuit} onFocusCircuit={setFocusedCircuit} />
     <section className={styles.evidence} aria-labelledby="official-evidence-heading"><h2 id="official-evidence-heading">Límites y evidencia</h2>
       {data.exclusions.map(item => <p key={item.reason}>Opciones excluidas · {item.reason}: {formatCount(item.rows)} filas.</p>)}
       {result?.sourceExclusions.map(item => <p key={item.kind}>Excluidas del resultado · fuente {item.kind}: {formatCount(item.rows)} filas / {formatCount(item.votes)} votos.</p>)}
