@@ -745,7 +745,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
             workbenchAboveResults: workBox!.bottom <= resultBox!.top,
             evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
             inspectorGeometry: inspectorWidth === null
-              ? mapBox!.bottom <= detailBox!.top && Math.abs(mapBox!.width - detailBox!.width) <= 2
+              ? mapBox!.bottom <= detailBox!.top && (locator ? mapBox!.width <= 320 : Math.abs(mapBox!.width - detailBox!.width) <= 2)
               : inspectorWidth === "locator"
                 ? mapBox!.width <= 320 && mapBox!.right <= detailBox!.left && detailBox!.width > mapBox!.width
                 : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
