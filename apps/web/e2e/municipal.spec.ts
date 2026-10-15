@@ -52,7 +52,7 @@ test("first-run: a fresh sole-organization user reaches Rosales results in three
     const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
     const nonce = randomUUID();
     const email = `first-run-${nonce}@example.test`;
-    const password = `First-run-${randomUUID()}!`;
+    const password = randomUUID();
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
     if (created.error || !created.data.user) throw new Error("first-run user creation failed");
     const userId = created.data.user.id;
@@ -81,7 +81,32 @@ test("first-run: a fresh sole-organization user reaches Rosales results in three
       await expect(organization).toHaveValue(fixture.organization_id);
       await expect(organization.locator('option:not([value=""])')).toHaveCount(1);
       const summary = main.getByRole("complementary", { name: "Lectura de la selección" });
-      await expect(summary).toContainText(formatCount(OFFICIAL_VOTES + 3_333));
+      try {
+        await expect(summary).toContainText(formatCount(OFFICIAL_VOTES + 3_333), { timeout: 20_000 });
+      } catch (error) {
+        // Electoral context and render state only: no storage, credentials or rows.
+        try {
+          const facts = await page.evaluate(() => {
+            const keys = ["electionId", "categoryId", "distritoCode", "seccionCode", "sourceKind"];
+            const params = new URL(window.location.href).searchParams;
+            const bar = document.querySelector('[aria-label="Contexto electoral"]');
+            const aside = Array.from(document.querySelectorAll("aside")).find(node => node.getAttribute("aria-label") === "Lectura de la selección" || node.hasAttribute("aria-labelledby"));
+            return {
+              pathname: window.location.pathname,
+              searchParams: Object.fromEntries(keys.map(key => [key, params.getAll(key)])),
+              selectedOptions: Array.from(bar?.querySelectorAll("select") ?? []).map(select => ({
+                label: select.getAttribute("aria-label"), value: select.value, disabled: select.disabled, options: select.options.length,
+              })),
+              summaryPresent: !!aside,
+              summaryTerms: Array.from(aside?.querySelectorAll("dt") ?? []).map(node => node.textContent),
+              summaryStatus: Array.from(aside?.querySelectorAll('[role="alert"], [role="status"]') ?? []).map(node => node.textContent),
+              pageAlerts: Array.from(document.querySelectorAll('main [role="alert"]')).map(node => node.textContent?.slice(0, 160)),
+            };
+          });
+          await writeFile(test.info().outputPath("e2e-facts-first-run-panorama.json"), JSON.stringify(facts));
+        } catch { /* Diagnostics must not replace the original failure. */ }
+        throw error;
+      }
       await expect(summary).not.toContainText(formatCount(OFFICIAL_VOTES + 3_333 + FISCALIZACION_VOTES));
       // Click 2: consume Panorama's real scoped URL, not a constructed deep link.
       await main.getByRole("link", { name: "Explorar resultados", exact: true }).click();
