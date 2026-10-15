@@ -15,6 +15,9 @@
 @media (max-width: 760px) { .breakdownHeader { align-items: stretch; flex-direction: column; } .childScroll :global(.table-scroll), .root :global(.boundedEstablishments .table-scroll) { max-height: 280px; } }
 .layout { max-width: 2040px; padding-inline: 34px; }
 .selectionBoundary { display: grid; gap: 23px; min-width: 0; }
+.navigatorHeading, .fieldLabel { position: relative; display: flex; align-items: center; gap: 4px; }
+.fieldLabel { margin-bottom: 5px; }
+.filter .fieldLabel label { margin-bottom: 0; }
 .mapHeading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px 23px 0; }
 .mapHeading h2 { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
 .mapHeading p { color: var(--muted-ink); font-size: 0.8125rem; margin: 0; }

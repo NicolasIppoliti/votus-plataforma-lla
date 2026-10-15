@@ -1,3 +1,4 @@
+import { profileServerSpan } from "@/lib/workspace/profile-server";
 import { createAuthorizedOfficialFacetRepository } from "@/lib/workspace/official-facets";
 import { resolveDefaultElectoralContext } from "@/lib/context/default";
 import { parseElectoralContext, serializeElectoralContext, type ElectoralContext, type ElectoralContextSearchParams } from "@/lib/context/url";
@@ -18,7 +19,11 @@ export interface PanoramaData {
 }
 
 /** Read the shared URL contract; only an absent selection uses the workspace default. */
-export async function loadPanorama(params: ElectoralContextSearchParams = {}): Promise<PanoramaData> {
+export function loadPanorama(params: ElectoralContextSearchParams = {}): Promise<PanoramaData> {
+  return profileServerSpan("panorama.load", () => resolvePanorama(params));
+}
+
+async function resolvePanorama(params: ElectoralContextSearchParams): Promise<PanoramaData> {
   const unavailable: PanoramaData = { href: "/drilldown", exclusions: [] };
   const parsed = parseElectoralContext(params);
   if (parsed.status !== "ok") return { ...unavailable, notice: `Contexto inválido: ${parsed.reason}. No se muestran cifras.` };
