@@ -52,6 +52,7 @@ interface EvidenceTableProps {
 
 
     const AWARDED_BY_LABEL: Record<SeatAward["awardedBy"], string> = {
+      most_votes_completion: "Mayor número de sufragios (Art. 109 c)",
       cuociente_division: "división por cociente", largest_remainder: "mayor residuo", halving: "reducción sucesiva a la mitad", dhondt_quotient: "cociente D’Hondt", tie_break: "desempate",
     };
     const EVIDENCE_VALUE_LABEL: Record<string, string> = {

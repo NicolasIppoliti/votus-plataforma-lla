@@ -60,6 +60,7 @@ export interface TieBreak {
 export type SeatAwardReason =
   | "cuociente_division"
   | "largest_remainder"
+  | "most_votes_completion"
   | "halving"
   | "dhondt_quotient"
   | "tie_break";

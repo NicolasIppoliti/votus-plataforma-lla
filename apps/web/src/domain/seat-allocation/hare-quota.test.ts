@@ -305,16 +305,27 @@ describe("allocateHareQuota", () => {
     expect(() => allocateHareQuota(input)).toThrow(/5,?901.*uncovered/i);
   });
 
-  it("refuses an insufficient scenario instead of returning a partial allocation", () => {
+  it("completes a single qualifying list after Art. 110 halving", () => {
     const input: HareQuotaInput = {
       voteTotals: { totalVotes: 100, blankVotes: 0, annulledVotes: 0 },
       seatsToFill: 9,
       lists: [{ listId: "A", listName: "Lista A", votes: 1 }],
     };
 
-    expect(() => allocateHareQuota(input)).toThrow(
-      /cannot allocate all 9 seats/i,
-    );
+    const result = allocateHareQuota(input);
+    expect(result.results[0]!.totalSeats).toBe(9);
+    expect(result.seatAwards.filter((award) => award.awardedBy === "most_votes_completion")).toHaveLength(7);
+  });
+
+  it("never silently picks between equal most-voted completion candidates", () => {
+    expect(() => allocateHareQuota({
+      voteTotals: { kind: "valid_votes_only", validVotes: 1000 },
+      seatsToFill: 9,
+      lists: [
+        { listId: "A", listName: "A", votes: 120 },
+        { listId: "B", listName: "B", votes: 120 },
+      ],
+    })).toThrow(/equal most-voted lists/);
   });
 
   it("never lets a zero-vote list fill an otherwise unallocated remainder seat", () => {
@@ -328,9 +339,9 @@ describe("allocateHareQuota", () => {
       ],
     };
 
-    expect(() => allocateHareQuota(input)).toThrow(
-      /cannot allocate all 7 seats/i,
-    );
+    const result = allocateHareQuota(input);
+    expect(result.results.map((list) => list.totalSeats)).toEqual([5, 2, 0]);
+    expect(result.seatAwards.at(-1)).toMatchObject({ listId: "A", awardedBy: "most_votes_completion" });
   });
 
   it("reproduces the official 2023 Coronel Rosales distrito 027 concejales result (UxP 3 / JxC 3 / LLA 3 / AMPR 0)", () => {
