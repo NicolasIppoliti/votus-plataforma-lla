@@ -39,6 +39,17 @@ export function FiscalizacionSelectionForm({ selected, sourceKind, fields, child
   const servedKey = selectionKey(selected);
   const [state, setState] = useState<SelectionState>({ servedKey, requestedKey: null, draft: selected });
   const latestDraft = useRef(selected);
+  const pendingFocus = useRef<{ key: string; control: HTMLSelectElement } | null>(null);
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending || pending.key !== servedKey) return;
+    pendingFocus.current = null;
+    // A loading boundary can hide the initiating control and drop focus to the
+    // document. Do not override a deliberate move to another control or link.
+    if (pending.control.isConnected && (document.activeElement === document.body || document.activeElement === document.documentElement)) {
+      pending.control.focus();
+    }
+  }, [servedKey]);
 
   if (state.servedKey !== servedKey) {
     // Intermediate responses cannot replace a newer independent edit.
@@ -58,7 +69,7 @@ export function FiscalizacionSelectionForm({ selected, sourceKind, fields, child
     return () => window.removeEventListener("popstate", restoreHistory);
   }, []);
 
-  function change(name: CoverageControlName, value: string) {
+  function change(name: CoverageControlName, value: string, control: HTMLSelectElement) {
     const controls = Object.fromEntries(CONTROL_NAMES.map((key) => [key, {
       value: key === name ? value : latestDraft.current[key], disabled: false, required: false,
     }])) as Record<CoverageControlName, ScopeControl>;
@@ -66,6 +77,7 @@ export function FiscalizacionSelectionForm({ selected, sourceKind, fields, child
     const draft = Object.fromEntries(CONTROL_NAMES.map((key) => [key, controls[key].value])) as CoverageSelection;
     latestDraft.current = draft;
     const requestedKey = selectionKey(draft);
+    pendingFocus.current = { key: requestedKey, control };
     setState((previous) => ({ ...previous, draft, requestedKey }));
     // Returning to the served selection must also supersede any outstanding response.
     const params = serializeElectoralContext({ ...draft, sourceKind });
@@ -95,7 +107,7 @@ export function FiscalizacionSelectionForm({ selected, sourceKind, fields, child
                   <ResponsiveSelect id={field.id} name={field.name} value={state.draft[field.name]}
                     required={controlStates[field.name].required}
                     disabled={controlStates[field.name].disabled || !parentsResolved(field.name)}
-                    onChange={(event) => change(field.name, event.target.value)}>
+                    onChange={(event) => change(field.name, event.target.value, event.currentTarget)}>
                     <option value="">{field.placeholder}</option>
                     {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </ResponsiveSelect>
