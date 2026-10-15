@@ -39,6 +39,17 @@ it("renders the real evidence workbench with authorized provenance and section c
   expect(mocks.bundle).toHaveBeenCalledWith({}, { ...params, circuitoCode: null, establecimientoCode: null, mesaCode: null, requestedLevel: "seccion" });
   expect(html).not.toContain("49.300"); expect(html).not.toContain("Casos de consulta");
 });
+it("labels facet exclusions in Spanish at the rendered page boundary and preserves unknown reasons", async () => {
+  const facets = await mocks.facets();
+  mocks.facets.mockResolvedValue({ ...facets, exclusions: [
+    { reason: "non_official_source_rows", rows: 3 },
+    { reason: "future_exclusion", rows: 2 },
+  ] });
+  const html = await render();
+  expect(html).toContain("Opciones excluidas: filas de fuente no oficial; 3 fila(s).");
+  expect(html).not.toContain("non_official_source_rows");
+  expect(html).toContain("Opciones excluidas: future_exclusion; 2 fila(s).");
+});
 it("does not request result evidence until an exact authorized section is chosen", async () => {
   expect(await render({})).toContain("Seleccione una elección, categoría, distrito y sección");
   expect(mocks.bundle).not.toHaveBeenCalled();
