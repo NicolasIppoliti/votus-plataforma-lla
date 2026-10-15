@@ -80,7 +80,8 @@ export default async function AuthenticatedLayout({
       <AccountDisclosure><SignOutForm /></AccountDisclosure>
     </WorkspaceFooter>
   );
-  const sidebar = <SituationSidebar>{accountControls}</SituationSidebar>;
+  const sidebar = <SituationSidebar />;
+  const drawerSidebar = <SituationSidebar>{accountControls}</SituationSidebar>;
 
   return (
     <WorkspacePresentation snapshot={{
@@ -95,7 +96,8 @@ export default async function AuthenticatedLayout({
       sidebar={sidebar}
       topbar={
         <WorkspaceTopbar
-          mobileNavigation={<MobileNavigation sidebar={sidebar} />}
+          mobileNavigation={<MobileNavigation sidebar={drawerSidebar} />}
+          organizationControls={accountControls}
         />
       }
     >

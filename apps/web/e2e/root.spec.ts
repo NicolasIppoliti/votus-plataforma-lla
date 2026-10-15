@@ -29,18 +29,18 @@ test("the authenticated page renders one navy theme regardless of the system pre
   await expect(page).toHaveURL(/\/$/);
 });
 
-test("sidebar footer anchors workspace controls in a 218px rail that narrows and then becomes a drawer", async ({ page }) => {
+test("topbar anchors workspace controls while the 218px rail becomes a drawer", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 1440, height: 1400 });
     await page.goto("/");
     const sidebar = page.locator(".app-shell > aside.situation-sidebar");
-    const controls = sidebar.getByRole("group", { name: "Organización y cuenta", exact: true });
+    const controls = page.getByRole("banner").getByRole("group", { name: "Organización y cuenta", exact: true });
     const topbar = page.getByRole("banner");
     const trigger = page.getByRole("button", { name: "Abrir navegación" });
     await expect(controls).toBeVisible();
     await expect(controls).toContainText("Organización activa: E2E Authorized Review Browser");
-    await expect(topbar.getByRole("combobox")).toHaveCount(0);
-    await expect(topbar.locator("summary")).toHaveCount(0);
+    await expect(topbar.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
+    await expect(topbar.locator("summary")).toHaveCount(1);
     await expect(trigger).toBeHidden();
     expect((await sidebar.boundingBox())!.width).toBe(218);
     const navigationBox = await sidebar.getByRole("navigation", { name: "principal" }).boundingBox();
@@ -49,8 +49,10 @@ test("sidebar footer anchors workspace controls in a 218px rail that narrows and
     expect(navigationBox).not.toBeNull();
     expect(controlsBox).not.toBeNull();
     expect(sidebarBox).not.toBeNull();
-    expect(controlsBox!.y).toBeGreaterThan(navigationBox!.y + navigationBox!.height);
-    expect(sidebarBox!.y + sidebarBox!.height - controlsBox!.y - controlsBox!.height).toBeLessThanOrEqual(25);
+    const topbarBox = await topbar.boundingBox();
+    expect(topbarBox).not.toBeNull();
+    expect(controlsBox!.y).toBeGreaterThanOrEqual(topbarBox!.y);
+    expect(controlsBox!.y + controlsBox!.height).toBeLessThanOrEqual(topbarBox!.y + topbarBox!.height);
     expect((await page.locator(".app-shell__workspace").boundingBox())!.x).toBe(218);
 
     await page.setViewportSize({ width: 1100, height: 1400 });
@@ -138,7 +140,7 @@ test("real workspace A to B replaces identity and authorized count, while B to A
       expect(typeof fixture?.organization_id).toBe("string");
       await page.goto("/");
       const topbar = page.locator("header.workspace-topbar");
-      const sidebar = page.locator(".app-shell > aside.situation-sidebar");
+      const sidebar = topbar.locator(".workspace-topbar__controls");
       const attention = page.getByRole("complementary", { name: "Atención operativa" });
       const organization = page.getByRole("combobox", { name: "Organización", exact: true });
       const firstId = await organization.inputValue();
@@ -187,6 +189,28 @@ test("real workspace A to B replaces identity and authorized count, while B to A
   });
 });
 
+test("the 390px drawer submits the real workspace switch and refreshes topbar identity", async ({ page }) => {
+  await withReviewItem(page, async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    const topbar = page.getByRole("banner");
+    await expect(topbar.locator(".workspace-topbar__mobile-identity")).toHaveText("Organización activa: E2E Authorized Review Browser");
+    await page.getByRole("button", { name: "Abrir navegación" }).click();
+    const drawer = page.getByRole("dialog", { name: "Navegación principal" });
+    const organization = drawer.getByRole("combobox", { name: "Organización", exact: true });
+    const organizationId = await organization.inputValue();
+    const switched = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
+    await drawer.getByRole("button", { name: "Cambiar organización" }).click();
+    const response = await switched;
+    expect(response.request().postDataJSON()).toMatchObject({ organizationId, expectedRevision: expect.any(Number) });
+    expect(response.ok()).toBe(true);
+    await expect(drawer.getByRole("status").filter({ hasText: /^Organización activa\.$/ })).toBeVisible();
+    await drawer.getByRole("button", { name: "Cerrar navegación" }).click();
+    await expect(topbar.locator(".workspace-topbar__mobile-identity")).toHaveText("Organización activa: E2E Authorized Review Browser");
+    await expect(topbar).toContainText("1 elemento(s) de revisión pendiente(s)");
+  });
+});
+
 test("the short mobile drawer keeps the real organization and account group keyboard reachable", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 320, height: 400 });
@@ -222,7 +246,7 @@ test("the short mobile drawer keeps the real organization and account group keyb
   });
 });
 
-test("resizing an open drawer to desktop focuses the visible sidebar account", async ({ page }) => {
+test("resizing an open drawer to desktop focuses the visible topbar account", async ({ page }) => {
   await withReviewItem(page, async () => {
     await page.setViewportSize({ width: 320, height: 400 });
     await page.goto("/");
@@ -246,14 +270,14 @@ test("resizing an open drawer to desktop focuses the visible sidebar account", a
     });
     await expect.poll(activeIsVisible).toBe(true);
     await expect(page.getByRole("group", { name: "Organización y cuenta" })).toHaveCount(1);
-    await expect(page.locator(".app-shell > aside.situation-sidebar").locator("summary", { hasText: "Cuenta" })).toBeFocused();
+    await expect(page.locator(".workspace-topbar__controls").locator("summary", { hasText: "Cuenta" })).toBeFocused();
     await expect(page.getByRole("combobox", { name: "Organización", exact: true })).toHaveCount(1);
     await page.keyboard.press("Tab");
     await expect.poll(activeIsVisible).toBe(true);
   });
 });
 
-test("account controls live in the sidebar footer and mobile drawer and preserve keyboard operation", async ({ page, context }) => {
+test("account controls live in the topbar and mobile drawer and preserve keyboard operation", async ({ page, context }) => {
   // Sign out only a new login session, never the harness's shared storage session.
   await context.clearCookies();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -264,11 +288,11 @@ test("account controls live in the sidebar footer and mobile drawer and preserve
   await expect(page).toHaveURL(/\/$/);
   const sidebar = page.locator(".app-shell > aside.situation-sidebar");
   const topbar = page.getByRole("banner");
-  const controls = sidebar.getByRole("group", { name: "Organización y cuenta", exact: true });
+  const controls = topbar.getByRole("group", { name: "Organización y cuenta", exact: true });
   await expect(controls).toHaveCount(1);
   await expect(controls.getByRole("status").filter({ hasText: /^Seleccioná una organización para continuar\.$/ })).toBeVisible();
   await expect(controls.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
-  await expect(topbar.getByRole("group", { name: "Organización y cuenta", exact: true, includeHidden: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("group", { name: "Organización y cuenta", exact: true, includeHidden: true })).toHaveCount(0);
   const account = controls.locator("summary").filter({ hasText: /^Cuenta$/ });
   await expect(account).toBeVisible();
   await account.focus();
@@ -563,7 +587,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(topbar).not.toContainText("elemento(s) de revisión pendiente(s)");
     await drawerTrigger.click();
     const footer = drawer.getByRole("group", { name: "Organización y cuenta" });
-    await expect(footer).toContainText("Organización sin verificar");
+    await expect(footer).toContainText("Sin organización");
     await expect(footer.getByRole("status").filter({ hasText: "Seleccioná una organización para continuar." })).toBeVisible();
     await expect(footer.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
     await expect(
