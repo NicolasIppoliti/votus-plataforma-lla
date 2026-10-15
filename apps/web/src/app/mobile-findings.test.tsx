@@ -13,16 +13,16 @@ const css = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8
 it("keeps the full selected evidence and comparison labels readable outside native clipped controls", () => {
   const label = "Diputados nacionales · categoría de nombre extenso";
   const html = renderToStaticMarkup(<EvidenceContext fields={[{ name: "categoryId", label: "Categoría", value: "c", options: [{ value: "c", label }] }]}><p>Resultado</p></EvidenceContext>);
-  expect(html).toContain(`class="selected-value" aria-hidden="true">${label}</span>`);
+  expect(html).toContain(`class="responsive-select__value" data-mobile-select-value="" aria-hidden="true">${label}</span>`);
   const comparison = renderToStaticMarkup(<ComparisonSelectionForm selected={{ leftElectionId: "e" }} groups={[{ id: "a", title: "A", description: "Selección", className: "", fields: [{ key: "leftElectionId", id: "election-a", label: "Elección A", placeholder: "Elegir", options: [{ value: "e", label }] }] }]}><p>Resultado</p></ComparisonSelectionForm>);
-  expect(comparison).toContain(`class="selected-value" aria-hidden="true">${label}</span>`);
+  expect(comparison).toContain(`class="responsive-select__value" data-mobile-select-value="" aria-hidden="true">${label}</span>`);
   expect(comparison).toContain('id="election-a"');
-  expect(css("./globals.css")).toMatch(/\.selected-value\s*\{[^}]*overflow-wrap: anywhere/);
+  expect(css("./globals.css")).toMatch(/\.responsive-select__value\s*\{[^}]*overflow-wrap: anywhere/);
 });
 
 it("does not display a stale full-value mirror for an empty selection", () => {
   const html = renderToStaticMarkup(<EvidenceContext fields={[{ name: "categoryId", label: "Categoría", value: "", options: [{ value: "c", label: "Anterior" }] }]}><p>Sin selección</p></EvidenceContext>);
-  expect(html).not.toContain('class="selected-value"');
+  expect(html).not.toContain('aria-hidden="true">Anterior</span>');
   expect(html).toContain('for="evidence-categoryId"');
 });
 
@@ -42,7 +42,8 @@ it("reduces Exploration pre-map spacing without hiding context or shrinking touc
   expect(mobile).toMatch(/\.selectionBoundary\s*\{[^}]*gap: 12px/);
   expect(mobile).toMatch(/\.filterRow\s*\{[^}]*gap: 8px/);
   expect(mobile).toMatch(/\.guidance\s*\{[^}]*line-height: 1.35/);
-  expect(mobile).not.toContain("display: none");
+  const spacingRules = mobile.split("/* Reference-only geography")[0];
+  expect(spacingRules).not.toContain("display: none");
 });
 
 it("makes horizontal table navigation discoverable while bounding long mobile tables", () => {

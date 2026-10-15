@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import {
   useActionState,
@@ -137,14 +138,14 @@ function TransferForm({ requestKey, navigate }: TransferFormProps) {
       {[{ name: "donor", label: "Lista donante" }, { name: "target", label: "Lista receptora" }].map(({ name, label }) => (
         <div className="field" key={name}>
           <Label htmlFor={`transfer-${name}`}>{label}</Label>
-          <select id={`transfer-${name}`} name={name} value={name === "donor" ? controls.donor : controls.target} required
+          <ResponsiveSelect id={`transfer-${name}`} name={name} value={name === "donor" ? controls.donor : controls.target} required
             onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))}
             aria-describedby="transfer-help transfer-errors">
             <option value="">Seleccione una lista</option>
             {baseline.lists.map((list) => (
               <option key={list.listId} value={list.listId}>{list.listName} — {formatCount(list.votes)} votos</option>
             ))}
-          </select>
+          </ResponsiveSelect>
         </div>
       ))}
       <div className="field">
@@ -189,12 +190,12 @@ function SweepForm({ requestKey, navigate }: TransferFormProps) {
       {(["donor", "target"] as const).map((name) => (
         <div className="field" key={name}>
           <Label htmlFor={`sweep-${name}`}>{name === "donor" ? "Donante del muestreo" : "Receptora del muestreo"}</Label>
-          <select id={`sweep-${name}`} name={name} value={controls[name]} required
+          <ResponsiveSelect id={`sweep-${name}`} name={name} value={controls[name]} required
             aria-describedby="sweep-help sweep-errors"
             onChange={(event) => setControls((current) => ({ ...current, [name]: event.target.value }))}>
             <option value="">Seleccione para muestrear</option>
             {baseline.lists.map((list) => <option key={list.listId} value={list.listId}>{list.listName} — {formatCount(list.votes)} votos</option>)}
-          </select>
+          </ResponsiveSelect>
         </div>
       ))}
       {(["max", "step"] as const).map((name) => (
@@ -532,7 +533,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
           <legend className="simulation-form__legend">Elección y alcance</legend>
           <div className="field">
             <Label htmlFor="simulation-level">{ELECTORAL_CONTEXT_LABELS.allocatingBody}</Label>
-            <select
+            <ResponsiveSelect
               aria-describedby="simulation-form-help simulation-form-errors"
               id="simulation-level"
               onChange={handleLevelChange}
@@ -545,11 +546,11 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
                 Legislatura provincial (PBA)
               </option>
               <option value={ALLOCATION_LEVEL.NATIONAL}>Elección nacional</option>
-            </select>
+            </ResponsiveSelect>
           </div>
           <div className="field">
             <Label htmlFor="simulation-granularity">{ELECTORAL_CONTEXT_LABELS.level}</Label>
-            <select
+            <ResponsiveSelect
               aria-describedby="granularity-help simulation-form-errors"
               id="simulation-granularity"
               onChange={handleGranularityChange}
@@ -560,7 +561,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
                   {granularityLabel(value)}
                 </option>
               ))}
-            </select>
+            </ResponsiveSelect>
             <p id="granularity-help">
               Seleccione el alcance al que corresponden los votos ingresados.
             </p>
