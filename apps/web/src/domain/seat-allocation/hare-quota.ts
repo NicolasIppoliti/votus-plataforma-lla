@@ -13,7 +13,8 @@
  *              step.
  * Art. 109(c): leftover seats go to the largest remainders, in descending
  *              order; equal remainders are resolved by higher raw vote
- *              total - STATUTORY, deterministic, never a "convention".
+ *              total. Each qualifier gets at most one remainder seat;
+ *              any remaining seats complete the most-voted qualifying list.
  * Art. 109 final paragraph: blank and annulled votes are EXCLUDED from the
  *              cuociente denominator.
  * Art. 110: if no list reaches the cuociente, halve it repeatedly until at
@@ -21,6 +22,7 @@
  *              than there are seats, seats go to the highest-voted
  *              qualifying lists.
  *
+ * Completion under Art. 109(c) is traced separately from source MAYORIA.
  * There is a published `MAYORIA` column on the official Junta Electoral
  * results, observed as zero in both 2023 and 2025. It is NOT modeled here:
  * this is an unexercised statutory provision, not a missing feature.
@@ -95,6 +97,7 @@ export interface HareQuotaInput {
 export type HareSeatAwardReason =
   | "cuociente_division"
   | "largest_remainder"
+  | "most_votes_completion"
   | "halving"
   | "tie_break";
 
@@ -511,6 +514,31 @@ export function allocateHareQuota(input: HareQuotaInput): HareAllocationResult {
       values: { votes: entry.list.votes, remainder: entry.remainder },
       ...(tieBreak ? { tieBreak } : {}),
     });
+  }
+
+  // Art. 109(c): after one remainder seat per qualifier, complete with
+  // the most-voted list. The statute supplies no rule for equal leaders:
+  // refuse explicitly rather than silently selecting an identifier.
+  const completionSeats = remainingSeats - awardedCount;
+  if (completionSeats > 0) {
+    const leaders = remainderOrder.filter((entry) =>
+      entry.list.votes === Math.max(...remainderOrder.map((candidate) => candidate.list.votes)),
+    );
+    if (leaders.length !== 1) {
+      throw new HareQuotaValidationError(
+        "Art. 109(c) completion has equal most-voted lists; no statutory tie resolution is modeled",
+      );
+    }
+    const winner = leaders[0]!;
+    seatsByResidue.set(winner.list.listId,
+      (seatsByResidue.get(winner.list.listId) ?? 0) + completionSeats);
+    for (let seat = 0; seat < completionSeats; seat += 1) {
+      seatAwards.push({
+        listId: winner.list.listId,
+        awardedBy: "most_votes_completion",
+        values: { votes: winner.list.votes },
+      });
+    }
   }
 
   return buildResult({
