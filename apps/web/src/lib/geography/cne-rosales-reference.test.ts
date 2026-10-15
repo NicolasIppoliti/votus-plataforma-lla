@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
+import { SECTION_PATH, SECTION_SHA256 } from "../workspace/municipal-section-geometry";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -28,9 +29,13 @@ function variant(edit: (artifact: RosalesReference) => void) {
 }
 
 describe("CNE Rosales 2025 reference artifact", () => {
-  it("pins the only committed artifact by its content hash", () => {
-    expect(readdirSync(directory)).toEqual([`cne-rosales-2025-reference.${ROSALES_REFERENCE_SHA256}.json`]);
+  it("pins both committed geography artifacts by their content hashes", () => {
+    expect(readdirSync(directory).sort()).toEqual([
+      `cne-rosales-2025-reference.${ROSALES_REFERENCE_SHA256}.json`,
+      basename(SECTION_PATH),
+    ].sort());
     expect(sha(committed)).toBe(ROSALES_REFERENCE_SHA256);
+    expect(sha(readFileSync(resolve(process.cwd(), SECTION_PATH)))).toBe(SECTION_SHA256);
   });
 
   it("loads the committed artifact as reference-only geography", async () => {

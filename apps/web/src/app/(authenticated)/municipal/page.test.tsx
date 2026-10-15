@@ -1,4 +1,9 @@
 import type { ReactElement } from "react";
+import { readFile } from "node:fs/promises";
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { redirectMock } = vi.hoisted(() => ({
@@ -245,8 +250,12 @@ describe("municipal page — the real entry point", () => {
     process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
     process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
     entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+    vi.mocked(readFile).mockClear();
     const { default: Page } = await import("./page");
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+    const paths = vi.mocked(readFile).mock.calls.map(([path]) => String(path));
+    expect(paths.some((path) => /cne-rosales-section\.[a-f0-9]{64}\.json$/.test(path))).toBe(true);
+    expect(paths.some((path) => path.includes("archive/") || path.endsWith("archive-manifest.json"))).toBe(false);
     expect(html).toContain("Referencia geográfica de sección");
     expect(html).toContain('data-map-kind="locator"');
     expect(html).toContain("vigencia electoral no verificada");
@@ -259,6 +268,26 @@ describe("municipal page — the real entry point", () => {
     expect(html).toContain('id="municipal-results-heading" tabindex="-1"');
     expect(html).not.toContain("authkey=");
     expect(html).toContain('<td class="table-cell--number">4.200</td>');
+  });
+
+  it("keeps exact results in server HTML when the real loader cannot read the derivative", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    vi.mocked(readFile).mockImplementation((...args) => {
+      if (String(args[0]).includes("cne-rosales-section.")) return Promise.reject(new Error("ENOENT"));
+      return actual.readFile(...args);
+    });
+    try {
+      process.env["MUNICIPAL_ELECTION_ID"] = "2025-municipal";
+      process.env["MUNICIPAL_CATEGORY_ID"] = "c-concejales";
+      entryPointRows = [{ ...MUNICIPAL_ROWS[0]!, listId: "2206" }];
+      const { default: Page } = await import("./page");
+      const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({}) })) as ReactElement);
+      expect(html).toContain("Geometría no disponible o no verificable");
+      expect(html).toContain('<td class="table-cell--number">4.200</td>');
+      expect(html).not.toContain('aria-label="Contorno geográfico CNE');
+    } finally {
+      vi.mocked(readFile).mockImplementation(actual.readFile);
+    }
   });
 
   it("keeps exact results visible when section geometry is withheld", async () => {
