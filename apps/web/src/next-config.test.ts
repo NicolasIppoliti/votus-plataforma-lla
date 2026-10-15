@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import nextConfig from "../next.config";
 import { ROSALES_REFERENCE_PATH } from "@/lib/geography/cne-rosales-reference";
 import { SCENARIO_ARTIFACT_PATH } from "@/lib/scenarios/scenario-artifact";
+import { SECTION_PATH } from "@/lib/workspace/municipal-section-geometry";
 
 vi.mock("server-only", () => ({}));
 
@@ -18,8 +19,21 @@ it("includes the pinned scenario artifact in the /scenarios route trace", () => 
 
 it("includes the pinned CNE Rosales reference artifact in the /municipal route trace", () => {
   expect(nextConfig.outputFileTracingIncludes?.["/municipal"]).toEqual([
-    "../../archive-manifest.json",
-    "../../archive/geography/cne-pba-sections.*.geojson",
+    `./${SECTION_PATH}`,
     `./${ROSALES_REFERENCE_PATH}`,
   ]);
+});
+
+it("includes the pinned section derivative for compare and drilldown", () => {
+  expect(nextConfig.outputFileTracingIncludes?.["/compare"]).toEqual([`./${SECTION_PATH}`]);
+  expect(nextConfig.outputFileTracingIncludes?.["/drilldown"]).toEqual([
+    `./${SECTION_PATH}`,
+    `./${ROSALES_REFERENCE_PATH}`,
+  ]);
+});
+
+it.each(["/municipal", "/compare", "/drilldown"])("does not trace the complete CNE sections archive for %s", (route) => {
+  const entries = nextConfig.outputFileTracingIncludes?.[route];
+  expect(entries).toBeDefined();
+  expect(entries?.some((entry) => entry.includes("cne-pba-sections"))).toBe(false);
 });
