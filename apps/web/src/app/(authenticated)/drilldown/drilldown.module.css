@@ -245,7 +245,9 @@
 }
 
 
-/* Reference-only geography retains its explicit limitations, not a narrower workbench. */
+/* Reference-only geography retains its explicit limitations, not a narrower workbench.
+   Cap the locator's border box without changing the broad data-map grid track. */
+.mapPanel[data-map-kind="locator"] { box-sizing: border-box; width: 100%; max-width: 320px; }
 .mapPanel[data-map-kind="locator"] .territoryLabel { display: none; }
 .selectionNotes { margin-top: 8px; font-size: .8125rem; color: var(--secondary-ink); }
 .selectionNotes > summary { min-height: 44px; padding-block: 12px; cursor: pointer; }

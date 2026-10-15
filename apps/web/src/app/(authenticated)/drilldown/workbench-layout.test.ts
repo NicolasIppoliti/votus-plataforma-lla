@@ -8,5 +8,8 @@ const css = readFileSync(new URL("./drilldown.module.css", import.meta.url), "ut
 it("does not replace the broad-map workbench with a locator-first narrow column", () => {
   expect(css).not.toMatch(/\.workbench:has\(> \[data-map-kind="locator"\]\)\s*\{/);
   expect(css).toContain("grid-template-columns: minmax(0, 1fr) 322px");
-  expect(css).not.toMatch(/\.mapPanel\[data-map-kind="locator"\]\s*\{[^}]*max-width/);
+});
+
+it("caps the locator reference column at 320px including borders without narrowing data maps", () => {
+  expect(css).toMatch(/\.mapPanel\[data-map-kind="locator"\]\s*\{[^}]*box-sizing: border-box;[^}]*width: 100%;[^}]*max-width: 320px;/);
 });
