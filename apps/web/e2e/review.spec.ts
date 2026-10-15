@@ -620,6 +620,39 @@ test.describe("the review route reflects the disposable database", () => {
           if (!titleBox || !attentionBox || !resultsBox) throw new Error("loading geometry missing");
           expect(attentionBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
           expect(resultsBox.y).toBeGreaterThanOrEqual(attentionBox.y + attentionBox.height);
+          if (resultsBox.height < 192) {
+            await writeFile(test.info().outputPath("e2e-facts-review-loading-height.json"), JSON.stringify({
+              viewport: page.viewportSize(),
+              matched,
+              titleBox,
+              attentionBox,
+              resultsBox,
+              styles: await panels.evaluateAll((elements) => {
+                const geometry = (element: Element) => {
+                  const style = getComputedStyle(element);
+                  const box = element.getBoundingClientRect();
+                  return {
+                    width: box.width, height: box.height,
+                    display: style.display, minHeight: style.minHeight,
+                    heightStyle: style.height, fontSize: style.fontSize,
+                    paddingTop: style.paddingTop, paddingBottom: style.paddingBottom,
+                    boxSizing: style.boxSizing, animationName: style.animationName,
+                  };
+                };
+                return {
+                  root: geometry(document.documentElement),
+                  panels: elements.map((element) => ({
+                    ...geometry(element),
+                    placeholders: Array.from(element.querySelectorAll(".review-queue__placeholder"), geometry),
+                  })),
+                  stylesheets: Array.from(document.styleSheets, (sheet) => ({
+                    disabled: sheet.disabled,
+                    loaded: sheet.ownerNode instanceof HTMLLinkElement ? sheet.ownerNode.sheet !== null : true,
+                  })),
+                };
+              }),
+            }));
+          }
           expect(resultsBox.height).toBeGreaterThanOrEqual(192);
           await expectDocumentNotToOverflow(page);
         }

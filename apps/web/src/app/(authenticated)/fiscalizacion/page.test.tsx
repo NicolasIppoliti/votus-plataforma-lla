@@ -194,7 +194,7 @@ async function renderPage(params: PageParams = {}): Promise<string> {
 }
 
 async function renderComplete(): Promise<string> {
-  return renderPage(COMPLETE_SELECTION);
+  return renderPage({ ...COMPLETE_SELECTION, sourceKind: "fiscalizacion" });
 }
 
 it("renders the evidence trail before the authorized scope workspace", async () => {
@@ -213,6 +213,52 @@ beforeEach(() => {
 });
 
 describe("FiscalizacionPage", () => {
+  it("prefills the authorized shared default without opting into fiscal evidence", async () => {
+    mocks.facets.mockResolvedValue({ ...FACETS,
+      categories: [{ id: COMPLETE_SELECTION.categoryId, name: "CONCEJALES" }],
+      availableLevels: ["seccion"],
+    });
+    const markup = await renderPage();
+    expect(markup).toContain(`<option value="${COMPLETE_SELECTION.electionId}" selected="">`);
+    expect(markup).toContain('<option value="02" selected="">');
+    expect(markup).toContain('<option value="027" selected="">');
+    expect(markup).toContain("Activar fiscalización (no oficial)");
+    expectFigureFree(markup);
+    expect(mocks.coverage).not.toHaveBeenCalled();
+    expect(mocks.result).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "official"])("requires explicit opt-in for a complete shared context (%s)", async (sourceKind) => {
+    mocks.facets.mockResolvedValue(FACETS);
+    const markup = await renderPage({ ...COMPLETE_SELECTION, ...(sourceKind ? { sourceKind } : {}) });
+    expectFigureFree(markup);
+    expect(mocks.coverage).not.toHaveBeenCalled();
+    expect(mocks.result).not.toHaveBeenCalled();
+    expect(markup).toContain("Activar fiscalización (no oficial)");
+  });
+
+  it("loads the existing isolated evidence pair only with explicit shared source opt-in", async () => {
+    mocks.facets.mockResolvedValue(FACETS);
+    mocks.coverage.mockResolvedValue(AUTHORIZED_COVERAGE);
+    mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
+    const markup = await renderPage({ ...COMPLETE_SELECTION, sourceKind: "fiscalizacion" });
+    expect(mocks.coverage).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
+    expect(mocks.result).toHaveBeenCalledWith(COMPLETE_SELECTION, true);
+    expect(markup).toContain("7 unidades observadas de 8");
+  });
+  it.each([
+    { sourceKind: "unknown" },
+    { sourceKind: ["official", "fiscalizacion"] },
+    { circuitoCode: "00001" },
+  ])("refuses invalid or finer shared context without loading section aggregates: %j", async (extra) => {
+    mocks.facets.mockResolvedValue(FACETS);
+    const markup = await renderPage({ ...COMPLETE_SELECTION, sourceKind: "fiscalizacion", ...extra });
+    expect(markup).toContain("Solicitud no disponible");
+    expectFigureFree(markup);
+    expect(mocks.coverage).not.toHaveBeenCalled();
+    expect(mocks.result).not.toHaveBeenCalled();
+  });
+
   it("renders the reusable dependent selector journey from authorized facets", async () => {
     mocks.facets.mockResolvedValue(FACETS);
 
@@ -576,8 +622,8 @@ describe("FiscalizacionPage", () => {
     mocks.coverage.mockRejectedValue(new Error("unsafe remote detail"));
     mocks.result.mockResolvedValue(AUTHORIZED_RESULT);
 
-    const markup = await renderPage({ ...COMPLETE_SELECTION, distritoCode: "2", seccionCode: "27" });
-    const href = `/fiscalizacion?electionId=${COMPLETE_SELECTION.electionId}&amp;categoryId=${COMPLETE_SELECTION.categoryId}&amp;distritoCode=02&amp;seccionCode=027`;
+    const markup = await renderPage({ ...COMPLETE_SELECTION, sourceKind: "fiscalizacion", distritoCode: "2", seccionCode: "27" });
+    const href = `/fiscalizacion?electionId=${COMPLETE_SELECTION.electionId}&amp;categoryId=${COMPLETE_SELECTION.categoryId}&amp;sourceKind=fiscalizacion&amp;distritoCode=02&amp;seccionCode=027`;
     expect(markup).toContain(`<a href="${href}" data-slot="button"`);
     expect(markup).toContain('>Reintentar carga</a>');
     expect(markup).toContain('role="alert"');
