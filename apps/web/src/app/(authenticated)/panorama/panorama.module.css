@@ -10,6 +10,9 @@
 .notice { color: #efc58c; border-left: 2px solid #efc58c; padding: 8px 12px; font-size: 13px; margin: 17px 0 19px; background: #171c20; }
 .workbench { display: grid; grid-template-columns: minmax(0, 1fr) 310px; border: 1px solid #2b4658; border-radius: 9px; background: #0d1d2b; overflow: hidden; }
 .map { min-width: 0; background: #091724; }
+.circuitMap { padding: 0 20px 12px; }
+.circuitMap h3 { margin: 0 0 12px; font-size: 17px; font-weight: 500; }
+.circuitMap > svg { height: 280px; }
 .trail { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 20px 0; }
 .trail button { color: #b9c8d2; padding: 6px 0; min-height: 44px; border: 0; background: none; font-size: 13px; cursor: pointer; }
 .trail button[aria-current] { color: #65e5f2; }

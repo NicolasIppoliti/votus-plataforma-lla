@@ -422,7 +422,7 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
   expect(actionBox).not.toBeNull();
   expect(attentionBox).not.toBeNull();
   expect(attentionBox!.y).toBeGreaterThan(actionBox!.y + actionBox!.height);
-  const map = main.getByRole("region", { name: "Mapa territorial de referencia" });
+  const map = main.getByRole("region", { name: "Mapa territorial de referencia", exact: true }).or(main.getByRole("region", { name: "Ganadores por circuito", exact: true }));
   const summary = main.getByRole("complementary", { name: "Lectura de la selección" });
   const mapBox = await map.boundingBox();
   const summaryBox = await summary.boundingBox();
