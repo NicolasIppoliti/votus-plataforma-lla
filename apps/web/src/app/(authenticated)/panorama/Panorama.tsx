@@ -1,5 +1,6 @@
 "use client";
 
+import { CircuitReferenceSvg } from "@/components/maps/CircuitReferenceSvg";
 import { Alert } from "@/components/ui/alert";
 import { granularityLabel } from "@/lib/results/granularity";
 import { useState } from "react";
@@ -18,12 +19,13 @@ export function Panorama({ data }: { data: PanoramaData }) {
   const evidence = rosales ? data.evidence : undefined;
   const ok = evidence?.status === "ok" ? evidence : undefined;
   const result = ok?.result;
+  const outcomes = ok?.circuitOutcomes;
+  const mapped = outcomes?.status === "ok" && outcomes.circuit_membership === "known" && !!data.circuitGeometry?.length;
   const ranked = result ? [...result.parties].sort((a, b) => b.votes - a.votes) : [];
   const tied = ranked.length > 1 && ranked[0]!.votes === ranked[1]!.votes;
   const leader = result && result.totalVotes > 0 && !tied ? ranked[0] : undefined;
   const completeness = ok?.completeness;
   const complete = completeness?.status === "complete";
-  const outcomes = ok?.circuitOutcomes;
   const state = !rosales ? "Agregado no disponible para este nivel." : !evidence ? "La selección oficial predeterminada no está disponible." : evidence.status === "authorization_denied" ? "Acceso a resultados oficiales denegado. No se muestran cifras ni procedencia." : evidence.status === "empty" ? "La consulta autorizada no devolvió resultados. Sin datos no significa cero votos." : evidence.status !== "ok" ? `Resultados no disponibles (${evidence.status}). No se muestran cifras parciales.` : complete ? "Completitud oficial verificada para la sección." : "Completitud no confirmada; el primer lugar observado es provisional.";
   return <>
     <section className={styles.context} aria-label="Contexto del panorama">
@@ -36,7 +38,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
       <div className={styles.map}>
         <nav className={styles.trail} aria-label="Recorrido territorial">{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <button key={item} type="button" aria-current={item === territory ? "location" : undefined} onClick={() => setTerritory(item)}>{item}</button>)}</nav>
         <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? "Sección 027 · distrito 02" : "Sin agregado autorizado en Panorama"}</p></header>
-        {rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno de la sección seleccionada" referenceRosales consolidatedLimits /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
+        {rosales && mapped ? <section aria-label="Ganadores por circuito"><h3>Ganadores por circuito</h3><CircuitReferenceSvg geometry={data.circuitGeometry!} circuits={outcomes.circuits} selected={null} /></section> : rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno de la sección seleccionada" referenceRosales consolidatedLimits /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
         <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
@@ -54,9 +56,9 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <details className={styles.evidence}>
       <summary id="official-evidence-heading">Fuente y límites</summary>
       <p>Fiscalización es una fuente no oficial, de consulta separada; sus cifras no se combinan con las de este panorama.</p>
-      <p>El contorno neutral es referencia geográfica, no cobertura electoral ni mapa de ganadores. Geometría CNE no certificada como límite electoral 2025. Aplicabilidad electoral desconocida; no acredita equivalencia histórica.</p>
-      <p>Fuente geográfica: CNE · recuperada el 24/09/2026. Contorno ancestro; sin geometría propia para unidades inferiores.</p>
-      <p>Panorama termina en el partido. Circuitos, establecimientos, mesas e internas se consultan en Exploración.</p>
+      <p>La geometría CNE es referencia geográfica, no cobertura electoral. Geometría no certificada como límite electoral 2025. Aplicabilidad electoral desconocida; no acredita equivalencia histórica.</p>
+      <p>Fuente geográfica: CNE · recuperada el 24/09/2026. {mapped ? "0248B y 0248C se superponen en la fuente; su área compartida se muestra neutra y rayada." : "Contorno ancestro; sin geometría propia para unidades inferiores ni mapa de ganadores disponible para esta selección."}</p>
+      <p>Panorama muestra el primer lugar observado y margen por circuito cuando están disponibles. Los resultados exactos de circuitos, establecimientos, mesas e internas se consultan en Exploración.</p>
       <p>No hay participación, comparación histórica ni pronóstico disponibles en esta lectura.</p>
       <p>Las consultas conservan el alcance de cada fuente. La disponibilidad depende del territorio y del acceso autorizado.</p>
       {result && <>
