@@ -728,7 +728,10 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       await expect(map).toContainText("Vista de referencia · 100 %");
       await expect(page).toHaveURL(explorerUrl);
       expect(await voteTable.textContent()).toBe(exactBeforeCamera);
-      for (const [width, inspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+      // A reference-only stage is a small locator next to the inspector (#449); data maps keep the wide stage.
+      const locator = (await map.getAttribute("data-map-kind")) === "locator";
+      for (const [width, dataInspectorWidth] of [[1440, 322], [1250, 295], [980, 275], [760, null], [320, null]] as const) {
+        const inspectorWidth = locator && dataInspectorWidth !== null ? "locator" : dataInspectorWidth;
         await page.setViewportSize({ width, height: 900 });
         await expect.poll(async () => {
           const [filterBox, workBox, mapBox, detailBox, resultBox, evidenceBox] = await Promise.all(
@@ -743,7 +746,9 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
             evidenceBelow: resultBox!.bottom <= evidenceBox!.top,
             inspectorGeometry: inspectorWidth === null
               ? mapBox!.bottom <= detailBox!.top && Math.abs(mapBox!.width - detailBox!.width) <= 2
-              : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
+              : inspectorWidth === "locator"
+                ? mapBox!.width <= 320 && mapBox!.right <= detailBox!.left && detailBox!.width > mapBox!.width
+                : Math.abs(detailBox!.width - inspectorWidth) <= 2 && mapBox!.right <= detailBox!.left,
           };
         }).toEqual({ filtersAbove: true, workbenchAboveResults: true, evidenceBelow: true, inspectorGeometry: true });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
