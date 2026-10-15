@@ -502,7 +502,12 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
           const session = await page.request.get(new URL("/api/session", baseURL).toString());
           const sessionBody: unknown = await session.json();
           // Failure-only facts (HTTP status and session status only): the release gate redacts Playwright output.
-          await writeFile(test.info().outputPath("e2e-facts-sole-org-session.json"), JSON.stringify({ http: session.status(), body: sessionBody, url: new URL(page.url()).pathname }));
+          if (JSON.stringify(sessionBody) !== JSON.stringify({ status: "active" })) {
+            const landing = { url: new URL(page.url()).pathname, alerts: await page.getByRole("alert").allTextContents(), statuses: await page.getByRole("status").allTextContents() };
+            await page.reload();
+            const afterReload = await (await page.request.get(new URL("/api/session", baseURL).toString())).json();
+            await writeFile(test.info().outputPath("e2e-facts-sole-org-session.json"), JSON.stringify({ http: session.status(), body: sessionBody, landing, afterReload }));
+          }
           expect(sessionBody).toEqual({ status: "active" });
         } else {
         await page.goto(new URL("/dashboard", baseURL).toString());
