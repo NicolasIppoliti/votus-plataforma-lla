@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { useState, type ReactNode } from "react";
 import type { UnitSwing } from "@/lib/results/compare";
@@ -42,7 +43,7 @@ export function ComparisonWorkbench({ territory, swing, leftNames, rightNames, m
       </section>
       <section className={styles.selectedAnalytics} aria-label="Participación de la agrupación seleccionada">
         <label htmlFor="compare-party">Agrupación</label>
-        <select id="compare-party" value={party} onChange={event => setParty(event.target.value)}>{swing.swings.map(entry => <option key={entry.party} value={entry.party}>{leftNames[entry.party]} / {rightNames[entry.party]}</option>)}</select>
+        <ResponsiveSelect id="compare-party" value={party} onChange={event => setParty(event.target.value)}>{swing.swings.map(entry => <option key={entry.party} value={entry.party}>{leftNames[entry.party]} / {rightNames[entry.party]}</option>)}</ResponsiveSelect>
         <div className={styles.pairedFigures}>{[{ value: a, label: "A · 2023", names: leftNames, total: swing.shares2023 }, { value: b, label: "B · 2025", names: rightNames, total: swing.shares2025 }].map(({ value, label, names, total }) => <div key={label}>
           <span>{label}</span><p>{names[party]}</p><strong>{value ? share(value.sharePercent) : "Observación no disponible"}</strong><small>Participación sobre votos partidarios incluidos</small>
           <dl><dt>Votos de agrupación</dt><dd>{value ? formatCount(value.votes) : "Observación no disponible"}</dd><dt>Total incluido</dt><dd>{formatCount(total.reduce((sum, entry) => sum + entry.votes, 0))}</dd></dl>

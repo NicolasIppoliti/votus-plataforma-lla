@@ -2,6 +2,29 @@ import { isDeepStrictEqual } from "node:util";
 import { formatCount } from "../src/lib/format/number";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
+import { expectMobileFormGeometry } from "./mobile-form-geometry";
+
+for (const width of [320, 390]) {
+  test(`all three simulation forms remain usable at ${width}px (#463)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/scenarios");
+    await page.getByTestId("scenario-persistencia").getByRole("link", { name: "Editar este escenario" }).click();
+    await expect(page.getByTestId("allocation-result")).toBeVisible();
+    await openSimulationDisclosure(page, "Editar los datos del escenario");
+    await openSimulationDisclosure(page, "Sensibilidad de la transferencia");
+    for (const name of ["Formulario de simulación de bancas", "Transferencia de votos a total fijo", "Muestreo de transferencias a total fijo"]) {
+      await expect(page.getByRole("form", { name, exact: true })).toBeVisible();
+    }
+    const donor = page.locator("#transfer-donor");
+    const lastOption = await donor.locator("option").last().getAttribute("value");
+    expect(lastOption).not.toBeNull();
+    await donor.selectOption(lastOption!);
+    await expect(donor.locator("..").locator("[data-mobile-select-value]")).toHaveText(await donor.locator("option:checked").innerText());
+    await expectMobileFormGeometry(page, page.locator(".app-shell__workspace"));
+    // Controlled changes alone must not submit the transfer or hide allocation evidence.
+    await expect(page.getByTestId("allocation-result")).toBeVisible();
+  });
+}
 
 test("Escenarios opens editable projections with scenario provenance", async ({ page }) => {
   for (const [id, name] of [["persistencia", "Persistencia"], ["transferencias_ei", "Transferencias estimadas por inferencia ecológica"]]) {

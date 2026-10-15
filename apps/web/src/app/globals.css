@@ -175,6 +175,13 @@ textarea {
   padding: 0.65rem 0.75rem;
 }
 
+/* Native fields must be allowed to shrink inside narrow grid/flex tracks. */
+:where(input, select, textarea) {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 2.75rem;
+}
+
 select option {
   color: var(--color-ink);
   background-color: var(--color-surface);
@@ -790,6 +797,7 @@ html:has(.electoral-context) {
 
 .field {
   display: grid;
+  min-width: 0;
   gap: 0.4rem;
 }
 
@@ -1586,6 +1594,43 @@ html:has(.electoral-context) {
 
   .review-queue__results-heading {
     display: grid;
+  }
+}
+
+/* The native select stays authoritative; this visual-only value wraps on phones.
+   Do not hide overflow: arbitrary authorized election/list labels can be long. */
+.responsive-select { display: contents; }
+.responsive-select > .responsive-select__value { display: none; }
+@media (max-width: 30rem) {
+  .responsive-select.responsive-select {
+    display: grid;
+    min-width: 0;
+    max-width: 100%;
+    gap: 0.25rem;
+  }
+  .responsive-select > .responsive-select__value {
+    display: block;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    color: var(--secondary-ink);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+}
+
+/* Keep mobile actions readable rather than ellipsizing or shrinking their text.
+   Higher specificity than the primitive's compact height, without changing desktop density. */
+@media (max-width: 30rem) {
+  :is(form, .electoral-context) :is(button, input, select, textarea) {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    max-width: 100%;
+  }
+
+  :is(form, .electoral-context) :is(label, legend, button) {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 

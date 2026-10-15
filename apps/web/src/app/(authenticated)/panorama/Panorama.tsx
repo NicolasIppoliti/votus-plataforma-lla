@@ -1,4 +1,5 @@
 "use client";
+import { ResponsiveSelect } from "@/components/ResponsiveSelect";
 
 import { Alert } from "@/components/ui/alert";
 import { granularityLabel } from "@/lib/results/granularity";
@@ -27,7 +28,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
   return <>
     <section className={styles.context} aria-label="Contexto del panorama">
       <div><span>Vista de datos</span><strong>Resultados oficiales</strong></div>
-      <div><label htmlFor="panorama-territory">Territorio</label><select id="panorama-territory" value={territory} onChange={event => setTerritory(event.target.value)}>{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <option key={item}>{item}</option>)}</select></div>
+      <div><label htmlFor="panorama-territory">Territorio</label><ResponsiveSelect id="panorama-territory" value={territory} onChange={event => setTerritory(event.target.value)}>{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <option key={item}>{item}</option>)}</ResponsiveSelect></div>
       <div><span>Elección</span><strong>{result ? `${result.electionYear} · ${result.electionRound}` : "Sin selección disponible"}</strong></div>
       <div><span>Categoría</span><strong>{result?.categoryName ?? "Sin selección disponible"}</strong></div>
     </section>
