@@ -36,6 +36,7 @@
 
 - **Desktop:** Persistent `218px` navy rail (`190px` at ≤1250px) with a bottom workspace/account cluster and a lightweight topbar, per `docs/prototypes/territorial-exploration/APPROVED-DESIGN.md`. The prototype's `78px` icon rail is not adopted: it hides the footer, and the workspace/account controls must stay reachable.
 - **Mobile:** At ≤980px the rail becomes a scrollable drawer with the same workspace/account controls. Do not duplicate those controls in the header.
+- **Page container (#461):** Every authenticated route (including loading, denied and error states) uses `ApplicationShell`'s `#main-content` container: the existing `72rem` maximum width and safe-area-aware `1rem` minimum horizontal gutter. Route grids may retain structural wrappers but cannot add another page gutter or width cap. Page padding is `2rem` above / `4rem` below, reduced to `1rem` / `3rem` below `48rem`. Public login remains independent. `page-container.css` owns this geometry with shell-scoped specificity so route CSS and soft navigation cannot change it.
 - **Topbar responsibility:** Mobile navigation trigger and authorized review status only.
 - **Sidebar responsibility:** Product identity, domain navigation, current-route indication, source-separation reminder, active organization, workspace switch and account actions.
 - **Footer behavior:** One bottom-aligned cluster in normal scroll flow, not a fixed overlay. All controls remain reachable on short screens and at 200% zoom. Crossing the breakpoint restores focus to a visible control.
@@ -79,8 +80,7 @@ its separate unofficial-source note. Each current route appears exactly once.
 
 | Token | Size / line-height | Usage |
 | --- | --- | --- |
-| Briefing title | `2rem / 1.2` | Operational home; `1.75rem` on mobile |
-| Redesigned route title | `2rem / 1.2` | Comparison, official explorer, Municipal and Fiscalización; login uses `1.5rem` |
+| Authenticated page title | `2rem / 1.2` | All authenticated routes and refusal/loading states; `1.75rem` below `48rem`, weight `500`, tracking `-0.03em`; login remains `1.5rem` |
 | Redesigned section | `1.25rem / 1.3` | Exact comparison/explorer results; applied-context headings use `1rem` |
 | `h3` | `1rem / 1.3` | Panel and table section |
 | `body` | `0.875rem / 1.55` | Primary explanatory copy |
@@ -88,7 +88,7 @@ its separate unofficial-source note. Each current route appears exactly once.
 | `label` | `0.6875rem / 1.2` | Controls and metadata |
 | `micro` | `0.625rem / 1.2` | Compact machine evidence only |
 
-Existing non-redesigned routes retain their route-specific heading scales until their own delivery slice. Body copy never drops below `0.8125rem` for dense analytical surfaces; comparison controls remain at least `0.875rem`.
+All authenticated page `h1` headings share the shell-owned scale (#461); route-specific panel and section scales remain unchanged. Body copy never drops below `0.8125rem` for dense analytical surfaces; comparison controls remain at least `0.875rem`.
 
 ## Color
 
@@ -147,7 +147,7 @@ Color is never the only carrier of meaning. Every source/status color is paired 
 - **Municipal:** The single configured official election loads automatically on route entry, after existing query and authorization guards. Compact fixed context precedes full-width raw identified-party votes and the exact table. Source audits, exclusions, unresolved identities and granularity remain inline; supporting archive references follow in native disclosures, with missing-hash/non-OK status qualifications outside.
 - **Fiscalización:** Group election and territory selectors above full-width evidence. Preserve the explicit unofficial source, nonrandom-sample and official-denominator qualifications. Unit coverage precedes exact list/granularity rows and uncovered-unit detail; only supporting archive references collapse, never verification warnings or truncation/exclusion counts.
 - **Forms:** Progressive selectors stack into obvious groups while preserving field names, query parameters, focus behavior, and deep links.
-- **Simulation:** Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
+- **Simulation:** The desktop page header reserves right-side space for the scenario summary; its `h1` starts at the shared page gutter but need not span the full page width. Cross-route geometry checks compare the page's right edge, not the title's right edge. Fully functional on mobile, while desktop remains the preferred deep-analysis environment. The editor updates its server-calculated result automatically after a short typing pause; charts and exact evidence always refer to the same accepted scenario.
 - **Touch targets:** At least `44×44px`.
 
 ## Component Architecture

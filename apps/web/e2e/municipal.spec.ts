@@ -400,14 +400,14 @@ test.describe("the municipal route requires workspace-authorized official result
 
       for (const width of [1710, 1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        await expect(heading).toHaveCSS("font-size", "32px");
+        await expect(heading).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
         await expect.poll(() => main.locator(":scope > .shell-container").evaluate((element) => {
-          const workspace = element.closest(".app-shell__workspace");
-          if (!(workspace instanceof HTMLElement)) throw new Error("Municipal requires an application workspace");
-          const style = getComputedStyle(workspace);
-          const availableWidth = workspace.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-          return Math.abs(element.getBoundingClientRect().width - Math.min(1540, availableWidth));
-        }), { message: "Municipal keeps its full workspace width up to1540px" }).toBeLessThanOrEqual(1);
+          const container = element.closest("#main-content");
+          if (!(container instanceof HTMLElement)) throw new Error("Municipal requires the shared page container");
+          const style = getComputedStyle(container);
+          const availableWidth = container.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          return Math.abs(element.getBoundingClientRect().width - availableWidth);
+        }), { message: "Municipal fills the shared page container without a second gutter" }).toBeLessThanOrEqual(1);
         await expect.poll(async () => {
           const boxes = await Promise.all([selection, results, evidence].map((region) => region.evaluate((element) => {
             const { x, y, width, bottom } = element.getBoundingClientRect();
