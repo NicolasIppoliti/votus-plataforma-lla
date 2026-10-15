@@ -25,6 +25,15 @@ function side(year: 2023 | 2025, electionId: string, categoryId: string, votes: 
 function evidence() { return { status: "ok" as const, left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]), right: side(2025, IDS.rightElection, IDS.rightCategory, [55, 45]) }; }
 beforeEach(() => { mocks.completeness.mockReset().mockResolvedValue({ status: "unavailable" }); mocks.circuits.mockReset().mockResolvedValue({ status: "unavailable" }); leftDistricts = [district]; rightDistricts = [district]; leftSections = [section]; rightSections = [section]; mocks.facets.mockReset().mockImplementation(facets); mocks.evidence.mockReset().mockResolvedValue(evidence()); mocks.geometry.mockReset().mockResolvedValue({ status: "ok", name: "Cnel. de Marina L.Rosales", sha256: "964af68999504c107c71eaccd8470055f990071eccba09f227e81b6dc31df673", fetchedAt: "2026-09-24T03:29:24Z", geometry: { type: "MultiPolygon", coordinates: [[[[-62, -38], [-61, -38], [-61, -37], [-62, -38]]]] } }); }); afterEach(() => vi.clearAllMocks());
 async function render(params: Record<string, string | string[] | undefined>): Promise<string> { return renderToStaticMarkup((await ComparePage({ searchParams: Promise.resolve(params) })) as ReactElement); }
+it("preserves the merged mobile region reading order through both evidence rails", async () => {
+  supportedSpatialEvidence();
+  const html = await render(PARAMS);
+  const markers = ['id="compare-shared-heading"', 'id="compare-edit-a-heading"', 'id="compare-edit-b-heading"', 'aria-label="Mesa de comparación territorial"', 'aria-labelledby="compare-child-heading"', 'aria-label="Contexto de comparación autorizada"', 'aria-labelledby="compare-chart-heading"', 'aria-label="Tabla exacta de participación', 'id="compare-evidence-a-heading"', 'id="compare-evidence-b-heading"'];
+  const positions = markers.map(marker => { const index = html.indexOf(marker); expect(index, marker).toBeGreaterThanOrEqual(0); return index; });
+  for (let i = 1; i < positions.length; i++) expect(positions[i], `${markers[i - 1]} before ${markers[i]}`).toBeGreaterThan(positions[i - 1]!);
+  expect(html.indexOf('id="compare-side-b-heading"')).toBeGreaterThan(html.indexOf('id="compare-side-a-heading"'));
+});
+
 it("renders one shared map action set for both official panels", async () => {
   supportedSpatialEvidence();
   const html = await render(PARAMS);
@@ -133,7 +142,7 @@ it("consolidates applied context and selection notes into one closed lower discl
   expect(markup.indexOf('id="compare-child-heading"')).toBeLessThan(markup.indexOf('data-applied-context=""'));
 });
 
-it.each([false, true])("orders inspector → exact table → child changes → context with child membership available=%s", async (available) => {
+it.each([false, true])("orders inspector → child changes → context → exact table with child membership available=%s", async (available) => {
   supportedSpatialEvidence();
   if (available) mocks.circuits.mockResolvedValue({ status: "ok", circuit_membership: "known",
     circuits: [{ circuito_code: "00248", positive_total: 100, status: "complete", parties: [
@@ -142,8 +151,8 @@ it.each([false, true])("orders inspector → exact table → child changes → c
     ] }], unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0,
       membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 } });
   const markup = await render(PARAMS);
-  const destinations = ['aria-label="Detalle de comparación"', 'id="compare-results-heading"',
-    'data-results-for="compare-results-heading"', 'id="compare-child-heading"', 'data-applied-context=""', 'id="compare-evidence-heading"'];
+  const destinations = ['aria-label="Detalle de comparación"', 'id="compare-child-heading"', 'data-applied-context=""',
+    'id="compare-results-heading"', 'data-results-for="compare-results-heading"', 'id="compare-evidence-heading"'];
   for (const [index, destination] of destinations.entries()) {
     expect(markup).toContain(destination);
     if (index > 0) expect(markup.indexOf(destinations[index - 1]!)).toBeLessThan(markup.indexOf(destination));
@@ -152,7 +161,7 @@ it.each([false, true])("orders inspector → exact table → child changes → c
   expect(markup.match(/id="compare-child-heading"/g)).toHaveLength(1);
   if (available) {
     expect(markup).toContain("1 de 1 pares comparables");
-    expect(markup.indexOf("Participación oficial y variación en puntos porcentuales</caption>")).toBeLessThan(markup.indexOf("Cambio por circuito sobre votos positivos incluidos</caption>"));
+    expect(markup.indexOf("Cambio por circuito sobre votos positivos incluidos</caption>")).toBeLessThan(markup.indexOf("Participación oficial y variación en puntos porcentuales</caption>"));
   } else expect(markup).toContain("Comparabilidad del siguiente nivel no disponible");
 });
 

@@ -164,6 +164,7 @@ interface CompareSelectorProps {
   evidenceNotice?: ComparisonEvidenceNotice | undefined;
   children?: ReactNode;
   workbench?: ReactNode;
+  exactResults?: ReactNode;
   context?: ReactNode;
 }
 
@@ -180,6 +181,7 @@ function CompareSelector({
   evidenceNotice,
   children,
   workbench,
+  exactResults,
   context,
 }: CompareSelectorProps): ReactNode {
   const groups: SelectionGroup[] = [
@@ -245,6 +247,7 @@ function CompareSelector({
               )}
             </section>
           )}
+          {exactResults}
           {children}
         </ComparisonSelectionForm>
       </div>
@@ -603,7 +606,8 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
           maps={section?.status === "ok" ? <ComparisonMap electionLabels={[selectedLeftElection.label, selectedRightElection.label]} coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><Alert variant="caveat">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</Alert><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
-          exactResults={<section className="official-compare__results" aria-labelledby="compare-results-heading">
+        />}
+      exactResults={<section className="official-compare__results" aria-labelledby="compare-results-heading">
           <h2 id="compare-results-heading" tabIndex={-1}>Resultados exactos</h2>
           <GranularityBadge granularity="seccion" {...(summedFrom ? { summedFrom } : {})} />
         <p>{unitId}: {swing.flipped ? `cambió de ${leftName(swing.fromParty)} → ${rightName(swing.toParty)}` : "sin cambio"}.</p>
@@ -639,7 +643,6 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
         </TableRegion>
         </details>
         </section>}
-        />}
     >
         <div className="official-compare__analysis">
         <aside className="official-compare__evidence" aria-labelledby="compare-evidence-heading">
