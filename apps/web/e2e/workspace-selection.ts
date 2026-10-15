@@ -1,54 +1,36 @@
-import { expect, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Page, type TestInfo } from "@playwright/test";
 import { writeWorkspaceStateFacts } from "./workspace-state-facts";
-import { assertE2eEnvironment, emptyStorageState } from "./gate-contract";
 import { withReviewItem } from "./authorized-review-fixture";
 
-const environment = assertE2eEnvironment(process.env);
-
-export async function selectOrganizationInlineOnReview({ page, browser }: { page: Page; browser: Browser }, testInfo: TestInfo) {
+export async function selectOrganizationInlineOnReview({ page }: { page: Page }, testInfo: TestInfo) {
+  // Bootstrap this authenticated session before adding its sole organization.
+  // New sessions with one organization auto-select it; an existing unselected
+  // context must stay unselected when a membership subsequently becomes available.
+  await page.goto("/review");
+  const inline = page.getByRole("region", { name: "Selección de organización", exact: true });
+  await expect(inline).toBeVisible();
+  await expect(inline.getByRole("status").filter({ hasText: /^No hay organizaciones disponibles\.$/ })).toBeVisible();
   try {
     await withReviewItem(page, async () => {
-      // A fresh sign-in has its own server-side workspace context, with no selection.
-      // The fixture's original context remains untouched for cleanup.
-      const context = await browser.newContext({ storageState: emptyStorageState(), baseURL: new URL(page.url()).origin });
-      try {
-        const freshPage = await context.newPage();
-        try {
-          await freshPage.goto("/login");
-          await freshPage.getByLabel("Correo electrónico").fill(environment.VOTUS_E2E_TEST_USER_EMAIL);
-          await freshPage.getByLabel("Contraseña").fill(environment.VOTUS_E2E_TEST_USER_PASSWORD);
-          await freshPage.getByRole("button", { name: "Iniciar sesión" }).click();
-          await writeWorkspaceStateFacts(freshPage, testInfo, "review-inline-after-sign-in");
-          await expect(freshPage).toHaveURL(/\/$/);
-          await freshPage.goto("/review");
-          const inline = freshPage.getByRole("region", { name: "Selección de organización", exact: true });
-          await writeWorkspaceStateFacts(freshPage, testInfo, "review-inline-before-selection");
-          await expect(inline).toBeVisible();
-          await expect(freshPage.getByRole("table", { name: "Elementos de revisión pendientes" })).toHaveCount(0);
-          await inline.getByRole("combobox", { name: "Organización", exact: true }).selectOption({ label: "E2E Authorized Review Browser" });
-          const switched = freshPage.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
-          await inline.getByRole("button", { name: "Cambiar organización" }).click();
-          const response = await switched;
-          expect(response.ok()).toBe(true);
-          expect(await response.json()).toMatchObject({ status: "active" });
-          await writeWorkspaceStateFacts(freshPage, testInfo, "review-inline-after-switch");
-          await expect(inline).toHaveCount(0);
-          await expect(freshPage.getByRole("heading", { name: "Cola de revisión", exact: true })).toBeVisible();
-          await expect(freshPage.getByRole("table", { name: "Elementos de revisión pendientes" })).toBeVisible();
-          await expect(freshPage.getByRole("main")).toContainText("Mostrando 1 de 1.");
-          await expect(freshPage).toHaveURL(/\/review$/);
-        } catch (error) {
-          await writeWorkspaceStateFacts(freshPage, testInfo, "review-inline-failed").catch(() => {});
-          throw error;
-        }
-      } finally {
-        await context.close();
-      }
-    });
+      await page.reload();
+      await writeWorkspaceStateFacts(page, testInfo, "review-inline-before-selection");
+      await expect(inline).toBeVisible();
+      await expect(page.getByRole("table", { name: "Elementos de revisión pendientes" })).toHaveCount(0);
+      await inline.getByRole("combobox", { name: "Organización", exact: true }).selectOption({ label: "E2E Authorized Review Browser" });
+      const switched = page.waitForResponse(response => response.url().endsWith("/api/workspace") && response.request().method() === "POST");
+      await inline.getByRole("button", { name: "Cambiar organización" }).click();
+      const response = await switched;
+      expect(response.ok()).toBe(true);
+      expect(await response.json()).toMatchObject({ status: "active" });
+      await writeWorkspaceStateFacts(page, testInfo, "review-inline-after-switch");
+      await expect(inline).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Cola de revisión", exact: true })).toBeVisible();
+      await expect(page.getByRole("table", { name: "Elementos de revisión pendientes" })).toBeVisible();
+      await expect(page.getByRole("main")).toContainText("Mostrando 1 de 1.");
+      await expect(page).toHaveURL(/\/review$/);
+    }, { selectOrganization: false });
   } catch (error) {
-    // Also cover fixture setup failures, before a fresh page exists. Never log
-    // the raw error: it may contain fixture identities or request details.
-    await writeWorkspaceStateFacts(page, testInfo, "review-fixture-failed").catch(() => {});
+    await writeWorkspaceStateFacts(page, testInfo, "review-inline-failed").catch(() => {});
     throw error;
   }
 }

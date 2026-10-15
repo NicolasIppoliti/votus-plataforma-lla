@@ -113,7 +113,9 @@ test.describe("authorized official comparison", () => {
       const main = page.getByRole("main");
       await writeWorkspaceStateFacts(page, test.info(), "comparison-revoked-before-denial");
       try {
-        await expect(main.getByRole("alert")).toContainText("No tiene autorización");
+        // Revoked section entitlements remove the elections from authorized
+        // facets before the comparison evidence RPC can be reached.
+        await expect(main.getByRole("alert")).toHaveText("La elección seleccionada no pertenece al año y alcance autorizados.");
       } catch (error) {
         await writeWorkspaceStateFacts(page, test.info(), "comparison-revoked-denial-failed").catch(() => {});
         throw error;
