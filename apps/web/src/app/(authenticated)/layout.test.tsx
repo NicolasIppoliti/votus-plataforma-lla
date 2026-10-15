@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
 import SessionMonitor from "@/components/SessionMonitor";
 import AuthenticatedLayout from "./layout";
+import { loadContextOptions } from "./context-actions";
 import HomePage from "./(home)/page";
 import { OperationalBriefing as OperationalBriefingPage } from "./OperationalBriefing";
 
@@ -11,7 +12,7 @@ const panorama = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));
 vi.mock("@/lib/workspace/official-facets", () => ({ createAuthorizedOfficialFacetRepository: () => ({ facets: panorama.facets }) }));
 vi.mock("@/lib/workspace/official-drilldown-evidence", () => ({ loadAuthorizedOfficialDrilldownEvidence: panorama.evidence }));
 panorama.facets.mockRejectedValue(new Error("unavailable"));
-const navigation = vi.hoisted(() => ({ pathname: "/" }));
+const navigation = vi.hoisted(() => ({ pathname: "/", query: "" }));
 const workspace = vi.hoisted(() => ({ reviewItems: vi.fn(), selection: vi.fn() }));
 const supabase = vi.hoisted(() => ({
   auth: {
@@ -22,6 +23,7 @@ const supabase = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
   usePathname: () => navigation.pathname,
+  useSearchParams: () => new URLSearchParams(navigation.query),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
@@ -47,6 +49,40 @@ async function renderLayout(pathname: string): Promise<string> {
     })) as ReactElement,
   );
 }
+
+it.each(["/", "/drilldown", "/compare", "/municipal", "/fiscalizacion", "/simulate"])("renders electoral context through the real layout on %s", async (path) => {
+  const markup = await renderLayout(path);
+  expect(markup).toContain('aria-label="Contexto electoral"');
+  for (const label of ["Territorio", "Elección", "Categoría", "Fuente"]) expect(markup).toContain(label);
+  expect(markup).toContain('value="official" selected=""');
+});
+
+it.each(["/scenarios", "/evidencia", "/review", "/simulate-other"])("omits context on non-data route %s", async path => {
+  expect(await renderLayout(path)).not.toContain('aria-label="Contexto electoral"');
+});
+it("only displays fiscalización when explicitly requested in the URL", async () => {
+  navigation.query = "sourceKind=fiscalizacion";
+  try {
+    const markup = await renderLayout("/fiscalizacion");
+    expect(markup).toContain('data-source="fiscalizacion"');
+    expect(markup).toContain('value="fiscalizacion" selected=""');
+    expect(markup).toContain("No se combina con resultados oficiales.");
+  } finally { navigation.query = ""; }
+});
+it("rejects invalid source rather than selecting fiscalización", async () => {
+  navigation.query = "sourceKind=other";
+  try { expect(await renderLayout("/municipal")).toContain("Contexto inválido"); }
+  finally { navigation.query = ""; }
+});
+
+it("loads only authorized facets for URL context and fails closed", async () => {
+  const facets = { elections: [], categories: [], distritos: [], secciones: [], circuitos: [], establecimientos: [], mesas: [], availableLevels: [] };
+  panorama.facets.mockResolvedValueOnce(facets);
+  expect(await loadContextOptions("electionId=authorized-election&sourceKind=fiscalizacion")).toEqual({ context: { electionId: "authorized-election", sourceKind: "fiscalizacion" }, facets });
+  expect(panorama.facets).toHaveBeenLastCalledWith({ electionId: "authorized-election", sourceKind: "fiscalizacion" });
+  expect(await loadContextOptions("electionId=unauthorized-election")).toBeNull();
+  expect(await loadContextOptions("sourceKind=unknown")).toBeNull();
+});
 
 it("mounts exactly one session monitor at the shared authenticated entry point", async () => {
   function countMonitors(node: ReactNode): number {
@@ -350,13 +386,14 @@ it("renders the real Panorama page with an explicit unavailable default and map-
 
 it("resolves only the uniquely authorized Rosales scope and links its real explorer", async () => {
   panorama.facets.mockResolvedValueOnce({ elections: [{ id: "election-2025", year: 2025, round: "legislativas" }] });
-  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "DIPUTADO NACIONAL" }] });
+  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "CONCEJALES" }] });
   panorama.facets.mockResolvedValueOnce({ distritos: [{ code: "02" }], secciones: [{ code: "027" }], availableLevels: ["seccion"], exclusions: [] });
+  panorama.facets.mockResolvedValueOnce({ circuitos: [], exclusions: [] });
   panorama.evidence.mockResolvedValueOnce({ status: "authorization_denied" });
   const markup = renderToStaticMarkup(await HomePage() as ReactElement);
   expect(panorama.evidence).toHaveBeenLastCalledWith({ electionId: "election-2025", categoryId: "deputies", distritoCode: "02", seccionCode: "027", requestedLevel: "seccion", circuitoCode: null, establecimientoCode: null, mesaCode: null });
   expect(markup).toContain("Acceso a resultados oficiales denegado");
-  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
+  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;sourceKind=official&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
   expect(markup).not.toContain("Votos positivos oficiales</dt>");
 });
 

@@ -3,6 +3,25 @@ import { formatCount } from "../src/lib/format/number";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 
+test("Escenarios opens editable projections with scenario provenance", async ({ page }) => {
+  for (const [id, name] of [["persistencia", "Persistencia"], ["transferencias_ei", "Transferencias estimadas por inferencia ecológica"]]) {
+    await page.goto("/scenarios");
+    await page.getByTestId(`scenario-${id}`).getByRole("link", { name: "Editar este escenario" }).click();
+    await expect(page).toHaveURL(/\/simulate\?scenario=/);
+    const provenance = page.getByRole("region", { name: "Procedencia del escenario" });
+    await expect(provenance).toContainText(name!);
+    await expect(provenance).toContainText("no es un resultado oficial");
+    if (id === "transferencias_ei") await expect(provenance).toContainText("mayores restos");
+    await openSimulationDisclosure(page, "Editar los datos del escenario");
+    const votes = page.getByLabel("Votos de la lista", { exact: true });
+    await expect(votes).toHaveCount(8);
+    const values = await votes.evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
+    expect(values.reduce((sum, value) => sum + value, 0)).toBe(32291);
+    if (id === "persistencia") expect(values).toEqual([14550, 7300, 4540, 1788, 1512, 1384, 1027, 190]);
+    await expect(page.getByTestId("allocation-result")).toBeVisible();
+  }
+});
+
 async function openSimulationDisclosure(page: Page, name: string): Promise<void> {
   const summary = page.locator("details > summary").filter({ hasText: name });
   await expect(summary).toBeVisible();
@@ -1217,7 +1236,7 @@ test("reaches unvalidated 2027 scenarios from shared navigation at mobile width"
   const persistenceRow = page
     .getByRole("region", { name: "Listas del escenario Persistencia", exact: true })
     .getByRole("row", { name: /ALIANZA LA LIBERTAD AVANZA/ });
-  await expect(persistenceRow.getByRole("cell")).toHaveText(["45,06", "5"]);
+  await expect(persistenceRow.getByRole("cell")).toHaveText(["45,06", "5", "0"]);
   await expect(main.getByText(/21,074 pp frente a 17,245 pp/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
@@ -1225,6 +1244,11 @@ test("reaches unvalidated 2027 scenarios from shared navigation at mobile width"
   await expect(regions).toHaveCount(2);
   await regions.first().focus();
   await expect(regions.first()).toBeFocused();
+  await page.keyboard.press("Tab");
+  const editTransfers = page.getByTestId("scenario-transferencias_ei")
+    .getByRole("link", { name: "Editar este escenario" });
+  await expect(editTransfers).toBeFocused();
+  await expect(editTransfers).toHaveAttribute("href", "/simulate?scenario=transferencias_ei");
   await page.keyboard.press("Tab");
   await expect(regions.nth(1)).toBeFocused();
 

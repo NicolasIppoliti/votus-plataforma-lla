@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const loader = vi.hoisted(() => ({ override: null as null | { ok: false; reason: string } }));
+const loader = vi.hoisted(() => ({ override: null as null | import("@/lib/scenarios/scenario-artifact").ScenarioArtifactResult }));
 
 vi.mock("@/lib/scenarios/scenario-artifact", async () => {
   const actual = await vi.importActual<typeof import("@/lib/scenarios/scenario-artifact")>(
@@ -43,6 +43,35 @@ describe("/scenarios", () => {
     expect(html).toContain("22,557");
     expect(html).toContain("24,079");
     expect(html.match(/<table/g)).toHaveLength(2);
+    expect(html.match(/Editar este escenario/g)).toHaveLength(2);
+    expect(html).toContain('scenario=persistencia');
+    expect(html).toContain('scenario=transferencias_ei');
+    expect(html.match(/class="scenario-seat-bar"/g)).toHaveLength(2);
+    expect(html.match(/Diferencia vs\. Persistencia/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Bancas de Persistencia:');
+    expect(html).toMatch(/ALIANZA LA LIBERTAD AVANZA<\/th><td>[^<]+<\/td><td>4<\/td><td>−1<\/td>/);
+    expect(html).toContain('<td>+1</td>');
+    expect(html).toContain('<td>0</td>');
+  });
+
+  it("does not invent seats for ties or silently match unknown list IDs", async () => {
+    const actual = await vi.importActual<typeof import("@/lib/scenarios/scenario-artifact")>("@/lib/scenarios/scenario-artifact");
+    const result = await actual.loadScenarioArtifact();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Verified fixture unavailable");
+    const artifact = structuredClone(result.artifact);
+    const alternative = artifact.scenarios.find((scenario) => !scenario.default)!;
+    alternative.lists[0]!.list_id = "unmapped-list";
+    alternative.lists[0]!.label = "Lista sin correspondencia";
+    loader.override = { ok: true, artifact };
+    let html = await render();
+    expect(html).toMatch(/Lista sin correspondencia<\/th><td>[^<]+<\/td><td>\d+<\/td><td>Sin correspondencia<\/td>/);
+    alternative.seat_status = "ambiguous_tie";
+    html = await render();
+    expect(html.match(/class="scenario-seat-bar"/g)).toHaveLength(1);
+    expect(html).toContain("Empate ambiguo");
+    expect(html).toContain("<td>—</td><td>No disponible</td>");
+    loader.override = null;
   });
 
   it.each([
@@ -53,7 +82,7 @@ describe("/scenarios", () => {
     ["unvalidated_label_missing", "no declara que sus supuestos no están validados"],
     ["seat_total_mismatch", "no suman las 9 bancas"],
     ["default_mismatch", "no declara la persistencia"],
-  ])("shows an alert and no numbers when the artifact is refused (%s)", async (reason, message) => {
+  ] as const)("shows an alert and no numbers when the artifact is refused (%s)", async (reason, message) => {
     loader.override = { ok: false, reason };
     const html = await render();
     expect(html).toContain('role="alert"');

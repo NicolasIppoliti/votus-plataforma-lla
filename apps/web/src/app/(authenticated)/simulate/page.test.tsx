@@ -7,6 +7,8 @@ import { projectionInputSchema, projectionToAllocationInput } from "./projection
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
 import * as referenceLoader from "@/lib/geography/cne-rosales-reference";
 import { SIMULATION_COUNCIL } from "./simulation-configuration";
+import { loadOfficialSimulationBase } from "@/lib/scenarios/official-simulation-base";
+import { simulationScenarioQuery, transferSimulationQuery, transferBaselineFromQuery } from "./simulation-form-adapter";
 
 // Static rendering cannot measure layout, but it can pin the native-disclosure
 // visibility boundary that caused reset/restoration to hide the served chart.
@@ -18,6 +20,75 @@ function outsideDisclosures(html: string): string {
     return depth === 0;
   }).join("");
 }
+
+describe("scenario handoff", () => {
+  it("follows both real scenario links into prefilled projections", async () => {
+    const { default: ScenariosPage } = await import("../scenarios/page");
+    const source = renderToStaticMarkup(await ScenariosPage());
+    const links = [...source.matchAll(/href="(\/simulate\?scenario=[^"]+)"/g)];
+    expect(links).toHaveLength(2);
+    for (const [, href] of links) {
+      const params = Object.fromEntries(new URL(href!, "https://example.test").searchParams);
+      const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve(params) }) as ReactElement);
+      expect(html).toContain("Resultado (municipal de PBA)");
+      expect(html).toContain("no es un resultado oficial");
+      expect(html).not.toContain("Territorio no vinculado");
+    }
+  });
+  it("rejects mixed scenario and official requests before either loads", async () => {
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ scenario: "persistencia", officialBase: "2025" }) }) as ReactElement);
+    expect(html).toContain("no se puede combinar");
+    expect(html).not.toContain('data-testid="allocation-result"');
+    expect(html).not.toContain("Base oficial 2025 · JEBA definitivo");
+  });
+  it("refuses unknown scenarios without loading votes", async () => {
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ scenario: "unknown" }) }) as ReactElement);
+    expect(html).toContain("Escenario no disponible");
+    expect(html).not.toContain('data-testid="allocation-result"');
+  });
+  it("loads the named projection through the rendered page", async () => {
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ scenario: "transferencias_ei" }) }) as ReactElement);
+    expect(html).toContain("Transferencias estimadas por inferencia ecológica");
+    expect(html).toContain("mayores restos");
+    expect(html).toContain("Diferencia máxima por lista");
+    expect(html).toContain("Resultado (municipal de PBA)");
+    expect(html).toContain("no es un resultado oficial");
+  });
+});
+
+describe("official 2025 base", () => {
+  it("offers an official base through the rendered entry point and loads exact published votes", async () => {
+    const initial = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({}) }) as ReactElement);
+    expect(initial).toContain('href="/simulate?officialBase=2025"');
+    const html = renderToStaticMarkup(await SimulatePage({ searchParams: Promise.resolve({ officialBase: "2025" }) }) as ReactElement);
+    expect(html).toContain("Base oficial 2025");
+    expect(html).toContain("14550");
+    expect(html).toContain("7300");
+    expect(html).toContain("4540");
+    expect(html).toContain("Resultado (municipal de PBA)");
+    expect(html).toContain("Ley 5109");
+    expect(html).not.toContain("Territorio no vinculado");
+    const loaded = await loadOfficialSimulationBase();
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) throw new Error(loaded.reason);
+    expect(loaded.input.lists.map((list) => list.votes)).toEqual([14550, 7300, 4540, 1788, 1512, 1384, 1027, 190]);
+    expect(loaded.input.voteTotals.validVotes).toBe(32291);
+    const allocation = allocateSeats(projectionToAllocationInput(loaded.input));
+    expect(allocation.seatAwards).toHaveLength(9);
+    expect(loaded.input.lists.map((list) => allocation.seatAwards.filter((seat) => seat.listId === list.listId).length)).toEqual([5, 2, 2, 0, 0, 0, 0, 0]);
+    const query = transferSimulationQuery(simulationScenarioQuery({ input: loaded.input, council: SIMULATION_COUNCIL.JURISDICTION }), "2206", "2200", "1000");
+    const transferred = transferBaselineFromQuery(query)!;
+    expect(transferred.lists.map((list) => list.votes)).toEqual([13550, 8300, 4540, 1788, 1512, 1384, 1027, 190]);
+    const movedHtml = await renderSimulation(undefined, Object.fromEntries(new URLSearchParams(query)));
+    expect(movedHtml).toContain("Resultado (municipal de PBA)");
+  });
+
+  it("refuses mixing the official loading request with caller-provided inputs", async () => {
+    const html = await renderSimulation(ALLOCATION_INPUT, { officialBase: "2025" });
+    expect(html).toContain("La carga oficial no se puede combinar");
+    expect(html).not.toContain("Base oficial 2025 · JEBA definitivo");
+  });
+});
 
 describe("default-visible impact contracts", () => {
   it("keeps seated and zero-seat images outside disclosures on each served render", async () => {

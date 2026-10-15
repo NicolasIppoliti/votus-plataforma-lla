@@ -1071,8 +1071,9 @@ def begin_result_rows_replacement(
     )
     with phase("scoped_delete"), conn.cursor() as cur:
         cur.execute(
-            "delete from result_row where archive_entry_id = %s and election_id = %s",
-            (archive_entry_id, election_id),
+            "delete from result_row where archive_entry_id = %s and election_id = %s "
+            "and source_kind = %s",
+            (archive_entry_id, election_id, source_kind or authoritative_source_kind),
         )
     return ResultRowsReplacement(
         conn=conn,

@@ -400,6 +400,56 @@ select option {
   line-height: 1.5;
 }
 
+/* ResizeObserver tracks both sticky rows as controls wrap or zoom changes.
+   Reserve their combined height for browser focus/scrollIntoView and screenshots. */
+html:has(.electoral-context) {
+  scroll-padding-block-start: calc(var(--electoral-topbar-height, 4rem) + var(--electoral-context-height, 0px) + 1rem);
+}
+
+.app-shell__workspace:has(.electoral-context) > .workspace-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 11;
+}
+
+.electoral-context {
+  position: sticky;
+  top: var(--electoral-topbar-height, 4rem);
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding-block: 0.75rem;
+  background: var(--color-surface);
+  border-block-end: 1px solid var(--border);
+}
+.electoral-context__field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; flex: 1 1 10rem; }
+.electoral-context select { width: 100%; min-width: 0; min-height: 2.75rem; }
+.electoral-context fieldset { display: flex; flex-wrap: wrap; gap: 0.5rem; min-width: 0; flex: 2 1 16rem; }
+.electoral-context[data-source="fiscalizacion"] { border-inline-start: 0.35rem solid #a65300; }
+.electoral-context > [role="alert"], .electoral-context > p { flex-basis: 100%; }
+
+/* At narrow widths/native zoom the wrapped rows can consume the viewport.
+   Scroll padding cannot make an oversized sticky stack leave room for targets.
+   Keep every control in flow and reachable; retain pinning on roomy screens. */
+@media (max-width: 980px), (max-height: 600px) {
+  html:has(.electoral-context) {
+    scroll-padding-block-start: 1rem;
+  }
+
+  .app-shell__workspace:has(.electoral-context) > .workspace-topbar {
+    position: static;
+    top: auto;
+    z-index: auto;
+  }
+
+  .electoral-context {
+    position: static;
+    top: auto;
+    z-index: auto;
+  }
+}
+
 .workspace-topbar {
   border-block-end: 1px solid var(--border);
   background: var(--color-surface);
@@ -1425,7 +1475,7 @@ select option {
   background: var(--surface-muted);
 }
 
-.evidence-state {
+.workspace-alert {
   display: grid;
   gap: 0.75rem;
   min-width: 0;
@@ -1437,13 +1487,33 @@ select option {
   overflow-wrap: anywhere;
 }
 
-.evidence-state[data-treatment="warning"] {
+.workspace-alert[data-variant="denied"],
+.workspace-alert[data-variant="unavailable"],
+.workspace-alert[data-variant="caveat"] {
   border-block-start-color: var(--warning-ink);
   background: var(--warning-surface);
 }
 
-.evidence-state[data-treatment="danger"] {
-  border-block-start-color: var(--danger);
+/* Load failures retain the operational danger top rule, not warning amber. */
+.workspace-alert[data-variant="error"] {
+  border-block-start: 3px solid var(--danger);
+}
+
+/* Header announcements share semantics without introducing a padded page box. */
+.workspace-alert.workspace-alert--inline {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-ink);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
+.workspace-alert__action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .evidence-state h2 {

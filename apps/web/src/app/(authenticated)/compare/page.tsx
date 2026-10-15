@@ -13,6 +13,7 @@ import { loadMunicipalSectionGeometry } from "@/lib/workspace/municipal-section-
 import type { OfficialSelection } from "@/app/api/workspace/official/input";
 import { GranularityBadge } from "@/components/GranularityBadge";
 import { EvidenceState } from "@/components/EvidenceState";
+import { Alert } from "@/components/ui/alert";
 import { TableRegion } from "@/components/TableRegion";
 import { Table } from "@/components/ui/table";
 import { compareResults, type UnitResult } from "@/lib/results/compare";
@@ -72,14 +73,14 @@ function formatSwing(value: number): string {
   return `${normalized > 0 ? "+" : ""}${formatFixed2(normalized)} puntos porcentuales`;
 }
 
-function refusalPage(message: ReactNode): ReactNode {
+function refusalPage(message: ReactNode, variant: "denied" | "unavailable" = "denied", action?: ReactNode): ReactNode {
   return (
     <main className="page-shell official-compare">
       <div className="shell-container official-compare__layout">
         <header className="official-compare__header">
           <h1>Comparación electoral</h1>
         </header>
-        <p className="official-compare__state" role="alert">{message}</p>
+        <Alert variant={variant} action={action}>{message}</Alert>
       </div>
     </main>
   );
@@ -233,9 +234,9 @@ function CompareSelector({
               <p>{message}</p>
             </EvidenceState>
           ) : (
-            <p className="official-compare__state" role={alert ? "alert" : "status"}>{message}</p>
+            <Alert variant={alert ? "unavailable" : "needs-selection"}>{message}</Alert>
           )}
-          {context}
+          <details className={styles.selectionNotes} data-applied-context=""><summary>Contexto de comparación aplicada</summary>{context}</details>
           </section>
           {children}
         </ComparisonSelectionForm>
@@ -364,7 +365,21 @@ export default function ComparePage(props: ComparePageProps): Promise<ReactNode>
 }
 
 async function renderComparePage({ searchParams }: ComparePageProps): Promise<ReactNode> {
-  const params = { ...await searchParams };
+  const originalParams = await searchParams;
+  const retryQuery = new URLSearchParams();
+  for (const [key, value] of Object.entries(originalParams)) {
+    if (typeof value === "string") retryQuery.set(key, value);
+  }
+  const retryUrl = `/compare${retryQuery.size ? `?${retryQuery}` : ""}`;
+  const loaderFailure = (error: unknown) => {
+    const denied = error instanceof AuthorizedOfficialFacetsError &&
+      [OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED, OFFICIAL_FACETS_ERROR.CONTEXT_ENDED, OFFICIAL_FACETS_ERROR.SELECTION_REQUIRED].some((code) => code === error.code);
+    return refusalPage(denied
+      ? "No tiene autorización para cargar las opciones de comparación. Verifique su sesión y espacio de trabajo."
+      : "Las opciones de comparación están temporalmente no disponibles. La solicitud pudo superar el tiempo de espera. Intente nuevamente.",
+    denied ? "denied" : "unavailable", <a href={retryUrl}>Reintentar</a>);
+  };
+  const params = { ...originalParams };
   const repeated = repeatedParams(params);
   if (repeated.length > 0) {
     return refusalPage(<>Se rechazó la solicitud: estos parámetros se proporcionaron más de una vez: {repeated.join(", ")}.</>);
@@ -416,10 +431,7 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
   try {
     cold = await repository.facets({});
   } catch (error) {
-    const message = error instanceof AuthorizedOfficialFacetsError && error.code === OFFICIAL_FACETS_ERROR.AUTHORIZATION_DENIED
-      ? "No tiene autorización para cargar las opciones de comparación."
-      : "No se pudieron cargar las opciones autorizadas.";
-    return refusalPage(message);
+    return loaderFailure(error);
   }
 
   const selectedLeftElection = cold.elections.find((option) => option.id === leftElectionId && option.year === 2023);
@@ -437,8 +449,8 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
     ]);
     leftCategories = leftFacets?.categories ?? [];
     rightCategories = rightFacets?.categories ?? [];
-  } catch {
-    return <CompareSelector elections={cold.elections} leftCategories={[]} rightCategories={[]} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar las categorías autorizadas." alert />;
+  } catch (error) {
+    return loaderFailure(error);
   }
 
   const leftCategory = leftCategories.find((option) => option.id === leftCategoryId);
@@ -458,8 +470,8 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
       const common = commonFacets(leftScope.distritos, rightScope.distritos);
       distritos = common.options;
       unique.distrito = common.unique;
-    } catch {
-      return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={[]} secciones={[]} selected={selected} message="No se pudieron cargar los distritos compartidos autorizados." alert />;
+    } catch (error) {
+      return loaderFailure(error);
     }
   }
   const selectedDistrito = distritos.find((option) => option.code === distritoCode);
@@ -477,8 +489,8 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
       const common = commonFacets(leftScope.secciones, rightScope.secciones);
       secciones = common.options;
       unique.seccion = common.unique;
-    } catch {
-      return <CompareSelector elections={cold.elections} leftCategories={leftCategories} rightCategories={rightCategories} distritos={distritos} secciones={[]} selected={selected} message="No se pudieron cargar las secciones compartidas autorizadas." alert />;
+    } catch (error) {
+      return loaderFailure(error);
     }
   }
   const selectedSeccion = secciones.find((option) => option.code === seccionCode);
@@ -584,7 +596,7 @@ async function renderComparePage({ searchParams }: ComparePageProps): Promise<Re
           leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))}
           rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))}
           completeness={[completenessA, completenessB]} outcomes={[circuitsA, circuitsB]}
-          maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><p role="status">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</p><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
+          maps={section?.status === "ok" ? <ComparisonMap coordinates={section.geometry.coordinates} name={section.name} fetchedAt={section.fetchedAt} sha256={section.sha256} swing={swing} leftNames={Object.fromEntries(swing.swings.map(({ party }) => [party, leftName(party)]))} rightNames={Object.fromEntries(swing.swings.map(({ party }) => [party, rightName(party)]))} /> : <div className={styles.mapUnavailable}><h2>Mapas de comparación</h2><Alert variant="caveat">Referencia geográfica no disponible; los resultados exactos permanecen disponibles.</Alert><p>No hay geometría autorizada para representar esta comparación territorial.</p></div>}
         />}
     >
         <div className="official-compare__analysis">

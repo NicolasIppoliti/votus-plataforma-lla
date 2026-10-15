@@ -1,5 +1,6 @@
 "use client";
 
+import { Alert } from "@/components/ui/alert";
 import { granularityLabel } from "@/lib/results/granularity";
 import { useState } from "react";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
@@ -27,8 +28,8 @@ export function Panorama({ data }: { data: PanoramaData }) {
     <section className={styles.context} aria-label="Contexto del panorama">
       <div><span>Vista de datos</span><strong>Resultados oficiales</strong></div>
       <div><label htmlFor="panorama-territory">Territorio</label><select id="panorama-territory" value={territory} onChange={event => setTerritory(event.target.value)}>{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <option key={item}>{item}</option>)}</select></div>
-      <div><span>Elección</span><strong>2025 · legislativas</strong></div>
-      <div><span>Categoría</span><strong>DIPUTADO NACIONAL</strong></div>
+      <div><span>Elección</span><strong>{result ? `${result.electionYear} · ${result.electionRound}` : "Sin selección disponible"}</strong></div>
+      <div><span>Categoría</span><strong>{result?.categoryName ?? "Sin selección disponible"}</strong></div>
     </section>
     <p className={styles.notice}>Fuente oficial exclusivamente. La geometría de referencia no acredita cobertura ni equivalencia electoral histórica.</p>
     <section className={styles.workbench} aria-label="Panorama territorial">
@@ -38,7 +39,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
         {rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
-        <h2 id="panorama-result-heading">Lectura de la selección</h2><p role="status">{state}</p>
+        <h2 id="panorama-result-heading">Lectura de la selección</h2><Alert variant={result ? "caveat" : evidence?.status === "authorization_denied" ? "denied" : evidence?.status === "empty" ? "empty" : "unavailable"}>{state}</Alert>
         {result && <>
           <div className={styles.leader}><span>{complete ? "Primer lugar observado" : "En cabeza · provisional"}</span><strong>{result.totalVotes === 0 ? "Cero votos" : tied ? "Empate en primer lugar" : leader ? name(leader) : "Sin agrupaciones disponibles"}</strong>
             <div className={styles.metrics}><p><span>Sobre votos positivos</span><b>{leader?.voteShare == null ? "No disponible" : `${formatDecimal(Number(leader.voteShare) * 100)} %`}</b></p><p><span>Margen sobre el segundo</span><b>{leader && ranked.length > 1 && result.totalVotes > 0 ? `${formatDecimal((leader.votes - ranked[1]!.votes) / result.totalVotes * 100)} pp` : "No disponible"}</b></p></div>

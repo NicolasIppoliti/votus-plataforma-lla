@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { CircuitOutcome, OfficialSectionCircuitOutcomes } from "@/lib/workspace/official-section-circuit-outcomes";
 import { TableRegion } from "@/components/TableRegion";
+import { Alert } from "@/components/ui/alert";
 import styles from "./comparison.module.css";
 import { formatCount, formatFixed2 } from "@/lib/format/number";
 
@@ -39,9 +40,9 @@ export function ComparisonChildren({ outcomes, party }: { outcomes: [OfficialSec
   const format = (value: number | null, suffix: string, signed = false) => value === null ? "No disponible" : `${signed && value > 0 ? "+" : ""}${formatFixed2(value)} ${suffix}`;
   return <section className={styles.children} aria-labelledby="compare-child-heading">
     <header><div><h2 id="compare-child-heading">Cambio por territorio</h2><p>Circuitos · agrupación seleccionada · B − A</p></div>
-      <div className={styles.childControls}><div><label htmlFor="compare-child-search">Filtrar territorios de la tabla</label><input id="compare-child-search" type="search" placeholder="Buscar por código" disabled={!available} value={search} onChange={event => setSearch(event.target.value)} /></div>
-        <div><label htmlFor="compare-child-order">Ordenar territorios</label><select id="compare-child-order" disabled={!available} value={order} onChange={event => setOrder(event.target.value)}><option value="descending">Mayor cambio en pp</option><option value="ascending">Menor cambio en pp</option></select></div></div></header>
-    {!available ? <p role="status">Comparabilidad del siguiente nivel no disponible: se requiere pertenencia oficial de mesas a circuitos en ambas elecciones. No se reemplazan ausencias con cero.</p> : <>
+      <details className={styles.selectionNotes} data-child-controls="" open={available}><summary>Controles del siguiente nivel</summary><div className={styles.childControls}><div><label htmlFor="compare-child-search">Filtrar territorios de la tabla</label><input id="compare-child-search" type="search" placeholder="Buscar por código" disabled={!available} value={search} onChange={event => setSearch(event.target.value)} /></div>
+        <div><label htmlFor="compare-child-order">Ordenar territorios</label><select id="compare-child-order" disabled={!available} value={order} onChange={event => setOrder(event.target.value)}><option value="descending">Mayor cambio en pp</option><option value="ascending">Menor cambio en pp</option></select></div></div></details></header>
+    {!available ? <Alert variant="caveat">Comparabilidad del siguiente nivel no disponible: se requiere pertenencia oficial de mesas a circuitos en ambas elecciones. No se reemplazan ausencias con cero.</Alert> : <>
       <div className={styles.coverage}><p role="status">{rows.filter(row => !row.reason).length} de {rows.length} pares comparables para la agrupación seleccionada</p>
         <ul aria-label="Motivos de exclusión del siguiente nivel">{[...excluded].map(([label, count]) => <li key={label}>{label}: {count}</li>)}</ul>
         <p>Todos los circuitos informados en cualquiera de los lados; la búsqueda no cambia la cobertura. Los códigos no certifican equivalencia de límites históricos.</p>

@@ -1,3 +1,4 @@
+import { Alert } from "@/components/ui/alert";
 import type { ReactNode } from "react";
 import type { SourceRef } from "@/lib/results/types";
 
@@ -25,7 +26,7 @@ export function ProvenanceLink({ sources }: ProvenanceLinkProps): ReactNode {
             // Named, not blank. An entry with no hash cannot be verified, and
             // rendering an empty code block reads as a digest that is simply
             // hard to see.
-            <strong role="alert">sin hash — esta entrada no puede verificarse</strong>
+            <Alert variant="unavailable">sin hash — esta entrada no puede verificarse</Alert>
           )}
           {" — "}
           <a href={source.url}>{source.url}</a>

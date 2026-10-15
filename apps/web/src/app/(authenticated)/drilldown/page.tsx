@@ -1,5 +1,6 @@
 import { profileServerSpan } from "@/lib/workspace/profile-server";
 import type { ReactNode } from "react";
+import { Alert } from "@/components/ui/alert";
 import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { granularityLabel } from "@/lib/results/granularity";
 import styles from "./drilldown.module.css";
@@ -220,7 +221,7 @@ function SectionCompleteness({ completeness, selection }: { completeness: Eviden
 
 function ResultEvidence({ evidence, selection, facets, selected }: { evidence: EvidenceOk; selection: OfficialSelection; facets: ExplorationFacets; selected: ExplorerFormProps["selected"] }): ReactNode {
   const { result, schools, reference, provenance } = evidence;
-  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <section className={styles.state} role="alert">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</section>;
+  if (result.sourceKind !== "official" || result.sourceAudit.some(({ kind }) => kind !== "official") || schools.status === "ok" && (schools.sourceKind !== "official" || schools.sourceAudit.some(({ kind }) => kind !== "official"))) return <Alert variant="denied">Se rechazó la solicitud: la evidencia renderizada no es exclusivamente oficial.</Alert>;
   const circuitLeadersMap = selection.requestedLevel === "seccion" && selection.circuitoCode === null && selection.establecimientoCode === null && selection.mesaCode === null
     && evidence.circuitOutcomes?.status === "ok" && evidence.circuitOutcomes.circuit_membership === "known" && selection.distritoCode === "02" && selection.seccionCode === "027";
   return (
@@ -500,7 +501,7 @@ function refusalPage(message: ReactNode): ReactNode {
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
         <ExplorerHeader />
-        <section className={styles.state} role="alert">{message}</section>
+        <Alert variant="denied">{message}</Alert>
       </div>
     </main>
   );
@@ -598,7 +599,7 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
     level === EXPLORATION_LEVEL.ESTABLECIMIENTO && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode) ||
     level === EXPLORATION_LEVEL.MESA && Boolean(effectiveCodes.circuitoCode && effectiveCodes.establecimientoCode && typeof effectiveCodes.mesaCode === "number");
   if (!hierarchyMatches || !baseReady || !levelReady || !electionId || !categoryId || !effectiveCodes.distritoCode || !effectiveCodes.seccionCode || !level) {
-    return <PageShell facets={facets} selected={selected}><section className={styles.state} role="status">Elija una sección exacta y los selectores requeridos para el nivel del informe.</section></PageShell>;
+    return <PageShell facets={facets} selected={selected}><Alert variant="needs-selection">Elija una sección exacta y los selectores requeridos para el nivel del informe.</Alert></PageShell>;
   }
 
   const selection: OfficialSelection = {
@@ -615,7 +616,7 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
   if (evidence.status !== OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.OK) {
     return (
       <PageShell facets={facets} selected={selected} workbench={false} showTrail={false}>
-        <section className={styles.state} role="alert">
+        <Alert variant={evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED ? "denied" : evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.EMPTY ? "empty" : "unavailable"}>
           <p>{refusalMessage(evidence.status)}</p>
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.UNAVAILABLE
             ? <a href={`/drilldown?${canonicalScopeSearchParams({
@@ -632,7 +633,7 @@ async function renderDrilldownPage({ searchParams }: DrilldownPageProps): Promis
           {evidence.status === OFFICIAL_DRILLDOWN_EVIDENCE_STATUS.AUTHORIZATION_DENIED
             ? null
             : <RefusalEvidence evidence={evidence.evidence} />}
-        </section>
+        </Alert>
       </PageShell>
     );
   }

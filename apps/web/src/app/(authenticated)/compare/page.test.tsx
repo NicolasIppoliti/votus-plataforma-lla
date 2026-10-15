@@ -64,6 +64,19 @@ it("puts the workbench before selection details and paints static maps on load",
   for (const text of ["La comparación se actualiza al cambiar la selección.", "Opciones no compartidas — Distrito", "Comparación aplicada", 'aria-label="Contexto de comparación autorizada"']) expect(workbench).toBeLessThan(markup.indexOf(text));
 });
 
+it("keeps optional map actions and repeated applied context folded on the rendered page", async () => {
+  supportedSpatialEvidence();
+  const markup = await render(PARAMS);
+  expect(markup.match(/<details[^>]*data-map-controls=""/g)).toHaveLength(2);
+  expect(markup).not.toMatch(/<details[^>]*data-map-controls=""[^>]*open/);
+  expect(markup).toMatch(/<details[^>]*data-applied-context=""[^>]*><summary>Contexto de comparación aplicada<\/summary>/);
+  expect(markup).toContain("Mostrar mapa interactivo");
+  expect(markup).toContain("Seleccionar sección y consultar resultados");
+  expect(markup).toMatch(/<details[^>]*data-child-controls=""[^>]*><summary>Controles del siguiente nivel<\/summary>/);
+  expect(markup).toContain("Completitud de la sección");
+  expect(markup).toContain("Dos elecciones oficiales");
+});
+
 it("paints two static maps on load", async () => {
   supportedSpatialEvidence();
   const markup = await render(PARAMS);
@@ -314,7 +327,7 @@ describe("authorized comparison page", () => {
   it("renders only safe side-owned counts for an unmapped refusal", async () => { mocks.evidence.mockResolvedValue({ status: "unmapped_parties", sides: [{ side: "left", partyCount: 1, totalVotes: 40 }], raw_list_id: "raw-list", display_name: "unsafe name", provider_side: "secret", left: side(2023, IDS.leftElection, IDS.leftCategory, [60, 40]) }); const markup = await render(PARAMS); for (const text of ["lado izquierdo", "1 partido", "40 votos"]) expect(markup).toContain(text); for (const hidden of ["raw-list", "unsafe name", "secret", "PARTIDO A 2023", "puntos porcentuales", "official/archive"]) expect(markup).not.toContain(hidden); });
   it.each([["authorization_denied", "No tiene autorización"], ["payload_too_large", "excede el límite seguro"], ["malformed", "no superó la validación"], ["unavailable", "no está disponible"]] as const)("renders no figures for %s evidence", async (status, message) => { mocks.evidence.mockResolvedValue({ status }); const markup = await render(PARAMS); expect(markup).toContain(message); expect(markup).not.toContain("puntos porcentuales"); expect(markup).not.toContain("official/archive"); });
   it.each([["repeated", { ...PARAMS, electionId: [IDS.leftElection, IDS.rightElection] }], ["legacy", { ...PARAMS, election2023: IDS.leftElection }], ["unknown", { ...PARAMS, debug: "true" }]])("rejects %s query keys before authorized reads", async (_case, params) => { const markup = await render(params); expect(markup).toContain("Se rechazó la solicitud"); expect(mocks.facets).not.toHaveBeenCalled(); expect(mocks.evidence).not.toHaveBeenCalled(); });
-  it("hides authorized facet provider failures", async () => { mocks.facets.mockRejectedValue(new Error("private provider detail")); const markup = await render({}); expect(markup).toContain("No se pudieron cargar las opciones autorizadas"); expect(markup).not.toContain("private provider detail"); });
+  it("hides authorized facet provider failures", async () => { mocks.facets.mockRejectedValue(new Error("private provider detail")); const markup = await render({}); expect(markup).toContain("temporalmente no disponibles"); expect(markup).toContain('data-variant="unavailable"'); expect(markup).toContain('href="/compare"'); expect(markup).not.toContain("private provider detail"); });
   it("presents two owned sides, shared scope, and exact official evidence as one ledger", async () => {
     const markup = await render(PARAMS);
     for (const text of ["Lado A", "Lado B", "Jurisdicción compartida", "Resultados exactos", "Evidencia oficial por lado"]) expect(markup).toContain(text);
@@ -397,6 +410,7 @@ describe("authorized comparison page", () => {
   ] as const)("names the %s refusal without exposing either side", async (status, title) => {
     mocks.evidence.mockResolvedValue({ status });
     const markup = await render(PARAMS);
+    expect(markup).toContain(`data-variant="${status === "authorization_denied" ? "denied" : status === "malformed" ? "error" : "unavailable"}"`);
     expect(markup).toMatch(/role="alert" aria-labelledby="compare-evidence-state-heading"/);
     expect(markup).toContain(`<h2 id="compare-evidence-state-heading">${title}</h2>`);
     expect(markup).not.toMatch(/<table|PARTIDO A|official\/archive|puntos porcentuales|Referencia oficial|Procedencia oficial|Opciones no compartidas/);

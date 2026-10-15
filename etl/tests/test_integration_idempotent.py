@@ -299,7 +299,8 @@ def test_load_result_rows_empty_batch_validates_archive_then_keeps_scoped_delete
     assert len(conn.statements) == 2
     assert "select source_kind" in conn.statements[0][0]
     assert "delete from result_row" in conn.statements[1][0]
-    assert conn.statements[1][1] == ("entry-1", "election-1")
+    assert "and source_kind = %s" in conn.statements[1][0]
+    assert conn.statements[1][1] == ("entry-1", "election-1", "fiscalizacion")
 
 
 def test_load_result_rows_empty_batch_still_refuses_a_missing_archive() -> None:
