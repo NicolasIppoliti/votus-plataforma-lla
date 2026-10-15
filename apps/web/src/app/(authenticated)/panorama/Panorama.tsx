@@ -4,7 +4,7 @@ import { granularityLabel } from "@/lib/results/granularity";
 import { useState } from "react";
 import { inspectorDistribution } from "@/lib/results/inspector-distribution";
 import { PanoramaChildren } from "./PanoramaChildren";
-import { TerritorialMapStage } from "../drilldown/TerritorialMapStage";
+import { MAP_HEADING, TerritorialMapStage } from "../drilldown/TerritorialMapStage";
 import type { PanoramaData } from "./load-panorama";
 import styles from "./panorama.module.css";
 import { formatCount, formatDecimal } from "@/lib/format/number";
@@ -35,7 +35,7 @@ export function Panorama({ data }: { data: PanoramaData }) {
       <div className={styles.map}>
         <nav className={styles.trail} aria-label="Recorrido territorial">{["Argentina", "Buenos Aires", "Coronel Rosales"].map(item => <button key={item} type="button" aria-current={item === territory ? "location" : undefined} onClick={() => setTerritory(item)}>{item}</button>)}</nav>
         <header className={styles.mapTitle}><h2>{territory}</h2><p>Lectura territorial · {rosales ? "Sección 027 · distrito 02" : "Sin agregado autorizado en Panorama"}</p></header>
-        {rosales ? <TerritorialMapStage title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
+        {rosales ? <TerritorialMapStage heading={MAP_HEADING.REFERENCE} title="Coronel Rosales" subtitle="Contorno neutral; no mapa de ganadores por unidad" referenceRosales /> : <div className={styles.noMap}><p>Agregado nacional/provincial no disponible.</p><p>Seleccione Coronel Rosales para consultar la sección autorizada. No se suman sus resultados para representar un nivel superior.</p></div>}
       </div>
       <aside className={styles.summary} aria-labelledby="panorama-result-heading">
         <h2 id="panorama-result-heading">Lectura de la selección</h2><p role="status">{state}</p>
