@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ELECTORAL_CONTEXT_LABELS } from "@/lib/context/labels";
 import { ALLOCATION_LEVEL } from "@/domain/seat-allocation/types";
 import { GRANULARITY_ORDER, granularityLabel } from "@/lib/results/granularity";
 import { GRANULARITY } from "@/lib/results/types";
@@ -527,7 +528,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
         <fieldset className="simulation-form__section panel form-grid">
           <legend className="simulation-form__legend">Elección y alcance</legend>
           <div className="field">
-            <Label htmlFor="simulation-level">Tipo de elección</Label>
+            <Label htmlFor="simulation-level">{ELECTORAL_CONTEXT_LABELS.allocatingBody}</Label>
             <select
               aria-describedby="simulation-form-help simulation-form-errors"
               id="simulation-level"
@@ -544,7 +545,7 @@ export function SimulationForm({ requestKey, children, impact, baseImpact, compa
             </select>
           </div>
           <div className="field">
-            <Label htmlFor="simulation-granularity">Granularidad</Label>
+            <Label htmlFor="simulation-granularity">{ELECTORAL_CONTEXT_LABELS.level}</Label>
             <select
               aria-describedby="granularity-help simulation-form-errors"
               id="simulation-granularity"

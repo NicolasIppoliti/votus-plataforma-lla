@@ -392,7 +392,7 @@ describe("DrilldownPage authorized official evidence", () => {
       `Elección</dt><dd>${COMPLETE_SECTION.electionId}`,
       `Categoría</dt><dd>${COMPLETE_SECTION.categoryId}`,
       "Distrito</dt><dd>02", "Sección</dt><dd>027", "Circuito</dt><dd>00001",
-      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel del informe</dt><dd>Mesa",
+      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel</dt><dd>Mesa",
     ]) expect(evidence).toContain(entry);
     expect(evidence).toContain("Referencia electoral autorizada");
     expect(evidence).toContain(`SHA-256 ${"a".repeat(64)}`);

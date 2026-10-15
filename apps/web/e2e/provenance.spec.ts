@@ -558,7 +558,7 @@ async function expectNoBlankSearchParams(page: Page): Promise<void> {
       for (const key of ["circuitoCode", "establecimientoCode", "mesaCode", "level"]) {
         await expect(page).toHaveURL(url => !url.searchParams.has(key));
       }
-      for (const label of ["Circuito", "Establecimiento", "Mesa", "Nivel del informe"]) await expect(page.getByRole("combobox", { name: label, exact: true })).toHaveCount(0);
+      for (const label of ["Circuito", "Establecimiento", "Mesa", "Nivel"]) await expect(page.getByRole("combobox", { name: label, exact: true })).toHaveCount(0);
       await expect(page).toHaveURL((url) => !url.searchParams.has("seccionCode"));
       await expect(form).not.toHaveAttribute("aria-busy", "true");
       await draft("Sección", identity.seccionCode);

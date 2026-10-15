@@ -643,8 +643,9 @@ describe("simulate page — normal-user entry", () => {
       '<form aria-label="Formulario de simulación de bancas"',
     );
     expect(markup).toMatch(
-      /<label[^>]*for="simulation-level"[^>]*>Tipo de elección<\/label>/,
+      /<label[^>]*for="simulation-level"[^>]*>Cuerpo a elegir<\/label>/,
     );
+    expect(markup).toMatch(/<label[^>]*for="simulation-granularity"[^>]*>Nivel<\/label>/);
     expect(markup).toMatch(/<form[^>]+class="simulation-form"/);
     expect(
       markup.match(
