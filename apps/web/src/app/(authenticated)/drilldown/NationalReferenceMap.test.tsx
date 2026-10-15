@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { NationalReferenceMap } from "./NationalReferenceMap";
-import { MAP_HEADING, TerritorialMapStage } from "./TerritorialMapStage";
+import { TerritorialMapStage } from "./TerritorialMapStage";
+import { MAP_HEADING } from "./map-heading";
 
 describe("national reference before activation", () => {
   it("keeps one navigation anchor in the complete national reference region", () => {
