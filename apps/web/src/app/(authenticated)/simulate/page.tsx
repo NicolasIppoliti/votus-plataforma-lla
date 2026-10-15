@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { loadScenarioSimulation } from "@/lib/scenarios/scenario-simulation";
 import { Alert } from "@/components/ui/alert";
 import { loadOfficialSimulationBase } from "@/lib/scenarios/official-simulation-base";
 import { loadRosalesReference } from "@/lib/geography/cne-rosales-reference";
@@ -360,6 +361,24 @@ export default async function SimulatePage({
     );
   }
 
+  let scenarioProvenance: Awaited<ReturnType<typeof loadScenarioSimulation>>;
+  let scenarioError: string | undefined;
+  const scenarioId = stringParam(params, "scenario");
+  if (scenarioId) {
+    if (requestQuery.has("input") || requestQuery.has("baseInput") || requestQuery.has("officialBase")) {
+      return <main><h1>Simulación de escenarios</h1><Alert variant="denied">El escenario no se puede combinar con otros datos aportados.</Alert></main>;
+    } else {
+      scenarioProvenance = await loadScenarioSimulation(scenarioId);
+      if (scenarioProvenance) {
+        params.input = JSON.stringify(scenarioProvenance.input);
+        params.council = SIMULATION_COUNCIL.JURISDICTION;
+        requestQuery.delete("scenario");
+        requestQuery.set("input", params.input);
+        requestQuery.set("council", params.council);
+        requestQuery.sort();
+      } else scenarioError = "Escenario no disponible: no se cargaron cifras.";
+    }
+  }
   let officialBaseLoaded = false;
   let officialBaseError: string | undefined;
   if (stringParam(params, "officialBase") === "2025") {
@@ -510,6 +529,11 @@ export default async function SimulatePage({
         <p>Supuestos, no predicciones. Explore una hipótesis de transferencia, no un pronóstico electoral.</p>
         <span className="simulation-authored-badge">Datos aportados por quien consulta · no oficiales</span>
       </header>
+      {scenarioProvenance ? <section aria-label="Procedencia del escenario">
+        <p>Escenario: {scenarioProvenance.name}. Proyección 2027 · supuestos sin validar; no es un resultado oficial. Las bancas se calculan desde estos votos con el asignador de Simulación.</p>
+        {scenarioProvenance.apportioned ? <p>Votos enteros obtenidos por redondeo de las proporciones del escenario mediante mayores restos sobre 32.291 votos. Diferencia máxima por lista: {scenarioProvenance.maxDifference.toFixed(6)} votos.</p> : <p>Votos enteros exactos recuperados de las proporciones del archivo sobre 32.291 votos.</p>}
+      </section> : null}
+      {scenarioError ? <Alert variant="unavailable">{scenarioError}</Alert> : null}
       <section aria-label="Cargar base oficial">
         <a href="/simulate?officialBase=2025">Cargar base oficial 2025 de Coronel Rosales</a>
         {officialBaseLoaded ? <p>Base oficial 2025 · JEBA definitivo · Concejales · argentinos y extranjeros. Positivos: 32.291; blancos: 2.150; total publicado: 34.441. Base del cociente Hare (sin blancos ni anulados): 32.291. Anulados no publicados: no se infieren como cero. El reparto usa Hare y 9 bancas por elección. Las transferencias posteriores son hipótesis, no resultados oficiales.</p> : null}
