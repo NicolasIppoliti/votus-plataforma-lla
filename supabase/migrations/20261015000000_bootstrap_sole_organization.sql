@@ -23,7 +23,8 @@ begin
   select * into ctx from workspace_private.workspace_context where session_id=c.claim_session_id; if ctx.user_id<>c.claim_user_id then raise exception using errcode='VOT03'; end if; return workspace_api.current_workspace();
 end $$;
 alter function workspace_api.bootstrap_workspace_context() owner to workspace_context_owner;
-revoke all on function workspace_api.bootstrap_workspace_context() from public,anon,service_role;
+revoke all on function workspace_api.bootstrap_workspace_context() from public,anon;
+do $$ begin if to_regrole('service_role') is not null then revoke all on function workspace_api.bootstrap_workspace_context() from service_role; end if; end $$;
 grant execute on function workspace_api.bootstrap_workspace_context() to authenticated;
 reset role;
 revoke create on schema workspace_private,workspace_api from workspace_context_owner;
