@@ -409,6 +409,7 @@ test("workspace refresh preserves an unsent real simulation form", async ({ page
 });
 
 test("Panorama places the map beside its summary and stacks them on mobile",  async ({ page }) => {
+  await withReviewItem(page, async () => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
@@ -445,6 +446,7 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
     await expectNoSevereAccessibilityIssues(page);
     await page.keyboard.press("Escape");
   }
+  });
 });
 
 test.describe("the production root preserves its authentication boundary", () => {
@@ -694,6 +696,9 @@ test.describe("the production root preserves its authentication boundary", () =>
     await expect(desktopNavigation.getByRole("link", { name: "Evidencia", exact: true })).toHaveAttribute("href", "/evidencia");
     await expect(desktopNavigation.getByRole("link", { name: "Revisión de datos", exact: true })).toHaveAttribute("href", "/review");
 
+    // The no-selection shell above intentionally has no Panorama data content.
+    await expect(page.getByRole("main").getByRole("heading", { name: "Seleccioná una organización", exact: true })).toBeVisible();
+    await withReviewItem(page, async () => {
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
     await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
@@ -701,6 +706,7 @@ test.describe("the production root preserves its authentication boundary", () =>
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
     await expect(separatedRoutes.getByRole("link", { name: "Resultados municipales" })).toHaveAttribute("href", "/municipal");
+    });
     await page
       .getByRole("link", { name: "Ir al contenido principal" })
       .press("Enter");

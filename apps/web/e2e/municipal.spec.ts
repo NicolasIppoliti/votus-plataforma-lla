@@ -23,12 +23,12 @@ const baseURL = scenarioBaseUrl(SPEC, environment);
 const identity = resultScenarioIdentity(SPEC);
 
 interface WorkspaceFixture { organization_id: string; user_id: string; distrito_code: string; seccion_code: string; }
-async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promise<T>): Promise<T> {
+async function withAuthorizedMunicipalWorkspace<T>(page: Page, run: () => Promise<T>, seccionCode = "027"): Promise<T> {
   const admin = createClient(environment.NEXT_PUBLIC_SUPABASE_URL, environment.SUPABASE_SERVICE_ROLE_KEY);
   const { data: users, error: userError } = await admin.auth.admin.listUsers();
   const user = users?.users.find((candidate) => candidate.email?.toLowerCase() === environment.VOTUS_E2E_TEST_USER_EMAIL.toLowerCase());
   if (userError || !user) throw new Error("failed to resolve municipal fixture user");
-  const { data, error } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: "02", p_seccion_code: "027" });
+  const { data, error } = await admin.rpc("e2e_setup_authorized_fiscal_fixture", { p_user_id: user.id, p_distrito_code: "02", p_seccion_code: seccionCode });
   if (error || typeof data?.organization_id !== "string") throw new Error("failed to set up authorized municipal fixture");
   const fixture = data as WorkspaceFixture;
   try {
@@ -107,7 +107,9 @@ nextTest("retries unavailable municipal evidence with the exact configured reque
 
 test.describe("the municipal route requires workspace-authorized official results", () => {
   test("test_route_is_reachable_and_fails_closed_without_workspace_entitlement", async ({ page }) => {
-    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => {
+    // Select a valid workspace for a different section. An unselected workspace
+    // now exercises #427's recovery state, not the municipal entitlement guard.
+    await withResultFixture(SPEC, MUNICIPAL_SOURCE_ISOLATION_FIXTURE, async () => withAuthorizedMunicipalWorkspace(page, async () => {
       await page.goto(new URL("/", baseURL).toString());
       const municipalNavigationLink = page
         .getByRole("navigation", { name: "principal" })
@@ -137,7 +139,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText(formatCount(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText("party-internal, unofficial");
-    });
+    }, "028"));
   });
 
   test("test_authorized_workspace_section_map_keyboard_activation_and_exact_results_focus", async ({ page }) => {
