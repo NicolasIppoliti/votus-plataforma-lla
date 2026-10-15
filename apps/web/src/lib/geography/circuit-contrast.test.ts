@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { circuitColor, circuitBandColor } from "./circuit-presentation";
+import { circuitColor, circuitBandColor, shareFill, WINNER_COLORS, NEUTRAL_FILL, REFERENCE_COLOR, DOT_COLOR } from "@/components/maps/reference-colors";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CircuitReferenceSvg } from "../../components/maps/CircuitReferenceSvg";
@@ -13,7 +13,16 @@ function luminance(hex: string) {
 }
 
 describe("navy circuit margin contrast", () => {
-  it("renders light and medium bands as opaque fills with at least 3:1 contrast", () => {
+  it("keeps shared electoral fills and reference marks at AA text contrast against both navy surfaces", () => {
+    const hex = (rgb: readonly number[]) => "#" + rgb.slice(0, 3).map(channel => channel.toString(16).padStart(2, "0")).join("");
+    const colors = [REFERENCE_COLOR, DOT_COLOR, hex(NEUTRAL_FILL), ...WINNER_COLORS.map(hex), ...Array.from({ length: 101 }, (_, percent) => hex(shareFill(percent)))];
+    for (const background of ["#0d1d2b", "#091724"]) for (const color of colors) {
+      expect((luminance(color) + 0.05) / (luminance(background) + 0.05)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(shareFill(-1)).toEqual(shareFill(0));
+    expect(shareFill(101)).toEqual(shareFill(100));
+  });
+  it("renders light and medium bands as opaque fills with at least 4.5:1 contrast", () => {
     for (const margin of [4, 10, 20]) {
       const markup = renderToStaticMarkup(createElement(CircuitReferenceSvg, {
         geometry: [{ code: "00248", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] }],
@@ -31,18 +40,18 @@ describe("navy circuit margin contrast", () => {
         const bg = channels(background);
         const composite = "#" + channels(fill!).map((value, index) => Math.round(value * opacity + bg[index]! * (1 - opacity)).toString(16).padStart(2, "0")).join("");
         const contrast = (luminance(composite) + 0.05) / (luminance(background) + 0.05);
-        expect(contrast).toBeGreaterThanOrEqual(3);
+        expect(contrast).toBeGreaterThanOrEqual(4.5);
       }
     }
   });
-  it("keeps every categorical identity color at least 3:1 against navy", () => {
+  it("keeps every categorical identity color at least 4.5:1 against navy", () => {
     const measurements = [];
     for (const id of ["a", "b", "c", "d", "e", "f"]) {
       const base = circuitColor(id);
       const colors = ["light", "medium", "intense"].map(band => {
         const color = circuitBandColor(base, band);
         const contrast = (luminance(color) + 0.05) / (luminance("#0d1d2b") + 0.05);
-        expect(contrast).toBeGreaterThanOrEqual(3);
+        expect(contrast).toBeGreaterThanOrEqual(4.5);
         return { band, color, contrast: Number(contrast.toFixed(3)) };
       });
       expect(new Set(colors.map(entry => entry.color)).size).toBe(3);

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { formatCount } from "../src/lib/format/number";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { writeSimulateBackRestore } from "./simulate-back-restore";
 
@@ -252,7 +253,7 @@ test.describe("the simulation route labels caller-supplied projections", () => {
     await expect(form).not.toContainText(/heldOver|JSON/);
     await expectNoHorizontalOverflow(page);
 
-    await form.getByLabel("Granularidad").selectOption("seccion");
+    await form.getByLabel("Nivel", { exact: true }).selectOption("seccion");
     await form.getByRole("button", { name: "Agregar lista" }).click();
     await expect(form.getByLabel("Nombre de la lista").nth(1)).toBeFocused();
     await form.getByRole("button", { name: "Agregar lista" }).click();
@@ -675,8 +676,8 @@ test("transfers a rich baseline losslessly with keyboard controls and resets aft
   await expect(transfer.getByLabel("Lista receptora")).toHaveValue("");
   await expect(transfer.getByLabel("Cantidad a transferir")).toHaveValue("0");
   await expect(transfer.getByLabel("Lista donante").getByRole("option", {
-    name: "Lista A — 6000 votos", exact: true,
-  })).toHaveText("Lista A — 6000 votos");
+    name: "Lista A — 6.000 votos", exact: true,
+  })).toHaveText("Lista A — 6.000 votos");
 
   // A custom-editor baseline change must also discard a drafted operation.
   const custom = { ...input, voteTotals: undefined, totalVotes: 10000,
@@ -734,10 +735,10 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
   await expect(samples).toContainText("Último intervalo más corto: 400 votos");
   const sampledTable = samples.getByRole("table", { name: "Muestras evaluadas", exact: true });
   await expect(sampledTable.getByRole("row")).toHaveCount(4);
-  await expect(sampledTable.locator("tbody").getByRole("rowheader")).toHaveText(["0", "600", "1000"]);
+  await expect(sampledTable.locator("tbody").getByRole("rowheader")).toHaveText([0, 600, 1000].map(formatCount));
   await expect(samples).toContainText("Sin probabilidades, garantías entre puntos ni umbral general para ganar bancas");
   for (const amount of [0, 600, 1000]) {
-    const link = samples.getByRole("link", { name: `Ver escenario exacto: ${amount} votos`, exact: true });
+    const link = samples.getByRole("link", { name: `Ver escenario exacto: ${formatCount(amount)} votos`, exact: true });
     await expect(link).toHaveCount(1);
     const url = new URL((await link.getAttribute("href"))!, page.url());
     expect([...url.searchParams.keys()].some((key) => key.startsWith("sweep"))).toBe(false);
@@ -752,7 +753,7 @@ test("samples fixed-total transfers, links exact evidence and resets on baseline
     .getByRole("row", { name: "Lista cero 0 0", exact: true })).toBeVisible();
   await expect(exact.getByText(/Huella de los datos proporcionados/)).toHaveText(trace);
   expect(JSON.parse(new URL(page.url()).searchParams.get("input")!)).toEqual(input);
-  const endpoint = samples.getByRole("link", { name: "Ver escenario exacto: 1000 votos", exact: true });
+  const endpoint = samples.getByRole("link", { name: "Ver escenario exacto: 1.000 votos", exact: true });
   const pointUrl = new URL((await endpoint.getAttribute("href"))!, page.url());
   expect(pointUrl.searchParams.has("sweepMax")).toBe(false);
   expect(JSON.parse(pointUrl.searchParams.get("input")!)).toEqual({ ...input, lists: [
@@ -810,11 +811,11 @@ test("serves varying sample allocations and numeric extrema for every list", asy
   })}`);
   const samples = page.getByRole("region", { name: "Resultados del muestreo", exact: true });
   const points = samples.getByRole("table", { name: "Muestras evaluadas", exact: true });
-  await expect(points.locator("tbody").getByRole("rowheader")).toHaveText(["0", "2000", "4000"]);
+  await expect(points.locator("tbody").getByRole("rowheader")).toHaveText([0, 2000, 4000].map(formatCount));
   for (const [amount, seats] of [["0", ["1", "1", "0"]], ["2000", ["1", "1", "0"]], ["4000", ["0", "2", "0"]]] as const) {
-    const row = points.getByRole("rowheader", { name: amount, exact: true }).locator("..");
+    const row = points.getByRole("rowheader", { name: formatCount(Number(amount)), exact: true }).locator("..");
     await expect(row.getByRole("cell")).toHaveText([
-      "Válida", ...seats, `Ver escenario exacto: ${amount} votos`,
+      "Válida", ...seats, `Ver escenario exacto: ${formatCount(Number(amount))} votos`,
     ]);
   }
   const extrema = samples.getByRole("table", { name: "Mínimo y máximo de bancas en las muestras válidas" });
@@ -1079,8 +1080,8 @@ test("keeps zero-seat lists countable at desktop and mobile widths", async ({ pa
     await page.setViewportSize({ width, height: 800 });
     for (const label of ["Lista donante", "Lista receptora"]) {
       await expect(transfer.getByLabel(label).getByRole("option", {
-        name: `${longName} — 10000 votos`, exact: true,
-      })).toHaveText(`${longName} — 10000 votos`);
+        name: `${longName} — 10.000 votos`, exact: true,
+      })).toHaveText(`${longName} — 10.000 votos`);
     }
     await expect(chart.locator('[data-seat-state="awarded"]')).toHaveCount(2);
     await expect(chart.locator('[data-seat-state="empty"]')).toHaveCount(4);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createClient } from "@supabase/supabase-js";
 
+import { formatCount } from "../src/lib/format/number";
 import { assertE2eEnvironment } from "./gate-contract";
 import { test as nextTest } from "./review-test-fixture";
 import {
@@ -71,6 +72,11 @@ nextTest("retries unavailable municipal evidence with the exact configured reque
         p_requested_level: "seccion",
       };
 
+      // Panorama (reached by the workspace helper) resolves its own default
+      // context and calls official_result too, including the refresh after the
+      // organization switch; let it settle so only this page's request counts.
+      await page.waitForLoadState("networkidle");
+      bodies.length = 0;
       await page.goto(submittedUrl);
       const main = page.getByRole("main");
       await expect(main.getByRole("alert")).toContainText("no está disponible");
@@ -91,7 +97,7 @@ nextTest("retries unavailable municipal evidence with the exact configured reque
       await expect(page).toHaveURL(submittedUrl);
       await expect(page.locator("html")).not.toHaveAttribute("data-retry-sentinel", "original-document");
       await expect(main.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
-      await expect(main.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(main.getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       await expect(retry).toHaveCount(0);
       await expect(reset).toHaveCount(0);
     }),
@@ -122,12 +128,13 @@ test.describe("the municipal route requires workspace-authorized official result
       })).toHaveCount(0);
       await expect(main.getByRole("table")).toHaveCount(0);
       await expect(main.getByRole("rowheader")).toHaveCount(0);
-      await expect(main).not.toContainText(`ALIANZA LA LIBERTAD AVANZA: ${OFFICIAL_VOTES} voto(s)`);
+      await expect(main).not.toContainText(`ALIANZA LA LIBERTAD AVANZA: ${formatCount(OFFICIAL_VOTES)} voto(s)`);
       await expect(main).not.toContainText("110: 1 filas");
       await expect(main.getByRole("status", { name: "granularidad: sección" })).toHaveCount(0);
-      await expect(main).not.toContainText(`1 fila fiscalización / ${FISCALIZACION_VOTES} votos`);
+      await expect(main).not.toContainText(`1 fila fiscalización / ${formatCount(FISCALIZACION_VOTES)} votos`);
       await expect(main.getByRole("list", { name: "procedencia" })).toHaveCount(0);
       await expect(main).not.toContainText(String(OFFICIAL_VOTES + FISCALIZACION_VOTES));
+      await expect(main).not.toContainText(formatCount(OFFICIAL_VOTES + FISCALIZACION_VOTES));
       await expect(main).not.toContainText("party-internal, unofficial");
     });
   });
@@ -142,7 +149,7 @@ test.describe("the municipal route requires workspace-authorized official result
       const outline = geography.getByRole("img");
       const table = main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" });
       await expect(outline).toBeVisible();
-      await expect(table.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(table.getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       const activate = geography.getByRole("button", { name: "Activar mapa interactivo de la sección" });
       await activate.focus();
       await activate.press("Enter");
@@ -160,7 +167,7 @@ test.describe("the municipal route requires workspace-authorized official result
         await expect(geography.locator("canvas.maplibregl-canvas")).toHaveCount(0);
       }
       await expect(outline).toBeVisible();
-      await expect(table.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(table.getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       const select = geography.getByRole("button", { name: "Seleccionar sección y consultar resultados" });
       await select.focus();
       await select.press("Enter");
@@ -187,7 +194,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(tableRegion).toBeFocused();
       await page.keyboard.press("ArrowRight");
       await expect(tableRegion).toBeFocused();
-      await expect(main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }).getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(main.getByRole("region", { name: "Tabla de resultados oficiales exactos por partido" }).getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     }));
   });
@@ -219,7 +226,7 @@ test.describe("the municipal route requires workspace-authorized official result
               .getByRole("table").locator("tbody").getByRole("row");
             await expect(rows).toHaveCount(1);
             await expect(rows.getByRole("rowheader")).toHaveText(["ALIANZA LA LIBERTAD AVANZA"]);
-            await expect(rows.getByRole("cell")).toHaveText([String(OFFICIAL_VOTES)]);
+            await expect(rows.getByRole("cell")).toHaveText([formatCount(OFFICIAL_VOTES)]);
           }
         } finally {
           await context.close();
@@ -261,7 +268,7 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(geography.getByRole("status")).toContainText("Mapa no disponible; el contorno y la tabla siguen disponibles.");
       await expect(geography.locator("canvas.maplibregl-canvas")).toHaveCount(0);
       await expect(outline).toBeVisible();
-      await expect(table.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(table.getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
       const link = geography.getByRole("link", { name: "Ir a los resultados exactos de la sección" });
       await link.focus();
       await link.press("Enter");
@@ -286,8 +293,8 @@ test.describe("the municipal route requires workspace-authorized official result
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toBeVisible();
       await expect(main.getByRole("heading", { name: "Resultados exactos" })).toHaveCSS("font-size", "20px");
       await expect(main.getByRole("rowheader", { name: "ALIANZA LA LIBERTAD AVANZA" })).toBeVisible();
-      await expect(main.getByRole("cell", { name: String(OFFICIAL_VOTES) })).toBeVisible();
-      await expect(main).toContainText(`1 fila fiscalización / ${FISCALIZACION_VOTES} votos`);
+      await expect(main.getByRole("cell", { name: formatCount(OFFICIAL_VOTES) })).toBeVisible();
+      await expect(main).toContainText(`1 fila fiscalización / ${formatCount(FISCALIZACION_VOTES)} votos`);
       const archiveSummary = main.locator("summary").filter({ hasText: "Archivo y procedencia" });
       await expect(archiveSummary).toBeVisible();
       await expect(main.getByRole("list", { name: "procedencia" })).not.toBeVisible();
@@ -302,7 +309,7 @@ test.describe("the municipal route requires workspace-authorized official result
       const officialRows = tableRegion.getByRole("table").locator("tbody").getByRole("row");
       await expect(officialRows).toHaveCount(1);
       await expect(officialRows.getByRole("rowheader")).toHaveText(["ALIANZA LA LIBERTAD AVANZA"]);
-      await expect(officialRows.getByRole("cell")).toHaveText([String(OFFICIAL_VOTES)]);
+      await expect(officialRows.getByRole("cell")).toHaveText([formatCount(OFFICIAL_VOTES)]);
       await tableRegion.focus(); await expect(tableRegion).toBeFocused();
       const heading = main.getByRole("heading", {
         name: "Coronel Rosales",
@@ -323,10 +330,10 @@ test.describe("the municipal route requires workspace-authorized official result
       });
 
       await expect(coverage.getByRole("alert")).toContainText(
-        "1 de 2 filas (3333 votos) se resolvieron sin un partido curado",
+        "1 de 2 filas (3.333 votos) se resolvieron sin un partido curado",
       );
       await expect(coverage.getByRole("listitem").filter({
-        hasText: /^110: 1 filas, 3333 votos$/,
+        hasText: /^110: 1 filas, 3\.333 votos$/,
       })).toHaveCount(1);
 
       for (const width of [1710, 1440, 390, 320]) {

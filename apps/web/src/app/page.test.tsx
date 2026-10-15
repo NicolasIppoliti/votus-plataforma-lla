@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import { loadAuthorizedOfficialDrilldownEvidence } from "@/lib/workspace/official-drilldown-evidence";
-import OperationalBriefingPage from "./(authenticated)/page";
+import OperationalBriefingPage from "./(authenticated)/(home)/page";
 
 const { facets } = vi.hoisted(() => ({ facets: vi.fn().mockResolvedValue({ elections: [] }) }));
 
@@ -41,14 +41,14 @@ it("renders the root operational briefing with evidence and review routes", asyn
 it("renders compact official groups and real child circuit outcomes through the root page", async () => {
   facets.mockResolvedValue({
     elections: [{ id: "election", year: 2025, round: "legislativas" }],
-    categories: [{ id: "category", name: "DIPUTADO NACIONAL" }],
+    categories: [{ id: "category", name: "CONCEJALES" }],
     distritos: [{ code: "02" }], secciones: [{ code: "027" }],
     circuitos: [{ code: "00248", name: "Circuito autorizado", nameStatus: "present", nameVariantCount: 1 }],
     availableLevels: ["seccion"],
   });
   vi.mocked(loadAuthorizedOfficialDrilldownEvidence).mockResolvedValueOnce({
     status: "ok", result: {
-      status: "ok", sourceKind: "official", electionYear: 2025, electionRound: "legislativas", categoryName: "DIPUTADO NACIONAL", mesaCount: 1, archiveEntryIds: [], sourceAudit: [],
+      status: "ok", sourceKind: "official", electionYear: 2025, electionRound: "provinciales", categoryName: "CONCEJALES", mesaCount: 1, archiveEntryIds: [], sourceAudit: [],
       totalVotes: 210, level: "seccion", sourceGranularity: "mesa", sourceExclusions: [],
       parties: [6, 5, 4, 3, 2, 1].map((n) => ({ identityStatus: "canonical", canonicalPartyId: `p${n}`, displayName: `Grupo ${n}`, listId: null, votes: n * 10, voteShare: String(n / 21) })),
     },
@@ -61,6 +61,8 @@ it("renders compact official groups and real child circuit outcomes through the 
     }], unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0, membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 } },
   });
   const markup = renderToStaticMarkup(await OperationalBriefingPage() as ReactElement);
+  expect(markup).toContain("CONCEJALES");
+  expect(markup).toContain("2025 · provinciales");
   expect.soft(markup).toContain("Otras agrupaciones (2)");
   expect(markup).toContain("30 votos");
   expect.soft(markup).not.toContain("Grupo 1");

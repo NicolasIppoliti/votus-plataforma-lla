@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Map as MapIcon, Target, Check, Plus, Minus, RotateCcw, Info } from "lucide-react";
+import { REFERENCE_STYLE, Legend } from "@/components/maps/reference-colors";
 import { loadSectionReferenceGeometry } from "./circuit-geometry";
 import styles from "./drilldown.module.css";
 
@@ -21,16 +22,19 @@ function SectionReferenceOutline() {
   const height = 600 * (north - south) / ((east - west) * aspect);
   const path = reference.geometry.coordinates.flat().map(ring => ring.map(([x, y], i) => `${i ? "L" : "M"}${(x! - west) / (east - west) * 600} ${(north - y!) / (north - south) * height}`).join(" ") + " Z").join(" ");
   return <svg className={styles.referenceOutline} viewBox={`-20 -20 640 ${height + 40}`} role="img" aria-label="Contorno de referencia CNE de Coronel Rosales; no geometría de la unidad seleccionada">
-    <path d={path} fillRule="evenodd" />
+    <path d={path} style={REFERENCE_STYLE} fillRule="evenodd" />
   </svg>;
 }
 
-export function TerritorialMapStage({ title, subtitle, referenceRosales = false, children, footer }: {
-  title: string; subtitle: string; referenceRosales?: boolean; children?: ReactNode; footer?: ReactNode;
+/** Neutral outline or source-backed results: the heading must say which (#487). */
+export const MAP_HEADING = { REFERENCE: "Referencia territorial", CIRCUIT_LEADERS: "Primer lugar observado por circuito" } as const;
+
+export function TerritorialMapStage({ heading, title, subtitle, referenceRosales = false, children, footer }: {
+  heading: (typeof MAP_HEADING)[keyof typeof MAP_HEADING]; title: string; subtitle: string; referenceRosales?: boolean; children?: ReactNode; footer?: ReactNode;
 }) {
   const [zoom, setZoom] = useState(100);
   return <section className={styles.mapPanel} aria-label="Mapa territorial de referencia">
-    <header className={styles.mapHeading}><div><h2>Ganadores en el territorio</h2><p>{subtitle}</p></div><span className={styles.mapMode}><MapIcon aria-hidden="true" size={14} /> Vista territorial</span></header>
+    <header className={styles.mapHeading}><div><h2>{heading}</h2><p>{subtitle}</p></div><span className={styles.mapMode}><MapIcon aria-hidden="true" size={14} /> Vista territorial</span></header>
     <div className={styles.mapStage}>
       <span className={styles.coordinate}>Referencia geográfica</span>
       <div className={styles.northMark} role="img" aria-label="Norte"><span>N</span><svg viewBox="0 0 18 30" aria-hidden="true"><path d="m9 2 6 18-6-4-6 4zM9 16v12" /></svg></div>
@@ -45,6 +49,7 @@ export function TerritorialMapStage({ title, subtitle, referenceRosales = false,
     </div>
     <footer className={styles.mapFooter}><div><span aria-hidden="true">■</span> Territorio seleccionado<small>Referencia geográfica, no cobertura electoral</small></div><a href="#official-evidence-heading"><Info aria-hidden="true" size={14} /> Ver evidencia</a></footer>
     {footer}
+    {referenceRosales && <Legend label="Referencia de sección" entries={[{ label: "Contorno de referencia CNE; sin resultados electorales", encoding: "outline" }]} />}
     {referenceRosales && <div className={styles.referenceNote}><p>Geometría de referencia CNE; no certificada como límite electoral 2025. Aplicabilidad electoral desconocida.</p><p>Fuente: CNE · recuperada el 24/09/2026. Contorno ancestro; sin geometría propia para la unidad seleccionada.</p></div>}
   </section>;
 }

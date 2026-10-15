@@ -131,7 +131,7 @@ describe("DrilldownPage authorized official evidence", () => {
     for (const label of ["Territorio", "Elección", "Categoría", "Agrupación", "Todas las agrupaciones", "Alcance fijo", "La cámara no cambia los resultados"]) expect(filters).toContain(label);
     for (const name of ["circuitoCode", "establecimientoCode", "mesaCode", "level"]) expect(filters).not.toMatch(new RegExp(`<select[^>]*name="${name}"`));
     expect(filters).toMatch(/<select[^>]*id="explorer-party"[^>]*disabled/);
-    for (const label of ["Ganadores en el territorio", "Vista territorial", 'aria-label="Acercar mapa"', 'aria-label="Alejar mapa"', 'aria-label="Restablecer vista"', 'aria-label="Norte"', "Vista de referencia · 100 %", "Contorno de referencia", "Detalle territorial", "Navegador territorial", "Circuitos de Coronel Rosales", "Volver a Buenos Aires", "Participación", "Votos positivos"]) expect(markup).toContain(label);
+    for (const label of ["Referencia territorial", "Vista territorial", 'aria-label="Acercar mapa"', 'aria-label="Alejar mapa"', 'aria-label="Restablecer vista"', 'aria-label="Norte"', "Vista de referencia · 100 %", "Contorno de referencia", "Detalle territorial", "Navegador territorial", "Circuitos de Coronel Rosales", "Volver a Buenos Aires", "% de los votos positivos", "Votos positivos"]) expect(markup).toContain(label);
     expect(markup).toContain('aria-label="Abrir 00001 — nombre no disponible"');
     expect(markup.indexOf('aria-label="Navegador territorial"')).toBeLessThan(markup.indexOf('aria-label="Liderazgo observado"'));
   });
@@ -158,6 +158,33 @@ describe("DrilldownPage authorized official evidence", () => {
     const markup = await render();
     expect(markup).toContain('id="navigator-search"');
     expect(markup.match(/aria-label="Abrir /g)).toHaveLength(10);
+  });
+
+  it("titles the map by what it shows and labels the party share by its denominator (#487)", async () => {
+    const reference = await render({});
+    expect(reference).not.toContain("Ganadores en el territorio");
+    expect(reference).toContain("<h2>Referencia territorial</h2>");
+
+    const selected = await render();
+    expect(selected).not.toContain("Ganadores en el territorio");
+    expect(selected).toContain("<h2>Referencia territorial</h2>");
+    expect(selected).not.toMatch(/<p>Participación [0-9]/);
+    expect(selected).toMatch(/<p>[0-9.,]+ % de los votos positivos · margen /);
+    expect(selected).toContain("Sobre votos positivos; no representa participación del padrón.");
+
+    mocks.circuits.mockResolvedValue({
+      status: "ok", authorization_status: "authorized", source_kind: "official", level: "seccion",
+      circuit_membership: "known", category_applicability: "district_reported_categories", truncated: false,
+      unassigned: { catalogue_mesas_without_membership: 0, membership_quarantined_mesas: 0,
+        membership_quarantine_reasons: {}, completeness_quarantines: 0, completeness_quarantine_reasons: {}, unexpected_status_mesas: 0 },
+      circuits: [{ circuito_code: "00001", positive_total: 100, status: "complete",
+        counts: { expected: 1, counted: 1, not_counted: 0, missing: 0, unexpected: 0, quarantined: 0 },
+        parties: [{ identity_status: "canonical", canonical_party_id: "p1", display_name: "Grupo 1", list_id: null, votes: 60 },
+          { identity_status: "canonical", canonical_party_id: "p2", display_name: "Grupo 2", list_id: null, votes: 40 }] }],
+    });
+    const observed = await render();
+    expect(observed).not.toContain("Ganadores en el territorio");
+    expect(observed).toContain("<h2>Primer lugar observado por circuito</h2>");
   });
 
   it("reaches circuit legend and exact provisional table through the real page", async () => {
@@ -191,15 +218,15 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(markup.indexOf('aria-label="Resultados exactos por circuito"')).toBeLessThan(markup.indexOf('<summary>Mostrar resultados exactos</summary>'));
     expect(markup.indexOf('aria-label="Resultados exactos por circuito"')).toBeLessThan(markup.indexOf('aria-labelledby="school-breakdown-heading"'));
     expect(markup).toContain('data-hatched="true"');
-    expect(markup).toContain("20.00");
+    expect(markup).toContain("20,00");
     expect(mocks.circuits).toHaveBeenCalled();
   });
 
   it.each([
-    [60, 40, "canonical", "Mayoría", "20.00 pp"],
-    [50, 50, "canonical", "Empate", "0.00 pp"],
+    [60, 40, "canonical", "Mayoría", "20,00 pp"],
+    [50, 50, "canonical", "Empate", "0,00 pp"],
     [0, 0, "canonical", "Sin votos positivos", "no disponible"],
-    [60, 40, "unmapped", "Lista sin mapear 110", "20.00 pp"],
+    [60, 40, "unmapped", "Lista sin mapear 110", "20,00 pp"],
   ])("inspects every official group truthfully (%s/%s, %s)", async (first, second, status, leader, margin) => {
     const bundle = authorizedBundle();
     mocks.bundle.mockResolvedValue({ ...bundle, result: { ...bundle.result, total_votes: first + second,
@@ -267,7 +294,7 @@ describe("DrilldownPage authorized official evidence", () => {
     const markup = await render();
     expect(markup).toContain("Internas");
     expect(mocks.internas).toHaveBeenCalled();
-    for (const text of ["La Fuerza del Cambio", "75.00%", "60.00%", "Lista única", "Lista sin mapear", "0 votos", "No disponible", "ingesta nacional", "Fuente: oficial", "Granularidad: mesa"])
+    for (const text of ["La Fuerza del Cambio", "75,00%", "60,00%", "Lista única", "Lista sin mapear", "0 votos", "No disponible", "ingesta nacional", "Fuente: oficial", "Granularidad: mesa"])
       expect(markup).toContain(text);
     expect(markup).not.toContain("9999");
     expect(markup).toContain('aria-label="Internas: votos y porcentajes por agrupación"');
@@ -392,12 +419,12 @@ describe("DrilldownPage authorized official evidence", () => {
       `Elección</dt><dd>${COMPLETE_SECTION.electionId}`,
       `Categoría</dt><dd>${COMPLETE_SECTION.categoryId}`,
       "Distrito</dt><dd>02", "Sección</dt><dd>027", "Circuito</dt><dd>00001",
-      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel del informe</dt><dd>Mesa",
+      "Establecimiento</dt><dd>E1", "Mesa</dt><dd>1", "Nivel</dt><dd>Mesa",
     ]) expect(evidence).toContain(entry);
     expect(evidence).toContain("Referencia electoral autorizada");
     expect(evidence).toContain(`SHA-256 ${"a".repeat(64)}`);
     expect(markup).toContain("300 votos a nivel mesa");
-    expect(markup).toMatch(/<td\b[^>]*>300 votos<\/td><td\b[^>]*>100\.00%<\/td>/);
+    expect(markup).toMatch(/<td\b[^>]*>300 votos<\/td><td\b[^>]*>100,00%<\/td>/);
     expect(mocks.bundle).toHaveBeenCalledWith(expect.anything(), {
       electionId: COMPLETE_SECTION.electionId, categoryId: COMPLETE_SECTION.categoryId,
       distritoCode: "02", seccionCode: "027", circuitoCode: "00001",
@@ -660,8 +687,8 @@ describe("DrilldownPage authorized official evidence", () => {
     expect(chart.match(/role="img"/g)).toHaveLength(3);
     for (const width of [75, 25, 0]) expect(chart).toContain(`width="${width}"`);
     expect(chart).toContain("100 %");
-    expect(markup).toContain("75.00%");
-    expect(markup).toContain("25.00%");
+    expect(markup).toContain("75,00%");
+    expect(markup).toContain("25,00%");
     const disclosure = markup.slice(markup.indexOf("<summary>Archivo y procedencia</summary>"), markup.indexOf("</details>", markup.indexOf("<summary>Archivo y procedencia</summary>")));
     expect(disclosure).toContain("SHA-256");
     expect(disclosure).not.toContain("Se excluyeron");

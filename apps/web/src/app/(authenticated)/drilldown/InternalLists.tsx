@@ -1,8 +1,9 @@
 import { TableRegion } from "@/components/TableRegion";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ExactShare, OfficialInternalLists } from "@/lib/workspace/official-internal-lists";
+import { formatCount, formatFixed2 } from "@/lib/format/number";
 
-const share = (value: ExactShare | null) => value === null ? "No disponible" : `${(value.numerator / value.denominator * 100).toFixed(2)}%`;
+const share = (value: ExactShare | null) => value === null ? "No disponible" : `${formatFixed2(value.numerator / value.denominator * 100)}%`;
 const states: Record<string, string> = {
   authorization_denied: "Acceso denegado a las internas de esta selección.",
   no_rows: "La consulta autorizada no encontró listas internas.",
@@ -24,7 +25,7 @@ export function InternalLists({ evidence }: { evidence: OfficialInternalLists })
   return <section aria-labelledby="internas-heading">
     <h2 id="internas-heading">Internas</h2>
     <p>Fuente: oficial · Nivel: sección · Granularidad: {evidence.source_granularity}.</p>
-    <p>Base de porcentajes: votos positivos de la selección ({evidence.positive_total} votos), no todos los votos emitidos.</p>
+    <p>Base de porcentajes: votos positivos de la selección ({formatCount(evidence.positive_total)} votos), no todos los votos emitidos.</p>
     <TableRegion label="Internas: votos y porcentajes por agrupación">
       <Table className="data-table">
         <TableCaption>Internas: votos y porcentajes por agrupación</TableCaption>
@@ -32,7 +33,7 @@ export function InternalLists({ evidence }: { evidence: OfficialInternalLists })
         {Array.from(groups, ([id, lists]) => <TableBody key={id ?? "unmapped"}>
           <TableRow><TableHead scope="rowgroup" colSpan={4}>{lists[0]?.display_name ?? "Agrupación sin mapear"}{lists[0]?.singleList ? " · Lista única" : ""}</TableHead></TableRow>
           {lists.map((list, index) => <TableRow key={list.list_id ?? index}>
-            <TableHead scope="row">{list.label}</TableHead><TableCell>{list.votes} votos</TableCell>
+            <TableHead scope="row">{list.label}</TableHead><TableCell>{formatCount(list.votes)} votos</TableCell>
             <TableCell>{share(list.withinParty)}</TableCell><TableCell>{share(list.ofPositive)}</TableCell>
           </TableRow>)}
         </TableBody>)}

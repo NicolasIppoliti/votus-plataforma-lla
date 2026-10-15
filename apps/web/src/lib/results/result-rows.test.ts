@@ -33,7 +33,7 @@ describe("the exclusion tally (rule 3 — a drop is judged by its size)", () => 
     const response = { excluded: tallyByKind([MIXED_ROWS[1]!]) };
 
     expect(response.excluded).toEqual({ fiscalizacion: { rows: 1, votes: 9999 } });
-    expect(describeExcluded(response.excluded)).toBe("1 fila fiscalización / 9999 votos");
+    expect(describeExcluded(response.excluded)).toBe("1 fila fiscalización / 9.999 votos");
   });
 
   it("test_a_source_kind_outside_the_enum_lands_in_its_own_bucket", () => {

@@ -1,4 +1,5 @@
 import type { Granularity, SourceKind } from "./types";
+import { formatCount } from "@/lib/format/number";
 
 export interface ResultRow {
   jurisdictionId: string;
@@ -69,7 +70,7 @@ export function describeExcluded(excluded: ExcludedByKind): string | null {
           : kind === "unknown"
             ? "desconocida"
             : kind;
-      return `${tally.rows} ${tally.rows === 1 ? "fila" : "filas"} ${sourceLabel} / ${tally.votes} ${tally.votes === 1 ? "voto" : "votos"}`;
+      return `${formatCount(tally.rows)} ${tally.rows === 1 ? "fila" : "filas"} ${sourceLabel} / ${formatCount(tally.votes)} ${tally.votes === 1 ? "voto" : "votos"}`;
     })
     .join(", ");
 }

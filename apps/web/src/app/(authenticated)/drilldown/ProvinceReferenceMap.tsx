@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { REFERENCE_STYLE, Legend } from "@/components/maps/reference-colors";
 import styles from "./drilldown.module.css";
 
 interface ProvinceFeature {
@@ -35,6 +36,6 @@ export function ProvinceReferenceMap() {
     void load();
     return () => controller.abort();
   }, []);
-  return path ? <svg className={styles.referenceOutline} viewBox="-20 -20 640 640" role="img" aria-label="Contorno de referencia IGN de Buenos Aires; sin resultados electorales"><path d={path} fillRule="evenodd" /></svg>
+  return path ? <><svg className={styles.referenceOutline} viewBox="-20 -20 640 640" role="img" aria-label="Contorno de referencia IGN de Buenos Aires; sin resultados electorales"><path d={path} style={REFERENCE_STYLE} fillRule="evenodd" /></svg><Legend label="Referencia provincial" entries={[{ label: "Contorno de referencia IGN; sin resultados electorales", encoding: "outline" }]} /></>
     : <p role="status">{failed ? "Contorno de referencia no disponible; consulte la evidencia exacta." : "Preparando contorno de referencia provincial…"}</p>;
 }

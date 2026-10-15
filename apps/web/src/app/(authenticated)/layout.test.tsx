@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { expect, it, vi } from "vitest";
 import SessionMonitor from "@/components/SessionMonitor";
 import AuthenticatedLayout from "./layout";
-import HomePage from "./page";
+import HomePage from "./(home)/page";
 import { OperationalBriefing as OperationalBriefingPage } from "./OperationalBriefing";
 
 const panorama = vi.hoisted(() => ({ facets: vi.fn(), evidence: vi.fn() }));
@@ -122,28 +122,28 @@ it("renders a closed mobile drawer from the shared navigation contract", async (
     ]);
 });
 
-it("renders the real desktop account controls in the sidebar footer while the drawer is closed", async () => {
+it("renders the real desktop organization and account controls in the topbar while the drawer is closed", async () => {
   const markup = await renderLayout("/");
   const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
   const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
   expect(markup).not.toContain("<footer");
-  expect(topbar).not.toContain('aria-label="Organización y cuenta"');
-  expect(topbar).not.toContain("<form");
-  expect(sidebar.match(/role="group" aria-label="Organización y cuenta"/g)).toHaveLength(1);
-  const account = sidebar.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
+  expect(topbar).toContain('aria-label="Organización y cuenta"');
+  expect(sidebar).not.toContain('aria-label="Organización y cuenta"');
+  const account = topbar.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? "";
   expect(account).not.toMatch(/<details[^>]*\sopen(?:\s|=|>)/);
   expect(account).toContain("<summary>Cuenta</summary>");
   const forms = account.match(/<form\b[^>]*>[\s\S]*?<\/form>/g) ?? [];
   expect(forms).toHaveLength(1);
   expect(forms[0]).toMatch(/<form[^>]*\saction=/);
   expect(forms[0]).toContain('type="submit">Cerrar sesión</button>');
-  const selectors = [...sidebar.matchAll(/<select id="([^"]+)"/g)];
+  const selectors = [...topbar.matchAll(/<select id="([^"]+)"/g)];
   expect(selectors).toHaveLength(1);
   const id = selectors[0]?.[1] ?? "";
   expect(id).not.toBe("");
-  expect(sidebar).toContain(`<label for="${id}">Organización</label>`);
-  expect(sidebar.indexOf("<select id=")).toBeLessThan(sidebar.indexOf("<details"));
-  expect(sidebar).toContain("Organización activa:");
+  expect(topbar).toContain(`<label for="${id}">Organización</label>`);
+  expect(topbar.indexOf("<select id=")).toBeLessThan(topbar.indexOf("<details"));
+  expect(topbar).toContain("Organización activa:");
+  expect(topbar).toContain("Municipalidad");
 });
 
 function primaryNavigation(markup: string): string {
@@ -286,6 +286,7 @@ it("says no organization is selected instead of a review failure (#429)", async 
   workspace.reviewItems.mockResolvedValueOnce({ status: "ok", total: 7 });
   const markup = renderToStaticMarkup(await AuthenticatedLayout({ children: <OperationalBriefingPage /> }));
   expect(markup.match(/Seleccioná una organización para ver el estado de revisión\./g)).toHaveLength(2);
+  expect(markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0]).toContain("Sin organización");
   expect(markup).not.toContain("No se pudo verificar el estado de revisión.");
   expect(markup).not.toContain("elemento(s) de revisión pendiente(s)");
   expect(markup).not.toContain("Sin elementos pendientes");
@@ -320,17 +321,17 @@ it("renders all nine shared destinations in contract order with explicit source 
   expect(markup).toContain("Espacio de análisis");
 });
 
-it("keeps workspace and account below navigation, offers no theme choice, and only review status in the header", async () => {
+it("keeps organization and existing account controls in the header alongside review status without a theme choice", async () => {
   const markup = await renderLayout("/compare");
   const topbar = markup.match(/<header class="workspace-topbar">[\s\S]*?<\/header>/)?.[0] ?? "";
   const sidebar = markup.match(/<aside class="situation-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
   for (const label of ["Organización activa:", "Cambiar organización", "Cerrar sesión"]) {
-    expect(sidebar).toContain(label);
-    expect(topbar).not.toContain(label);
+    expect(topbar).toContain(label);
+    expect(sidebar).not.toContain(label);
   }
   expect(markup).not.toContain("Tema");
   expect(markup).not.toContain('class="theme-selector"');
-  expect(sidebar.indexOf('class="workspace-identity"')).toBeGreaterThan(sidebar.indexOf("</nav>"));
+  expect(topbar).toContain('class="workspace-identity"');
   expect(sidebar).toContain("Esta herramienta no es una fuente electoral oficial.");
   expect(topbar).toContain("Sin elementos pendientes");
   expect(topbar).toContain("Abrir navegación");
@@ -349,13 +350,14 @@ it("renders the real Panorama page with an explicit unavailable default and map-
 
 it("resolves only the uniquely authorized Rosales scope and links its real explorer", async () => {
   panorama.facets.mockResolvedValueOnce({ elections: [{ id: "election-2025", year: 2025, round: "legislativas" }] });
-  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "DIPUTADO NACIONAL" }] });
+  panorama.facets.mockResolvedValueOnce({ categories: [{ id: "deputies", name: "CONCEJALES" }] });
   panorama.facets.mockResolvedValueOnce({ distritos: [{ code: "02" }], secciones: [{ code: "027" }], availableLevels: ["seccion"], exclusions: [] });
+  panorama.facets.mockResolvedValueOnce({ circuitos: [], exclusions: [] });
   panorama.evidence.mockResolvedValueOnce({ status: "authorization_denied" });
   const markup = renderToStaticMarkup(await HomePage() as ReactElement);
   expect(panorama.evidence).toHaveBeenLastCalledWith({ electionId: "election-2025", categoryId: "deputies", distritoCode: "02", seccionCode: "027", requestedLevel: "seccion", circuitoCode: null, establecimientoCode: null, mesaCode: null });
   expect(markup).toContain("Acceso a resultados oficiales denegado");
-  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
+  expect(markup).toContain('/drilldown?electionId=election-2025&amp;categoryId=deputies&amp;sourceKind=official&amp;distritoCode=02&amp;seccionCode=027&amp;level=seccion');
   expect(markup).not.toContain("Votos positivos oficiales</dt>");
 });
 
