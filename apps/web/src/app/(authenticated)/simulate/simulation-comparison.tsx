@@ -44,8 +44,8 @@ export function SimulationComparison({ base, scenario, baseResult, result }: {
         <dl><div><dt>Total base modelado</dt><dd>{formatCount(baseTotal)}</dd></div><div><dt>Total escenario modelado</dt><dd>{formatCount(scenarioTotal)}</dd></div></dl>
       </header>
       <div className="table-scroll" role="region" aria-label="Comparación exacta de base y escenario" tabIndex={0}>
-        <table className="data-table"><caption>Comparación exacta de votos, proporciones y bancas</caption><thead><tr>
-          {["Lista", "Votos base", "Votos escenario", "Cambio de votos", "% positivos modelados base", "% positivos modelados escenario", "Bancas base", "Bancas escenario"].map((heading) => <th key={heading} scope="col">{heading}</th>)}
+        <table className="data-table simulation-exact-table"><caption>Comparación exacta de votos, proporciones y bancas</caption><thead><tr>
+          {["Lista", "Votos base", "Votos escenario", "Cambio de votos", "% positivos modelados base", "% positivos modelados escenario", "Bancas base", "Bancas escenario"].map((heading, index) => <th key={heading} scope="col">{index === 0 ? heading : <abbr title={heading}>{["Lista", "V. base", "V. esc.", "Δ votos", "% base", "% esc.", "B. base", "B. esc."][index]}</abbr>}</th>)}
         </tr></thead><tbody>{base.lists.map((list) => {
           const current = scenario.lists.find((row) => row.listId === list.listId)!;
           return <tr key={list.listId}><th scope="row">{list.listName}</th><td>{formatCount(list.votes)}</td><td>{formatCount(current.votes)}</td><td>{delta(current.votes - list.votes)}</td><td>{share(list.votes, baseTotal)}</td><td>{share(current.votes, scenarioTotal)}</td><td>{seats(baseResult, list.listId)}</td><td>{seats(result, list.listId)}</td></tr>;
