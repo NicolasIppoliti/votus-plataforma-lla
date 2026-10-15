@@ -1,205 +1,186 @@
-# R5 — evidence is insufficient to close #499, #500 or #501
+# R5 round 2 — populated captures expose remaining fidelity gaps
 
-All 34 supplied PNGs were opened with the image read tool, and all 19 height JSONs were read. **The decisive limitation is capture state:** Comparación and Evidencia have no selected electoral context; Panorama reports its default selection unavailable; Exploración shows reference-only content. Shorter pages are not evidence of improved density when the results are absent. Simulación has a populated, user-supplied scenario. Municipal is rejected/unavailable; Fiscalización remains opt-in and inactive.
+**Do not close #499, #500 or #501.** All 12 supplied same-scale pair PNGs were opened with the image read tool. Comparación remains substantially denser/longer than the approved specimen; Exploración has populated totals but no resolved circuit map; Panorama resolves its map but still starts late on mobile. Simulación's narrow geography-heading column is no longer visible, but its distribution and lower page remain different. Evidencia has no production capture in this artifact.
 
-This is a **partial visual review**, not an independent-verifier approval. No application changes, test runs, interaction checks, or historical before/after comparisons were performed.
+Round 1 used `/tmp/votus-r5/art/`, with mostly unselected/unavailable states and no generated pairs. Its short pages were not parity evidence. This round supersedes those observations with `/tmp/votus-r5/art3/`; it does not retroactively establish a before/after implementation test.
 
-## Pair-generation limitation
+## Evidence and limitations
 
-Existing tool: `docs/visual-review/pair-desktop.mjs`. It emits SVG, production left, requires R4 input filenames through its manifest CLI and restricts prototype widths to 1276/1424/1600. R5 desktop PNGs are actually 1440 wide on both sides. It is therefore not directly applicable to the requested R5 PNG pairs (including mobile).
+Each reviewed pair is located at:
+`/tmp/votus-r5/art3/visual-evidence-r5-R5-<page>-approved-pair-at-<width>px/pair-<page>-<width>.png`.
 
-The explicitly requested fallback was attempted:
+Reviewed pages: `panorama`, `exploracion`, `comparacion`, `simulacion`; widths: **1440, 390, 320**, all twelve combinations. Prototype is left, production right. Labels state equal CSS-pixel scale; desktop sources are both 1440 wide, not the historical R4 1276/1424/1600 specimens. Full captures have explicit end labels and striped padding after the shorter side; padding is not missing production content. The reader downscales long images to fit: fine typography and exact pixel measurements are not certified here. Heights below come from the adjacent measurement JSONs, not estimates from displayed thumbnails.
 
-```text
-/Users/nicolasmateoippoliti/dev/votus-plataforma-lla/etl/.venv/bin/python -c 'from PIL import Image; print(Image.__version__)'
-ModuleNotFoundError: No module named 'PIL'
-```
+This is a static visual audit, not interaction verification, native-review approval, gate execution or implementation/TDD evidence. Different selected geography, fictional parties and synthetic totals are not themselves product defects. Open exact-result sections in these captures cannot establish their default state or prove which action opened them.
 
-Following “else document”, no dependency was installed and no substitute renderer was introduced. **No pair PNGs were generated, no ≤1.5 MB output-size claim is made, and no same-scale pair was inspected.** The observations below compare the original PNGs opened individually. The image tool scales long screenshots to fit its display; these observations must not be represented as a native-pixel 1:1 audit. Fine typography, subtle clipping and small text remain uncertain.
+| Page | Width | Prototype document height | Production document height |
+|---|---:|---:|---:|
+| Panorama | 1440 | 2750 | 2736 |
+| Panorama | 390 | 4248 | 3915 |
+| Panorama | 320 | 4469 | 4383 |
+| Exploración | 1440 | 2146 | 4502 |
+| Exploración | 390 | 3392 | 6824 |
+| Exploración | 320 | 3497 | 7771 |
+| Comparación | 1440 | 2571 | 3878 |
+| Comparación | 390 | 4708 | 7375 |
+| Comparación | 320 | 4891 | 8019 |
+| Simulación | 1440 | 2586 | 3612 |
+| Simulación | 390 | 4889 | 5714 |
+| Simulación | 320 | 5736 | 6517 |
 
-## Evidence locator and dimensions
+Comparación is about **57% taller at 390 and 64% taller at 320** in these captured states. These specimens differ from the historical heights quoted in #499, so this is not a controlled regression measurement against R4.
 
-Artifact root: `/tmp/votus-r5/art/`. For the five prototype pages, each row below identifies both files under `visual-evidence-r5-R5-<page>-approved-pair-at-<width>px/`: `prototype-<page>-<width>.png` and `production-<page>-<width>.png`. Its adjacent `visual-evidence-r5-heights.json` records the measurements. These temporary source artifacts are not committed by this review.
+## Per-element review
 
-All viewport heights are 900. Every recorded scroll width equals the requested viewport width. This establishes no document-level horizontal overflow in these states, **not** scrollability of nested tables. All image heights match the recorded full-document heights as reported by the image reader; these are not 900-pixel viewport-only captures.
+**MATCH** means only the named visible aspect matches. **DEVIATION** includes added/missing content or state differences; uncertain root causes are explicit. **DATA-ONLY** is reserved for differences explained by selected/synthetic content, not layout. Shared-shell rows below apply to each of the four pages at each width, and are part of every page's inventory.
 
-| Page | Width | Prototype height | Production height | Capture-state verdict |
-|---|---:|---:|---:|---|
-| panorama | 1440 | 2750 | 2265 | DEVIATION: unavailable selection and preparing map |
-| panorama | 390 | 4248 | 2991 | DEVIATION: same; large global controls before content |
-| panorama | 320 | 4469 | 3376 | DEVIATION: same; controls stack further |
-| exploracion | 1440 | 2146 | 2063 | DEVIATION: reference-only, not populated results |
-| exploracion | 390 | 3392 | 3171 | DEVIATION: reference-only, tall control stack |
-| exploracion | 320 | 3497 | 3490 | DEVIATION: almost equal height despite missing results |
-| comparacion | 1440 | 2571 | 1052 | DEVIATION: no selected pair, maps/inspector/tables absent |
-| comparacion | 390 | 4708 | 2126 | DEVIATION: no selected pair, not density evidence |
-| comparacion | 320 | 4891 | 2297 | DEVIATION: no selected pair, not density evidence |
-| evidencia | 1440 | 2588 | 1037 | DEVIATION: no exact selection, map/units absent |
-| evidencia | 390 | 4527 | 2076 | DEVIATION: same; selectors in one column |
-| evidencia | 320 | 4926 | 2331 | DEVIATION: same; headline wraps to two lines |
-| simulacion | 1440 | 2586 | 3649 | DEVIATION: expanded distribution and extra scenario content |
-| simulacion | 390 | 4889 | 5751 | DEVIATION: longer populated scenario |
-| simulacion | 320 | 5736 | 6553 | DEVIATION: longer; geography switch below heading |
+### Shared top bars and footer — all four pages
 
-R5 desktop comparisons have identical 1440-pixel capture widths. The historical R4 native-width warning in #500 must not be falsely attached to these new inputs. R5 is not a reconstruction from the specified `raw/r4-*-1440-full.png` sources.
-
-## Per-element observations
-
-Each subsection explicitly applies to **1440, 390 and 320**, except where a width is singled out. MATCH means a visible shared element, not whole-page parity. PROD-ONLY identifies additions without judging whether they are required product features. DEVIATION can be an evidence-state mismatch rather than a proven implementation defect. Closed disclosure contents and unavailable result states were not inspected.
-
-### Shared shell — all five pages, each width
-
-| Element | Status | Visible evidence |
-|---|---|---|
-| Header | PROD-ONLY | Organization identity and pending-review link above page content; desktop also organization selector, change action and Cuenta disclosure. Prototype starts directly with the page heading. |
-| Navigation | DEVIATION | Desktop production adds Municipal, Escenarios, Revisión de datos and Fiscalización entries, unlike the simpler specimen rail. Mobile menu sits above organization information rather than beside the title. |
-| Context bar | PROD-ONLY | Panorama, Exploración, Comparación and Simulación show global election/category/territory/source controls and “Cargando contexto autorizado…”. Evidencia instead has its own page selectors without this global bar. |
-| Mobile controls | DEVIATION | At 390 election/category share a row in the global bar; at 320 they stack. Both repeat selected/placeholder text below controls, substantially increasing height. |
-| Footer | DEVIATION | Production adds the electoral-source disclaimer; specimens have laboratory/demo footers. Source separation is visibly stated, not verified functionally. |
-
-### Panorama — 1440 / 390 / 320
-
-| Element | Status | Concrete observation |
-|---|---|---|
-| Headline | MATCH | “Panorama” and its introductory sentence remain recognizable at all three widths. |
-| Context/forms | DEVIATION | Specimen has compact design/territory/base/category controls below title. Production global controls precede it, and territory is Coronel Rosales rather than Argentina. |
-| Map | DEVIATION | Specimen renders colored national geography. Production shows a small grid with amber “Preparando contorno de referencia…” instead of a resolved outline. Mobile map frame/control area is narrow, but resolved-map clipping cannot be assessed. |
-| Main panel layout | DEVIATION | Desktop specimen gives the map most of the width and puts the inspector right; production has narrow territory/map left and broad empty reading panel right. Both stack map then reading on mobile. |
-| Inspector | DEVIATION | Specimen shows leader, vote share, margin, totals, coverage and bars. Production shows “La selección oficial predeterminada no está disponible.” None of those metrics can be compared. |
-| Interpretation | DEVIATION | Specimen “Lo que se puede leer aquí” explanatory group has no equivalent populated interpretation in this production state. |
-| Lower table/forms | DEVIATION | “Elegir dónde profundizar” heading exists, but production has no rows and an unavailability notice instead of search, territory rows and pagination. |
-| Disclosures | DEVIATION | Production has closed “Códigos administrativos” and “Fuente y límites”; specimen has its national-framing disclosure and visible legend/provenance. Closed contents unverified. |
-| Continuation links | MATCH | Exploration/comparison/simulation/evidence destinations are visible, although production changes wording and wraps links into multiple rows. |
-| Lower operational/other scopes | PROD-ONLY | Atención operativa card, review button and separate municipal/fiscalización destinations add substantial lower-page content. |
-
-**Mobile density remains unapproved at both widths:** title/content follows the tall authorization bar. No assertion that the clipped-map item was fixed is possible while the map is preparing.
-
-### Exploración — 1440 / 390 / 320
-
-| Element | Status | Concrete observation |
-|---|---|---|
-| Headline | MATCH | “Exploración territorial” and “El territorio como punto de partida.” |
-| Context/forms | DEVIATION | Production “Elegir territorio” disclosure replaces territory select; election/category are unset. Mobile four controls stack singly, rather than the specimen's compact two-column grid. |
-| Mobile summary/navigation | DEVIATION | Specimen has populated compact summary and Mapa/Resultados/Detalle links. Production has selection guidance, no equivalent populated summary. |
-| Map | DEVIATION | Specimen renders Argentina with inset and controls. Production shows “Mostrar referencia nacional”, amber optional-map notice, reference/provenance text and exact-selection link; no rendered geography. White-bordered trigger differs from specimen map controls. |
-| Desktop panel proportions | DEVIATION | Production map/reference is narrow left with broad empty detail right; specimen has broad map and narrow detail. |
-| Inspector/navigator | DEVIATION | Argentina heading persists, but specimen province search/list and totals/distribution are replaced by “No hay un siguiente nivel autorizado disponible” and no figures pending exact selection. |
-| Legends/evidence rail | DEVIATION | Production reference-only legend lacks specimen party colors/distribution and visible map evidence link. Geographic-not-electoral warning remains visible. |
-| Lower table/form | DEVIATION | Specimen “Ganadores por provincia” search and results table are not present in production's captured state. |
-| Lower exact-results disclosure | DEVIATION | Specimen “Los números, sin aproximaciones” disclosure is not shown in production's captured state. |
-| Reference cards | PROD-ONLY | Large Argentina and Buenos Aires reference-geography cards plus selection links occupy lower production page. |
-| Disclosures | DEVIATION | Production reference provenance disclosure is closed; contents not reviewed. |
-
-At 390 and 320, extra shell/context and single-column controls visibly delay the reference panel. Similar document height at 320 is misleading because production lacks the specimen's populated inspector and tables.
-
-### Comparación — 1440 / 390 / 320
-
-| Element | Status | Concrete observation |
-|---|---|---|
-| Headline | MATCH | Title and “Dos muestras. El mismo territorio. Una lectura compartida.” |
-| Territory/context | DEVIATION | Production adds shared-section selector; territory and elections are unset, unlike populated Buenos Aires / Alianza A specimen. |
-| A/B forms | DEVIATION | Production uses year-specific empty prompts, duplicate visible value text and more vertical spacing on mobile. Intercambiar remains between A and B on mobile and centered on desktop. Long selected names are not exercised. |
-| Mobile summary/navigation | DEVIATION | Populated compact summary and Mapa/Resultados/Detalle links in specimen are not shown in production. |
-| Maps/metric switch | DEVIATION | Both maps and percentage/change/winner controls are absent in captured production state. Cannot check repeated map actions, “Ganadores” wrapping, or shared-control fidelity. |
-| Inspector | DEVIATION | Territory navigator, search, comparison percentages and changes shown in specimen are absent in captured production. |
-| Exact/change tables | DEVIATION | Neither specimen result table is shown in production. This is a state mismatch, not proof that implementation lacks tables. |
-| Disclosures/guidance | PROD-ONLY | “Detalles de la selección”, “Notas de la selección” and “Contexto de comparación aplicada” rows plus “Complete ambas selecciones…” guidance appear instead of the populated workbench. Contents/interactions unverified. |
-| Evidence rail | DEVIATION | Specimen map evidence link and comparability explanations cannot be compared in this unselected production state. Global official-source label and disclaimer remain visible. |
-
-**Blocking evidence gap for #499:** mobile production is 2126/2297 px precisely while maps, inspector and tables are not rendered. Do not compare these heights to populated R4 or approved specimens as a successful compactness fix.
-
-### Evidencia — 1440 / 390 / 320
-
-| Element | Status | Concrete observation |
-|---|---|---|
-| Headline | MATCH | Title and explanatory sentence retained. Production title is one line at 390, two at 320; specimen mobile title wraps at both widths. |
-| Context/forms | DEVIATION | Production election/category/district/section empty selectors and static “Oficial · autorizado” replace populated design/territory/base/category/origin controls. Mobile single-column layout is taller than specimen's largely two-column controls; duplicate value text adds height. |
-| Selection summary/navigation | DEVIATION | Specimen has selected-territory summary and map/evidence/unit/traceability links; production has selection-required notice instead. |
-| Map/legend | DEVIATION | Specimen Coronel Rosales shape and completeness legend absent in captured production state. |
-| Inspector | DEVIATION | “Qué respalda este dato”, coverage, votes, traceability action and cases disclosure absent in captured production. |
-| Units table/forms | DEVIATION | Specimen “Inspeccionar las unidades”, search/status controls, two rows and per-row limits disclosures absent in production state. |
-| Lower explanations | MATCH | Six visible thematic explanations remain: completeness, separated opt-in fiscalización, safe traceability, read-only review, unknown-vs-empty, and sources not certifying coverage. |
-| Lower explanation copy/layout | DEVIATION | Completeness copy now describes expected/scrutinized/missing mesas rather than missing denominator; other copy is updated. Desktop is two columns, mobile one, as in specimen; prototype-specific historical caveats are replaced by current product text. |
-| Machine label | DEVIATION (evidence gap) | `non_official_source_rows` is not visible, but no selected evidence rows are displayed. Absence here does not prove Spanish translation at a single boundary. |
-| Long selected values | DEVIATION (evidence gap) | Only short “Seleccionar” values appear. Neither 390 nor 320 tests truncation of populated long labels. |
-
-### Simulación — 1440 / 390 / 320
-
-| Element | Status | Concrete observation |
-|---|---|---|
-| Headline | MATCH | “Simulación de escenarios” and explicit hypothetical/not-prediction framing retained. |
-| Context/forms | DEVIATION | Production adds persisted-scenario explanation, integer-vote reconstruction over 32.291 votes and official-base load link; specimen has fictional 49.300 base. Production context is text blocks rather than territory/base selectors. |
-| Mobile summary/navigation | DEVIATION | Specimen compact scenario summary and Mapa/Escenario/Resultados shortcuts not shown in production. |
-| Geography header/switch | DEVIATION | Production uses “Referencia territorial” rather than Coronel Rosales. At 320 **and 390** Base/Escenario are below the explanatory text rather than beside a narrow text column: the reported narrow-column symptom is not visible. Historical before/after evidence is absent. |
-| Map | DEVIATION | Production neutral pale gray shape with internal circuit lines, not specimen solid teal territory; its legend describes winners, margin and provisional status rather than specimen four-party color key. It is explicitly reference-only, so electoral equivalence is not asserted. |
-| Inspector | DEVIATION | Production one reference explanation and evidence link replace two demo circuit-inspection buttons and specimen method link. |
-| Transfer form | MATCH | Donor/recipient selects, quantity, prominent cyan transfer action and reset are present. |
-| Transfer form copy/state | DEVIATION | Empty “Seleccione una lista” values, Lista donante/receptora and “Transferir votos” replace populated party values and “Aplicar transferencia”. Functional transfer not exercised. |
-| Seat summary | MATCH | Nine seats and a visible colored seat strip. |
-| Seat distribution | DEVIATION | Production long eight-list distribution with repeated 9-box strips replaces compact four-list base→scenario rows. This increases mobile length markedly; production 5/2/2 split differs from fictional 4/4/1, not a correctness finding. |
-| Disclosures | PROD-ONLY | Sin bancas, Cómo se calcula, Cómo leer la distribución and Editar los datos del escenario appear; contents are closed/unverified. Shared sensitivity/allocation disclosures remain but arrangement differs. |
-| Lower exact table | DEVIATION | Eight real-named lists vs four demo rows; desktop table is visibly cut at the right edge of its panel, mobile shows only initial column. Nested horizontal scrolling not verified. |
-| Lower scenario/result | PROD-ONLY | Scenario explanation, municipal result, granularity, long hash and allocation section increase page height. At 320 the long hash is hard to assess at reader scale; no exact overflow conclusion. |
-| Availability section | DEVIATION | Two current availability items replace the much larger specimen limitation inventory. Lower text differs substantively; no parity claimed. |
-
-### Production-only mobile pages
-
-No approved prototype exists: every element below is **PROD-ONLY**, not MATCH.
-
-| Page/width | Artifact directory | Header/context/headline/forms | Map/table/disclosures and lower content |
+| Element | 1440 | 390 | 320 |
 |---|---|---|---|
-| municipal / 390 | `visual-evidence-r5-R5-prod-06c3a-90px-no-approved-prototype-` | Shared organization header and tall loading context; Municipal (Concejales), official label, two election links. | Rejected-request/unavailable evidence card with retry and configured-election links. No results table/map visible; footer. Height 1205. |
-| municipal / 320 | `visual-evidence-r5-R5-prod-51b24-20px-no-approved-prototype-` | Global controls stack; election links break into separate lines. | Same unavailable card, more wrapping; no table/map to test. Height 1423. |
-| fiscalizacion / 390 | `visual-evidence-r5-R5-prod-6c573-90px-no-approved-prototype-` | Shared header/loading context; non-official heading; second election/category/district/section form repeats context; section help control. | Opt-in warning and activation button; no activated coverage/results/table/map. Footer. Height 1825. |
-| fiscalizacion / 320 | `visual-evidence-r5-R5-prod-e65d9-20px-no-approved-prototype-` | Same repeated form with stacked global controls. | Activation button wraps onto two lines; no activated results or table. Height 1997. |
+| Organization top bar | DEVIATION: added organization/account/actions above or across content | DEVIATION: organization and review status precede title | DEVIATION: same, with more wrapping |
+| Global filters | DEVIATION: added election/category/district/section/source bar; on Exploración/Comparación it visibly overlays mid-workbench in the capture | DEVIATION: tall global context before title; election/category share row, territory/source below; selected-value text repeated underneath | DEVIATION: election/category stack separately, plus repeated values, delaying title further |
+| Navigation | DEVIATION: extra Municipal, Escenarios, review and fiscalización destinations versus simpler specimen rail | DEVIATION: menu above organization, not inline beside page title | DEVIATION: same ordering difference |
+| Source framing | DEVIATION: official/authorization or user-supplied context replaces fictional-demo badge/caution | DEVIATION: same; retain source separation when compacting | DEVIATION: same |
+| Footer | DEVIATION: longer official-source disclaimer replaces short laboratory footer | DEVIATION: disclaimer wraps into a substantial block | DEVIATION: further wrapping |
 
-The official/default global source and explicit fiscalización opt-in are visible. These static inactive/error screenshots cannot establish table-scroll interaction or populated-page density.
+The mid-page bar and visible “Ir al contenido principal” focus link on Exploración/Comparación may be capture/focus/scroll state rather than intended layout. Recapture in a controlled state before assigning an implementation cause; do not approve the obstructed pair as parity.
 
-## Acceptance criteria — quoted and mapped
+### Panorama
 
-Verdicts: **NOT SATISFIED** means the requested deliverable/approval is absent or a visible blocker remains. **NOT VERIFIED** means this artifact cannot decide the criterion. No issue is recommended for closure.
+| Element | 1440 | 390 | 320 |
+|---|---|---|---|
+| Title/subtitle | MATCH: wording and hierarchy recognizable; shifted down by shell | MATCH: same text, below global controls | MATCH: same, still later start |
+| Page filters/summary | DEVIATION: compact below-title prototype controls replaced by above-title global controls | DEVIATION: no compact selected-summary + Mapa/Resultados/Detalle navigation | DEVIATION: same missing compact summary/navigation |
+| Territory and values | DATA-ONLY: Coronel Rosales circuits vs Argentina; 11.111 vs fictional national total | DATA-ONLY: same selected-context distinction | DATA-ONLY: same |
+| Map | DEVIATION: large local outline fills broad panel; no specimen national grid/inset framing; local geography itself DATA-ONLY | DEVIATION: local outline fills almost all frame width; more verbose stacked legend; no obvious cut outline at this reader scale | DEVIATION: similarly edge-tight, legend wraps further; no definitive clipping verdict at reduced display scale |
+| Headline inspector | MATCH: map left, inspector right with leader/share/votes/bars; DEVIATION: large amber completeness box and long unmapped leader replace compact warning | MATCH: inspector follows map; DEVIATION: large amber block and one-column distribution vs compact two-column party bars | MATCH: same ordering; long leader and metric text wrap more |
+| Interpretation | DEVIATION: specimen “Lo que se puede leer aquí” three-part explanation missing as a distinct group | DEVIATION: same missing group | DEVIATION: same |
+| Search/table | MATCH: search and territory rows; DEVIATION: five-column circuit schema replaces specimen four-column province schema | MATCH: search/table present; DEVIATION: only initial columns visible | DEVIATION: only initial columns and partial next column visible; scrolling unverified |
+| Rows/pagination | DATA-ONLY: two synthetic circuits rather than twelve displayed provinces; absent pagination is not alone a defect with two rows | DATA-ONLY: same | DATA-ONLY: same |
+| Disclosures | DEVIATION: Códigos administrativos and Fuente y límites replace specimen national framing disclosure/provenance arrangement; closed contents unverified | DEVIATION: same | DEVIATION: same |
+| Continuation/lower forms | MATCH: four continuation destinations; DEVIATION: 3+1 desktop arrangement plus added operational-review card and separate municipal/fiscalización links | MATCH: two-column continuation cards; DEVIATION: extra operational and separate-scope blocks | MATCH: two-column cards; DEVIATION: same additions and extra wrapping |
 
-### #499
+**Summary:** populated map and table are now visible. Similar total height is not parity: fewer data rows offset substantial shell and operational additions. Mobile late-content defect remains; map clipping is not proven fixed.
 
-| Exact AC | Verdict | Evidence |
+### Exploración
+
+| Element | 1440 | 390 | 320 |
+|---|---|---|---|
+| Title/subtitle | MATCH: title and introductory hierarchy | MATCH: same, after tall shell | MATCH: same, later still |
+| Page filters/forms | DEVIATION: territory disclosure and exclusion notes replace compact selector row | DEVIATION: all page controls stack singly after duplicated global context, vs compact two-column specimen | DEVIATION: same, with taller notes |
+| Compact summary/anchors | DEVIATION: no equivalent specimen mobile summary needed on desktop; added exclusion context instead | DEVIATION: populated summary and Mapa/Resultados/Detalle shortcuts absent | DEVIATION: same |
+| Map | DEVIATION: tiny narrow reference grid/amber warning, no resolved circuit outline; broad specimen national map absent | DEVIATION: empty grid/warning and legend in place of resolved specimen geography | DEVIATION: same; even longer warning/legend wrapping |
+| Desktop panel balance | DEVIATION: narrow map left, much wider inspector right, opposite specimen balance | MATCH: map before inspector stack | MATCH: same stack |
+| Inspector/summary | MATCH: territory, leader, total and distribution present; DATA-ONLY: 14.444 and selected section vs fictional Argentina | MATCH: equivalent summary roles; DEVIATION: more caveat text and long names | MATCH: same with heavier wrapping |
+| Territory navigator | DEVIATION: back links/no next authorized level replace searchable province list (selected-level/state difference, not proof of missing implementation) | DEVIATION: same missing list in this state | DEVIATION: same |
+| Territorial table/search | DEVIATION: search present but circuit table has headers/no populated rows; specimen province rows visible | DEVIATION: same empty result body; initial columns only | DEVIATION: same; horizontal scroll unverified |
+| Exact-results disclosure | DEVIATION: open large section instead of closed compact row; default state unknown | DEVIATION: open scope IDs, distribution and table greatly extend page | DEVIATION: same, more wrapping |
+| Lower tables and evidence | DEVIATION: added party table, establishment-unavailable block, reference ID table and provenance | DEVIATION: same; long identifiers, initial table columns visible | DEVIATION: same, very tall identifier cells |
+| Lower reference cards | DEVIATION: extra Argentina and Buenos Aires cards after exact results | DEVIATION: two long stacked cards absent from specimen | DEVIATION: same |
+| Other disclosures/forms | DEVIATION: legend notes and archive/provenance disclosures; contents not fully inspected; no transfer form in either | DEVIATION: same | DEVIATION: same |
+
+**Summary:** selected totals are populated, but circuit map/table are not. Metadata says `circuitRpcControlled: false`; this is evidence of uncontrolled capture state, not proof of root cause. Open exact results, reference cards and repeated filters account for visible density differences that are not merely synthetic totals.
+
+### Comparación
+
+| Element | 1440 | 390 | 320 |
+|---|---|---|---|
+| Title/subtitle | MATCH: title and shared-reading subtitle | MATCH: same text after shell | MATCH: same |
+| Shared selectors | DEVIATION: added shared-section selector and all-party control rather than compact territory/party row | DEVIATION: global context plus single-column territory/section/party controls | DEVIATION: same, longer wraps; selected section clipped in native select |
+| A/B form | MATCH: A/B election/category and swap action; DEVIATION: year-specific labels | DEVIATION: each election/category stacks with duplicated selected-value text; much taller than specimen paired rows | DEVIATION: same; category select truncates; explanatory selected-value text remains below |
+| Summary/shortcuts | DEVIATION: reference-only description replaces specimen selected-party headline | DEVIATION: no compact comparison summary or Mapa/Resultados/Detalle shortcuts | DEVIATION: same |
+| Metric switch | MATCH: three visible modes; DEVIATION: Participación replaces % de votos label | MATCH: three controls fit at reader scale; exact typography uncertain | MATCH: three controls visible; cannot certify fine “Ganadores” wrapping at this scale |
+| Paired maps | MATCH: two maps side by side; DEVIATION: plain local cyan outlines vs detailed specimen choropleths | MATCH: A then B; DEVIATION: each repeats contour disclosure, interactive/select actions, amber notice and exact-results link | MATCH: same repeated controls/notice/link, rather than specimen shared compact map controls |
+| Geographic/numeric content | DATA-ONLY: local section, synthetic names, 60→75%, +15 pp rather than specimen province/party totals | DATA-ONLY: same | DATA-ONLY: same |
+| Inspector | MATCH: shared territory, A/B shares/votes/change and evidence link; DEVIATION: larger completeness/caveat text, long party selector, no populated child list | MATCH: after both maps; DEVIATION: long selector/text and completeness block extend it | MATCH: same order, denser wraps |
+| Change table/search | DEVIATION: specimen populated child-change table + search/order controls replaced by comparability-unavailable warning | DEVIATION: warning card, not populated change rows | DEVIATION: same; unavailable data must not be invented to match specimen |
+| Disclosures/context | DEVIATION: added Detalles, Notas, Comparación aplicada, Contexto rows below workbench | DEVIATION: same repeated-context area | DEVIATION: same |
+| Exact table/chart | DEVIATION: placed after change warning/context, with added bar chart; specimen compact exact table precedes change table | DEVIATION: open long exact-result block/chart after context, only early table columns visible | DEVIATION: same; very tall wrapped party cells, scroll unverified |
+| Evidence rail/lower section | MATCH: evidence access retained; DEVIATION: extra full A/B coverage/reference/provenance cards below exact results | DEVIATION: A/B evidence cards stack at bottom | DEVIATION: same |
+
+**Summary:** the requested selectors → paired maps → inspector order exists, but its compact density does not. Repeated per-map controls, duplicated context and large lower result/evidence blocks remain visible. Exact results are open in the screenshot, not proven opened by “Seleccionar sección y consultar resultados”.
+
+### Simulación
+
+| Element | 1440 | 390 | 320 |
+|---|---|---|---|
+| Title/headline | MATCH: title and hypothetical/not-prediction framing; DEVIATION: persisted-scenario/reconstructed-vote paragraphs added | MATCH: same, plus long paragraphs before workbench | MATCH: title wraps as specimen; extra paragraphs remain |
+| Filters/summary | DEVIATION: static territory/base text and official-base link replace compact specimen selects | DEVIATION: no specimen compact summary/Mapa-Escenario-Resultados shortcuts | DEVIATION: same |
+| Geography heading/switch | MATCH: heading left, Base/Escenario right, with readable explanation | DEVIATION: switch below full-width heading/explanation rather than beside it; no narrow side-column symptom | DEVIATION: switch below full-width explanation; reported narrow-column symptom not visible |
+| Map/legend | DEVIATION: gray internal circuits and verbose multi-status legend replace solid teal outline/party key; selected geography recognizable | DEVIATION: longer legend below map | DEVIATION: legend wraps heavily; not a data-only layout difference |
+| Inspector | DEVIATION: evidence link and reference explanation replace two demo circuit buttons/method link | DEVIATION: same | DEVIATION: same |
+| Transfer form | MATCH: donor/recipient, integer quantity, cyan action and reset; DEVIATION: empty selects and changed action copy | MATCH: form follows map/inspection; DEVIATION: repeated selected-value helper text and larger reset area | MATCH: same |
+| Nine-seat headline | MATCH: nine-seat strip and total; DATA-ONLY: 5/2/2 instead of fictional 4/4/1 | MATCH: same | MATCH: same |
+| Distribution | DEVIATION: eight long per-list nine-box rows, vs compact four-list base→scenario summary | DEVIATION: long distribution extends form panel substantially | DEVIATION: long names wrap further, same repeated strips |
+| Exact table | MATCH: base/scenario totals and comparison table; DATA-ONLY: eight lists/32.291 vs four/49.300; DEVIATION: rightmost columns outside visible panel | DEVIATION: only list column visible, specimen shows several early columns | DEVIATION: only list column visible; scrolling not verified |
+| Disclosures | MATCH: sensitivity/allocation disclosures; DEVIATION: added Sin bancas, calculation, distribution-reading and scenario-editor rows | DEVIATION: same additions | DEVIATION: same |
+| Lower scenario/results | DEVIATION: added current-scenario, municipal result, granularity and long hash block | DEVIATION: long stacked block after table | DEVIATION: hash wraps into many lines |
+| Availability/footer-adjacent | DEVIATION: two current availability items vs specimen larger inventory; historical demo copy not required to remain literal | DEVIATION: two stacked current items | DEVIATION: same |
+
+**Summary:** geography header is encouraging current-state evidence for #501, not a controlled before/after proof. Distribution presentation and wide table remain material deviations, not explained solely by having more synthetic rows.
+
+## Failed journeys and unavailable evidence
+
+A scoped search for `**/e2e-facts-r5-*.json` under `/tmp/votus-r5` found **none**. No failure assertion, stack trace or journey fact can therefore be quoted. User reports Evidencia and municipal journeys failed again; that report is not an observed test result in this audit.
+
+- **Evidencia 1440/390/320:** artifact contains only prototype PNG and prototype measurements (2588/4527/4926 px), no production PNG and no pair. Every production element—bars, title, selectors, summary, map, inspector, units table, disclosures, lower explanations and footer—is **unverified**, not MATCH. Machine-label translation and long selected values remain gaps.
+- **Municipal:** production PNGs exist, with measurement heights 4740 at 390 and 5323 at 320, `sourceKind: official`. Their presence does not establish journey success; they were not included in the twelve approved pair comparisons. No approved prototype is supplied. Table-scroll behavior remains unverified.
+- **Fiscalización:** production PNGs exist, heights 3324/3644 at 390/320, `sourceKind: fiscalizacion`; no approved prototype. These metadata do not demonstrate activation, coverage correctness or horizontal interaction. No parity disposition is made.
+- All supplied measurement scroll widths equal their viewport widths. This does **not** prove nested tables can be scrolled or their hidden columns reached.
+
+## Prioritized product deviations to reach the prototype
+
+Preserve text through disclosures and preserve official-source/evidence rails; do not silently remove warnings or fabricate unavailable data.
+
+| Priority | Page / width | Element | Expected → actual / action |
+|---|---|---|---|
+| P1 | Comparación / 390, 320 | Selector hierarchy | Compact paired controls + selected summary → duplicated global/page controls, single-column A/B rows and repeated values. Consolidate while keeping full selected values accessible. |
+| P1 | Comparación / 390, 320 | Map actions | Shared compact controls → repeated interactive/select buttons, notices and exact links on both sides. Fold secondary detail, retain reachable actions. |
+| P1 | Comparación / all | Result hierarchy | Compact inspector → exact table → change table → footer → change warning/context → large open chart/table → A/B evidence cards. Restore compact reading order without dropping evidence or pretending child comparability exists. |
+| P1 | Exploración / 1440 | Workbench proportions | Broad map / narrow inspector → tiny map / broad inspector. Restore balanced map prominence. |
+| P1 | Exploración / 390, 320 | Pre-map controls | Compact two-column filters/summary → repeated shell and single-column page controls with exclusion notes. Fold detail and restore quick navigation. |
+| P1 | Panorama / 390, 320 | First substantive content | Inline title/menu and compact controls → organization + tall context before title; map starts much later. Compact shell without hiding source context. |
+| P2 | Exploración / all | Lower density | Closed exact-results row → open scope/chart/tables/reference IDs and two extra geography cards. Compare controlled closed/open states; retain details in appropriate disclosures. |
+| P2 | Simulación / all | Distribution | Compact base→scenario list summary → repeated nine-seat strips for eight lists. Use compact summary, fold zero-seat/detail rows without dropping them. |
+| P2 | Simulación / 390, 320 | Exact table | Several useful early columns visible → essentially list names only. Improve narrow-width column density and verify horizontal access. |
+| P2 | Panorama / all | Interpretation and lower navigation | Distinct reading explanation + compact continuation → absent interpretation group, added operational/separate-scope blocks. Reconcile intended product content and placement rather than silently delete it. |
+| P2 | Simulación / all | Reference map explanation | Short party legend + concise reference rail → verbose status legend and additional provenance text. Compact/fold secondary explanation while preserving limitations. |
+| P2 | Comparación / 390, 320 | Selected values | Readable selections → native selects truncate category/section/long party names; helper text compensates at height cost. Design an accessible compact full-value treatment. |
+
+Separate evidence blockers, not proven product defects: resolve/recapture Exploración circuit geography/rows; obtain Evidencia production captures and failed-journey facts; recapture desktop Exploración/Comparación without bar/focus obstruction; inspect loaded Panorama contour at native scale; verify municipal/fiscalización scrolling. None should be mislabeled DATA-ONLY or assumed fixed.
+
+## Acceptance mapping
+
+### #499 — comparison mobile
+
+| AC | Status | Evidence / remaining gap |
 |---|---|---|
-| “1:1 same-scale pairs at 390 and 320 against the approved captures, with per-element notes and an independent verifier with no blocking finding.” | NOT SATISFIED | Per-element raw-image notes above exist; pairs unavailable (Pillow missing); mobile production has no populated comparison. This review finds a blocking evidence-state mismatch, and is not an independent approval. |
-| “An e2e assertion that "Seleccionar sección y consultar resultados" leaves the exact-table disclosure **open**. The verifier suggested this; today only focus is asserted.” | NOT VERIFIED | No interaction/test execution or assertion inspection in this documentation-only review; exact-table state cannot be inferred from screenshots lacking the workbench. |
-| “`test:e2e:gate` 8/8, 0 skipped.” | NOT VERIFIED | No gate report supplied or executed. Nineteen measurement files do not establish the eight-test gate result. |
+| 1:1 pairs at 390/320, per-element notes, independent verifier with no blocking finding | PARTIAL / NOT SATISFIED overall | Both supplied pairs opened and inventoried above. Populated comparison is visible, but density/hierarchy blockers remain (7375/8019 vs 4708/4891). No independent no-blocking disposition established. |
+| E2E assertion that “Seleccionar sección y consultar resultados” leaves exact disclosure open | NOT VERIFIED | Open exact results are visible; no assertion inspected or action executed. Screenshot state does not establish causal behavior. |
+| `test:e2e:gate` 8/8, 0 skipped | NOT VERIFIED | No gate report supplied or command run. |
 
-### #500
+### #500 — complete desktop comparisons
 
-| Exact AC | Verdict | Evidence |
+| AC | Status | Evidence / remaining gap |
 |---|---|---|
-| “No segment shows production as absent when the content exists.” | NOT SATISFIED (pairs missing) | Inputs are full-page, not 900px viewport crops; heights above verify that useful prerequisite. No generated pair segments exist to approve. Blank comparison/evidence result states are in the source captures themselves, not introduced by segmentation. |
-| “Every lower-section element has a match or deviation note.” | PARTIAL | Visible lower sections of all five full-page images are inventoried above (including production-only additions). Populated comparison/evidence tables and other unavailable states cannot be compared. Native-pixel pair review remains outstanding. |
-| “An independent verifier finds no blocking issue.” | NOT SATISFIED | Blocking capture-state mismatch remains; no independent-verifier approval was obtained. |
+| No segment shows production absent when content exists | SATISFIED for four supplied R5 pairs only | All four full-page desktop pairs include lower production content and explicit capture ends; stripe padding is clearly marked. Evidencia pair absent. Historical R4 reconstruction remains unverified. |
+| Every lower-section element has match/deviation note | PARTIAL | Four-page lower inventory above covers tables, disclosures, reference/evidence cards, scenario/availability, continuation and footer. Evidencia production missing; no note can establish its parity. |
+| Independent verifier finds no blocking issue | NOT SATISFIED | This audit finds blocking fidelity/evidence gaps; no no-blocking approval is claimed. |
 
-Additional scoped requirements: R5 full-page source availability is confirmed; R4-specific source reconstruction is not performed; R4 native-width mismatch is not present in these R5 1440-wide inputs. No claim that this R5 report satisfies the exact historical R4 reconstruction request.
+Scope caveat: R5 pair labels show 1440 CSS px on both sides. Do not attach the R4 native-width caveat as if these were mismatched widths. Rebuilding specifically from `raw/r4-*-1440-full.png`, equal-height historical segments and R4 native-width annotations are not demonstrated by art3.
 
-### #501 — ACs apply to each of the six items
+### #501 — all three ACs apply to every item
 
-Exact criteria:
+AC1 = strict TDD where behavior/labels change; AC2 = 1:1 before/after evidence; AC3 = gate 8/8, zero skipped.
 
-1. “strict TDD where behaviour or labels change;”
-2. “1:1 before/after evidence;”
-3. “`test:e2e:gate` 8/8, 0 skipped.”
-
-| Item | AC 1 | AC 2 | AC 3 | Visible result / remaining gap |
+| Item | Current visual result | AC1 | AC2 | AC3 |
 |---|---|---|---|---|
-| Evidencia machine label | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED | Raw key not visible in unselected screen; Spanish boundary not exercised. |
-| Evidencia / Comparación mobile select truncation | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED | Long populated values not captured at either width. |
-| Simulación 320 geography header | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED | Narrow side-column symptom not visible: switch is below text. This is encouraging current-state evidence, not historical before/after or TDD. |
-| Panorama mobile late content / clipped map | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED | Tall pre-content context remains visible at both widths; unresolved map prevents clipping verdict. |
-| Exploración mobile delayed map | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED | Tall global and page controls visibly delay reference panel; resolved map/results not captured. |
-| Municipal / Fiscalización length and horizontal scrolling | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED | Error/inactive screens do not contain target result tables. No scroll interaction performed. |
+| Evidencia Spanish machine label at single boundary | GAP: production capture absent; boundary not inspected | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED |
+| Evidencia / Comparación mobile long selects | Comparación truncation remains visible; Evidencia GAP | NOT VERIFIED | PARTIAL: prototype/current pairs for comparison, not production-before/after; none for evidence | NOT VERIFIED |
+| Simulación 320 geography heading/explanation | Narrow side-column symptom not visible; switch below full-width text | NOT VERIFIED | PARTIAL: current pair exists, historical controlled before/after absent | NOT VERIFIED |
+| Panorama mobile late content / clipped map | Late content remains; map resolved but precise clipping unresolved | NOT VERIFIED | PARTIAL: current pairs, not controlled before/after | NOT VERIFIED |
+| Exploración mobile delayed map | Tall duplicated controls and delayed reference panel remain; unresolved map | NOT VERIFIED | PARTIAL: current pairs, not controlled before/after | NOT VERIFIED |
+| Municipal / Fiscalización length and horizontal scrolling | Metadata only assessed here; no approved pairs or scrolling interaction | NOT VERIFIED | NOT SATISFIED | NOT VERIFIED |
 
-Prototype versus production is **not** production-before versus production-after. This artifact has no historical before captures and no recorded RED/GREEN history; it cannot satisfy those ACs for any item.
-
-## Remaining work, in priority order
-
-1. Repair/recapture the authorized selected contexts so Panorama resolves its outline/results, Exploración has populated results, Comparación has the actual paired maps/inspector/tables, and Evidencia has selected rows. Determine capture-state cause separately; screenshots alone do not establish a backend or frontend root cause.
-2. Provide a working image renderer (Pillow was unavailable) and generate native-scale equal-height PNG segments, prototype left / production right, clearly labeling actual capture ends. Preserve complete lower content and enforce ≤1.5 MB per output. Inspect every generated segment at native scale.
-3. Review mobile shared-shell height, repeated value text, one-column control stacks and extra context against compact specimens. Review Simulación's long per-list distribution and wide table. Required source/authorization messages must not be silently removed.
-4. Exercise long selected values, map clipping after load, exact-table-open interaction and nested table horizontal scrolling. For municipal/fiscalización use appropriate authorized populated evidence; default fiscalización captures intentionally do not activate internal data.
-5. Attach actual strict-TDD records where applicable, historical before/after captures, the eight-test gate report (8/8, no skipped), and an independent verifier's disposition. Keep all three issues open until their remaining ACs are met.
+No behavior/label code changed in this documentation task, so no meaningful RED/GREEN applies to the report itself. That exception does not waive implementation TDD ACs. Next evidence should include actual gate/test records, populated Evidencia, journey failure facts, controlled focus/disclosure state, long selected values, and horizontal-scroll interactions. Keep all three issues open.
