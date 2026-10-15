@@ -10,6 +10,29 @@ fresh-target restore failures have been fixed). The migration
 is `20261015100000_jurisdiction_merge_key_index.sql` (not #425's colliding
 `20261015000000` version). The exact web release-gate inventory includes it.
 
+## Rollout
+
+Production application is manual during a **maintenance window**; the accepted
+rollout uses plain `CREATE INDEX` inside the transactional migration runner, not
+`CREATE INDEX CONCURRENTLY`. No hosted mutation is performed by this work.
+
+The build takes a `SHARE` lock on `public.jurisdiction`, blocking inserts,
+updates and deletes while allowing ordinary reads. The transaction retains that
+lock until commit, including the following `ANALYZE`. Plan the write outage for
+the full migration transaction, not just the index statement. Build duration
+depends on table size, I/O and concurrent load; the lookup timings below exclude
+index creation and provide no production lock-duration estimate or upper bound.
+
+Before rollout, merge main and reconcile the exact migration inventories in
+`apps/web/scripts/e2e-gate-runtime.ts` and
+`apps/web/e2e/release-gate-safety.test.ts`: retain `20261015100000` before main's
+`20261015200000_projection_receipt`. Include `20261015000000` only if it is
+present on main at merge time. Keep the last-file assertion and inventory error
+boundary consistent with that order; retain main's receipt rollback/reapply
+proofs and update their inventory count for the added index migration. The
+branch's current inventory remains exact for its current migration files;
+these overlapping inventory edits require reconciliation when main is merged.
+
 ## Reproduce the plan check
 
 From `etl/`, use the existing environment:
