@@ -2176,6 +2176,7 @@ describe("migration release-gate integration", () => {
 		"20261013000000",
 		"20261014000000",
 		"20261015000000",
+		"20261015100000",
 		"20261015200000",
 		"20261015300000",
 	];
@@ -2190,7 +2191,7 @@ describe("migration release-gate integration", () => {
 		});
 		expect(
 			new Set([...plan.migrationVersions, plan.syntheticMigration.version]).size,
-		).toBe(75);
+		).toBe(76);
 		expect(plan.setupProofs).toEqual([
 			{
 				path: "tests/results_exploration_scale_setup.sql",
@@ -2691,13 +2692,14 @@ describe("migration release-gate integration", () => {
 			),
 			([, down, version]) => `${version}-${down ? "down" : "up"}`,
 		);
-		expect(proof).toContain("75 as migration_inventory_count");
+		expect(proof).toContain("76 as migration_inventory_count");
 		expect(migrationSequence.some((entry) => entry.startsWith("0024-"))).toBe(
 			false,
 		);
 		expect(migrationSequence).toEqual([
 			"20261015300000-down",
 			"20261015200000-down",
+			"20261015100000-down",
 			"20261015000000-down",
 			"20261014000000-down",
 			"20261013000000-down",
@@ -2802,6 +2804,7 @@ describe("migration release-gate integration", () => {
 			"20261013000000-up",
 			"20261014000000-up",
 			"20261015000000-up",
+			"20261015100000-up",
 			"20261015200000-up",
 			"20261015300000-up",
 		]);

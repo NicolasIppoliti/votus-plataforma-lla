@@ -1,0 +1,4 @@
+BENCHMARK BLOCKER: schema clone CalledProcessError exit 1 known diagnostics ['connection to server on socket', 'No such file or directory'] sqlstates []
+OWNED DIAGNOSTIC CLEANUP: database and role absence confirmed by harness
+.
+1 passed in 0.18s
