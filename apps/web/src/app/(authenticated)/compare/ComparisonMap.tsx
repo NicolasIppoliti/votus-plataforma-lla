@@ -75,7 +75,7 @@ export function ComparisonMapView({ coordinates, name, fetchedAt, sha256, swing,
     <p>Un único contorno para toda la sección 02/027; no representa variaciones dentro de la sección.</p>
     <div className={styles.spatialPair}>{[{ id: "a", label: "Lado A — 2023 generales", shares: swing.shares2023, names: leftNames }, { id: "b", label: "Lado B — 2025 legislativas", shares: swing.shares2025, names: rightNames }].map(({ id, label, shares, names }, index) => <article key={id} aria-label={label}>
       <h3>{label}</h3><p>{labels[index]}</p>
-      <SectionReferenceMap coordinates={coordinates} name={name} label={label} resultId="compare-results-heading" camera={camera} onCamera={updateCamera} fillColor={fills[index]} staticLabel={labels[index]} />
+      <SectionReferenceMap compactControls coordinates={coordinates} name={name} label={label} resultId="compare-results-heading" camera={camera} onCamera={updateCamera} fillColor={fills[index]} staticLabel={labels[index]} />
       <details className={styles.sideFigures}><summary>Cifras — Lado {id.toUpperCase()}</summary><p>Denominador: {formatCount(shares.reduce((sum, entry) => sum + entry.votes, 0))} votos partidarios.</p><Leader shares={shares} names={names} /></details>
     </article>)}</div>
     <div className={styles.spatialLegend}><Legend label={metric === "Participación" ? "Escala de color común: 0 % a 100 %" : metric === "Cambio" ? "Escala de cambio: −100 pp a +100 pp" : "Leyenda categórica de ganadores"}>

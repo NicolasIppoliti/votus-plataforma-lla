@@ -235,7 +235,7 @@ function CompareSelector({
           ) : (
             <Alert variant={alert ? "unavailable" : "needs-selection"}>{message}</Alert>
           )}
-          {context}
+          <details className={styles.selectionNotes} data-applied-context=""><summary>Contexto de comparación aplicada</summary>{context}</details>
           </section>
           {children}
         </ComparisonSelectionForm>
