@@ -696,7 +696,11 @@ test.describe("the production root preserves its authentication boundary", () =>
 
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
-    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
+    const explorationHref = await officialRoutes.getByRole("link", { name: "Explorar resultados", exact: true }).getAttribute("href");
+    expect(explorationHref).not.toBeNull();
+    const carried = new URL(explorationHref!, page.url()).searchParams;
+    carried.delete("level");
+    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", `/compare${carried.size ? `?${carried}` : ""}`);
     // Municipal is a separated flow in the approved Panorama, outside the official routes.
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
