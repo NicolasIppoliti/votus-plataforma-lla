@@ -2657,6 +2657,9 @@ def test_ingest_2023_generales_municipal_rows_preserves_raw_categories_and_prove
                     local_root=local_root,
                     manifest_path=manifest_path,
                     metrics=metrics,
+                    # This test asserts full parsing metrics on each pass;
+                    # verified-reuse observations are tested separately.
+                    force_rebuild=True,
                 )
                 == 5
             )

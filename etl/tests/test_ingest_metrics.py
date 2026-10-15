@@ -102,6 +102,16 @@ class Connection:
                 "0" * 32,
             )
             return
+        if text == "show transaction_isolation":
+            self.response = ("read committed",)
+            return
+        if text.startswith(
+            ("select id from election", "select projection from public.projection_receipt")
+        ):
+            return
+        if text.startswith("select jsonb_object_agg(name,signature)"):
+            self.response = ({},)
+            return
         if text.startswith("select capability is not distinct"):
             return
         if text.startswith("select source_kind from archive_entry"):
@@ -119,6 +129,8 @@ class Connection:
                     "truncate table pg_temp.result_rows_",
                     "insert into result_row",
                     "insert into archive_entry",
+                    "select pg_advisory_xact_lock",
+                    "insert into public.projection_receipt",
                     "delete from result_row",
                     "LOCK TABLE jurisdiction",
                     "delete from official_mesa_completeness_quarantine",
@@ -249,7 +261,10 @@ def scenario(tmp_path, monkeypatch):
 def test_performance_cli_report_is_separate_and_exclusive(scenario, capsys):
     argv, conn, output = scenario([row(), row(lista_numero="B")])
     assert main([*argv, "--performance-output", str(output)]) == 0
-    assert capsys.readouterr() == ("ingested 2 rows from synthetic\n", "")
+    assert capsys.readouterr() == (
+        "projection rebuilt: 2 rows\nprojection contains 2 rows from synthetic\n",
+        "",
+    )
     report = json.loads(output.read_text())
     assert report["version"] == 1
     assert report["kind"] == "national_ingest_performance"
@@ -390,7 +405,10 @@ def test_performance_and_count_reports_are_independent(scenario, tmp_path):
 def test_no_flag_cli_baseline(scenario, capsys):
     argv, conn, output = scenario([row()])
     assert main(argv) == 0
-    assert capsys.readouterr() == ("ingested 1 rows from synthetic\n", "")
+    assert capsys.readouterr() == (
+        "projection rebuilt: 1 rows\nprojection contains 1 rows from synthetic\n",
+        "",
+    )
     assert (conn.commits, conn.rollbacks) == (1, 0)
     assert not output.exists()
 
@@ -398,9 +416,16 @@ def test_no_flag_cli_baseline(scenario, capsys):
 def test_cli_json_counts_logical_records_once_and_preserves_paso_lists(scenario, capsys):
     argv, conn, output = scenario([row(), row(lista_numero="B")])
     assert main([*argv, "--metrics-output", str(output)]) == 0
-    assert capsys.readouterr() == ("ingested 2 rows from synthetic\n", "")
+    assert capsys.readouterr() == (
+        "projection rebuilt: 2 rows\nprojection contains 2 rows from synthetic\n",
+        "",
+    )
     assert json.loads(output.read_text()) == {
         "version": 1,
+        "projection_outcome": "rebuilt",
+        "projection_rows": 2,
+        "rows_written": 2,
+        "rows_committed": 2,
         "scope": {
             "source_id": "synthetic",
             "year": 2023,
@@ -779,7 +804,11 @@ def test_publication_failure_never_rolls_back_a_returned_commit_or_masks_ingest(
         f"error: metrics publication failed; commit_returned={observed} "
         "(application observation, not a rollback claim)\n"
     )
-    assert captured.out == ("" if fail_loading else "ingested 1 rows from synthetic\n")
+    assert captured.out == (
+        ""
+        if fail_loading
+        else "projection rebuilt: 1 rows\nprojection contains 1 rows from synthetic\n"
+    )
     assert (conn.commits, conn.rollbacks) == ((0, 1) if fail_loading else (1, 0))
     assert json.loads(output.read_text())["commit_returned"] is (not fail_loading)
 
