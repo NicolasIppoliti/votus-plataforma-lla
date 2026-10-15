@@ -49,6 +49,31 @@ afterEach(() => {
 });
 
 describe("middleware", () => {
+  it("overwrites untrusted profiling metadata and groups by a generated request id", async () => {
+    vi.stubEnv("VOTUS_PROFILE_SPANS", "1");
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "private-user" } } });
+      const request = new NextRequest("http://localhost:3000/compare?private=not-logged", { headers: { "x-votus-profile-request": "private-session", "x-votus-profile-route": "private-url" } });
+      const response = await middleware(request);
+      const id = response.headers.get("x-votus-profile-request");
+      expect(id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(response.headers.get("x-middleware-request-x-votus-profile-request")).toBe(id);
+      const event = JSON.parse(log.mock.calls[0]?.[0] as string);
+      expect(event).toMatchObject({ requestId: id, route: "/compare", name: "auth.middleware.getUser" });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private-");
+    } finally { log.mockRestore(); }
+  });
+
+  it("accounts SessionMonitor probes separately from page routes", async () => {
+    vi.stubEnv("VOTUS_PROFILE_SPANS", "1");
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+      await middleware(new NextRequest("http://localhost:3000/api/session"));
+      expect(JSON.parse(log.mock.calls[0]?.[0] as string)).toMatchObject({ route: "/api/session", name: "auth.middleware.getUser" });
+    } finally { log.mockRestore(); }
+  });
   it("returns a private status-only 401 for an unauthenticated session probe", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
 
