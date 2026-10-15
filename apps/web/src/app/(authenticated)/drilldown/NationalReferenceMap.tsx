@@ -11,7 +11,7 @@ export function NationalReferenceMap() {
   const [active, setActive] = useState(false);
   const [feature, setFeature] = useState<ReferenceFeature | null>(null);
   const [polarPath, setPolarPath] = useState("");
-  const [status, setStatus] = useState("Mapa opcional. Podés ir a Buenos Aires o usar los selectores sin WebGL.");
+  const [status, setStatus] = useState("Mapa opcional. Usá los selectores sin WebGL.");
   const [continentalStatus, setContinentalStatus] = useState("Mapa continental aún no activado.");
   const [retry, setRetry] = useState(0);
   const [continentalRetry, setContinentalRetry] = useState(0);
@@ -109,9 +109,8 @@ export function NationalReferenceMap() {
       </section>
     </div> : null}
     <Legend label="Referencia nacional" entries={[{ label: "Contorno de referencia IGN; sin resultados electorales", encoding: "outline" }]} />
-    <p className={styles.attribution}>Fuente: IGN · Derivado simplificado de referencia ({NATIONAL_REFERENCE_PATH.split(".")[1]}). Precisión cartográfica derivada; no son límites electorales.</p>
-    <a href="#province-reference-heading">Ir a Buenos Aires</a>
-    <a href="#national-reference-heading">Volver a Argentina</a>
+    <p>Fuente: IGN · Precisión cartográfica derivada; no son límites electorales.</p>
+    <details><summary>Procedencia de la referencia nacional</summary><p className={styles.attribution}>Derivado simplificado de referencia · sha256: <code>{NATIONAL_REFERENCE_PATH.split(".")[1]}</code></p></details>
     <a href="#explorer-election" onClick={() => document.getElementById("explorer-election")?.focus()}>Ir a la selección electoral exacta</a>
   </div>;
 }

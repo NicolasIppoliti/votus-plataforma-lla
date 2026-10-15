@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ELECTORAL_CONTEXT_KEYS, parseElectoralContext, serializeElectoralContext } from "@/lib/context/url";
 import { Alert } from "@/components/ui/alert";
 import { RosalesAdministrativeDetails, RosalesTerritoryName } from "@/components/RosalesAdministrativeContext";
 import { loadMunicipalSectionGeometry, type MunicipalSectionResult } from "@/lib/workspace/municipal-section-geometry";
@@ -141,13 +142,15 @@ export function renderMunicipalView(
   section?: MunicipalSectionResult,
   reference?: RosalesReferenceResult,
 ): ReactNode {
+  const stateHeading = <MunicipalStateHeading year={year} />;
+  const municipalRefusal = (reason: ReactNode) => municipalState(<>Se rechazó la solicitud: {reason}</>, "alert", year);
   if (view.status !== "ok") {
     const carried = describeExcluded(
       view.status === "read_failed" ? (view.excluded ?? {}) : {},
     );
     return (
       <main className={`page-shell ${styles.root}`}>
-        <MunicipalStateHeading />
+        {stateHeading}
         <Alert variant="unavailable">Se rechazó la lectura: {view.reason}</Alert>
         {view.status === "read_failed" && (view.unmapped || view.withoutListId) ? (
           <UnmappedListIds
@@ -220,7 +223,7 @@ export function renderMunicipalView(
   if (foreignRows.length > 0) {
     return (
       <main className={`page-shell ${styles.root}`}>
-        <MunicipalStateHeading />
+        {stateHeading}
         <Alert variant="denied">
           Se rechazó la solicitud: {describeExcluded(tallyByKind(foreignRows))} de{" "}
           {rows.length} filas no son oficiales. Las cifras oficiales y de
@@ -248,7 +251,7 @@ export function renderMunicipalView(
     partyTotals = unsummable !== null ? [] : votesByParty(rows);
   } catch {
     return <main className={`page-shell ${styles.root}`}>
-      <MunicipalStateHeading />
+      {stateHeading}
       <Alert variant="unavailable">Se rechazó la solicitud: un mismo partido canónico tiene nombres
         incompatibles. No se muestran cifras hasta resolver el conflicto.</Alert>
       {excludedNote}
@@ -263,6 +266,7 @@ export function renderMunicipalView(
     return municipalState(
       "No se encontraron resultados municipales para esta jurisdicción, categoría y elección.",
       "status",
+      year,
     );
   }
 
@@ -273,7 +277,7 @@ export function renderMunicipalView(
           <nav className={styles.trail} aria-label="Recorrido de la página">Exploración / Municipal</nav>
           <h1>Coronel Rosales</h1>
           <p>Resultados municipales · {is2023 ? "Cuerpo municipal (rótulo DINE: INTENDENTE)" : "Concejales"} · Fuente oficial</p>
-          <nav aria-label="Elección municipal"><a href="/municipal">2025 · Provinciales</a>{" · "}<a href="/municipal?year=2023">2023 · Generales</a></nav>
+          <MunicipalElectionSwitch year={year} />
           <p>Esquema nacional: distrito es la provincia; sección es el partido. La fiscalización no forma parte de estos resultados.</p>
           {is2023 ? <p role="note">El archivo DINE 2023 registra 153 mesas y 10 códigos de circuito para Coronel Rosales; son datos del archivo, no cobertura confirmada de esta proyección ni límites geográficos vigentes.</p> : null}
         </header>
@@ -288,13 +292,13 @@ export function renderMunicipalView(
           </dl>
           <RosalesAdministrativeDetails />
         </section>
-        {section ? <section className={styles.reference} aria-label="Referencia geográfica de sección">
-          <h2>Referencia geográfica de sección</h2>
+        {section ? <section className={styles.reference} data-map-kind="locator" aria-label="Referencia geográfica de sección">
+          <h2>Referencia territorial</h2>
           {section.status === "ok" ? <>
             <p>Contorno CNE: {section.name}. Referencia geográfica únicamente; vigencia electoral no verificada para {year}.</p>
             <SectionOutline coordinates={section.geometry.coordinates} />
             <MunicipalSectionMap coordinates={section.geometry.coordinates} name={section.name} />
-            <p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p>
+            <details><summary>Archivo geográfico CNE</summary><p>Archivo CNE descargado el <time dateTime={section.fetchedAt}>{section.fetchedAt}</time> · sha256: <code>{section.sha256}</code>. Fecha de descarga, no vigencia del límite electoral. No representa circuitos ni mesas.</p></details>
           </> : <p role="note">Geometría no disponible o no verificable; se conserva la tabla de resultados exactos.</p>}
         </section> : null}
         </div>
@@ -332,7 +336,7 @@ export function renderMunicipalView(
           ) : (
             <>
               <MunicipalDistribution parties={partyTotals} />
-              <TableRegion label="Tabla de resultados oficiales exactos por partido">
+              <TableRegion mobileHint label="Tabla de resultados oficiales exactos por partido">
                 <Table className="data-table">
                   <caption>Resultados oficiales exactos por partido y votos</caption>
                   <thead>
@@ -390,19 +394,30 @@ function SectionOutline({ coordinates }: { coordinates: number[][][][] }): React
   </svg>;
 }
 
-function MunicipalStateHeading(): ReactNode {
+function MunicipalElectionSwitch({ year }: { year: MunicipalYear }): ReactNode {
+  function href(target: MunicipalYear): string {
+    const electionId = process.env[target === 2023 ? "MUNICIPAL_2023_ELECTION_ID" : "MUNICIPAL_ELECTION_ID"];
+    const categoryId = process.env[target === 2023 ? "MUNICIPAL_2023_CATEGORY_ID" : "MUNICIPAL_CATEGORY_ID"];
+    if (!electionId || !categoryId) return target === 2023 ? "/municipal?year=2023" : "/municipal";
+    return `/municipal?${serializeElectoralContext({ electionId, categoryId, sourceKind: "official", distritoCode: "02", seccionCode: "027" })}`;
+  }
+  return <nav aria-label="Elección municipal"><a href={href(2025)} aria-current={year === 2025 ? "page" : undefined}>2025 · Provinciales</a>{" · "}<a href={href(2023)} aria-current={year === 2023 ? "page" : undefined}>2023 · Generales</a></nav>;
+}
+
+function MunicipalStateHeading({ year = 2025 }: { year?: MunicipalYear }): ReactNode {
   return <header className={styles.header}>
     <p className={styles.trail}>Exploración / Municipal</p>
-    <h1>Municipal (Concejales)</h1>
+    <h1>Municipal ({year === 2023 ? "Cuerpo municipal (rótulo DINE: INTENDENTE)" : "Concejales"})</h1>
     <p>Resultados municipales · Fuente oficial</p>
+    <MunicipalElectionSwitch year={year} />
   </header>;
 }
 
-function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode {
+function municipalState(message: ReactNode, role: "alert" | "status", year: MunicipalYear = 2025): ReactNode {
   return (
     <main className={`page-shell ${styles.root}`}>
       <div className={`shell-container ${styles.layout}`}>
-        <MunicipalStateHeading />
+        <MunicipalStateHeading year={year} />
         <Alert variant={role === "alert" ? "unavailable" : "empty"} aria-labelledby="municipal-state-heading">
           <h2 id="municipal-state-heading">Estado de la evidencia</h2>
           <p>{message}</p>
@@ -410,10 +425,6 @@ function municipalState(message: ReactNode, role: "alert" | "status"): ReactNode
       </div>
     </main>
   );
-}
-
-function municipalRefusal(reason: ReactNode): ReactNode {
-  return municipalState(<>Se rechazó la solicitud: {reason}</>, "alert");
 }
 
 interface MunicipalPageProps {
@@ -429,6 +440,10 @@ export default async function MunicipalPage({
   searchParams,
 }: MunicipalPageProps): Promise<ReactNode> {
   const params = await searchParams;
+  const context = parseElectoralContext(params);
+  const selectedYear: MunicipalYear = params.year === "2023" || (context.status === "ok" && context.value.electionId !== undefined && context.value.electionId === process.env["MUNICIPAL_2023_ELECTION_ID"]) ? 2023 : 2025;
+  const municipalStateForYear = (message: ReactNode, role: "alert" | "status") => municipalState(message, role, selectedYear);
+  const municipalRefusal = (reason: ReactNode) => municipalStateForYear(<>Se rechazó la solicitud: {reason}</>, "alert");
 
   // Refused BEFORE anything is read: `stringParam` yields `undefined` for a
   // repeated param, so without this a supplied value looks absent.
@@ -436,7 +451,7 @@ export default async function MunicipalPage({
   if (repeated.length > 0) {
     return (
       <main className={`page-shell ${styles.root}`}>
-        <MunicipalStateHeading />
+        <MunicipalStateHeading year={selectedYear} />
         <Alert variant="denied">
           Se rechazó la solicitud: estos parámetros de consulta se proporcionaron
           más de una vez y no se pueden resolver a un único valor: {repeated.join(", ")}.
@@ -444,16 +459,20 @@ export default async function MunicipalPage({
       </main>
     );
   }
+  if (context.status === "invalid") return municipalRefusal(context.reason);
+  const selection = context.value;
+  if (selection.sourceKind !== "official") return municipalRefusal("Esta ruta solo ofrece resultados oficiales; la fiscalización se consulta por separado.");
+  if ((selection.distritoCode && selection.distritoCode !== "02") || (selection.seccionCode && selection.seccionCode !== "027") || selection.circuitoCode || selection.establecimientoCode || selection.mesaCode !== undefined)
+    return municipalRefusal("Esta ruta solo ofrece la sección municipal 02/027.");
   const suppliedKeys = Object.keys(params);
   const electionId = stringParam(params, "electionId");
   const legacyJurisdictionId = stringParam(params, "jurisdictionId");
-  const legacyCategoryId = stringParam(params, "categoryId");
   const legacyPartyFamily = stringParam(params, "partyJurisdiction");
   const legacyPartyCategory = stringParam(params, "partyCategory");
   const suppliedYear = stringParam(params, "year");
   if (suppliedYear !== undefined && suppliedYear !== "2023" && suppliedYear !== "2025")
     return municipalRefusal("el año debe ser 2023 o 2025.");
-  const year: MunicipalYear = suppliedYear === "2023" ? 2023 : 2025;
+  const year = selectedYear;
   const configuredElectionId = year === 2023 ? process.env["MUNICIPAL_2023_ELECTION_ID"] : process.env["MUNICIPAL_ELECTION_ID"];
   const categoryId = year === 2023 ? process.env["MUNICIPAL_2023_CATEGORY_ID"] : process.env["MUNICIPAL_CATEGORY_ID"];
 
@@ -462,10 +481,12 @@ export default async function MunicipalPage({
   }
   if (electionId && electionId !== configuredElectionId)
     return municipalRefusal(<>esta ruta solo ofrece la elección municipal configurada; se recibió {electionId}.</>);
-  if (legacyJurisdictionId || legacyCategoryId || legacyPartyFamily || legacyPartyCategory) {
-    return municipalRefusal(<>la sección 02/027, la categoría y la elección son fijas; no se aceptan parámetros de identidad o autorización: {legacyJurisdictionId} {legacyCategoryId} {legacyPartyFamily} {legacyPartyCategory}.</>);
+  if (selection.categoryId && selection.categoryId !== categoryId)
+    return municipalRefusal(<>La categoría {selection.categoryId} no corresponde a la elección municipal seleccionada.</>);
+  if (legacyJurisdictionId || legacyPartyFamily || legacyPartyCategory) {
+    return municipalRefusal(<>la sección 02/027, la categoría y la elección son fijas; no se aceptan parámetros de identidad o autorización: {legacyJurisdictionId} {legacyPartyFamily} {legacyPartyCategory}.</>);
   }
-  const unknownKeys = suppliedKeys.filter((key) => key !== "electionId" && key !== "year");
+  const unknownKeys = suppliedKeys.filter((key) => key !== "year" && !ELECTORAL_CONTEXT_KEYS.some((contextKey) => contextKey === key));
   if (unknownKeys.length > 0) {
     return municipalRefusal(<>parámetros de consulta no admitidos: {unknownKeys.join(", ")}.</>);
   }
@@ -474,10 +495,10 @@ export default async function MunicipalPage({
   if (evidence.status === "denied")
     return municipalRefusal("El espacio de trabajo no autoriza esta sección municipal.");
   if (evidence.status === "empty")
-    return municipalState("No hay resultados oficiales autorizados para esta sección.", "status");
+    return municipalStateForYear("No hay resultados oficiales autorizados para esta sección.", "status");
   if (evidence.status === "unavailable") {
     const retryHref = year === 2023 ? "/municipal?year=2023" : `/municipal?electionId=${encodeURIComponent(configuredElectionId)}`;
-    return municipalState(
+    return municipalStateForYear(
       <>
         Se rechazó la solicitud: La evidencia oficial autorizada no está disponible.{" "}
         <a href={retryHref}>Reintentar misma consulta</a>{" · "}

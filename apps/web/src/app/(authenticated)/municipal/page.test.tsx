@@ -267,6 +267,7 @@ describe("municipal page — the real entry point", () => {
     expect(paths.some((path) => /cne-rosales-section\.[a-f0-9]{64}\.json$/.test(path))).toBe(true);
     expect(paths.some((path) => path.includes("archive/") || path.endsWith("archive-manifest.json"))).toBe(false);
     expect(html).toContain("Referencia geográfica de sección");
+    expect(html).toContain('data-map-kind="locator"');
     expect(html).toContain("vigencia electoral no verificada");
     expect(html).toContain("2026-09-24T03:29:24Z");
     expect(html).toContain("Fecha de descarga, no vigencia");
@@ -309,6 +310,17 @@ describe("municipal page — the real entry point", () => {
     expect(html).not.toContain("<svg viewBox=\"0 0 300 200\"");
   });
 
+  it("selects 2023 from shared context and keeps the switch on refusal", async () => {
+    process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
+    process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
+    authorizedEvidenceState = { status: "empty" };
+    const { default: Page } = await import("./page");
+    const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ electionId: "e-2023", categoryId: "c-intendente", sourceKind: "official", distritoCode: "02", seccionCode: "027" }) })) as ReactElement);
+    expect(loadMunicipalOfficialEvidence).toHaveBeenCalledWith(2023);
+    expect(html).toContain("INTENDENTE");
+    expect(html).toContain('aria-label="Elección municipal"');
+  });
+
   it("selects the authorized 2023 provisional ballot and displays its raw category", async () => {
     process.env["MUNICIPAL_2023_ELECTION_ID"] = "e-2023";
     process.env["MUNICIPAL_2023_CATEGORY_ID"] = "c-intendente";
@@ -320,6 +332,9 @@ describe("municipal page — the real entry point", () => {
     const { default: Page } = await import("./page");
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
     expect(loadMunicipalOfficialEvidence).toHaveBeenCalledWith(2023);
+    expect(html).toContain('data-map-kind="locator"');
+    expect(html).toContain("<summary>Archivo geográfico CNE</summary>");
+    expect(html).toContain("vigencia electoral no verificada para 2023");
     for (const text of ["2023", "Generales", "INTENDENTE", "provisorio", "LA LIBERTAD AVANZA", "Distrito 02 · Sección 027"])
       expect(html).toContain(text);
     expect(html).toContain('<th scope="row">LA LIBERTAD AVANZA</th>');
@@ -365,6 +380,8 @@ describe("municipal page — the real entry point", () => {
     const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve({ year: "2023" }) })) as ReactElement);
     expect(html).not.toContain("4200");
     expect(html).not.toContain("153 mesas");
+    expect(html).toContain('aria-label="Elección municipal"');
+    expect(html).toContain("Municipal (Cuerpo municipal (rótulo DINE: INTENDENTE))");
     if (status === "unavailable") expect(html).toContain('href="/municipal?year=2023"');
   });
 
@@ -582,7 +599,9 @@ describe("municipal page — the real entry point", () => {
         for (const params of [
           { electionId: ["2025-municipal", "2025-municipal"] },
           { electionId: "other-election" }, { unexpected: "x" },
-          { jurisdictionId: "j-027" }, { categoryId: "c-concejales" },
+          { sourceKind: "fiscalizacion" }, { distritoCode: "027" },
+          { distritoCode: "02", seccionCode: "028" }, { mesaCode: "1" },
+          { jurisdictionId: "j-027" }, { categoryId: "other-category" },
           { partyJurisdiction: "national" }, { partyCategory: "CONCEJALES" },
         ]) {
           const html = renderToStaticMarkup((await Page({ searchParams: Promise.resolve(params) })) as ReactElement);
@@ -1042,6 +1061,8 @@ describe("municipal page — CNE Rosales 2025 circuits and voting locations (#39
     expect(html).toContain('data-encoding="outline"');
     expect(html).toContain('data-encoding="dot"');
     expect(html).toContain("Local de votación con coordenadas");
+    const legend = html.slice(html.indexOf('aria-label="Leyenda de referencia geográfica"'));
+    expect(legend.slice(0, legend.indexOf("</div>"))).toContain("Locales sin coordenadas: 3. No se dibujan en el mapa; se incluyen en la tabla de locales.");
     expect(html.match(/<circle /g)).toHaveLength(28);
     expect(html.match(/data-circuit=/g)).toHaveLength(10);
     const table = html.slice(html.indexOf("<caption>Locales de votación CNE 2025"));

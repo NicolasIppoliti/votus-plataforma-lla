@@ -8,11 +8,70 @@ import { withReviewItem } from "./authorized-review-fixture";
 const environment = assertE2eEnvironment(process.env);
 const ROOT_CONTENT = "Panorama";
 
+test("authenticated routes share page gutter and title scale", async ({ page }) => {
+  const routes = ["/", "/drilldown", "/municipal", "/compare", "/simulate", "/scenarios", "/evidencia", "/review", "/fiscalizacion"];
+  for (const width of [320, 390, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    let sharedLeft: number | undefined;
+    let sharedRight: number | undefined;
+    for (const route of routes) {
+      await page.goto(route);
+      const title = page.locator("#main-content h1");
+      await expect(title).toBeVisible();
+      await expect(title).toHaveCSS("font-size", width < 768 ? "28px" : "32px");
+      await expect(title).toHaveCSS("line-height", width < 768 ? "33.6px" : "38.4px");
+      const geometry = await title.evaluate(node => {
+        const box = node.getBoundingClientRect();
+        // Simulation reserves desktop header space for its scenario summary.
+        // The title must start at the page gutter, not fill that reserved space.
+        const pageBox = node.closest("main")!.getBoundingClientRect();
+        const container = document.getElementById("main-content")!;
+        const shell = container.getBoundingClientRect();
+        const style = getComputedStyle(container);
+        return { left: box.left, right: pageBox.right, expectedLeft: shell.left + parseFloat(style.paddingLeft), expectedRight: shell.right - parseFloat(style.paddingRight) };
+      });
+      expect(Math.abs(geometry.left - geometry.expectedLeft), route).toBeLessThan(1);
+      expect(Math.abs(geometry.right - geometry.expectedRight), route).toBeLessThan(1);
+      sharedLeft ??= geometry.left;
+      sharedRight ??= geometry.right;
+      expect(Math.abs(geometry.left - sharedLeft), route).toBeLessThan(1);
+      expect(Math.abs(geometry.right - sharedRight), route).toBeLessThan(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), route).toBe(true);
+    }
+  }
+});
+
 async function expectNoSevereAccessibilityIssues(page: Page) {
   const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
   expect(result.violations.filter(issue => issue.impact === "critical" || issue.impact === "serious")
     .map(issue => ({ id: issue.id, impact: issue.impact, affectedNodes: issue.nodes.length }))).toEqual([]);
 }
+
+test("electoral context stays labelled and readable at 320px with explicit source opt-in", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/municipal");
+  const bar = page.getByRole("region", { name: "Contexto electoral", exact: true });
+  await expect(bar).toBeVisible();
+  await expect(bar).toHaveCSS("position", "static");
+  await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "static");
+  for (const label of ["Elección", "Categoría", "Distrito", "Sección", "Fuente"]) {
+    await expect(bar.getByRole("combobox", { name: `Contexto electoral: ${label}`, exact: true })).toHaveCount(1);
+  }
+  await expect(page).toHaveURL(/\/municipal$/);
+  const source = bar.getByRole("combobox", { name: "Contexto electoral: Fuente", exact: true });
+  await expect(source).toHaveValue("official");
+  await source.selectOption("fiscalizacion");
+  await expect(page).toHaveURL(/sourceKind=fiscalizacion/);
+  await expect(bar).toHaveAttribute("data-source", "fiscalizacion");
+  await expect(bar.getByText("Fiscalización: fuente no oficial.", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(bar).toHaveCSS("position", "sticky");
+  await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "sticky");
+  await page.setViewportSize({ width: 1440, height: 500 });
+  await expect(bar).toHaveCSS("position", "static");
+  await expect(page.locator(".workspace-topbar")).toHaveCSS("position", "static");
+});
 
 test("the authenticated page renders one navy theme regardless of the system preference", async ({ page }) => {
   for (const colorScheme of ["light", "dark"] as const) {
@@ -387,7 +446,7 @@ test("Panorama places the map beside its summary and stacks them on mobile",  as
   await page.goto("/");
   const heading = page.getByRole("heading", { level: 1, name: ROOT_CONTENT, exact: true });
   await expect(heading).toBeVisible();
-  await expect(heading).toHaveCSS("font-size", "34px");
+  await expect(heading).toHaveCSS("font-size", "32px");
   const main = page.getByRole("main");
   const explore = main.getByRole("link", { name: "Explorar resultados", exact: true }).first();
   const attention = main.getByRole("complementary", { name: "Atención operativa" });
@@ -670,7 +729,11 @@ test.describe("the production root preserves its authentication boundary", () =>
 
     const officialRoutes = page.getByRole("main").getByRole("region", { name: "Continuar el análisis", exact: true });
     await expect(officialRoutes).toContainText("Contrastar bases y reconocer sus condiciones de comparabilidad.");
-    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", "/compare");
+    const explorationHref = await officialRoutes.getByRole("link", { name: "Explorar resultados", exact: true }).getAttribute("href");
+    expect(explorationHref).not.toBeNull();
+    const carried = new URL(explorationHref!, page.url()).searchParams;
+    carried.delete("level");
+    await expect(officialRoutes.getByRole("link", { name: "Comparar elecciones" })).toHaveAttribute("href", `/compare${carried.size ? `?${carried}` : ""}`);
     // Municipal is a separated flow in the approved Panorama, outside the official routes.
     const separatedRoutes = page.getByRole("main").getByRole("region", { name: "Otros alcances · flujos separados", exact: true });
     await expect(separatedRoutes).toContainText("Coronel Rosales · Concejales 2025. Elección configurada.");
