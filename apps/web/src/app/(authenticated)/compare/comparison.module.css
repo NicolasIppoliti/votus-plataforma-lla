@@ -172,3 +172,29 @@
 .sideFigures > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .exactTable, .selectionNotes { border-block: 1px solid var(--border); margin-block: 0.75rem; min-width: 0; }
 .exactTable > summary, .selectionNotes > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 0.875rem; }
+
+/* Compact mobile comparison: one readable field per row at 320 and 390px. */
+@media (max-width: 760px) {
+  .root :global(.official-compare__layout) { gap: 12px; }
+  .root :global(.official-compare__selector-grid) { gap: 12px; }
+  .root :global(.official-compare__selector-grid) fieldset { grid-template-columns: minmax(0,1fr); gap: 8px; }
+  .root :global(.official-compare__selector-grid) :global(.official-compare__shared) { grid-template-columns: minmax(0,1fr); }
+  .root :global(select) { padding-inline: 8px; }
+  .sharedRow { gap: 8px; padding-block: 8px; }
+  .badge { justify-self: start; }
+  .sharedNote { margin: 0; }
+  .spatial { padding: 12px; }
+  .mapHeader { gap: 8px; margin-bottom: 8px; }
+  .metricSwitch { flex-wrap: nowrap; width: 100%; }
+  .metricSwitch button { white-space: nowrap; padding-inline: 5px; flex: 1; }
+  .spatialPair article { padding: 12px 0; }
+  .spatialLegend { margin-block: 8px; }
+  .spatial p { margin-block: 8px; }
+  .children { padding: 12px; }
+  .children header { gap: 8px; margin-bottom: 8px; }
+  .selectionDetails { padding-block: 8px; }
+  .selectionNotes { margin-block: 4px; }
+  .pairedFigures { margin-top: 12px; gap: 8px; }
+  .coverage { padding-block: 8px; }
+}
+
